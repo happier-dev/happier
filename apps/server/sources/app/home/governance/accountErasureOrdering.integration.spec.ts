@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
+import { join } from "node:path";
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '@happier-dev/protocol/account/publicProfile';
 import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, PublicProfilePublishBodyV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
@@ -14,6 +15,7 @@ import { homeGovernanceRoutes } from "@/app/api/routes/home/homeGovernanceRoutes
 import { registerAccountErasureRoute } from "@/app/api/routes/auth/registerAccountErasureRoute";
 import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
+import { createLocalPrivateFilesBackend, resolveLocalPrivateFilesDir } from "@/storage/privateFiles/privateFilesLocal";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { TEAM_CHANGE_ENTITY_ID } from "@/app/teams/teamChanges";
@@ -25,6 +27,7 @@ import { ACCOUNT_ENCRYPTION_TRANSITION_LIFECYCLE } from "@/app/encryption/accoun
 // erasure contract rather than a rehearsal of it.
 const blobCalls: Array<Readonly<{ path: string; accountStatusAtCall: string | null }>> = [];
 const privateBlobCalls: string[] = [];
+const privateBlobPaths = new Map<string, string>();
 let failBlobDeletion = false;
 let failPrivateBlobDeletion = false;
 /** Runs between Phase A's commit and Phase C, where object storage runs. */
@@ -45,13 +48,18 @@ vi.mock("@/storage/blob/files", async (importOriginal) => ({
     }),
 }));
 
-vi.mock("@/app/pets/accountPetLibraryRuntime", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("@/app/pets/accountPetLibraryRuntime")>()),
-    deleteDefaultAccountPetPrivateObject: vi.fn(async (objectKey: string) => {
-        privateBlobCalls.push(objectKey);
-        if (failPrivateBlobDeletion) throw new Error("private object store unavailable");
-    }),
-}));
+// Fail only the physical filesystem operation; pet deletion and path validation run for real.
+vi.mock("node:fs/promises", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("node:fs/promises")>();
+    return { ...actual, rm: async (...args: Parameters<typeof actual.rm>) => {
+        const objectKey = typeof args[0] === "string" ? privateBlobPaths.get(args[0]) : undefined;
+        if (objectKey) {
+            privateBlobCalls.push(objectKey);
+            if (failPrivateBlobDeletion) throw new Error("private object store unavailable");
+        }
+        return actual.rm(...args);
+    } };
+});
 
 const { deleteAccountForErasure } = await import("@/app/plugins/data/accountDataErase");
 const { auth } = await import("@/app/auth/auth");
@@ -77,6 +85,10 @@ async function createPrivatePetAsset(accountId: string): Promise<Readonly<{ asse
     const petPackageId = `erasure-pet-${sequence}`;
     const assetId = `${petPackageId}-asset`;
     const objectKey = `private/accounts/${accountId}/pets/${petPackageId}/sheet.webp`;
+    const rootDir = resolveLocalPrivateFilesDir();
+    const backend = createLocalPrivateFilesBackend({ rootDir });
+    await backend.writePrivateFile(objectKey, new Uint8Array([1]));
+    privateBlobPaths.set(join(rootDir, objectKey), objectKey);
     await db.accountPetPackage.create({
         data: {
             id: petPackageId,
@@ -117,6 +129,7 @@ afterAll(async () => await harness.close());
 afterEach(async () => {
     blobCalls.length = 0;
     privateBlobCalls.length = 0;
+    privateBlobPaths.clear();
     failBlobDeletion = false;
     failPrivateBlobDeletion = false;
     duringBlobDeletion = null;
@@ -522,6 +535,7 @@ describe("Account erasure ordering against Home ownership", () => {
         await createAccountWithBlob({ homeRole: "owner" });
         const { accountId } = await createAccountWithBlob({ homeRole: "member" });
         const { assetId, objectKey } = await createPrivatePetAsset(accountId);
+        const privateFiles = createLocalPrivateFilesBackend({ rootDir: resolveLocalPrivateFilesDir() });
         failPrivateBlobDeletion = true;
 
         await expect(deleteAccountForErasure({ accountId })).resolves.toEqual({
@@ -529,12 +543,14 @@ describe("Account erasure ordering against Home ownership", () => {
             code: "account_erasure_blob_delete_failed",
         });
         expect(privateBlobCalls).toEqual([objectKey]);
+        await expect(privateFiles.readPrivateFile(objectKey)).resolves.toEqual(new Uint8Array([1]));
         await expect(db.accountPetAsset.findUnique({ where: { id: assetId } }))
             .resolves.not.toBeNull();
 
         failPrivateBlobDeletion = false;
         await expect(deleteAccountForErasure({ accountId })).resolves.toEqual({ status: "deleted" });
         expect(privateBlobCalls).toEqual([objectKey, objectKey]);
+        await expect(privateFiles.readPrivateFile(objectKey)).rejects.toMatchObject({ code: "ENOENT" });
     });
 
     it("refuses final deletion when a retained locator row is replaced at the same storage coordinate", async () => {

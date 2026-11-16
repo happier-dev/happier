@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition, settleApprovalRequestActionArgs } from '../approvals/approvalRequestTransition.js';
-import type { HomeAccountRowV1 } from '../home/governance/accounts.js';
+import { HomeAccountRowV1Schema } from '../home/governance/accounts.js';
 import { buildApprovalPreviewSummary, createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
@@ -48,8 +48,8 @@ function transitionStoredApproval(stored: ApprovalRequest | null | undefined, re
   return decideApprovalRequestTransition(stored, request);
 }
 
-function homeAccountRow(): HomeAccountRowV1 {
-  return {
+function homeAccountRow() {
+  return HomeAccountRowV1Schema.parse({
     accountId: 'account-2',
     homeRole: 'admin' as const,
     status: 'active' as const,
@@ -67,7 +67,7 @@ function homeAccountRow(): HomeAccountRowV1 {
       delete: { status: 'available' },
       signOutEverywhere: { status: 'available' },
     },
-  };
+  });
 }
 
 describe('createActionExecutor (Home governance and Teams)', () => {

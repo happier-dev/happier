@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { bytesToHex } from '@noble/hashes/utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { signAccountContentKeyBindingV1 } from '../crypto/accountContentKeyBindingV1.js';
 import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '../crypto/encryptedDataKeyEnvelopeV1.js';
@@ -10,16 +10,6 @@ import { ResourceAccessRecipientCensusV1Schema, ResourceRecipientKeyEnvelopeComm
 import { runResourceRecipientKeyPreparationV1, summarizeResourceRecipientReadinessV1 } from './resourceRecipientKeyPreparationV1.js';
 import { AccountRecipientEnvelopeUnavailableReasonSchema } from '../account/encryptionMode.js';
 import { TaskRecipientReadinessV1Schema } from '../todos/taskResourceV1.js';
-
-// Counting wrapper over the real verifier: signature checks per open are the cost contract.
-const verification = vi.hoisted(() => ({ calls: 0 }));
-vi.mock('../crypto/accountContentKeyBindingV1.js', async importOriginal => {
-  const actual = await importOriginal<typeof import('../crypto/accountContentKeyBindingV1.js')>();
-  return { ...actual, verifyAccountContentKeyBindingV1: (input: Parameters<typeof actual.verifyAccountContentKeyBindingV1>[0]) => {
-    verification.calls += 1;
-    return actual.verifyAccountContentKeyBindingV1(input);
-  } };
-});
 
 function fixture() {
   const signingSecret = randomBytes(32), signingPublic = ed25519.getPublicKey(signingSecret);
@@ -41,10 +31,12 @@ function fixture() {
 }
 
 describe('shared resource key-holder preparation', () => {
-  beforeEach(() => { verification.calls = 0; });
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it('verifies no recipient key on an unchanged open and exactly the new recipient on a membership advance', async () => {
     const { dataKey, ownerEnvelope, census } = fixture();
+    // Observe the third-party crypto boundary without replacing the binding owner.
+    const verification = vi.spyOn(ed25519, 'verify');
     const peer = census.recipients.find(recipient => recipient.recipientAccountId === 'peer')!;
     const current = Array.from({ length: 20 }, (_, index) => ({ ...peer, recipientAccountId: `current-${index}`,
       encryptedDataKey: ownerEnvelope, recipientContentPublicKeyFingerprint: peer.contentPublicKeyFingerprint }));
@@ -59,9 +51,9 @@ describe('shared resource key-holder preparation', () => {
       return committed;
     };
     await expect(run(current)).resolves.toEqual([]);
-    expect(verification.calls).toBe(0);
+    expect(verification).not.toHaveBeenCalled();
     await expect(run([...current, peer])).resolves.toEqual(['peer']);
-    expect(verification.calls).toBe(1);
+    expect(verification).toHaveBeenCalledTimes(1);
   });
 
   it('never seals to a recipient key whose binding does not verify', async () => {
