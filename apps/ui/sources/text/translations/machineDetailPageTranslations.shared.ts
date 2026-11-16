@@ -2350,6 +2350,7 @@ export const english = {
                 secret_redaction_unavailable: ({ machine }: { machine: string }) => `Logs stay hidden while Happier can’t mask secret values on ${machine}.`,
                 denied: ({ machine: _machine }: { machine: string }) => 'Reading these logs wasn’t allowed.',
                 cancelled: ({ machine: _machine }: { machine: string }) => 'Reading logs was cancelled.',
+                follow_only: ({ machine: _machine }: { machine: string }) => 'These logs are live only. Follow to see new lines as they arrive.',
             },
         },
     },

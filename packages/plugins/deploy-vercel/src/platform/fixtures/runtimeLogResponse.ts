@@ -14,5 +14,7 @@ export const recordedVercelRuntimeLog = {
   requestMethod: 'string', requestPath: 'string', responseStatusCode: '123',
   rowId: 'example_id', source: 'delimiter', timestampInMs: '123',
 } as const;
-export const openApiTypedRuntimeLog = { ...recordedVercelRuntimeLog,
+// The docs example fills `source` with the enum's first value, `delimiter`. Live, that is Vercel's
+// window-end control row (COR4R-163), not a log line, so the typed log replay uses a log source.
+export const openApiTypedRuntimeLog = { ...recordedVercelRuntimeLog, source: 'serverless',
   messageTruncated: false, responseStatusCode: 123, timestampInMs: 123 } as const;

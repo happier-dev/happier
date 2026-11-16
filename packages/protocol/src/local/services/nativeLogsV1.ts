@@ -4,6 +4,8 @@ import { MachineRecipeReferenceV1Schema } from '../../machines/setup/machineReci
 
 export const ManagedServiceUnavailableReasonV1Schema = lazyZodSchema(() => z.enum([
   'unsupported', 'unavailable', 'admission_unavailable', 'secret_redaction_unavailable', 'denied', 'cancelled',
+  /** The source keeps no history (a live tail only): a one-shot read answers at once; follow streams it. */
+  'follow_only',
 ]));
 export type ManagedServiceUnavailableReasonV1 = z.infer<typeof ManagedServiceUnavailableReasonV1Schema>;
 

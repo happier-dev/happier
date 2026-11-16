@@ -59,6 +59,8 @@ async function openRuntimePages(raw: JsonValue, context: PluginAccountActionCont
         context.signal.throwIfAborted();
         // A provider frame is a finite partial page, never a historical window.
         const row = parse(line);
+        // Vercel closes its live window (5 minutes) with a `delimiter` control row: the end of this stream, not a log.
+        if (row.source === 'delimiter') return null;
         return { kind: 'page' as const, page: { sourceRevision, rowId: row.rowId,
           text: `${JSON.stringify(row)}\n`, nextCursor: null, truncated: true } };
       };
@@ -70,13 +72,14 @@ async function openRuntimePages(raw: JsonValue, context: PluginAccountActionCont
           const line = pending.slice(0, boundary).trim();
           pending = pending.slice(boundary + 1);
           if (!line) continue;
-          yield deliver(line);
+          const page = deliver(line);
+          if (!page) return;
+          yield page;
         }
       }
       try { pending += decoder.decode(); } catch { return fail('provider_response_invalid'); }
-      if (pending.trim()) {
-        yield deliver(pending.trim());
-      }
+      const last = pending.trim() ? deliver(pending.trim()) : null;
+      if (last) yield last;
       context.signal.throwIfAborted();
     } finally { await response.dispose(); } })();
 }
@@ -88,10 +91,10 @@ export const runtimeLogsAction: PluginActionDefinition<Extract<PluginActionDecla
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [],
   hostAccess: ['vercel-api', 'deploy.manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
   dangerLevel: 'safe', readOnly: true, inputSchema: inputs['logs.runtime'].jsonSchema, resultSchema: output.jsonSchema,
-  async run(raw: JsonValue, context: PluginAccountActionContext): Promise<ReturnType<typeof output.parse>> {
-    for await (const page of await openRuntimePages(raw, context)) return page;
-    const input = raw as unknown as ReturnType<typeof inputs['logs.runtime']['parse']>;
-    return { kind: 'page', page: { sourceRevision: input.providerDeploymentId!, text: '', nextCursor: null, truncated: true } };
+  // Vercel keeps no runtime-log history: this endpoint is a live tail only. A one-shot read answers at once
+  // and names Follow (observeRead) instead of holding the request open for Vercel's 5-minute window.
+  async run(): Promise<ReturnType<typeof output.parse>> {
+    return { kind: 'unavailable', reason: 'follow_only' };
   },
   observeRead: (async (raw, observation, context) => {
     if (!observation.emit) throw new PluginError({ code: 'plugin_action_read_observation_unavailable' });

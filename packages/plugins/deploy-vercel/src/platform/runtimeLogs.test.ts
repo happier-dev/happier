@@ -32,13 +32,9 @@ it.each([normalizedRow, { ...normalizedRow, rowId: '' }])('preserves every norma
       chunks: (async function* () { yield new TextEncoder().encode(`${JSON.stringify({ ...expectedRow, privateVendorField: 'omitted' })}\n`); })(), async dispose() {} }; } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    const result = await kit.invokeAction('runtime-logs-read', input);
-    expect(result).toMatchObject({ kind: 'page', page: { rowId: expectedRow.rowId } });
-    if (!result || typeof result !== 'object' || Array.isArray(result) || result.kind !== 'page'
-      || !result.page || typeof result.page !== 'object' || Array.isArray(result.page) || typeof result.page.text !== 'string') {
-      throw new Error('Expected finite runtime page');
-    }
-    expect(JSON.parse(result.page.text)).toEqual(expectedRow);
+    const { pages } = await follow(kit);
+    expect(pages).toHaveLength(1);
+    expectRuntimePage(pages[0], expectedRow);
   } finally { await kit.dispose(); }
 });
 
@@ -117,51 +113,35 @@ it('retains a delivered finite runtime page when a later vendor frame is malform
   } finally { await kit.dispose(); }
 });
 
-it('returns the first complete runtime frame for a direct Action and disposes without waiting for EOF', async () => {
-  let disposed = false;
-  let advanced = false;
+/** Follow is the only streaming read: collect what it emits until it retires (EOF, delimiter or failure). */
+async function follow(kit: Awaited<ReturnType<typeof createPluginTestkit>>) {
+  const pages: unknown[] = [];
+  let end!: (error?: unknown) => void;
+  const retired = new Promise<unknown>(resolve => { end = resolve; });
+  let subscription: Awaited<ReturnType<typeof kit.observeAction>>;
+  // A refusal before the stream opens rejects the follow itself; later failures retire it.
+  try { subscription = await kit.observeAction('runtime-logs-read', input, Object.assign(() => {}, {
+    retire: end, async emit(value: unknown) { pages.push(value); },
+  })); } catch (cause) { return { pages, cause }; }
+  const cause = await retired;
+  await subscription.dispose();
+  return { pages, cause };
+}
+
+it('answers a one-shot read at once as follow-only, without opening the live stream (ORCH-TOP 01:23Z)', async () => {
+  // Vercel runtime logs are a live tail with no history; a direct read used to wait up to 5 minutes (COR4R-163).
+  let streams = 0;
   const http = createPluginHttpFixture({ async request() { throw new Error('unexpected buffered HTTP'); },
-    async requestStream(request) { return { status: 200, finalUrl: request.url, headers: {},
-      chunks: (async function* () {
-        yield new TextEncoder().encode(`${JSON.stringify(openApiTypedRuntimeLog)}\n`);
-        advanced = true;
-        throw new Error('A direct read must not wait for another frame or EOF');
-      })(), async dispose() { disposed = true; } }; } });
+    async requestStream() { streams++; throw new Error('A one-shot runtime read must not open the live stream'); } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    expectRuntimePage(await kit.invokeAction('runtime-logs-read', input), openApiTypedRuntimeLog);
-    expect(disposed).toBe(true);
-    expect(advanced).toBe(false);
+    expect(DeploymentTargetLogsResultV1ProtocolSchema.parse(await kit.invokeAction('runtime-logs-read', input)))
+      .toEqual({ kind: 'unavailable', reason: 'follow_only' });
+    expect(streams).toBe(0);
   } finally { await kit.dispose(); }
 });
 
-it('cancels a quiet direct runtime read through its containing request signal', async () => {
-  const controller = new AbortController();
-  let reading!: () => void;
-  const started = new Promise<void>(resolve => { reading = resolve; });
-  let disposed = false;
-  const http = createPluginHttpFixture({ async request() { throw new Error('unexpected buffered HTTP'); },
-    async requestStream(request, options) { return { status: 200, finalUrl: request.url, headers: {},
-      chunks: (async function* () {
-        reading();
-        await new Promise<never>((_resolve, reject) => {
-          const signal = options?.signal;
-          if (signal?.aborted) reject(signal.reason);
-          else signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-        });
-      })(), async dispose() { disposed = true; } }; } });
-  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
-  try {
-    const outcome = kit.invokeAction('runtime-logs-read', input, { signal: controller.signal })
-      .then(() => 'unexpected-success', () => 'cancelled');
-    await started;
-    controller.abort();
-    await expect(outcome).resolves.toBe('cancelled');
-    expect(disposed).toBe(true);
-  } finally { await kit.dispose(); }
-});
-
-it.each(['daemon-root', 'portable-account'] as const)('normalizes a split UTF-8 runtime frame through the Account Action on %s', async target => {
+it.each(['daemon-root', 'portable-account'] as const)('normalizes a split UTF-8 runtime frame through the Account follow on %s', async target => {
   const requests: HttpStreamRequest[] = [];
   let disposed = false;
   let advancedAfterFrame = false;
@@ -173,16 +153,16 @@ it.each(['daemon-root', 'portable-account'] as const)('normalizes a split UTF-8 
           const bytes = new TextEncoder().encode(`${JSON.stringify(row)}\n`);
           for (const byte of bytes) yield new Uint8Array([byte]);
           advancedAfterFrame = true;
-          throw new Error('Finite runtime reads must dispose after their first complete frame');
         })(),
         async dispose() { disposed = true; } };
     } });
   const kit = await createPluginTestkit({ manifest: entry.manifest,
     module: target === 'daemon-root' ? entry : { ...entry, activateAccount }, services: { http } });
   try {
-    const result = await kit.invokeAction('runtime-logs-read', input);
-    expectRuntimePage(result, normalizedRow);
-    expect(advancedAfterFrame).toBe(false);
+    const { pages } = await follow(kit);
+    expect(pages).toHaveLength(1);
+    expectRuntimePage(pages[0], normalizedRow);
+    expect(advancedAfterFrame).toBe(true);
     expect(disposed).toBe(true);
     expect(requests).toHaveLength(1);
     const request = requests[0]!;
@@ -206,7 +186,27 @@ it.each([
       async dispose() { disposed = true; } }; } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    await expect(kit.invokeAction('runtime-logs-read', input)).rejects.toMatchObject({ code: sample.code, details: { phase: 'runtime' } });
+    const { pages, cause } = await follow(kit);
+    expect(pages).toHaveLength(0);
+    expect(cause).toMatchObject({ code: sample.code });
+    expect(JSON.stringify(cause)).not.toContain('private');
     expect(disposed).toBe(true);
+  } finally { await kit.dispose(); }
+});
+
+it('ends at the vendor window delimiter instead of returning it as a log row (COR4R-163 live)', async () => {
+  // Live: .project/tmp/COR4R-163/logs-runtime-cli2.json — after its 5-minute live window Vercel sends this
+  // control row; it was returned to the person as a runtime log line.
+  const delimiter = { timestampInMs: 1794786702678, rowId: '', level: 'error', message: 'Exceeded query duration limit of 5 minutes',
+    messageTruncated: false, domain: '', source: 'delimiter', requestMethod: '', requestPath: '', responseStatusCode: 0 };
+  const http = createPluginHttpFixture({ async request() { throw new Error('unexpected buffered HTTP'); },
+    async requestStream(request) { return { status: 200, finalUrl: request.url, headers: {},
+      chunks: (async function* () { yield new TextEncoder().encode(`${JSON.stringify(delimiter)}\n`); })(),
+      async dispose() {} }; } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    const { pages, cause } = await follow(kit);
+    expect(pages).toHaveLength(0);
+    expect(cause).toMatchObject({ code: 'service_unavailable' });
   } finally { await kit.dispose(); }
 });

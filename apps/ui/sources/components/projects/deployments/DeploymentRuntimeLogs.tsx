@@ -49,6 +49,9 @@ export function DeploymentRuntimeLogs(props: Readonly<{
   const title = t('machineServices.logs.error.title');
   const reason = resolveActionExecutionErrorMessage(error, title, { safeToRetry: true });
   const retry = () => { void logs.readAgain(); };
+  // A live-only source (Vercel runtime logs) keeps no history: its one-shot read names Follow instead of failing.
+  const followOnly = !error && projection?.kind === 'unavailable' && projection.reason === 'follow_only';
+  const unreadable = !followOnly && (error || projection?.kind === 'unavailable' || projection?.kind === 'sourceChanged');
   return (
     <View ref={root} style={styles.logs} testID="deployment-runtime-logs">
       <NativeLogToolbar testID="deployment-runtime-logs-toolbar" viewer={viewer}
@@ -62,13 +65,18 @@ export function DeploymentRuntimeLogs(props: Readonly<{
           reason={resolveActionExecutionErrorMessage(error, t('machineServices.logs.truncated'), { safeToRetry: true })}
           busy={logs.followed?.pending !== undefined && logs.followed.pending !== 'idle'}
           action={describeActionExecutionPrerequisite(error?.code) ? undefined : { label: t('common.retry'), onPress: retry }} />
-      ) : error || projection?.kind === 'unavailable' || projection?.kind === 'sourceChanged' ? (
+      ) : unreadable ? (
         <SurfaceStateCard testID="deployment-runtime-logs-error" kind="error" size="line" title={title}
           reason={reason === title ? undefined : reason} diagnosticCode={error?.code ?? (projection?.kind === 'unavailable' ? projection.reason : undefined)}
           action={describeActionExecutionPrerequisite(error?.code) ? undefined : { label: t('common.retry'), onPress: retry }} />
       ) : null}
       {!logs.index || !viewer ? (
-        error || projection?.kind === 'unavailable' || projection?.kind === 'sourceChanged' ? null : (
+        unreadable ? null : followOnly ? (
+          <SurfaceStateCard testID="deployment-runtime-logs-follow-only" kind="empty" size="line"
+            title={logs.follow ? t('machineServices.logs.empty') : t('machineServices.logs.unavailable.follow_only', { machine: '' })}
+            action={logs.follow ? undefined : { label: t('machineServices.logs.follow'), onPress: () => logs.setFollow(true),
+              testID: 'deployment-runtime-logs-follow' }} />
+        ) : (
           <SurfaceStateCard testID="deployment-runtime-logs-reading" kind="loading" size="line" title={t('machineServices.logs.reading')} />
         )
       ) : isNativeLogBlank(viewer.lines) ? (
