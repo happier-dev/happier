@@ -619,6 +619,9 @@ function sessionCallerRegression() {
           installationId: 'workspace-installation', privateKey: installationKeys.secretKey,
         });
         expect(issue(spawn)).not.toBeNull();
+        // The birth proof crosses HTTP as JSON; the admitted requester's host-private custody stays behind.
+        const proof = await issue(spawn)!.prepareRequestProof!({ tag: identity.sessionCreationTag });
+        expect(JSON.parse(JSON.stringify(proof))).toEqual(proof);
         expect(issue({ ...spawn, directory: { kind: 'path', path: join(f.rootPath, 'outside-reviewed-directory') } })).toBeNull();
         expect(issue({ ...spawn, memoryEnabled: false })).toBeNull();
         expect(issue({ ...spawn, organizationPlacement: { folderId: 'unreviewed-folder', tagIds: ['reviewed-tag'] } })).toBeNull();

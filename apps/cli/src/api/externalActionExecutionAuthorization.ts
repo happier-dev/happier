@@ -461,8 +461,10 @@ export function createPrepareSessionCreationAuthorization(input: Readonly<{
     installationId: input.installationId, method, requestId: identity.requestId,
     ...(params === undefined ? {} : { params }), privateKey: input.privateKey });
   if (!execution) return null;
-  const sourceExecution = { requestId: identity.requestId, method,
-    ...(params === undefined ? {} : { params }), externalActionExecution: execution, originalActionEnvelope: envelope };
+  // The proof crosses HTTP: it carries the public authorization, never the host-private custody sidecar.
+  const sourceExecution = { requestId: identity.requestId, method, ...(params === undefined ? {} : { params }),
+    externalActionExecution: { ...execution, authorization: ExternalActionExecutionAuthorizationV1Schema.parse(execution.authorization) },
+    originalActionEnvelope: envelope };
   return { token: authorization.token, prepareRequestProof: async body => {
     if (!await context.verifyMachineAdmissionCurrent!() || context.signal?.aborted
       || body.tag !== identity.sessionCreationTag) throw new Error('prepare_session_creation_authorization_unavailable');
