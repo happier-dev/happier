@@ -57,7 +57,7 @@ describe('managed native-role custody at contributed dispatch', () => {
         expect(order).toEqual(approved ? ['trust', 'key', 'guest'] : ['trust']);
         expect(result).toMatchObject({ result: { ok: approved } });
     });
-    it.each(['prepare-build', 'prepare-destroy'] as const)('refuses an ordinary native %s without the admitted Prepare parent', async localId => {
+    it.each(['prepare-build', 'prepare-inspect', 'prepare-destroy'] as const)('refuses an ordinary native %s without the admitted Prepare parent', async localId => {
         const manifest = normalizePluginManifestV2(createMachineProvisionerPreparationAuthorFixture().manifest);
         let effects = 0;
         const f = fixture({ fixtureManifest: manifest, credentialPurposes: [],
@@ -67,12 +67,31 @@ describe('managed native-role custody at contributed dispatch', () => {
             }])) });
         const provider = { pluginId: manifest.id, localId: manifest.contributes.machineProvisioners[0]!.id };
         const input = localId === 'prepare-build' ? { operationId: 'unadmitted', input: { name: 'base' } }
-            : { artifact: { contributionRef: provider, schemaVersion: 1, value: { launch: { name: 'base' } } } };
+            : localId === 'prepare-inspect' ? { operationId: 'unadmitted', launch: { name: 'base' } }
+                : { artifact: { contributionRef: provider, schemaVersion: 1, value: { launch: { name: 'base' } } } };
         const result = await executeContributedAction({ runtimeRegistry: f.runtimeRegistry,
             actionId: `${manifest.id}/${localId}`, input, context: { surface: 'plugin' } });
         expect(result).toMatchObject({ result: { ok: false, errorCode: 'plugin_managed_provider_operation_custody_invalid',
             actionHandlerInvocation: 'notStarted' } });
         expect(effects).toBe(0);
+    });
+    it.each(['current', 'wrong-role', 'foreign-provider', 'stale'] as const)('inspects a prepared image only with matching current Machine custody (%s)', async scenario => {
+        const manifest = normalizePluginManifestV2(createMachineProvisionerPreparationAuthorFixture().manifest);
+        let inspections = 0;
+        const f = fixture({ fixtureManifest: manifest, credentialPurposes: [],
+            nativeRoleResults: { preparationInspect: { kind: 'absent' } },
+            onAction(localId) { if (localId === 'prepare-inspect') inspections++; } });
+        const result = await executeContributedAction({ runtimeRegistry: f.runtimeRegistry,
+            actionId: `${manifest.id}/prepare-inspect`, context: { surface: 'plugin' },
+            input: { operationId: 'prepared-operation', launch: { name: 'base' } },
+            admittedManagedProviderOperation: { ...f.custody,
+                role: scenario === 'wrong-role' ? 'acquire' : 'preparationInspect',
+                contribution: scenario === 'foreign-provider' ? { ...f.custody.contribution, localId: 'foreign' } : f.custody.contribution,
+                isCurrent: () => scenario !== 'stale',
+            } });
+        expect(result).toMatchObject({ result: scenario === 'current' ? { ok: true, result: { kind: 'absent' } }
+            : { ok: false, errorCode: 'plugin_managed_provider_operation_custody_invalid', actionHandlerInvocation: 'notStarted' } });
+        expect(inspections).toBe(scenario === 'current' ? 1 : 0);
     });
     it('keeps prepared-image Build outside an admitted Archive', async () => {
         const manifest = normalizePluginManifestV2(createMachineProvisionerPreparationAuthorFixture().manifest);

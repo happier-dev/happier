@@ -130,17 +130,17 @@ export async function checkManagedProviderOperationCustody(params: Readonly<{
   const effectRole = matches.some((binding) => (
     MACHINE_PROVISIONER_EFFECT_ROLES_V1.some((role) => role === binding.role)
   ));
-  const requiresManagedCustody = effectRole || matches.some(({ role }) => role === 'reconcile' || role === 'cleanup');
+  const requiresManagedCustody = effectRole || matches.some(({ role }) => role === 'reconcile' || role === 'cleanup' || role === 'preparationInspect');
   if (params.operation === undefined && params.probeBinding === undefined && !requiresManagedCustody) return null;
   const invalid = (): PluginActionExecutorResult => ({
     ok: false, errorCode: 'plugin_managed_provider_operation_custody_invalid',
     error: 'The native provisioner role requires current managed-resource custody',
     actionHandlerInvocation: 'notStarted',
   });
-  // A prepared image belongs to its admitted preset operation, before any
-  // managed Machine exists. Consume the same private exact-child issuer used
-  // by other host effects rather than inventing a managed resource for it.
-  if (matches.some(({ role }) => role === 'preparationBuild' || role === 'preparationInspect' || role === 'preparationDestroy')) {
+  // Preset preparation consumes its exact-child admission. Image inspection
+  // during acquisition instead consumes the existing Machine custody below.
+  if (matches.some(({ role }) => role === 'preparationBuild' || role === 'preparationDestroy'
+    || role === 'preparationInspect' && !params.operation)) {
     const identity = params.action.pluginId ? { pluginId: params.action.pluginId, localId: params.action.definition.id } : undefined;
     const admitted = identity ? readHostReviewedChildOperationV1(params.approvalContext,
       formatQualifiedPluginActionId(identity), params.input) : null;
