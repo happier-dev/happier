@@ -48,6 +48,8 @@ const rowHintFacts = {
   transcriptSeq: z.optional(sequence),
   followReceiverAvailabilityChanged: z.optional(z.boolean()),
   followReceiverAvailabilityChangedAtCursor: z.optional(sequence),
+  /** The Account cursor of the latest durable transcript row revision this coalesced row retains. */
+  transcriptRevisedAtCursor: z.optional(sequence),
 };
 /**
  * A durable Message row revised at an unchanged seq. `updatedMessageUpdatedAt` is the

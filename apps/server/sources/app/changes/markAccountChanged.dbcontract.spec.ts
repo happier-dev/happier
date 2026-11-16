@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { buildConnectedServicesAccountChangeV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1, SessionDeletedChangeHintV1Schema } from '@happier-dev/protocol/changes';
+import { buildConnectedServicesAccountChangeV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionTranscriptRevisedV1, SessionDeletedChangeHintV1Schema } from '@happier-dev/protocol/changes';
 
 import { db, initDbMysql, initDbPostgres } from "@/storage/db";
 import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
@@ -117,6 +117,29 @@ describe("AccountChange coalescing database contract", () => {
         await point({ runtimeActivityRevision: 3, followReceiverAvailabilityChanged: true });
         await inTx(tx => markAccountProjectionChanges(tx, 'session', new Map([[session.id, [account.id]]]), deletion));
         expect((await read()).hint).toEqual(deletion);
+    });
+
+    it(`retains a transcript revision under later append and batch coalescing only for unconsumed readers on ${provider}`, async () => {
+        const account = await db.account.create({ data: { publicKey: `${publicKeyPrefix}${randomUUID()}` } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}' } });
+        const read = () => db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: account.id, kind: 'session', entityId: session.id },
+        } });
+        const point = (hint: unknown) => inTx(tx => markAccountChanged(tx, {
+            accountId: account.id, kind: 'session', entityId: session.id, hint,
+        }));
+        await point({ lastMessageSeq: 1, transcriptRevisedAtCursor: 1 });
+        expect(readSessionTranscriptRevisedV1(await read(), 0)).toBe(false);
+        await point({ updatedMessageSeq: 1, updatedMessageId: 'revised' });
+        const revision = await read();
+        expect(readSessionTranscriptRevisedV1(revision, revision.cursor - 1)).toBe(true);
+        await point({ lastMessageSeq: 2 });
+        expect(readSessionTranscriptRevisedV1(await read(), revision.cursor - 1)).toBe(true);
+        expect(readSessionTranscriptRevisedV1(await read(), revision.cursor)).toBe(false);
+        await inTx(tx => markSessionAccountsChanged(tx, new Map([[session.id, [account.id]]])));
+        await point({ lastMessageSeq: 3 });
+        expect(readSessionTranscriptRevisedV1(await read(), revision.cursor - 1)).toBe(true);
+        expect(readSessionTranscriptRevisedV1(await read(), revision.cursor)).toBe(false);
     });
 
     it(`retains a cursor-relative Follow receiver wake across unrelated Session writes on ${provider}`, async () => {

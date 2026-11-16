@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { buildConnectedServicesAccountChangeV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionFollowSourceChangedV1, readSessionMemoryInputsChangedV1, readSessionMemoryPushedFactsV1, readSessionUsageAccountingChangedV1 } from '@happier-dev/protocol/changes';
+import { buildConnectedServicesAccountChangeV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionFollowSourceChangedV1, readSessionMemoryInputsChangedV1, readSessionMemoryPushedFactsV1, readSessionTranscriptRevisedV1, readSessionUsageAccountingChangedV1 } from '@happier-dev/protocol/changes';
 
 import { markSessionProjectionRecipientsChanged } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { markPendingStateChangedRecipients } from "@/app/session/pending/markPendingStateChangedRecipients";
@@ -82,6 +82,36 @@ describe("terminal AccountChange publication on SQLite", () => {
         await point({ lastMessageSeq: 2 });
         expect(readSessionFollowReceiverAvailabilityChangedV1(await read(), title.cursor)).toBe(false);
         expect(readSessionFollowSourceChangedV1(await read(), title.cursor)).toBe(true);
+    });
+
+    it('retains a transcript revision under later append and batch coalescing only for unconsumed readers', async () => {
+        const account = await db.account.create({ data: { publicKey: 'transcript-revision-coalescing' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'transcript-revision', metadata: '{}' } });
+        const read = () => db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: account.id, kind: 'session', entityId: session.id },
+        } });
+        const point = (hint: unknown) => inTx(tx => markAccountChanged(tx, {
+            accountId: account.id, kind: 'session', entityId: session.id, hint,
+        }));
+        await point({ lastMessageSeq: 1 });
+        const append = await read();
+        expect(readSessionTranscriptRevisedV1(append, append.cursor - 1)).toBe(false);
+        // A writer cannot forge the server-owned revision cursor.
+        await point({ lastMessageSeq: 2, transcriptRevisedAtCursor: 1 });
+        expect(readSessionTranscriptRevisedV1(await read(), 0)).toBe(false);
+        await point({ updatedMessageSeq: 2, updatedMessageId: 'revised' });
+        const revision = await read();
+        expect(readSessionTranscriptRevisedV1(revision, revision.cursor - 1)).toBe(true);
+        await point({ lastMessageSeq: 3 });
+        const coalesced = await read();
+        expect(readSessionTranscriptRevisedV1(coalesced, revision.cursor - 1)).toBe(true);
+        expect(readSessionTranscriptRevisedV1(coalesced, revision.cursor)).toBe(false);
+        await inTx(tx => markSessionAccountsChanged(tx, new Map([[session.id, [account.id]]])));
+        expect(readSessionTranscriptRevisedV1(await read(), revision.cursor - 1)).toBe(true);
+        expect(readSessionTranscriptRevisedV1(await read(), revision.cursor)).toBe(false);
+        await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id,
+            hint: { v: 1, lifecycle: 'deleted' } }));
+        expect((await read()).hint).toEqual({ v: 1, lifecycle: 'deleted' });
     });
 
     it('preserves accounting change floors across projection writes and withdraws them for unknown batches', async () => {

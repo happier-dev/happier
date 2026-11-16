@@ -1226,6 +1226,34 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             } finally { await harness.close(); }
         });
 
+        it('reaches the Memory revision reader once per row revision, never for plain transcript appends', async () => {
+            const account = await db.account.create({ data: { id: 'memory-revision-cost-account', encryptionMode: 'plain' } });
+            const session = await db.session.create({ data: { accountId: account.id, tag: 'memory-revision-cost',
+                metadata: '{}', encryptionMode: 'plain' } });
+            admitAccountSnapshot(admitAccountSnapshot.name);
+            const harness = await createMaterialChangeHarness(account.id, admitAccountSnapshot.name);
+            const revisions: number[] = [];
+            harness.client.onSessionTranscriptRevised(change => { revisions.push(change.seq); });
+            const write = (tx: Parameters<typeof markAccountChanged>[0], hint: unknown) => markAccountChanged(tx, {
+                accountId: account.id, kind: 'session', entityId: session.id, hint });
+            try {
+                await harness.start();
+                await harness.settle();
+                for (let seq = 1; seq <= 3; seq += 1) {
+                    await inTx(tx => write(tx, { lastMessageSeq: seq }));
+                    await harness.settle();
+                }
+                expect(revisions).toEqual([]);
+                // A revision coalesced under a later append still reaches the reader, exactly once.
+                await inTx(async tx => { await write(tx, { updatedMessageSeq: 2, updatedMessageId: 'revised' });
+                    await write(tx, { lastMessageSeq: 4 }); });
+                await harness.settle();
+                await inTx(tx => write(tx, { lastMessageSeq: 5 }));
+                await harness.settle();
+                expect(revisions).toEqual([4]);
+            } finally { await harness.close(); }
+        });
+
         it('carries the Memory-unchanged proof for idle activity writes without hiding a coalesced Memory input', async () => {
             const account = await db.account.create({ data: { id: 'memory-projection-cost-account', encryptionMode: 'plain' } });
             const session = await db.session.create({ data: { accountId: account.id, tag: 'memory-projection-cost',
@@ -4566,7 +4594,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         } finally { dispose(); await client.shutdown(); }
     });
 
-    it('delivers same-sequence transcript revisions before acknowledging the Account cursor', async () => {
+    it('delivers same-sequence transcript revisions, not plain appends, before acknowledging the Account cursor', async () => {
         const machine: Machine = { id: 'machine-memory-revision', encryptionKey: new Uint8Array(32).fill(7),
             encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
         mockAccountGet(async (url: string) => {
@@ -4575,10 +4603,13 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
                 changes: [{ cursor: 12, kind: 'session', entityId: 'session-edited', changedAt: 2,
                     hint: { updatedMessageSeq: 8, updatedMessageId: 'message-edited' } },
                     { cursor: 13, kind: 'session', entityId: 'session-coalesced', changedAt: 3,
-                        hint: { lastMessageSeq: 9 } }], nextCursor: 13,
-                sessionAccessWitness: { v: 1, throughCursor: 13,
+                        hint: { lastMessageSeq: 9, transcriptRevisedAtCursor: 11 } },
+                    { cursor: 14, kind: 'session', entityId: 'session-appended', changedAt: 4,
+                        hint: { lastMessageSeq: 4 } }], nextCursor: 14,
+                sessionAccessWitness: { v: 1, throughCursor: 14,
                     entries: [{ sessionId: 'session-edited', cursor: 12, status: 'available' },
-                        { sessionId: 'session-coalesced', cursor: 13, status: 'available' }] },
+                        { sessionId: 'session-coalesced', cursor: 13, status: 'available' },
+                        { sessionId: 'session-appended', cursor: 14, status: 'available' }] },
             } };
             throw new Error(`unexpected url: ${url}`);
         });

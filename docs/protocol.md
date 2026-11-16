@@ -347,6 +347,15 @@ reader that is behind, lacks the row, or receives a hint without the revision
 repairs it through one targeted read. This is an additive 0.3 development hint
 field with no persisted format change.
 
+Session coalescing replaces a revision hint with a later append hint, so the
+coalesced row also retains the revision's own Account cursor as
+`transcriptRevisedAtCursor` (server-written; a writer cannot supply it).
+`readSessionTranscriptRevisedV1(change, after)` reports a revision only when
+the row is itself a revision or that cursor lies above `after`. The daemon
+hands only such rows to the Memory revision reader; a plain append reaches
+Memory through its Session change and pushed transcript seq. Share rows carry
+no such fact and stay conservative.
+
 `sessionAccessSessionId` remains the separate exact-access probe. Supplying it
 together with `sessionId` or `kinds` returns `400 invalid_params`; filtering does not create
 a second access or token-admission owner.

@@ -375,6 +375,22 @@ export function readSessionTranscriptChangeHintV1(
 }
 
 /**
+ * Whether a transcript row was revised after `afterCursor`. Session coalescing replaces a revision
+ * hint with a later append hint but retains the revision's own Account cursor, so a reader that
+ * consumed the revision sees a plain append. Other kinds keep no such fact and stay conservative.
+ */
+export function readSessionTranscriptRevisedV1(
+  change: Readonly<{ kind: string; cursor: number; hint?: unknown }>, afterCursor: number,
+): boolean {
+  if (!readSessionTranscriptChangeHintV1(change)) return false;
+  const record = change.hint as Record<string, unknown>;
+  if (change.kind !== 'session' || typeof record.lastMessageSeq !== 'number') return true;
+  const at = record.transcriptRevisedAtCursor;
+  return typeof at === 'number' && Number.isSafeInteger(at) && at > 0 && at <= change.cursor
+    && (!Number.isSafeInteger(afterCursor) || afterCursor < at);
+}
+
+/**
  * Memory facts a coalesced Session change row carries: the Session's current transcript seq
  * (every projection writer stamps it; an append hint carries it too) and whether owner-metadata
  * locality is proven unchanged since `afterCursor`. Absent facts are unknown.

@@ -12,36 +12,47 @@ export function sessionChangeHint(hint: unknown): Record<string, unknown> {
     if (deletion) return deletion;
     const record = hint && typeof hint === 'object' && !Array.isArray(hint) ? hint as Record<string, unknown> : {};
     const result = { ...record, followReceiverAvailabilityChanged: record.followReceiverAvailabilityChanged === true };
+    // Cursor-stamped facts are server-owned: only the coalescing merge below writes them.
     delete (result as Record<string, unknown>).followReceiverAvailabilityChangedAtCursor;
+    delete (result as Record<string, unknown>).transcriptRevisedAtCursor;
     return result;
 }
 
-/** Retain the event's original Account cursor, never the later coalescing cursor. */
-export function mergeSessionReceiverAvailabilityHint(current: unknown, hint: unknown, cursor: number): Record<string, unknown> {
+/**
+ * Retain each coalesced event's original Account cursor, never the later coalescing cursor:
+ * receiver availability, and a transcript row revision a later append hint replaces.
+ */
+export function mergeSessionCoalescedHint(current: unknown, hint: unknown, cursor: number): Record<string, unknown> {
     const next = sessionChangeHint(hint);
     // Physical deletion has a closed authority envelope, not an open row hint.
     if (readDeletionHint(next)) return next;
     const previous = current && typeof current === 'object' && !Array.isArray(current) ? current as Record<string, unknown> : {};
-    if (next.followReceiverAvailabilityChanged === true) return { ...next, followReceiverAvailabilityChangedAtCursor: cursor };
-    if (previous.followReceiverAvailabilityChanged === true
-        && Number.isSafeInteger(previous.followReceiverAvailabilityChangedAtCursor)
-        && (previous.followReceiverAvailabilityChangedAtCursor as number) > 0) {
-        return { ...next, followReceiverAvailabilityChanged: true,
+    const isCursor = (value: unknown) => Number.isSafeInteger(value) && (value as number) > 0;
+    const revisedAt = typeof next.updatedMessageSeq === 'number' ? cursor
+        : isCursor(previous.transcriptRevisedAtCursor) ? previous.transcriptRevisedAtCursor : undefined;
+    const merged = revisedAt === undefined ? next : { ...next, transcriptRevisedAtCursor: revisedAt };
+    if (next.followReceiverAvailabilityChanged === true) return { ...merged, followReceiverAvailabilityChangedAtCursor: cursor };
+    if (previous.followReceiverAvailabilityChanged === true && isCursor(previous.followReceiverAvailabilityChangedAtCursor)) {
+        return { ...merged, followReceiverAvailabilityChanged: true,
             followReceiverAvailabilityChangedAtCursor: previous.followReceiverAvailabilityChangedAtCursor };
     }
-    return next;
+    return merged;
 }
 
-/** SQL expressions operate on trusted publication columns/parameters, not caller text. */
-export function sessionReceiverAvailabilityHintSql(existing: string, next: string, cursor: string): string {
+/** The PostgreSQL form of `mergeSessionCoalescedHint`, over trusted publication columns/parameters, not caller text. */
+export function sessionCoalescedHintSql(existing: string, next: string, cursor: string): string {
     return `CASE WHEN ${next}->>'lifecycle' = 'deleted' THEN ${next}
-        WHEN ${next}->>'followReceiverAvailabilityChanged' = 'true'
+        ELSE (CASE WHEN ${next}->>'followReceiverAvailabilityChanged' = 'true'
         THEN ${next} || jsonb_build_object('followReceiverAvailabilityChangedAtCursor', ${cursor})
         WHEN ${existing}->>'followReceiverAvailabilityChanged' = 'true'
             AND jsonb_typeof(${existing}->'followReceiverAvailabilityChangedAtCursor') = 'number'
         THEN ${next} || jsonb_build_object('followReceiverAvailabilityChanged', true,
             'followReceiverAvailabilityChangedAtCursor', ${existing}->'followReceiverAvailabilityChangedAtCursor')
-        ELSE ${next} END`;
+        ELSE ${next} END) || (CASE WHEN jsonb_typeof(${next}->'updatedMessageSeq') = 'number'
+        THEN jsonb_build_object('transcriptRevisedAtCursor', ${cursor})
+        WHEN jsonb_typeof(${existing}->'transcriptRevisedAtCursor') = 'number'
+        THEN jsonb_build_object('transcriptRevisedAtCursor', ${existing}->'transcriptRevisedAtCursor')
+        ELSE '{}'::jsonb END) END`;
 }
 
 /** A generic source invalidation must withdraw a retained projection-only fact. */
@@ -79,7 +90,7 @@ export async function coalesceSessionProjectionChangeHintInTx(
     const merge = (next: unknown) => {
         const incoming = { ...sessionChangeHint(next),
             followReceiverAvailabilityChanged: sessionChangeHint(hint).followReceiverAvailabilityChanged };
-        return cursor === undefined ? incoming : mergeSessionReceiverAvailabilityHint(current?.hint, incoming, cursor);
+        return cursor === undefined ? incoming : mergeSessionCoalescedHint(current?.hint, incoming, cursor);
     };
     if (!projectionOnly) return merge(hint === undefined ? retainSessionSourceChangeHint(current?.hint) : hint);
     const next = { ...(hint as Record<string, unknown>) };

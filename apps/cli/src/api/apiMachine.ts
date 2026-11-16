@@ -323,7 +323,7 @@ import type { DaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/conne
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
-import { isMachineProjectionChangeKindV1, readAuthoritativeSessionDeletionChangeV1, readSessionTranscriptChangeHintV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionMemoryInputsChangedV1, readSessionMemoryPushedFactsV1, TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, type ChangeKind } from '@happier-dev/protocol/changes';
+import { isMachineProjectionChangeKindV1, readAuthoritativeSessionDeletionChangeV1, readSessionTranscriptChangeHintV1, readSessionTranscriptRevisedV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionMemoryInputsChangedV1, readSessionMemoryPushedFactsV1, TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, type ChangeKind } from '@happier-dev/protocol/changes';
 import {
     registerMachineRpcHandlers,
     type MachineRpcHandlerDeps,
@@ -6981,9 +6981,11 @@ export class ApiMachineClient {
                     }
                     const transcript = readSessionTranscriptChangeHintV1(change);
                     if (!transcript || !sessionId || removedSessionIds.has(sessionId)) continue;
+                    // A plain append reaches Memory through its Session change (pushed
+                    // transcript seq). Only a row revision since this read invalidates
+                    // retained rows; coalescing keeps that revision's own cursor.
+                    if (!readSessionTranscriptRevisedV1(change, after)) continue;
                     signal.throwIfAborted();
-                    // Append hints also invalidate retained rows: Account changes can
-                    // coalesce a revision followed by an append into the latter hint.
                     for (const listener of this.sessionTranscriptRevisionListeners) {
                         await listener({ sessionId, ...transcript, cursor: change.cursor });
                     }

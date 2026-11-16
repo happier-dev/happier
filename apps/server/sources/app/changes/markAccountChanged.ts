@@ -10,7 +10,7 @@ import { DISCUSSION_CHANGE_HINT_V1, readDiscussionChangeHintV1, type DiscussionC
 import { isSessionSystemRecordUnchangedHintV1, readSessionSystemRecordChangeV1, type SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { coalesceSessionProjectionChangeHintInTx, retainSessionSourceChangeHint, sessionChangeHint,
-    mergeSessionReceiverAvailabilityHint, sessionReceiverAvailabilityHintSql } from './sessionProjectionChangeHint';
+    mergeSessionCoalescedHint, sessionCoalescedHintSql } from './sessionProjectionChangeHint';
 import { acquireAccountSessionOwnerMetadataFencesInTx, acquireAccountSessionOwnerMetadataPublicationFencesInTx, type AccountAdmissionIntent } from '@/app/encryption/accountSessionOwnerMetadataFence';
 
 /** An allocation intent, resolved only by the transaction's publication phase. */
@@ -477,7 +477,7 @@ async function publishAccountProjectionChanges(
             )
             SELECT next."id", $2, requested."entityId",
                 next."seq" - totals.total + row_number() OVER (PARTITION BY next."id" ORDER BY requested."entityId"),
-                $3, CASE WHEN $2 = 'session' THEN ${sessionReceiverAvailabilityHintSql('NULL::jsonb', '$4::jsonb', 'next."seq" - totals.total + row_number() OVER (PARTITION BY next."id" ORDER BY requested."entityId")')} ELSE $4::jsonb END,
+                $3, CASE WHEN $2 = 'session' THEN ${sessionCoalescedHintSql('NULL::jsonb', '$4::jsonb', 'next."seq" - totals.total + row_number() OVER (PARTITION BY next."id" ORDER BY requested."entityId")')} ELSE $4::jsonb END,
                 CASE WHEN $2 = 'session' AND EXISTS (
                     SELECT 1 FROM "Session" WHERE "id" = requested."entityId"
                 ) THEN requested."entityId" ELSE NULL END,
@@ -490,7 +490,7 @@ async function publishAccountProjectionChanges(
                 "cursor" = EXCLUDED."cursor",
                 "changedAt" = EXCLUDED."changedAt",
                 "hint" = CASE WHEN EXCLUDED."kind" = 'session' THEN
-                    ${sessionReceiverAvailabilityHintSql('"AccountChange"."hint"', 'EXCLUDED."hint"', 'EXCLUDED."cursor"')}
+                    ${sessionCoalescedHintSql('"AccountChange"."hint"', 'EXCLUDED."hint"', 'EXCLUDED."cursor"')}
                     ELSE EXCLUDED."hint" END,
                 "sessionId" = EXCLUDED."sessionId",
                 "machineId" = EXCLUDED."machineId",
@@ -563,7 +563,7 @@ async function publishAccountProjectionChanges(
             ...(kind === "machine" ? { machineId: retainedMachineIds.has(entityId) ? entityId : null } : {}),
             ...(kind === "session" || kind === "machine" ? {
                 hint: kind === 'session'
-                    ? mergeSessionReceiverAvailabilityHint(hintByIdentity.get(JSON.stringify([accountId, entityId])),
+                    ? mergeSessionCoalescedHint(hintByIdentity.get(JSON.stringify([accountId, entityId])),
                         hint === undefined ? { ...sessionChangeHint(retainSessionSourceChangeHint(hintByIdentity.get(JSON.stringify([accountId, entityId])))),
                             followReceiverAvailabilityChanged: false } : hint, cursor)
                     : hint === undefined ? hintByIdentity.get(JSON.stringify([accountId, entityId])) ?? undefined : hint,
@@ -710,7 +710,7 @@ async function publishAccountChanged(
                 next."seq",
                 $4,
                 CASE
-                    WHEN $2 = 'session' THEN ${sessionReceiverAvailabilityHintSql('NULL::jsonb', '$5::jsonb', 'next."seq"')}
+                    WHEN $2 = 'session' THEN ${sessionCoalescedHintSql('NULL::jsonb', '$5::jsonb', 'next."seq"')}
                     WHEN $2 = 'artifact' THEN
                         (CASE WHEN jsonb_typeof($5::jsonb) = 'object' THEN $5::jsonb ELSE '{}'::jsonb END - 'artifactKinds')
                         || CASE
@@ -734,7 +734,7 @@ async function publishAccountChanged(
                 "changedAt" = EXCLUDED."changedAt",
                 "hint" = CASE
                     WHEN EXCLUDED."kind" = 'session' THEN
-                        ${sessionReceiverAvailabilityHintSql('"AccountChange"."hint"', 'EXCLUDED."hint"', 'EXCLUDED."cursor"')}
+                        ${sessionCoalescedHintSql('"AccountChange"."hint"', 'EXCLUDED."hint"', 'EXCLUDED."cursor"')}
                     WHEN EXCLUDED."kind" = 'artifact' THEN
                         CASE WHEN
                             jsonb_array_length(CASE WHEN jsonb_typeof("AccountChange"."hint"->'artifactKinds') = 'array'
