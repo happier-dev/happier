@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
 
-import { SOURCE_CONDITION, SOURCE_RUNTIME_OUTPUT_OPTIONS } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '../policy/serverRoutedTransferPolicy';
 import { resolveWorkspaceFileDownloadSource } from './resolveWorkspaceFileDownloadSource';
 
@@ -36,8 +36,8 @@ describe('resolveWorkspaceFileDownloadSource', () => {
             splitting: true, target: 'node20', metafile: true,
             ...SOURCE_RUNTIME_OUTPUT_OPTIONS,
             conditions: [SOURCE_CONDITION], outdir: outputDir, logLevel: 'silent',
-            banner: { js: "import { createRequire as __artifactCreateRequire } from 'node:module'; import { fileURLToPath as __artifactFileURLToPath } from 'node:url'; import { dirname as __artifactDirname } from 'node:path'; const require = __artifactCreateRequire(import.meta.url); const __artifactFilename = __artifactFileURLToPath(import.meta.url); const __artifactDirectory = __artifactDirname(__artifactFilename);" },
-            define: { __dirname: '__artifactDirectory', __filename: '__artifactFilename' },
+            banner: { js: SOURCE_RUNTIME_COMMONJS_BANNER },
+            define: SOURCE_RUNTIME_COMMONJS_DEFINE,
         });
         const inputs = result.metafile.inputs;
         const entry = Object.keys(inputs).find(key => resolve(key) === source);

@@ -8,7 +8,7 @@ import { build } from 'esbuild';
 import { expect, it } from 'vitest';
 import { isPidProvablyAbsent } from '@happier-dev/cli-common/process';
 
-import { createWorkspaceSourceResolver, readWorkspacePackages, SOURCE_CONDITION, SOURCE_RUNTIME_OUTPUT_OPTIONS } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { createWorkspaceSourceResolver, readWorkspacePackages, SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createDaemonizingProcessFixture } from '@/testkit/process/daemonizingProcess';
 import { waitForProcessExit } from '@/testkit/process/spawn';
@@ -27,8 +27,8 @@ it('retires the native ACP probe tree through the compiled host module', async (
             ...SOURCE_RUNTIME_OUTPUT_OPTIONS,
             conditions: [SOURCE_CONDITION], logLevel: 'silent', tsconfig: join(cliDir, 'tsconfig.json'),
             plugins: [createWorkspaceSourceResolver({ workspacePackages, requireFromProject })],
-            banner: { js: "import { createRequire as __artifactCreateRequire } from 'node:module'; import { fileURLToPath as __artifactFileURLToPath } from 'node:url'; import { dirname as __artifactDirname } from 'node:path'; const require = __artifactCreateRequire(import.meta.url); const __artifactFilename = __artifactFileURLToPath(import.meta.url); const __artifactDirectory = __artifactDirname(__artifactFilename);" },
-            define: { __dirname: '__artifactDirectory', __filename: '__artifactFilename' },
+            banner: { js: SOURCE_RUNTIME_COMMONJS_BANNER },
+            define: SOURCE_RUNTIME_COMMONJS_DEFINE,
         });
         // The shipped tree owner remains an asset of the compiled CLI module.
         await mkdir(join(root, 'scripts'));

@@ -15,6 +15,8 @@ import type {
 } from 'esbuild';
 import {
   SOURCE_CONDITION,
+  SOURCE_RUNTIME_COMMONJS_BANNER,
+  SOURCE_RUNTIME_COMMONJS_DEFINE,
   SOURCE_RUNTIME_OUTPUT_OPTIONS,
   bundleCliSourceSidecars,
   createCliSourceProjectionResolver,
@@ -22,6 +24,7 @@ import {
   readCliSourceEntries,
   readWorkspacePackages,
   runtimePackageExports,
+  stripUnusedSourceRuntimeBanners,
 } from '../../sourceRuntimeEntries.mjs';
 
 import cliDistBuildManifest from '../../cliDistBuildManifest.cjs';
@@ -645,13 +648,8 @@ export async function buildCliBinaryArtifactCodePayload({
       chunkNames: 'package-dist/chunks/[name]-[hash]',
       metafile: true,
       logLevel: 'silent',
-      banner: {
-        js: "import {createRequire as __artifactCreateRequire} from 'node:module'; import {fileURLToPath as __artifactFileURLToPath} from 'node:url'; import {dirname as __artifactDirname} from 'node:path'; const require=__artifactCreateRequire(import.meta.url); const __artifactFilename=__artifactFileURLToPath(import.meta.url); const __artifactDirectory=__artifactDirname(__artifactFilename);",
-      },
-      define: {
-        __dirname: '__artifactDirectory',
-        __filename: '__artifactFilename',
-      },
+      banner: { js: SOURCE_RUNTIME_COMMONJS_BANNER },
+      define: SOURCE_RUNTIME_COMMONJS_DEFINE,
       plugins: [
         ...(daemonProjectionRoot ? [createCliSourceProjectionResolver({ projectionRoot: daemonProjectionRoot })] : []),
         createWorkspaceSourceResolver({
@@ -670,6 +668,7 @@ export async function buildCliBinaryArtifactCodePayload({
     });
     Object.assign(result.metafile!.inputs, sidecars.metafile.inputs);
     Object.assign(result.metafile!.outputs, sidecars.metafile.outputs);
+    await stripUnusedSourceRuntimeBanners(Object.keys(result.metafile!.outputs).map((file) => join(repoRoot, file)));
     const assets = join(cliDir, 'assets');
     if (existsSync(assets))
       await cp(assets, join(payloadDir, 'assets'), {

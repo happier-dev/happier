@@ -14,7 +14,7 @@ it('admits raw registry targets before compiled startup-policy and demand reads'
         // Source runtime bundles borrow the host's installed dependencies.
         await symlink(join(repoDir, 'node_modules'), join(outputDir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
         // The repository's source-resolver module is an untyped tooling boundary.
-        const { bundleCliSourceSidecars, createWorkspaceSourceResolver, readWorkspacePackages, SOURCE_RUNTIME_OUTPUT_OPTIONS } = await import(
+        const { bundleCliSourceSidecars, createWorkspaceSourceResolver, readWorkspacePackages, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS } = await import(
             /* @vite-ignore */ new URL('../../../../../../../packages/cli-common/sourceRuntimeEntries.mjs', import.meta.url).href
         );
         const workspacePackages = await readWorkspacePackages(repoDir);
@@ -89,8 +89,8 @@ it('admits raw registry targets before compiled startup-policy and demand reads'
             outfile: entrypoint, bundle: true, platform: 'node', format: 'esm',
             ...SOURCE_RUNTIME_OUTPUT_OPTIONS,
             // Match the retained source runtime's CommonJS bridge inside ESM.
-            banner: { js: "import { createRequire as __sourceCreateRequire } from 'node:module'; import {fileURLToPath as __sourceFileURLToPath} from 'node:url'; import {dirname as __sourcePathDirname} from 'node:path'; const require = __sourceCreateRequire(import.meta.url); const __sourceFilename = __sourceFileURLToPath(import.meta.url); const __sourceDirname = __sourcePathDirname(__sourceFilename);" },
-            define: { __dirname: '__sourceDirname', __filename: '__sourceFilename' },
+            banner: { js: SOURCE_RUNTIME_COMMONJS_BANNER },
+            define: SOURCE_RUNTIME_COMMONJS_DEFINE,
             conditions: ['happier-source'], tsconfig: join(repoDir, 'apps/cli/tsconfig.runtime.json'),
             plugins: [createWorkspaceSourceResolver({
                 workspacePackages, requireFromProject,

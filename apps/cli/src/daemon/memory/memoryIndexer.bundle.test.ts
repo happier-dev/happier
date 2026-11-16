@@ -12,7 +12,7 @@ import {
   createWorkspaceSourceResolver,
   readWorkspacePackages,
   SOURCE_CONDITION,
-  SOURCE_RUNTIME_OUTPUT_OPTIONS,
+  SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS,
 } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -52,8 +52,8 @@ describe('compiled Memory process placement', () => {
         conditions: [SOURCE_CONDITION], metafile: true, logLevel: 'silent',
         tsconfig: join(cliDir, 'tsconfig.json'),
         plugins: [createWorkspaceSourceResolver({ workspacePackages, requireFromProject })],
-        banner: { js: "import { createRequire as __artifactCreateRequire } from 'node:module'; import { fileURLToPath as __artifactFileURLToPath } from 'node:url'; import { dirname as __artifactDirname } from 'node:path'; const require = __artifactCreateRequire(import.meta.url); const __artifactFilename = __artifactFileURLToPath(import.meta.url); const __artifactDirectory = __artifactDirname(__artifactFilename);" },
-        define: { __dirname: '__artifactDirectory', __filename: '__artifactFilename' },
+        banner: { js: SOURCE_RUNTIME_COMMONJS_BANNER },
+        define: SOURCE_RUNTIME_COMMONJS_DEFINE,
       });
       await bundleCliSourceSidecars({ repoDir, outputDir: join(outputDir, 'scripts'), build,
         workspacePackages, requireFromProject });

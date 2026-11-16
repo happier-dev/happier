@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { cp, mkdir, readFile, readdir } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { isBuiltin } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -17,6 +17,43 @@ export const SOURCE_RUNTIME_OUTPUT_OPTIONS = Object.freeze({
   legalComments: 'external',
   supported: Object.freeze({ 'template-literal': false }),
 });
+
+// Split ESM output still runs bundled CommonJS code that reads `require`, `__filename` and
+// `__dirname`, so emitters give every chunk this banner and these defines. Evaluating the banner
+// builds a CommonJS Module (`createRequire`) and two path strings and adds three builtin imports;
+// a daemon or session host loads ~1,500 chunks and fewer than one in ten reads these names.
+// Emitters strip it from the others with stripUnusedSourceRuntimeBanners.
+export const SOURCE_RUNTIME_COMMONJS_BANNER = "import { createRequire as __sourceCreateRequire } from 'node:module'; import {fileURLToPath as __sourceFileURLToPath} from 'node:url'; import {dirname as __sourcePathDirname} from 'node:path'; const require = __sourceCreateRequire(import.meta.url); const __sourceFilename = __sourceFileURLToPath(import.meta.url); const __sourceDirname = __sourcePathDirname(__sourceFilename);";
+export const SOURCE_RUNTIME_COMMONJS_DEFINE = Object.freeze({ __dirname: '__sourceDirname', __filename: '__sourceFilename' });
+// A textual match can only keep a banner that is not needed, never drop one that is.
+const READS_COMMONJS_BANNER_BINDING = /\brequire\b|__sourceFilename|__sourceDirname/;
+
+/**
+ * Removes the CommonJS banner from a chunk that never reads its bindings. Only a banner at the top
+ * of the chunk (after an optional shebang line) counts. Its line stays, empty, so line numbers still
+ * match an external source map.
+ */
+export function stripUnusedSourceRuntimeBanner(code) {
+  const at = code.indexOf(SOURCE_RUNTIME_COMMONJS_BANNER);
+  if (at < 0) return code;
+  if (at !== 0 && !(code.startsWith('#!') && code.indexOf('\n') + 1 === at)) return code;
+  const rest = code.slice(at + SOURCE_RUNTIME_COMMONJS_BANNER.length);
+  return READS_COMMONJS_BANNER_BINDING.test(rest) ? code : code.slice(0, at) + rest;
+}
+
+/** Applies stripUnusedSourceRuntimeBanner to emitted JavaScript files; returns how many changed. */
+export async function stripUnusedSourceRuntimeBanners(files) {
+  let stripped = 0;
+  for (const file of new Set(files)) {
+    if (!/\.m?js$/.test(file)) continue;
+    const code = await readFile(file, 'utf8');
+    const next = stripUnusedSourceRuntimeBanner(code);
+    if (next === code) continue;
+    await writeFile(file, next);
+    stripped += 1;
+  }
+  return stripped;
+}
 
 // Node source tools reuse the bundle resolver's authored workspace authority.
 // This adapter maps only bare first-party imports; tsx retains transpilation.

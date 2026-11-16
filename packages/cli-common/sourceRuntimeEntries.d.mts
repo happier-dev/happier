@@ -22,6 +22,11 @@ export function assertSourceRuntimeDependenciesCurrent(options: Readonly<{
 export const SOURCE_CONDITION: 'happier-source';
 export const SOURCE_RUNTIME_OUTPUT_OPTIONS: Readonly<Pick<BuildOptions,
   'charset' | 'minifyWhitespace' | 'legalComments' | 'supported'>>;
+/** Gives split ESM chunks `require`, `__filename` and `__dirname`; strip it where unused. */
+export const SOURCE_RUNTIME_COMMONJS_BANNER: string;
+export const SOURCE_RUNTIME_COMMONJS_DEFINE: Readonly<{ __dirname: string; __filename: string }>;
+export function stripUnusedSourceRuntimeBanner(code: string): string;
+export function stripUnusedSourceRuntimeBanners(files: Iterable<string>): Promise<number>;
 export function initialize(repoDir: string): Promise<void>;
 export const resolve: import('node:module').ResolveHook;
 export function sourceExport(value: unknown, label: string): string;
