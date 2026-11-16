@@ -412,7 +412,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
   it('offers the Account checkouts as stable complete refs, named with their machine, through the typed Checkout input', async () => {
     const surface = { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } };
     const ref = (id: string, machineId: string, rootPath: string, extra: Record<string, unknown> = {}) =>
-      ({ id, serverId: 'home', machineId, rootPath, label: null, createdAtMs: 1, lastOpenedAtMs: 99, ...extra });
+      ({ id, serverId: 'home', machineId, rootPath, label: null, createdAtMs: 1, lastOpenedAtMs: 99, projectKey: undefined, ...extra });
     const executor = createActionExecutor({ ...createDeps(),
       projectWorkspaceRefs: async () => ({ workspaceRefs: [ref('ws-1', 'm1', '/work/happier'), ref('ws-2', 'm2', '/srv/happier', { label: 'Happier (server)' })] }),
       machinesList: async () => ({ items: [{ serverId: 'home', machineId: 'm1', label: 'Laptop', active: true }, { serverId: 'home', machineId: 'm2', label: 'Dev box', active: true }] }),

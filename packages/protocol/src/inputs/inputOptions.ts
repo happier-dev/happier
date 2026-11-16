@@ -29,7 +29,7 @@ import { SESSION_LIST_PAGE_MAX_LIMIT } from '../sessions/listing/query.js';
 import { isSessionAwarenessContentReadableV1 } from '../sessions/awareness/availability.js';
 import { readSessionAwarenessWorkStatusV1, readSessionWorkStateGroupV1 } from '../sessions/awareness/presentationV1.js';
 import { SessionAwarenessProjectionV1Schema, type SessionAwarenessProjectionV1 } from '../sessions/awareness/projectionV1.js';
-import type { JsonValue } from '../json/strictJsonValue.js';
+import { projectNativeJsonValueForTransport, type JsonValue } from '../json/strictJsonValue.js';
 import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { WorkspaceRefV1Schema } from '../workspaces/workspaceRefV1.js';
 import { createProjectAnchorOfKeyV1 } from '../workspaces/workspaceRefResolutionV1.js';
@@ -469,7 +469,7 @@ export async function resolveInputOptions(params: Readonly<{
     // A host marks a row `named: false` when its label is not a real name (hidden or still loading), and supplies the word
     // for a machine it does not list (`unlistedLabel`), so every checkout is named the way the host's own screens name it.
     const machineList = deps.machinesList ? await deps.machinesList({ serverId: selectedServerId, purpose: 'input' }) : undefined;
-    const machineLabels = new Map<string, string>();
+    const machineLabels = new Map<string | undefined, string>();
     let unlistedLabel: string | undefined;
     if (machineList !== undefined && !params.readFailure(machineList)) {
       unlistedLabel = readNonEmptyString(readRecord(machineList).unlistedLabel);
@@ -486,7 +486,7 @@ export async function resolveInputOptions(params: Readonly<{
       // Recency changes whenever the checkout is opened; a saved pin must keep matching its option.
       const { lastOpenedAtMs: _recency, ...stable } = ref.data;
       const machineLabel = machineLabels.get(ref.data.machineId) ?? unlistedLabel;
-      options.push({ value: stable, label: ref.data.label ?? ref.data.rootPath.split(/[\\/]+/).filter(Boolean).at(-1) ?? ref.data.rootPath,
+      options.push({ value: projectNativeJsonValueForTransport(stable), label: ref.data.label ?? ref.data.rootPath.split(/[\\/]+/).filter(Boolean).at(-1) ?? ref.data.rootPath,
         description: machineLabel ? `${machineLabel} · ${ref.data.rootPath}` : ref.data.rootPath });
     }
     return { ok: true, result: options };
