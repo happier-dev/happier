@@ -52,7 +52,7 @@ it('projects current usable bound Secret revisions without acquiring values or e
     mocks.db.publicSessionShare.findMany.mockResolvedValue([]);
     mocks.db.artifact.findMany.mockResolvedValue([{ id: 'artifact', accountId: account.id, account,
         kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, signedInLink: null,
-        accountGrants: [], teamGrants: [], groupGrants: [], keyEnvelopes: [],
+        grants: [], keyEnvelopes: [],
         dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), provenanceDataEncryptionKey: null,
         header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ title: 'Environment' })),
         headerVersion: 1, bodyVersion: 1, provenance: null, seq: 1, createdAt: now, updatedAt: now }]);
