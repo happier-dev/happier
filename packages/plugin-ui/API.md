@@ -1399,6 +1399,9 @@ Declaration: `dist/index.d.ts`
 - value `RowStatusLine` from `dist/index.d.ts`
 - type `RowStatusLineProps` from `dist/index.d.ts`
 - type `RowStatusTone` from `dist/index.d.ts`
+- value `SavedSecretChoiceList` from `dist/index.d.ts`
+- type `SavedSecretChoiceListProps` from `dist/index.d.ts`
+- type `SavedSecretChoiceSelection` from `dist/index.d.ts`
 - type `ScaleTextStyleOptions` from `dist/index.d.ts`
 - type `ScaledTextStyleMetrics` from `dist/index.d.ts`
 - value `SceneArt` from `dist/index.d.ts`
@@ -3356,6 +3359,9 @@ Declaration: `dist/components/index.d.ts`
 - value `RowStatusLine` from `dist/components/index.d.ts`
 - type `RowStatusLineProps` from `dist/components/index.d.ts`
 - type `RowStatusTone` from `dist/components/index.d.ts`
+- value `SavedSecretChoiceList` from `dist/components/index.d.ts`
+- type `SavedSecretChoiceListProps` from `dist/components/index.d.ts`
+- type `SavedSecretChoiceSelection` from `dist/components/index.d.ts`
 - type `ScaleTextStyleOptions` from `dist/components/index.d.ts`
 - type `ScaledTextStyleMetrics` from `dist/components/index.d.ts`
 - value `SceneArt` from `dist/components/index.d.ts`
