@@ -5,7 +5,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import type { PluginUiResourceEntry } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { acquirePluginContextualResourceStore, type PluginContextualResourceBinding } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { resolvePluginContextualResourceBinding } from '@/components/plugins/surfaces/pluginResourceBinding';
 import { readPluginUiResourceProjection, type PluginUiResourceProjection } from '@/sync/domains/plugins/ui/projection';
@@ -122,7 +122,7 @@ function observeIndex(input: Readonly<{
 /** Mounted Inbox demand only. Unrelated Account/store arrivals do not enter this Resource path. */
 export function useInboxPluginSessionRows(): Source & Readonly<{ invokeControl: InboxPluginSessionControlInvoker }> {
     const runtime = useAppShellPluginUiProjection();
-    const presented = useLayoutPresentationActive();
+    const presentedSignal = useLayoutPresentationSignal();
     const [source, setSource] = React.useState<Source>(EMPTY);
     const handles = React.useRef(new Map<string, { index: PluginUiResourceProjection; detail: PluginUiResourceProjection;
         lifetime: typeof runtime.accountLifetime; binding: PluginContextualResourceBinding; source: Source; dispose(): void }>());
@@ -130,54 +130,65 @@ export function useInboxPluginSessionRows(): Source & Readonly<{ invokeControl: 
     const sourceLifetime = React.useRef(lifetime);
     const projection = runtime.pluginUiProjection;
     React.useEffect(() => {
-        const active = presented && runtime.phase === 'current' && runtime.interactionEnabled && lifetime?.isCurrent();
-        let unavailable = false;
-        const publish = () => {
-            const sources = [...handles.current.values()].map(handle => handle.source);
-            const rows = sources.flatMap(value => value.rows);
-            setSource(previous => {
-                const loading = sources.some(value => value.loading);
-                const failed = unavailable || sources.some(value => value.failed);
-                sourceLifetime.current = lifetime;
-                return rows.length === previous.rows.length && rows.every((row, i) => row === previous.rows[i])
-                    && loading === previous.loading && failed === previous.failed ? previous : { rows, loading, failed };
+        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+        const start = (presented: boolean): (() => void) | void => {
+            const active = presented && runtime.phase === 'current' && runtime.interactionEnabled && lifetime?.isCurrent();
+            let unavailable = false;
+            const publish = () => {
+                const sources = [...handles.current.values()].map(handle => handle.source);
+                const rows = sources.flatMap(value => value.rows);
+                setSource(previous => {
+                    const loading = sources.some(value => value.loading);
+                    const failed = unavailable || sources.some(value => value.failed);
+                    sourceLifetime.current = lifetime;
+                    return rows.length === previous.rows.length && rows.every((row, i) => row === previous.rows[i])
+                        && loading === previous.loading && failed === previous.failed ? previous : { rows, loading, failed };
+                });
+            };
+            const wanted = new Set<string>();
+            if (active && lifetime) for (const index of Object.values(projection?.resourcesById ?? {})) {
+                if (!index.sessionInbox) continue;
+                const key = buildQualifiedPluginContributionKey({ pluginId: index.pluginId, localId: index.id });
+                const detail = readPluginUiResourceProjection(projection?.resourcesById,
+                    { pluginId: index.pluginId, localId: index.sessionInbox.detailResourceId });
+                if (!detail || index.scope !== 'surface' || detail.scope !== 'session') { unavailable = true; continue; }
+                const admission = { projection, machineId: runtime.machineId, serverId: runtime.serverId,
+                    accountLifetime: lifetime, requireReadAuthority: true, isCurrent: lifetime.isCurrent };
+                const binding = resolvePluginContextualResourceBinding(admission, index,
+                    { kind: 'surface', mountInstanceKey: 'happier:session-inbox', launchInput: { cursor: null, serverId: lifetime.scope.serverId } });
+                if (!binding) { unavailable = true; continue; }
+                wanted.add(key);
+                const existing = handles.current.get(key);
+                if (existing?.index === index && existing.detail === detail && existing.lifetime === lifetime
+                    && existing.binding.machineId === binding.machineId && existing.binding.serverId === binding.serverId
+                    && existing.binding.expectedCallerOccurrenceId === binding.expectedCallerOccurrenceId) continue;
+                existing?.dispose();
+                const handle = { index, detail, lifetime, binding, source: { rows: [], loading: true, failed: false } as Source, dispose: () => {} };
+                handles.current.set(key, handle);
+                handle.dispose = observeIndex({ index, detail, binding,
+                    detailBinding: row => resolvePluginContextualResourceBinding(admission, detail,
+                        { kind: 'session', sessionId: row.session.sessionId }),
+                    publish: value => { if (handles.current.get(key) === handle) { handle.source = value; publish(); } },
+                });
+            }
+            for (const [key, handle] of handles.current) if (!wanted.has(key)) { handle.dispose(); handles.current.delete(key); }
+            publish();
+            const retirement = lifetime?.onRetire(() => {
+                for (const handle of handles.current.values()) handle.dispose();
+                handles.current.clear(); sourceLifetime.current = null; setSource(EMPTY);
             });
+            return () => retirement?.dispose();
         };
-        const wanted = new Set<string>();
-        if (active && lifetime) for (const index of Object.values(projection?.resourcesById ?? {})) {
-            if (!index.sessionInbox) continue;
-            const key = buildQualifiedPluginContributionKey({ pluginId: index.pluginId, localId: index.id });
-            const detail = readPluginUiResourceProjection(projection?.resourcesById,
-                { pluginId: index.pluginId, localId: index.sessionInbox.detailResourceId });
-            if (!detail || index.scope !== 'surface' || detail.scope !== 'session') { unavailable = true; continue; }
-            const admission = { projection, machineId: runtime.machineId, serverId: runtime.serverId,
-                accountLifetime: lifetime, requireReadAuthority: true, isCurrent: lifetime.isCurrent };
-            const binding = resolvePluginContextualResourceBinding(admission, index,
-                { kind: 'surface', mountInstanceKey: 'happier:session-inbox', launchInput: { cursor: null, serverId: lifetime.scope.serverId } });
-            if (!binding) { unavailable = true; continue; }
-            wanted.add(key);
-            const existing = handles.current.get(key);
-            if (existing?.index === index && existing.detail === detail && existing.lifetime === lifetime
-                && existing.binding.machineId === binding.machineId && existing.binding.serverId === binding.serverId
-                && existing.binding.expectedCallerOccurrenceId === binding.expectedCallerOccurrenceId) continue;
-            existing?.dispose();
-            const handle = { index, detail, lifetime, binding, source: { rows: [], loading: true, failed: false } as Source, dispose: () => {} };
-            handles.current.set(key, handle);
-            handle.dispose = observeIndex({ index, detail, binding,
-                detailBinding: row => resolvePluginContextualResourceBinding(admission, detail,
-                    { kind: 'session', sessionId: row.session.sessionId }),
-                publish: value => { if (handles.current.get(key) === handle) { handle.source = value; publish(); } },
-            });
-        }
-        for (const [key, handle] of handles.current) if (!wanted.has(key)) { handle.dispose(); handles.current.delete(key); }
-        publish();
-        const retirement = lifetime?.onRetire(() => {
-            for (const handle of handles.current.values()) handle.dispose();
-            handles.current.clear(); sourceLifetime.current = null; setSource(EMPTY);
+        let current = presentedSignal.get();
+        let stop = start(current);
+        const unsubscribe = presentedSignal.subscribe(() => {
+            if (presentedSignal.get() === current) return;
+            current = presentedSignal.get();
+            stop?.();
+            stop = start(current);
         });
-        return () => retirement?.dispose();
-    }, [presented, runtime.phase, runtime.interactionEnabled, lifetime, projection?.resourcesById,
-        projection?.installedPackagesById, runtime.machineId, runtime.serverId]);
+        return () => { unsubscribe(); stop?.(); };
+    }, [runtime.phase, runtime.interactionEnabled, lifetime, projection?.resourcesById, projection?.installedPackagesById, runtime.machineId, runtime.serverId, presentedSignal]);
     React.useEffect(() => () => { for (const handle of handles.current.values()) handle.dispose(); handles.current.clear(); }, []);
     const current = sourceLifetime.current === lifetime && lifetime?.isCurrent() ? source : EMPTY;
     const controls = useInboxPluginSessionControls(current.rows);

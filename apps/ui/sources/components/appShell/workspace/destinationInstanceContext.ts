@@ -151,6 +151,32 @@ export function useDestinationFocus(): boolean {
     return instance ? instance.focused : useOptionalScreenIsFocused();
 }
 
+export type DestinationFocusSignal = Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
+
+/**
+ * {@link useDestinationFocus} as a subscription, for work that only starts or stops with focus and draws
+ * nothing from it: a tab switch does not render the reader. Listeners run after the destination commits.
+ */
+export function useDestinationFocusSignal(): DestinationFocusSignal {
+    const route = React.useContext(DestinationRouteContext);
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
+    const screenFocused = route ? true : useOptionalScreenIsFocused();
+    const [fallback] = React.useState(() => {
+        let current = screenFocused;
+        const listeners = new Set<() => void>();
+        return {
+            get: () => current,
+            subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+            set: (next: boolean) => { if (next === current) return; current = next; for (const listener of [...listeners]) listener(); },
+        };
+    });
+    React.useLayoutEffect(() => { if (!route) fallback.set(screenFocused); }, [fallback, route, screenFocused]);
+    return React.useMemo<DestinationFocusSignal>(() => route ? {
+        get: () => route.getSnapshot()?.focused === true,
+        subscribe: route.subscribe,
+    } : { get: fallback.get, subscribe: fallback.subscribe }, [fallback, route]);
+}
+
 /** Visibility belongs to the same retained destination context, without loading shell composition. */
 export function useDestinationVisibility(): boolean {
     return useDestinationInstanceFacts()?.visible ?? true;

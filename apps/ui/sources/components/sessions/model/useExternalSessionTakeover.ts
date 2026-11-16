@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { captureExternalSessionTakeoverStartInputV1 } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import { showExternalSessionTakeoverDialog } from '@/components/sessions/external/takeover/showExternalSessionTakeoverDialog';
 import { Modal } from '@/modal';
@@ -47,7 +47,7 @@ type UseExternalSessionTakeoverResult = Readonly<{
 }>;
 
 export function useExternalSessionTakeover(params: UseExternalSessionTakeoverParams): UseExternalSessionTakeoverResult {
-    const presentationActive = useLayoutPresentationActive();
+    const presentationActiveSignal = useLayoutPresentationSignal();
     const requestControllerRef = React.useRef<AbortController | null>(null);
     const [takeoverInFlight, setTakeoverInFlight] = React.useState<DirectTakeoverMode | null>(null);
     const [takeoverPreflightInFlight, setTakeoverPreflightInFlight] = React.useState(false);
@@ -96,28 +96,40 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
     ]);
 
     React.useEffect(() => {
-        mountedRef.current = presentationActive;
-        const controller = new AbortController();
-        requestControllerRef.current = controller;
-        const lifetime = params.accountLifetime === undefined
-            ? captureActiveServerAccountScopeCurrentness() : params.accountLifetime;
-        const retirement = lifetime?.onRetire(() => controller.abort());
-        preflightGenerationRef.current += 1;
-        preflightPromiseRef.current = null;
-        takeoverIdempotencyKeysRef.current = {
-            direct: null,
-            persisted: null,
-        };
-        setTakeoverInFlight(null);
-        setTakeoverPreflightInFlight(false);
-        return () => {
-            controller.abort();
-            retirement?.dispose();
-            mountedRef.current = false;
+        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+        const start = (presentationActive: boolean): (() => void) | void => {
+            mountedRef.current = presentationActive;
+            const controller = new AbortController();
+            requestControllerRef.current = controller;
+            const lifetime = params.accountLifetime === undefined
+                ? captureActiveServerAccountScopeCurrentness() : params.accountLifetime;
+            const retirement = lifetime?.onRetire(() => controller.abort());
             preflightGenerationRef.current += 1;
             preflightPromiseRef.current = null;
+            takeoverIdempotencyKeysRef.current = {
+                direct: null,
+                persisted: null,
+            };
+            setTakeoverInFlight(null);
+            setTakeoverPreflightInFlight(false);
+            return () => {
+                controller.abort();
+                retirement?.dispose();
+                mountedRef.current = false;
+                preflightGenerationRef.current += 1;
+                preflightPromiseRef.current = null;
+            };
         };
-    }, [takeoverScopeKey, params.accountLifetime, params.externalSessionRuntime.sessionServerId, presentationActive]);
+        let current = presentationActiveSignal.get();
+        let stop = start(current);
+        const unsubscribe = presentationActiveSignal.subscribe(() => {
+            if (presentationActiveSignal.get() === current) return;
+            current = presentationActiveSignal.get();
+            stop?.();
+            stop = start(current);
+        });
+        return () => { unsubscribe(); stop?.(); };
+    }, [takeoverScopeKey, params.accountLifetime, params.externalSessionRuntime.sessionServerId, presentationActiveSignal]);
 
     const readLatestStatus = React.useCallback(async () => {
         return await params.externalSessionRuntime.refreshNow();

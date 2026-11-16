@@ -29,3 +29,17 @@ it('schedules no moment frames in a retained inactive pane and resumes only its 
     await screen.unmount();
     expect(vi.getTimerCount()).toBe(0);
 });
+
+it('renders nothing of its own when its retained pane is hidden and shown', async () => {
+    let renders = 0;
+    function Clock() { renders += 1; useMomentClock(true, true); return null; }
+    // The pane keeps its body element: only the presentation fact flips.
+    const clock = <Clock />;
+    const element = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active}>{clock}</PluginSurfaceFocusEligibilityProvider>;
+    const screen = await renderScreen(element(true));
+    renders = 0;
+    await screen.update(element(false));
+    await screen.update(element(true));
+    expect(renders).toBe(0);
+    await screen.unmount();
+});

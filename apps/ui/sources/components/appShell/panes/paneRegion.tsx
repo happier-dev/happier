@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { useDestinationFocus } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationFocusSignal } from '@/components/appShell/workspace/destinationInstanceContext';
 import { readPressFocusReturnTarget, restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { paneRegionFocus, type PaneKeyboardRegion } from './paneRegionFocus';
 export { focusPaneRegion } from './paneRegionFocus';
@@ -15,7 +15,7 @@ export function usePaneRegionFocusBoundary(
     visible: boolean,
     additionalRootRef?: React.RefObject<unknown>,
 ) {
-    const destinationFocused = useDestinationFocus();
+    const destinationFocusedSignal = useDestinationFocusSignal();
     const node = React.useRef<FocusReturnTarget>(null);
     const lastTarget = React.useRef<FocusReturnTarget>(null);
     const currentVisible = React.useRef(visible);
@@ -31,23 +31,35 @@ export function usePaneRegionFocusBoundary(
         lastTarget.current = readPressFocusReturnTarget({ currentTarget: focusEvent?.target, nativeEvent: focusEvent?.nativeEvent });
     }, [region]);
     React.useEffect(() => {
-        if (!destinationFocused || !visible) return;
-        return paneRegionFocus.register(region, () => {
-            const root = node.current;
-            const additionalRoot = additionalRootRef?.current;
-            return {
-                visible: currentVisible.current,
-                containsFocus: typeof HTMLElement !== 'undefined'
-                    ? (root instanceof HTMLElement && root.contains(document.activeElement))
-                        || (additionalRoot instanceof HTMLElement && additionalRoot.contains(document.activeElement))
-                    : lastFocusedRegion === region,
-                focus: () => {
-                    const restored = restoreFocusToBestTarget(lastTarget, node);
-                    if (restored) lastFocusedRegion = region;
-                    return restored;
-                },
-            };
+        // Focus only starts and stops this registration: a subscription, so a tab switch renders nothing here.
+        const start = (destinationFocused: boolean): (() => void) | void => {
+            if (!destinationFocused || !visible) return;
+            return paneRegionFocus.register(region, () => {
+                const root = node.current;
+                const additionalRoot = additionalRootRef?.current;
+                return {
+                    visible: currentVisible.current,
+                    containsFocus: typeof HTMLElement !== 'undefined'
+                        ? (root instanceof HTMLElement && root.contains(document.activeElement))
+                            || (additionalRoot instanceof HTMLElement && additionalRoot.contains(document.activeElement))
+                        : lastFocusedRegion === region,
+                    focus: () => {
+                        const restored = restoreFocusToBestTarget(lastTarget, node);
+                        if (restored) lastFocusedRegion = region;
+                        return restored;
+                    },
+                };
+            });
+        };
+        let current = destinationFocusedSignal.get();
+        let stop = start(current);
+        const unsubscribe = destinationFocusedSignal.subscribe(() => {
+            if (destinationFocusedSignal.get() === current) return;
+            current = destinationFocusedSignal.get();
+            stop?.();
+            stop = start(current);
         });
-    }, [additionalRootRef, destinationFocused, region, visible]);
+        return () => { unsubscribe(); stop?.(); };
+    }, [additionalRootRef, region, visible, destinationFocusedSignal]);
     return { ref, onFocusCapture, onFocus: onFocusCapture };
 }

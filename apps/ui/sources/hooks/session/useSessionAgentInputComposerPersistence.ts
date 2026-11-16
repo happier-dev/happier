@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useDestinationFocus as useIsFocused } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationFocusSignal } from '@/components/appShell/workspace/destinationInstanceContext';
 import { AppState, type AppStateStatus } from 'react-native';
 
 import {
@@ -236,7 +236,8 @@ export function useSessionAgentInputComposerPersistence({
         accountLifetime === null || accountLifetime === undefined || accountLifetime.isCurrent()
     ), [accountLifetime]);
     useAgentInputComposerDraftGarbageCollection(scope);
-    const isFocused = useIsFocused();
+    // Focus only starts the store read below: a subscription, so a tab switch does not render the composer.
+    const focus = useDestinationFocusSignal();
     const owner = React.useMemo(() => createSessionDraftOwner(sessionId), [sessionId]);
     const subscribeToStructuredMentions = React.useCallback((listener: () => void) => {
         if (!scope || !scopeIsCurrent() || owner?.kind !== 'session') return () => undefined;
@@ -377,9 +378,14 @@ export function useSessionAgentInputComposerPersistence({
             return;
         }
 
-        if (!isFocused) return;
-        setScopedStateFromStore(scope, owner, readLiveTextContext());
-    }, [flushPendingUiState, isFocused, owner, readLiveTextContext, scope, setScopedStateFromStore]);
+        let focused = focus.get();
+        if (focused) setScopedStateFromStore(scope, owner, readLiveTextContext());
+        return focus.subscribe(() => {
+            const next = focus.get();
+            if (next && !focused) setScopedStateFromStore(scope, owner, readLiveTextContext());
+            focused = next;
+        });
+    }, [flushPendingUiState, focus, owner, readLiveTextContext, scope, setScopedStateFromStore]);
 
     React.useEffect(() => {
         const flushForBackground = () => {

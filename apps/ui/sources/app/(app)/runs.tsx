@@ -42,7 +42,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { machinePageHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { subscribeMachineUpdates } from '@/sync/store/domains/machines';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 
 type MachineRunsState =
@@ -114,7 +114,7 @@ export default function RunsScreen() {
   const requestedRunId = requestedTarget?.runId
     ?? (routeParams.serverId === undefined && routeParams.machineId === undefined ? routeRunId : null);
   const shouldContinue = useMountedShouldContinue();
-  const presented = useLayoutPresentationActive();
+  const presentedSignal = useLayoutPresentationSignal();
   const inventory = useAllProfileMachineInventorySnapshots();
   const machineScopeBindings = useServerCredentialAccountScopeBindings(inventory.flatMap(snapshot =>
     snapshot.kind === 'resolved' ? [snapshot.serverIdentityId] : []));
@@ -217,18 +217,42 @@ export default function RunsScreen() {
   }, [machineScopeBindings, readTargets, machineAddresses]);
 
   React.useEffect(() => {
-    if (!presented) return;
-    void load();
-    return () => loadControllerRef.current?.abort();
-  }, [load, presented]);
+    // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+    const start = (presented: boolean): (() => void) | void => {
+      if (!presented) return;
+      void load();
+      return () => loadControllerRef.current?.abort();
+    };
+    let current = presentedSignal.get();
+    let stop = start(current);
+    const unsubscribe = presentedSignal.subscribe(() => {
+      if (presentedSignal.get() === current) return;
+      current = presentedSignal.get();
+      stop?.();
+      stop = start(current);
+    });
+    return () => { unsubscribe(); stop?.(); };
+  }, [load, presentedSignal]);
 
   React.useEffect(() => {
-    if (!presented) return;
-    return subscribeMachineUpdates((serverId, machineIds, facts) => {
-      if (!facts?.workSummaryChanged) return;
-      for (const machineId of machineIds) void load(undefined, { serverId, machineId });
-    }, { workSummary: true });
-  }, [load, presented]);
+    // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+    const start = (presented: boolean): (() => void) | void => {
+      if (!presented) return;
+      return subscribeMachineUpdates((serverId, machineIds, facts) => {
+        if (!facts?.workSummaryChanged) return;
+        for (const machineId of machineIds) void load(undefined, { serverId, machineId });
+      }, { workSummary: true });
+    };
+    let current = presentedSignal.get();
+    let stop = start(current);
+    const unsubscribe = presentedSignal.subscribe(() => {
+      if (presentedSignal.get() === current) return;
+      current = presentedSignal.get();
+      stop?.();
+      stop = start(current);
+    });
+    return () => { unsubscribe(); stop?.(); };
+  }, [load, presentedSignal]);
 
   React.useEffect(() => {
     if (requestedRunId === null) {

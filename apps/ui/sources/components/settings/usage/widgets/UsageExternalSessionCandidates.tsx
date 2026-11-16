@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { matchesUsageSourceAccountingScope, type UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
@@ -47,7 +47,7 @@ export function UsageExternalSessionCandidates(props: Readonly<{
     visible?: boolean;
     children?: (candidates: React.ReactNode) => React.ReactNode;
 }>) {
-    const presentationActive = useLayoutPresentationActive();
+    const presentationActiveSignal = useLayoutPresentationSignal();
     const commandBridge = useCurrentUiContextCommandBridge();
     const projected = useDaemonMergedProjectionInputs({ machineId: props.source.machineId,
         serverId: props.lifetime.scope.serverId, enabled: props.online && props.lifetime.isCurrent(),
@@ -92,10 +92,22 @@ export function UsageExternalSessionCandidates(props: Readonly<{
     const current = React.useRef({ target, browseScope, historyAllowed });
     current.current = { target, browseScope, historyAllowed };
     React.useEffect(() => {
-        cancelExternalSessionCandidateOpen(state.current);
-        setLinking(null);
-        return () => { cancelExternalSessionCandidateOpen(state.current); };
-    }, [browseScope, historyAllowed, presentationActive]);
+        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+        const start = (): (() => void) | void => {
+            cancelExternalSessionCandidateOpen(state.current);
+            setLinking(null);
+            return () => { cancelExternalSessionCandidateOpen(state.current); };
+        };
+        let current = presentationActiveSignal.get();
+        let stop = start();
+        const unsubscribe = presentationActiveSignal.subscribe(() => {
+            if (presentationActiveSignal.get() === current) return;
+            current = presentationActiveSignal.get();
+            stop?.();
+            stop = start();
+        });
+        return () => { unsubscribe(); stop?.(); };
+    }, [browseScope, historyAllowed, presentationActiveSignal]);
     const router = useRouter();
     const visible = props.visible !== false && !!target && props.lifetime.isCurrent();
     const outside = visible && historyAllowed ? listing.candidates.filter(candidate => !candidate.linkedSessionId) : [];

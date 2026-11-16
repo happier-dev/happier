@@ -9,7 +9,7 @@ import {
   type PlanetSceneOptions,
 } from '@happier-dev/brand/planet';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { PlanetCanvas } from '../PlanetCanvas';
 import type { HomePane } from '../homePlanetPlacement';
 import { PlanetMomentCanvas } from './PlanetMomentCanvas';
@@ -62,7 +62,7 @@ type Prepared = Readonly<{
 export function LoadingPlanet(props: LoadingPlanetProps) {
   const { pane, target, reducedMotion } = props;
   const activelyViewed = useHostActivelyViewed();
-  const presented = useLayoutPresentationActive();
+  const presentedSignal = useLayoutPresentationSignal();
   const [landed, setLanded] = React.useState<Readonly<{
     fast: boolean;
   }> | null>(null);
@@ -90,17 +90,29 @@ export function LoadingPlanet(props: LoadingPlanetProps) {
   const sourceKey = JSON.stringify(source);
   const [prepared, setPrepared] = React.useState<Prepared | null>(null);
   React.useEffect(() => {
-    if (landed || !activelyViewed || !presented || props.paused || pane.width <= 0 || pane.height <= 0) return;
-    if (prepared?.key === sourceKey) return;
-    const frame = requestAnimationFrame(() => {
-      setPrepared({
-        key: sourceKey,
-        assembly: planetAssembly(source),
-        haze: createPlanetScene({ ...source, rise: 1 }).haze,
+    // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+    const start = (presented: boolean): (() => void) | void => {
+      if (landed || !activelyViewed || !presented || props.paused || pane.width <= 0 || pane.height <= 0) return;
+      if (prepared?.key === sourceKey) return;
+      const frame = requestAnimationFrame(() => {
+        setPrepared({
+          key: sourceKey,
+          assembly: planetAssembly(source),
+          haze: createPlanetScene({ ...source, rise: 1 }).haze,
+        });
       });
+      return () => cancelAnimationFrame(frame);
+    };
+    let current = presentedSignal.get();
+    let stop = start(current);
+    const unsubscribe = presentedSignal.subscribe(() => {
+      if (presentedSignal.get() === current) return;
+      current = presentedSignal.get();
+      stop?.();
+      stop = start(current);
     });
-    return () => cancelAnimationFrame(frame);
-  }, [activelyViewed, presented, props.paused, landed, pane.height, pane.width, source, sourceKey, prepared]);
+    return () => { unsubscribe(); stop?.(); };
+  }, [activelyViewed, props.paused, landed, pane.height, pane.width, source, sourceKey, prepared, presentedSignal]);
 
   // The clock can finish before the canvas (for example while the browser loads its fonts).
   // Settlement belongs to the final painted travel frame, before Home replaces that canvas.

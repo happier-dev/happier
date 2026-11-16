@@ -1,6 +1,6 @@
 import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePresetCollectionClient';
 import * as React from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
@@ -485,7 +485,7 @@ export function useAdmittedManagedMachineRow(serverId: string, managedId: string
 /** A demanded projection of the canonical server inventory, with no persisted UI resource state. */
 export function useManagedMachineInventory<TExecute extends InventoryExecute = FrontDoorActionExecute>(serverIds: readonly string[], managedId?: string,
     requestedExecuteAction?: TExecute, includeArchived = false, enrolledMachineId?: string) {
-    const presented = useLayoutPresentationActive();
+    const presentedSignal = useLayoutPresentationSignal();
     const executeAction = requestedExecuteAction ?? execute;
     const idsKey = JSON.stringify([...new Set(serverIds.map(id => resolveServerProfileScopeIdForIdentifier(id) || id))].sort());
     const requestedIdsKey = JSON.stringify(serverIds);
@@ -503,28 +503,40 @@ export function useManagedMachineInventory<TExecute extends InventoryExecute = F
         reads.current.clear();
     }, []);
     React.useEffect(() => {
-        const keys = new Map(ids.map(serverId => [serverId, inventoryKey(
-            serverId, bindings.get(serverId)?.accountId, getServerProfileById(serverId)?.serverIdentityId, managedId, includeArchived, enrolledMachineId,
-        )]));
-        for (const [serverId, read] of reads.current) {
-            if (presented && read.binding === bindings.get(serverId) && read.binding.isCurrent() && read.reader.isCurrent()
-                && read.key === keys.get(serverId) && read.executeAction === executeAction) continue;
-            read.release(); reads.current.delete(serverId);
-        }
-        for (const serverId of ids) {
-            const binding = bindings.get(serverId);
-            const homeId = getServerProfileById(serverId)?.serverIdentityId;
-            if (!presented || !binding?.isCurrent() || !homeId || reads.current.has(serverId)) continue;
-            const key = keys.get(serverId)!;
-            const reader = getInventoryReader(serverId, binding.accountId, homeId, managedId, includeArchived, executeAction, entries[serverId], enrolledMachineId);
-            const ownedReader = reader;
-            const release = reader.subscribe(binding, () => setEntries(previous => previous[serverId] === ownedReader.get()
-                ? previous : { ...previous, [serverId]: ownedReader.get() }));
-            reads.current.set(serverId, { binding, key, executeAction, reader, release });
-        }
-        // Entry updates are projections, not new demand. Only binding/target changes reacquire a reader.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [presented, bindings, ids, managedId, includeArchived, enrolledMachineId, executeAction]);
+        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+        const start = (presented: boolean): (() => void) | void => {
+            const keys = new Map(ids.map(serverId => [serverId, inventoryKey(
+                serverId, bindings.get(serverId)?.accountId, getServerProfileById(serverId)?.serverIdentityId, managedId, includeArchived, enrolledMachineId,
+            )]));
+            for (const [serverId, read] of reads.current) {
+                if (presented && read.binding === bindings.get(serverId) && read.binding.isCurrent() && read.reader.isCurrent()
+                    && read.key === keys.get(serverId) && read.executeAction === executeAction) continue;
+                read.release(); reads.current.delete(serverId);
+            }
+            for (const serverId of ids) {
+                const binding = bindings.get(serverId);
+                const homeId = getServerProfileById(serverId)?.serverIdentityId;
+                if (!presented || !binding?.isCurrent() || !homeId || reads.current.has(serverId)) continue;
+                const key = keys.get(serverId)!;
+                const reader = getInventoryReader(serverId, binding.accountId, homeId, managedId, includeArchived, executeAction, entries[serverId], enrolledMachineId);
+                const ownedReader = reader;
+                const release = reader.subscribe(binding, () => setEntries(previous => previous[serverId] === ownedReader.get()
+                    ? previous : { ...previous, [serverId]: ownedReader.get() }));
+                reads.current.set(serverId, { binding, key, executeAction, reader, release });
+            }
+            // Entry updates are projections, not new demand. Only binding/target changes reacquire a reader.
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+        };
+        let current = presentedSignal.get();
+        let stop = start(current);
+        const unsubscribe = presentedSignal.subscribe(() => {
+            if (presentedSignal.get() === current) return;
+            current = presentedSignal.get();
+            stop?.();
+            stop = start(current);
+        });
+        return () => { unsubscribe(); stop?.(); };
+    }, [bindings, ids, managedId, includeArchived, enrolledMachineId, executeAction, presentedSignal]);
 
     const currentEntries = React.useMemo(() => {
         const result: Record<string, ManagedMachineInventoryEntry> = {};

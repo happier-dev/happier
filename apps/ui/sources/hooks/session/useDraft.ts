@@ -1,6 +1,5 @@
 import { useEffect, useRef, useCallback, useMemo, useLayoutEffect, useSyncExternalStore } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
-import { useDestinationFocus as useIsFocused } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { clearForkInitialPromptV1, readForkInitialPromptV1 } from '@/sync/domains/sessionFork/forkInitialPromptV1';
@@ -31,7 +30,8 @@ interface UseDraftOptions {
     /** Exact Session projection selected by the route owner. */
     session: Session | null;
     autoSaveInterval?: number; // in milliseconds, default 2000
-    active?: boolean;
+    /** Whether this composer may hydrate and take custody of its draft (its surface is presented). */
+    active: boolean;
     /**
      * The existing Session composer may advance its semantic revision as soon
      * as visible text changes. The debounced persistence write receives the
@@ -78,8 +78,7 @@ export function useDraft(
     const lastSessionId = useRef<string | null>(null);
     const latestValue = useRef<string>(textStore.getPrompt());
     const autosaveSkip = useRef<Readonly<{ sessionId: string; value: string }> | null>(null);
-    const routeFocused = useIsFocused();
-    const active = options.active ?? routeFocused;
+    const active = options.active;
     const accountLifetime = options.accountLifetime;
     const draftScope = accountLifetime?.isCurrent() === true ? accountLifetime.scope : null;
     const isDraftOwnerCurrent = useCallback(() => (

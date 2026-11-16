@@ -20,7 +20,7 @@ import {
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { setExternalSessionFollowPolicy, useExternalSessionFollowPolicyIntent } from '@/components/sessions/external/follow/setExternalSessionFollowPolicy';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import {
     useMachineAdministrationTargetSelection,
@@ -311,14 +311,26 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
         isExecutionTargetCurrent,
     });
     const hasActiveFollowPolicy = rows.some((row) => row.enabled);
-    const presentationActive = useLayoutPresentationActive();
+    const presentationActiveSignal = useLayoutPresentationSignal();
     const followControllerRef = React.useRef<AbortController | null>(null);
     React.useEffect(() => {
-        const controller = new AbortController();
-        followControllerRef.current = controller;
-        if (!presentationActive) controller.abort();
-        return () => controller.abort();
-    }, [presentationActive, expectedSettingsScope]);
+        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+        const start = (presentationActive: boolean): (() => void) | void => {
+            const controller = new AbortController();
+            followControllerRef.current = controller;
+            if (!presentationActive) controller.abort();
+            return () => controller.abort();
+        };
+        let current = presentationActiveSignal.get();
+        let stop = start(current);
+        const unsubscribe = presentationActiveSignal.subscribe(() => {
+            if (presentationActiveSignal.get() === current) return;
+            current = presentationActiveSignal.get();
+            stop?.();
+            stop = start(current);
+        });
+        return () => { unsubscribe(); stop?.(); };
+    }, [expectedSettingsScope, presentationActiveSignal]);
     const [mutationStatusBySessionId, setMutationStatusBySessionId] = React.useState<
         ReadonlyMap<string, 'error' | 'unsupported'>
     >(() => new Map());

@@ -21,7 +21,7 @@ import {
 import { requireSessionOrganizationMutationScope } from '@/sync/ops/sessionOrganization/requireSessionOrganizationMutationScope';
 import { writeSessionOrganizationAppearance } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
 import { useDetailsTabHeaderActionsCompact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Platform, View } from 'react-native';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { useUnistyles } from 'react-native-unistyles';
@@ -362,15 +362,27 @@ function didSessionHeaderActionMenuPropsChange(
 
 function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const openExecutionRunDraft = useOpenExecutionRunLauncherDraft();
-  const presentationActive = useLayoutPresentationActive();
+  const presentationActiveSignal = useLayoutPresentationSignal();
   const followControllerRef = React.useRef<AbortController | null>(null);
   React.useEffect(() => {
-    const controller = new AbortController();
-    followControllerRef.current = controller;
-    const retirement = props.actionAccountLifetime?.onRetire(() => controller.abort());
-    if (!presentationActive) controller.abort();
-    return () => { controller.abort(); retirement?.dispose(); };
-  }, [presentationActive, props.actionAccountLifetime, props.sessionId]);
+    // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+    const start = (presentationActive: boolean): (() => void) | void => {
+      const controller = new AbortController();
+      followControllerRef.current = controller;
+      const retirement = props.actionAccountLifetime?.onRetire(() => controller.abort());
+      if (!presentationActive) controller.abort();
+      return () => { controller.abort(); retirement?.dispose(); };
+    };
+    let current = presentationActiveSignal.get();
+    let stop = start(current);
+    const unsubscribe = presentationActiveSignal.subscribe(() => {
+      if (presentationActiveSignal.get() === current) return;
+      current = presentationActiveSignal.get();
+      stop?.();
+      stop = start(current);
+    });
+    return () => { unsubscribe(); stop?.(); };
+  }, [props.actionAccountLifetime, props.sessionId, presentationActiveSignal]);
   const { theme } = useUnistyles();
   const currentUiContextReader = useOptionalCurrentUiContextReader();
   const findSurfaceRuntime = useFindSurfaceRuntime();

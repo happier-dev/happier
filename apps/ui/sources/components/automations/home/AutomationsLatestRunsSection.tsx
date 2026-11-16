@@ -17,7 +17,7 @@ import type { AutomationDefinitionRun } from '@/sync/domains/automations/automat
 import { storage } from '@/sync/domains/state/storageStore';
 import { useAutomations, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { retainAutomationRunHistoryDemand } from '@/sync/domains/automations/automationReadDemand';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { resolveAutomationRunProjections } from '@/sync/store/domains/workflowRuns';
@@ -86,11 +86,22 @@ export const AutomationsLatestRunsSection = React.memo(function AutomationsLates
 
 function AutomationsLatestRunsWidget(props: HubSectionProps) {
     const router = useRouter();
-    const presented = useLayoutPresentationActive();
+    const presentedSignal = useLayoutPresentationSignal();
     const lifetime = useActiveServerAccountScopeLifetime();
     const automations = useAutomations();
     const ids = React.useMemo(() => selectLatestRunAutomationIds(automations, HOME_WIDGET_BODY_ROWS), [automations]);
-    React.useEffect(() => presented ? retainAutomationRunHistoryDemand(lifetime, ids) : undefined, [ids, lifetime, presented]);
+    React.useEffect(() => {
+        // Presentation only starts and stops this demand: a subscription, so a show/hide renders nothing here.
+        let current = presentedSignal.get();
+        let stop = current ? retainAutomationRunHistoryDemand(lifetime, ids) : undefined;
+        const unsubscribe = presentedSignal.subscribe(() => {
+            if (presentedSignal.get() === current) return;
+            current = presentedSignal.get();
+            stop?.();
+            stop = current ? retainAutomationRunHistoryDemand(lifetime, ids) : undefined;
+        });
+        return () => { unsubscribe(); stop?.(); };
+    }, [ids, lifetime, presentedSignal]);
     const runs = storage(useShallow((state) => {
         const found: AutomationDefinitionRun[] = [];
         for (const id of ids) {
@@ -108,9 +119,21 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
     const [read, setRead] = React.useState<ReadState>({ reading: true, failed: false, readAt: null });
     const mountedRef = React.useRef(true);
     React.useEffect(() => {
-        mountedRef.current = presented;
-        return () => { mountedRef.current = false; };
-    }, [presented]);
+        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+        const start = (presented: boolean): (() => void) | void => {
+            mountedRef.current = presented;
+            return () => { mountedRef.current = false; };
+        };
+        let current = presentedSignal.get();
+        let stop = start(current);
+        const unsubscribe = presentedSignal.subscribe(() => {
+            if (presentedSignal.get() === current) return;
+            current = presentedSignal.get();
+            stop?.();
+            stop = start(current);
+        });
+        return () => { unsubscribe(); stop?.(); };
+    }, [presentedSignal]);
     const inFlightRef = React.useRef(new Map<string, Promise<unknown>>());
     const load = React.useCallback(async (retry: boolean) => {
         setRead((current) => ({ ...current, reading: true }));
@@ -128,17 +151,41 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
     }, []);
     const refresh = React.useCallback(() => load(true), [load]);
     React.useEffect(() => {
-        if (presented) void load(false);
-    }, [presented, load]);
+        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+        const start = (presented: boolean): (() => void) | void => {
+            if (presented) void load(false);
+        };
+        let current = presentedSignal.get();
+        let stop = start(current);
+        const unsubscribe = presentedSignal.subscribe(() => {
+            if (presentedSignal.get() === current) return;
+            current = presentedSignal.get();
+            stop?.();
+            stop = start(current);
+        });
+        return () => { unsubscribe(); stop?.(); };
+    }, [load, presentedSignal]);
 
     // An Automation that newly counts among the latest (another one ran) has its first page read once;
     // one whose page this device already holds asks nothing.
     React.useEffect(() => {
-        if (!presented) return;
-        readMissingRunPages(ids, inFlightRef.current).catch(() => {
-            if (mountedRef.current) setRead((current) => ({ ...current, failed: true }));
+        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+        const start = (presented: boolean): (() => void) | void => {
+            if (!presented) return;
+            readMissingRunPages(ids, inFlightRef.current).catch(() => {
+                if (mountedRef.current) setRead((current) => ({ ...current, failed: true }));
+            });
+        };
+        let current = presentedSignal.get();
+        let stop = start(current);
+        const unsubscribe = presentedSignal.subscribe(() => {
+            if (presentedSignal.get() === current) return;
+            current = presentedSignal.get();
+            stop?.();
+            stop = start(current);
         });
-    }, [ids, presented]);
+        return () => { unsubscribe(); stop?.(); };
+    }, [ids, presentedSignal]);
 
     const openAutomations = React.useCallback(() => {
         router.push(AUTOMATIONS_ROUTE as never);

@@ -203,7 +203,8 @@ it('renders only its focus readers when its retained Session tab is hidden and s
         expect(renders.get('SessionViewLoaded') ?? 0, summary).toBe(0);
         expect(renders.get('RightSidebarActionRailView') ?? 0, summary).toBe(0);
         expect(renders.get('SessionCockpitPanePresentationBoundary') ?? 0, summary).toBe(0);
-        expect(total, summary).toBeLessThan(400);
+        // HEAD before W5: ~564 (A/B arm); after: 434, the remaining readers listed in P03-WEB-TAB-SWITCH (Round 3).
+        expect(total, summary).toBeLessThan(460);
     } finally {
         await screen.unmount();
     }

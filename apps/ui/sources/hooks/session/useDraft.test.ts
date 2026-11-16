@@ -268,7 +268,8 @@ async function renderHarness(params: {
       restoreComposerSnapshot,
     } = useDraft(sessionId, textStore, {
       autoSaveInterval: 60_000,
-      ...(typeof params.active === 'boolean' ? { active: params.active } : {}),
+      // A presented composer unless the case says otherwise (the former route-focus fallback, true here).
+      active: typeof params.active === 'boolean' ? params.active : true,
       accountLifetime: params.accountLifetime === undefined
         ? fallbackAccountLifetime
         : params.accountLifetime,

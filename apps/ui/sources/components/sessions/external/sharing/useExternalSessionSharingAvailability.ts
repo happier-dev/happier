@@ -1,5 +1,5 @@
 import React, { useCallback, useRef } from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import type { SharingAuthoritySession } from '@/sync/domains/social/sessionSharingMutationAuthority';
 import { useIsMachineListSettled, useServerScopedMachine } from '@/sync/domains/state/storage';
@@ -33,7 +33,7 @@ export function useExternalSessionSharingAvailability({ serverId, sessionId, ses
     session: SharingAuthoritySession | null;
     accountScopeKey: string | null;
 }>) {
-    const presentationActive = useLayoutPresentationActive();
+    const presentationActiveSignal = useLayoutPresentationSignal();
     const requestControllerRef = useRef<AbortController | null>(null);
     const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
     const externalSessionLink = React.useMemo(
@@ -42,12 +42,24 @@ export function useExternalSessionSharingAvailability({ serverId, sessionId, ses
     );
     const sourceKey = externalSessionLink ? createExternalSessionTranscriptLiveSourceKeyFromLink(externalSessionLink) : null;
     React.useEffect(() => {
-        const controller = new AbortController();
-        requestControllerRef.current = controller;
-        const retirement = captureActiveServerAccountScopeCurrentness().onRetire(() => controller.abort());
-        if (!presentationActive) controller.abort();
-        return () => { controller.abort(); retirement.dispose(); };
-    }, [accountScopeKey, presentationActive, serverId, sessionId, sourceKey]);
+        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
+        const start = (presentationActive: boolean): (() => void) | void => {
+            const controller = new AbortController();
+            requestControllerRef.current = controller;
+            const retirement = captureActiveServerAccountScopeCurrentness().onRetire(() => controller.abort());
+            if (!presentationActive) controller.abort();
+            return () => { controller.abort(); retirement.dispose(); };
+        };
+        let current = presentationActiveSignal.get();
+        let stop = start(current);
+        const unsubscribe = presentationActiveSignal.subscribe(() => {
+            if (presentationActiveSignal.get() === current) return;
+            current = presentationActiveSignal.get();
+            stop?.();
+            stop = start(current);
+        });
+        return () => { unsubscribe(); stop?.(); };
+    }, [accountScopeKey, serverId, sessionId, sourceKey, presentationActiveSignal]);
     const machineScopeServerId = serverId;
     // Only this Home's settled fact: another Machine's row publication is not an input here.
     const machineScopeSettled = useIsMachineListSettled(machineScopeServerId);
