@@ -4,7 +4,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { accountSettingsParse, SessionSpawnNewInputV2Schema } from '@happier-dev/protocol';
+import { accountSettingsParse, SessionSpawnNewInputV2Schema, SessionSpawnNewResultV1Schema } from '@happier-dev/protocol';
 import type { SessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { ActionExecutorContext, ActionExecuteResult, ActionExecuteFailure } from '@happier-dev/protocol/actions';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
@@ -50,6 +50,86 @@ const initialPolicy = configuration.organizationPolicy;
 afterEach(() => { Object.defineProperty(configuration, 'organizationPolicy', { value: initialPolicy, configurable: true }); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('Session spawn defaults at admission', () => {
+  it('preserves explicit native authentication instead of reapplying a saved connected account', async () => {
+    const resolved = await resolveSessionSpawnManagedDefaults({ executionTarget: { serverId: 'home', machineId: 'machine' },
+      agentTarget: target, connectedServices: null }, {
+      agentId: 'codex', organizationPolicy: { status: 'absent' }, accountSettings: accountSettingsParse({
+        connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: { codex: { v: 2, bindingsByServiceId: {
+          [serviceId]: { source: 'connected', profileId: 'saved-account' },
+        } } } },
+      }), readTeam: async () => team(), readHome: async () => ({ homeDefaults: null }),
+    });
+    expect(resolved.connectedServices.bindingsByServiceId).not.toHaveProperty(serviceId);
+  });
+  it.each([
+    { caller: { kind: 'host' } as const, workKind: 'sessions', id: 'session' },
+    { caller: { kind: 'workflowRun', runId: 'run', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } as const, workKind: 'automationsWorkflows', id: 'workflow' },
+    { caller: { kind: 'plugin', pluginId: 'example.channels' } as const, workKind: 'botsChannels', id: 'bot', attestedContext: { externalPrincipalId: 'sender', sourceMessageId: 'message' } },
+  ])('enforces the $workKind placement from admitted origin before caller-selected placement', async ({ caller, workKind, id, attestedContext }) => {
+    const resolved = await resolveSessionSpawnManagedDefaults({ executionTarget: { serverId: 'home', machineId: 'machine' },
+      agentTarget: target, ...(attestedContext ? { attestedContext } : {}) }, {
+      agentId: 'codex', accountSettings: accountSettingsParse({}), organizationPolicy: { status: 'absent' },
+      openedMachineMetadata: { isolationPolicyV1: {
+        configuredSandboxes: Object.fromEntries(['session', 'bot', 'workflow'].map(key => [key, {
+          provisioner: { pluginId: 'example.sandbox', localId: 'sandbox' }, presetId: `preset-${key}`,
+        }])), workKinds: {
+          sessions: { kind: 'sandbox', configuredSandboxId: 'session', lifecycle: 'fresh' },
+          botsChannels: { kind: 'sandbox', configuredSandboxId: 'bot', lifecycle: 'shared-kept' },
+          automationsWorkflows: { kind: 'sandbox', configuredSandboxId: 'workflow', lifecycle: 'fresh' },
+        },
+      } }, startContext: { actionCaller: caller, authority: 'account_automation' },
+      readTeam: async () => team(), readHome: async () => ({ homeDefaults: null }),
+    });
+    expect(resolved.resolveIsolation()).toMatchObject({ workKind, choice: { kind: 'sandbox', configuredSandboxId: id },
+      configuredSandbox: { presetId: `preset-${id}` } });
+  });
+  it.each(['malformed', 'unattested-bot', 'noninteractive-override', 'use-override', 'interactive-manage-override'] as const)(
+    'admits only a verified interactive Manage override ($0)', async scenario => {
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-proof', binding: {
+        accountId: 'requester', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+        admittedMachineRole: scenario === 'use-override' ? 'use' : 'manage', actionId: 'session.spawn_new', requestId: 'policy-start',
+        target: { kind: 'machine', machineId: 'machine' }, requestEnvelopeDigest: 'a'.repeat(43),
+      } });
+      const promise = resolveSessionSpawnManagedDefaults({ executionTarget: { serverId: 'home', machineId: 'machine' }, agentTarget: target,
+        ...(scenario === 'unattested-bot' ? { identity: { bot: { kind: 'bot' as const } } } : {}),
+        ...(scenario.endsWith('override') ? { isolationOverride: 'directly' as const } : {}) }, {
+        agentId: 'codex', accountSettings: {}, organizationPolicy: { status: 'absent' },
+        openedMachineMetadata: { isolationPolicyV1: scenario === 'malformed' ? { agentNativeSandboxEnabled: 'yes' } : {
+          configuredSandboxes: { sandbox: { provisioner: { pluginId: 'example.sandbox', localId: 'sandbox' }, presetId: 'preset' } },
+          workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'sandbox', lifecycle: 'fresh' }, botsChannels: { kind: 'directly' },
+            automationsWorkflows: { kind: 'directly' } },
+        } }, startContext: { surface: 'ui', authority: scenario === 'noninteractive-override' ? 'account_automation' : 'present_user',
+          actionCaller: { kind: 'host' }, externalActionExecutionAuthorization: authorization,
+          presentUserApproval: { actionId: 'session.spawn_new', requestId: 'policy-start', inputDigest: 'a'.repeat(43), decidedAtMs: 1 } },
+        readTeam: async () => team(), readHome: async () => ({ homeDefaults: null }),
+      });
+      if (scenario === 'interactive-manage-override') {
+        expect((await promise).resolveIsolation()?.choice).toEqual({ kind: 'directly' });
+      } else await expect(promise.then(value => value.resolveIsolation())).rejects.toMatchObject({ errorCode: scenario.endsWith('override') ? 'permission_denied' : 'target_unavailable' });
+    });
+  it.each([
+    { explicit: undefined, available: true, resume: false, expected: 'off' },
+    { explicit: 'on' as const, available: true, resume: false, expected: 'on' },
+    { explicit: undefined, available: false, resume: false, expected: undefined },
+    { explicit: undefined, available: true, resume: true, expected: undefined },
+    { explicit: 'on' as const, available: true, resume: true, expected: 'on' },
+  ])('keeps sandbox intent separate from permission defaults (available=$available, resume=$resume, explicit=$explicit)', async ({ explicit, available, resume, expected }) => {
+    const resolved = await resolveSessionSpawnManagedDefaults({ executionTarget: { serverId: 'home', machineId: 'machine' },
+      agentTarget: target, permissionMode: 'read-only', ...(explicit || resume ? { configuration: {
+        ...(explicit ? { nativeSandbox: explicit } : {}),
+        ...(resume ? { providerSessionResume: { kind: 'provider_session.v1' as const, providerSessionId: 'retained-native-session' } } : {}),
+        mode: { value: null, updatedAtMs: 1 }, model: { value: null, updatedAtMs: 1 },
+        permissionIntent: { value: null, updatedAtMs: 1 }, options: {},
+      } } : {}) }, {
+      agentId: 'codex', accountSettings: accountSettingsParse({}), organizationPolicy: { status: 'absent' },
+      machineIsolation: { environment: 'managed-guest', provisionerId: 'example.machine/guest' },
+      sandboxTypeSupportsNativeSandbox: true,
+      nativeSandboxAvailable: available, readTeam: async () => team(), readHome: async () => ({ homeDefaults: null }),
+    });
+    expect(resolved.nativeSandbox).toBe(expected);
+    expect(resolved.permissionMode).toBe('read-only');
+  });
   it.each(['home', 'team'] as const)('retains an admitted %s governance refusal and public diagnostic', async scope => {
     const details = { requiredFact: 'governance_access', remedy: 'request_access' };
     const failureCause = projectActionFailureCauseV1({ name: 'Error', code: 'permission_denied', status: 403 },
@@ -86,6 +166,9 @@ describe('Session spawn defaults at admission', () => {
     { name: 'locked file policy', surface: 'mcp' as const, layer: 'policy', permission: 'yolo', modelId: 'policy-model' },
     { name: 'conflicting locked placement', surface: 'mcp' as const, layer: 'placement', permission: 'yolo', modelId: 'policy-model' },
     { name: 'Home without Team', surface: 'mcp' as const, layer: 'home', permission: 'read-only', modelId: 'home-model' },
+    { name: 'isolated Machine sandbox default preserves Team approvals', surface: 'mcp' as const, layer: 'isolated', permission: 'safe-yolo', modelId: 'team-model' },
+    { name: 'isolated Machine refuses unavailable explicit native sandbox', surface: 'mcp' as const, layer: 'isolated-explicit', permission: 'safe-yolo', modelId: 'team-model' },
+    { name: 'isolated Machine refuses malformed native sandbox policy', surface: 'mcp' as const, layer: 'isolated-invalid-policy', permission: 'safe-yolo', modelId: 'team-model' },
   ])('$name', async testCase => {
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url')}.signature`;
     const crossAccount = ['requester', 'unadmitted', 'retired'].includes(testCase.layer);
@@ -154,7 +237,10 @@ describe('Session spawn defaults at admission', () => {
               ? [{ purpose: purpose.purpose, target: { kind: 'group', service, groupId: 'saved-codex-pool' } }]
               : testCase.layer === 'member' || testCase.layer === 'policy' || crossAccount
               ? [{ purpose: purpose.purpose, target: { kind: 'account', account: { service, accountId: 'member-account' } } }] : [] }) } } } }),
-      sessionSpawnDirectTargetTransport: { machineId: 'machine', prepare: async () => ({ ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
+      sessionSpawnDirectTargetTransport: { machineId: 'machine', readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1,
+        metadata: testCase.layer.startsWith('isolated') ? { isolationV1: { environment: 'managed-guest', provisionerId: 'example.machine/guest' },
+          ...(testCase.layer === 'isolated-invalid-policy' ? { isolationPolicyV1: { agentNativeSandboxEnabled: 'yes' } } : {}) } : {} }),
+        prepare: async () => ({ ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
         spawnedSession: { spawn: async request => { launched.push(request); return { type: 'success', sessionId: 'created',
           sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } }; },
         resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) } },
@@ -209,6 +295,9 @@ describe('Session spawn defaults at admission', () => {
       ...(testCase.layer === 'automatic' ? { configuration: { mode: { value: null, updatedAtMs: 1 },
         model: { value: null, updatedAtMs: 1, selectionSource: 'explicit' },
         permissionIntent: { value: null, updatedAtMs: 1 }, options: {} } } : {}),
+      ...(testCase.layer === 'isolated-explicit' ? { configuration: { nativeSandbox: 'on',
+        mode: { value: null, updatedAtMs: 1 }, model: { value: null, updatedAtMs: 1, selectionSource: 'inherited' },
+        permissionIntent: { value: null, updatedAtMs: 1 }, options: {} } } : {}),
       ...(testCase.layer === 'policy' ? { permissionMode: 'safe-yolo', modelSelection: model('explicit-model') } : {}),
       connectedServices: { v: 2, bindingsByServiceId: testCase.layer === 'muse'
         ? { 'happier.agent.muse/muse-account': { source: 'connected', selection: 'profile', profileId: 'own-muse' } }
@@ -245,7 +334,19 @@ describe('Session spawn defaults at admission', () => {
       expect(reads).toEqual([]);
       return;
     }
+    if (testCase.layer === 'isolated-invalid-policy') {
+      await expect(spawn).rejects.toMatchObject({ errorCode: 'target_unavailable',
+        details: { reason: 'machine_isolation_policy_unreadable' } });
+      expect(launched).toEqual([]);
+      return;
+    }
     const result = await spawn;
+    if (testCase.layer === 'isolated-explicit') {
+      expect(SessionSpawnNewResultV1Schema.parse(result)).toMatchObject({ type: 'error', code: 'target_unavailable', retryable: false,
+        failureCause: { nativeErrorReason: 'not_available_in_sandbox_type' } });
+      expect(launched).toEqual([]);
+      return;
+    }
     if (testCase.layer === 'placement' || testCase.layer === 'retired') {
       expect(result).toMatchObject({ type: 'error', code: 'permission_denied' });
       expect(launched).toHaveLength(0);
@@ -256,6 +357,10 @@ describe('Session spawn defaults at admission', () => {
     expect(launched[0]).toMatchObject({ permissionMode: testCase.permission,
       ...(testCase.layer === 'team-resource' || testCase.layer === 'automatic' ? {} : { modelSelection: model(testCase.modelId) }),
     });
+    if (testCase.layer.startsWith('isolated')) {
+      const nativeSandbox = testCase.layer === 'isolated' ? 'off' : 'on';
+      expect(launched[0]).toMatchObject({ nativeSandbox, sessionCreationCorrespondence: { recipe: { configuration: { nativeSandbox } } } });
+    }
     const expectedBindings = testCase.layer === 'muse'
       ? { 'happier.agent.muse/muse-account': { source: 'connected', selection: 'profile', profileId: 'own-muse' } }
       : testCase.layer === 'pool-default'

@@ -1,4 +1,9 @@
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
+import { readMachineIsolationPolicyV1, type MachineIsolationPolicyV1, type MachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation, readInitiatingActionCallerV1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveAgentSpawnPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
 import type { OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { getOrganizationPolicySessionDefaults } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
@@ -20,7 +25,54 @@ import type { ConnectedServiceBindingsV2, SessionTeamCredentialBindingIntentList
 import { materializeSessionSpawnConnectedServicesDefaults, mergeSessionTeamCredentialBindingIntents, readAgentPurposeDefaults, type ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 
 type SpawnDefaultSelections = Pick<SessionSpawnNewInputV2,
-  'executionTarget' | 'agentTarget' | 'primaryTeamId' | 'initialAccess' | 'permissionMode' | 'modelSelection' | 'configuration' | 'connectedServices' | 'teamCredentialBindings'>;
+  'executionTarget' | 'agentTarget' | 'primaryTeamId' | 'initialAccess' | 'permissionMode' | 'modelSelection' | 'configuration' | 'teamCredentialBindings' | 'identity' | 'attestedContext' | 'isolationOverride' | 'sourceContext'>
+  & Readonly<{ connectedServices?: SessionSpawnNewInputV2['connectedServices'] | null }>;
+
+export type SessionSpawnIsolationDecision = Readonly<{
+  policy: MachineIsolationPolicyV1;
+  workKind: keyof MachineIsolationPolicyV1['workKinds'];
+  choice: MachineIsolationPolicyV1['workKinds']['sessions'];
+  configuredSandbox?: MachineIsolationPolicyV1['configuredSandboxes'][string];
+}>;
+
+function isolationUnavailable(reason: string): never {
+  throw createActionExecuteFailureError({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+    details: { reason }, effectAttempted: false });
+}
+
+function resolveSessionSpawnIsolation(input: SpawnDefaultSelections, openedMetadata: unknown,
+  context: ActionExecutorContext | undefined): SessionSpawnIsolationDecision | null {
+  let policy: MachineIsolationPolicyV1 | null;
+  try { policy = readMachineIsolationPolicyV1(openedMetadata ?? {}); }
+  catch { return isolationUnavailable('machine_isolation_policy_unreadable'); }
+  if (!policy || input.sourceContext || input.configuration?.providerSessionResume) return null;
+  const binding = context?.externalActionExecutionAuthorization?.binding;
+  const caller = readInitiatingActionCallerV1(context?.actionCaller);
+  const run = caller?.kind === 'workflowRun' || caller?.kind === 'automationRun' || Boolean(binding?.workflowActionOrigin);
+  const bot = binding?.actionId === BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+    || (context?.actionCaller?.kind === 'plugin' && input.attestedContext !== undefined);
+  if (!run && !bot && (input.identity?.bot || input.identity?.createdAsBot)) {
+    return isolationUnavailable('machine_isolation_bot_origin_unavailable');
+  }
+  const workKind = run ? 'automationsWorkflows' : bot ? 'botsChannels' : 'sessions';
+  if (input.isolationOverride) {
+    const manage = context?.machineAdmission?.role === 'manage' || binding?.admittedMachineRole === 'manage';
+    const interactive = context !== undefined
+      && (isPresentUserHostInvocation(context) || isHomeAdmittedPresentUserHostInvocation(context, SESSION_SPAWN_NEW_ACTION_ID_V1))
+      && context.interactivePresentation !== 'unavailable'
+      && context.presentUserApproval?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+      && Boolean(context.presentUserApproval.inputDigest);
+    if (!manage || !interactive || run || bot) throw createActionExecuteFailureError({ ok: false,
+      errorCode: 'permission_denied', error: 'permission_denied',
+      details: { reason: 'machine_isolation_override_requires_interactive_manage' }, effectAttempted: false });
+    return { policy, workKind, choice: { kind: 'directly' } };
+  }
+  const choice = policy.workKinds[workKind];
+  if (choice.kind === 'directly') return { policy, workKind, choice };
+  const configuredSandbox = policy.configuredSandboxes[choice.configuredSandboxId];
+  if (!configuredSandbox) return isolationUnavailable('machine_isolation_sandbox_unavailable');
+  return { policy, workKind, choice, configuredSandbox };
+}
 
 function readGovernanceResult(raw: unknown): unknown {
   const failure = ActionExecuteFailureSchema.safeParse(raw);
@@ -31,6 +83,12 @@ function readGovernanceResult(raw: unknown): unknown {
 /** Fill unset launch facets once, using the acting Account's admitted plaintext settings. */
 export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSelections, params: Readonly<{
   agentId: string;
+  openedMachineMetadata?: unknown;
+  startContext?: ActionExecutorContext;
+  machineIsolation?: MachineIsolationV1 | null;
+  machineIsolationPolicy?: Readonly<Pick<MachineIsolationPolicyV1, 'agentNativeSandboxEnabled'>> | null;
+  sandboxTypeSupportsNativeSandbox?: boolean;
+  nativeSandboxAvailable?: boolean;
   accountSettings: unknown;
   purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
   organizationPolicy: OrganizationPolicyLoadResult;
@@ -49,6 +107,7 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   const declarations = readAgentPurposeDefaults(purposes);
   const memberPurposes = readAgentPurposeDefaults({ ...purposes, onlySavedDefaults: true });
   const explicitPurposes = declarations.flatMap((entry): ManagedConnectedServiceDefaultV1[] => {
+    if (input.connectedServices === null) return [{ ...entry, target: null, teamResource: null }];
     const binding = input.connectedServices?.bindingsByServiceId[buildQualifiedPluginContributionKey(entry.service)];
     const slot = input.teamCredentialBindings?.find(intent => intent.slot.kind === 'connected_service_purpose'
       && qualifiedPurposeKey(intent.slot.purpose) === qualifiedPurposeKey(entry.purpose));
@@ -94,6 +153,12 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
     updatedAt: input.configuration.model.updatedAtMs, ref: { agentTargetKey: targetKey, providerConnectionId: null,
       modelId: input.configuration.model.value } } : explicitAutomatic || explicitModelBinding ? null : undefined);
   const resolved = resolveManagedSessionDefaults({
+    machineIsolation: params.machineIsolation,
+    machineIsolationPolicy: params.machineIsolationPolicy,
+    sandboxTypeSupportsNativeSandbox: params.sandboxTypeSupportsNativeSandbox,
+    nativeSandboxAvailable: params.nativeSandboxAvailable,
+    explicitAgentSandbox: input.configuration?.nativeSandbox,
+    retainedNativeProfile: input.configuration?.providerSessionResume !== undefined,
     agentTargetKey: targetKey, memberDefaults, teamDefaults: team?.policy.managedDefaults ?? null,
     groupIds: team?.managedDefaultsGroupIds ?? [], homeDefaults, policyDefaults: policy,
     explicitChoices: {
@@ -138,7 +203,10 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   ];
   const teamCredentialBindings = mergeSessionTeamCredentialBindingIntents({ explicit: explicitTeamBindings, admitted: admittedTeamBindings });
   return {
+    resolveIsolation: () => resolveSessionSpawnIsolation(input, params.openedMachineMetadata, params.startContext),
     placement: resolved.placement,
+    nativeSandbox: resolved.agentSandbox.value,
+    agentSandbox: resolved.agentSandbox,
     permissionMode: resolved.permissionMode.value,
     modelSelection: selectedModel ? selectedModel.v === 1 ? selectedModel : projectSessionModelSelectionV2ToV1(selectedModel) ?? undefined : input.modelSelection,
     connectedServices: { v: 2 as const, bindingsByServiceId },

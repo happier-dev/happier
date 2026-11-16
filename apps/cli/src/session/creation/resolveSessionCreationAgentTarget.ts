@@ -24,6 +24,7 @@ export function resolveSessionCreationAgentTarget(
   catalog: Pick<ReturnType<typeof readAgentCatalogSnapshot>, 'agentDefinitionsById' | 'pluginEnablementById'> = readAgentCatalogSnapshot(),
 ): Readonly<{
   agentId: string;
+  nativeSandboxAvailable: boolean;
   backendTarget: BackendTargetRefV2;
 }> | null {
   const selectedTarget = AgentExecutionTargetV1Schema.safeParse(agentTarget);
@@ -43,6 +44,7 @@ export function resolveSessionCreationAgentTarget(
 
   return {
     agentId: agentContribution.id,
+    nativeSandboxAvailable: agentContribution.richDefinition?.definition.capabilities.nativeSandbox?.off === true,
     backendTarget: projectResolvedAgentBackendTarget(selectedTarget.data, agentContribution.id),
   };
 }

@@ -1,11 +1,13 @@
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import { sameStrictJsonValue, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { applyMachineSetupBeforeAgent } from '@/machines/setup/applyMachineSetupBeforeAgent';
-import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions';
+import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import { prepareSessionAgentReadiness } from './prepareSessionAgentReadiness';
 import { incompatibleSessionSpawnTarget, projectSessionInitialAccessEnvelopeHostErrorResult } from '../actions/cliActionDeps/sessionSpawnErrors';
@@ -18,6 +20,7 @@ import type { SessionFollowSourceKeyPreparationResultV1, ActionExecutorDeps, Act
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { normalizeSessionCreationOrganizationPlacementV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { withSessionNativeSandbox } from '@/session/shared/sessionCreationCorrespondence';
 import type { buildSessionCreationCorrespondence } from '@/session/shared/sessionCreationCorrespondence';
 import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/modelParticipantLaunch';
 import { readSessionCreationTargetPreparationResultV1, projectSessionCreationTargetPreparationRpcFailureV1, SessionCreationDirectoryApprovalV1Schema, needsSessionCreationDirectoryApprovalPreflightV1, projectSessionCreationDirectoryApprovalV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
@@ -59,6 +62,8 @@ import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/r
 import { buildHostOnboardingInput } from './hostOnboardingInput';
 import { createTemplateHostOnboardingAdmissionTransport } from '@/api/session/templateHostOnboardingAdmission';
 import { resolveSessionSpawnManagedDefaults } from './resolveSessionSpawnManagedDefaults';
+import { resolveManagedAgentSandbox } from '@happier-dev/protocol/teams/managedDefaults';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -358,7 +363,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       teamCredentialBindings,
       organizationPlacement,
       placementOrigin,
-      managedTargetPlacement,
+      managedTargetPlacement: authoredManagedTargetPlacement,
+      isolationOverride,
       authoringOrigin,
       agentTarget,
       modelSelection: requestedModelSelection,
@@ -368,7 +374,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       allowedTools,
       unlistedTools,
       agentModeId,
-      configuration: configurationSnapshot,
+      configuration: requestedConfigurationSnapshot,
       connectedServices: requestedConnectedServices,
       capabilitySelection,
       transcriptStorage,
@@ -380,13 +386,13 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       memoryEnabled,
       approvalProfileId,
       promptStack,
-      managedCreation,
+      managedCreation: authoredManagedCreation,
       discussionParticipant,
       discussionParticipantLaunch: admittedDiscussionLaunch,
       initialInput: authoredInitialInput,
       agentSessionStartupInstructionsV1,
       environmentVariables,
-      sessionCreationTag,
+      sessionCreationTag: requestedSessionCreationTag,
       sourceContext,
       legacyMetadataLabel,
       actionCaller,
@@ -400,6 +406,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       originRunId,
       signal,
       } = input;
+      const managedTargetPlacement = authoredManagedTargetPlacement;
+      const managedCreation = authoredManagedCreation;
       const onboardingInput = continuation?.hostOnboarding
         ? buildHostOnboardingInput(continuation.hostOnboarding) : null;
       const initialInput = onboardingInput?.initialInput ?? authoredInitialInput;
@@ -419,7 +427,10 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         return { ok: false, errorCode: 'permission_denied', error: 'permission_denied', effectAttempted: false,
           failureCause: projectActionFailureCauseV1({ name: 'Error', code: 'permission_denied' }, 'session.creation.authorization') };
       }
-      let initialSessionRolesV1 = requestedInitialSessionRolesV1;
+      const birthContext = params.sessionSpawnBirthContext;
+      const sessionCreationTag = birthContext?.sessionCreationTag ?? requestedSessionCreationTag;
+      let initialSessionRolesV1 = birthContext?.initialSessionRolesV1 ?? requestedInitialSessionRolesV1;
+      let configurationSnapshot = requestedConfigurationSnapshot;
       const discussionParticipantLaunch = discussionParticipant
         ? admittedDiscussionLaunch ?? projectDiscussionModelParticipantLaunchV1(input)
         : undefined;
@@ -534,7 +545,11 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             || !sameStrictJsonValue(retained.controller, managedCreation.controller)
             || retained.creationState !== 'active' || retained.archivedAt !== undefined
             || retained.allocation !== 'bound' || !retained.resource
-            || retained.enrolledMachineId !== executionTarget.machineId) {
+            || (retained.enrolledMachineId !== executionTarget.machineId
+              && !(retained.acquisitionMode === 'resource-bound'
+                && retained.controller?.machineId === executionTarget.machineId
+                && retained.custodianAccountId === (context?.externalActionExecutionAuthorization?.binding.accountId
+                  ?? readAccountIdFromToken(params.credentials.token))))) {
             return { type: 'error', code: 'invalid_input', retryable: false };
           }
         } catch (error) {
@@ -549,9 +564,9 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         return { type: 'error', code: 'invalid_input', retryable: false };
       }
       const [{ createStableSpawnNonce }, { buildSessionCreationCorrespondence }] = await Promise.all([import("@/session/shared/spawnNonce"), import("@/session/shared/sessionCreationCorrespondence")]);
-      const spawnNonce = normalizedActionRequestId
+      const spawnNonce = birthContext?.spawnNonce ?? (normalizedActionRequestId
         ? createStableSpawnNonce('session.spawn_new.action', { actionRequestId: normalizedActionRequestId })
-        : undefined;
+        : undefined);
 
       const directTargetTransport = params.sessionSpawnDirectTargetTransport?.machineId === executionTarget.machineId
         ? params.sessionSpawnDirectTargetTransport : undefined;
@@ -690,10 +705,41 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         serverId: executionTarget.serverId, serverHttpBaseUrl: machineReferenceServerUrl });
       const homeReadContext = { surface: 'cli' as const, serverId: executionTarget.serverId };
       const { createSpawnConnectedServicesTeamResourceCatalogResolver } = await import('@/session/services/spawnConnectedServicesDefaults');
+      let openedMachineMetadata: unknown;
+      if (!sourceContext && !configurationSnapshot?.providerSessionResume) {
+        if (directTargetTransport?.readMachineMetadataSnapshot) {
+          const snapshot = directTargetTransport.readMachineMetadataSnapshot();
+          if (snapshot.status !== 'ready') return { type: 'error', code: 'target_unavailable', retryable: true };
+          openedMachineMetadata = snapshot.metadata;
+        } else {
+          try {
+            const { ApiClient } = await import('@/api/api');
+            const api = await ApiClient.create(defaultsCredentials);
+            const machine = await runWithServerHttpBaseUrl(machineReferenceServerUrl,
+              () => api.getMachine(executionTarget.machineId, {
+                ...(context?.externalActionExecutionAuthorization ? { authorization: context.externalActionExecutionAuthorization } : {}),
+                effectActionId: 'session.spawn_new', ...(signal ? { signal } : {}),
+              }));
+            if (!machine) return { type: 'error', code: 'target_unavailable', retryable: true };
+            openedMachineMetadata = machine.metadata;
+            if (!openedMachineMetadata || typeof openedMachineMetadata !== 'object' || Array.isArray(openedMachineMetadata)) {
+              return { type: 'error', code: 'target_unavailable', retryable: true };
+            }
+          } catch {
+            signal?.throwIfAborted();
+            return { type: 'error', code: 'target_unavailable', retryable: true };
+          }
+        }
+      }
+      const machineIsolation = readMachineIsolationV1(openedMachineMetadata);
       const defaults = await resolveSessionSpawnManagedDefaults({ executionTarget, agentTarget, primaryTeamId, initialAccess, teamCredentialBindings,
         permissionMode: requestedPermissionMode, modelSelection: requestedModelSelection,
-        configuration: configurationSnapshot, connectedServices: requestedConnectedServices }, {
+        configuration: configurationSnapshot,
+        connectedServices: birthContext?.connectedServices === null ? null : requestedConnectedServices,
+        identity, attestedContext, isolationOverride, sourceContext }, {
         agentId: resolvedAgentTarget.agentId, accountSettings: defaultsSettings,
+        openedMachineMetadata, startContext: context,
+        nativeSandboxAvailable: resolvedAgentTarget.nativeSandboxAvailable, machineIsolation,
         ...(purposeCatalog ? { purposeCatalog } : {}),
         organizationPolicy: configuration.organizationPolicy,
         readTeam: teamId => homeActions.homeDomainAction!({ actionId: 'teams.get', input: { v: 1, teamId }, context: homeReadContext,
@@ -706,13 +752,15 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         }),
         ...(signal ? { signal } : {}),
       });
-      // Admission already selected this exact daemon. A file lock may refuse
-      // that target, but cannot redirect its admitted credentials elsewhere.
+      // The receiving daemon was admitted once; organization placement can refuse it.
       if (defaults.placement.lock && (defaults.placement.value?.kind !== 'machine'
         || !sameStrictJsonValue(defaults.placement.value.target, executionTarget))) {
         return { type: 'error', code: 'permission_denied', retryable: false };
       }
       const { permissionMode, modelSelection, connectedServices } = defaults;
+      const configurationWithNativeSandbox = (nativeSandbox: typeof defaults.nativeSandbox) =>
+        withSessionNativeSandbox(configurationSnapshot, nativeSandbox);
+      configurationSnapshot = configurationWithNativeSandbox(defaults.nativeSandbox);
       // Root starts have no lead snapshot. Bind the selected Account role at
       // the native spawn owner before the launch contract drops Action roleId.
       if (roleId && initialSessionRolesV1 === undefined) {
@@ -904,6 +952,57 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           checkout: immutableCheckout,
         },
       });
+      const prepareSessionIsolation: Parameters<typeof createSpawnedSession>[0]['prepareSessionIsolation'] = async () => {
+        const isolation = defaults.resolveIsolation();
+        const sandboxChoice = isolation?.choice.kind === 'sandbox' ? isolation.choice : undefined;
+        const resolveNativeSandbox = (sandboxTypeSupportsNativeSandbox?: boolean) => {
+          const agentSandbox = resolveManagedAgentSandbox({
+            machineIsolation: sandboxChoice && isolation?.configuredSandbox ? { environment: 'managed-guest',
+              provisionerId: buildQualifiedPluginContributionKey(isolation.configuredSandbox.provisioner) } : machineIsolation,
+            machineIsolationPolicy: isolation?.policy,
+            sandboxTypeSupportsNativeSandbox,
+            nativeSandboxAvailable: resolvedAgentTarget.nativeSandboxAvailable,
+            explicitAgentSandbox: requestedConfigurationSnapshot?.nativeSandbox,
+            retainedNativeProfile: requestedConfigurationSnapshot?.providerSessionResume !== undefined,
+          });
+          if (agentSandbox.availability?.status === 'unavailable') {
+            throw Object.assign(new Error('Agent native sandbox is unavailable'), { code: 'target_unavailable',
+              failureCause: { phase: 'session.spawn_new', errorClass: 'Error', errorCode: 'target_unavailable', httpStatus: null,
+                nativeErrorReason: agentSandbox.availability.reason } });
+          }
+          return agentSandbox.value;
+        };
+        let acquired: Awaited<ReturnType<NonNullable<typeof params.acquireSessionIsolationSandbox>>> | undefined;
+        if (sandboxChoice) {
+          if (authoredManagedCreation) {
+            throw Object.assign(new Error('Authored managed placement conflicts with Machine sandbox policy'),
+              { code: 'target_unavailable' });
+          }
+          if (!isolation?.configuredSandbox || !context || !params.acquireSessionIsolationSandbox
+            || !input.admittedInput || !input.executeSessionIsolationAcquire) {
+            throw Object.assign(new Error('Machine sandbox acquisition is unavailable'), { code: 'target_unavailable' });
+          }
+          acquired = await params.acquireSessionIsolationSandbox({
+            executeSessionIsolationAcquire: input.executeSessionIsolationAcquire,
+            parent: { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, input: input.admittedInput },
+            configuredSandbox: isolation.configuredSandbox, lifecycle: sandboxChoice.lifecycle,
+            resolveNativeSandbox,
+            context, ...(signal ? { signal } : {}),
+          });
+        }
+        const nativeSandbox = acquired ? acquired.nativeSandbox : resolveNativeSandbox();
+        return {
+          sessionCreationCorrespondence: { ...correspondence, recipe: { ...correspondence.recipe,
+            ...(acquired ? { managedCreation: acquired.managedCreation, managedCreationOrigin: 'machine_policy' as const } : {}),
+            ...(nativeSandbox !== undefined && requestedConfigurationSnapshot?.nativeSandbox === undefined
+              && (acquired || machineIsolation) ? { nativeSandboxOrigin: 'machine_policy' as const } : {}),
+            configuration: configurationWithNativeSandbox(nativeSandbox) ?? null,
+          } },
+          ...(acquired ? { managedTargetPlacement: {
+            managedId: acquired.managedCreation.managedId, workspaceRoot: normalizedDirectory } } : {}),
+          ...(nativeSandbox !== undefined ? { nativeSandbox } : {}),
+        };
+      };
       // A source recipe is required semantics, not a hint: it is resolved to an
       // exact cutoff before any Session row exists, and a failure creates no
       // child so the authoring draft and its chip stay intact.
@@ -1016,12 +1115,17 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             : {}),
           machineId: executionTarget.machineId,
           backendTarget,
+          ...(input.agentArgs !== undefined ? { agentArgs: input.agentArgs } : {}),
+          ...(birthContext?.runtimeDescriptorV1 ? { runtimeDescriptorV1: birthContext.runtimeDescriptorV1 } : {}),
           sessionCreationTag,
           ...(replaySeededCreation ? { replaySeededCreation } : {}),
           ...(sourceContext ? { sourceContext } : {}),
           approvedNewDirectoryCreation: preparedTarget.directoryCreationRequired,
           ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
           sessionCreationCorrespondence: correspondence,
+          ...(requestedConfigurationSnapshot?.nativeSandbox !== undefined
+            ? { authoredNativeSandbox: requestedConfigurationSnapshot.nativeSandbox } : {}),
+          ...(prepareSessionIsolation ? { prepareSessionIsolation } : {}),
           organizationPlacement: normalizedPlacement,
           ...(placementOrigin && placementOriginSupported ? { placementOrigin } : {}),
           ...(managedTargetPlacement ? { managedTargetPlacement } : {}),
@@ -1037,6 +1141,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           ...(sessionAllowedTools !== undefined ? { allowedTools: sessionAllowedTools } : {}),
           ...(sessionUnlistedTools !== undefined ? { unlistedTools: sessionUnlistedTools } : {}),
           ...(configurationSnapshot?.workspaceWrites !== undefined ? { workspaceWrites: configurationSnapshot.workspaceWrites } : {}),
+          ...(defaults.nativeSandbox !== undefined ? { nativeSandbox: defaults.nativeSandbox } : {}),
           ...(resolvedAgentModeId ? { agentModeId: resolvedAgentModeId } : {}),
           ...(normalizedConfigurationOverrides
             ? { sessionConfigOptionOverrides: normalizedConfigurationOverrides }
@@ -1135,7 +1240,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           ...(context?.operationAcceptance?.actionId === 'session.spawn_new'
             ? { observeSessionBirth: context.operationAcceptance.observeSessionBirth } : {}),
           ...(spawnNonce ? { spawnNonce } : {}),
-          ...(resumeActionRequest === true ? { resumeOnly: true } : {}),
+          ...(resumeActionRequest === true || birthContext?.resumeOnly === true ? { resumeOnly: true } : {}),
           ...(signal ? { signal } : {}),
         });
         const committed: Extract<SessionSpawnNewResultV1, { type: 'success' }> = {
@@ -1158,6 +1263,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         // into an error that invites another spawn.
         return { ...committed, sourceKeyPreparation: preparation };
       } catch (error) {
+        if (isActionExecuteFailure(error)) throw error;
+        if (birthContext?.projectCreationFailure) return birthContext.projectCreationFailure(error);
         // A proven pre-persistence failure creates no Session, but does not
         // establish that the checkout still has no other consumer.
         if (error instanceof PromptStackPreparationError) throw error;
@@ -1207,6 +1314,10 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           && typeof (error as { code?: unknown }).code === 'string'
           ? (error as { code: string }).code
           : '';
+        if (code === 'target_unavailable') {
+          return { type: 'error', code: 'target_unavailable', retryable: false,
+            failureCause: projectActionFailureCauseV1(error, 'session.spawn_new') };
+        }
         if (code === 'session_input_invalid') {
           return { type: 'error', code: 'invalid_input', retryable: false };
         }

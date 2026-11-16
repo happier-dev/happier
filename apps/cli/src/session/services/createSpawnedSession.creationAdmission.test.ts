@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,9 +8,15 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { createSocketTransportAdapter, markRpcRequestDisposition } from '@happier-dev/sync-client';
+import { markRpcRequestDisposition, socketRpcCodec } from '@happier-dev/sync-client';
 import axios, { AxiosError, AxiosHeaders } from 'axios';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import nacl from 'tweetnacl';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionMachineBootstrapV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { ConnectedAccountCatalogRowReadResponseV1Schema, ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 
 import {
   buildSessionSpawnInitialInputLocalIdV1,
@@ -42,8 +47,16 @@ import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createLocalMachineActionTransportFixture } from '@/testkit/apiMachineTransport';
+import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot, createSessionCreationTargetPreparationRpcResult,
+  resolveApiSessionSocketDefaultAck, respondToExactMachineSessionSpawnRpc } from '@/testkit/backends/apiSessionSocketHarness';
+import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { CapabilitiesDetectResponse } from '@/capabilities/types';
+import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { configuration } from '@/configuration';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { createSpawnedSession } from './createSpawnedSession';
@@ -51,14 +64,14 @@ import { submitSpawnInitialInput } from './submitSpawnInitialInput';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { buildSessionSpawnInitialInputAdmissionForLocalIdV1 } from './sessionInputAdmissionIdentity';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
-import { createCurrentSessionProjectionRecordFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createCurrentSessionProjectionRecordFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import { createWorkflowRequesterCustody, listWorkflowRequesterCredentialScopes } from '@/daemon/workflows/requesterCustody';
 
 // Only HTTP/authentication and exact-machine transport boundaries are replaced;
 // lookup decoding, creation settlement and Message admission remain real.
 vi.mock('axios', async (importOriginal) => {
   const actual = await importOriginal<typeof import('axios')>();
-  return { ...actual, default: { ...actual.default, post: vi.fn(), get: vi.fn(), isAxiosError: actual.default.isAxiosError } };
+  return { ...actual, default: { ...actual.default, post: vi.fn(), get: vi.fn(), request: vi.fn(), isAxiosError: actual.default.isAxiosError } };
 });
 vi.mock('@/auth/validateStoredAuthTokenAgainstActiveServer', () => ({
   validateStoredAuthTokenAgainstActiveServer: vi.fn(async () => ({ state: 'valid' })),
@@ -74,14 +87,9 @@ vi.mock('@/api/client/connectedServiceCredentialApi', async (importOriginal) => 
   fetchAccountEncryptionCurrentness,
 }));
 const socketBoundary = vi.hoisted(() => ({ create: vi.fn() }));
-vi.mock('@/api/session/sockets', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@/api/session/sockets')>(),
-  createUserScopedSocketConnection: () => {
-    const socket = socketBoundary.create();
-    return { socket, transport: createSocketTransportAdapter(socket) };
-  },
-}));
-afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); resetServerFeaturesClientForTests(); });
+vi.mock('socket.io-client', () => ({ io: () => socketBoundary.create() }));
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals();
+  resetActiveAccountSettingsSnapshotForTests(); resetServerFeaturesClientForTests(); });
 
 const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'admission-test' });
 const sessionCreationCorrespondence = SessionCreationCorrespondenceV1Schema.parse({
@@ -97,6 +105,40 @@ const sessionCreationCorrespondence = SessionCreationCorrespondenceV1Schema.pars
   },
 });
 
+// Exact-machine RPC and opened Machine metadata are external daemon boundaries.
+function creationAdmissionReadinessReply(method: string): unknown {
+  if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+    return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+      projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+        codex: { id: 'codex', title: 'Codex', capabilities: { sessions: {
+          open: ['create'], delivery: ['newTurn'], cancel: true,
+        } } },
+      } } });
+  }
+  if (method === RPC_METHODS.CAPABILITIES_DETECT) return {
+    protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: {
+      installed: true, version: '1.2.3', latestVersion: null, update: { supported: false, command: null },
+      signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
+      install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
+    } } },
+  } satisfies CapabilitiesDetectResponse;
+  return undefined;
+}
+
+function createCreationAdmissionMachineTransport(machineId: string) {
+  const transport = createLocalMachineActionTransportFixture(machineId);
+  return { ...transport, invoke: async (...args: Parameters<typeof transport.invoke>) => {
+    const [method, request] = args;
+    const readiness = creationAdmissionReadinessReply(method);
+    if (readiness !== undefined) return readiness;
+    if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
+      || method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE) {
+      return createSessionCreationTargetPreparationRpcResult(SessionCreationTargetPreparationRequestV1Schema.parse(request));
+    }
+    return transport.invoke(...args);
+  } };
+}
+
 describe('canonical Session creation admission', () => {
   const spawn = vi.fn();
   const resolveSpawnSessionByNonce = vi.fn();
@@ -107,12 +149,46 @@ describe('canonical Session creation admission', () => {
     sessionCreationTag, sessionCreationCorrespondence,
     directTransport: { spawn, resolveSpawnSessionByNonce },
   };
+  const machineSnapshot = { ...createAvailableSessionSpawnMachineSnapshot('machine-1'),
+    ...ExternalActionMachineBootstrapV1Schema.parse({ id: 'machine-1', kind: 'persistent', active: true,
+      managedMachineRef: null, revokedAt: null, replacedByMachineId: null }), storageMode: 'plain' };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(axios.get).mockReset();
-    socketBoundary.create.mockReturnValue(Object.assign(new EventEmitter(), {
-      connected: false, connect: vi.fn(), disconnect: vi.fn(), close: vi.fn(),
+    // The installed Account owns this already-authenticated defaults snapshot.
+    // A separate admitted requester still opens its own network snapshot.
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {},
+      settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+      scopeKey: resolveAccountSettingsScopeKey(params.credentials), connectedPurposeCatalog: {
+        status: 'ready', revision: 1, record: { key: 'purposes', value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }) },
+      } });
+    vi.mocked(axios.request).mockReset().mockImplementation(async request => {
+      if (String(request.url).endsWith('/v1/home/governance/get')) return { status: 200, data: { homeDefaults: null } };
+      throw new Error(`Unexpected creation Home request ${String(request.url)}`);
+    });
+    vi.mocked(axios.get).mockReset().mockImplementation(async url => {
+      if (String(url).endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: machineSnapshot } };
+      throw new Error(`Unexpected creation HTTP read ${url}`);
+    });
+    socketBoundary.create.mockImplementation(() => createApiSessionSocketStub({
+      emitWithAck: async (event, payload) => {
+        if (event !== SOCKET_RPC_EVENTS.CALL) return resolveApiSessionSocketDefaultAck(event, payload);
+        const call = payload as SocketRpcRequestPayload;
+        const content = { mode: 'plain' as const };
+        const decoded = await socketRpcCodec.decodeRequestParams(content, call.params, call.method);
+        const method = call.method.startsWith('machine-1:') ? call.method.slice('machine-1:'.length) : call.method;
+        const readiness = creationAdmissionReadinessReply(method);
+        const result = readiness ?? (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
+          || method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE
+          ? createSessionCreationTargetPreparationRpcResult(SessionCreationTargetPreparationRequestV1Schema.parse(decoded.params))
+          : undefined);
+        if (result === undefined) throw new Error(`Unexpected creation Machine RPC ${method}`);
+        return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
+      },
+      emit: (event, args) => {
+        if (respondToExactMachineSessionSpawnRpc({ event, args, machineId: 'machine-1', sessionId: 'session-created',
+          onSpawnRequest: () => { throw new Error('Unexpected remote spawn after local target preparation'); } })) return;
+      },
     }));
     vi.mocked(axios.post).mockResolvedValue({ status: 200, data: { sessions: [] } });
     spawn.mockResolvedValue({
@@ -124,6 +200,126 @@ describe('canonical Session creation admission', () => {
       metadataVersion: 1, metadataLayoutVersion: 1, encryptionMode: 'plain', metadata: JSON.stringify({ v: 1 }),
     });
     fetchAccountEncryptionCurrentness.mockRejectedValue(new Error('Account currentness unavailable'));
+  });
+
+  it.each([
+    { origin: 'machine_policy', authored: 'same', rejoined: true },
+    { origin: 'machine_policy', authored: 'derived-native', rejoined: true },
+    { origin: 'machine_policy', authored: 'added-native-same-value', rejoined: false },
+    { origin: 'machine_policy', authored: 'changed-permission', rejoined: false },
+    { origin: 'machine_policy', authored: 'added-managed', rejoined: false },
+    { origin: undefined, authored: 'same', rejoined: false },
+    { origin: undefined, authored: 'explicit-managed', rejoined: true },
+  ] as const)('retains only internally derived placement across current policy refusal ($origin, $authored)', async scenario => {
+    const nativeConfiguration = { mode: { value: null, updatedAtMs: 0 },
+      model: { value: null, updatedAtMs: 0, selectionSource: 'inherited' as const },
+      permissionIntent: { value: null, updatedAtMs: 0 }, options: {}, nativeSandbox: 'off' as const };
+    const nativeDerived = scenario.authored === 'derived-native' || scenario.authored === 'added-native-same-value';
+    const retained = { ...sessionCreationCorrespondence,
+      recipe: { ...sessionCreationCorrespondence.recipe, managedCreation: { homeId: 'home', managedId: 'shared-original',
+        controller: { machineId: 'machine-1', installationId: 'install' } },
+        ...(scenario.origin ? { managedCreationOrigin: scenario.origin } : {}),
+        ...(nativeDerived ? { configuration: nativeConfiguration, nativeSandboxOrigin: 'machine_policy' as const } : {}) } };
+    const fields = buildSessionMetadataEnvelopeCreateFields({ credentials: params.credentials,
+      accountEncryptionMode: 'plain', storedContentMode: 'plain', agentState: null,
+      metadata: { path: '/repo', host: 'host', machineId: 'machine-1', sessionCreationCorrespondenceV1: retained } });
+    const session = createCurrentSessionProjectionRecordFixture({ ...createSessionNotificationContextFixture('session-created'),
+      encryptionMode: 'plain', share: null, active: true, archivedAt: null,
+      metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext,
+      ownerMetadata: fields.ownerMetadata, dataEncryptionKey: null });
+    fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null,
+      contentKeyFingerprint: null, updatedAt: 1 });
+    vi.mocked(axios.post).mockImplementation(async url => {
+      if (String(url).endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [session] } };
+      throw new Error(`Unexpected creation request ${url}`);
+    });
+    let allocations = 0;
+    const authored = { ...sessionCreationCorrespondence, recipe: { ...sessionCreationCorrespondence.recipe,
+      ...(scenario.authored === 'changed-permission' ? { requestedPermissionMode: 'read-only' } : {}),
+      ...(scenario.authored === 'added-native-same-value' ? { configuration: nativeConfiguration } : {}),
+      ...(scenario.authored === 'added-managed' || scenario.authored === 'explicit-managed'
+        ? { managedCreation: retained.recipe.managedCreation } : {}) } };
+    const pending = createSpawnedSession({ ...params, sessionCreationCorrespondence: authored,
+      ...(scenario.authored === 'added-native-same-value' ? { authoredNativeSandbox: 'off' as const } : {}),
+      prepareSessionIsolation: async () => {
+        allocations += 1;
+        throw Object.assign(new Error('Current Machine policy is unreadable'), { code: 'target_unavailable' });
+      } });
+    if (scenario.rejoined) await expect(pending).resolves.toMatchObject({ disposition: 'rejoined', sessionId: session.id });
+    else await expect(pending).rejects.toMatchObject({ code: 'creation_conflict' });
+    expect(allocations).toBe(0);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('resolves policy placement once after the fresh creation lookup before native dispatch', async () => {
+    const refusal = Object.assign(new Error('Native boundary refused launch'), { code: 'native_fixture_refused' });
+    spawn.mockRejectedValue(refusal);
+    let allocations = 0;
+    await expect(createSpawnedSession({ ...params, prepareSessionIsolation: async () => {
+      allocations += 1;
+      const managedCreation = { homeId: 'home', managedId: 'fresh-bound' };
+      return { sessionCreationCorrespondence: { ...sessionCreationCorrespondence,
+        recipe: { ...sessionCreationCorrespondence.recipe, managedCreation } },
+        managedTargetPlacement: { managedId: managedCreation.managedId, workspaceRoot: '/repo' } };
+    } })).rejects.toMatchObject({ code: 'native_fixture_refused' });
+    expect(allocations).toBe(1);
+    expect(SpawnDaemonSessionRequestSchema.parse(spawn.mock.calls[0]?.[0])).toMatchObject({
+      managedTargetPlacement: { managedId: 'fresh-bound', workspaceRoot: '/repo' },
+      sessionCreationCorrespondence: { recipe: { managedCreation: { managedId: 'fresh-bound' } } },
+    });
+  });
+
+  it('resolves policy placement once and retries failed target preparation on the same retained unstarted Session', async () => {
+    const managedCreation = { homeId: 'home', managedId: 'retained-after-preparation-failure',
+      controller: { machineId: 'machine-1', installationId: 'installation' } };
+    const correspondence = { ...sessionCreationCorrespondence, recipe: { ...sessionCreationCorrespondence.recipe,
+      managedCreation, managedCreationOrigin: 'machine_policy' as const } };
+    const envelopes = buildSessionMetadataEnvelopeCreateFields({ credentials: params.credentials,
+      accountEncryptionMode: 'plain', storedContentMode: 'plain', agentState: null,
+      metadata: { path: '/repo', host: 'host', sessionCreationCorrespondenceV1: correspondence } });
+    const unstarted = createCurrentSessionProjectionRecordFixture({ ...createSessionNotificationContextFixture('session-target-retry'),
+      encryptionMode: 'plain', share: null, active: false, archivedAt: null, runtimeActivityRevision: 0,
+      runtimeActivityState: 'unknown', runtimeActivityActiveCount: 0, runtimeActivityObservedAt: null,
+      metadataLayoutVersion: envelopes.metadataLayoutVersion, metadata: envelopes.sharedMetadata.ciphertext,
+      ownerMetadata: envelopes.ownerMetadata, dataEncryptionKey: null });
+    let birthCommitted = false;
+    let allocations = 0;
+    let attempts = 0;
+    fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+      capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }))));
+    vi.mocked(axios.get).mockImplementation(async url => {
+      if (String(url).includes('/v1/access-keys/')) return { status: 200, data: { accessKey: { data: 'bound-key' } } };
+      throw new Error(`Unexpected retry HTTP read ${url}`);
+    });
+    vi.mocked(axios.post).mockImplementation(async url => {
+      if (String(url).endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: birthCommitted ? [unstarted] : [] } };
+      throw new Error(`Unexpected retry HTTP write ${url}`);
+    });
+    spawn.mockImplementation(async request => {
+      const parsed = SpawnDaemonSessionRequestSchema.parse(request);
+      expect(parsed).toMatchObject({ managedTargetPlacement: { managedId: managedCreation.managedId },
+        sessionCreationCorrespondence: { recipe: { managedCreation, managedCreationOrigin: 'machine_policy' } } });
+      attempts += 1;
+      if (!birthCommitted) {
+        birthCommitted = true;
+        throw Object.assign(new Error('Target preparation refused after Session birth'), { code: 'target_prepare_failed' });
+      }
+      expect(parsed).toMatchObject({ existingSessionId: unstarted.id, freshSessionCreation: false });
+      return { type: 'success', sessionId: unstarted.id };
+    });
+    fetchSessionById.mockResolvedValue({ ...unstarted, active: true, archivedAt: null, runtimeActivityRevision: 1 });
+    const request = { ...params, prepareSessionIsolation: async () => {
+      allocations += 1;
+      return { sessionCreationCorrespondence: correspondence,
+        managedTargetPlacement: { managedId: managedCreation.managedId, workspaceRoot: '/repo' } };
+    } };
+    await expect(createSpawnedSession(request)).rejects.toMatchObject({ code: 'target_prepare_failed' });
+    await expect(createSpawnedSession(request)).resolves.toMatchObject({ disposition: 'rejoined', sessionId: unstarted.id });
+    expect(allocations).toBe(1);
+    expect(attempts).toBe(2);
   });
 
   it.each([false, true])('commits ordinary Bot birth and awaits content preparation before dispatching its runner (retry: %s)', async retry => {
@@ -382,9 +578,10 @@ describe('canonical Session creation admission', () => {
       sessionId: 'cli-global', mode: 'plain', ctx: null, rawSession: {},
       serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({ memoryUpkeepInNewBots: false }) }),
-      machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('machine-1'),
+      machineActionDirectTargetTransport: createCreationAdmissionMachineTransport('machine-1'),
       sessionSpawnDirectTargetTransport: {
         machineId: 'machine-1',
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
         prepare: async () => ({ ok: true, directory: '/repo', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
         spawnedSession: { spawn, resolveSpawnSessionByNonce },
       },
@@ -467,6 +664,7 @@ describe('canonical Session creation admission', () => {
       capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } })),
     { status: 200, headers: { 'Content-Type': 'application/json' } })));
     vi.mocked(axios.get).mockImplementation(async (url) => {
+      if (String(url).endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: machineSnapshot } };
       if (String(url).includes('/v1/access-keys/')) return { status: 200, data: { accessKey: 'existing' } };
       throw new Error(`Unexpected HTTP read ${url}`);
     });
@@ -499,8 +697,9 @@ describe('canonical Session creation admission', () => {
       token: params.credentials.token, credentials: params.credentials, sessionId: '', mode: 'plain', ctx: null,
       serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
-      machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('machine-1'),
+      machineActionDirectTargetTransport: createCreationAdmissionMachineTransport('machine-1'),
       sessionSpawnDirectTargetTransport: { machineId: 'machine-1',
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
         prepare: async () => ({ ok: true, directory: '/repo', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
         spawnedSession: { spawn, resolveSpawnSessionByNonce } },
     }));
@@ -542,6 +741,7 @@ describe('canonical Session creation admission', () => {
       capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } })),
     { status: 200, headers: { 'Content-Type': 'application/json' } })));
     vi.mocked(axios.get).mockImplementation(async (url) => {
+      if (String(url).endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: machineSnapshot } };
       if (String(url).includes('/v1/access-keys/')) return { status: 200, data: { accessKey: 'existing' } };
       throw new Error(`Unexpected HTTP read ${url}`);
     });
@@ -588,9 +788,10 @@ describe('canonical Session creation admission', () => {
           messageRole: 'user', inputAdmissionReceipt, inputAuthority }));
         return { status: 'accepted', localId: request.localId };
       },
-      machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('machine-1'),
+      machineActionDirectTargetTransport: createCreationAdmissionMachineTransport('machine-1'),
       sessionSpawnDirectTargetTransport: {
         machineId: 'machine-1',
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
         prepare: async () => ({ ok: true, directory: '/repo', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
         spawnedSession: { spawn, resolveSpawnSessionByNonce },
       },
@@ -708,7 +909,11 @@ describe('canonical Session creation admission', () => {
     }
   }, 120_000);
 
-  it.each(['prepared', 'incompatible'] as const)('resolves the managed target directory before preparing deferred Template birth triggers (%s target)', async targetReply => {
+  it.each(['prepared', 'incompatible', 'foreign-home'] as const)('resolves the managed target directory before preparing deferred Template birth triggers (%s target)', async targetReply => {
+    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`, encryption: null };
+    const settings = accountSettingsParse({ memoryUpkeepInNewBots: false });
+    const signing = nacl.sign.keyPair();
     const custodyHome = await mkdtemp(join(tmpdir(), 'managed-trigger-custody-'));
     const targetHome = await mkdtemp(join(tmpdir(), 'managed-trigger-target-'));
     onTestFinished(async () => { await rm(custodyHome, { recursive: true, force: true }); await rm(targetHome, { recursive: true, force: true }); });
@@ -725,12 +930,19 @@ describe('canonical Session creation admission', () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
       capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }))));
     vi.mocked(axios.get).mockImplementation(async url => {
-      if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
-        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
-        recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
-      } };
+      if (String(url).endsWith('/v1/account/entity-rows/connected-accounts/purposes')) return { status: 200,
+        data: ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
+          content: { t: 'plain', v: { key: 'purposes', value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }) } } }) };
+      if (String(url).endsWith('/v1/account/profile')) return { status: 200, data: { id: 'owner' } };
+      if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (String(url).endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: settings }, version: 1 } };
+      if (String(url).endsWith(ACCOUNT_SECURITY_PATH_V1)) return { status: 200,
+        data: AccountSecurityGetResponseV1Schema.parse({ v: 1, encryptionMode: 'plain', nativeEmail: null,
+          password: { status: 'not_enrolled', revision: null } }) };
+      if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200,
+        data: createAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }) };
       if (String(url).endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: {
-        id: 'machine-1', revokedAt: null, replacedByMachineId: null,
+        ...machineSnapshot,
         operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1, 2, 3, 4] } },
         operationProtocolCapabilitiesRevision: 1,
       } } };
@@ -739,6 +951,7 @@ describe('canonical Session creation admission', () => {
     let birthTriggers: unknown;
     let birthOwnerMetadata: unknown;
     vi.mocked(axios.post).mockImplementation(async (url, raw) => {
+      if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
       if (String(url).endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
       if (!String(url).endsWith('/v1/sessions') || raw === null || typeof raw !== 'object') {
         throw new Error(`Unexpected managed trigger HTTP write ${url}`);
@@ -749,39 +962,29 @@ describe('canonical Session creation admission', () => {
       // prepared transaction. This test creates no Session or runner.
       throw new AxiosError('Isolated birth boundary refuses persistence', 'ERR_BAD_REQUEST');
     });
-    const attribution = { serverId: 'home-a', accountId: 'guest', machineId: 'machine-1', installationId: 'installation' };
+    const attribution = { serverId: 'home-a', accountId: 'owner', machineId: 'machine-1', installationId: 'installation-1' };
     const deps = createCliActionDeps({
-      token: params.credentials.token, credentials: params.credentials,
+      token: credentials.token, credentials,
       sessionId: 'cli-global', mode: 'plain', ctx: null, rawSession: {},
-      serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
-      actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => accountSettingsParse({ memoryUpkeepInNewBots: false }) }),
+      serverId: 'home-a', serverIdentityId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
+      externalActionMachineInstallationId: 'installation-1', externalActionMachineRequestPrivateKey: signing.secretKey,
+      actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => settings }),
       workflowRequesterCustody: createWorkflowRequesterCustody({ happyHomeDir: custodyHome, attribution,
-        credentials: params.credentials, serverHttpBaseUrl: 'https://home-a.example.test' }),
-      machineActionDirectTargetTransport: targetReply === 'prepared'
-        ? createLocalMachineActionTransportFixture('machine-1')
-        : { machineId: 'machine-1', invoke: async method => {
-          // The real RPC transport may return malformed data. Keep the typed
-          // local preparation owner truthful and exercise its receiver parser.
-          if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
-            || method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE) return undefined;
-          throw new Error(`Unexpected managed trigger RPC ${method}`);
-        } },
-      ...(targetReply === 'prepared' ? { sessionSpawnDirectTargetTransport: {
+        credentials, serverHttpBaseUrl: 'https://home-a.example.test' }),
+      machineActionDirectTargetTransport: createCreationAdmissionMachineTransport('machine-1'),
+      sessionSpawnDirectTargetTransport: {
         machineId: 'machine-1',
-        // Exact Machine transport boundary delegates to the real target owner;
-        // no Workflow or directory logic is mocked.
-        prepare: (request: Parameters<typeof prepareSessionCreationTarget>[0]['request']) => prepareSessionCreationTarget({ request, activeServerDir: targetHome }),
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
+        prepare: async (request: Parameters<typeof prepareSessionCreationTarget>[0]['request']) => {
+          if (targetReply !== 'incompatible') return prepareSessionCreationTarget({ request, activeServerDir: targetHome });
+          // Malformed transport bytes exercise the real target-result parser.
+          return undefined as unknown as Awaited<ReturnType<typeof prepareSessionCreationTarget>>;
+        },
         spawnedSession: { spawn, resolveSpawnSessionByNonce },
-      } } : {}),
+      },
     });
-    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'template-birth-authorization', binding: {
-      accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
-      custodianAccountId: 'owner', serverIdentityId: 'home-a', machineId: 'machine-1', installationId: 'installation-1',
-      actionId: 'template.instantiate', requestId: 'managed-trigger-template', target: { kind: 'machine', machineId: 'machine-1' },
-      requestEnvelopeDigest: 'a'.repeat(43),
-    } });
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey,
-      executionTarget: { serverId: 'home-a', machineId: 'machine-1' }, directory: { kind: 'managed' },
+      executionTarget: { serverId: targetReply === 'foreign-home' ? 'other-home' : 'home-a', machineId: 'machine-1' }, directory: { kind: 'managed' },
       agentTarget: sessionCreationCorrespondence.recipe.agentTarget, connectedServices: { v: 2, bindingsByServiceId: {} },
       memoryEnabled: false, initialTriggers: [{
         target: { kind: 'inline', definition: getWorkflowStarterExamplesV1().find(item => item.key === 'memory-upkeep-in-session')!.definition },
@@ -789,14 +992,43 @@ describe('canonical Session creation admission', () => {
           schedule: { kind: 'cron', scheduleExpr: '0 9 * * 0', everyMs: null, timezone: null } },
       }],
     });
-    if (!deps.sessionSpawnNew) throw new Error('Canonical spawn dependency is unavailable');
-    const result = await deps.sessionSpawnNew({ ...input, creationKey, sessionCreationTag: tag,
-      actionCaller: { kind: 'host' }, callerSurface: 'cli', actionRequestId: 'managed-trigger-template',
-      context: { surface: 'cli', authority: 'present_user', serverId: 'home-a',
-        externalActionExecutionAuthorization: authorization,
-        originalActionEnvelope: ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'managed-trigger-template',
-          input: {}, target: { kind: 'machine', machineId: 'machine-1' } }) },
-    }, { hostOnboarding: { templateName: 'Managed helper', templateVersion: '1.0.0' } });
+    const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'managed-trigger-template',
+      input: { creation: input }, target: { kind: 'machine', machineId: 'machine-1' } });
+    // Home's signed grant is the HTTP boundary; retain the real requester and
+    // reviewed-child owners through the exact Session operand and continuation.
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'template-birth-authorization', binding: {
+      accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      custodianAccountId: 'owner', serverIdentityId: 'home-a', machineId: 'machine-1', installationId: 'installation-1',
+      admittedMachineRole: 'manage', actionId: 'template.instantiate', requestId: envelope.requestId, target: envelope.target,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } });
+    const executor = createActionExecutor(deps);
+    const requester = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
+      machineId: 'machine-1', installationId: 'installation-1', installationPrivateKey: signing.secretKey,
+      serverId: 'home-a', serverIdentityId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
+      ownCredentials: credentials, isCurrent: async () => true, createExecutor: () => executor });
+    if (!requester) throw new Error('Managed Template requester custody was not admitted');
+    onTestFinished(() => requester.dispose());
+    const execution = await invokeHostReviewedChildV1({ parent: { actionId: 'template.instantiate', input: envelope.input },
+      context: { surface: 'cli', authority: 'present_user', serverId: 'home-a', serverIdentityId: 'home-a',
+        actionCaller: { kind: 'host' }, runtimeAccountId: 'owner', actionRequestId: envelope.requestId,
+        externalActionExecutionAuthorization: requester.authorization, externalActionTarget: envelope.target,
+        originalActionEnvelope: envelope },
+      child: { action: 'session.spawn_new', role: 'create_bot', input },
+      admittedReview: { action: 'session.spawn_new', role: 'create_bot', surface: 'cli' },
+      invocationServices: { sessionCreation: { beforeLaunch: async () => {},
+        hostOnboarding: { templateName: 'Managed helper', templateVersion: '1.0.0' } } },
+      execute: (childInput, childContext, actionId) => executor.execute(actionId, childInput, childContext),
+    });
+    if (targetReply === 'foreign-home') {
+      expect(execution).toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+      expect(vi.mocked(axios.post).mock.calls.filter(([url]) => String(url).endsWith('/v1/sessions'))).toHaveLength(0);
+      expect(spawn).not.toHaveBeenCalled();
+      return;
+    }
+    expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true });
+    if (!execution.ok) throw new Error('Managed Template child execution was refused');
+    const result = SessionSpawnNewResultV1Schema.parse(execution.result);
     if (targetReply === 'incompatible') {
       expect(result).toEqual({ type: 'error', code: 'incompatible_target', retryable: false,
         incompatibleTarget: { reason: 'target_preparation_invalid_result' } });
@@ -812,8 +1044,9 @@ describe('canonical Session creation admission', () => {
     expect(SessionInitialTriggerAdmissionV1Schema.parse(birthTriggers[0])).toMatchObject({
       executionRecipe: { workflow: { t: 'plain', v: { workspace: { directory: expectedTarget.directory } } } },
     });
-    expect(birthOwnerMetadata).toMatchObject({ t: 'plain', v: { workspace: { sessionDirectoryV1: { v: 1, kind: 'managed' } } } });
-    expect(birthOwnerMetadata).not.toMatchObject({ t: 'plain', v: { workspace: { path: expectedTarget.directory } } });
+    expect(birthOwnerMetadata).toMatchObject({ t: 'plain', v: { workspace: {
+      sessionDirectoryV1: { v: 1, kind: 'managed' }, path: expectedTarget.directory,
+    } } });
     expect(spawn).not.toHaveBeenCalled();
   });
 
@@ -865,9 +1098,10 @@ describe('canonical Session creation admission', () => {
       actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => accountSettings }),
       workflowRequesterCustody: createWorkflowRequesterCustody({ happyHomeDir: custodyHome, attribution,
         credentials: params.credentials, serverHttpBaseUrl: 'https://home-a.example.test' }),
-      machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('machine-1'),
+      machineActionDirectTargetTransport: createCreationAdmissionMachineTransport('machine-1'),
       sessionSpawnDirectTargetTransport: {
         machineId: 'machine-1',
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
         prepare: async () => ({ ok: true, directory: '/repo', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
         spawnedSession: { spawn, resolveSpawnSessionByNonce },
       },
@@ -1075,7 +1309,11 @@ describe('canonical Session creation admission', () => {
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
       capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }))));
-    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { accessKey: 'existing' } });
+    vi.mocked(axios.get).mockImplementation(async url => {
+      if (String(url).endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: machineSnapshot } };
+      if (String(url).includes('/v1/access-keys/')) return { status: 200, data: { accessKey: 'existing' } };
+      throw new Error(`Unexpected archived restore HTTP read ${url}`);
+    });
     let row: Record<string, unknown> | null = null;
     let loseRestoreResponse = false;
     const creationTags: unknown[] = [];
@@ -1096,9 +1334,10 @@ describe('canonical Session creation admission', () => {
       sessionId: 'cli-global', mode: 'plain', ctx: null, rawSession: {},
       serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
       actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => accountSettingsParse({ memoryUpkeepInNewBots: false }) }),
-      machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('machine-1'),
+      machineActionDirectTargetTransport: createCreationAdmissionMachineTransport('machine-1'),
       sessionSpawnDirectTargetTransport: {
         machineId: 'machine-1',
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
         prepare: async () => ({ ok: true, directory: '/repo', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
         spawnedSession: { spawn, resolveSpawnSessionByNonce },
       },
@@ -1176,10 +1415,12 @@ describe('canonical Session creation admission', () => {
     const promptStack = [{ id: 'session.instructions',
       ref: { kind: 'doc', serverId, artifactId: 'instructions' },
       enabled: true, required: true, placement: 'system_append' }] as const;
-    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { machine: {
-      id: 'machine-1', kind: 'persistent', storageMode: 'plain',
-      revokedAt: null, replacedByMachineId: null,
-    } } });
+    const predecessor = { ...ExternalActionMachineBootstrapV1Schema.parse({
+      id: 'machine-1', kind: 'persistent',
+      active: true, managedMachineRef: null, revokedAt: null, replacedByMachineId: null,
+    }), storageMode: 'plain' };
+    vi.mocked(axios.get).mockImplementation(async url => ({ status: 200,
+      data: String(url).endsWith('/v1/machines') ? [predecessor] : { machine: predecessor } }));
     // The observed 0.2 predecessor has no capability projection producer.
     // Ordinary Action admission already refuses that real shape before dispatch.
     socketBoundary.create.mockImplementation(() => { throw new Error('predecessor_rpc_dispatched'); });
@@ -1203,10 +1444,12 @@ describe('canonical Session creation admission', () => {
       connectedServices: { v: 2, bindingsByServiceId: {} }, promptStack,
       identity: { bot: { kind: 'bot' }, createdAsBot: true },
     });
-    expect(await executor.execute('session.spawn_new', input, {
+    const predecessorResult = await executor.execute('session.spawn_new', input, {
       surface: 'cli', authority: 'present_user', serverId,
       presentUserConfirmation: { actionId: 'session.spawn_new' }, actionRequestId: 'predecessor-bot-instructions',
-    })).toMatchObject({ ok: true, result: { type: 'error', code: 'incompatible_target', retryable: false } });
+    });
+    expect(predecessorResult, JSON.stringify(predecessorResult)).toMatchObject({ ok: true,
+      result: { type: 'error', code: 'incompatible_target', retryable: false } });
     expect(axios.post).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
     expect(socketBoundary.create).not.toHaveBeenCalled();
@@ -1250,8 +1493,8 @@ describe('canonical Session creation admission', () => {
     expect(fetchSessionById).toHaveBeenCalledTimes(baselineReads);
     fetchSessionById.mockResolvedValue(session);
     const socket = socketBoundary.create.mock.results[0]?.value;
-    socket.emit('connect');
+    socket.trigger('connect');
     await expect(result).resolves.toMatchObject({ sessionId: 'session-created', disposition: 'created' });
-    expect(socket.eventNames()).toEqual([]);
+    expect(socket.getHandler('connect')).toBeUndefined();
   });
 });

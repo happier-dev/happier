@@ -72,11 +72,15 @@ export const SessionSpawnMachineSetupInputV1Schema = lazyZodSchema(() => {
  */
 export const SessionSpawnNewInputV2BaseSchema = lazyZodSchema(() => z.strictObject({
   ...SessionSpawnNewSelectionV2BaseSchema.shape,
+  /** Opaque native Agent argv for this launch; the host never reparses these as control flags. */
+  agentArgs: z.optional(z.array(z.string())),
   creationKey: zMini.optional(SessionCreationKeyV1Schema),
   /** Reviewed software setup completes on the selected Machine before Agent startup. */
   machineSetupPlanInput: z.optional(SessionSpawnMachineSetupInputV1Schema),
   /** Place the Session's Agent inside one of the person's managed targets. */
   managedTargetPlacement: z.optional(SessionManagedTargetPlacementV1Schema),
+  /** One Session only; receiving admission requires interactive Manage intent. */
+  isolationOverride: z.optional(z.literal('directly')),
   /** Create's consent for the chosen Agent's existing reviewed install Action. */
   agentInstallConsent: z.optional(AgentInstallJobConsentSchema),
   /** Transport observer preference; send only after negotiating Session-spawn epoch three. */
@@ -161,13 +165,13 @@ export function projectSessionSpawnNewActionInputV2(input: SessionSpawnNewInputV
   } } : {}) };
 }
 
-export const SessionSpawnNewActionAgentAuthoringInputV2Schema = lazyZodSchema(() => z.partial(z.omit(SessionSpawnNewActionInputV2BaseSchema, { observeSessionCommit: true }), {
+export const SessionSpawnNewActionAgentAuthoringInputV2Schema = lazyZodSchema(() => z.partial(z.omit(SessionSpawnNewActionInputV2BaseSchema, { observeSessionCommit: true, isolationOverride: true }), {
   executionTarget: true,
   agentTarget: true,
 }).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn)));
 
 /** Session Agents may inherit these choices; the start owner resolves them before creation admission. */
-export const SessionSpawnNewAgentAuthoringInputV2Schema = lazyZodSchema(() => z.partial(z.omit(SessionSpawnNewInputV2BaseSchema, { observeSessionCommit: true }), {
+export const SessionSpawnNewAgentAuthoringInputV2Schema = lazyZodSchema(() => z.partial(z.omit(SessionSpawnNewInputV2BaseSchema, { observeSessionCommit: true, isolationOverride: true }), {
   executionTarget: true,
   agentTarget: true,
 }).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn)));
@@ -182,11 +186,12 @@ export const SessionServerStartSpawnDraftV1Schema = lazyZodSchema(() => (<T exte
   observeSessionCommit: true,
   initialInput: true,
   environmentVariables: true,
+  agentArgs: true,
   attestedContext: true,
   authoringOrigin: true,
 })).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn)));
 
 export type SessionServerStartSpawnDraftV1 = Omit<
   SessionSpawnNewInputV2,
-  'creationKey' | 'observeSessionCommit' | 'initialInput' | 'environmentVariables' | 'attestedContext' | 'authoringOrigin'
+  'creationKey' | 'observeSessionCommit' | 'initialInput' | 'environmentVariables' | 'agentArgs' | 'attestedContext' | 'authoringOrigin'
 >;

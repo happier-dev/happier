@@ -11,6 +11,7 @@ import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js'
 import { SessionExecutionTargetV1Schema } from '../sessions/creation/sessionExecutionTargetV1.js';
 import { ManagedMachinePresetV1Schema } from '../machines/managed/managedMachinePresetV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import type { MachineIsolationPolicyV1, MachineIsolationV1 } from '../machines/machineIsolationV1.js';
 
 export const ManagedSessionPlacementV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('machine'), target: SessionExecutionTargetV1Schema }),
@@ -87,9 +88,17 @@ export type ManagedDefaultDecision<T> = Readonly<{
   lock: Readonly<{ organization: string; supportUrl?: string }> | null;
   groupConflict: boolean;
 }>;
+export type ManagedAgentSandboxAvailability =
+  | Readonly<{ status: 'enabled' | 'disabled' }>
+  | Readonly<{ status: 'unavailable'; reason: 'not_available_in_sandbox_type' }>;
 export type ResolvedManagedSessionDefaults = Readonly<{
   placement: ManagedDefaultDecision<ManagedSessionPlacementV1>;
   permissionMode: ManagedDefaultDecision<AgentPermissionIntentV1>;
+  agentSandbox: Readonly<{
+    value: 'on' | 'off' | undefined;
+    source: 'explicit' | 'machine' | 'none';
+    availability: ManagedAgentSandboxAvailability | undefined;
+  }>;
   model: ManagedDefaultDecision<SessionModelSelectionV1 | SessionModelSelectionV2 | null>;
   connectedServices: readonly ManagedDefaultDecision<ManagedConnectedServiceDefaultV1>[];
 }>;
@@ -127,8 +136,36 @@ export function projectManagedSessionDefaultsLayers(
   return { layers, purposeKeys };
 }
 
+export type ManagedAgentSandboxContext = Readonly<{
+  machineIsolation?: MachineIsolationV1 | null;
+  nativeSandboxAvailable?: boolean;
+  /** O-MACH isolationPolicyV1 projection; its owner reads and validates stored metadata. */
+  machineIsolationPolicy?: Readonly<Pick<MachineIsolationPolicyV1, 'agentNativeSandboxEnabled'>> | null;
+  /** Canonical provisioner sessionPlacement support reader result; omission makes no support claim. */
+  sandboxTypeSupportsNativeSandbox?: boolean;
+  explicitAgentSandbox?: 'on' | 'off';
+  /** Omission must preserve a native continuation's retained profile. */
+  retainedNativeProfile?: boolean;
+}>;
+
+/** Native sandbox intent is independent from permission and placement defaults. */
+export function resolveManagedAgentSandbox(input: ManagedAgentSandboxContext): ResolvedManagedSessionDefaults['agentSandbox'] {
+  const isolated = input.machineIsolation != null;
+  const machineSandboxEnabled = input.machineIsolationPolicy?.agentNativeSandboxEnabled === true;
+  const source = input.explicitAgentSandbox !== undefined ? 'explicit'
+    : !input.retainedNativeProfile && isolated && (input.nativeSandboxAvailable || machineSandboxEnabled) ? 'machine' : 'none';
+  const value = source === 'explicit' ? input.explicitAgentSandbox
+    : source === 'machine' ? machineSandboxEnabled ? 'on' : 'off' : undefined;
+  const availability: ManagedAgentSandboxAvailability | undefined = value === undefined ? undefined
+    : value === 'off' ? { status: 'disabled' }
+    : isolated && (!input.nativeSandboxAvailable || !input.sandboxTypeSupportsNativeSandbox)
+      ? { status: 'unavailable', reason: 'not_available_in_sandbox_type' }
+      : { status: 'enabled' };
+  return { value, source, availability };
+}
+
 /** One decision per field/purpose. Defaults express intent and never confer resource access. */
-export function resolveManagedSessionDefaults(input: ManagedSessionDefaultsContext & Readonly<{
+export function resolveManagedSessionDefaults(input: ManagedSessionDefaultsContext & ManagedAgentSandboxContext & Readonly<{
   agentTargetKey: string; explicitChoices?: ManagedSessionExplicitChoicesV1;
 }>): ResolvedManagedSessionDefaults {
   const projection = projectManagedSessionDefaultsLayers(input);
@@ -162,9 +199,11 @@ export function resolveManagedSessionDefaults(input: ManagedSessionDefaultsConte
   const modelIdentity = (model: SessionModelSelectionV1 | SessionModelSelectionV2 | null) => model === null ? null : model.v === 1
     ? model.ref
     : projectSessionModelSelectionV2ToV1(model)?.ref ?? model.ref;
+  const agentSandbox = resolveManagedAgentSandbox(input);
   return {
     placement: decide(defaults => defaults.placement),
     permissionMode: decide(defaults => defaults.permissionModeByAgentTargetKey?.[targetKey]),
+    agentSandbox,
     model: decide(defaults => defaults.modelByAgentTargetKey?.[targetKey], (left, right) => sameStrictJsonValue(modelIdentity(left), modelIdentity(right))),
     connectedServices: [...purposeKeys].sort().map(key => decide(defaults =>
       defaults.connectedServicesByAgentTargetKey?.[targetKey]?.find(value => purposeKey(value) === key))),

@@ -43,6 +43,9 @@ const createSessionCreationImmutableRecipeSchema = () => z.strictObject({
   memoryEnabled: z.optional(z.boolean()),
   promptStack: z.optional(SessionPromptStackV1Schema),
   managedCreation: z.optional(SessionManagedCreationV1Schema),
+  /** Internal derivation only; public spawn input cannot author this provenance. */
+  managedCreationOrigin: z.optional(z.literal('machine_policy')),
+  nativeSandboxOrigin: z.optional(z.literal('machine_policy')),
   checkoutCreationDraft: z.optional(SessionAuthoringCheckoutCreationDraftV1Schema),
   discussionParticipant: z.optional(SessionDiscussionParticipantV1Schema),
   secretReferenceOverlay: z.optional(SecretReferenceOverlayV1Schema),

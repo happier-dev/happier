@@ -2006,6 +2006,9 @@ export type ActionExecutorDeps = Readonly<{
     admittedInput?: SessionSpawnNewInputV2;
     /** Ordinary reviewed Actions, bound to this exact admitted Session and requester. */
     invokeAgentReadinessAction?: (actionId: SessionAgentReadinessActionIdV1, input: unknown) => Promise<ActionExecuteResult>;
+    /** Host-only executor for this Session's reviewed local isolation acquisition. */
+    executeSessionIsolationAcquire?: (input: import('../../machines/managed/actionsV1.js').ManagedAcquireInputV1,
+      context: ActionExecutorContext) => Promise<ActionExecuteResult>;
     /** Host-only invocation binding for post-commit private material preparation; never sent in the spawn payload. */
     context?: ActionExecutorContext;
     /** Complete host-resolved spawn snapshot; memory remains subject to target owner proof. */

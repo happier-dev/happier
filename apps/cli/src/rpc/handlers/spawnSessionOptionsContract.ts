@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
-import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { z } from 'zod/mini';
 import { AgentSessionToolPolicyShapeV1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -27,7 +27,7 @@ import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessio
 import { SessionInitialGoalRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
-import { SessionManagedTargetPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionManagedTargetPlacementV1Schema, SessionSpawnNewInputV2BaseSchema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { SessionProviderBindingSecurityChangeConfirmationV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
@@ -276,6 +276,7 @@ const SpawnDaemonSessionRequestCompatSchema = lazyZodSchema(() => (<I extends z.
   sessionConfigOptionOverrides: z.optional(AcpConfigOptionOverridesV1Schema),
   backendTarget: z.optional(z.any()),
   agentTarget: z.optional(AgentExecutionTargetV1Schema),
+  agentArgs: SessionSpawnNewInputV2BaseSchema.shape.agentArgs,
   agent: z.optional(z.string().check(z.trim(), z.minLength(1))),
   terminal: z.optional(SpawnSessionTerminalSchema),
   windowsRemoteSessionLaunchMode: z.optional(z.enum(['hidden', 'windows_terminal', 'console'])),
@@ -494,6 +495,7 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'approvedNewDirectoryCreation',
   'backendTarget',
   'agentTarget',
+  'agentArgs',
   'terminal',
   'windowsRemoteSessionLaunchMode',
   'windowsRemoteSessionConsole',

@@ -77,7 +77,7 @@ import { ManagedServiceNativeLogResultV1Schema } from '../local/services/nativeL
 import { readActionApprovalScopeAdmissionV1 } from './executor/approvalScope.js';
 import { isDeploymentActionIdV1, isDeploymentBackupActionIdV1, DeploymentActionInputSchemasV1 } from '../deployments/deploymentActionsV1.js';
 import { isProjectReadinessActionIdV1 } from './projectReadinessActionIdsV1.js';
-import { isMachineSetupPlanOrApplyActionIdV1 } from '../machines/managed/actionIdsV1.js';
+import { isMachineSetupPlanOrApplyActionIdV1, MANAGED_ACQUIRE_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { hasPendingDeploymentBindingSelectionV1 } from '../deployments/deploymentBindingSelectionNarrowing.js';
 import { withoutClientActionInput } from './clientActionInput.js';
@@ -6025,6 +6025,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
           const args = { ...spawnArgs, admittedInput: admittedSpawnInput,
+            executeSessionIsolationAcquire: (childInput: import('../machines/managed/actionsV1.js').ManagedAcquireInputV1, childContext: ActionExecutorContext) =>
+              executeHostChild(MANAGED_ACQUIRE_ACTION_ID_V1, childInput, childContext),
             invokeAgentReadinessAction: (childId: SessionAgentReadinessActionIdV1, childInput: unknown) => {
               const role = readSessionAgentReadinessRoleV1(childId);
               if (!role) return Promise.resolve<ActionExecuteResult>({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });

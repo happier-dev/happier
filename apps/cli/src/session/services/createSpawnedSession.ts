@@ -3,8 +3,9 @@ import { normalizeSpawnSessionErrorDetail, SPAWN_SESSION_ERROR_CODES } from '@ha
 import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { buildSpawnedFirstTurnLocalId, buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
-import { sessionCreationCorrespondenceMatchesV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
-import { commitPreparedSessionBirthV1 } from '@happier-dev/protocol/sessions';
+import { SessionCreationCorrespondenceV1ReadSchema, sessionCreationCorrespondenceMatchesV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { withSessionNativeSandbox } from '@/session/shared/sessionCreationCorrespondence';
+import { commitPreparedSessionBirthV1 } from '@happier-dev/protocol/sessions/creation/sessionPreparedBirthV1';
 import { migrateRetainedSessionWorkContextV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
@@ -143,6 +144,14 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   backendTarget?: BackendTargetRefV2;
   sessionCreationTag?: SessionCreationTagV1;
   sessionCreationCorrespondence?: SessionCreationCorrespondenceV1;
+  /** Distinguishes an explicit native choice from the receiver's derived default. */
+  authoredNativeSandbox?: 'on' | 'off';
+  /** Host policy placement resolves only after the existing creation owner finds no retained Session. */
+  prepareSessionIsolation?: () => Promise<Readonly<{
+    sessionCreationCorrespondence: SessionCreationCorrespondenceV1;
+    managedTargetPlacement?: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2').SessionManagedTargetPlacementV1;
+    nativeSandbox?: 'on' | 'off';
+  }> | undefined>;
   /** Retain only the admitted creator's read capability; never resume launch or input. */
   observeSessionBirth?: NonNullable<import('@happier-dev/protocol/actions').ActionExecutorContext['operationAcceptance']>['observeSessionBirth'];
   /** Informational origin persisted only by the fresh canonical creator. */
@@ -260,6 +269,7 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   | 'runtimeDescriptorV1'
   | 'agentSessionStartupInstructionsV1'
   | 'agentTarget'
+  | 'agentArgs'
   | 'managedDirectorySeed'
 >> & (
   | Readonly<{ deferLaunch?: false; directory: string }>
@@ -974,7 +984,7 @@ export async function createSpawnedSession(
       SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
     );
   }
-  const spawnRequestInput = {
+  let spawnRequestInput = {
     ...pickSessionCreateOriginFields(params),
     directory: params.directory,
     ...(params.directoryKind ? { directoryKind: params.directoryKind } : {}),
@@ -989,6 +999,7 @@ export async function createSpawnedSession(
     spawnNonce,
     ...(exactMachineId ? { machineId: exactMachineId } : {}),
     ...(params.agentTarget ? { agentTarget: params.agentTarget } : {}),
+    ...(params.agentArgs !== undefined ? { agentArgs: params.agentArgs } : {}),
     ...(!params.agentTarget && params.backendTarget ? { backendTarget: params.backendTarget } : {}),
     ...(params.sessionCreationTag ? { sessionCreationTag: params.sessionCreationTag } : {}),
     ...(params.sessionCreationCorrespondence
@@ -1049,7 +1060,13 @@ export async function createSpawnedSession(
   // Deferred birth is trusted host input, not a daemon spawn request: an asleep
   // Machine has not resolved its managed directory yet. Actual dispatch still
   // goes through the canonical strict daemon parser.
-  const spawnRequest = params.deferLaunch ? spawnRequestInput : SpawnDaemonSessionRequestSchema.parse(spawnRequestInput);
+  let spawnRequest = params.deferLaunch ? spawnRequestInput : SpawnDaemonSessionRequestSchema.parse(spawnRequestInput);
+  const applyIsolation = (prepared: Awaited<ReturnType<NonNullable<CreateSpawnedSessionParams['prepareSessionIsolation']>>>) => {
+    if (!prepared) return;
+    params = { ...params, ...prepared };
+    spawnRequestInput = { ...spawnRequestInput, ...prepared };
+    spawnRequest = params.deferLaunch ? spawnRequestInput : SpawnDaemonSessionRequestSchema.parse(spawnRequestInput);
+  };
   const isProviderBound = spawnRequest.modelSelection?.ref.providerConnectionId != null;
   if (!params.authorizeRequest) await assertStoredAuthTokenValidForSpawn(params.credentials.token);
   params.signal?.throwIfAborted();
@@ -1098,6 +1115,29 @@ export async function createSpawnedSession(
         accountEncryptionMode: accountEncryptionCurrentness.mode,
         rawSession: existing,
       });
+      const retained = SessionCreationCorrespondenceV1ReadSchema.safeParse(ownerMetadata?.sessionCreationCorrespondenceV1);
+      if (retained.success) {
+        const recipe = params.sessionCreationCorrespondence.recipe;
+        const restorePlacement = retained.data.recipe.managedCreationOrigin === 'machine_policy'
+          && recipe.managedCreation === undefined && retained.data.recipe.managedCreation !== undefined;
+        const restoreNativeSandbox = retained.data.recipe.nativeSandboxOrigin === 'machine_policy'
+          && params.authoredNativeSandbox === undefined;
+        if (restorePlacement || restoreNativeSandbox) {
+          const managedCreation = retained.data.recipe.managedCreation;
+          const nativeSandbox = retained.data.recipe.configuration?.nativeSandbox;
+          applyIsolation({
+            sessionCreationCorrespondence: { ...params.sessionCreationCorrespondence, recipe: {
+              ...recipe,
+              ...(restorePlacement ? { managedCreation, managedCreationOrigin: 'machine_policy' as const } : {}),
+              ...(restoreNativeSandbox ? { nativeSandboxOrigin: 'machine_policy' as const,
+                configuration: withSessionNativeSandbox(recipe.configuration, nativeSandbox) ?? null } : {}),
+            } },
+            ...(restorePlacement && managedCreation ? { managedTargetPlacement: {
+              managedId: managedCreation.managedId, workspaceRoot: params.directory } } : {}),
+            ...(restoreNativeSandbox && nativeSandbox !== undefined ? { nativeSandbox } : {}),
+          });
+        }
+      }
       const attestedContext = SessionAttestedContextV1Schema.safeParse(ownerMetadata?.attestedContext);
       const candidateValidation = validateExistingSessionCreationCandidate({
         ownerMetadata,
@@ -1290,6 +1330,7 @@ export async function createSpawnedSession(
   }
   const existingCreation = await rejoinExistingCreation();
   if (existingCreation) return existingCreation;
+  if (params.resumeOnly !== true && params.prepareSessionIsolation) applyIsolation(await params.prepareSessionIsolation());
   // Rejoined and nonce-resumed Sessions retain their birth context. Only a
   // genuinely fresh worker captures its lead's current memory attachments.
   let inheritedMemory: Awaited<ReturnType<typeof prepareSessionMemoryInheritance>> | undefined;

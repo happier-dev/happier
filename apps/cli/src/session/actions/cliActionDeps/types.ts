@@ -17,7 +17,7 @@ import type { RoleSourceReader } from '@/session/roles/roleSources';
 import type { StoredCredentials } from '@/persistence';
 import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import type { CredentialedConnectedAccountAuthenticationHost } from '@/plugins/runtime/connectedAccounts/authenticationHost';
-import type { DirectSpawnedSessionTransport } from '@/session/services/createSpawnedSession';
+import type { CreateSpawnedSessionParams, DirectSpawnedSessionTransport } from '@/session/services/createSpawnedSession';
 import type { ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 import type { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import type { dispatchOriginalAccountAction, ExternalActionHomeBinding } from '@/api/externalActionExecutionAuthorization';
@@ -81,12 +81,32 @@ export type RetryTemporaryThrottleNow = (input: Readonly<{
  */
 export type SessionSpawnDirectTargetTransport = Readonly<{
   machineId: string;
+  readMachineMetadataSnapshot?: () => import('@happier-dev/protocol/machines/machineMetadataFieldV1').MachineMetadataFieldReadV1;
   prepare: (
     request: SessionCreationTargetPreparationRequestV1,
     options?: Readonly<{ signal?: AbortSignal }>,
   ) => Promise<SessionCreationTargetPreparationResultV1>;
   spawnedSession: DirectSpawnedSessionTransport;
 }>;
+
+/** Host-private consumption of an opened Machine's isolation choice. */
+export type AcquireSessionIsolationSandbox = (request: Readonly<{
+  executeSessionIsolationAcquire: NonNullable<Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0]['executeSessionIsolationAcquire']>;
+  parent: Readonly<{
+    actionId: typeof import('@happier-dev/protocol/actions/actionIds').SESSION_SPAWN_NEW_ACTION_ID_V1;
+    input: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2').SessionSpawnNewInputV2;
+  }>;
+  configuredSandbox: import('@happier-dev/protocol/machines/machineIsolationV1').MachineIsolationPolicyV1['configuredSandboxes'][string];
+  lifecycle: 'fresh' | 'shared-kept';
+  /** Finalize native intent from the qualified preset before admission or provision. */
+  resolveNativeSandbox?: (sandboxTypeSupportsNativeSandbox: boolean) => 'on' | 'off' | undefined;
+  context: ActionExecutorContext;
+  signal?: AbortSignal;
+}>) => Promise<Readonly<{
+  managedCreation: import('@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1').SessionManagedCreationV1;
+  sandboxTypeSupportsNativeSandbox: boolean;
+  nativeSandbox?: 'on' | 'off';
+}>>;
 
 /** The daemon's already authenticated Machine socket; never the Account user socket. */
 export type SessionActionRpcTransport = (request: Readonly<{
@@ -272,6 +292,15 @@ export type CliActionDepsParams = Readonly<{
     Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
   >;
   sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
+  /** Original host-owned birth facts; placement and launch policy remain with the spawn owner. */
+  sessionSpawnBirthContext?: Pick<CreateSpawnedSessionParams,
+    'sessionCreationTag' | 'spawnNonce' | 'resumeOnly' | 'initialSessionRolesV1' | 'runtimeDescriptorV1'> & Readonly<{
+      /** Portable Workflow null explicitly selects native authentication. */
+      connectedServices?: null;
+      /** The original startup owner retains exact launch-retirement evidence. */
+      projectCreationFailure?: (error: unknown) => import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1').SessionSpawnNewResultV1;
+    }>;
+  acquireSessionIsolationSandbox?: AcquireSessionIsolationSandbox;
   machineActionDirectTargetTransport?: MachineActionDirectTargetTransport;
   /** The CLI's explicit `--machine-id`; the one Machine an Account-owned read goes through when the host has no Session or daemon of its own. */
   explicitMachineId?: string;

@@ -119,6 +119,7 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   authoringOrigin?: import('@happier-dev/protocol/plugins/ui').PluginUiNewSessionSeedOriginV1;
   /** Authored Session ceiling, committed before the native runner opens. */
   workspaceWrites?: 'allow' | 'deny';
+  nativeSandbox?: 'on' | 'off';
   /** Original cold-start operation, retained only until native Session open. Never serialized. */
   projectSetupOperation?: import('@/workspaces/projectSetup/projectSetupExecution').ProjectSetupOperationContext;
   allowedTools?: readonly string[];
@@ -213,6 +214,13 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
    * which the new runner adopts instead of starting one (single use; never persisted).
    */
   adoptSessionHolder?: Readonly<{ socketPath: string; holderPid: number; agentPid: number; turnId?: string }>;
+  /**
+   * Placement "target": run this Session's Agents in a managed target this daemon
+   * controls (a container/sandbox with no daemon inside). Its custody stays here;
+   * only the row's custodian may place a Session on it (managed driver `openSessionTarget`).
+   */
+  /** `workspaceRoot` is the Session workspace root inside the target; the spawn directory maps onto it. */
+  managedTargetPlacement?: Readonly<import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2').SessionManagedTargetPlacementV1>;
   /** Additional deny-only native-state verification for a no-copy handoff launch. */
   handoffStateTransfer?: 'transfer' | 'existing';
   /** Secret-free source consumed once by the child native Agent session opener. */
@@ -248,6 +256,8 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   approvedNewDirectoryCreation?: boolean;
   /** Canonical plugin-qualified Agent execution identity. */
   agentTarget?: AgentExecutionTargetV1;
+  /** Launch-only opaque native Agent arguments, retained in their original order. */
+  agentArgs?: string[];
   /** Released backend routing ingress and configured-ACP target only. */
   backendTarget?: BackendTargetRefV2;
   terminal?: TerminalSpawnOptions;
