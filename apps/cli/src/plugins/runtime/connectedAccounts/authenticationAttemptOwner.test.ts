@@ -538,17 +538,17 @@ describe('addressed manual attempts', () => {
         } finally { first.owner.dispose(); next.owner.dispose(); }
     });
 
-    it('restores a manual configuration target in a fresh host before replacement and submit', async () => {
+    it('retains a saved manual configuration form in an independent host until explicit continuation', async () => {
         const original = manualMode();
         const admittedMode = { ...original, descriptor: PluginConnectedAccountAuthenticationModeV2Schema.parse({
             ...original.descriptor, configuration: accountScopedConfiguration(),
         }) };
         const api = createConnectedAccountAttemptTransactionApiBoundary();
-        const transactions = createQualifiedConnectedAccountAttemptTransactionAdapters({
-            credentials: { token: 'account-token', encryption: null },
-            getAccountEncryptionMode: async () => 'plain', getMachineId: () => undefined, now: () => 1_000, api,
-        });
         const makeHost = () => {
+            const transactions = createQualifiedConnectedAccountAttemptTransactionAdapters({
+                credentials: { token: 'account-token', encryption: null },
+                getAccountEncryptionMode: async () => 'plain', getMachineId: () => undefined, now: () => 1_000, api,
+            });
             const store = createConnectedAccountAttemptConfigurationStore({ createRevision: () => 'configuration-2', transactions });
             const configuration = createConnectedAccountConfigurationOwner({
                 read: async target => target.kind === 'attempt' ? store.read(target) : null,
@@ -566,6 +566,7 @@ describe('addressed manual attempts', () => {
         };
         const first = makeHost();
         const next = makeHost();
+        const reader = makeHost();
         try {
             expect(await first.owner.beginConnect({ service, modeId: 'manual' })).toMatchObject({ status: 'configurationRequired' });
             first.owner.dispose();
@@ -573,17 +574,25 @@ describe('addressed manual attempts', () => {
             expect(control).toMatchObject({ target: { kind: 'attempt', attemptId: 'attempt-1' } });
             expect(await next.configuration.replaceForControl({ ...control!, expectedRevision: null,
                 values: { tenant: 'fixture' }, secretValues: {} })).toMatchObject({ status: 'committed' });
-            expect(await next.owner.continueConnect({ attemptId: 'attempt-1', expectedConfigurationRevision: 'configuration-2' }))
+            next.owner.dispose();
+            const savedControl = await reader.owner.resolveConfigurationControlTarget({ attemptId: 'attempt-1' });
+            expect(savedControl).toMatchObject({ target: { kind: 'attempt', attemptId: 'attempt-1' } });
+            expect(await reader.configuration.inspect(savedControl!)).toMatchObject({
+                status: 'ready', revision: 'configuration-2', values: { tenant: 'fixture' },
+            });
+            expect(await reader.owner.read({ attemptId: 'attempt-1' })).toMatchObject({ status: 'configurationRequired' });
+            expect(await reader.owner.continueConnect({ attemptId: 'attempt-1', expectedConfigurationRevision: 'configuration-2' }))
                 .toMatchObject({ status: 'awaitingManual' });
+            expect(await reader.owner.resolveConfigurationControlTarget({ attemptId: 'attempt-1' })).toBeNull();
             expect(api.records.size).toBe(1);
-            expect(await next.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'synthetic-token' } }))
+            expect(await reader.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'synthetic-token' } }))
                 .toMatchObject({ status: 'connected' });
-            expect(next.settle).toHaveBeenCalledOnce();
-            expect(next.settle.mock.calls[0]?.[0]).toMatchObject({
+            expect(reader.settle).toHaveBeenCalledOnce();
+            expect(reader.settle.mock.calls[0]?.[0]).toMatchObject({
                 expectedConfigurationRevision: 'configuration-2', stagedAccountConfigurationContent: { values: { tenant: 'fixture' } },
             });
             expect(api.records.size).toBe(0);
-        } finally { first.owner.dispose(); next.owner.dispose(); }
+        } finally { first.owner.dispose(); next.owner.dispose(); reader.owner.dispose(); }
     });
 
     it('preserves the admitted configuration revision when restoring a manual draft', async () => {

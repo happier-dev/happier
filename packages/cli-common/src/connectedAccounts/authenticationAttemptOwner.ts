@@ -1052,6 +1052,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
 
     async function begin(input: AttemptTarget, restored?: Readonly<{
         attemptId: string; createdAtMs: number; expiresAtMs: number; sourceCustody: ConnectedAccountSourceCustodyV1;
+        phase: 'awaitingManual' | 'configurationRequired';
     }>): Promise<AttemptResponse> {
         if (disposed) return unavailable();
         let admitted: ConnectedAccountAttemptModeAdmission;
@@ -1109,13 +1110,14 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             }
             return unavailable();
         }
-        if (configuration.status !== 'ready') {
-            if (configuration.status === 'configurationRequired') {
+        // Saving complete values does not continue a retained configuration form.
+        if (configuration.status !== 'ready' || restored?.phase === 'configurationRequired') {
+            if (configuration.status === 'configurationRequired' || configuration.status === 'ready') {
                 const response: AttemptResponse = {
                     status: 'configurationRequired',
                     ...(reservedAttemptId ? { attemptId: reservedAttemptId } : {}),
-                    target: configuration.target,
-                    missingFieldIds: Object.freeze([...configuration.missingFieldIds]),
+                    target: configuration.status === 'ready' ? configuration.snapshot.target : configuration.target,
+                    missingFieldIds: configuration.status === 'ready' ? [] : Object.freeze([...configuration.missingFieldIds]),
                 };
                 if (reservedAttemptId) {
                     reservedAttemptIds.delete(reservedAttemptId);
@@ -3213,7 +3215,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     ...(manual.expectedConfigurationRevision === null ? {}
                         : { expectedConfigurationRevision: manual.expectedConfigurationRevision }),
                 }, { attemptId: input.attemptId, createdAtMs: record.scope.createdAtMs,
-                    expiresAtMs: record.expiresAtMs, sourceCustody: manual.sourceCustody });
+                    expiresAtMs: record.expiresAtMs, sourceCustody: manual.sourceCustody,
+                    phase: record.scope.phase === 'configurationRequired' ? 'configurationRequired' : 'awaitingManual' });
                 return response.status === 'awaitingManual' || response.status === 'configurationRequired' ? null : response;
             }
             if (record.kind === 'oauth') {

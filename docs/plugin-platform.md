@@ -10260,6 +10260,10 @@ their existing staged Account content; OAuth/device drafts before authorization
 retain a sealed configuration draft until the ordinary continuation consumes it.
 This is unreleased 0.3 behavior and does not add another persistence store.
 
+Restoring a manual draft preserves its saved configuration form, including when
+all required values are present. Reading or replacing that form does not advance
+authentication; explicit continuation admits the saved revision and opens manual input.
+
 After exchanging an authorization code, a provider can stage its grant in
 `attemptCredentials` and return `{ status: 'configurationRequired', fields }`.
 The fields replace matching Account configuration fields in the admitted mode;
