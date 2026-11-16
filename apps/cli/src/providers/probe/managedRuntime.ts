@@ -2,6 +2,7 @@ import { createProviderManagedProbeRequestFingerprintV1 } from '@happier-dev/pro
 import { randomUUID } from 'node:crypto';
 import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import type { ProviderErrorV1 } from '@happier-dev/protocol';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type {
   ManagedProviderEndpointHttpAccess,
@@ -27,13 +28,24 @@ import type { ProviderProbeManagedServiceRequest } from './client';
 
 type AcquireProviderCatalogRegistryLease = () => Promise<PluginRuntimeRegistryLease>;
 
+function managedCatalogAcquisitionError(error: unknown, ticket: ProviderManagedProbeHostAuthorizationTicket,
+  phase: string): ProviderErrorV1 {
+  const providerError = ProviderErrorV1Schema.safeParse(error);
+  return providerError.success ? providerError.data : createProviderErrorV1('provider_endpoint_unavailable', {
+    connectionId: ticket.connectionId, machineId: ticket.machineId,
+    failureCause: projectActionFailureCauseV1(error, phase),
+  });
+}
+
 function managedCatalogLaunchError(input: Readonly<{
   ticket: ProviderManagedProbeHostAuthorizationTicket;
   code: PublicManagedProviderRuntimeStartFailureCode;
+  failureCause?: ActionFailureCauseV1;
 }>): ProviderErrorV1 {
   const context = {
     connectionId: input.ticket.connectionId,
     machineId: input.ticket.machineId,
+    ...(input.failureCause ? { failureCause: input.failureCause } : {}),
   };
   switch (input.code) {
     case 'managed_provider_request_invalid':
@@ -181,13 +193,7 @@ export function createProviderManagedCatalogRuntimePort(input: Readonly<{
         try {
           await scope.release();
         } catch {
-          return Object.freeze({
-            ok: false as const,
-            error: createProviderErrorV1('provider_endpoint_unavailable', {
-              connectionId: ticket.connectionId,
-              machineId: ticket.machineId,
-            }),
-          });
+          // Cleanup cannot replace the acquisition or admission refusal.
         }
         return Object.freeze({ ok: false as const, error });
       };
@@ -196,11 +202,8 @@ export function createProviderManagedCatalogRuntimePort(input: Readonly<{
       try {
         registryLease = await acquireRegistryLease();
         scope.register(registryLease.release);
-      } catch {
-        return await fail(createProviderErrorV1(
-          'provider_endpoint_unavailable',
-          { connectionId: ticket.connectionId, machineId: ticket.machineId },
-        ));
+      } catch (error) {
+        return await fail(managedCatalogAcquisitionError(error, ticket, 'providers.catalog.acquire_registry'));
       }
       const registry = registryLease.registry;
       if (
@@ -238,8 +241,8 @@ export function createProviderManagedCatalogRuntimePort(input: Readonly<{
           signal,
           isCurrent: isAuthorizationCurrent,
         });
-      } catch {
-        invocationServices = null;
+      } catch (error) {
+        return await fail(managedCatalogAcquisitionError(error, ticket, 'providers.catalog.acquire_services'));
       }
       if (!invocationServices) {
         return await fail(createProviderErrorV1(
@@ -274,7 +277,8 @@ export function createProviderManagedCatalogRuntimePort(input: Readonly<{
           ok: false,
           error: started.code === 'managed_provider_authorization_changed'
             ? authorizationError()
-            : managedCatalogLaunchError({ ticket, code: started.code }),
+            : managedCatalogLaunchError({ ticket, code: started.code,
+              failureCause: started.startupFailure?.failureCause }),
         };
       }
       const admittedEndpointUrl = started.access.endpointUrl(

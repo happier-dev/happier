@@ -55,6 +55,37 @@ vi.mock('socket.io-client', () => ({ io: socketBoundary.io }));
 vi.mock('@/session/transport/rpc/machineRpc', () => ({ callExactMachineRpc: transport.call }));
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); transport.call.mockReset(); });
 
+it('retains the managed runtime startup cause through the real catalog probe', async () => {
+  await withConfiguredDaemonTestHome({ prefix: 'managed-probe-start-cause-' }, async ({ homeDir }) => {
+    const controller = createPluginReloadController();
+    const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
+      controller, probeCatalog: true });
+    try {
+      const unavailable = async (): Promise<never> => { throw new Error('Startup fixture must not acquire Account material'); };
+      const purposeRuntime = createDaemonConnectedAccountPurposeBindingRuntime({ reloadController: controller,
+        resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+        establishedRuntimeOwner: { invokeWithReceipt: unavailable, invokeDirectMaterial: unavailable },
+      });
+      const services = createRuntimeProviderServices({ machineId: fixture.machineId, happyHomeDir: homeDir,
+        registry: fixture.contributes, featureGate: { isEnabled: () => true }, getAccountSettingsSnapshot: () => fixture.snapshot,
+        resolveManagedPurposeBindingIntent: purposeRuntime.resolveBindingIntent,
+        managedCatalogRuntime: createProviderManagedCatalogRuntimePort({ happyHomeDir: homeDir, acquireRegistryLease: async () => {
+          const lease = controller.tryAcquireRuntimeRegistry();
+          if (!lease) throw new Error('Expected installed Provider registry');
+          return lease;
+        } }),
+      });
+      const result = DaemonProviderProbeResponseV1Schema.parse(await services.probe({
+        connectionId: fixture.record.connectionId, machineId: fixture.machineId,
+      }));
+      expect(result).toMatchObject({ status: 'error', error: { code: 'provider_endpoint_unavailable', failureCause: {
+        phase: 'providers.runtime_start', errorClass: 'Error', errorCode: null, httpStatus: null,
+      } } });
+      expect(JSON.stringify(result)).not.toContain('Worker must not start');
+    } finally { await fixture.cleanup(); }
+  });
+});
+
 it.each(['cancelled'] as const)('settles Gateway binding status during a pending purpose Home read on %s', reason =>
   withConfiguredDaemonTestHome({ prefix: 'gateway-binding-status-lifetime-' }, async ({ homeDir }) => {
     let entered = () => {};
