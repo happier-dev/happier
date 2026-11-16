@@ -12798,6 +12798,11 @@ const ca = {
         detailsTitle: 'Detalls del proveïdor', name: 'Nom', namePlaceholder: 'Passarel·la de l’empresa', baseUrl: 'URL base', baseUrlPlaceholder: 'https://gateway.example.com/v1', modelsPath: 'Camí dels models', credentialsTitle: 'Credencials', credentialsFooter: 'Enganxa la clau a sota; es guarda com a Secret desat. No enganxis mai una clau API a l’URL ni a les capçaleres.', requiresApiKey: 'Requereix una clau API', requiresApiKeyYes: 'Utilitza un Secret desat per a les sol·licituds', requiresApiKeyNo: 'Connecta sense credencials', apiKey: 'Clau API', apiKeyDescription: 'Tria o crea un Secret desat', credentialStyleTitle: 'Format de la clau API', credentialHeader: 'Nom de la capçalera', credentialStyle: { bearer: 'Token bearer d’autorització', xApiKey: 'Capçalera x-api-key', apiKey: 'Capçalera api-key', customHeader: 'Capçalera personalitzada' }, catalogTitle: 'Catàleg de models', catalogFooter: 'Obtén els models automàticament quan l’endpoint ho permeti o afegeix-los manualment més tard.', fetchModels: 'Obtén els models automàticament', fetchModelsYes: 'Utilitza l’endpoint de llista de models del proveïdor', fetchModelsNo: 'Afegeix els ID de model manualment', verifyTitle: 'Connecta', verifyFooter: 'Prova primer quan sigui possible i després desa el proveïdor.', save: 'Desa el proveïdor', connect: 'Connecta el proveïdor',
     },
     errors: {
+        probeResponseInvalidTitle: "La resposta del proveïdor no és vàlida",
+        agentRuntimeUnsupportedTitle: "L’entorn de l’agent no és compatible",
+        materializationFailedTitle: "No s’ha pogut preparar el proveïdor",
+        connectionConfigurationInvalidTitle: "La connexió del proveïdor no és vàlida",
+
         effortUnsupportedTitle: "Esforç de raonament no compatible",
         effortUnsupportedDescription: "Tria un esforç de raonament compatible amb aquest model i agent, o esborra l’opció.",
         machineOfflineTitle: "Aquesta màquina està desconnectada",

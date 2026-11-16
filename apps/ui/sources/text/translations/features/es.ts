@@ -12819,6 +12819,11 @@ const es = {
         fetchModelsYes: 'Usar el endpoint de lista de modelos del proveedor', fetchModelsNo: 'Añadir los ID de modelo manualmente', verifyTitle: 'Conectar', verifyFooter: 'Prueba primero cuando sea posible y después guarda el proveedor.', save: 'Guardar proveedor', connect: 'Conectar proveedor',
     },
     errors: {
+        probeResponseInvalidTitle: "La respuesta del proveedor no es válida",
+        agentRuntimeUnsupportedTitle: "El entorno del agente no es compatible",
+        materializationFailedTitle: "No se pudo preparar el proveedor",
+        connectionConfigurationInvalidTitle: "La conexión del proveedor no es válida",
+
         effortUnsupportedTitle: "Esfuerzo de razonamiento no compatible",
         effortUnsupportedDescription: "Elige un esfuerzo de razonamiento compatible con este modelo y agente, o borra la opción.",
         machineOfflineTitle: "Esta máquina está desconectada",

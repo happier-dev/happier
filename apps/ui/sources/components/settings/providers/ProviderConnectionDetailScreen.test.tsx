@@ -2964,11 +2964,11 @@ describe('ProviderConnectionDetailScreen', () => {
         await pressAndFlush(activate);
         expect(run).not.toHaveBeenCalled();
         await pressAndFlush(screen.findByTestId('provider-connection-managed-purpose-save') ?? undefined);
-        await waitForHomeGovernance(() => expect(presentedTitles(screen)).toContain('settingsProviders.errors.connectionInvalidTitle'));
+        await waitForHomeGovernance(() => expect(presentedTitles(screen)).toContain('settingsProviders.errors.connectionConfigurationInvalidTitle'));
         expect(alert).not.toHaveBeenCalled();
         expect(stored.writes).toBe(0);
         expect(stored.catalog.connections[0]?.deployment.kind).toBe('external');
-        expect(presentedTitles(screen)).toContain('settingsProviders.errors.connectionInvalidTitle');
+        expect(presentedTitles(screen)).toContain('settingsProviders.errors.connectionConfigurationInvalidTitle');
         expect(run).not.toHaveBeenCalled();
     });
 

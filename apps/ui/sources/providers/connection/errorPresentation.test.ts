@@ -4,6 +4,17 @@ import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/p
 import { presentProviderError, presentProviderRecoveryAction } from './errorPresentation';
 
 describe('provider error presentation', () => {
+    it('distinguishes catalog, runtime, materialization, settings and connection failures in picker titles', () => {
+        const codes = [
+            'provider_probe_response_invalid',
+            'provider_agent_runtime_unsupported',
+            'provider_materialization_failed',
+            'provider_settings_invalid',
+            'provider_connection_invalid',
+        ] as const;
+        const titles = codes.map(code => presentProviderError(createProviderErrorV1(code)).titleKey);
+        expect(new Set(titles).size).toBe(codes.length);
+    });
     it('presents a refused server save with Retry and retains the closed database cause', () => {
         const failureCause = { phase: 'providers.connections.save', errorCode: 'database_transaction_timeout',
             errorClass: 'Error', httpStatus: 503 } as const;
@@ -95,10 +106,10 @@ describe('provider error presentation', () => {
             .toBe('settingsProviders.errors.sourceUnavailableTitle');
     });
 
-    it('presents unsupported Agent runtimes through the existing review-connection recovery copy', () => {
+    it('distinguishes unsupported Agent runtimes while retaining connection review', () => {
         expect(presentProviderError('provider_agent_runtime_unsupported')).toEqual(expect.objectContaining({
-            titleKey: 'settingsProviders.errors.connectionInvalidTitle',
-            descriptionKey: 'settingsProviders.errors.connectionInvalidDescription',
+            titleKey: 'settingsProviders.errors.agentRuntimeUnsupportedTitle',
+            descriptionKey: 'settingsProviders.errors.incompatibleDescription',
             action: 'review_connection',
         }));
     });
@@ -118,8 +129,8 @@ describe('provider error presentation', () => {
 
     it('presents materialization failures as connection review rather than restart continuity', () => {
         expect(presentProviderError('provider_materialization_failed')).toEqual(expect.objectContaining({
-            titleKey: 'settingsProviders.errors.connectionInvalidTitle',
-            descriptionKey: 'settingsProviders.errors.connectionInvalidDescription',
+            titleKey: 'settingsProviders.errors.materializationFailedTitle',
+            descriptionKey: 'settingsProviders.errors.genericDescription',
             action: 'review_connection',
         }));
     });

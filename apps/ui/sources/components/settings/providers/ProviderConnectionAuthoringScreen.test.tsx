@@ -1356,7 +1356,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
 
         expect(probeProviderDraft).not.toHaveBeenCalled();
         expect(presentedTitles(screen))
-            .toContain('settingsProviders.errors.connectionInvalidTitle');
+            .toContain('settingsProviders.errors.connectionConfigurationInvalidTitle');
         expect(presentedTitles(screen))
             .toContain('settingsProviders.errors.actions.reviewConnection');
         expect(presentedTitles(screen))

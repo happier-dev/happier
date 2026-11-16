@@ -164,8 +164,8 @@ const PRESENTATIONS = Object.freeze({
         descriptionKey: 'settingsProviders.errors.mutationOutcomeUnknownDescription',
     },
     provider_probe_response_invalid: {
-        titleKey: 'settingsProviders.errors.connectionInvalidTitle',
-        descriptionKey: 'settingsProviders.errors.connectionInvalidDescription',
+        titleKey: 'settingsProviders.errors.probeResponseInvalidTitle',
+        descriptionKey: 'settingsProviders.errors.genericDescription',
     },
     provider_model_not_found: {
         titleKey: 'settingsProviders.errors.modelNotFoundTitle',
@@ -192,16 +192,16 @@ const PRESENTATIONS = Object.freeze({
         descriptionKey: 'settingsProviders.errors.restartRequiredDescription',
     },
     provider_agent_runtime_unsupported: {
-        titleKey: 'settingsProviders.errors.connectionInvalidTitle',
-        descriptionKey: 'settingsProviders.errors.connectionInvalidDescription',
+        titleKey: 'settingsProviders.errors.agentRuntimeUnsupportedTitle',
+        descriptionKey: 'settingsProviders.errors.incompatibleDescription',
     },
     provider_managed_requires_daemon: {
         titleKey: 'settingsProviders.errors.managedRequiresDaemonTitle',
         descriptionKey: 'settingsProviders.errors.managedRequiresDaemonDescription',
     },
     provider_materialization_failed: {
-        titleKey: 'settingsProviders.errors.connectionInvalidTitle',
-        descriptionKey: 'settingsProviders.errors.connectionInvalidDescription',
+        titleKey: 'settingsProviders.errors.materializationFailedTitle',
+        descriptionKey: 'settingsProviders.errors.genericDescription',
     },
     provider_probe_authorization_invalid: {
         titleKey: 'settingsProviders.errors.probeExpiredTitle',
@@ -216,7 +216,7 @@ const PRESENTATIONS = Object.freeze({
         descriptionKey: 'settingsProviders.errors.connectionInvalidDescription',
     },
     provider_connection_invalid: {
-        titleKey: 'settingsProviders.errors.connectionInvalidTitle',
+        titleKey: 'settingsProviders.errors.connectionConfigurationInvalidTitle',
         descriptionKey: 'settingsProviders.errors.connectionInvalidDescription',
     },
     provider_profile_migration_source_changed: {

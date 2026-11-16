@@ -12944,6 +12944,11 @@ const fr = {
         fetchModelsYes: 'Utiliser l’endpoint de liste de modèles du provider', fetchModelsNo: 'Ajouter les ids de modèle manuellement', verifyTitle: 'Connecter', verifyFooter: 'Teste d’abord si possible, puis enregistre le provider.', save: 'Enregistrer le provider', connect: 'Connecter le provider',
     },
     errors: {
+        probeResponseInvalidTitle: "La réponse du provider est invalide",
+        agentRuntimeUnsupportedTitle: "L’environnement de l’agent n’est pas pris en charge",
+        materializationFailedTitle: "Impossible de préparer le provider",
+        connectionConfigurationInvalidTitle: "La connexion au provider est invalide",
+
         effortUnsupportedTitle: "Effort de raisonnement non pris en charge",
         effortUnsupportedDescription: "Choisissez un effort de raisonnement pris en charge par ce modèle et cet agent, ou effacez cette option.",
         machineOfflineTitle: "Cette machine est hors ligne",

@@ -7190,6 +7190,10 @@ const enSettingsProviders = {
     credentialUnsupportedTitle: 'API key format is not supported',
     credentialUnsupportedDescription:
       'Review this connection and choose a credential format supported by the selected agent.',
+    probeResponseInvalidTitle: "Provider response is invalid",
+    agentRuntimeUnsupportedTitle: "Agent runtime is not supported",
+    materializationFailedTitle: "Couldn’t prepare the Provider",
+    connectionConfigurationInvalidTitle: "Provider connection is invalid",
     connectionInvalidTitle: 'Provider settings are invalid',
     connectionInvalidDescription:
       'Review the endpoint and model-list settings, then test the connection again.',
