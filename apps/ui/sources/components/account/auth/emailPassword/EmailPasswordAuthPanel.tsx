@@ -357,6 +357,7 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
     const emailField = (
         autoComplete: 'email' | 'username',
         onSubmitEditing?: () => void,
+        help?: React.ReactNode,
     ) => (
         <StepFieldGroup>
             <StepFieldLabel nativeID={EMAIL_LABEL_ID}>{t('settingsAccount.nativePassword.email')}</StepFieldLabel>
@@ -384,7 +385,7 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
             />
             {emailInvalid ? (
                 <StepFieldHelp testID={emailErrorId} nativeID={emailErrorId} tone="error">{problemMessage}</StepFieldHelp>
-            ) : null}
+            ) : help}
         </StepFieldGroup>
     );
 
@@ -556,6 +557,12 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
             {emailField(
                 provisioning ? 'email' : 'username',
                 collectsCredentials ? undefined : submitProvision,
+                // Without a password here, the field's own line says what happens to the address.
+                collectsCredentials ? undefined : (
+                    <StepFieldHelp testID="email-password-verify-first">
+                        {t('settingsAccount.nativePassword.verifyReturnToCreate')}
+                    </StepFieldHelp>
+                ),
             )}
             {collectsCredentials ? (
             <ListPresentationProvider value="page">
@@ -574,11 +581,7 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
                 onSubmitEditing={provisioning ? () => confirmRef.current?.focus() : submitLogin}
             />
             </ListPresentationProvider>
-            ) : (
-                <Text testID="email-password-verify-first" style={styles.hint}>
-                    {t('settingsAccount.nativePassword.verifyReturnToCreate')}
-                </Text>
-            )}
+            ) : null}
             {provisioning && collectsCredentials ? (
                 <ListPresentationProvider value="page">
                 <PasswordField
