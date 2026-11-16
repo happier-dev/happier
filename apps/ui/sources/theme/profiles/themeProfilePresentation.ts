@@ -32,7 +32,7 @@ export function projectPluginThemeProfileDocument(theme: ThemeProfileV1, source:
 export function projectThemeMiniaturePalette(profile: ThemeMiniatureInput): ThemeProfileArtifactHeader['palette'] {
     const mode = resolveThemeProfileAssetAppearance(profile);
     const authored = profile.overrides[mode];
-    return { seeds: profile.seeds, radius: profile.style?.radius ?? DEFAULT_THEME_RADIUS_SCALE_NAME,
+    return { ...(profile.seeds ? { seeds: profile.seeds } : {}), radius: profile.style?.radius ?? DEFAULT_THEME_RADIUS_SCALE_NAME,
         overrides: Object.fromEntries(Object.values(THEME_MINIATURE_OVERRIDE_TOKENS).flatMap(token =>
             authored[token] === undefined ? [] : [[token, authored[token]]])) };
 }
@@ -56,4 +56,16 @@ export function projectThemeLibraryEntry(document: ThemeProfileDocument, provena
     return { id: document.profile.id, reference, name: document.profile.name, mode: miniature.mode, source,
         editable: source.kind === 'yours', deletable: source.kind === 'yours' || source.kind === 'store',
         compatibility: presented.compatibility, miniature };
+}
+
+
+/** Every library surface uses the same source join and stable source order. */
+export function projectThemeLibraryEntries(saved: readonly ThemeLibraryEntry[], plugins: readonly ThemeLibraryEntry[], builtIns: readonly ThemeLibraryEntry[]): readonly ThemeLibraryEntry[] {
+    return [...saved.filter(entry => entry.source.kind === 'yours'), ...saved.filter(entry => entry.source.kind !== 'yours'), ...plugins, ...builtIns];
+}
+
+/** Admitted plugin declarations join as references, never persisted Artifact copies. */
+export function projectPluginThemeLibraryEntries(items: readonly (Pick<Extract<ThemeProfileSource, { kind: 'plugin' }>, 'pluginId' | 'contributionId'> & Readonly<{ theme: ThemeProfileV1 }>)[]): readonly ThemeLibraryEntry[] {
+    return items.map(item => projectThemeLibraryEntry(projectPluginThemeProfileDocument(item.theme,
+        { kind: 'plugin', pluginId: item.pluginId, contributionId: item.contributionId })));
 }

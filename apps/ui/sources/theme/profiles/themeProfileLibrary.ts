@@ -3,7 +3,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { ArtifactCreateIdV1Schema } from '@happier-dev/protocol/artifacts/artifactIdV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { getBuiltInThemeLibraryEntries, getBuiltInThemeProfileDocument } from './builtInThemeProfiles';
-import { projectThemeLibraryEntry, projectThemeProfileDocumentPresentation } from './themeProfilePresentation';
+import { projectThemeLibraryEntries, projectThemeLibraryEntry, projectThemeProfileDocumentPresentation } from './themeProfilePresentation';
 
 export type ThemeProfileArtifactRecord = Readonly<{ document: ThemeProfileDocument; revision: number; headerVersion: number }>;
 export type ThemeProfileArtifactSummary = Readonly<{ entry: ThemeLibraryEntry; revision: number; headerVersion: number }>;
@@ -79,7 +79,7 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
         list: async () => {
             await artifacts.load();
             const saved = artifacts.list().map(row => row.entry);
-            return [...saved.filter(entry => entry.source.kind === 'yours'), ...saved.filter(entry => entry.source.kind !== 'yours'), ...(context.pluginProfiles?.list() ?? []), ...getBuiltInThemeLibraryEntries()];
+            return projectThemeLibraryEntries(saved, context.pluginProfiles?.list() ?? [], getBuiltInThemeLibraryEntries());
         },
         get: async reference => {
             if (reference.kind === 'built-in') return getBuiltInThemeProfileDocument(reference.presetId);

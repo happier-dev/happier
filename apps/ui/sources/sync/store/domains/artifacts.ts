@@ -1,3 +1,4 @@
+import { THEME_ARTIFACT_KIND } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
 import { settleMountedWidgetAreaLayoutDeletion } from '../../domains/widgets/widgetAreaLayoutSelection';
 import type { DecryptedArtifact } from '../../domains/artifacts/artifactTypes';
 import type { ArtifactInventoryPublication, ArtifactInventorySelection } from '../../domains/artifacts/artifactInventory';
@@ -171,6 +172,7 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
   let incompleteInbox = state.artifactIncompleteInboxArtifacts;
   let browser = state.artifactBrowserArtifacts;
   let prompts = state.artifactPromptLibraryArtifacts;
+  let themes = state.artifactThemeLibraryArtifacts;
   let sessionApprovals = state.artifactApprovalArtifactsBySessionId;
   let discussionApprovals = state.artifactApprovalArtifactsByDiscussionId;
   const removedSessionGroups = new Set<string>();
@@ -226,6 +228,20 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
       if (prompts === state.artifactPromptLibraryArtifacts) prompts = { ...prompts };
       if (promptRow) prompts[id] = promptRow; else delete prompts[id];
     }
+    const themeHeader = artifact?.rawHeader ?? artifact?.header;
+    const themeRow = artifact?.isDecrypted && !artifact.draft && themeHeader?.kind === THEME_ARTIFACT_KIND ? artifact : null;
+    const previousTheme = themes[id];
+    const sameThemeHeader = previousTheme && themeRow && previousTheme.header === themeRow.header
+      && previousTheme.rawHeader === themeRow.rawHeader && previousTheme.ownerAccountId === themeRow.ownerAccountId
+      && previousTheme.access === themeRow.access && previousTheme.sourceServerId === themeRow.sourceServerId;
+    if (!sameThemeHeader && (themeRow || previousTheme)) {
+      if (themes === state.artifactThemeLibraryArtifacts) themes = { ...themes };
+      if (themeRow) themes[id] = { isDecrypted: true, id: themeRow.id, title: themeRow.title,
+        header: themeRow.header, rawHeader: themeRow.rawHeader, headerVersion: themeRow.headerVersion,
+        bodyVersion: themeRow.bodyVersion, seq: themeRow.seq, createdAt: themeRow.createdAt, updatedAt: themeRow.updatedAt,
+        sourceServerId: themeRow.sourceServerId, ownerAccountId: themeRow.ownerAccountId, access: themeRow.access };
+      else delete themes[id];
+    }
     const beforeRunId = readWorkflowPublicationApprovalRunId(state.artifacts[id]);
     const runId = readWorkflowPublicationApprovalRunId(artifact);
     workflowApprovals = patchApprovalArtifactGroups(workflowApprovals, state.artifactWorkflowPublicationArtifactsByRunId, id,
@@ -263,7 +279,7 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
     artifactOpenApprovalEntries: openApprovals,
     artifactListedOpenApprovals: listedApprovals,
     artifactDiscussionAttentionEntries: discussionAttention, artifactIncompleteInboxArtifacts: incompleteInbox,
-    artifactBrowserArtifacts: browser, artifactPromptLibraryArtifacts: prompts,
+    artifactBrowserArtifacts: browser, artifactPromptLibraryArtifacts: prompts, artifactThemeLibraryArtifacts: themes,
     artifactWorkflowPublicationArtifactsByRunId: workflowApprovals,
     artifactUnclassifiedWorkflowPublicationArtifacts: unclassifiedWorkflowApprovals };
 }
@@ -279,6 +295,8 @@ export type ArtifactsDomain = {
   /** Selection membership is projected once at admission, never by whole-inventory subscribers. */
   artifactBrowserArtifacts: Record<string, DecryptedArtifact>;
   artifactPromptLibraryArtifacts: Record<string, DecryptedArtifact>;
+  /** Theme headers only; body hydration retains this list input identity. */
+  artifactThemeLibraryArtifacts: Record<string, DecryptedArtifact>;
   artifactInboxEntries: Record<string, InboxArtifactEntry>;
   /** The same entries newest first, merged per applied page; retained entries are never re-sorted. */
   artifactInboxOrder: readonly InboxArtifactEntry[];
@@ -335,6 +353,7 @@ export function createArtifactsDomain<S extends ArtifactsDomain & { profileScope
     artifactApprovalArtifactsByDiscussionId: {},
     artifactBrowserArtifacts: {},
     artifactPromptLibraryArtifacts: {},
+    artifactThemeLibraryArtifacts: {},
     artifactInboxEntries: {},
     artifactInboxOrder: [],
     artifactHealthNoticesByEnvironmentId: {},

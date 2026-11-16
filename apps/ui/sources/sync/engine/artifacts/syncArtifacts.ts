@@ -1545,7 +1545,7 @@ export async function createArtifactViaApi(params: {
     });
 }
 
-export async function createArtifactWithHeaderViaApi(params: {
+export type CreateArtifactWithHeaderParams = {
     idScope?: ArtifactIdScopeV1;
     memoryDecisionSource?: CoordinationMessageRefV1;
     credentials: AuthCredentials;
@@ -1561,7 +1561,15 @@ export async function createArtifactWithHeaderViaApi(params: {
     encryption: Encryption | null;
     artifactDataKeys: ArtifactDataKeyCache;
     addArtifact: (artifact: DecryptedArtifact) => void;
-}): Promise<string> {
+};
+export type ArtifactCreationResult = Readonly<{ artifact: DecryptedArtifact; created: boolean | undefined }>;
+
+export async function createArtifactWithHeaderViaApi(params: CreateArtifactWithHeaderParams): Promise<string> {
+    return (await createArtifactWithHeaderResultViaApi(params)).artifact.id;
+}
+
+/** The server's create acknowledgement decides whether this operation created the record. */
+export async function createArtifactWithHeaderResultViaApi(params: CreateArtifactWithHeaderParams): Promise<ArtifactCreationResult> {
     const { credentials, header, encryption, artifactDataKeys, addArtifact } = params;
     // A retained reference belongs to an existing Artifact; only update/restore can reuse it.
     if (params.body !== null && typeof params.body === 'object' && !('bytes' in params.body)) {
@@ -1664,13 +1672,13 @@ export async function createArtifactWithHeaderViaApi(params: {
 
         // Exact-id create can return a pre-existing row after a same-id race. Its
         // content and key are authoritative, not the plaintext we attempted to save.
-        if (params.artifactId !== undefined) {
+        if (params.artifactId !== undefined || artifact.created === false) {
             const returnedArtifact = await decryptArtifactWithBody({ artifact, encryption, artifactDataKeys });
             if (!returnedArtifact?.isDecrypted) {
                 throw Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' });
             }
             addArtifact(returnedArtifact);
-            return artifact.id;
+            return { artifact: returnedArtifact, created: artifact.created };
         }
 
         // Add to local storage
@@ -1696,7 +1704,7 @@ export async function createArtifactWithHeaderViaApi(params: {
 
         addArtifact(decryptedArtifact);
 
-        return artifactId;
+        return { artifact: decryptedArtifact, created: artifact.created };
     } catch (error) {
         console.error('Failed to create artifact:', error);
         throw error;

@@ -16,7 +16,7 @@ import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Sche
 import { isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactPublicAudienceV1ReadSchema, ArtifactRevisionListResponseV1Schema, ArtifactQuotaExceededV1Schema, ArtifactRevisionV1Schema, ArtifactStorageUsageV1Schema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBlobReadResponseV1Schema, ArtifactBlobAccountEncryptionStageV1Schema, type ArtifactBlobStoredContentV1, type ArtifactBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { ArtifactHttpReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
+import { ArtifactCreateHttpResponseV1Schema, ArtifactHttpReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
     ArtifactReadHeadersBatchResponseV1Schema, type ArtifactReadBatchResponseV1,
     type ArtifactReadHeadersBatchResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { createServerHttpRequestBodyItemBudgetV1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
@@ -89,6 +89,8 @@ async function readWriteRefusal(response: Response, fallback: string): Promise<H
         response.status === 408 || response.status === 429 || response.status >= 500,
         { status: response.status, ...(code ? { code } : {}) });
 }
+
+const artifactCreationProjectionSchema = pick(ArtifactCreateHttpResponseV1Schema, { created: true });
 
 const artifactAuthorityProjectionSchema = pick(ArtifactAccessRecipientCensusResponseV1Schema, {
     ownerAccountId: true, access: true, encryptionMode: true,
@@ -531,7 +533,7 @@ export async function createArtifact(
     credentials: AuthCredentials, 
     request: ArtifactCreateRequest,
     opts: ArtifactApiOptions = {},
-): Promise<Artifact> {
+): Promise<Artifact & Readonly<{ created?: boolean }>> {
     throwIfAborted(opts.signal);
     if (request.memoryDecisionSource && request.blob)
         throw new HappyError('memory_decision_source_unsupported', false, { code: 'memory_decision_source_unsupported' });
@@ -572,7 +574,14 @@ export async function createArtifact(
             throw await readWriteRefusal(response, `Failed to create artifact: ${response.status}`);
         }
 
-        return readArtifactResponse(await response.json());
+        const value: unknown = await response.json();
+        const acknowledgement = artifactCreationProjectionSchema.safeParse({
+            created: value && typeof value === 'object' ? Reflect.get(value, 'created') : undefined,
+        });
+        if (!acknowledgement.success) {
+            throw new HappyError('Artifact creation acknowledgement is unavailable', false, { code: 'artifact_content_unavailable' });
+        }
+        return { ...readArtifactResponse(value), ...acknowledgement.data };
     };
 
     if (opts.retry === 'none') {

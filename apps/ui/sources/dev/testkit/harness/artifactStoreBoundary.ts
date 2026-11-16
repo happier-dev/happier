@@ -314,7 +314,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
         // Re-creating an id the Account already holds returns the stored row
         // unchanged, as the Home's idempotent create does.
         const existing = rows.get(id);
-        if (existing) return existing.ownerAccountId === ownerAccountId ? json(existing)
+        if (existing) return existing.ownerAccountId === ownerAccountId ? json({ ...projectArtifactBoundaryReadRow(existing), created: false })
             : json({ error: 'Artifact with this ID already exists for another account' }, 409);
         const now = Date.now();
         const row: Artifact = {
@@ -327,7 +327,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
         };
         rows.set(id, row);
         publish(row);
-        return json(projectArtifactBoundaryReadRow(row));
+        return json({ ...projectArtifactBoundaryReadRow(row), created: true });
     };
 
     const update = async (callerAccountId: string, artifactId: string, input: Record<string, unknown> | null): Promise<Response> => {

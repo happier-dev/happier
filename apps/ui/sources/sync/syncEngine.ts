@@ -557,6 +557,15 @@ import {
 import { runWithServerAccountScopeRequestGuard } from './runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
 import { artifactInventorySelectionOptions, doesArtifactInventorySelectionCover, isApprovalSessionInventorySelection, isApprovalStateInventorySelection, isArtifactInventoryLoaded, type ArtifactInventorySelection } from './domains/artifacts/artifactInventory';
 import { selectArtifactInventoryRows } from './store/domains/artifactInventoryIndex';
+import { createThemeProfileArtifactAdapter } from '@/theme/profiles/themeProfileArtifactAdapter';
+import { createThemeProfileLibrary, createThemeProfileSourceAdapter, type ThemeProfileLibraryContext, type ThemeProfileSourceAdapter, type ThemeProfileUndoState } from '@/theme/profiles/themeProfileLibrary';
+import type { ThemeProfileLibrary } from '@happier-dev/protocol/account/settings/themeProfiles';
+import type { ArtifactIdScopeV1 } from '@happier-dev/protocol/artifacts/idScope';
+import { THEME_ARTIFACT_KIND } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
+import { readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
+import { readPluginThemeList } from '@/theme/profiles/pluginThemeCatalog';
+import { projectPluginThemeLibraryEntries, projectPluginThemeProfileDocument } from '@/theme/profiles/themeProfilePresentation';
+import { publishArtifactDeletion } from './ops/actions/artifactDeletionPublication';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { fetchAndApplyFeed, handleNewFeedPostUpdate, handleRelationshipUpdatedSocketUpdate, handleTodoKvBatchUpdate } from './engine/social/syncFeed';
 import { fetchAndApplyFriends } from './engine/social/syncFriends';
@@ -9766,12 +9775,62 @@ class Sync {
         });
     }
 
+    private themeProfileUndo: Readonly<{ scope: ServerAccountScope; state: ThemeProfileUndoState }> | null = null;
+
+    public withThemeProfileContext = async <TResult>(operation: (context: ThemeProfileLibraryContext) => Promise<TResult>,
+        options?: Readonly<{ signal?: AbortSignal; expectedScope?: AccountSettingsScope; artifactIdScopes?: ReadonlyMap<string, ArtifactIdScopeV1> }>,
+    ): Promise<TResult> => this.withArtifactReadAuthority(options?.signal, async params => {
+        const scope = { serverId: params.serverId, accountId: params.accountId };
+        if (!this.themeProfileUndo || !areServerAccountScopesEqual(this.themeProfileUndo.scope, scope)) {
+            this.themeProfileUndo = { scope, state: { current: null } };
+        }
+        const selection = [THEME_ARTIFACT_KIND];
+        const inventoryReadStartedWith = selectArtifactInventoryRows(storage.getState(), selection);
+        const artifacts = createThemeProfileArtifactAdapter({ ...params,
+            ownerAccountId: scope.accountId, artifactIdScopes: options?.artifactIdScopes,
+            readArtifacts: () => storage.getState().artifacts,
+            applyArtifacts: rows => { throwIfAborted(params.signal); storage.getState().applyArtifacts(rows); },
+            applyInventory: (rows, source) => {
+                throwIfAborted(params.signal);
+                storage.getState().applyArtifacts(rows, source !== undefined ? inventoryReadStartedWith : undefined, selection, source);
+            },
+            isLoaded: () => isArtifactInventoryLoaded(storage.getState(), selection),
+            deleteArtifact: id => { throwIfAborted(params.signal); publishArtifactDeletion(id, storage.getState().artifacts[id]); },
+        });
+        return operation({ artifacts, undoState: this.themeProfileUndo.state,
+            now: Date.now, createId: randomUUID,
+            readSelection: () => readThemeProfileReferenceSelection(storage.getState().localSettings.themeProfileSelection),
+            writeSelection: (mode, reference) => {
+                throwIfAborted(params.signal);
+                const current = storage.getState().localSettings.themeProfileSelection;
+                storage.getState().applyLocalSettings({ themeProfileSelection: { ...current, [mode]: reference } });
+            },
+            pluginProfiles: {
+                list: () => projectPluginThemeLibraryEntries(readPluginThemeList()),
+                get: async reference => {
+                    const item = readPluginThemeList().find(item => item.pluginId === reference.pluginId && item.contributionId === reference.contributionId);
+                    return item ? projectPluginThemeProfileDocument(item.theme, { kind: 'plugin', pluginId: item.pluginId, contributionId: item.contributionId }) : null;
+                },
+            },
+        });
+    }, options?.expectedScope);
+
+    public withThemeProfileLibrary = async <TResult>(operation: (library: ThemeProfileLibrary) => Promise<TResult>,
+        options?: Readonly<{ signal?: AbortSignal; expectedScope?: AccountSettingsScope; artifactIdScopes?: ReadonlyMap<string, ArtifactIdScopeV1> }>,
+    ): Promise<TResult> => this.withThemeProfileContext(context => operation(createThemeProfileLibrary(context)), options);
+
+    public withThemeProfileSourceAdapter = async <TResult>(operation: (adapter: ThemeProfileSourceAdapter) => Promise<TResult>,
+        options?: Readonly<{ signal?: AbortSignal; expectedScope?: AccountSettingsScope }>,
+    ): Promise<TResult> => this.withThemeProfileContext(context => operation(createThemeProfileSourceAdapter(context)), options);
+
     private async withArtifactReadAuthority<TResult>(signal: AbortSignal | undefined,
-        operation: (params: Omit<Parameters<typeof fetchArtifactForViewFromApi>[0], 'artifactId'> & Readonly<{ serverId: string }>) => Promise<TResult>,
+        operation: (params: Omit<Parameters<typeof fetchArtifactForViewFromApi>[0], 'artifactId'> & Readonly<{ serverId: string; accountId: string }>) => Promise<TResult>,
+        expectedScope?: AccountSettingsScope,
     ): Promise<TResult> {
         if (!this.credentials) throw new Error('Not authenticated');
         const scope = getActiveServerAccountScope();
         if (!scope) throw new Error('Artifact Account scope is unavailable');
+        if (expectedScope && !areServerAccountScopesEqual(scope, expectedScope)) throw new Error('Artifact Account scope changed');
         const serverIsCurrent = this.createServerScopeGuard();
         const credentials = this.credentials;
         const encryption = this.encryption;
@@ -9789,7 +9848,7 @@ class Sync {
                 guard.check();
                 if (authority.context.token !== credentials.token) throw staleError();
                 result = await operation({ credentials, encryption, artifactDataKeys: this.artifactDataKeys,
-                    serverId: scope.serverId,
+                    serverId: scope.serverId, accountId: scope.accountId,
                     readTransport: authority.readTransport,
                     signal: guard.signal,
                     request: async (path, init) => {

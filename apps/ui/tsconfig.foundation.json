@@ -3873,6 +3873,7 @@
     "sources/theme/profiles/deriveThemeColors.ts",
     "sources/theme/profiles/deriveThemeSeedColors.ts",
     "sources/theme/profiles/resolveThemeProfile.ts",
+    "sources/theme/profiles/themeProfileArtifactProjection.ts",
     "sources/theme/profiles/themeProfileAssetAppearance.ts",
     "sources/theme/profiles/themeProfileColorValidation.ts",
     "sources/theme/profiles/themeProfileConstants.ts",

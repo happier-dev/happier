@@ -13,7 +13,7 @@ export const THEME_MINIATURE_OVERRIDE_TOKENS = {
 /** Minimal authored inputs for the header-only miniature; CSS stays in the body. */
 export const ThemeProfileArtifactHeaderSchema = lazyZodSchema(() => z.object({
     v: z.literal(1), kind: z.literal(THEME_ARTIFACT_KIND), title: z.string(),
-    mode: z.enum(['light', 'dark']), source: ThemeProfileSourceSchema,
+    mode: z.enum(['light', 'dark']), themeSource: ThemeProfileSourceSchema,
     compatibility: z.strictObject({ status: z.enum(['supported', 'partial']), requiresAppVersion: z.optional(z.string()), unsupportedPaths: z.array(z.string()) }),
     palette: z.strictObject({ seeds: z.optional(ThemeProfileSeedsSchema),
         overrides: z.partialRecord(z.enum(Object.values(THEME_MINIATURE_OVERRIDE_TOKENS)), ThemeProfileColorSchema), radius: ThemeRadiusScaleNameSchema }),
