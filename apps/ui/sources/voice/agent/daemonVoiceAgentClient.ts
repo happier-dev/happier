@@ -21,6 +21,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 import { resolveVoiceTurnStreamReadConfig } from './resolveVoiceTurnStreamReadConfig';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { defaultExecutionRunRetention } from '@happier-dev/protocol/actions/specs/executionRunCli';
 
 const VOICE_AGENT_LIFECYCLE_RPC_TIMEOUT_MS = null;
 
@@ -113,7 +114,7 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       intent: 'voice_agent',
       backendTarget,
       permissionMode: params.permissionIntent,
-      retentionPolicy: params.retentionPolicy ?? 'ephemeral',
+      retentionPolicy: params.retentionPolicy ?? defaultExecutionRunRetention('voice_agent'),
       runClass: 'long_lived',
       ioMode: 'streaming',
       ...(params.resumeHandle ? { resumeHandle: params.resumeHandle } : {}),

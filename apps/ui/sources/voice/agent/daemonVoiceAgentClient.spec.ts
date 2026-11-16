@@ -170,6 +170,9 @@ describe('DaemonVoiceAgentClient', () => {
       actionId: 'execution.run.start',
       input: { sessionId: 's1', intent: 'voice_agent' },
     });
+    expect(admittedRunStart()).toMatchObject({
+      retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+    });
   });
   it('carries a custom native Voice chat choice as an exact explicit model tuple', async () => {
     daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_native', created: true });
