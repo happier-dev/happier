@@ -18,8 +18,8 @@ export function captureRuntimeDependencies({ imports, outputDir, sourceRepoDir, 
   const optionalImports = [
     ...Object.values(CLI_OPTIONAL_NODE_RUNTIME_ENTRYPOINTS)
       .map(entry => entry.replace(/^node_modules\//, '')),
-    // Both the native provider and its Node relay select these by variable.
-    'node-pty', '@homebridge/node-pty-prebuilt-multiarch',
+    // The native provider, Node relay and recording adapter select these by variable.
+    'node-pty', '@homebridge/node-pty-prebuilt-multiarch', 'ffmpeg-static',
   ]
     .filter(entry => dependencies.has(packageNameOfSpecifier(entry)))
     .map(path => ({ path, resolveFrom: cliManifestPath }));
@@ -29,21 +29,25 @@ export function captureRuntimeDependencies({ imports, outputDir, sourceRepoDir, 
   readSourceRuntimeDependencyIdentity({ imports, signal, onPackage({ name, packageDir, resolveFrom }) {
     const physical = realpathSync(packageDir);
     if (!packages.has(physical)) {
-      const target = join(outputDir, 'runtime-dependencies', String(packages.size));
+      // Native addons resolve sibling libraries relative to their physical package.
+      // Keep those siblings together without merging different peer/version graphs.
+      const modules = join(outputDir, 'runtime-dependencies', String(packages.size), 'node_modules');
+      const target = join(modules, name);
       copyDirDereferenceContainedSync({ sourceDir: physical, destDir: target, dereferenceRootDir: sourceRepoDir,
         shouldCopyPath: path => path === physical || !relative(physical, path).split(/[\\/]/).includes('node_modules') });
-      packages.set(physical, target);
+      packages.set(physical, { target, modules });
     }
     edges.push({ name, physical, resolveFrom });
   } });
   const linked = new Set();
   for (const { name, physical, resolveFrom } of edges) {
     const parent = packages.get(realpathSync(dirname(resolveFrom)));
-    const link = join(parent ?? outputDir, 'node_modules', name);
+    const link = join(parent?.modules ?? join(outputDir, 'node_modules'), name);
+    const target = packages.get(physical).target;
+    if (link === target) continue;
     if (linked.has(link)) continue;
     linked.add(link);
     mkdirSync(dirname(link), { recursive: true });
-    const target = packages.get(physical);
     symlinkSync(process.platform === 'win32' ? target : relative(dirname(link), target), link,
       process.platform === 'win32' ? 'junction' : 'dir');
   }
