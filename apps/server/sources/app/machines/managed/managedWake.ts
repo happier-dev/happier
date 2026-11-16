@@ -28,14 +28,15 @@ import type { RpcAckResponseEmitter } from '@/app/api/socket/rpc/_types';
 import { readMachineDaemonSocketIdentity } from '@/app/machines/machineDaemonPresence';
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from '@/app/api/socket/machineSocketInstallationProof';
 import type { PendingActivationHoldReasonV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
-import { resolveManagedFiniteWakeControllerV1, resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { resolveManagedFiniteWakeControllerV1, resolveManagedMachineRuntimeV1, resolveManagedWakeAvailabilityV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { serializeMachinePresence } from '@/app/machines/machineSerialization';
 import { hasManagedWakeAuthority, readManagedWakeTargetBindingInTx } from './managedWakeBinding';
 import { readManagedWakeSessionsInTx, readPendingManagedWakeTargetsInTx, readPendingManagedWakeInputTarget } from './managedWakePlacement';
 
 type FiniteWakePreparation = Readonly<{ kind: 'not-needed' | 'ready'; isCurrent(): Promise<boolean> }>
-    | Readonly<{ kind: 'unavailable' | 'submitted-unknown' }>;
+    | Readonly<{ kind: 'unavailable'; reason?: Extract<ReturnType<typeof resolveManagedWakeAvailabilityV1>, { kind: 'unavailable' }>['reason'] }>
+    | Readonly<{ kind: 'submitted-unknown' }>;
 
 /** One original finite root may disclose custody only to its current installed controller. */
 export async function readCurrentManagedFiniteWakeCustodyInTx(tx: Tx, input: Readonly<{
@@ -109,14 +110,18 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
     const target = initial.wake;
     if (!target) return { kind: 'unavailable' };
     const finiteWake = resolveManagedFiniteWakeControllerV1(target);
-    if (finiteWake.kind === 'unavailable' || !await isCurrent()) return { kind: 'unavailable' };
+    if (finiteWake.kind === 'unavailable') return finiteWake;
+    if (!await isCurrent()) return { kind: 'unavailable' };
     const wakeTarget = target;
     const controllerBinding = finiteWake.controller;
     // Target admission owns requester power. This read selects that resource's
     // installed custodian transport; the signed original requester stays on the Action.
     const controller = await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: initial.controllerCustodianAccountId,
         machineId: controllerBinding.machineId, requiredRole: 'manage', requireOnline: true }));
-    if (controller.kind !== 'admitted' || controller.installationId !== controllerBinding.installationId) return { kind: 'unavailable' };
+    const controllerAvailability = resolveManagedWakeAvailabilityV1(controllerBinding, controller.kind === 'admitted'
+        ? { id: controllerBinding.machineId, installationId: controller.installationId, online: true } : undefined);
+    if (controllerAvailability.kind === 'unavailable') return controllerAvailability;
+    if (controller.kind !== 'admitted') return { kind: 'unavailable' };
     const exact = (candidate: RpcAckResponseEmitter) =>
         readMachineDaemonSocketIdentity(candidate.data)?.machineId === controllerBinding.machineId
         && readVerifiedMachineSocketInstallationIdFromSocketData(candidate.data) === controllerBinding.installationId;

@@ -1391,6 +1391,35 @@ describe('finite managed wake original Action authority (real storage)', () => {
         } finally { await app.close(); }
     });
 
+    it.each(['no_controller', 'controller_unavailable'] as const)('refuses an asleep Session spawn with its Protocol wake-blocked reason (%s)', async reason => {
+        const test = await setup();
+        if (reason === 'no_controller') {
+            await db.managedMachine.update({ where: { id: test.row.id }, data: {
+                controllerMachineId: null, controllerInstallationId: null,
+            } });
+        } else await db.machine.update({ where: { id: test.controller.id }, data: { active: false } });
+        const methods: string[] = [];
+        const dispatch = createExternalActionDaemonDispatcher({ io: new Server(), forwardRpc: async request => {
+            methods.push(request.method);
+            throw new Error('A wake-blocked Machine must not receive native wake or Session spawn');
+        } });
+        const result = await dispatch({ actionId: SESSION_SPAWN_NEW_ACTION_ID_V1,
+            principal: { accountId: test.account.id, authority: 'present_user',
+                authentication: { kind: 'account', tokenEpoch: test.account.tokenEpoch } },
+            envelope: { v: 1, requestId: test.requestId, target: { kind: 'machine', machineId: test.guest.id }, input: {
+                creationKey: test.requestId, executionTarget: { serverId: homeId, machineId: test.guest.id },
+                directory: { kind: 'path', path: '/work' }, organizationPlacement: { sectionId: null, tagIds: [] },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+                initialInput: { text: 'Start this Session' }, agentInstallConsent: { vendorRecipe: true },
+            } },
+        });
+        expect(result).toMatchObject({ kind: 'placement_error', code: 'target_unavailable', failureCause: {
+            phase: 'machines.managed.wake', errorCode: 'target_unavailable', nativeErrorReason: reason,
+        } });
+        expect(methods).toEqual([]);
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } })).desired).toBe('stop');
+    });
+
     it('checks requester Account mode independently of the shared custodian Machine resource mode', async () => {
         const test = await setup();
         const keys = tweetnacl.box.keyPair();
@@ -1470,6 +1499,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
     it.each([
         { actionId: 'projects.script.run', disposition: 'current' },
         { actionId: 'projects.script.run', disposition: 'publisher-before-wake' },
+        { actionId: 'projects.script.run', disposition: 'controller-unavailable' },
         { actionId: 'daemon.filesystem.readFile', disposition: 'current' },
     ] as const)('preserves the original signed Socket finite custody carrier and refuses retired Session authority ($actionId/$disposition)', async ({ actionId, disposition }) => {
         const test = await setup();
@@ -1524,6 +1554,9 @@ describe('finite managed wake original Action authority (real storage)', () => {
                         data: { eligibilityNextCheckAt: new Date(0) } });
                     wakeEligibilityDue = true;
                     if (disposition === 'publisher-before-wake') publisherVisible = false;
+                    if (disposition === 'controller-unavailable') {
+                        await db.machine.update({ where: { id: test.controller.id }, data: { active: false } });
+                    }
                 }
                 return publisherVisible ? [publisher] : [];
             }
@@ -1602,6 +1635,12 @@ describe('finite managed wake original Action authority (real storage)', () => {
                 expect(response).toEqual({ ok: true, result: { completed: true } });
                 expect(methods).toEqual([wakeMethod, guestMethod]);
                 expect(carrier.binding).toEqual(root.binding);
+            } else if (disposition === 'controller-unavailable') {
+                expect(response).toMatchObject({ ok: false, failureCause: {
+                    phase: 'machines.managed.wake', errorCode: 'target_unavailable',
+                    nativeErrorReason: 'controller_unavailable',
+                } });
+                expect(methods).toEqual([]);
             } else {
                 expect(await resolveSource({ accountId: test.account.id, sessionId: session.id })).toBeNull();
                 expect(response).toMatchObject({ ok: false });

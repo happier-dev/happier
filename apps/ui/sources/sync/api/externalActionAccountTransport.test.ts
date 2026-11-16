@@ -190,12 +190,13 @@ describe('captured Account Action response decoding', () => {
         })).toEqual({ supported: true, result: { ok: true, result: { installed: true } } });
         expect(homes.requestsFor('/v1/actions/action.invoke')).toHaveLength(1);
     });
-    it.each(['shared', 'delegated-accepted', 'delegated-declined', 'delegated-automation'] as const)('dispatches Home-admitted finite custody without controller inventory (%s)', async recipient => {
+    it.each(['shared', 'owned-spawn', 'delegated-accepted', 'delegated-declined', 'delegated-automation'] as const)('dispatches Home-admitted finite custody without controller inventory (%s)', async recipient => {
         if (!account) throw new Error('Expected captured Account');
         const guestKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
         const controllerKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
         const row = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: recipient === 'shared' ? 'custodian' : 'owner' }),
             installationId: 'installation-1', installationPublicKey: encodeBase64(guestKeys.publicKey),
+            ...(recipient === 'owned-spawn' ? { managedMachineRef: { homeId: binding.serverIdentityId, managedId: 'managed-guest' } } : {}),
             access: { custodian: { accountId: recipient === 'shared' ? 'custodian' : 'owner', displayName: 'Custodian' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } };
         disclosureConsent.mockResolvedValue(recipient !== 'delegated-declined');
         let controllerReads = 0;
@@ -206,7 +207,8 @@ describe('captured Account Action response decoding', () => {
                 return null; // Can use on the guest grants no access to its controller.
             }).json(),
         }) });
-        const actionId = recipient === 'shared' ? 'session.spawn_new' : 'projects.script.run';
+        const spawn = recipient === 'shared' || recipient === 'owned-spawn';
+        const actionId = spawn ? 'session.spawn_new' : 'projects.script.run';
         const actionPath = `/v1/actions/${actionId}`;
         homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
@@ -249,7 +251,7 @@ describe('captured Account Action response decoding', () => {
         } });
         const result = await executeOriginalAccountMachineAction({ account, actionId, requestId: binding.requestId,
             authority: recipient === 'delegated-automation' ? 'account_automation' : 'present_user',
-            machineId: row.id, input: recipient !== 'shared' ? { workspace: { serverId, workspaceId: 'workspace', machineId: row.id, rootPath: '/tmp' },
+            machineId: row.id, input: !spawn ? { workspace: { serverId, workspaceId: 'workspace', machineId: row.id, rootPath: '/tmp' },
                 selection: { kind: 'named', name: 'test' } } : projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
                 creationKey: 'shared-guest-spawn', executionTarget: { serverId, machineId: row.id },
                 directory: { kind: 'path', path: '/tmp' }, permissionMode: 'default',

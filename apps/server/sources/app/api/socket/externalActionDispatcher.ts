@@ -912,7 +912,12 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             finiteWake = wake.value;
             if (finiteWake.kind === 'submitted-unknown') return { kind: 'submitted_unknown', cause: { reason: 'managed_wake_unconfirmed' } };
             if (finiteWake.kind === 'unavailable') return createPlacementError({ code: 'target_unavailable',
-                refusalBranch: 'finite_wake_unavailable', requestId: request.envelope.requestId, machineId });
+                refusalBranch: 'finite_wake_unavailable', requestId: request.envelope.requestId, machineId,
+                ...(finiteWake.reason === undefined ? {} : { failureCause: {
+                    phase: 'machines.managed.wake', errorClass: 'Error', errorCode: 'target_unavailable',
+                    nativeErrorReason: finiteWake.reason, httpStatus: null,
+                } }),
+            });
         }
         const authorization = await runDispatchPhase('execution_authorization', machineId, async () => (
             executionAuthorization ?? await mint()

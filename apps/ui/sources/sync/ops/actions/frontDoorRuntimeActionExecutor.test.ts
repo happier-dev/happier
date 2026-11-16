@@ -1,3 +1,9 @@
+import { createHydratedPlainMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { storage } from '@/sync/domains/state/storage';
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 import * as React from 'react';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -77,6 +83,71 @@ describe('composed UI Action front-door adapters', () => {
         vi.stubGlobal('navigator', { clipboard: { writeText: clipboard } });
     });
     afterEach(() => standardCleanup());
+
+    it.each(['wake', 'blocked'] as const)('keeps new Session Send with Home managed runtime admission (%s)', async disposition => {
+        const serverIdentityId = 'srv_send_wake';
+        const serverId = await homes.addHome({ name: 'Send wake Home', serverUrl: 'https://send-wake.test',
+            serverIdentityId, accountId: 'alice', currentAccount: true });
+        await setServerProfileIdentityForUrl('https://send-wake.test', serverIdentityId);
+        const machine = createHydratedPlainMachineFixture({ id: 'asleep-guest', accountId: 'alice', machine: {
+            active: false, isShared: false, managedMachineRef: { homeId: serverIdentityId, managedId: 'managed-guest' },
+        } });
+        const row = createPlainMachineRowFixture({ id: machine.id, accountId: 'alice', machine });
+        homes.answer(serverId, '/v1/machines', { body: [row] });
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, id => id === row.id ? row : null).json(),
+        }) });
+        storage.setState({ profileScope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice' } });
+        storage.getState().applyMachines([machine], false, { sourceServerId: serverId, sourceAccountId: 'alice' });
+        const actionPath = '/v1/actions/session.spawn_new';
+        const failureCause = { phase: 'machines.managed.wake', errorClass: 'Error', errorCode: 'target_unavailable',
+            nativeErrorReason: 'controller_unavailable', httpStatus: null };
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            if (disposition === 'blocked') return { status: 409, body: {
+                error: 'invalid_request', code: 'target_unavailable', requestId: request.envelope.requestId, failureCause,
+            } };
+            return { body: { v: 1, token: 'send-wake-proof', binding: {
+                serverIdentityId, accountId: 'alice', authentication: { kind: 'account', tokenEpoch: 0 },
+                actionId: 'session.spawn_new', requestId: request.envelope.requestId,
+                target: request.envelope.target, machineId: row.id, installationId: row.installationId,
+                custodianAccountId: 'alice', accountEncryptionMode: 'plain', machineRuntimeDemand: 'required',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+            } } };
+        } });
+        homes.answer(serverId, actionPath, { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            expect(request.executionAuthorization?.token).toBe('send-wake-proof');
+            expect(request.envelope).toMatchObject({ target: { kind: 'machine', machineId: row.id }, input: {
+                agentInstallConsent: { vendorRecipe: true }, initialInput: { text: 'Wake and run' },
+            } });
+            return { body: { v: 1, actionId: 'session.spawn_new', requestId: request.envelope.requestId,
+                execution: { ok: true, result: projectSessionSpawnNewActionResultV1({
+                    type: 'success', disposition: 'created', sessionId: 'after-wake',
+                    executionTarget: { serverId, machineId: row.id }, organizationPlacement: { folderId: null, tagIds: [] },
+                    initialInput: { status: 'accepted', localId: 'send-wake-input' },
+                }) } } };
+        } });
+        // Home and Machine transports are external boundaries. The real UI entry,
+        // Action routing, custody codec and result projection stay composed.
+        daemonRpc.mockResolvedValue({ type: 'error', code: 'machine_offline', retryable: true });
+        const { executeSessionSpawnNewAction } = await import('./sessionSpawnNewAction');
+        const spawn = SessionSpawnNewInputV2Schema.parse({
+            creationKey: `send-${disposition}`, executionTarget: { serverId, machineId: row.id },
+            directory: { kind: 'path', path: '/repo' }, organizationPlacement: { folderId: null, tagIds: [] },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+            initialInput: { text: 'Wake and run' }, agentInstallConsent: { vendorRecipe: true },
+        });
+        if (!spawn.creationKey) throw new Error('Expected a creation key');
+        const result = await executeSessionSpawnNewAction({ ...spawn, creationKey: spawn.creationKey },
+            { surface: 'ui', serverId, expectedAccountId: 'alice' });
+        expect(result, JSON.stringify(result)).toMatchObject(disposition === 'blocked'
+            ? { ok: false, errorCode: 'target_unavailable', failureCause }
+            : { ok: true, result: { type: 'success', sessionId: 'after-wake' } });
+        expect(homes.requestsFor(`${actionPath}/execution-authorization`)).toHaveLength(1);
+        expect(homes.requestsFor(actionPath)).toHaveLength(disposition === 'blocked' ? 0 : 1);
+        expect(daemonRpc).not.toHaveBeenCalled();
+    });
 
     it('retains the complete Browser download refusal at the file-save UI boundary', async () => {
         const serverId = await homes.addHome({ name: 'Download Home', serverUrl: 'https://download-home.test',

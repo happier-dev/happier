@@ -168,7 +168,7 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
             ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}) });
     const envelope = params.handoffAdmission ? { ...sealed, handoffAdmission: params.handoffAdmission } : sealed;
     let request: unknown = envelope;
-    if (custody && (foreignGuest || finite || params.invocation || retainedResource)) {
+    if (custody) {
         if (binding.target.kind !== 'machine' || !('authentication' in binding)) return failure('admission_unavailable');
         const mint = await account.request(bindExternalActionExecutionAuthorizationHttpPathV1(binding.actionId), {
             method: 'POST', headers,
@@ -352,24 +352,28 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     if (params.invocation && (account.credentialAuthorityKind !== 'account'
         || !ExternalActionRequesterInvocationV1Schema.safeParse(params.invocation).success)) return failure('admission_unavailable');
     const finite = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, params.actionId);
+    const runtimeDemand = projectExternalActionMachineRuntimeDemandV1(params.actionId, params.input,
+        params.machineTarget ?? { kind: 'machine', machineId: params.machineId }) === 'required';
     const retainedResource = params.resourceContinuation !== undefined || params.machineServiceLogsGeneration !== undefined
         || params.managedContinuation !== undefined;
     // This incumbent own-Machine transport carries no private requester box.
-    // Foreign custody, finite placement and requester invocations still prove
+    // Runtime demand, finite placement and requester invocations still prove
     // their exact Home identity freshly before selecting private custody.
-    const currentOwnRow = !finite && !params.invocation && !retainedResource ? readCurrentOwnActionMachine(account, params.machineId) : null;
+    const currentOwnRow = !finite && !runtimeDemand && !params.invocation && !retainedResource ? readCurrentOwnActionMachine(account, params.machineId) : null;
     const row = currentOwnRow ?? await readOriginalAccountActionMachine(account, params.machineId, params.signal);
     if (!row || row.kind !== 'persistent' || row.revokedAt !== null || row.replacedByMachineId !== null
         || !row.access || row.access.accessState !== 'ready') return failure('admission_unavailable');
     const foreignCustody = row.access.custodian.accountId !== account.accountId;
-    // Non-finite own targets retain their incumbent transport. Finite placement
-    // is Home-owned even when its guest belongs to the requester.
-    if (params.foreignTargetOnly && !foreignCustody && !finite && !params.invocation && !retainedResource) return null;
+    const needsCustody = foreignCustody || finite || runtimeDemand && Boolean(row.managedMachineRef)
+        || params.invocation !== undefined || retainedResource;
+    // Ordinary own targets retain their incumbent transport. Managed runtime
+    // demand and finite placement need Home custody even for an own guest.
+    if (params.foreignTargetOnly && !needsCustody) return null;
     const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
     if (!authentication || !account.serverIdentityId) return failure('admission_unavailable');
     const { accountMode, encryption } = await account.resolveAccountEncryption();
     if (!foreignCustody && row.access.resourceMode !== accountMode) return failure('admission_unavailable');
-    if ((foreignCustody || finite || params.invocation || retainedResource) && !row.installationId) return failure('content_unavailable');
+    if (needsCustody && !row.installationId) return failure('content_unavailable');
     if ((foreignCustody || params.invocation) && !row.installationPublicKey) return failure('content_unavailable');
     if (accountMode === 'e2ee' && !encryption) return failure('content_unavailable');
     const input = params.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1

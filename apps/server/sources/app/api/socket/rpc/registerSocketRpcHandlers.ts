@@ -1901,7 +1901,13 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     callback?.({ ok: false, error: 'outcome_uncertain', errorCode: 'outcome_uncertain' });
                     return;
                 }
-                if (finiteWake.kind === 'unavailable') { callback?.(buildForbiddenRpcResponse()); return; }
+                if (finiteWake.kind === 'unavailable') {
+                    callback?.({ ...buildForbiddenRpcResponse(), ...(finiteWake.reason === undefined ? {} : {
+                        failureCause: { phase: 'machines.managed.wake', errorClass: 'Error', errorCode: 'target_unavailable',
+                            nativeErrorReason: finiteWake.reason, httpStatus: null },
+                    }) });
+                    return;
+                }
             }
             if (workspaceSyncSeedRouting && machinePrefix) {
                 const routing = workspaceSyncSeedRouting;

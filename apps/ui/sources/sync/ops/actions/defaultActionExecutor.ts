@@ -1016,7 +1016,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       accountContext.assertCurrent();
       if (disposition.kind === 'refused') return disposition.result;
       const managedContinuation = context?.invocationServices?.managedContinuation;
-      if (disposition.kind === 'requester' || managedContinuation || context.surface === 'plugin' || context.surface === 'voice'
+      // Home admission owns runtime demand even for an owned guest absent from
+      // the warm inventory. It prepares managed wake before dispatching spawn.
+      if (accountContext.serverIdentityId || disposition.kind === 'requester' || managedContinuation || context.surface === 'plugin' || context.surface === 'voice'
         || context.presentUserConfirmation || readHostReviewedParentV1(context)) {
         const needsInvocation = context.surface !== 'plugin'
           && (context.surface !== 'ui' || readHostReviewedParentV1(context)
