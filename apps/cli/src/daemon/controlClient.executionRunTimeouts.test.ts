@@ -180,7 +180,8 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
   it('uses each hosted Session deadline for materialization and rejected-start recovery', async () => {
     const env = createEnvKeyScope(['HAPPIER_EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_MS']);
     env.patch({ HAPPIER_EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_MS: '3300' });
-    const deadlines = new WeakMap<NonNullable<RequestInit['signal']>, number>();
+    // Only object identity joins the clock signal to the Fetch boundary.
+    const deadlines = new WeakMap<object, number>();
     vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => {
       const signal = new AbortController().signal;
       deadlines.set(signal, ms);
