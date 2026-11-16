@@ -1,6 +1,6 @@
 import { decodeBase64, defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { caughtNativeFailure, fail } from './nativeFailure.js';
+import { caughtNativeFailure, fail, nativeFailureResult, type VercelNativeFailure } from './nativeFailure.js';
 import { createVercelNativeClient } from './nativeClient.js';
 import { reference, VercelAcquisitionSchema, VercelLaunchSchema, type VercelLaunch, type VercelResource, type VercelScope } from './schemas.js';
 
@@ -24,13 +24,16 @@ type DestroyResult = ReturnType<typeof PREPARATION_SCHEMAS.destroyResult.parse>;
 export function createVercelPreparationClient(scope: VercelScope, request: typeof fetch, signal?: AbortSignal, observedAt = Date.now()) {
   const native = createVercelNativeClient(scope, request, signal, observedAt);
   const io = native.preparation;
-  const unknown = (operation: Operation, code: string): InspectResult & { kind: 'unknown' } => ({ kind: 'unknown', code, nativeOperationRef: reference(operation) });
+  const unknown = (operation: Operation, failure: string | VercelNativeFailure): InspectResult & { kind: 'unknown' } => ({
+    ...nativeFailureResult(typeof failure === 'string' ? { kind: 'unknown', code: failure } : failure),
+    kind: 'unknown', nativeOperationRef: reference(operation),
+  });
   function initial(operationId: string, launch: VercelLaunch): Operation {
     return { launch, acquisition: VercelAcquisitionSchema.parse({ kind: 'acquire', ...scope,
       name: 'happier-prepared-' + operationId, managedId: 'prepared-' + operationId }) };
   }
   function failure(error: unknown, operation: Operation, fallback: string) {
-    return unknown(operation, caughtNativeFailure(error, fallback).code);
+    return unknown(operation, caughtNativeFailure(error, fallback));
   }
   function resource(operation: Operation): VercelResource | null {
     const { acquisition } = operation;
@@ -51,12 +54,13 @@ export function createVercelPreparationClient(scope: VercelScope, request: typeo
       // enrolled Session or a previously supplied restore snapshot.
       const { snapshotId: _snapshot, ...coldLaunch } = operation.launch;
       const acquired = await native.acquire(coldLaunch, operation.acquisition.managedId, { persistent: false });
-      if (acquired.kind === 'rejected') return { kind: 'refused', code: acquired.code };
-      if (acquired.kind !== 'bound') return unknown(operation, 'vercel_preparation_create_unconfirmed');
+      if (acquired.kind === 'rejected') return { ...nativeFailureResult({ ...acquired, kind: 'refused' }), kind: 'refused' };
+      if (acquired.kind !== 'bound') return unknown(operation, { ...acquired, kind: 'unknown', code: 'vercel_preparation_create_unconfirmed' });
       const base = acquired.resource.value;
       operation = { ...operation, acquisition: { ...operation.acquisition, createdAt: base.createdAt } };
       const current = await io.read(base);
-      if (current.kind !== 'present') return unknown(operation, current.kind === 'absent' ? 'vercel_resource_absent' : current.code);
+      if (current.kind !== 'present') return unknown(operation, current.kind === 'absent'
+        ? { ...current, kind: 'unknown', code: 'vercel_resource_absent' } : current);
       if (current.value.sandbox.persistent || current.value.sandbox.status !== 'running') return unknown(operation, 'vercel_preparation_base_unavailable');
       await io.guestHome(current.value);
       const directory = '/tmp/happier-prepared-' + encodeURIComponent(input.operationId);
@@ -77,7 +81,8 @@ export function createVercelPreparationClient(scope: VercelScope, request: typeo
       }
       signal?.throwIfAborted();
       const snapshot = await io.capture(current.value, operation.launch.snapshotExpirationMs);
-      if (snapshot.kind !== 'present') return unknown(operation, snapshot.kind === 'absent' ? 'vercel_snapshot_unconfirmed' : snapshot.code);
+      if (snapshot.kind !== 'present') return unknown(operation, snapshot.kind === 'absent'
+        ? { ...snapshot, kind: 'unknown', code: 'vercel_snapshot_unconfirmed' } : snapshot);
       const result = classify(operation, snapshot.value);
       return result.kind === 'failed' ? { ...result, kind: 'unknown' } : result;
     } catch (error) { return failure(error, operation, 'vercel_preparation_build_unconfirmed'); }
@@ -86,7 +91,7 @@ export function createVercelPreparationClient(scope: VercelScope, request: typeo
     let operation = 'nativeOperation' in input ? VercelPreparationOperationSchema.parse(input.nativeOperation) : initial(input.operationId, input.launch);
     try {
       const base = await io.read(operation.acquisition);
-      if (base.kind !== 'present' && base.kind !== 'absent') return unknown(operation, base.code);
+      if (base.kind !== 'present' && base.kind !== 'absent') return unknown(operation, base);
       if (base.kind === 'present') {
         operation = { ...operation, acquisition: { ...operation.acquisition, createdAt: base.value.sandbox.createdAt } };
         if (base.value.sandbox.persistent) return unknown(operation, 'vercel_preparation_base_unavailable');
@@ -94,12 +99,13 @@ export function createVercelPreparationClient(scope: VercelScope, request: typeo
       const owned = resource(operation);
       if (!owned) {
         const leftovers = await io.snapshots({ ...operation.acquisition, createdAt: 0 });
-        return base.kind === 'absent' && leftovers.kind === 'present' && leftovers.ids.length === 0
+        if (leftovers.kind !== 'present') return unknown(operation, leftovers);
+        return base.kind === 'absent' && leftovers.ids.length === 0
           ? { kind: 'absent' } : unknown(operation, 'vercel_cleanup_unqualified');
       }
       if (!operation.snapshotId) {
         const snapshots = await io.snapshots(owned);
-        if (snapshots.kind !== 'present') return unknown(operation, snapshots.code);
+        if (snapshots.kind !== 'present') return unknown(operation, snapshots);
         if (snapshots.ids.length === 0) return base.kind === 'absent' ? { kind: 'absent' }
           : { kind: 'failed', code: 'vercel_preparation_incomplete', nativeOperationRef: reference(operation) };
         if (snapshots.ids.length !== 1) return unknown(operation, 'vercel_cleanup_unqualified');
@@ -107,7 +113,8 @@ export function createVercelPreparationClient(scope: VercelScope, request: typeo
       }
       const snapshot = await io.readOwnedSnapshot(owned, operation.snapshotId!);
       return snapshot.kind === 'present' ? classify(operation, snapshot.value) : snapshot.kind === 'absent'
-        ? { kind: 'failed', code: 'vercel_snapshot_deleted', nativeOperationRef: reference(operation) } : unknown(operation, snapshot.code);
+        ? { ...nativeFailureResult({ ...snapshot, kind: 'unknown', code: 'vercel_snapshot_deleted' }), kind: 'failed', nativeOperationRef: reference(operation) }
+        : unknown(operation, snapshot);
     } catch (error) { return failure(error, operation, 'vercel_preparation_read_unconfirmed'); }
   }
   async function destroy(input: { artifact?: Artifact; nativeOperation?: Operation }): Promise<DestroyResult> {
@@ -115,7 +122,7 @@ export function createVercelPreparationClient(scope: VercelScope, request: typeo
     try {
       let base = await io.read(operation.acquisition);
       if (base.kind !== 'present' && base.kind !== 'absent') return base.kind === 'refused'
-        ? { kind: 'refused', code: base.code } : unknown(operation, base.code);
+        ? { ...nativeFailureResult(base), kind: 'refused' } : unknown(operation, base);
       if (base.kind === 'present') {
         operation = { ...operation, acquisition: { ...operation.acquisition, createdAt: base.value.sandbox.createdAt } };
         if (base.value.sandbox.persistent) return { kind: 'refused', code: 'vercel_preparation_base_unavailable' };
@@ -123,32 +130,33 @@ export function createVercelPreparationClient(scope: VercelScope, request: typeo
       const owned = resource(operation);
       if (!owned) {
         const leftovers = await io.snapshots({ ...operation.acquisition, createdAt: 0 });
-        return base.kind === 'absent' && leftovers.kind === 'present' && leftovers.ids.length === 0
+        if (leftovers.kind !== 'present') return unknown(operation, leftovers);
+        return base.kind === 'absent' && leftovers.ids.length === 0
           ? { kind: 'confirmed' } : unknown(operation, 'vercel_cleanup_unqualified');
       }
       const snapshots = await io.snapshots(owned);
-      if (snapshots.kind !== 'present') return unknown(operation, snapshots.code);
+      if (snapshots.kind !== 'present') return unknown(operation, snapshots);
       const ids = [...new Set([...snapshots.ids, ...(operation.snapshotId ? [operation.snapshotId] : [])])];
       // These are operation-owned manual snapshots. Ordinary Machine deletion
       // retains its existing shared-source/orphan policy at native.destroy.
       for (const id of ids) {
         const snapshot = await io.readOwnedSnapshot(owned, id);
         if (snapshot.kind === 'absent' || snapshot.kind === 'present' && snapshot.value.status === 'deleted') continue;
-        if (snapshot.kind !== 'present') return unknown(operation, snapshot.code);
+        if (snapshot.kind !== 'present') return unknown(operation, snapshot);
         operation = { ...operation, snapshotId: id };
         const deleted = await io.http('/v2/sandboxes/snapshots/' + encodeURIComponent(id), 'DELETE');
-        if (deleted.kind !== 'ok' && deleted.kind !== 'absent') return unknown(operation, deleted.code);
+        if (deleted.kind !== 'ok' && deleted.kind !== 'absent') return unknown(operation, deleted);
         const after = await io.readSnapshot(id);
         if (after.kind === 'present' && after.value.status !== 'deleted') return { kind: 'pending', nativeOperationRef: reference(operation) };
-        if (after.kind !== 'present' && after.kind !== 'absent') return unknown(operation, after.code);
+        if (after.kind !== 'present' && after.kind !== 'absent') return unknown(operation, after);
       }
       if (base.kind === 'present') {
         const deleted = await io.http('/v2/sandboxes/' + encodeURIComponent(owned.name), 'DELETE', undefined, { projectId: scope.projectId, deleteOrphanSnapshots: 'false' });
-        if (deleted.kind !== 'ok' && deleted.kind !== 'absent') return unknown(operation, deleted.code);
+        if (deleted.kind !== 'ok' && deleted.kind !== 'absent') return unknown(operation, deleted);
         base = await io.read(owned);
       }
       return base.kind === 'absent' ? { kind: 'confirmed' } : base.kind === 'present'
-        ? { kind: 'pending', nativeOperationRef: reference(operation) } : unknown(operation, base.code);
+        ? { kind: 'pending', nativeOperationRef: reference(operation) } : unknown(operation, base);
     } catch (error) { return failure(error, operation, 'vercel_preparation_delete_unconfirmed'); }
   }
   return { build, inspect, destroy };

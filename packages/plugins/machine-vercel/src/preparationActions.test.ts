@@ -28,6 +28,8 @@ function vendor() {
   let loseCreate = false, loseSnapshot = false, commandFailure: 'install' | 'setup' | undefined, holdDelete = false;
   let cancelSnapshot: AbortController | undefined;
   let wrongOwner = false, foreignSnapshot = false;
+  let commandHttpFailure = false;
+  let readHttpFailure = false;
   const session = () => ({ id: 'sbx_build', sourceSandboxName: acquisition.name, projectId: scope.projectId, createdAt: 1000 });
   const named = () => ({ name: acquisition.name, tags: { 'happier-managed-id': wrongOwner ? 'other-person' : acquisition.managedId },
     createdAt: 1000, currentSessionId: 'sbx_build', status: stopped ? 'stopped' : 'running', persistent: false });
@@ -52,6 +54,7 @@ function vendor() {
         return response(200, { sandbox: named(), session: session(), routes: [] });
       }
       if (path === '/v2/sandboxes/' + acquisition.name) {
+        if (readHttpFailure && method === 'GET') return response(503, {});
         if (method === 'DELETE' && !holdDelete) base = false;
         return base ? response(200, { sandbox: named(), session: session() }) : response(404, {});
       }
@@ -70,6 +73,7 @@ function vendor() {
       if (path === '/v2/sandboxes/sessions/sbx_build') return response(200, { session: session() });
       if (path === '/v2/sandboxes/sessions/sbx_other') return response(200, { session: { ...session(), id: 'sbx_other', sourceSandboxName: 'someone-elses-sandbox' } });
       if (path.endsWith('/cmd')) {
+        if (commandHttpFailure) return response(503, {});
         const command = body as { command: string; args: string[] };
         const id = 'cmd_' + commands.size; commands.set(id, command);
         return response(200, { command: { id, sessionId: 'sbx_build', exitCode: null } });
@@ -94,6 +98,8 @@ function vendor() {
     loseCreate() { loseCreate = true; }, loseSnapshot() { loseSnapshot = true; },
     cancelSnapshot(controller: AbortController) { cancelSnapshot = controller; },
     failCommand(value: 'install' | 'setup') { commandFailure = value; }, setStatus(value: string) { snapshotStatus = value; },
+    failCommandHttp() { commandHttpFailure = true; },
+    failReadHttp(value: boolean) { readHttpFailure = value; },
     holdDelete() { holdDelete = true; }, wrongOwner() { wrongOwner = true; },
     foreignSnapshot() { foreignSnapshot = true; },
     get state() { return { base, captured }; } };
@@ -159,6 +165,20 @@ describe('Vercel preparation through public Actions', () => {
     const result = await kit.invokeAction('prepare-build', buildInput, { surface: 'plugin' });
     expect(result).toMatchObject({ kind: 'unknown', code: phase === 'install' ? 'vercel_preparation_cli_install_failed' : 'vercel_preparation_setup_failed',
       nativeOperationRef: { value: { acquisition } } });
+    expect(v.calls.filter(call => call.url.pathname.endsWith('/snapshot'))).toHaveLength(0);
+    expect(await kit.invokeAction('prepare-destroy', { nativeOperation: reference({ acquisition, launch }) }, { surface: 'plugin' })).toEqual({ kind: 'confirmed' });
+  }));
+
+  it.each(['exec', 'read'] as const)('retains the existing native HTTP failure cause from %s and owned operation for cleanup', async phase => withKit(async (kit, v) => {
+    if (phase === 'exec') v.failCommandHttp();
+    else { v.seed(); v.failReadHttp(true); }
+    const result = phase === 'exec' ? await kit.invokeAction('prepare-build', buildInput, { surface: 'plugin' })
+      : await kit.invokeAction('prepare-inspect', { nativeOperation: reference(operation) }, { surface: 'plugin' });
+    expect(result).toMatchObject({
+      kind: 'unknown', code: 'vercel_http_503', nativeCause: { httpStatusClass: '5xx' },
+      nativeOperationRef: { value: { acquisition } },
+    });
+    v.failReadHttp(false);
     expect(v.calls.filter(call => call.url.pathname.endsWith('/snapshot'))).toHaveLength(0);
     expect(await kit.invokeAction('prepare-destroy', { nativeOperation: reference({ acquisition, launch }) }, { surface: 'plugin' })).toEqual({ kind: 'confirmed' });
   }));
