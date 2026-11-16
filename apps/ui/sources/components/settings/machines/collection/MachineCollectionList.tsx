@@ -324,14 +324,15 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     const selectedKey = rail ? resolveSelectedMachineCollectionKey(pathname, { serverId: readParam(params.serverId) }) : null;
 
     const [query, setQuery] = React.useState(() => readLastVisitedMachine()?.query ?? '');
-    const total = React.useMemo(() => buildMachineCollection({
+    const unfiltered = React.useMemo(() => buildMachineCollection({
         groups: viewModel.visibleMachineGroups,
         groupedByHome: viewModel.showMachinesGroupedByServer,
         managedByServerId: viewModel.managedByServerId,
         managedFirstAnswerPending: viewModel.managedFirstAnswerPending,
         presetsByServerId: viewModel.presetsByServerId,
-    }).count, [viewModel.visibleMachineGroups, viewModel.showMachinesGroupedByServer, viewModel.managedByServerId,
+    }), [viewModel.visibleMachineGroups, viewModel.showMachinesGroupedByServer, viewModel.managedByServerId,
         viewModel.managedFirstAnswerPending, viewModel.presetsByServerId]);
+    const total = unfiltered.count;
     const searchable = total > SEARCH_THRESHOLD;
     const teamServerIds = React.useMemo(() => Object.entries(viewModel.presetsByServerId ?? {})
         .filter(([, presets]) => presets.some(preset => preset.owner.kind === 'team')).map(([serverId]) => serverId), [viewModel.presetsByServerId]);
