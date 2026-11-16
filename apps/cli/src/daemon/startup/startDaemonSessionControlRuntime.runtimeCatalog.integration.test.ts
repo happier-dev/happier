@@ -1489,6 +1489,7 @@ async function installTrackedRunnerProcfsBoundary(
         const file = String(path);
         if (!file.startsWith(`/proc/${tracked.pid}/`)) return actual.open(path, flags, mode);
         if (!isLive()) throw Object.assign(new Error('Fixture process exited'), { code: 'ENOENT' });
+        if (file === `/proc/${tracked.pid}/task/${tracked.pid}/children`) return procfsFileHandle('');
         if (file.endsWith('/status')) return procfsFileHandle(`Uid:\t${process.getuid?.() ?? 1000}\t0\t0\t0\n`);
         if (file.endsWith('/stat')) {
             const fields = Array<string>(22).fill('0');
@@ -1506,6 +1507,10 @@ async function installTrackedRunnerProcfsBoundary(
     readdir.mockImplementation(
         (async (path, options) => {
             if (String(path) === '/proc') return [String(process.pid), ...(isLive() ? [String(tracked.pid)] : [])];
+            if (String(path) === `/proc/${tracked.pid}/task`) {
+                if (!isLive()) throw Object.assign(new Error('Fixture process exited'), { code: 'ENOENT' });
+                return [String(tracked.pid)];
+            }
             return Reflect.apply(actual.readdir, undefined, [path, options]);
         }) as typeof filesystem.readdir,
     );
@@ -19015,17 +19020,20 @@ describe('startDaemonSessionControlRuntime', () => {
             deviceLocalSecretKeyFile: configuration.deviceLocalSecretKeyFile };
         Object.assign(configuration, { happyHomeDir: home, deviceLocalSecretKeyFile: join(home, 'local.key') });
         onTestFinished(async () => { Object.assign(configuration, previousConfiguration); await rm(home, { recursive: true, force: true }); });
-        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(9991), pid: 9991, sessionRunnerPid: process.pid, happySessionId: 'sess-refresh-drain', startedBy: 'daemon',
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(9991), pid: 9991, sessionRunnerPid: 9991, happySessionId: 'sess-refresh-drain', startedBy: 'daemon',
             processCommand: 'node /tmp/versions/0.2.10/package-dist/index.mjs claude --happy-starting-mode remote --started-by daemon',
             processCommandHash: 'a'.repeat(64), processStartTimeMs: 100, vendorResumeId: 'thread-drain',
             spawnOptions: { directory: '/tmp/project', resume: 'thread-drain', existingSessionId: 'sess-refresh-drain',
                 backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' } } };
         const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
         const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
-        const childProcess = { pid: tracked.pid, exitCode: null, signalCode: null,
-            kill: vi.fn(() => true) };
+        const { ChildProcess } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+        const childProcess = new ChildProcess();
+        Object.defineProperty(childProcess, 'pid', { value: tracked.pid });
+        const killChild = vi.fn(() => true);
+        childProcess.kill = killChild;
         if (childActivity === 'Stop before exit' || childActivity === 'shutdown before exit') {
-            tracked.childProcess = childProcess as never;
+            tracked.childProcess = childProcess;
         }
         if (childActivity === 'adopted runner survives') {
             tracked.sessionRunnerPid = tracked.pid;
@@ -19033,15 +19041,15 @@ describe('startDaemonSessionControlRuntime', () => {
         }
         let credentialProcessLive = true;
         if (childActivity === 'credential retirement') {
-            tracked.childProcess = childProcess as never;
+            tracked.childProcess = childProcess;
             tracked.sessionRunnerPid = tracked.pid;
             await installTrackedRunnerProcfsBoundary(tracked, () => credentialProcessLive);
         }
         if (childActivity !== 'adopted runner survives' && childActivity !== 'credential retirement') {
             await installTrackedRunnerProcfsBoundary(tracked, () => credentialProcessLive);
         }
-        // The production starting-mode reader uses the reported runner's witness,
-        // which can differ from the launcher whose PID receives the signal.
+        // The reported runner shares the synthetic process's birth and exit.
+        // Using the test worker PID would correctly preserve a surviving runner.
         tracked.runnerProcessIdentity = { pid: tracked.sessionRunnerPid ?? tracked.pid,
             processStartTimeMs: 100, processCommandHash: 'a'.repeat(64), processCommand: tracked.processCommand };
         if (childActivity === 'remainder capture unavailable') {
@@ -19073,7 +19081,9 @@ describe('startDaemonSessionControlRuntime', () => {
         const realSignal = await vi.importActual<typeof import('../connectedServices/sessionAuthSwitch/requestConnectedServiceSessionRestartSignal')>('../connectedServices/sessionAuthSwitch/requestConnectedServiceSessionRestartSignal');
         requestConnectedServiceSessionRestartSignalMock.mockImplementationOnce(realSignal.requestConnectedServiceSessionRestartSignal);
         vi.mocked(executeSpawnSessionRequest).mockClear();
-        fetchSessionByIdCompatMock.mockResolvedValue(null);
+        fetchSessionByIdCompatMock.mockResolvedValue(createSessionRecordFixture({
+            id: tracked.happySessionId!, encryptionMode: 'plain', metadata: JSON.stringify({}),
+        }));
         const runtime = await startDaemonSessionControlRuntime({ machineId: 'machine-1', externalActionAccountId: 'owner-refresh',
             serverId: 'server-refresh', serverBaseUrl: 'http://localhost:3000',
             credentials: { token: 'token-daemon', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
@@ -19164,7 +19174,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     connectedServiceCredentialRevisionsV1: [] })).rejects.toThrow('connected_service_credential_deletion_not_settled');
                 expect(childActive).toBe(true);
                 // Stop may use the process group or its platform-specific child handle.
-                expect(signalSent || childProcess.kill.mock.calls.length > 0,
+                expect(signalSent || killChild.mock.calls.length > 0,
                     JSON.stringify({ warnings: vi.mocked(logger.warn).mock.calls,
                         signals: processKill.mock.calls.filter(([, signal]) => signal !== 0) })).toBe(true);
                 expect(executeSpawnSessionRequest).not.toHaveBeenCalled();
@@ -19243,7 +19253,7 @@ describe('startDaemonSessionControlRuntime', () => {
             // The real exit observer can settle a missing synthetic runner before
             // this observation. Successful completion is checked below; only the
             // explicit retirement/budget cases require it to remain pending here.
-            await vi.waitFor(() => expect(signalSent).toBe(true));
+            await vi.waitFor(() => expect(signalSent, JSON.stringify(refreshResult)).toBe(true));
             if (childActivity === 'idle') {
                 // Observe publication at the physical signal boundary; the exit
                 // observer can already have retired it by the next awaited read.
