@@ -106,6 +106,48 @@ async function fixture(blocks: readonly WorkflowBlock[], options: Readonly<{ pro
 }
 
 describe('recorded durable workflow frontier', () => {
+  it.each(['parallel', 'items'] as const)('recovers a missing first %s body after later admission advances the frontier', async kind => {
+    const ids = ['first', 'second', 'third'];
+    const block: WorkflowBlock = kind === 'parallel'
+      ? { kind, id: 'collection', failurePolicy: 'collect_outcomes', branches: ids.map(id => ({ id, blocks: [step(`implement-${id}`)] })) }
+      : { kind: 'loop', id: 'collection', repetition: { kind: 'items', items: { kind: 'literal', value: ids },
+        execution: 'parallel', failurePolicy: 'collect_outcomes' }, body: [step('work')] };
+    const f = await fixture([block]);
+    const owner = await f.intent('collection', 0, { lifecycle: 'running', container: kind === 'parallel'
+      ? { kind: 'parallel', nextBranchOrdinal: '0' }
+      : { kind: 'loop', mode: 'items', source: { kind: 'definition', reference: { kind: 'literal', value: ids } },
+        itemCount: '3', nextMemberIndex: '0', nextBodyBlockOrdinal: '0' } });
+    const refusal = new Error('database_transaction_timeout');
+    let refused = false;
+    const storage: ConstructorParameters<typeof DurableWorkflowCoordinatorStore>[0]['storage'] = {
+      execute: async (operation, options) => {
+        if (!refused && operation.operation === 'invocations.admit'
+          && operation.invocations[0]?.parentRecordId === owner.recordId && operation.invocations[0].memberOrdinal === '0') {
+          refused = true;
+          throw refusal;
+        }
+        return await f.boundary.execute(operation, options);
+      },
+    };
+    await expect(f.run(await f.load(storage))).rejects.toBe(refusal);
+    expect(refused).toBe(true);
+    const before = f.boundary.rows();
+    expect(before.filter(row => row.index.parentRecordId === owner.recordId && row.index.memberOrdinal === '0')).toHaveLength(0);
+    const third = before.find(row => row.index.parentRecordId === owner.recordId && row.index.memberOrdinal === '2');
+    expect(third?.index.lifecycle).toBe('completed');
+    const retained = structuredClone(before.filter(row => row.index.id === third?.index.id || row.index.parentRecordId === third?.index.id));
+    const frontier = (await f.load()).readByLogicalInvocation(owner.recordId);
+    expect((await frontier)?.container).toMatchObject(kind === 'parallel' ? { nextBranchOrdinal: '3' } : { nextMemberIndex: '3' });
+    const callsAt = f.boundary.calls.length;
+    const recovered = await f.run(await f.load());
+    expect(recovered).toMatchObject({ result: { state: 'succeeded' }, effects: [kind === 'parallel' ? 'implement-first' : 'work'] });
+    expect(retained.map(row => f.boundary.rowById(row.index.id))).toEqual(retained);
+    const admissions = f.boundary.calls.slice(callsAt).filter(operation => operation.operation === 'invocations.admit');
+    // One absent body and its one leaf are admitted; retained siblings are never replayed.
+    expect(admissions).toHaveLength(2);
+    expect(f.boundary.rows().filter(row => row.index.parentRecordId === owner.recordId)).toHaveLength(3);
+  });
+
   it.each(['pending', 'cancel_requested'] as const)('reads fresh root control from its one authoritative snapshot (%s)', async lifecycle => {
     const f = await fixture(Array.from({ length: 500 }, (_, index) => step(`control-${index}`)));
     const store = await f.load();
