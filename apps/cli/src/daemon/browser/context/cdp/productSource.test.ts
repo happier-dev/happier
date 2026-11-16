@@ -89,7 +89,7 @@ describe('sidecar cdp browser context source (production wiring)', () => {
         } finally { await rm(workingDirectory, { recursive: true, force: true }); }
     });
 
-    it('serves diagnostics summaries from the store-backed summary source when present', async () => {
+    it('serves all retained diagnostics through the store-backed summary source without truncation', async () => {
         const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1' });
         store.publishEvent(networkEvent());
         for (let ordinal = 2; ordinal <= 600; ordinal += 1) {
@@ -112,13 +112,12 @@ describe('sidecar cdp browser context source (production wiring)', () => {
         const result = await source.captureSummary({ ...VIEW, kind: 'browserNetworkSummary' });
         expect(result.ok).toBe(true);
         if (!result.ok) return;
-        expect(result.summary).toContain('https://api.test/items');
-        expect(result.summary).toContain('200');
-        expect(result.summary.endsWith('https://api.test/items-600')).toBe(true);
+        expect(result.summary.split('\n')).toEqual(Array.from({ length: 600 }, (_, index) =>
+            `RESPONSE 200 https://api.test/items${index === 0 ? '' : `-${index + 1}`}`));
         expect(buildSidecarSummaryContextItem({ contextId: 'summary', sourceViewId: VIEW.viewId,
             capturedAtMs: 10_000, navigationGeneration: VIEW.navigationGeneration,
             kind: 'browserNetworkSummary', summary: result.summary, truncated: result.truncated }))
-            .toMatchObject({ lifecycleState: 'available', truncated: true });
+            .toMatchObject({ lifecycleState: 'available', truncated: false });
     });
 
     it('fails closed for diagnostics summaries without a summary source', async () => {
