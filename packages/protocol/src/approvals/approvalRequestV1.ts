@@ -773,7 +773,10 @@ export const ApprovalRequestV2Schema = lazyZodSchema(() => z.strictObject({
 })));
 export type ApprovalRequestV2 = z.infer<typeof ApprovalRequestV2Schema>;
 
-export const ApprovalRequestSchema = lazyZodSchema(() => z.discriminatedUnion('v', [
+export const ApprovalRequestSchema: z.ZodMiniDiscriminatedUnion<[
+  typeof ApprovalRequestV1Schema,
+  typeof ApprovalRequestV2Schema,
+], 'v'> = lazyZodSchema(() => z.discriminatedUnion('v', [
   ApprovalRequestV1Schema,
   ApprovalRequestV2Schema,
 ]));

@@ -68,8 +68,36 @@ const ApprovalPublicRequestV2Schema = lazyZodSchema(() => z.strictObject({
   execution: z.optional(ApprovalPublicExecutionV2Schema),
 }));
 
+type ApprovalPublicRequestV1Shape = Omit<typeof ApprovalRequestV1Schema.shape,
+  'actionArgs' | 'preview' | 'origin' | 'decision' | 'execution'> & {
+  actionArgs: typeof StrictJsonValueSchema;
+  preview: z.ZodMiniOptional<typeof StrictJsonValueSchema>;
+  origin: z.ZodMiniOptional<typeof ApprovalPublicOriginV1Schema>;
+  decision: z.ZodMiniOptional<typeof ApprovalPublicDecisionV2Schema>;
+  execution: z.ZodMiniOptional<typeof ApprovalPublicExecutionV1Schema>;
+};
+type HistoricalPublishPublicRequestV2Shape = Omit<typeof ApprovalPublicRequestV2Schema.shape,
+  'actionId' | 'executionOriginV1'> & {
+  actionId: z.ZodMiniLiteral<typeof RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1>;
+  executionOriginV1: typeof HistoricalPublishPublicExecutionOriginV1Schema;
+};
+type ApprovalPublicTargetRequestV1Shape = Omit<typeof TargetActionApprovalRequestV1Schema.shape,
+  'executionOriginV1' | 'decision' | 'execution'> & {
+  executionOriginV1: z.ZodMiniOptional<typeof ApprovalPublicExecutionOriginV1Schema>;
+  decision: z.ZodMiniOptional<z.ZodMiniObject<typeof ApprovalPublicDecisionV1Schema.shape & {
+    decidedVia: typeof ApprovalDecisionV2Schema.shape.decidedVia;
+  }, z.core.$strict>>;
+  execution: z.ZodMiniOptional<typeof ApprovalPublicTargetExecutionV1Schema>;
+};
+export type ApprovalRequestPublicReadSchemaType = z.ZodMiniUnion<[
+  z.ZodMiniObject<ApprovalPublicRequestV1Shape, z.core.$strict>,
+  typeof ApprovalPublicRequestV2Schema,
+  z.ZodMiniObject<HistoricalPublishPublicRequestV2Shape, z.core.$strict>,
+  z.ZodMiniObject<ApprovalPublicTargetRequestV1Shape, z.core.$strict>,
+]>;
+
 /** Read projection only: the private request schemas retain all replay/lifecycle validation. */
-export const ApprovalRequestPublicReadSchema = lazyZodSchema(() => z.union([
+export const ApprovalRequestPublicReadSchema: ApprovalRequestPublicReadSchemaType = lazyZodSchema(() => z.union([
   z.strictObject({
     ...ApprovalRequestV1Schema.shape,
     actionArgs: StrictJsonValueSchema,
@@ -156,7 +184,17 @@ export function projectDeploymentApprovalReceiptV1(approvalId: string,
     state: request.status === 'open' ? 'waiting-for-approval' : request.status });
 }
 
-export const ApprovalRequestGetResultV1Schema = lazyZodSchema(() => z.strictObject({
+export const ApprovalRequestGetResultV1Schema: z.ZodMiniObject<{
+  artifactId: z.ZodMiniString;
+  request: typeof ApprovalRequestPublicReadSchema;
+  deploymentReceipt: z.ZodMiniOptional<typeof DeploymentApprovalReceiptV1Schema>;
+  queryPlan: z.ZodMiniObject<{
+    kind: z.ZodMiniLiteral<'approval_artifact_id_lookup'>;
+    backingStore: z.ZodMiniLiteral<'ArtifactStore'>;
+    boundedBy: z.ZodMiniString;
+    hydratedTranscripts: z.ZodMiniLiteral<false>;
+  }, z.core.$strict>;
+}, z.core.$strict> = lazyZodSchema(() => z.strictObject({
   artifactId: z.string(),
   request: ApprovalRequestPublicReadSchema,
   deploymentReceipt: z.optional(DeploymentApprovalReceiptV1Schema),
