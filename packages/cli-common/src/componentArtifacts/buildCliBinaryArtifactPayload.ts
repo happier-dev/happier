@@ -356,12 +356,15 @@ export function readCliBinaryArtifactSupportIdentity({
   goVersion,
   cliProxyApiManagedRuntimeExecutablePath,
   processCustodyRuntimeExecutablePath,
+  dependencyRootDir = repoRoot,
 }: Readonly<{
   repoRoot: string;
   target?: BinaryTarget;
   goVersion: string;
   cliProxyApiManagedRuntimeExecutablePath?: string;
   processCustodyRuntimeExecutablePath?: string;
+  /** Installed packages resolve under this root (default: repoRoot). */
+  dependencyRootDir?: string;
 }>): CliBinaryArtifactSupportIdentity {
   const normalizedGoVersion = String(goVersion ?? '').trim();
   if (!normalizedGoVersion) {
@@ -387,7 +390,7 @@ export function readCliBinaryArtifactSupportIdentity({
     hash.update(`workspace-package\0${packageName}\0`);
     hashRuntimeDependencyTree({
       hash,
-      repoRoot,
+      repoRoot: dependencyRootDir,
       packageJsonPath,
       destinationNodeModulesPath: join(
         'node_modules',
@@ -417,7 +420,7 @@ export function readCliBinaryArtifactSupportIdentity({
   const cliPackageJsonPath = join(cliDir, 'package.json');
   hashRuntimeDependencyTree({
     hash,
-    repoRoot,
+    repoRoot: dependencyRootDir,
     packageJsonPath: cliPackageJsonPath,
     destinationNodeModulesPath: 'node_modules',
   });
@@ -905,6 +908,7 @@ async function stageCliBinaryArtifactSupportPayload({
       goVersion: normalizedGoVersion,
       cliProxyApiManagedRuntimeExecutablePath,
       processCustodyRuntimeExecutablePath,
+      dependencyRootDir,
     });
     if (before.fingerprint !== expectedSupportFingerprint) {
       throw new Error(
@@ -1020,6 +1024,7 @@ async function stageCliBinaryArtifactSupportPayload({
       goVersion: normalizedGoVersion,
       cliProxyApiManagedRuntimeExecutablePath,
       processCustodyRuntimeExecutablePath,
+      dependencyRootDir,
     });
     if (after.fingerprint !== expectedSupportFingerprint) {
       throw new Error(

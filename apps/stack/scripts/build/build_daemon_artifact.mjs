@@ -66,6 +66,7 @@ export async function resolveDaemonSupportArtifactFingerprint({
   runCaptureImpl = runCapture,
   resolveCurrentBinaryTargetImpl = resolveCurrentBinaryTarget,
   readCliBinaryArtifactSupportIdentityImpl = readCliBinaryArtifactSupportIdentity,
+  dependencyRootDir,
 } = {}) {
   const repoDir = resolveDaemonArtifactRepoDir({ rootDir, sourceMetadata });
   if (!repoDir) throw new Error('[build] daemon support identity requires a repository directory.');
@@ -79,6 +80,7 @@ export async function resolveDaemonSupportArtifactFingerprint({
     repoRoot: repoDir,
     target,
     goVersion,
+    ...(dependencyRootDir ? { dependencyRootDir } : {}),
   });
   const fingerprint = String(identity?.fingerprint ?? '').trim();
   if (!fingerprint) throw new Error('[build] daemon support identity did not produce a fingerprint.');
@@ -239,7 +241,8 @@ async function buildDaemonSupportArtifact({
  */
 export async function ensureDaemonSupportArtifact({ stackBaseDir, repoDir, dependencyRootDir, env = process.env,
   runtimeTarget = { platform: process.platform, arch: process.arch } }) {
-  const fingerprint = await resolveDaemonSupportArtifactFingerprint({ sourceMetadata: { repoDir }, env, target: runtimeTarget });
+  const fingerprint = await resolveDaemonSupportArtifactFingerprint({ sourceMetadata: { repoDir }, env, target: runtimeTarget,
+    dependencyRootDir });
   // The support identity is derived from these sources alone.
   const sourceMetadata = { repoDir, sourceFingerprint: fingerprint, builtAt: new Date().toISOString() };
   const support = await buildDaemonSupportArtifact({ stackBaseDir, supportArtifactFingerprint: fingerprint, sourceMetadata,
