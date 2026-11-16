@@ -15,6 +15,38 @@ vi.mock('node:fs/promises', async importOriginal => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+it.each(['ask', 'preauthorized'] as const)('settles a production %s preview without requesting elevation', async mode => {
+  const prompt = vi.fn(async () => null);
+  const native = createAgentIsolationEffectsBoundary({ installationId: 'installation',
+    installedCli: '/opt/happier/cli/current/happier', readRoots: () => [],
+    readSessionsToReplace: () => 0, publishStatus: async () => {},
+    adminAccess: mode === 'ask' ? { version: 1, mode, administratorUsername: 'administrator' } : { version: 1, mode },
+  });
+  const metadata = { status: 'ready' as const, metadataVersion: 5, metadata: {} };
+  const handlers: RpcHandlerMap = new Map();
+  registerDaemonMachineAgentIsolationRpcHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, {
+    target: () => ({ serverId: 'home', machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner' }),
+    read: () => ({ enabled: false, status: { kind: 'disabled' } }),
+    // Production has no injected setup backend. This is the branch the earlier
+    // CHECK fixtures bypassed, even though they correctly asserted no APPLY.
+    effects: { ...native.effects, backend: undefined, elevation: { ...native.effects.elevation, prompt } },
+    captureMetadataPort: () => ({ read: async () => metadata, compareAndSwap: async () => { throw new Error('Preview wrote policy'); } }),
+  });
+  const context: RpcHandlerContext = { signal: new AbortController().signal,
+    transportRequestId: 'ed13a64b-6132-429d-870b-0b0f677b335a',
+    machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+      installationId: 'installation', role: 'manage', encryptionMode: 'plain' } };
+  const result = MachineAgentIsolationPreviewResultV1Schema.parse(await handlers.get('machines.agentIsolation.preview')!(
+    { machineId: 'machine', enabled: true }, context));
+  expect(prompt).not.toHaveBeenCalled();
+  expect(native.launches).toHaveLength(mode === 'ask' ? 0 : 1);
+  expect(native.mutations).toEqual([]);
+  expect(result).toMatchObject(mode === 'ask' ? { kind: 'unavailable', setup: {
+    outcome: 'not_applied', reasonCode: 'not_preauthorized',
+    recovery: { kind: 'configure_admin_access', mode: 'preauthorized' },
+  } } : { kind: 'ready' });
+});
+
 it.each(['qualificationPending', 'effective'] as const)('produces the %s recovery fixture through the registered preview, without effects', async name => {
   vi.spyOn(process as NodeJS.Process & { getuid: () => number }, 'getuid').mockReturnValue(1001);
   let writes = 0;

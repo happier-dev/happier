@@ -115,6 +115,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
           ? context?.localActionContext?.actionRequestId ?? context?.transportRequestId : undefined;
       const prepareResult = (expectedPolicy?: MachineAgentIsolationPolicyV1) => prepareAgentIsolationEffectsResult({ machineId: request.machineId,
         enabled: desired.enabled, port, status: options.read().status, operationId, signal: context?.signal,
+        ...(actionId === 'machines.agentIsolation.preview' ? { allowPrompt: false as const } : {}),
         ...(desired.memberProvisioning ? { memberProvisioning: desired.memberProvisioning } : {}),
         verifyCurrent: verify, ...(expectedPolicy ? { expectedPolicy } : {}) }, effects);
       const prepare = async (expectedPolicy?: MachineAgentIsolationPolicyV1) => {

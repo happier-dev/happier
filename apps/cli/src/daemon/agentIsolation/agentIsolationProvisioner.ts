@@ -78,6 +78,7 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
   machineId: string; enabled: boolean; port: MachineMetadataFieldPortV1;
   status: MachineAgentIsolationStatusV1; expectedPolicy?: MachineAgentIsolationPolicyV1;
   operationId?: string; signal?: AbortSignal; verifyCurrent?: () => Promise<boolean>;
+  allowPrompt?: false;
   memberProvisioning?: 'linuxUsersV1';
   requesterIdentity?: AgentIsolationMemberRequester;
 }>, effects: AgentIsolationEffectDependencies): Promise<PreparedAgentIsolationEffects
@@ -104,7 +105,7 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
   let setupPlan = createMachineSetupEffectPlan({ basis, steps: [], nativeFacts: [] });
   if (observationSteps.length && !effects.backend && input.operationId && input.verifyCurrent) {
     const checked = await checkElevatedMachineSetupPlanResult({ machineId: input.machineId, operationId: input.operationId,
-      basis, steps: observationSteps, signal: input.signal }, { ...effects.elevation, verifyCurrent: input.verifyCurrent });
+      basis, steps: observationSteps, signal: input.signal, allowPrompt: input.allowPrompt }, { ...effects.elevation, verifyCurrent: input.verifyCurrent });
     if (checked.outcome === 'checked') setupPlan = checked.plan;
     else if (input.enabled) return { ...unavailable(),
       ...(checked.outcome === 'not_applied' ? { setup: checked } : {}) };

@@ -194,6 +194,8 @@ export async function runElevatedMachineReboot(input: Pick<RunElevatedEffectInpu
 /** Protected review uses the same elevation policy and password prompt as APPLY, without mutation. */
 export async function checkElevatedMachineSetupPlan(input: Pick<RunElevatedEffectInput, 'machineId' | 'operationId' | 'signal'> & Readonly<{
     basis: MachineSetupEffectPlanV1['basis']; steps: MachineRecipeStepV1[]; checks?: MachineRecipeCheckV1[];
+    /** Finite read RPCs cannot wait for an administrator's attendance. */
+    allowPrompt?: false;
 }>, dependencies: MachineElevationDependencies): Promise<MachineSetupEffectPlanV1 | null> {
     const result = await checkElevatedMachineSetupPlanResult(input, dependencies);
     return result.outcome === 'checked' ? result.plan : null;
@@ -202,8 +204,13 @@ export async function checkElevatedMachineSetupPlan(input: Pick<RunElevatedEffec
 /** Inspect retains the existing elevation owner's typed refusal and recovery. */
 export async function checkElevatedMachineSetupPlanResult(input: Parameters<typeof checkElevatedMachineSetupPlan>[0],
     dependencies: MachineElevationDependencies): Promise<ElevatedProcessResult> {
-    return runElevatedProcess(input, dependencies, { kind: 'check', basis: input.basis, steps: input.steps,
+    const result = await runElevatedProcess(input, input.allowPrompt === false ? { ...dependencies, prompt: undefined } : dependencies,
+        { kind: 'check', basis: input.basis, steps: input.steps,
         ...(input.checks !== undefined ? { checks: input.checks } : {}) });
+    return input.allowPrompt === false && result.outcome === 'needs_attendance'
+        ? { outcome: 'not_applied', reasonCode: 'not_preauthorized',
+            recovery: { kind: 'configure_admin_access', mode: 'preauthorized' } }
+        : result;
 }
 
 function managedPolicyRefusal(error: unknown): Extract<MachineElevatedResultV1, { outcome: 'not_applied' }> | undefined {
