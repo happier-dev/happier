@@ -33,6 +33,8 @@ vi.mock('@/plugins/runtime/context/pluginAccountSettingsChangeBroker', () => ({
 }));
 
 import {
+  accountWakeNeedsHostChangesRead,
+  registerAccountWakeConsumer,
   runSessionChangesSyncOnConnect,
 } from './sessionChangesSyncOnConnect';
 import { buildPromptLibraryPhysicalKeyV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
@@ -49,6 +51,24 @@ function createChangesCursorStore(initialCursor = 3): {
     }),
   };
 }
+
+describe('accountWakeNeedsHostChangesRead', () => {
+  it('reads for no wake whose kinds this host never consumes, and still reads when a consumed kind rides along', () => {
+    const release = registerAccountWakeConsumer('wake-kinds-token', {
+      sessionId: 's1', receivesWakes: () => true, sessionPushesCurrent: () => true,
+    });
+    const wake = (changeKinds: string[], entityIds: string[]) => ({ body: { t: 'account-change', changeKinds, entityIds } });
+    try {
+      // A daemon's own `daemonState` write and a Machine recipient grant: no Session-client consumer.
+      expect(accountWakeNeedsHostChangesRead({ token: 'wake-kinds-token', wake: wake(['machine', 'machineRecipientAccess'], ['m1']) }))
+        .toBe(false);
+      expect(accountWakeNeedsHostChangesRead({ token: 'wake-kinds-token', wake: wake(['machine', 'account'], ['m1', 'self']) }))
+        .toBe(true);
+      expect(accountWakeNeedsHostChangesRead({ token: 'wake-kinds-token', wake: wake(['machine', 'session'], ['m1', 's1']) }))
+        .toBe(true);
+    } finally { release(); }
+  });
+});
 
 describe('runSessionChangesSyncOnConnect', () => {
   beforeEach(() => {
