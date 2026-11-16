@@ -995,6 +995,9 @@ resolveServerFeaturesSnapshot?: () =>
             ).execute('session.spawn_new', projectSessionSpawnNewActionInputV2(input), context);
           },
           observeRecordedApprovalExecution,
+          ...(apiMachineForSessions ? { cancelAndWaitForActionOperation:
+            (...args: Parameters<ApiMachineClient['cancelAndWaitForActionOperation']>) =>
+              apiMachineForSessions.cancelAndWaitForActionOperation(...args) } : {}),
           observeActionExecution: request => {
             if (!apiMachineForSessions) return Promise.resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
             const rpcContext = resolveRequesterIngress(executionContext);

@@ -207,7 +207,8 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
     observeRecordedApprovalExecution?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['observeRecordedApprovalExecution'],
     executeEnvironmentSetup?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['executeEnvironmentSetup'],
     observeActionExecution?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['observeActionExecution'],
-    runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry, installationId = 'installation') {
+    runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry, installationId = 'installation',
+    cancelAndWaitForActionOperation?: ReturnType<typeof createHostActionOperationRuntime>['runner']['cancelAndWait']) {
     // The module-loading boundary has no installed plugin. The empty catalog
     // itself is produced by the real contribution registry owner.
     const registry = { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry;
@@ -217,6 +218,7 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
         ...(observeRecordedApprovalExecution ? { observeRecordedApprovalExecution } : {}),
         ...(executeEnvironmentSetup ? { executeEnvironmentSetup } : {}),
         ...(observeActionExecution ? { observeActionExecution } : {}),
+        ...(cancelAndWaitForActionOperation ? { cancelAndWaitForActionOperation } : {}),
         installationIdentity: { installationId, privateKey },
         ...(withAuthority ? { managedProviderOperationAuthority: authority } : {}),
         resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
@@ -227,7 +229,7 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
 }
 
 describe('daemon managed Machine Action factory', () => {
-    it.each(['ready', 'inspected', 'cancelled', 'replaced'] as const)('prepares a private preset beneath its original public Action (%s)', async outcome => {
+    it.each(['ready', 'inspected', 'cancelled', 'replaced', 'retired'] as const)('prepares a private preset beneath its original public Action (%s)', async outcome => {
         const actionId = MACHINE_PRESET_PREPARE_ACTION_ID_V1;
         const payload = await createCliPayloadFixture();
         onTestFinished(() => payload.cleanup());
@@ -272,6 +274,12 @@ describe('daemon managed Machine Action factory', () => {
             } } });
         }
         const nativeOperationRef = { contributionRef: provider, schemaVersion: 1, value: { claimId: 'prepare-operation' } };
+        let releaseOriginal = () => {};
+        const originalHeld = new Promise<void>(resolve => { releaseOriginal = resolve; });
+        let markStopping = () => {};
+        const stopping = new Promise<void>(resolve => { markStopping = resolve; });
+        let builds = 0;
+        let admittedInput = input;
         let markBuildStarted = () => {};
         const buildStarted = new Promise<void>(resolve => { markBuildStarted = resolve; });
         const native = nativeFixture({ fixtureManifest: manifest, credentialPurposes: [],
@@ -282,13 +290,15 @@ describe('daemon managed Machine Action factory', () => {
                     dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
                 if (action.id === 'prepare-build') {
                     expect(openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared)
-                        .toMatchObject({ status: 'building', operationId: 'prepare-operation' });
+                        .toMatchObject({ status: 'building', operationId: builds === 0 ? 'prepare-operation' : 'replacement-operation' });
                     markBuildStarted();
-                    return outcome === 'ready' ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
+                    builds++;
+                    if (outcome === 'retired' && builds === 1) await originalHeld;
+                    return outcome === 'ready' || outcome === 'retired' ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
                 }
-                if (action.id === 'prepare-inspect') return outcome === 'inspected' ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
+                if (action.id === 'prepare-inspect') return outcome === 'inspected' || outcome === 'retired' ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
                 if (action.id === 'prepare-destroy') {
-                    expect(body).toMatchObject(outcome === 'replaced' ? { artifact } : { nativeOperation: nativeOperationRef });
+                    expect(body).toMatchObject(outcome === 'replaced' || outcome === 'retired' ? { artifact } : { nativeOperation: nativeOperationRef });
                     return { kind: 'confirmed' };
                 }
                 if (action.id === 'prepare-build-replacement') {
@@ -316,7 +326,7 @@ describe('daemon managed Machine Action factory', () => {
                 roots.push(path);
                 return { status: 200, data: { v: 1, token: 'prepare-original-root', binding: { accountId: 'account', custodianAccountId: 'account',
                     authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain', serverIdentityId: 'srv_home',
-                    machineId: 'controller', installationId: 'installation', actionId, presetPreparationAdmission: input, requestId: request.envelope.requestId,
+                    machineId: 'controller', installationId: 'installation', actionId, presetPreparationAdmission: admittedInput, requestId: request.envelope.requestId,
                     target: { kind: 'machine', machineId: 'controller' }, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
             }
             if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
@@ -331,9 +341,15 @@ describe('daemon managed Machine Action factory', () => {
             }
             throw new Error(`Unexpected preparation POST ${path}`);
         });
-        const managed = adapter(true, undefined, undefined, signing.secretKey, accountCredentials, undefined, undefined, undefined, native.runtimeRegistry);
+        let operationSequence = 0;
         const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account',
-            generateOperationId: () => 'prepare-operation' });
+            generateOperationId: () => operationSequence++ === 0 ? 'prepare-operation' : 'replacement-operation' });
+        const managed = adapter(true, undefined, undefined, signing.secretKey, accountCredentials, undefined, undefined, undefined,
+            native.runtimeRegistry, 'installation', async (...args) => {
+                const result = operations.runner.cancelAndWait(...args);
+                markStopping();
+                return await result;
+            });
         const deps = createCliActionDeps({ credentials: accountCredentials, token, sessionId: '', mode: 'plain', ctx: null,
             serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
             externalActionMachineRequestPrivateKey: signing.secretKey, externalActionMachineInstallationId: 'installation',
@@ -341,37 +357,63 @@ describe('daemon managed Machine Action factory', () => {
         const executor = createActionExecutor({ ...deps, runActionOperation: operations.runActionOperation,
             invokeContributedAction: createCommittedContributedActionInvoker({ managedProviderOperationAuthority: authority,
                 acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }) }) });
-        const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId, input, requestId: 'prepare-request',
-            target: { kind: 'machine', machineId: 'controller' }, machineId: 'controller', accountId: 'account', accountEncryptionMode: 'plain',
-            tokenEpochHint: 0, token, serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
-            installationId: 'installation', privateKey: signing.secretKey });
-        if (!authorization) throw new Error('Home did not admit the Prepare root');
-        const requester = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
-            machineId: 'controller', installationId: 'installation', installationPrivateKey: signing.secretKey,
-            serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
-            ownCredentials: accountCredentials, isCurrent: async () => true, createExecutor: () => executor });
-        if (!requester) throw new Error('Prepare requester custody is unavailable');
-        onTestFinished(() => requester.dispose());
-        const confirmation = bindPresentUserActionConfirmationV1(actionId, input, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
-            runtimeAccountId: 'account', actionRequestId: 'prepare-request', serverId: configuration.activeServerId,
-            serverIdentityId: 'srv_home', externalActionTarget: authorization.binding.target });
-        const context = { ...confirmation, externalActionExecutionAuthorization: requester.authorization,
-            signExternalActionApprovalInput: (args: Parameters<NonNullable<ActionExecutorContext['signExternalActionApprovalInput']>>[0]) =>
-                signExternalActionApprovalInputV1({ authorizationToken: authorization.token, ...args, privateKey: signing.secretKey }),
-            originalActionEnvelope: { v: 1 as const, requestId: 'prepare-request', target: authorization.binding.target, input } };
-        const result = await operations.observeExecution({ actionId, input, actionRequestId: 'prepare-request',
-            execute: operation => executor.execute(actionId, input, { ...context, ...operation }) });
+        const start = async (requestInput = input, requestId = 'prepare-request') => {
+            const input = requestInput;
+            admittedInput = input;
+            const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId, input, requestId,
+                target: { kind: 'machine', machineId: 'controller' }, machineId: 'controller', accountId: 'account', accountEncryptionMode: 'plain',
+                tokenEpochHint: 0, token, serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+                installationId: 'installation', privateKey: signing.secretKey });
+            if (!authorization) throw new Error('Home did not admit the Prepare root');
+            const requester = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
+                machineId: 'controller', installationId: 'installation', installationPrivateKey: signing.secretKey,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+                ownCredentials: accountCredentials, isCurrent: async () => true, createExecutor: () => executor });
+            if (!requester) throw new Error('Prepare requester custody is unavailable');
+            onTestFinished(() => requester.dispose());
+            const confirmation = bindPresentUserActionConfirmationV1(actionId, input, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+                runtimeAccountId: 'account', actionRequestId: requestId, serverId: configuration.activeServerId,
+                serverIdentityId: 'srv_home', externalActionTarget: authorization.binding.target });
+            const context = { ...confirmation, externalActionExecutionAuthorization: requester.authorization,
+                signExternalActionApprovalInput: (args: Parameters<NonNullable<ActionExecutorContext['signExternalActionApprovalInput']>>[0]) =>
+                    signExternalActionApprovalInputV1({ authorizationToken: authorization.token, ...args, privateKey: signing.secretKey }),
+                originalActionEnvelope: { v: 1 as const, requestId, target: authorization.binding.target, input } };
+            const result = await operations.observeExecution({ actionId, input, actionRequestId: requestId,
+                execute: operation => executor.execute(actionId, input, { ...context, ...operation }) });
+            return result;
+        };
+        const result = await start();
         expect(result.ok ? null : result).toBeNull();
         expect(result).toMatchObject({ ok: true, result: { status: 'accepted', operationId: 'prepare-operation' } });
+        if (outcome === 'retired') {
+            await buildStarted;
+            const replacement = start({ ...input, expectedRevision: preset.revision }, 'replacement-request');
+            try {
+                expect(await Promise.race([stopping.then(() => 'stopping'), replacement.then(() => 'premature')])).toBe('stopping');
+                expect(builds).toBe(1);
+                expect(nativeRoles).toEqual(['options', 'prepare-build']);
+            } finally {
+                releaseOriginal();
+            }
+            expect(await replacement).toMatchObject({ ok: true, result: { status: 'accepted', operationId: 'replacement-operation' } });
+            expect(await operations.handlers.getV2({ operationId: 'prepare-operation', waitForTerminal: true }))
+                .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+        }
         if (outcome === 'cancelled') {
             await buildStarted;
             expect(await operations.handlers.cancel({ operationId: 'prepare-operation' })).toMatchObject({ kind: 'requested' });
         }
-        const terminal = await operations.handlers.getV2({ operationId: 'prepare-operation', waitForTerminal: true });
+        const terminal = await operations.handlers.getV2({ operationId: outcome === 'retired' ? 'replacement-operation' : 'prepare-operation', waitForTerminal: true });
         expect(terminal.kind === 'found' && terminal.operation.state === 'failed' ? terminal.operation.error : undefined).toBeUndefined();
         expect(terminal).toMatchObject({ kind: 'found', operation: { state: outcome === 'cancelled' ? 'cancelled' : 'succeeded' } });
         const prepared = openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared;
-        expect(roots).toEqual([bindExternalActionExecutionAuthorizationHttpPathV1(actionId)]);
+        expect(roots).toEqual(Array.from({ length: outcome === 'retired' ? 2 : 1 }, () => bindExternalActionExecutionAuthorizationHttpPathV1(actionId)));
+        if (outcome === 'retired') {
+            expect(prepared).toMatchObject({ status: 'ready', operationId: 'replacement-operation', artifact });
+            expect(builds).toBe(2);
+            expect(nativeRoles.indexOf('prepare-destroy')).toBeLessThan(nativeRoles.lastIndexOf('prepare-build'));
+            return;
+        }
         if (outcome !== 'cancelled') {
             expect(prepared).toMatchObject({ status: 'ready', artifact: outcome === 'replaced' ? replacementArtifact : artifact });
             expect(writes).toEqual(outcome === 'ready' ? [1, 2] : outcome === 'replaced' ? [1, 2, 3, 4] : [1, 2, 3]);

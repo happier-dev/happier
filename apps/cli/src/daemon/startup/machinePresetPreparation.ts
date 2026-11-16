@@ -23,6 +23,7 @@ import { createManagedPresetHydrator } from '@/machines/managed/presetHydration'
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { prepareMachineSetupPreparationV1 } from '@/machines/setup/prepareMachineSetupPreparation';
 import { resolveRegistryConnectedAccountActionPurposeAuthorizations } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
+import type { ApiMachineClient } from '@/api/apiMachine';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 type PrepareRequest = Parameters<NonNullable<ActionExecutorDeps['machinePresetPrepare']>>[0];
@@ -31,6 +32,7 @@ type PrepareRequest = Parameters<NonNullable<ActionExecutorDeps['machinePresetPr
 export async function prepareMachinePresetOnHost(request: PrepareRequest, host: Readonly<{
     homeId: string; machineId: string; installationId: string; serverBaseUrl: string;
     registry: ResolvedExecutablePluginRuntimeRegistry; isCurrent(): boolean;
+    cancelAndWait?: ApiMachineClient['cancelAndWaitForActionOperation'];
 }>) {
     const { input, context, signal } = request;
     const authorization = context.externalActionExecutionAuthorization;
@@ -102,10 +104,16 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
     const accepted = { status: 'accepted' as const, operationId: acceptance.operationId, machineId: host.machineId };
     let acceptedOnce = false;
     const accept = () => { if (!acceptedOnce) { acceptedOnce = true; acceptance.accept(accepted); } };
+    const cancelAndWait = host.cancelAndWait;
     const run = async (custody: Parameters<typeof settleManagedMachinePresetPreparationOperationV1>[0]['custody']) => {
         let firstRead = true;
         const result = await settleManagedMachinePresetPreparationOperationV1({ operationId: acceptance.operationId,
             expectedRevision: input.expectedRevision, custody, ...(signal ? { signal } : {}),
+            ...(cancelAndWait ? { stopIncumbentBuild: async (operationId: string) => {
+                const retirement = await cancelAndWait({ accountId: authorization.binding.accountId,
+                    machineId: host.machineId }, operationId);
+                return retirement.kind === 'requested' || retirement.kind === 'already_settled';
+            } } : {}),
             storage: { read: async () => { if (firstRead) { firstRead = false; return preset; } return await read(); },
                 compareAndSwap: async update => PresetMutationResultV1Schema.parse(await post('update', {
                     homeId: input.homeId, id: input.id, expectedRevision: update.expectedRevision,

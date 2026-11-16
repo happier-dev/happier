@@ -736,6 +736,15 @@ export function createActionOperationRunner(deps: Readonly<{
     observe,
     reconcileSessionBirth: sessionBirth.reconcile,
     cancel,
+    /** Local admitted owners need executor retirement, not an earlier terminal projection. */
+    async cancelAndWait(scope: ActionOperationQueryScope, operationId: string): Promise<ActionOperationCancelV1Response> {
+      const invocation = deps.store.get(scope, operationId) ? active.get(operationId) : undefined;
+      const response = cancel(scope, operationId);
+      if (invocation && (response.kind === 'requested' || response.kind === 'already_settled')) {
+        await invocation.result.catch(() => undefined);
+      }
+      return response;
+    },
     requestCancellation,
     claimServiceMoveStart(scope: ActionOperationQueryScope, requestId: string, input: ProjectServiceRelocateInputV1): ProjectServiceMoveStartClaimResultV1 {
       const snapshot = deps.store.findByRequestIdentity(scope, 'projects.service.relocate', requestId);

@@ -3249,6 +3249,9 @@ building write; subsequent status writes use the current preset CAS revision.
 They preserve encryption mode and recipient identities. Stop uses the existing
 operation cancellation owner: it ends new build work while retaining that same
 admission through private cancellation status and owned native cleanup.
+Replacing a building image first stops and joins the original local invocation
+under the same requester Account before inspecting or removing its resource.
+An invocation outside that scope remains a visible conflict until its owner stops it.
 
 In current 0.3 development, the terminal-auth verifier identifies a
 `HOME_AUTHORITY_MISMATCH` with a closed comparison label, verification phase,

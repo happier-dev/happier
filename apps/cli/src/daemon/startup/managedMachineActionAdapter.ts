@@ -72,6 +72,7 @@ type ManagedMachineActionAdapterParams = Readonly<{
     executeTeamCredentialBrokerAction?: Parameters<typeof resolveAccountExecutionRuntime>[0]['executeTeamCredentialBrokerAction'];
     managedGuestLocalStop?: ManagedGuestLocalStop;
     observeActionExecution?: ApiMachineClient['observeActionExecution'];
+    cancelAndWaitForActionOperation?: ApiMachineClient['cancelAndWaitForActionOperation'];
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
     subscribeManagedMachineChanges?: ApiMachineClient['onManagedMachinePolicyInvalidated'];
@@ -306,7 +307,8 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
     };
     return Object.assign(actionAdapter, {
         preparePreset: (async request => await withBoundDriver(params, request.signal, async (_driver, _credentials, host) =>
-            await prepareMachinePresetOnHost(request, { ...host, machineId: params.machineId, serverBaseUrl: params.serverBaseUrl }))) satisfies NonNullable<ActionExecutorDeps['machinePresetPrepare']>,
+            await prepareMachinePresetOnHost(request, { ...host, machineId: params.machineId, serverBaseUrl: params.serverBaseUrl,
+                ...(params.cancelAndWaitForActionOperation ? { cancelAndWait: params.cancelAndWaitForActionOperation } : {}) }))) satisfies NonNullable<ActionExecutorDeps['machinePresetPrepare']>,
         acquireSessionIsolationSandbox: (async request => {
             const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal);
             if (!origin || !params.installationIdentity) throw new ManagedMachineControllerError('controller_unavailable');
