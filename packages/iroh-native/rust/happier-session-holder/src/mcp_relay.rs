@@ -5,9 +5,9 @@
 //! The endpoint comes from the Session MCP context file named by
 //! `HAPPIER_SESSION_MCP_CONTEXT_FILE` (an Agent held in a target has none: the
 //! context is its own holder's, found among its ancestors, `session_mcp.rs`): a Unix socket (`socketPath`; the host admits
-//! this process by kernel peer identity in the Session's Agent tree, so the
-//! Agent-visible context carries no bearer) or, on Windows, `url`
-//! `http://127.0.0.1:<port>`, whose bearer arrives only in this relay's MCP client
+//! this process by its registration's bearer or kernel peer identity in the Session's Agent tree;
+//! the Agent-visible context carries no bearer) or, on Windows, `url`
+//! `http://127.0.0.1:<port>`. The registration's bearer arrives only in this relay's MCP client
 //! config env (`HAPPIER_SESSION_MCP_BEARER`), never in the context file the Agent's
 //! shell can read. A context still carrying `bearerToken` is accepted. The relay
 //! upgrades one HTTP/1.1 connection (`Upgrade: happier-mcp-relay`, the bearer when

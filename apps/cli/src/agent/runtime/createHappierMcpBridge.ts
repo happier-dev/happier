@@ -18,23 +18,26 @@ import type {
 } from '@happier-dev/protocol'
 
 /**
- * Every Session MCP listener has a private context (socket or Windows loopback + bearer). Agents
+ * Every Session MCP registration has a private context (socket or Windows loopback + bearer). Agents
  * launch the native relay mode of the shipped holder, which pipes MCP stdio to the Session's
  * endpoint; this host serves every tool in-process (no per-Session bridge process). The relay
- * reads only the context file path; it starts no tools and reads no settings.
+ * reads its context file path and registration bearer; it starts no tools and reads no settings.
  */
 function resolveHappierMcpServerConfig(server: Readonly<{ localContext?: SessionMcpLocalContext; contextFilePath?: string }>): McpServerConfig {
   if (!server.localContext) throw new SessionMcpUnavailableError()
   // An isolated Agent's context file is placed by its launch materialization (`resolveRunnerMcpServers`).
-  // The Unix socket admits the relay by kernel peer proof. The Windows loopback relay needs its
-  // bearer, which rides only this MCP client config (never the context file or the Agent env).
+  // The relay's bearer selects its registration when a Session and its Runs share a Unix socket;
+  // Windows loopback also requires it. It rides only this MCP client config (never the context file or the Agent env).
   // In a placed Session the relay uses the context of the holder it runs under in the target, which
   // admits by that holder's own Agent-tree proof; this Machine's bearer never crosses.
   const contextFilePath = resolveSessionAgentMcpContextFile(server.contextFilePath)
   const placed = readSessionTargetPlacement(sessionProcessEnvironment()) !== null
-  const loopbackBearer: Readonly<Record<string, string>> = !placed && 'url' in server.localContext ? { [SESSION_MCP_BEARER_ENV]: server.localContext.bearerToken } : {}
+  const relayEnvironment: Readonly<Record<string, string>> | undefined = placed ? undefined : {
+    ...(contextFilePath ? { [SESSION_MCP_CONTEXT_FILE_ENV]: contextFilePath } : {}),
+    [SESSION_MCP_BEARER_ENV]: server.localContext.bearerToken,
+  }
   return { command: resolveAgentSessionHolderExecutablePath(), args: ['mcp-relay'],
-    ...(contextFilePath ? { env: { [SESSION_MCP_CONTEXT_FILE_ENV]: contextFilePath, ...loopbackBearer } } : {}) }
+    ...(relayEnvironment ? { env: relayEnvironment } : {}) }
 }
 
 export async function createHappierMcpBridge(

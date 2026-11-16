@@ -80,6 +80,7 @@ describe('createHappierMcpBridge', () => {
     const binding = await resolveRunnerMcpServers({
       session,
       credentials: { token: 'plain-token', encryption: null },
+      accountCredentials: null,
       accountSettings: null,
       machineId: 'machine-a',
       directory: '/repo',
@@ -125,21 +126,22 @@ describe('createHappierMcpBridge', () => {
       getAccountSettings: null,
     }))
     // The relay reads only its context; Action policy stays in the in-session server.
-    expect(mcpServers.happier.env).toEqual({ HAPPIER_SESSION_MCP_CONTEXT_FILE: '/run/happier-mcp-x/session-mcp.json' })
+    expect(mcpServers.happier.env).toEqual({ HAPPIER_SESSION_MCP_CONTEXT_FILE: '/run/happier-mcp-x/session-mcp.json',
+      HAPPIER_SESSION_MCP_BEARER: BEARER })
   })
 
-  it('launches the shipped holder relay with only the private context path', async () => {
+  it('launches the shipped holder relay with its private context path and registration bearer', async () => {
     toolEnvironmentScope.patch({ AGENT_BROWSER_IDLE_TIMEOUT_MS: '420000', PRIVATE_BRIDGE_ENV: 'must-not-leak' })
     const { mcpServers } = await createHappierMcpBridge(createApiSessionClientFixture())
     expect(mcpServers.happier).toEqual({
       command: expect.stringMatching(/happier-session-holder\.[a-z0-9]+-[a-z0-9]+(\.exe)?$/u),
       args: ['mcp-relay'],
-      env: { HAPPIER_SESSION_MCP_CONTEXT_FILE: '/run/happier-mcp-x/session-mcp.json' },
+      env: { HAPPIER_SESSION_MCP_CONTEXT_FILE: '/run/happier-mcp-x/session-mcp.json', HAPPIER_SESSION_MCP_BEARER: BEARER },
     })
     const overrides = buildCodexAppServerConfigOverrides(mcpServers).join('\n')
     expect(overrides).toContain('mcp-relay')
     expect(overrides).not.toContain('PRIVATE_BRIDGE_ENV')
-    expect(overrides).not.toContain(BEARER)
+    expect(overrides).toContain(BEARER)
   })
 
   it('gives the Windows loopback relay its bearer only in its MCP client config', async () => {
@@ -153,7 +155,8 @@ describe('createHappierMcpBridge', () => {
   it('leaves an isolated Agent\'s context path to its launch materialization', async () => {
     startHappyServerMock.mockResolvedValue({ ...liveServer(), contextFilePath: undefined })
     const { mcpServers } = await createHappierMcpBridge(createApiSessionClientFixture())
-    expect(mcpServers.happier).toEqual({ command: expect.stringMatching(/happier-session-holder/u), args: ['mcp-relay'] })
+    expect(mcpServers.happier).toEqual({ command: expect.stringMatching(/happier-session-holder/u), args: ['mcp-relay'],
+      env: { HAPPIER_SESSION_MCP_BEARER: BEARER } })
   })
 
   it('refuses a launch without the shipped holder and stops the server', async () => {

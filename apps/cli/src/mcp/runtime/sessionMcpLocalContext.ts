@@ -2,7 +2,7 @@ import { isAbsolute } from 'node:path';
 import { z } from 'zod/mini';
 
 export const SESSION_MCP_CONTEXT_FILE_ENV = 'HAPPIER_SESSION_MCP_CONTEXT_FILE';
-/** Windows loopback only: the relay's bearer, carried in its MCP client config env, never the Agent env. */
+/** The relay's registration bearer, carried in its MCP client config env, never the Agent env. */
 export const SESSION_MCP_BEARER_ENV = 'HAPPIER_SESSION_MCP_BEARER';
 
 /** Session tool metadata shared by the client and its owning host endpoint. */

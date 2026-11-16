@@ -6032,14 +6032,17 @@ such as plugin services, which receive it in memory) or by the kernel peer proof
 below for this Session's Agent tree. The context the Agent can read
 (`HAPPIER_SESSION_MCP_CONTEXT_FILE` and isolated launch material, both written
 through `agentVisibleSessionMcpContext`) names the socket only, so an Agent's
-shell never holds a Session MCP bearer. Where no socket transport exists
-(Windows), the 127.0.0.1 Session MCP endpoint stays bearer-only: its context file
-names the endpoint, and the bearer reaches the relay only in that Agent's MCP
+shell context carries no Session MCP bearer. In current 0.3 development, each
+local Agent relay receives its own bridge registration's bearer only in its MCP
 client config env (`HAPPIER_SESSION_MCP_BEARER`; Codex projects that env as a
-config override on its own command line). As a labeled Windows mitigation the
-Session message writer (`buildOutboundSessionMessagePayload`) redacts the live
-loopback bearer by exact value before storage; the follow-up is a Windows
-named-pipe transport with peer proof. Plugin-hosted loopback MCP servers' bearers
+config override on its own command line). This selects the parent or Run's exact
+catalog when both bridges belong to the same Session holder; anonymous peer
+proof still refuses ambiguous registrations. The Session message writer
+(`buildOutboundSessionMessagePayload`) redacts each live registration bearer by
+exact value before storage. Where no socket transport exists (Windows), the
+127.0.0.1 endpoint stays bearer-only; the follow-up is a Windows named-pipe
+transport with peer proof. Placed Sessions retain their target holder transport
+and receive no Machine endpoint bearer. Plugin-hosted loopback MCP servers' bearers
 ride only the private remote-bridge config written by the MCP materializer (its
 path, not the bearer, is in the bridge's MCP config env), and the same transcript
 redactor covers them while they are live. The session hook server
@@ -6053,8 +6056,8 @@ is logged.
 
 Agents launch the Session MCP as `happier-session-holder mcp-relay` (the shipped
 holder binary; no Node bridge process per Session). The relay reads the
-context file named by `HAPPIER_SESSION_MCP_CONTEXT_FILE` (and, on Windows only,
-its bearer from `HAPPIER_SESSION_MCP_BEARER`), upgrades one HTTP/1.1
+context file named by `HAPPIER_SESSION_MCP_CONTEXT_FILE` (and its registration's
+bearer from `HAPPIER_SESSION_MCP_BEARER` when supplied), upgrades one HTTP/1.1
 connection on the Session endpoint (`Upgrade: happier-mcp-relay`, the bearer when
 present, the Agent's tool-name budget from `--tool-name-max-length`), then pipes MCP stdio
 framing both ways. The host serves that connection in-process as one MCP session

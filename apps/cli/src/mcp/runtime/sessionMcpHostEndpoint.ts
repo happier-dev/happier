@@ -171,8 +171,8 @@ export async function registerSessionMcpEndpointSession(
         }
     }
     const bearer = createLocalMcpBearer();
-    // The Windows loopback bearer reaches the relay's MCP client config; redact it while it is live.
-    const unregisterTranscriptSecret = transportOptions ? () => {} : registerTranscriptSecret(bearer.token);
+    // The registration bearer reaches the relay's MCP client config; redact it while it is live.
+    const unregisterTranscriptSecret = registerTranscriptSecret(bearer.token);
     const session: Registration = {
         bearer, holderScope: handlers.holderScope, agentUid: transportOptions?.agentUid,
         handleRequest: AsyncResource.bind(handlers.handleRequest),

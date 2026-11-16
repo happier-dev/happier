@@ -20,8 +20,10 @@ import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerH
 import { createSessionHolderSocketPath, requireSessionHolderExecutablePath, spawnSessionHolderChild, type SessionHolderTarget } from '@/subprocess/supervision/sessionHolder';
 import { SESSION_TARGET_PLACEMENT_ENV_KEY } from '@/subprocess/supervision/sessionTargetRelay';
 import { sessionMcpAgentTransport } from './sessionMcpClient.testkit';
-import { SESSION_MCP_CONTEXT_FILE_ENV } from './sessionMcpLocalContext';
+import { SESSION_MCP_BEARER_ENV, SESSION_MCP_CONTEXT_FILE_ENV } from './sessionMcpLocalContext';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { buildOutboundSessionMessagePayload } from '@/api/session/client/transport/outboundSessionMessagePayload';
 
 const daemonCatalogBoundary = vi.hoisted(() => ({
     read: vi.fn(async () => ({ kind: 'available' as const, plugins: [], tools: [] })),
@@ -35,12 +37,12 @@ vi.mock('@/daemon/controlClient', async (importOriginal) => {
         requestDaemonPluginActionExecution: async () => ({ matched: false }) };
 });
 
-async function startSessionMcp(sessionId: string, extra: Partial<HappyMcpSessionClient> = {}) {
+async function startSessionMcp(sessionId: string, extra: Partial<HappyMcpSessionClient> = {}, accountSettings = accountSettingsParse({})) {
     return await createHappierMcpBridge({ ...extra, sessionId,
         getServerBinding: () => ({ serverId: 'test-home', serverUrl: 'https://test-home.example.test' }),
         rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }),
         updateMetadata() {}, getMetadataSnapshot: () => ({}),
-    }, { accountSettings: accountSettingsParse({}) });
+    }, { accountSettings });
 }
 
 /** Run `command` the way an Agent's shell does: under a Session holder, with the Agent's environment. */
@@ -93,6 +95,53 @@ function shellTarget(directory: string, agentEnv: Readonly<Record<string, string
 }
 
 describe('Session MCP through the native holder relay', () => {
+    it.runIf(process.platform !== 'win32')('keeps a Session relay reachable when its own Run opens a second bridge in the same holder scope', async () => {
+        await runAddedHostedSession({ environment: { ...process.env }, workingDirectory: process.cwd(), end: () => {} }, async () => {
+            const primary = await startSessionMcp('session-mcp-own-run');
+            let run: Awaited<ReturnType<typeof startSessionMcp>> | undefined;
+            const primaryAgent = new Client({ name: 'same-session-primary', version: '1' });
+            const runAgent = new Client({ name: 'same-session-run', version: '1' });
+            try {
+                const context = primary.happierMcpServer.localContext;
+                if (!context || !('socketPath' in context)) throw new Error('missing Session MCP socket context');
+                const script = `const r=require('node:http').request({socketPath:${JSON.stringify(context.socketPath)},path:'/mcp',method:'POST',`
+                    + `headers:{'content-type':'application/json',accept:'application/json, text/event-stream'}},`
+                    + `res=>{res.resume();process.stdout.write(String(res.statusCode));});r.end(${JSON.stringify(INITIALIZE)});`;
+                const initialStatus = await runInAgentTree(process.execPath, ['-e', script], {});
+                expect(initialStatus).toBe('200');
+                // Session-owned Runs rebind the Happier bridge without opening another hosted Session.
+                run = await startSessionMcp('session-mcp-own-run', {}, accountSettingsParse({
+                    actionsSettingsV1: { v: 1, actions: { 'session.title.set': { enabled: false } } },
+                }));
+                const statusAfterRebind = await runInAgentTree(process.execPath, ['-e', script], {});
+                // A shared Agent tree cannot choose between the two registrations anonymously.
+                expect(statusAfterRebind).toBe('401');
+                const runInitialized = await runAgent.connect(sessionMcpAgentTransport(run.mcpServers.happier!))
+                    .then(() => true, () => false);
+                expect(runInitialized).toBe(true);
+                await primaryAgent.connect(sessionMcpAgentTransport(primary.mcpServers.happier!));
+                expect((await runAgent.listTools()).tools.map(tool => tool.name)).not.toContain('change_title');
+                expect((await primaryAgent.listTools()).tools.map(tool => tool.name)).toContain('change_title');
+                const runContext = run.happierMcpServer.localContext;
+                if (!runContext) throw new Error('missing Run MCP context');
+                // An Agent can echo its private MCP config: the real outbound writer redacts both live registrations.
+                const transcriptEcho = (value: string) => JSON.stringify(buildOutboundSessionMessagePayload({ mode: 'plain', ctx: null }, value));
+                const redactedEcho = JSON.stringify({ t: 'plain', v: TRANSCRIPT_SECRET_REDACTED });
+                expect(transcriptEcho(runContext.bearerToken) === redactedEcho).toBe(true);
+                expect(transcriptEcho(context.bearerToken) === redactedEcho).toBe(true);
+                await run.happierMcpServer.stop();
+                expect(await initializeOverSocket(context.socketPath, `Bearer ${runContext.bearerToken}`)).toBe(401);
+                expect(transcriptEcho(runContext.bearerToken) === JSON.stringify({ t: 'plain', v: runContext.bearerToken })).toBe(true);
+                expect(transcriptEcho(context.bearerToken) === redactedEcho).toBe(true);
+                expect((await primaryAgent.listTools()).tools.map(tool => tool.name)).toContain('change_title');
+            } finally {
+                await Promise.allSettled([primaryAgent.close(), runAgent.close()]);
+                await run?.happierMcpServer.stop();
+                await primary.happierMcpServer.stop();
+            }
+        });
+    }, 120_000);
+
     it.runIf(process.platform === 'linux')('serves an Agent held in a target through its holder channel, never this Machine\'s socket', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'mcp-target-'));
         const primarySocketPath = join(directory, 'primary.sock');
@@ -153,7 +202,7 @@ describe('Session MCP through the native holder relay', () => {
         }
     }, 60_000);
 
-    it.runIf(process.platform !== 'win32')('gives the Agent tree no bearer and admits its shell clients by kernel peer proof', async () => {
+    it.runIf(process.platform !== 'win32')('keeps the relay bearer out of the Agent environment and context file while admitting shell clients by peer proof', async () => {
         const bridge = await startSessionMcp('session-mcp-agent-shell');
         const context = bridge.happierMcpServer.localContext;
         const contextFile = bridge.happierMcpServer.contextFilePath;
@@ -164,7 +213,7 @@ describe('Session MCP through the native holder relay', () => {
             const shown = await runInAgentTree('/bin/sh', ['-c', 'env; cat "$HAPPIER_SESSION_MCP_CONTEXT_FILE"'], agentEnvironment);
             expect(shown).toContain(context.socketPath);
             expect(shown.includes(context.bearerToken)).toBe(false);
-            expect(JSON.stringify(bridge.mcpServers).includes(context.bearerToken)).toBe(false);
+            expect(JSON.stringify(bridge.mcpServers).includes(context.bearerToken)).toBe(true);
 
             // A bearer-less HTTP client in the Agent tree (the `happier` CLI's shell use) is admitted by peer proof.
             const script = `const r=require('node:http').request({socketPath:${JSON.stringify(context.socketPath)},path:'/mcp',method:'POST',`
@@ -177,7 +226,7 @@ describe('Session MCP through the native holder relay', () => {
             expect(await initializeOverSocket(context.socketPath)).toBe(401);
             expect(await initializeOverSocket(context.socketPath, `Bearer ${context.bearerToken}`)).toBe(200);
 
-            // The native relay reaches the Session from the bearer-less context.
+            // The native relay selects its registration with the bearer in its own MCP config.
             const agent = new Client({ name: 'relay-agent-bearerless', version: '1' });
             try {
                 await agent.connect(sessionMcpAgentTransport(bridge.mcpServers.happier!));
@@ -265,10 +314,10 @@ describe('Session MCP through the native holder relay', () => {
             expect(alias).toBeDefined();
             expect(CallToolResultSchema.parse(await budgeted.callTool({ name: alias!, arguments: {} })).content.length).toBeGreaterThan(0);
 
-            // Same uid, valid copied bearer, but not inside this Session's Agent tree: refused.
+            // An uncredentialed process outside this Session's Agent tree is refused.
             const outsider = new Client({ name: 'relay-outsider', version: '1' });
             await expect(outsider.connect(new StdioClientTransport({ command: config.command, args: [...config.args!],
-                env: { ...config.env }, stderr: 'ignore' }))).rejects.toThrow();
+                env: Object.fromEntries(Object.entries(config.env ?? {}).filter(([key]) => key !== SESSION_MCP_BEARER_ENV)), stderr: 'ignore' }))).rejects.toThrow();
             await outsider.close().catch(() => undefined);
 
             // A wrong bearer gets a 401 and never an MCP response.
