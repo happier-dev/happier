@@ -16,6 +16,7 @@ import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import type { VoiceActivityEvent } from '@/voice/activity/voiceActivityEvents';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -262,6 +263,71 @@ describe('MessageSpeakButton', () => {
         expect(playbackCommits).toBe(before);
         await act(async () => { control('message.stopReadAloudA11y').props.onPress(); });
         expect(screen.findAllByType('ScrollView')).toHaveLength(1);
+    });
+
+    it('keeps expanded session activity unchanged when another session receives events', async () => {
+        const { VoiceSurface } = await import('@/components/voice/surface/VoiceSurface');
+        setup();
+        setVoice(voiceSettingsParse({ ...localVoice, ui: { surfaceLocation: 'session', activityFeedEnabled: true } }));
+        voiceActivityController.appendUserText('s1', 'local_conversation', 'current session activity');
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="session-feed" onRender={() => { commits += 1; }}>
+            <VoiceSurface variant="session" sessionId="s1" />
+        </React.Profiler>);
+        await act(async () => { screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' }).props.onPress(); });
+        const before = commits;
+        await act(async () => { voiceActivityController.appendUserText('other', 'local_conversation', 'other session activity'); });
+        expect(commits).toBe(before);
+        await act(async () => { voiceActivityController.appendUserText('s1', 'local_conversation', 'new current activity'); });
+        expect(screen.getTextContent()).toContain('new current activity');
+        expect(screen.getTextContent()).not.toContain('other session activity');
+    });
+
+    it('reads only counts while activity is collapsed and opens current details after replacements', async () => {
+        const { VoiceSurface } = await import('@/components/voice/surface/VoiceSurface');
+        setup();
+        setVoice(voiceSettingsParse({ ...localVoice, ui: { surfaceLocation: 'sidebar', activityFeedEnabled: true } }));
+        let iterations = 0;
+        // Instrument real event arrays to observe history traversal without replacing store or feed logic.
+        const events = (sessionId: string, text: string) => new Proxy<VoiceActivityEvent[]>([{
+            id: `${sessionId}-${text}`, sessionId, ts: 1, adapterId: 'local_conversation', kind: 'user.text', text,
+        }], { get(target, key, receiver) {
+            if (key === Symbol.iterator) iterations += 1;
+            return Reflect.get(target, key, receiver);
+        } });
+        useVoiceActivityStore.setState({ eventsBySessionId: { s1: events('s1', 'old activity'), s2: events('s2', 'other activity') } });
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="collapsed-feed" onRender={() => { commits += 1; }}>
+            <VoiceSurface variant="sidebar" />
+        </React.Profiler>);
+        const counts = () => screen.findAllByType('Text').map(node => String(node.props.children ?? ''));
+        expect(counts()).toContain('2');
+        expect(iterations).toBe(0);
+        const before = commits;
+        await act(async () => { useVoiceActivityStore.getState().replaceSessionEvents('s1', events('s1', 'current activity')); });
+        expect(commits).toBe(before);
+        expect(iterations).toBe(0);
+        await act(async () => { screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' }).props.onPress(); });
+        expect(screen.getTextContent()).toContain('current activity');
+        expect(screen.getTextContent()).not.toContain('old activity');
+        await act(async () => { screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' }).props.onPress(); });
+        const closedIterations = iterations;
+        await act(async () => { useVoiceActivityStore.getState().replaceSessionEvents('s2', events('s2', 'latest activity')); });
+        expect(iterations).toBe(closedIterations);
+        await act(async () => { screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' }).props.onPress(); });
+        expect(screen.getTextContent()).toContain('latest activity');
+        await act(async () => {
+            useVoiceActivityStore.getState().replaceSessionEvents('s1', Array.from({ length: 60 }, (_, index) => ({
+                id: `tail-${index}`, sessionId: 's1', ts: index + 10, adapterId: 'local_conversation',
+                kind: 'user.text', text: `tail event ${index}`,
+            })));
+        });
+        expect(counts()).toContain('61');
+        const rows = screen.findAllByType('Text').filter(node => node.props.numberOfLines === 3)
+            .map(node => String(node.props.children ?? ''));
+        expect(rows).toHaveLength(50);
+        expect(rows[0]).toContain('tail event 59');
+        expect(rows[49]).toContain('tail event 10');
     });
 
     it('preserves newer live activity instead of rehydrating an unchanged carrier epoch after playback', async () => {

@@ -15,7 +15,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { useAllSessions, useSessionMetadata } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
+import { selectVoiceActivityEventCount, useVoiceActivityStore, type VoiceActivityState } from '@/voice/activity/voiceActivityStore';
 import type { VoiceActivityEvent } from '@/voice/activity/voiceActivityEvents';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
@@ -48,6 +48,7 @@ export type VoiceSurfaceVariant = 'sidebar' | 'session' | 'global';
 type VoiceSurfaceProps = Readonly<{ variant: VoiceSurfaceVariant; sessionId?: string | null; style?: StyleProp<ViewStyle> }>;
 
 const EMPTY_EVENTS: ReadonlyArray<VoiceActivityEvent> = [];
+const EMPTY_EVENT_GROUPS: VoiceActivityState['eventsBySessionId'] = {};
 
 function resolveSessionIdFromPathname(pathname: string | null | undefined): string | null {
   const normalized = String(pathname ?? '').trim();
@@ -426,20 +427,8 @@ function VoiceSurfaceActivityFeed(props: Readonly<{
   const { theme } = useUnistyles();
   const styles = stylesheet;
   const { expanded, setExpanded } = props;
-  const feedSessionId = props.variant === 'session' && typeof props.sessionId === 'string' ? props.sessionId : null;
-  // Avoid selectors that allocate new arrays on every getSnapshot call (can infinite-loop in React 18).
-  const eventsBySessionId = useVoiceActivityStore((s) => s.eventsBySessionId);
-  const events = React.useMemo(() => {
-    if (props.variant === 'session') {
-      return feedSessionId ? (eventsBySessionId[feedSessionId] ?? EMPTY_EVENTS) : EMPTY_EVENTS;
-    }
-
-    const all: VoiceActivityEvent[] = [];
-    for (const v of Object.values(eventsBySessionId ?? {})) {
-      if (Array.isArray(v)) all.push(...v);
-    }
-    return all.length === 0 ? EMPTY_EVENTS : all;
-  }, [eventsBySessionId, feedSessionId, props.variant]);
+  const feedSessionId = props.variant === 'session' ? (props.sessionId ?? '') : null;
+  const eventCount = useVoiceActivityStore((state) => selectVoiceActivityEventCount(state, feedSessionId));
 
   const hydratedVoiceAgentEpochRef = props.hydratedVoiceAgentEpochRef;
   React.useEffect(() => {
@@ -460,12 +449,6 @@ function VoiceSurfaceActivityFeed(props: Readonly<{
     }
   }, [props.autoExpandOnStart, expanded, props.status, setExpanded]);
 
-  const visibleEvents = React.useMemo(() => {
-    if (!Array.isArray(events) || events.length === 0) return EMPTY_EVENTS;
-    const base = props.variant === 'sidebar' ? [...events].sort(sortVoiceActivityEventsByTsThenId) : events;
-    const tail = base.length > 50 ? base.slice(base.length - 50) : base;
-    return [...tail].reverse();
-  }, [events, props.variant]);
   const onClearPress = () => {
     if (props.variant === 'session' && feedSessionId) {
       voiceActivityController.clearSession(feedSessionId);
@@ -491,20 +474,20 @@ function VoiceSurfaceActivityFeed(props: Readonly<{
                 {t('voiceActivity.title')}
               </Text>
               <Text style={[styles.feedCount, { color: theme.colors.text.secondary }]}>
-                {`${events.length}`}
+                {`${eventCount}`}
               </Text>
             </Pressable>
 
               <Pressable
                 onPress={onClearPress}
-                disabled={events.length === 0 || (props.variant === 'session' && !feedSessionId)}
+                disabled={eventCount === 0 || (props.variant === 'session' && !feedSessionId)}
                 accessibilityRole="button"
                 accessibilityLabel={t('voiceSurface.a11y.clearActivity')}
                 style={({ pressed }) => [
                   styles.clearButton,
                 {
                   opacity: pressed ? 0.72 : 1,
-                  backgroundColor: events.length === 0 ? 'transparent' : theme.colors.surface.inset,
+                  backgroundColor: eventCount === 0 ? 'transparent' : theme.colors.surface.inset,
                   borderColor: theme.colors.border.default,
                 },
               ]}
@@ -514,18 +497,32 @@ function VoiceSurfaceActivityFeed(props: Readonly<{
           </View>
 
           {expanded ? (
-            <VoiceSurfaceActivityEventsList events={events} visibleEvents={visibleEvents} />
+            <VoiceSurfaceActivityEventsList variant={props.variant} sessionId={feedSessionId} />
           ) : null}
         </View>
   );
 }
 
 function VoiceSurfaceActivityEventsList(props: Readonly<{
-  events: ReadonlyArray<any>;
-  visibleEvents: ReadonlyArray<any>;
+  variant: VoiceSurfaceVariant; sessionId: string | null;
 }>): React.ReactElement {
   const { theme } = useUnistyles();
   const styles = stylesheet;
+  const sessionEvents = useVoiceActivityStore((state) => props.sessionId !== null
+    ? (state.eventsBySessionId[props.sessionId] ?? EMPTY_EVENTS) : EMPTY_EVENTS);
+  const eventsBySessionId = useVoiceActivityStore((state) => props.sessionId === null ? state.eventsBySessionId : EMPTY_EVENT_GROUPS);
+  const events = React.useMemo(() => {
+    if (props.sessionId !== null) return sessionEvents;
+    const all: VoiceActivityEvent[] = [];
+    for (const group of Object.values(eventsBySessionId)) all.push(...group);
+    return all.length === 0 ? EMPTY_EVENTS : all;
+  }, [sessionEvents, eventsBySessionId, props.sessionId]);
+  const visibleEvents = React.useMemo(() => {
+    if (events.length === 0) return EMPTY_EVENTS;
+    const base = props.variant === 'sidebar' ? [...events].sort(sortVoiceActivityEventsByTsThenId) : events;
+    const tail = base.length > 50 ? base.slice(base.length - 50) : base;
+    return [...tail].reverse();
+  }, [events, props.variant]);
   const allSessions = useAllSessions();
   const sessionLabelById = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -538,10 +535,10 @@ function VoiceSurfaceActivityEventsList(props: Readonly<{
 
   return (
     <ScrollView style={styles.feedScroll} contentContainerStyle={styles.feedScrollContent as any}>
-      {props.events.length === 0 ? (
+      {events.length === 0 ? (
         <Text style={[styles.emptyText, { color: theme.colors.text.secondary }]}>{t('voiceActivity.empty')}</Text>
       ) : (
-        props.visibleEvents.map((event) => (
+        visibleEvents.map((event) => (
           <Text key={event.id} style={[styles.eventText, { color: theme.colors.text.primary }]} numberOfLines={3}>
             {formatVoiceActivityEvent(event, sessionLabelById)}
           </Text>
