@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,7 +21,9 @@ import { ApiMachineClient } from './apiMachine';
 const { mockIo, axiosGet } = vi.hoisted(() => ({ mockIo: vi.fn(), axiosGet: vi.fn() }));
 // Only the network and credential/cursor persistence are faked; catalog and copy owners are real.
 vi.mock('socket.io-client', () => ({ io: mockIo }));
-vi.mock('axios', () => ({ default: { get: axiosGet, post: vi.fn(), isAxiosError: vi.fn(() => false) }, isAxiosError: vi.fn(() => false) }));
+beforeEach(() => {
+    vi.spyOn(axios, 'get').mockImplementation(axiosGet);
+});
 vi.mock('@/persistence', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/persistence')>(),
     readAccountChangesCursor: vi.fn(async () => 0), writeAccountChangesCursor: vi.fn(async () => {}),

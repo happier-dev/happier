@@ -2,10 +2,11 @@ import { ArtifactKindCoverageV1Schema } from '@happier-dev/protocol/artifacts/ar
 import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 
 /** Kind-filtered Artifact lists answer one envelope; this is the Home wire shape the CLI list reader accepts. */
-export function artifactKindListResponse<T>(items: readonly T[]): Readonly<{
-  items: readonly T[]; hasUnclassified: false; coverage: ReturnType<typeof ArtifactKindCoverageV1Schema.parse>;
+export function artifactKindListResponse<T>(items: readonly T[],
+  coverage = ArtifactKindCoverageV1Schema.parse({ status: 'complete', unclassifiedCount: 0 })): Readonly<{
+  items: readonly T[]; hasUnclassified: boolean; coverage: ReturnType<typeof ArtifactKindCoverageV1Schema.parse>;
 }> {
-  return { items, hasUnclassified: false, coverage: ArtifactKindCoverageV1Schema.parse({ status: 'complete', unclassifiedCount: 0 }) };
+  return { items, hasUnclassified: coverage.status === 'partial', coverage };
 }
 
 /** GET /v1/artifacts answers a bare array unless the request selects membership, which answers the envelope. */

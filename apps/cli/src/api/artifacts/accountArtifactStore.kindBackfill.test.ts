@@ -6,6 +6,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
 import { createAccountArtifactStore } from './accountArtifactStore';
+import { artifactKindListResponse } from '@/testkit/http/artifactHome';
 
 describe('Account Artifact indexed exact selection', () => {
   it.each(['plain', 'e2ee'] as const)('keeps %s exact reads query-only with partial legacy membership and no unrelated bodies', async mode => {
@@ -61,7 +62,9 @@ describe('Account Artifact indexed exact selection', () => {
       const projection = url.searchParams.get('includeBody') === 'true' ? selected : headers;
       if (url.searchParams.get('includeBody') === 'true') bodyIds.push(...selected.map(row => row.id));
       send(url.searchParams.has('unclassified') || url.searchParams.has('kinds')
-        ? { items: projection, hasUnclassified: rows.some(row => !Object.hasOwn(row, 'kindHint')) } : projection);
+        ? artifactKindListResponse(projection, { status: 'partial',
+          unclassifiedCount: rows.filter(row => !Object.hasOwn(row, 'kindHint')).length,
+          reason: 'unclassified_legacy_rows' }) : projection);
     });
     await new Promise<void>(resolve => home.listen(0, '127.0.0.1', resolve));
     try {
@@ -71,18 +74,19 @@ describe('Account Artifact indexed exact selection', () => {
         const artifacts = createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => mode });
         for (let index = 0; index < 2; index++) {
           const result = await artifacts.list({ kinds: ['account_notice.v1'], includeBody: true });
-          expect(bodyIds.filter(id => id !== 'artifact-2')).toEqual([]);
-          expect(result.coverage).toBe('partial');
-          expect(result.items.map(item => item.artifactId)).toEqual(['artifact-2']);
+          expect(bodyIds.filter(id => id !== 'artifact-2' && id !== 'artifact-0')).toEqual([]);
+          expect(result.coverage).toBe('complete');
+          expect(result.kindCoverage).toMatchObject({ status: 'partial', unclassifiedCount: 2 });
+          expect(result.items.map(item => item.artifactId)).toEqual(['artifact-2', 'artifact-0']);
           expect(result.items[0]?.body).toBe('content');
         }
       });
       expect(labeled).toEqual([]);
       expect(kindWritePaths).toEqual([]);
-      expect(bodyIds).toEqual(['artifact-2', 'artifact-2']);
-      expect(queries.every(query => query.has('kinds'))).toBe(true);
+      expect(bodyIds).toEqual(['artifact-2', 'artifact-0', 'artifact-2', 'artifact-0']);
+      expect(queries.every(query => query.has('kinds') || query.has('unclassified'))).toBe(true);
       expect(queries.every(query => !query.has('includeBody'))).toBe(true);
-      expect(queries.filter(query => query.has('unclassified'))).toHaveLength(0);
+      expect(queries.filter(query => query.has('unclassified'))).toHaveLength(2);
       expect(queries.filter(query => query.has('kinds')).map(query => JSON.parse(query.get('kinds')!)))
         .toEqual([['account_notice.v1'], ['account_notice.v1']]);
     } finally { await new Promise<void>((resolve, reject) => home.close(error => error ? reject(error) : resolve())); }

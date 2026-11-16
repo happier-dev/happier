@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import axios from 'axios';
 
 import { reloadConfiguration } from '@/configuration';
 import type { Credentials } from '@/persistence';
@@ -8,20 +9,8 @@ import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { ApiClient } from './api';
 
-const { mockGet, mockPost, mockIsAxiosError } = vi.hoisted(() => ({
-  mockGet: vi.fn(),
-  mockPost: vi.fn(),
-  mockIsAxiosError: vi.fn(() => false),
-}));
-
-vi.mock('axios', () => ({
-  default: {
-    get: mockGet,
-    post: mockPost,
-    isAxiosError: mockIsAxiosError,
-  },
-  isAxiosError: mockIsAxiosError,
-}));
+const mockGet = vi.fn();
+const mockPost = vi.fn();
 
 vi.mock('@/features/serverFeaturesClient', () => ({
   fetchServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
@@ -42,7 +31,8 @@ describe('ApiClient loopback url resolution', () => {
       data: createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }),
     });
     mockPost.mockReset();
-    mockIsAxiosError.mockReset();
+    vi.spyOn(axios, 'get').mockImplementation(mockGet);
+    vi.spyOn(axios, 'post').mockImplementation(mockPost);
 
     envScope.patch({
       HAPPIER_HOME_DIR: '/tmp/happier-cli-test-loopback',
@@ -55,6 +45,7 @@ describe('ApiClient loopback url resolution', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     envScope.restore();
     reloadConfiguration();
   });

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProviderBrokerRequestAdmissionV1 } from '@happier-dev/protocol';
 import type { ProviderBrokerResourceTestRelayBindingV1 } from '@happier-dev/protocol';
 import { ProviderConnectionIdSchema, ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { TEAM_CREDENTIAL_ACTION_PATHS_V1, TeamCredentialResourceSummaryV1Schema,
   type TeamCredentialResourceTestAdmissionV1, RunnerBrokerReadinessRequestV1Schema,
   RunnerBrokerReadinessResponseV1Schema } from '@happier-dev/protocol/teams';
@@ -38,7 +39,10 @@ const admission: ProviderBrokerRequestAdmissionV1 = {
 
 const resource = TeamCredentialResourceSummaryV1Schema.parse({
   id: 'resource-1', teamId: 'team-1', custodianAccountId: 'custodian', sourceOwnerDisplayName: null,
-  displayName: 'Shared source', enabled: true, revision: 0, deliveryPolicy: { preferredAllowedModes: ['brokered'] },
+  displayName: projectPrivateLabelForRecipientV1({ recipientAccountId: 'custodian',
+    stored: sealPrivateLabelV1({ mode: 'plain', value: 'Shared source',
+      binding: { entity: 'team_credential_resource', field: 'displayName', id: 'resource-1' } }) }),
+  enabled: true, revision: 0, deliveryPolicy: { preferredAllowedModes: ['brokered'] },
   sessionUsePolicy: 'personal_allowed', source: null,
   sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
   directExportSupport: 'unsupported', activeUsageLimitCount: 0, requestPolicy: null,
