@@ -555,8 +555,9 @@ describe('All machines (the Settings door index)', () => {
     expect(updateLine('calm')).toBeUndefined();
   });
 
-  it('keeps one missing-value mark under each offline metric column', async () => {
+  it('keeps one missing-value mark under each offline metric column while another machine reports', async () => {
     await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+      machine('machine-online', 'Online box', 'online.local'),
       { ...machine('machine-offline', 'Offline box', 'offline.local'), active: false },
     ] }]);
     const tree = await renderPage();
@@ -567,6 +568,24 @@ describe('All machines (the Settings door index)', () => {
     const row = tree.findAll(node => node.props?.testID === 'machines.index.row.machine:srv_a:machine-offline')[0]!;
     const marks = row.findAll(node => typeof node.type === 'string' && node.props?.children === '—');
     expect(marks).toHaveLength(3);
+  });
+
+  it('drops the metric columns when no listed machine reports, and says each machine\'s presence instead', async () => {
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+      { ...machine('machine-a', 'Box A', 'a.local'), active: false },
+      { ...machine('machine-b', 'Box B', 'b.local'), active: false },
+    ] }]);
+    const tree = await renderPage();
+    await act(async () => {
+      const stage = tree.findAll(node => node.props?.testID === 'machines.index.collection:stage' && typeof node.props?.onLayout === 'function')[0]!;
+      stage.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 900 } } });
+    });
+    const row = tree.findAll(node => node.props?.testID === 'machines.index.row.machine:srv_a:machine-a')[0]!;
+    const text = (node: { children: unknown[] }): string => node.children
+      .map(child => typeof child === 'string' ? child : text(child as { children: unknown[] })).join(' ');
+    // Three columns of "—" say nothing; the row says it is offline, once.
+    expect(row.findAll(node => typeof node.type === 'string' && node.props?.children === '—')).toHaveLength(0);
+    expect(text(row)).toContain('settingsOverview.machineOffline');
   });
 
   it('says why an online machine it cannot read has no figures, where its figures would stand in the table', async () => {

@@ -100,7 +100,7 @@ export const settingsOverviewTranslationsEnglish = { en: {
         accountServiceSignedIn: ({ service }) => `Signed in to ${service}`,
         aboutDescription: 'Version, source code and legal terms (Happier is not affiliated with Anthropic).',
         machineOnline: 'Online',
-        machineOffline: ({ lastSeen }) => `Offline · last seen ${lastSeen}`,
+        machineOffline: ({ lastSeen }) => `Offline · ${lastSeen}`,
         machineUnreachableFromHome: 'Can’t reach from this Home',
         machineUpdateAvailable: 'Update available',
         machinesOnlineCount: ({ count }) => `${count} online`,

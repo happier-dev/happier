@@ -78,6 +78,7 @@ import { MachineAttentionStatedAbove } from '@/components/machines/widgets/machi
 const NO_ATTENTION_ENTRIES: readonly MachineAttentionEntry[] = [];
 const NO_ITEMS: MachineIndexItem[] = [];
 const NO_MACHINE_KEYS: readonly Readonly<{ serverId: string; machineId: string }>[] = [];
+const NO_METRICS: readonly MachineSummaryMetric[] = [];
 
 /** The index offers a search field only once the fleet no longer fits at a glance (as the list column does). */
 const SEARCH_THRESHOLD = 8;
@@ -251,7 +252,11 @@ function AllMachinesIndexBody() {
     const cardAttention = useMachineIndexCardAttention(view === 'grid', attentionSubjects, model.sections, presetMachineKey);
     const cardAttentionEntries = React.useMemo(() => [...cardAttention.values()], [cardAttention]);
     const summarySetting = useMachineSummarySettingValue();
-    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, summarySetting.metrics, deviceType === 'phone', cardAttention);
+    // Metric columns say something only while a listed machine reports; when none is online they would be columns of
+    // "—", so the table says each machine's presence instead (the no-metrics layout).
+    const anyOnline = items.some(item => item.kind === 'machine' && item.online);
+    const shownMetrics = anyOnline ? summarySetting.metrics : NO_METRICS;
+    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, shownMetrics, deviceType === 'phone', cardAttention);
     // An open page keeps its online machines' summaries live (one batched demand for the whole fleet), owned by a
     // leaf so a hide or a window blur withdraws it without redrawing the page.
     const demandKeys = React.useMemo(() => items.flatMap(item => item.online && item.kind === 'machine'
@@ -284,9 +289,6 @@ function AllMachinesIndexBody() {
             />
             {/* The list names each reason here; the grid states it in each machine's existing status line. */}
             {view === 'list' ? <MachinesNeedsYouList entries={holding ? NO_ATTENTION_ENTRIES : attention.entries} nowMs={nowMs} onOpen={openAttention} compact={deviceType === 'phone'} testID="machines.index.needs-you" /> : null}
-            {/* The table is the page's next section (lab `rm` F): one section gap under what leads, as every
-                sheet below a page header has. The phone's list and the grid bring their own group spacing. */}
-            {view === 'list' && deviceType !== 'phone' ? <View style={stylesheet.beforeTable} /> : null}
         </>
     );
     // A Home that could not list its machines ends in that fact; an unread created-machine inventory is
@@ -483,7 +485,9 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         title: (item) => item.title,
         // A name still decrypting holds the Collection's title skeleton (as the rail does), never "Loading…".
         titlePending: (item) => item.hydrating === true,
-        titleSuffix: (item) => item.facts,
+        // What the machine is ("64 cores · 251 GiB") gives way before its name, so the part that tells namesakes apart
+        // ("· 0c82") stays readable (Collection's inline title line truncates first).
+        titleSuffix: (item) => item.facts ? <Text numberOfLines={1} style={stylesheet.quiet}>{item.facts}</Text> : null,
         // The list's second line (phones): the strip, or why the machine shows none.
         byline: (item) => <MachineIndexListLine item={item} style={style} metrics={metrics} />,
         // A phone's list says the work on the name's line, where the table gives it a column. A machine that is not
@@ -697,9 +701,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     // The dashboard follows the machines as the page's next section: one section gap below the table or grid.
     afterMachines: {
         paddingTop: PAGE_LIST_METRICS.sectionGapPx,
-    },
-    beforeTable: {
-        height: PAGE_LIST_METRICS.sectionGapPx,
     },
     phoneViewSwitch: {
         alignSelf: 'flex-start',
