@@ -98,6 +98,33 @@ describe("Team WorkOS administration", () => {
         };
     }
 
+    it("keeps the local organization binding unchanged when WorkOS cannot open its portal", async () => {
+        const fixture = await createFixture({ organizationId: null, connectionId: null });
+        const generateLink = vi.fn().mockRejectedValueOnce(new Error("WorkOS 403"))
+            .mockResolvedValue({ link: "https://setup.workos.test/recovered" });
+        const dependencies = platform({
+            organizations: { getOrganizationByExternalId: vi.fn(async () => ({ id: "org_portal_unavailable", name: "Acme Team" })) },
+            adminPortal: { generateLink },
+        } as unknown as WorkOS);
+        const input = {
+            ...interactiveAuthentication, actorAccountId: fixture.actor.id, teamId: fixture.team.id,
+            connectionId: fixture.connection.id, intent: "sso" as const,
+            env: { HAPPIER_WEBAPP_URL: "https://app.example.test" },
+        };
+        expect(await createTeamWorkosAdminPortalLink(input, dependencies))
+            .toEqual({ ok: false, error: "identity_provider_unavailable" });
+        expect(await db.teamIdentityConnection.findUnique({ where: { id: fixture.connection.id } }))
+            .toMatchObject({ revision: fixture.connection.revision, externalReference: {
+                v: 1, kind: "workos_sso", organizationId: null, connectionId: null,
+            } });
+        expect(await createTeamWorkosAdminPortalLink(input, dependencies))
+            .toEqual({ ok: true, value: { url: "https://setup.workos.test/recovered" } });
+        expect(await db.teamIdentityConnection.findUnique({ where: { id: fixture.connection.id } }))
+            .toMatchObject({ externalReference: {
+                v: 1, kind: "workos_sso", organizationId: "org_portal_unavailable", connectionId: null,
+            } });
+    });
+
     it("creates Home company bindings without a Team and keeps administrator mutations closed", async () => {
         const owner = await db.account.create({ data: { homeRole: "owner" } });
         const otherOwner = await db.account.create({ data: { homeRole: "owner" } });

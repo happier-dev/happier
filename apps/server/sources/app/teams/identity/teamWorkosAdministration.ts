@@ -287,7 +287,7 @@ export async function createTeamWorkosAdminPortalLink(
     }>,
     dependencies: WorkosAdministrationDependencies = {},
 ): Promise<Result<Readonly<{ url: string }>>> {
-    let preflight = await inTx((tx) => preflightWorkosConnectionInTx(tx, input));
+    const preflight = await inTx((tx) => preflightWorkosConnectionInTx(tx, input));
     if (!preflight.ok) return preflight;
     if (input.teamId === null && input.intent !== "sso") return { ok: false, error: "identity_connection_invalid" };
     const initialConnectionRevision = preflight.value.connection.revision;
@@ -297,8 +297,17 @@ export async function createTeamWorkosAdminPortalLink(
     const homeServerIdentityId = await (
         dependencies.resolveServerIdentityId ?? getOrCreateServerIdentityId
     )(input.env);
+    const returnUrl = resolveTeamIdentityConnectionReturnUrl({
+        env: input.env,
+        homeServerIdentityId,
+        teamId: input.teamId,
+        connectionId: input.connectionId,
+        purpose: 'workos_admin_portal',
+    });
+    if (!returnUrl) return { ok: false, error: "identity_connection_invalid" };
     const adapter = createWorkosAdministrationAdapter(platform.client);
-    let organizationId = preflight.value.connection.externalReference.organizationId;
+    const initialOrganizationId = preflight.value.connection.externalReference.organizationId;
+    let organizationId = initialOrganizationId;
     if (organizationId === null) {
         let organization: Readonly<{ id: string; name: string }>;
         try {
@@ -310,6 +319,23 @@ export async function createTeamWorkosAdminPortalLink(
         } catch (error) {
             return { ok: false, error: mapWorkosError(error) };
         }
+        organizationId = organization.id;
+    }
+
+    const portalOrganizationId = organizationId;
+    let url: string;
+    try {
+        url = await adapter.createAdminPortalLink({
+            organizationId: portalOrganizationId,
+            intent: input.intent,
+            returnUrl,
+        });
+    } catch (error) {
+        return { ok: false, error: mapWorkosError(error) };
+    }
+    // The upstream organization has a stable external id and idempotency key.
+    // Publish its local binding only once WorkOS produced the requested link.
+    if (initialOrganizationId === null) {
         const persisted = await inTx(async (tx) => {
             await acquireTeamIdentityConnectionMutationAdmissionInTx(tx, input);
             const current = await preflightWorkosConnectionInTx(tx, {
@@ -326,7 +352,7 @@ export async function createTeamWorkosAdminPortalLink(
                 expectedRevision: current.value.connection.revision,
                 externalReference: {
                     ...current.value.connection.externalReference,
-                    organizationId: organization.id,
+                    organizationId: portalOrganizationId,
                 },
             });
             if (updated.status === "applied") {
@@ -339,32 +365,8 @@ export async function createTeamWorkosAdminPortalLink(
                 : { ok: false as const, error: mapConnectionMutationError(updated.status) };
         }, { isolationLevel: "ReadCommitted" /* Exclusive provider admission precedes the fresh preflight and revision CAS. */ });
         if (!persisted.ok) return persisted;
-        preflight = persisted;
-        organizationId = organization.id;
     }
-
-    const returnUrl = resolveTeamIdentityConnectionReturnUrl({
-        env: input.env,
-        homeServerIdentityId,
-        teamId: input.teamId,
-        connectionId: input.connectionId,
-        purpose: 'workos_admin_portal',
-    });
-    if (!returnUrl) return { ok: false, error: "identity_connection_invalid" };
-    try {
-        return {
-            ok: true,
-            value: {
-                url: await adapter.createAdminPortalLink({
-                    organizationId,
-                    intent: input.intent,
-                    returnUrl,
-                }),
-            },
-        };
-    } catch (error) {
-        return { ok: false, error: mapWorkosError(error) };
-    }
+    return { ok: true, value: { url } };
 }
 
 async function recordWorkosCandidateInTx(
