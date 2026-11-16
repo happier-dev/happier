@@ -1,4 +1,4 @@
-import { constants, copyFileSync, unlinkSync } from 'node:fs';
+import { constants, copyFileSync, statSync, unlinkSync, utimesSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
@@ -72,18 +72,23 @@ export async function createGitTemporaryIndex(input: Readonly<{
     try {
         let initializeEmpty = input.seed.kind === 'empty';
         if (input.seed.kind === 'current-index') {
+            let sourceIndexTimes: { atime: Date; mtime: Date } | undefined;
             try {
+                sourceIndexTimes = statSync(sourceIndex.indexPath);
                 copyFileSync(sourceIndex.indexPath, indexPath, constants.COPYFILE_EXCL);
             } catch (error) {
                 if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
                 initializeEmpty = true;
             }
-            if (!initializeEmpty) {
+            if (!initializeEmpty && sourceIndexTimes) {
                 // A snapshot must not depend on a shared-index file Git can retire.
                 const result = await input.runGit({ cwd: input.cwd, args: ['update-index', '--no-split-index'], env });
                 if (!result.success) {
                     return { success: false, error: result.stderr || 'Failed to snapshot repository index', commandResult: result };
                 }
+                // Git uses the index timestamp to detect racy-clean entries.
+                // Copying and expanding it must not make same-stat edits look clean.
+                utimesSync(indexPath, sourceIndexTimes.atime, sourceIndexTimes.mtime);
             }
         }
         if (input.seed.kind === 'tree' || initializeEmpty) {

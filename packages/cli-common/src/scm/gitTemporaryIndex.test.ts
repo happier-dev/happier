@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -97,6 +97,31 @@ describe('Git private index mechanics', () => {
             writeFileSync(join(cwd, 'file.txt'), 'later\n');
             await git(cwd, ['add', '.']);
             expect(await git(cwd, ['show', ':file.txt'], result.tempIndex.env)).toBe('staged');
+        } finally { result.tempIndex.cleanup(); }
+    }));
+
+    it.each([false, true])('captures same-stat edits after copying a racy current index (split=%s)', async split => withRepo(async cwd => {
+        await git(cwd, ['config', 'core.trustctime', 'false']);
+        await git(cwd, ['config', 'core.checkStat', 'minimal']);
+        const filePath = join(cwd, 'file.txt');
+        const liveIndexPath = join(cwd, '.git', 'index');
+        const timestamp = 1_000_000_000;
+        writeFileSync(filePath, 'Old\n');
+        utimesSync(filePath, timestamp, timestamp);
+        await git(cwd, ['add', '.']);
+        if (split) await git(cwd, ['update-index', '--split-index']);
+        // Model a coarse filesystem: the modified file has the cached size and
+        // timestamp, while the live index still marks that timestamp as racy.
+        utimesSync(liveIndexPath, timestamp, timestamp);
+        writeFileSync(filePath, 'New\n');
+        utimesSync(filePath, timestamp, timestamp);
+        const before = readFileSync(liveIndexPath);
+        const result = await createGitTemporaryIndex({ cwd, runGit, seed: { kind: 'current-index' } });
+        if (!result.success) throw new Error(result.error);
+        try {
+            await git(cwd, ['add', '-A', '--', '.'], result.tempIndex.env);
+            expect(await git(cwd, ['show', ':file.txt'], result.tempIndex.env)).toBe('New');
+            expect(readFileSync(liveIndexPath)).toEqual(before);
         } finally { result.tempIndex.cleanup(); }
     }));
 
