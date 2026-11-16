@@ -196,7 +196,8 @@ it.each(['admission', 'pre-launch'] as const)('keeps a requester Home outage ret
       const admitted = DaemonProviderProbeResponseV1Schema.parse(await services.probe(request));
       expect(admitted).toMatchObject(phase === 'admission'
         ? { status: 'error', error: { code: 'provider_catalog_unavailable', retryable: true, action: 'retry' } }
-        : { status: 'success' });
+        : { status: 'error', error: { code: 'provider_endpoint_unavailable', retryable: true, action: 'retry',
+          failureCause: { phase: 'providers.runtime_start', errorCode: 'project_requester_home_unavailable' } } });
       injectOutage = false;
       unavailable = false;
       const diagnostics = vi.fn<(value: RpcOperationDiagnostics) => void>();
