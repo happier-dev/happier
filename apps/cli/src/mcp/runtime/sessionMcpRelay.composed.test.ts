@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { once } from 'node:events';
@@ -116,6 +116,11 @@ async function placeHostHolder(directory: string) {
 }
 
 describe('Session MCP through the native holder relay', () => {
+    // These fixtures compare their own admitted Account catalogs. An invoking
+    // agent's explicit CLI override must not replace both fixture policies.
+    beforeEach(() => { vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', ''); });
+    afterEach(() => { vi.unstubAllEnvs(); });
+
     it.runIf(process.platform === 'linux')('routes a placed Run to its own catalog when its Session registered first', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'mcp-run-'));
         const primarySocketPath = join(directory, 'p.sock');

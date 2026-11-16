@@ -44,7 +44,7 @@ describe('redactSidecarDiagnosticsHeaders', () => {
         expect(redactSidecarDiagnosticsHeaders({ Authorization: 'Bearer secret' })).toEqual({});
     });
 
-    it('reports clipped allowed values without counting excluded secret headers as truncation', () => {
+    it('preserves complete allowed values without counting excluded secret headers as truncation', () => {
         const longValue = 'a'.repeat(257);
         const result = redactSidecarDiagnosticsHeadersWithResult({
             Accept: longValue,
@@ -52,8 +52,8 @@ describe('redactSidecarDiagnosticsHeaders', () => {
         });
 
         expect(result).toEqual({
-            headers: { accept: `${'a'.repeat(253)}...` },
-            truncated: true,
+            headers: { accept: longValue },
+            truncated: false,
         });
         expect(redactSidecarDiagnosticsHeaders({ Accept: longValue })).toEqual(result.headers);
         expect(redactSidecarDiagnosticsHeadersWithResult({
