@@ -4,6 +4,7 @@ import {
   type HostAuthorizedPluginExecLaunch,
 } from '@/plugins/runtime/invocation/services/exec';
 import { createBackgroundServiceProcessServiceHost } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessBridge';
+import { buildMemberAgentExecutionPath } from '@/capabilities/installJobs/memberInstallEnvironment';
 import {
   createBackgroundServiceProcessFrameDecoder,
   encodeBackgroundServiceProcessFrame,
@@ -27,6 +28,7 @@ export function authorizeWorkspaceEffectLaunch(
     }>,
 ): Promise<HostAuthorizedPluginExecLaunch> {
   const { managedHappierBinaryPath, workspaceRoot, env, ...context } = input;
+  const memberHome = context.agentIsolation?.read()?.memberIdentity?.home;
   return authorizeResolvedProjectExecLaunchForHost({
     ...context,
     agentLaunchKind: 'workspaceExec',
@@ -35,7 +37,7 @@ export function authorizeWorkspaceEffectLaunch(
       command: managedHappierBinaryPath,
       args: ['workspace-effect'],
       cwd: workspaceRoot,
-      env: { ...env },
+      env: { PATH: buildMemberAgentExecutionPath({ HOME: memberHome }), ...env },
       maxStdoutBytes: 0,
       maxStderrBytes: 0,
     },
