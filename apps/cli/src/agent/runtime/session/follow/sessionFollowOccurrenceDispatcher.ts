@@ -134,7 +134,7 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
       : !resolveFollowDeliveryV1({ policies: [observation.policy], event: { kind: 'stalled' } }).session.wake)) return;
     if (!await current() || await input.isSessionAlreadyRunning(sessionId)) return;
     const readReceiver = async () => {
-      const receiver = await resolveSessionTransportContext({ reason: 'follow-occurrence', credentials: input.credentials, idOrPrefix: sessionId, signal: input.signal });
+      const receiver = await resolveSessionTransportContext({ reason: 'follow-occurrence', credentials: input.credentials, idOrPrefix: sessionId, signal: input.signal, usage: 'read' });
       if (!receiver.ok || receiver.sessionId !== sessionId || !await current()) return null;
       const metadata = tryDecryptSessionOwnerMetadataView({ credentials: input.credentials, rawSession: receiver.rawSession,
         accountEncryptionMode: receiver.accountEncryptionCurrentness.mode });
@@ -945,7 +945,7 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
       if (!await current()) continue;
       checkpoint(diagnostic, 'range_transport', 'started', { sourceSessionId, afterSeq: range.afterSeq });
       const transport = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => resolveSessionTransportContext({ reason: 'follow-occurrence',
-        credentials: input.credentials, idOrPrefix: sourceSessionId, signal: input.signal }));
+        credentials: input.credentials, idOrPrefix: sourceSessionId, signal: input.signal, usage: 'read' }));
       if (!transport.ok || !await current()) {
         checkpoint(diagnostic, 'range_transport', 'held', { sourceSessionId,
           reason: !transport.ok ? transport.code : 'account_not_current' }); continue;

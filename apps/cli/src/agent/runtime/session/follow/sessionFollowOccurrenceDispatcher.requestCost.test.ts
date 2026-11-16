@@ -75,14 +75,15 @@ it.each([['no-rules', false], ['personal-rule', false], ['no-rules', true], ['pe
       // A host-reported Turn needs no committed-row re-read to find its Turn.
       expect(count(`GET /v1/sessions/${sourceSessionId}/messages`), JSON.stringify(perTurn)).toBe(0);
     } else {
-      // Terminal normalization admits the source transport once; preparation reuses it.
-      expect(count('GET /v1/account/encryption/currentness'), JSON.stringify(perTurn)).toBe(1);
+      // Terminal normalization admits the source transport once; preparation reuses it. Opening the
+      // source is a read: it borrows the held Account observation, so the Turn makes no witness read.
+      expect(count('GET /v1/account/encryption/currentness'), JSON.stringify(perTurn)).toBe(0);
       expect(count(`GET /v2/sessions/${sourceSessionId}`), JSON.stringify(perTurn)).toBe(1);
       expect(count(`GET /v1/sessions/${sourceSessionId}/messages`)).toBe(1);
     }
     if (scenario === 'no-rules') {
       // No rule, no applicable default, no ordinary edge: nothing reads the source's list facts.
-      expect(perTurn, JSON.stringify(perTurn)).toHaveLength(hostTurn ? 1 : 4);
+      expect(perTurn, JSON.stringify(perTurn)).toHaveLength(hostTurn ? 1 : 3);
       expect(personal).toEqual([]);
     } else {
       // A matching personal rule still evaluates against current facts and dispatches.

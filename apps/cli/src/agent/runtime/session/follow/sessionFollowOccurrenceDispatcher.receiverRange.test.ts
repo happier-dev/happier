@@ -545,7 +545,7 @@ it('does no rule inventory reads for 50 manager source arrivals without receiver
       currentness: reads.filter(path => path === '/v1/account/encryption/currentness').length,
       sourceDetails: reads.filter(path => path.startsWith('/v2/sessions/') && !path.endsWith('/messages')).length,
       transcriptPages: reads.filter(path => path.endsWith('/messages')).length,
-    }).toEqual({ rules: 0, preferences: 0, currentness: 50, sourceDetails: 50, transcriptPages: 50 });
+    }).toEqual({ rules: 0, preferences: 0, currentness: 0, sourceDetails: 50, transcriptPages: 50 });
     expect(writes).not.toHaveBeenCalled();
   } finally { lifetime.abort(); dispatcher.dispose(); }
 });

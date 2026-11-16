@@ -5,6 +5,7 @@ import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import { readAccountEncryptionCurrentnessForRead } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import type {
     SessionEncryptionContext,
@@ -81,6 +82,13 @@ export async function resolveSessionTransportContext(params: Readonly<{
     signal?: AbortSignal;
     /** Snapshot already bound to this exact Home; this owner never probes for one. */
     serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
+    /**
+     * `read`: the caller only opens this Session's content to read it, so it borrows the held,
+     * push-updated Account observation (fresh only when none is held). Callers that seal or
+     * write with the result omit it and keep a fresh witness. Signed Action requests always
+     * keep their own fresh authenticated read.
+     */
+    usage?: 'read';
 }>): Promise<ResolveSessionTransportContextResult> {
     const resolutionStartedAt = performance.now();
     let phaseStartedAt = resolutionStartedAt;
@@ -97,13 +105,18 @@ export async function resolveSessionTransportContext(params: Readonly<{
     if (params.resolveAuthorizationHeaders && !currentnessAuthorizationHeaders) {
         throw createExternalActionHeaderRefusalError();
     }
-    const accountEncryptionCurrentnessRead = fetchAccountEncryptionCurrentness({
-        credentials: params.credentials, token: params.credentials.token,
-        ...(currentnessAuthorizationHeaders
-            ? { authorizationHeaders: currentnessAuthorizationHeaders }
-            : {}),
-        ...(params.signal ? { signal: params.signal } : {}),
-    }).catch(error => {
+    const accountEncryptionCurrentnessRead = (params.usage === 'read' && !currentnessAuthorizationHeaders
+        ? readAccountEncryptionCurrentnessForRead({
+            credentials: params.credentials, token: params.credentials.token,
+            ...(params.signal ? { signal: params.signal } : {}),
+        })
+        : fetchAccountEncryptionCurrentness({
+            credentials: params.credentials, token: params.credentials.token,
+            ...(currentnessAuthorizationHeaders
+                ? { authorizationHeaders: currentnessAuthorizationHeaders }
+                : {}),
+            ...(params.signal ? { signal: params.signal } : {}),
+        })).catch(error => {
         if (params.signal?.aborted) throw error;
         // The reader retains the transport cause. Translate it once at this
         // shared adapter so CLI, signed Actions and direct Session operations
@@ -136,7 +149,7 @@ export async function resolveSessionTransportContext(params: Readonly<{
         ...(params.signal ? { signal: params.signal } : {}),
         ...(params.serverFeaturesSnapshot ? { serverFeaturesSnapshot: params.serverFeaturesSnapshot } : {}),
     }).then(resolved => { phase('session_lookup', lookupStartedAt); return resolved; });
-    // Both reads stay fresh. No transport or encryption material is published
+    // The Session read stays fresh. No transport or encryption material is published
     // until the Account witness and the canonical selector have both settled.
     const [accountEncryptionCurrentness, resolved] = await Promise.all([accountEncryptionCurrentnessRead, sessionLookup]);
     params.signal?.throwIfAborted();

@@ -35,7 +35,7 @@ export async function normalizeAdmittedSessionFollowTerminalSourceOccurrence(inp
   if (occurrence.evidence.event.kind !== 'finished' && occurrence.evidence.event.kind !== 'failed_or_stopped') return null;
   if (!await input.isCurrent()) return null;
   const transport = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => resolveSessionTransportContext({ reason: 'follow-source-hydration',
-    credentials: input.credentials, idOrPrefix: occurrence.sourceSessionId, signal: input.signal }));
+    credentials: input.credentials, idOrPrefix: occurrence.sourceSessionId, signal: input.signal, usage: 'read' }));
   if (!transport.ok || !await input.isCurrent()) return null;
   const page = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => fetchEncryptedTranscriptMessagesPage({
     token: input.credentials.token, sessionId: occurrence.sourceSessionId, scope: 'all',

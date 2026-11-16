@@ -294,7 +294,7 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
         const serverFeaturesSnapshot = input.session.getServerFeaturesSnapshot();
         const foreignSource = Boolean(viewerAccountId && question.authorAccountId && question.authorAccountId !== viewerAccountId);
         const sourceRead = resolveSessionTransportContext({ reason: 'follow-source-hydration', credentials: input.credentials, idOrPrefix: sourceSession.sourceSessionId,
-          signal, ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}) });
+          signal, usage: 'read', ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}) });
         // The authorized presentation read may identify a shared foreign Bot.
         // Unavailable presentation must not replace Pending's private-source hold.
         const source = foreignSource ? await sourceRead.catch(() => { signal.throwIfAborted(); return null; }) : await sourceRead;

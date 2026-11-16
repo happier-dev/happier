@@ -7,6 +7,8 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
 import { createDaemonSessionMutationCustody } from '@/daemon/connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
+import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 
 const sessionId = 'c123456789012345678901234';
 
@@ -140,6 +142,57 @@ describe('fresh Session transport HTTP resolution', () => {
     } finally {
       witnessResponse?.destroy();
       await pending.catch(() => {});
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  // OWNER-RULINGS 2026-11-16 "Remove overbuilt re-reads": a read-only caller borrows the held,
+  // push-updated Account observation; only seals keep a fresh witness. The Session record stays fresh.
+  it('borrows the held Account observation for read usage and keeps the fresh witness otherwise', async () => {
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? '');
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === '/v1/account/encryption/currentness') {
+        response.end(JSON.stringify(AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
+          updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null })));
+      } else if (request.url === `/v2/sessions/${sessionId}`) {
+        response.end(JSON.stringify(V2SessionByIdResponseSchema.parse({ session: createSessionRecordFixture({
+          id: sessionId, encryptionMode: 'plain', metadata: '{}',
+        }) })));
+      } else {
+        response.writeHead(404).end('{}');
+      }
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Loopback HTTP address unavailable');
+    const base = `http://127.0.0.1:${address.port}`;
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const token = 'transport-held-fixture';
+    const holder = acquireRequesterAccountEncryptionCurrentness({ accountId: 'account-held', token, serverBaseUrl: base });
+    const count = (url: string) => requests.filter(value => value === url).length;
+    try {
+      await runWithServerHttpBaseUrl(base, async () => {
+        await holder.read();
+        const resolve = (usage?: 'read') => resolveSessionTransportContext({
+          reason: 'follow-occurrence', credentials: { token, encryption: null }, idOrPrefix: sessionId,
+          serverFeaturesSnapshot: { status: 'unsupported', reason: 'endpoint_missing' }, ...(usage ? { usage } : {}),
+        });
+        const witnessesBefore = count('/v1/account/encryption/currentness');
+        for (let index = 0; index < 3; index += 1) {
+          await expect(resolve('read')).resolves.toMatchObject({ ok: true, sessionId, mode: 'plain',
+            accountEncryptionCurrentness: { mode: 'plain', version: 1 } });
+        }
+        expect(count('/v1/account/encryption/currentness') - witnessesBefore).toBe(0);
+        expect(count(`/v2/sessions/${sessionId}`)).toBe(3);
+        await expect(resolve()).resolves.toMatchObject({ ok: true, sessionId });
+        expect(count('/v1/account/encryption/currentness') - witnessesBefore).toBe(1);
+      });
+    } finally {
+      await holder.dispose();
+      await channel.close();
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
