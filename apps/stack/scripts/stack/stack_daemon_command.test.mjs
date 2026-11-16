@@ -12,6 +12,7 @@ import { resolveStackDaemonCommandContext } from './stack_daemon_command.mjs';
 import { sanitizeStackTestRunnerEnv } from '../utils/test/test_env.mjs';
 import { stopLocalDaemon } from '../daemon.mjs';
 import { recordStackRuntimeStart } from '../utils/stack/runtime_state.mjs';
+import { resolveStackBaseDir } from '../utils/paths/paths.mjs';
 
 for (const evidence of ['absent', 'previous-boot', 'live']) {
   test(`stale source daemon cleanup preserves process authority (${evidence})`, async t => {
@@ -68,6 +69,33 @@ test('daemon stop reaches retained cleanup while stale source status stays refus
   assert.equal(stop.runtimePath, runtimePath);
   await assert.rejects(() => resolveStackDaemonCommandContext({ ...input, argv: ['status'] }),
     { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' });
+});
+
+// P03-TOOLING-ISOLATION (Usage 18:35Z): a daemon-only restart of a revision-tree
+// Stack swapped in the producer's older bundle, so its daemon kept an old Iroh addon.
+test('a revision-tree daemon restart relaunches the Stack\'s selected tree instead of selecting a capture', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-tree-daemon-restart-' });
+  const repoDir = fileURLToPath(new URL('../../../../', import.meta.url));
+  const stackName = 'tree-daemon-restart';
+  const env = { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root, repoDir }),
+    HAPPIER_STACK_CLI_HOME_DIR: fixture.path('cli'), HAPPIER_STACK_STACK: stackName };
+  const stackBaseDir = resolveStackBaseDir(stackName, env).baseDir;
+  const treeDir = join(stackBaseDir, 'source-runtime', 'tree-daemon-fixture');
+  const cliDir = join(treeDir, 'apps', 'cli');
+  const entrypoint = join(cliDir, 'src', 'index.mjs');
+  await mkdir(join(cliDir, 'src'), { recursive: true });
+  await writeFile(entrypoint, 'export {};\n');
+  await writeFile(join(treeDir, 'source-bundle.json'), JSON.stringify({ identity: 'tree-identity', entrypoint, cliDir, env: {},
+    dependencyPublication: null, runtimeDependencyClosure: { captured: true, identity: 'fixture-install', imports: [] },
+    sourceTree: { base: 'a'.repeat(40), baseBuilt: false, overlaid: 0 } }));
+  await writeFile(join(stackBaseDir, 'source-runtime', 'selected-daemon.json'), JSON.stringify({ entrypoint }));
+  const restart = await resolveStackDaemonCommandContext({ rootDir: join(repoDir, 'apps/stack'), stackName, identity: 'default', env,
+    argv: ['restart', '--runtime=source'],
+    activeRuntimeState: { sourceRuntimeLaunch: { entrypoint, cliDir, env: {} },
+      sourceRuntimeIdentities: { daemon: { selected: 'tree-identity', loaded: 'tree-identity' } } } });
+  assert.equal(restart.cliEntrypoint, entrypoint);
+  assert.equal(restart.sourceRuntimeLaunchUpdate?.launch.entrypoint, entrypoint);
+  assert.equal(restart.sourceRuntimeLaunchUpdate?.identity, 'tree-identity');
 });
 
 for (const action of ['start', 'restart']) {

@@ -6,7 +6,7 @@ import { parseArgs } from '../utils/cli/args.mjs';
 import { printResult, wantsHelp } from '../utils/cli/cli.mjs';
 import { isTty, promptSelect, withRl } from '../utils/cli/wizard.mjs';
 import { checkDaemonState, daemonStatusSummary, startLocalDaemonWithAuth, stopLocalDaemon } from '../daemon.mjs';
-import { getComponentDir, getRepoDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
+import { getComponentDir, getRepoDir, resolveStackBaseDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { resolveServerUrls } from '../utils/server/urls.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
@@ -26,6 +26,7 @@ import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mj
 import { loadDevTargetsConfig } from '../utils/dev_targets/config.mjs';
 import { resolveObservedDevTargetService } from '../utils/dev_targets/service_placement.mjs';
 import { runRemoteStackOperation } from './remote_stack_operation.mjs';
+import { readSelectedSourceRuntimeRecord } from '../runtime/shared/source_bundle_record.mjs';
 
 export async function resolveStackDaemonCommandContext({
   rootDir,
@@ -36,10 +37,17 @@ export async function resolveStackDaemonCommandContext({
   activeRuntimeState = null,
 }) {
   const preparesDaemonLaunch = argv.includes('start') || argv.includes('restart');
+  // A revision-tree daemon is its Stack's revision (with the tree's own native
+  // support, e.g. the Iroh addon): a restart relaunches it.
+  // Selecting a capture here would swap in the producer's bundle of another
+  // revision; moving the Stack to another revision is a reload (`--rev`).
+  const relaunchesSelectedTree = preparesDaemonLaunch && Boolean((await readSelectedSourceRuntimeRecord({
+    stackBaseDir: resolveStackBaseDir(stackName, env).baseDir, component: 'daemon', required: false }))?.sourceTree);
+  const preparesSourceReplacement = preparesDaemonLaunch && !relaunchesSelectedTree;
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env, activeRuntimeState,
-    purpose: argv.includes('stop') ? 'stop' : preparesDaemonLaunch ? 'restart' : 'cli' });
+    purpose: argv.includes('stop') ? 'stop' : preparesSourceReplacement ? 'restart' : 'cli' });
   let sourceRuntimeLaunchUpdate = null;
-  if (runtimeLaunchContext.runtimeMode.mode === 'source-snapshot' && preparesDaemonLaunch) {
+  if (runtimeLaunchContext.runtimeMode.mode === 'source-snapshot' && preparesSourceReplacement) {
     const { buildSourceRuntimeBundle } = await import('../build/build_source_runtime.mjs');
     const built = await buildSourceRuntimeBundle({ repoDir: getRepoDir(rootDir, env),
       stackBaseDir: runtimeLaunchContext.stackBaseDir, component: 'daemon', env,
@@ -50,6 +58,13 @@ export async function resolveStackDaemonCommandContext({
   const runtimeSnapshot = runtimeLaunchContext.snapshot;
   const cliLaunchSpec = runtimeLaunchContext.cliLaunchSpec
     ?? (runtimeSnapshot ? await resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null);
+  if (relaunchesSelectedTree && cliLaunchSpec?.sourceSnapshot === true) {
+    // Carry the selected tree launch to the existing Session-preserving restart owner.
+    sourceRuntimeLaunchUpdate = {
+      launch: { entrypoint: cliLaunchSpec.entrypoint, cliDir: cliLaunchSpec.cliDir, env: cliLaunchSpec.env },
+      identity: activeRuntimeState?.sourceRuntimeIdentities?.daemon?.selected,
+    };
+  }
   const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli', env);
   const cliBin = join(cliDir, 'bin', 'happier.mjs');
   const cliEntrypoint = cliLaunchSpec?.entrypoint ?? '';

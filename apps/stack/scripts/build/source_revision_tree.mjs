@@ -532,7 +532,7 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
   await sweepSourceRevisionBases({ treesRoot, signal });
   const revision = descriptor.commit?.revision ?? descriptor.revision;
   return { baseDir: base.baseDir, treeDir, baseBuilt: base.built, overlaid, revision, base: descriptor.revision, installIdentity,
-    overlayDigest: descriptor.overlayDigest ?? null,
+    overlayDigest: descriptor.overlayDigest ?? null, supportFingerprint,
     key: sourceRevisionKey({ revision, overlayDigest: descriptor.overlayDigest ?? null }) };
 }
 
@@ -668,7 +668,7 @@ await runSqliteMigrationDeploy({ serverRoot: ${JSON.stringify(serverDir)}, runSc
       ...(runtimeDependencyClosure ? { runtimeDependencyClosure } : {}),
       sourceTree: { base: tree.base, baseBuilt: tree.baseBuilt, overlaid: tree.overlaid } });
     await writeOwnFile(join(t, 'source-bundle.json'), JSON.stringify(record, null, 2));
-    logger.error(`[source-tree] prepared component=${component} rev=${tree.revision} base=${tree.base} baseBuilt=${tree.baseBuilt} overlaid=${tree.overlaid} elapsedMs=${Math.round(performance.now() - started)}`);
+    logger.error(`[source-tree] prepared component=${component} rev=${tree.revision} base=${tree.base} baseBuilt=${tree.baseBuilt} overlaid=${tree.overlaid} nativeSupport=${tree.supportFingerprint} elapsedMs=${Math.round(performance.now() - started)}`);
     prepared[component] = record;
   }
   return prepared;
