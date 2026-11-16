@@ -9,6 +9,7 @@ import { dockerEngine } from './dockerEngine.js';
 import { coolify } from './coolify.js';
 import { dokploy } from './dokploy.js';
 import { caddy } from './caddy.js';
+import { coder } from './coder.js';
 import { firewall } from './firewall.js';
 import { automaticSecurityUpdates } from './automaticSecurityUpdates.js';
 import { sshHardening } from './sshHardening.js';
@@ -35,6 +36,7 @@ export const MACHINE_RECIPES_PLUGIN = definePlugin({
     coolify,
     dokploy,
     caddy,
+    coder,
     firewall,
     'binfmt-qemu': binfmtQemu,
     'backup-receiver': BACKUP_RECEIVER_RECIPE,

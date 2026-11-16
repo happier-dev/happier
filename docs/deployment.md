@@ -4262,6 +4262,23 @@ Docker Engine with Compose on that Machine, put `docker` on the daemon PATH and
 allow the daemon user to access Docker. Missing executable evidence does not
 establish an Engine, socket-permission or Compose-version failure.
 
+In unreleased 0.3 source, the existing `docker-engine` recipe accepts
+`{mode: 'rootless', daemonConfig: {}}` for the recommended sandbox setup.
+It installs rootless prerequisites, enables linger and a user Docker service,
+then selects Docker's native `rootless` context for the Happier user. Docker
+clients consume that context's socket endpoint; they do not construct a socket
+path. Explicit `DOCKER_HOST` or `DOCKER_CONTEXT` selections still override the
+user's default. The recipe uses the packaged `dockerd-rootless-setuptool.sh`
+when available, otherwise Docker's documented user installer at
+`https://get.docker.com/rootless`. Existing system Docker services are preserved.
+On hosts restricting unprivileged user namespaces, the same reviewed step loads
+an AppArmor profile for the Happier user's downloaded RootlessKit executable.
+The host needs systemd and subordinate UID/GID ranges for that user, as required
+by Docker's installer. Installer failure stays on the recipe step for Retry.
+`{mode: 'group', daemonConfig: {}}` selects the compatible group setup, which
+grants close to administrator power; existing inputs without `mode` retain that setup.
+Shared-daemon configuration belongs to the group variant only.
+
 Docker Buildx is also a prerequisite for image preparation, including image-only
 Compose services: native `imagetools inspect` establishes immutable image index,
 manifest, configuration and platform provenance before approval. Bake is invoked

@@ -4,7 +4,7 @@ export { createCaddyContainerSetupDeclarations, nativeCaddyProfile } from '@happ
 export { getMachineFirewallExposureInputSchemaV1 } from '@happier-dev/protocol/machines/setup/machineFirewallV1';
 export { createDockerMembershipStep } from '@happier-dev/cli-common/machineSetup/dockerMembership';
 export { machineConnectorCredentialDirectory } from '@happier-dev/cli-common/machineSetup/credentialFile';
-export { createDockerEngineSetupSteps, dockerEnginePresenceCheck } from '@happier-dev/cli-common/machineSetup/dockerEngine';
+export { createDockerEngineSetupSteps, dockerEnginePresenceCheck, dockerEngineAccessModeInputSchema } from '@happier-dev/cli-common/machineSetup/dockerEngine';
 export { createTailscaleJoinSteps, tailscaleMembershipPrograms } from '@happier-dev/cli-common/relayAccess/providers/tailscale/membership';
 export type {
   MachineRecipeV1,

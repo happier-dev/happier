@@ -348,6 +348,7 @@
 | `.` | `defineComposerRegion` | value | any |
 | `.` | `definePlugin` | value | any |
 | `.` | `defineUiSurfaceDefinition` | value | any |
+| `.` | `dockerEngineAccessModeInputSchema` | value | any |
 | `.` | `dockerEnginePresenceCheck` | value | any |
 | `.` | `getMachineFirewallExposureInputSchemaV1` | value | any |
 | `.` | `getPluginMachineExecutionOriginRef` | value | any |

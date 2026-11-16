@@ -299,6 +299,7 @@ export { defineComposerReference } from './composer.js';
 export { defineComposerRegion } from './composer.js';
 export { definePlugin } from './definePlugin.js';
 export { defineUiSurfaceDefinition } from './ui/surface.js';
+export { dockerEngineAccessModeInputSchema } from './machineSetup.js';
 export { dockerEnginePresenceCheck } from './machineSetup.js';
 export { getMachineFirewallExposureInputSchemaV1 } from './machineSetup.js';
 export { getPluginMachineExecutionOriginRef } from './executionOrigin.js';

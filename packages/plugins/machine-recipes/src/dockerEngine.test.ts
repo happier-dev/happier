@@ -30,3 +30,16 @@ it('resolves an authored whole-object merge input without writing the input-refe
     content: { kind: 'jsonMerge', value: { icc: false } },
   });
 });
+
+it('offers rootless alongside legacy group inputs without admitting shared daemon settings in rootless mode', () => {
+  const recipe = MachineRecipeV1Schema.parse({ id: 'docker-engine', ...dockerEngine });
+  const schema = compilePluginJsonSchema(recipe.inputSchema);
+  expect(isValidPluginJsonSchemaValue(schema, { mode: 'rootless', daemonConfig: {} })).toBe(true);
+  expect(isValidPluginJsonSchemaValue(schema, { mode: 'rootless', daemonConfig: { icc: false } })).toBe(false);
+  expect(isValidPluginJsonSchemaValue(schema, { mode: 'group', daemonConfig: {} })).toBe(true);
+  const authored = recipe.steps.find(step => step.id === 'docker-rootless-install');
+  expect(authored).toBeDefined();
+  if (!authored) throw new Error('Missing rootless install');
+  expect(resolveMachineRecipeStepInputsV1(authored, { mode: 'rootless', daemonConfig: {} }, { 'daemon.username': 'happier' }))
+    .toMatchObject({ kind: 'script', shell: 'sh', body: '/usr/local/bin/happier-docker-rootless\n' });
+});

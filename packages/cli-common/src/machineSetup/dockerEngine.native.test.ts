@@ -1,9 +1,75 @@
 import { expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir, userInfo } from 'node:os';
 import { createDockerEngineSetupSteps } from './dockerEngine.js';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan } from './index.js';
 import { createMachineSetupNativeBackend, runMachineSetupNativeCommand } from './nativeBackend.js';
+
+it.skipIf(process.platform !== 'linux').each([false, true])('checks the daemon user default context without elevation (rootless=%s)', async rootless => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-rootless-probe-'));
+    try {
+        // Docker is the external process boundary; the shell/user selection stays real.
+        await writeFile(join(root, 'docker'), `#!/bin/sh\nif [ "$1" = --context ]; then printf '%s\\n' name=rootless; else printf '%s\\n' name=${rootless ? 'rootless' : 'seccomp'}; fi\n`, { mode: 0o755 });
+        const declarations = createDockerEngineSetupSteps({ distribution: 'ubuntu', daemonUsername: userInfo().username, enginePresent: true, mode: 'rootless' });
+        const file = declarations.find(step => step.id === 'docker-rootless-launcher');
+        if (!file || file.kind !== 'file' || file.content?.kind !== 'literal') throw new Error('Missing concrete launcher');
+        const launcher = join(root, 'launcher');
+        await writeFile(launcher, file.content.value, { mode: 0o755 });
+        const steps = declarations.flatMap(step => step.kind === 'script' ? [{ ...step,
+            body: step.body.replaceAll(file.path, launcher),
+            check: step.check && { ...step.check, body: step.check.body.replaceAll(file.path, launcher) },
+        }] : []);
+        const backend = createMachineSetupNativeBackend({ platform: 'linux', readNativeInit: async () => 'systemd\n',
+            run: command => runMachineSetupNativeCommand({ ...command, env: { ...command.env, PATH: `${root}:${process.env.PATH}` } }) });
+        const plan = await checkMachineSetupEffectPlan({ basis: { kind: 'setup', machineId: 'rootless', desiredRevision: 0 }, steps, backend });
+        expect(plan.nativeFacts).toMatchObject([{ stepId: 'docker-rootless-install', status: rootless ? 'satisfied' : 'drifted' }]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it.each([false, true])('rootless Apply retains native failure and retries through the same step (failure=%s)', async fail => {
+    const steps = createDockerEngineSetupSteps({ distribution: 'ubuntu', daemonUsername: 'happier', enginePresent: true, mode: 'rootless' })
+        .filter(step => step.kind === 'command' || step.kind === 'script');
+    let installed = false;
+    let shouldFail = fail;
+    const effects: string[] = [];
+    const backend = createMachineSetupNativeBackend({ platform: 'linux', readNativeInit: async () => 'systemd\n', run: async command => {
+        if (command.executable === 'test') return { code: 0, stdout: '', stderr: '' };
+        if (command.executable === 'sh') {
+            if (Buffer.from(command.inputBytes ?? []).toString('utf8').includes('--check')) return { code: installed ? 0 : 1, stdout: '', stderr: '' };
+            effects.push('install'); installed = !shouldFail;
+            return { code: shouldFail ? 42 : 0, stdout: '', stderr: '' };
+        }
+        throw new Error(`Unexpected native command: ${command.executable}`);
+    } });
+    const basis = { kind: 'setup' as const, machineId: 'rootless', desiredRevision: 0 };
+    const plan = await checkMachineSetupEffectPlan({ basis, steps, backend });
+    expect(plan.nativeFacts.find(fact => fact.stepId === 'docker-rootless-install')?.status).toBe('drifted');
+    const result = await applyMachineSetupEffectPlan({ plan, backend });
+    expect(result.status).toBe(fail ? 'failed' : 'applied');
+    if (fail) {
+        expect(result).toMatchObject({ stepId: 'docker-rootless-install' });
+        shouldFail = false;
+        const retry = await checkMachineSetupEffectPlan({ basis, steps, backend });
+        expect((await applyMachineSetupEffectPlan({ plan: retry, backend })).status).toBe('applied');
+        expect(installed).toBe(true);
+    }
+    else {
+        const next = await checkMachineSetupEffectPlan({ basis, steps, backend });
+        expect(next.nativeFacts.every(fact => fact.status === 'satisfied')).toBe(true);
+        expect((await applyMachineSetupEffectPlan({ plan: next, backend })).status).toBe('applied');
+        expect(effects).toEqual(['install']);
+    }
+});
+
+it('refuses rootless on a non-systemd host before starting any native command', async () => {
+    const steps = createDockerEngineSetupSteps({ distribution: 'ubuntu', daemonUsername: 'happier', enginePresent: true, mode: 'rootless' })
+        .filter(step => step.kind === 'command' || step.kind === 'script');
+    const backend = createMachineSetupNativeBackend({ platform: 'linux', readNativeInit: async () => 'init\n',
+        run: async () => { throw new Error('No command is admitted'); } });
+    const plan = await checkMachineSetupEffectPlan({ basis: { kind: 'setup', machineId: 'rootless', desiredRevision: 0 }, steps, backend });
+    expect(await applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable' });
+});
 
 it.each(['ubuntu', 'debian'] as const)('installs %s distro Docker, grants daemon access and starts the service idempotently', async distribution => {
     const steps = createDockerEngineSetupSteps({ distribution, daemonUsername: 'happier', enginePresent: false });
