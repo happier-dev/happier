@@ -226,13 +226,14 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
           resource: correlation.resource.value, exec: payloadExec, putFile, bootstrapExec: exec,
           cleanupExec: (request: Parameters<ManagedNativeBootstrapIO['exec']>[0]) => native.exec(request),
           onPhase: (phase: 'prepare' | 'archive' | 'transfer' | 'promote') => {
-            const message = { prepare: 'Preparing Happier for this machine', archive: 'Creating the Happier delivery archive',
-              transfer: 'Transferring Happier to this machine', promote: 'Installing the transferred Happier payload' }[phase];
+            // Progress words a person reads on the machine's page: what happens, not how it is shipped.
+            const message = { prepare: 'Preparing Happier for this machine', archive: 'Packing Happier for this machine',
+              transfer: 'Copying Happier to this machine', promote: 'Installing Happier' }[phase];
             context?.emit({ type: 'progress', stepId: `ssh.installCli.${phase}`, message });
           },
           onTransferProgress: ({ transferredBytes, totalBytes }: Readonly<{ transferredBytes: number; totalBytes: number }>) => {
             context?.emit({ type: 'progress', stepId: 'ssh.installCli.transfer',
-              message: `Transferring Happier: ${transferredBytes} of ${totalBytes} bytes` });
+              message: `Copying Happier to this machine: ${Math.floor(transferredBytes / 1048576)} of ${Math.max(1, Math.ceil(totalBytes / 1048576))} MB` });
           } };
         if (!deps.installNativePayload) throw new SystemTaskExecutionError('guest_payload_missing', 'This app cannot read the Home guest CLI payload. Choose a connected controller to install this machine, then retry.');
         const installed = await deps.installNativePayload(installation);

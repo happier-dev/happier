@@ -1,4 +1,4 @@
-import { type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { type ProviderObservationV1, type SupportedNativeIntent } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MachineProvisionerCleanupObservationV1Schema, MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerRebuildResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedActivityBridgeResultV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -32,6 +32,18 @@ export type ManagedNativeOperationSettlement = Readonly<{
 export type ManagedMachineOperationSettlementContext = ActionExecutorContext & Readonly<{
     settleManagedNativeOperation?: (settlement: ManagedNativeOperationSettlement) => void;
 }>;
+
+/** The words a person reads on the machine while its native change runs: what happens to it, not the mechanism. */
+function describeNativeEffectProgress(desired: SupportedNativeIntent): string {
+    switch (desired) {
+        case 'start': return 'Starting the machine';
+        case 'resume': return 'Resuming the machine';
+        case 'stop': return 'Stopping the machine';
+        case 'suspend': return 'Suspending the machine';
+        case 'delete': return 'Deleting the machine';
+        case 'rebuild': return 'Rebuilding the machine';
+    }
+}
 
 /** Project only custody already settled by Home into the original operation. */
 export function publishSettledManagedNativeOperation(context: ManagedMachineOperationSettlementContext | undefined,
@@ -482,7 +494,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                 let guestStartupError: ManagedMachineControllerError | undefined;
                 try {
                     options.context?.operationOwnerUpdate?.update({ progress: {
-                        phase: 'managed.intent.native-effect', label: 'Applying native machine intent',
+                        phase: 'managed.intent.native-effect', label: describeNativeEffectProgress(machine.desired),
                     } });
                     // Once native IO may have been issued, reopening guest admission
                     // could let new work race a delayed Stop/Delete. Only definite
@@ -513,7 +525,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                                 : error instanceof ManagedMachineControllerError ? error.code : 'admission_unavailable');
                         }
                         options.context?.operationOwnerUpdate?.update({ progress: {
-                            phase: 'managed.intent.native-effect', label: 'Applying native machine intent',
+                            phase: 'managed.intent.native-effect', label: describeNativeEffectProgress(machine.desired),
                         } });
                     } } : undefined;
                     if (localStop) {
