@@ -26,8 +26,9 @@ function stripAnsi(s) {
   return String(s ?? '').replace(/\x1b\[[0-9;]*m/g, '');
 }
 
-for (const action of ['enable', 'url', 'disable']) {
-  test(`tailscale ${action} honors an explicit HTTPS listener without changing another listener`, async (t) => {
+for (const [entry, action] of ['direct', 'stack'].flatMap(entry =>
+  ['enable', 'url', 'disable'].map(action => [entry, action]))) {
+  test(`${entry} tailscale ${action} honors an explicit HTTPS listener without changing another listener`, async (t) => {
     const fixture = await createTempFixture(t, { prefix: 'tailscale-cli-port-' });
     const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
     const upstream = 'http://127.0.0.1:35550';
@@ -56,9 +57,13 @@ if (args[1] === 'status') {
   fs.writeFileSync(configPath, JSON.stringify(config));
 }
 ` });
-    const envPath = fixture.path('stack.env');
+    const envPath = fixture.path('storage', 'repo-port-test', 'env');
+    mkdirSync(dirname(envPath), { recursive: true });
     writeFileSync(envPath, 'HAPPIER_STACK_SERVER_PORT=35550\n');
-    const result = await runNode(['apps/stack/scripts/tailscale.mjs', action, '--https-port=8443', '--json'], {
+    const command = entry === 'stack'
+      ? ['apps/stack/scripts/stack.mjs', `tailscale:${action}`, 'repo-port-test', '--']
+      : ['apps/stack/scripts/tailscale.mjs', action];
+    const result = await runNode([...command, '--https-port=8443', '--json'], {
       cwd: repoRoot,
       env: buildStackFixtureEnv({ homeDir: fixture.path('home'), storageDir: fixture.path('storage'),
         stackName: 'repo-port-test', envPath, stripStackEnv: true,

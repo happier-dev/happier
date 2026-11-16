@@ -59,6 +59,15 @@ process.stdout.write(result?.out ?? '');
     assert.equal(calls.includes('3009'), false, 'controller forward is not a remote upstream');
     if (action === 'enable') assert.match(await readFile(baseDir + '/env', 'utf8'), /HAPPIER_PUBLIC_SERVER_URL=/);
   }
+  const wrapped = await runNodeCapture([
+    'apps/stack/scripts/stack.mjs', 'tailscale:enable', stackName,
+    '--', '--https-port=9447', '--json',
+  ], { cwd: fileURLToPath(new URL('../../../', import.meta.url)), env });
+  assert.equal(wrapped.code, 0, wrapped.stderr);
+  assert.equal(JSON.parse(wrapped.stdout).httpsUrl, publicUrl);
+  const remoteArgs = JSON.parse((await readFile(fixture.path('ssh-calls'), 'utf8')).trim().split('\n').at(-1));
+  assert.match(remoteArgs.join(' '), /--https-port=9447/,
+    'the stack wrapper must retain the listener operand through placed-server dispatch');
   await unlink(baseDir + '/stack.runtime.json');
   const cold = await runNodeCapture(['apps/stack/scripts/tailscale.mjs', 'url', '--json'], {
     cwd: fileURLToPath(new URL('../../../', import.meta.url)), env,

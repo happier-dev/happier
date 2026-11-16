@@ -29,10 +29,11 @@ export async function cmdRuntime({ rootDir, stackName, runtimeCommand, args = []
 }
 
 export async function cmdTailscale({ rootDir, stackName, subcmd, args }) {
+  const forwarded = args[0] === '--' ? args.slice(1) : args;
   await withStackEnv({
     stackName,
     fn: async ({ env }) => {
-      await run(process.execPath, [join(rootDir, 'scripts', 'tailscale.mjs'), subcmd, ...args], { cwd: rootDir, env });
+      await run(process.execPath, [join(rootDir, 'scripts', 'tailscale.mjs'), subcmd, ...forwarded], { cwd: rootDir, env });
     },
   });
 }
