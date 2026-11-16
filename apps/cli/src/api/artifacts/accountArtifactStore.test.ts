@@ -2454,7 +2454,8 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
         const url = new URL(rawUrl);
         expect(url.pathname).toBe('/v1/artifacts');
         if (url.searchParams.has('unclassified')) return { status: 200, data: { items: [], hasUnclassified: false } };
-        expect(url.searchParams.get('kind')).toBe('other');
+        expect(JSON.parse(url.searchParams.get('kinds') ?? 'null')).toEqual(['account_notice.v1', 'usage_notice.v1']);
+        expect(url.searchParams.get('ownerAccountId')).toBe('owner');
         expect(url.searchParams.has('includeBody')).toBe(false);
         if (competingWork === 'cancellation' && !pendingCancellation) {
           // The external abort arrives on the native loop while the response's
@@ -2465,7 +2466,7 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
           }));
         }
         return { status: 200, data: { items: url.searchParams.has('cursor') ? [] : rows,
-          hasUnclassified: false } };
+          hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 } } };
       });
       const store = createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => mode });
       let proofFinished = false;
