@@ -5113,7 +5113,7 @@ for (const publicationCase of ['changed', 'empty', 'unchanged']) {
     const incumbentFailures = [failure];
     const replacementFailures = publicationCase === 'empty' ? []
       : publicationCase === 'unchanged' ? incumbentFailures
-      : [{ ...failure, diagnostic: { ...failure.diagnostic, message: '/private/plugin-path/manifest.json rejected' } }];
+      : [{ ...failure, diagnostic: { ...failure.diagnostic, message: "contributes.actions.inputSchema: invalid_type in '/private/plugin-path/manifest.json'; Bearer publication-test-secret" } }];
     const artifactPath = '.project/tmp/bundled-plugin-publication/failures.json';
     for (const [cliDir, failures] of [[dirname(dirname(graph.old.entrypoint)), incumbentFailures],
       [graph.daemon.runtimeDir, replacementFailures]]) {
@@ -5127,16 +5127,21 @@ for (const publicationCase of ['changed', 'empty', 'unchanged']) {
       await assert.rejects(admission, error => {
         assert.equal(error.code, 'ESOURCERELOADNOTREADY');
         assert.equal(error.reason, 'bundled_plugin_failures_changed');
-        const pluginFailures = [{ pluginId: 'example', diagnostic: { code: 'plugin_manifest_invalid' } }];
+        const pluginFailures = [{ pluginId: 'example', diagnostic: { code: 'plugin_manifest_invalid',
+          message: error.pluginFailures[0].diagnostic.message } }];
+        assert.match(pluginFailures[0].diagnostic.message, /contributes.actions.inputSchema: invalid_type/);
+        assert.ok(!pluginFailures[0].diagnostic.message.includes('/private/plugin-path'));
+        assert.ok(!pluginFailures[0].diagnostic.message.includes('publication-test-secret'));
         assert.deepEqual(error.pluginFailures, pluginFailures);
         assert.match(error.message, /example.*plugin_manifest_invalid/);
-        assert.ok(!error.message.includes('/private/plugin-path'));
+        assert.match(error.message, /contributes.actions.inputSchema: invalid_type/);
+        assert.ok(!error.message.includes('publication-test-secret'));
         const transported = parseSourceReloadRefusalLine('HSTACK_SOURCE_RELOAD_REFUSAL='
           + JSON.stringify(readSourceReloadRefusal(error)));
         assert.equal(transported.phase, 'bundled-plugin-publication');
         assert.equal(transported.component, 'daemon');
         assert.deepEqual(transported.pluginFailures, pluginFailures);
-        assert.ok(!JSON.stringify(transported).includes('/private/plugin-path'));
+        assert.ok(!JSON.stringify(transported).includes('publication-test-secret'));
         assert.deepEqual(projectStackReloadVerification({ failure: { check: 'start', error: transported } }), {
           status: 'NOT_READY', check: 'start', baseline: 'unavailable',
           evidence: { code: 'ESOURCERELOADNOTREADY', reason: 'bundled_plugin_failures_changed', pluginFailures },

@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
 import { ENTRY_GRAPHS, loadEntryGraph } from '../../perf/entry-load.mjs';
 import { describeRuntimeImportFailure } from '../../utils/proc/runtimeImportProbe.mjs';
 import { redactFailureDiagnostic } from '../../utils/proc/proc.mjs';
@@ -10,14 +11,14 @@ const componentGraphs = Object.freeze({ daemon: 'daemon', cli: 'cli', server: 's
 /** @typedef {{component?: string, entryGraph?: string, firstFailingModule?: string,
  * code?: string|number, phase?: string, retryable?: boolean, sourceStack?: string,
  * reason?: string, nextAction?: string, missingMigrations?: string[], failedMigration?: string,
- * pluginFailures?: {pluginId: string, diagnostic: {code: string}}[]}} SourceReloadRefusal */
+ * pluginFailures?: {pluginId: string, diagnostic: {code: string, message?: string}}[]}} SourceReloadRefusal */
 
 function publicIdentifier(value, env) {
   return typeof value === 'string' && value.length > 0 && !/[\r\n]/u.test(value)
     && redactFailureDiagnostic(value, env) === value ? value : undefined;
 }
 
-/** Only identifier facts cross the existing worker transport, never error payloads. */
+/** Identifier facts and privacy-projected plugin diagnostics cross the worker transport. */
 export function readSourceReloadRefusal(error, env = process.env) {
   if (!error || typeof error !== 'object') return {};
   /** @type {SourceReloadRefusal} */
@@ -35,7 +36,11 @@ export function readSourceReloadRefusal(error, env = process.env) {
     refusal.pluginFailures = error.pluginFailures.flatMap(failure => {
       const pluginId = publicIdentifier(failure?.pluginId, env);
       const code = publicIdentifier(failure?.diagnostic?.code, env);
-      return pluginId && code ? [{ pluginId, diagnostic: { code } }] : [];
+      return pluginId && code ? [{ pluginId, diagnostic: { code,
+        ...(typeof failure.diagnostic.message === 'string' ? {
+          message: projectPluginFailureMessage(redactFailureDiagnostic(failure.diagnostic.message, env)),
+        } : {}),
+      } }] : [];
     });
   }
   return refusal;

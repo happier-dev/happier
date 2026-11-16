@@ -1,13 +1,14 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { readSourceReloadRefusal } from '../shared/source_reload_refusal.mjs';
 
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH,
   parseBundledPluginPublicationFailures } from '../../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 
 function notReady(reason, cause, failures = []) {
-  const pluginFailures = failures.map(({ pluginId, diagnostic }) => ({ pluginId, diagnostic: { code: diagnostic.code } }));
-  const detail = pluginFailures.map(({ pluginId, diagnostic }) => `${pluginId} ${diagnostic.code}`).join(', ');
+  const { pluginFailures = [] } = readSourceReloadRefusal({ pluginFailures: failures });
+  const detail = pluginFailures.map(({ pluginId, diagnostic }) => `${pluginId} ${diagnostic.code}: ${diagnostic.message}`).join(', ');
   return Object.assign(new Error(`[reload] replacement bundled plugin publication is not ready${detail ? `: ${detail}` : ''}; incumbent retained`,
     cause ? { cause } : undefined), {
     code: 'ESOURCERELOADNOTREADY', component: 'daemon', entryGraph: 'daemon',
