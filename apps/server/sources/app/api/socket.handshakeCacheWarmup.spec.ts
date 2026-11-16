@@ -67,7 +67,7 @@ describe("startSocket handshake cache warmup", () => {
     it('retains handshake labels only on ordinary app sync sockets and projects reconnect discovery', async () => {
         const { selectRpcTarget } = await import('./socket/rpc/rpcTargetSelection');
         for (const [clientPurpose, deviceLabel, expected] of [
-            ['sync', 'My phone', 'My phone'], ['sync', null, null],
+            ['sync', '  My  phone  ', 'My phone'], ['sync', 'x'.repeat(121), 'x'.repeat(120)], ['sync', null, null],
             ['scoped-rpc', 'Not an app', null], ['sync', 42, null],
         ] as const) {
             const { middleware, socket } = await runHandshake();

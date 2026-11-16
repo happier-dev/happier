@@ -4097,7 +4097,7 @@ export class ApiMachineClient {
         params: unknown,
         options?: Readonly<{ timeoutMs?: number | null; signal?: AbortSignal; onIssued?: () => void;
             answeringClient?: SocketRpcAnsweringClientV1 }>,
-    ): Promise<Readonly<{ ok: true; result: TResult; answeringClientId?: string; answeringClientIds?: readonly string[] }> | Readonly<{ ok: false; error?: string; errorCode?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>> {
+    ): Promise<Readonly<{ ok: true; result: TResult; answeringClientId?: string; answeringClientIds?: readonly string[]; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }> | Readonly<{ ok: false; error?: string; errorCode?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>> {
         const socket = this.socket;
         if (!socket || !this.machineContentReady) {
             return { ok: false, errorCode: 'machine_socket_unavailable' };
@@ -4157,7 +4157,7 @@ export class ApiMachineClient {
             });
             // The decoded ACK is already a known receipt. A later socket state
             // cannot turn that completion back into an uncertain effect.
-            return { ok: true, result, ...(answeringClientId ? { answeringClientId } : {}), ...(answeringClientIds ? { answeringClientIds } : {}) };
+            return { ok: true, result, ...(answeringClientId ? { answeringClientId } : {}), ...(answeringClientIds ? { answeringClientIds } : {}), ...(answeringClients ? { answeringClients } : {}) };
         } catch (error) {
             if (resultDecodeFailed) return { ok: false, errorCode: 'machine_rpc_result_decrypt_failed' };
             const errorCode = readRpcErrorCode(error);

@@ -9,7 +9,7 @@ export type RpcAckResponseEmitter = Readonly<{
 }>;
 
 export type RpcTargetSelectionResult =
-    | Readonly<{ type: "target"; target: RpcAckResponseEmitter; hadMultipleTargets: boolean; clientIds?: readonly string[] }>
+    | Readonly<{ type: "target"; target: RpcAckResponseEmitter; hadMultipleTargets: boolean; clientIds?: readonly string[]; clients?: readonly SocketRpcAnsweringClientCandidateV1[] }>
     | Readonly<{ type: "self-call" }>
     | Readonly<{ type: "ambiguous"; clientIds: readonly string[]; clients: readonly SocketRpcAnsweringClientCandidateV1[] }>
     | Readonly<{ type: "not-available" }>;

@@ -32,7 +32,7 @@ export type ClientActionMachineRpc = Readonly<{
   hasConnectedClientRpcHandler(method: string): boolean;
   callConnectedClientRpc(method: string, params: unknown,
     options: Readonly<{ timeoutMs: number | null; signal?: AbortSignal; answeringClient?: SocketRpcAnsweringClientV1; onIssued(): void }>):
-    Promise<Readonly<{ ok: true; result: unknown; answeringClientId?: string; answeringClientIds?: readonly string[] }> | Readonly<{ ok: false; errorCode?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>>;
+    Promise<Readonly<{ ok: true; result: unknown; answeringClientId?: string; answeringClientIds?: readonly string[]; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }> | Readonly<{ ok: false; errorCode?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>>;
 }>;
 
 type ClientActionReverseRequest = Omit<Parameters<NonNullable<ActionExecutorDeps['clientActionExecute']>>[0], 'context' | 'execute'> & Readonly<{
@@ -112,7 +112,8 @@ export function createClientActionReverseDispatcher(
     const libraryAction = actionId === 'workflow.library.view.get' || actionId === 'workflow.library.view.set'
       || actionId === 'workflow.library.view.reset';
     const listsAnsweringClients = actionId === 'plugins.execution_origin.list' || actionId === 'workflow.library.view.get';
-    const answeringClient = { ...(clientId ? { clientId } : {}), requireSingle: true as const };
+    const answeringClient = { ...(clientId ? { clientId } : {}), requireSingle: true as const,
+      ...(listsAnsweringClients ? { includeCandidates: true as const } : {}) };
     // Project only the address from the already-admitted full Action input.
     const address = isWorkflowAuthoringActionId(actionId) && input && typeof input === 'object'
       ? WorkflowDraftGetInputV1Schema.safeParse({ scope: Reflect.get(input, 'scope'), draftId: Reflect.get(input, 'draftId') }) : null;
@@ -202,6 +203,7 @@ export function createClientActionReverseDispatcher(
       const answeringClients = listsAnsweringClients && response.answeringClientId ? {
         answeringClientId: response.answeringClientId,
         ...(response.answeringClientIds ? { answeringClientIds: [...response.answeringClientIds] } : {}),
+        ...(response.answeringClients ? { answeringClients: [...response.answeringClients] } : {}),
       } : null;
       if (actionId === 'workflow.library.view.get' && execution && !execution.ok
         && execution.errorCode === 'unavailable' && answeringClients) {

@@ -1,3 +1,4 @@
+import { sanitizeDeviceLabel } from '@happier-dev/protocol/auth/deviceLabel';
 import { SOCKET_PING_INTERVAL_MS, SOCKET_PING_TIMEOUT_MS } from '@happier-dev/protocol/actions/externalActionLimits';
 import { onShutdown } from "@/utils/process/shutdown";
 import { isIrohIngressRequest, IROH_REQUEST_IP } from '@/app/net/requestIngress';
@@ -758,8 +759,8 @@ export function startSocket(app: Fastify): () => Promise<void> {
             socket.data.clientPurpose = clientPurpose;
             // Optional app presentation, retained only for this authenticated live socket.
             socket.data.rpcDeviceLabel = clientType === 'user-scoped' && clientPurpose === 'sync'
-                && !ephemeralRunnerAdmission && typeof socket.handshake.auth.deviceLabel === 'string'
-                ? socket.handshake.auth.deviceLabel : null;
+                && !ephemeralRunnerAdmission
+                ? sanitizeDeviceLabel(socket.handshake.auth.deviceLabel) : null;
             // A Session-scoped socket carries the ids its handshake admitted, the same ones its rooms use.
             const resourceIdentity = resolveSocketResourceIdentity({ ...socket.data, sessionId, machineId });
             socket.data.sessionId = resourceIdentity.sessionId;

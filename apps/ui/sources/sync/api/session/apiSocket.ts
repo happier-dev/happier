@@ -1,3 +1,6 @@
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
+import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabel';
 import { clearMachineRpcDirectRouteGrants } from '@/sync/domains/machines/peer/mediation/rpc/routeGrant';
 import { attachManagedSessionHumanPresenceSocket } from '@/sync/domains/session/humanPresence/attachManagedSessionHumanPresenceSocket';
 import { attachManagedSessionConsumptionSocket } from '@/sync/runtime/attachManagedSessionConsumptionSocket';
@@ -1739,9 +1742,14 @@ class ApiSocket {
             token: this.config.token,
             ...socketRole,
             clientPurpose: 'sync',
-            authExtras: buildAccountStoredContentCompatibilitySocketAuthV1(
-                CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-            ),
+            authExtras: {
+                ...buildAccountStoredContentCompatibilitySocketAuthV1(
+                    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+                ),
+                ...(socketRole.clientType === 'user-scoped' ? {
+                    deviceLabel: resolveLocalDeviceLabel({ deviceName: Constants.deviceName, platform: Platform.OS }),
+                } : {}),
+            },
             transports: resolveSocketIoTransportsForCarrier(
                 this.config.carrier ?? (hasCapturedServerTarget ? undefined : snapshot.carrier),
             ),

@@ -64,6 +64,7 @@ export type RpcForwardResult =
         result: unknown;
         answeringClientId?: string;
         answeringClientIds?: readonly string[];
+        answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[];
         transportAcknowledgement?: SocketRpcTransportAcknowledgementV1;
       }>
     | Readonly<{
@@ -538,7 +539,7 @@ async function executeRpcForwardCall(params: Readonly<{
             ok: true,
             result: envelope.success ? envelope.data.result : response,
             ...(params.answeringClient ? { answeringClientId: selection.target.id } : {}),
-            ...(selection.clientIds ? { answeringClientIds: selection.clientIds } : {}),
+            ...(selection.clientIds ? { answeringClientIds: selection.clientIds, answeringClients: selection.clients } : {}),
             ...(envelope.success && envelope.data.acknowledgement
                 ? { transportAcknowledgement: envelope.data.acknowledgement }
                 : {}),

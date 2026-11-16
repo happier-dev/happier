@@ -1,3 +1,4 @@
+import Constants from 'expo-constants';
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -257,10 +258,30 @@ describe('apiSocket transports and roles', () => {
         const { socket } = await boot();
         expect(socket.io.timeout()).toBe(15_000 + 45_000);
         expect(ioSpy).toHaveBeenCalledWith('https://server.example.test', expect.objectContaining({
-            path: '/v1/updates/', auth: expect.objectContaining({ clientType: 'user-scoped', clientPurpose: 'sync' }),
+            path: '/v1/updates/', auth: expect.objectContaining({ clientType: 'user-scoped', clientPurpose: 'sync', deviceLabel: null }),
             forceNew: true, multiplex: false, reconnection: false, autoConnect: false, withCredentials: false,
         }));
         expect(ioSpy.mock.calls[0]?.[1]).not.toHaveProperty('transports');
+    });
+
+    it('advertises the local device label in handshake auth, never in method registration', async () => {
+        const original = Object.getOwnPropertyDescriptor(Constants, 'deviceName');
+        Object.defineProperty(Constants, 'deviceName', { configurable: true, value: '  My phone  ' });
+        try {
+            const { apiSocket, socket } = await boot();
+            expect(ioSpy).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                auth: expect.objectContaining({ deviceLabel: 'My phone' }),
+            }));
+            const dispose = apiSocket.registerMachineScopedRpcHandler('machine-1', 'ui.demo', async () => ({}));
+            expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTER, { method: 'machine-1:ui.demo' });
+            socket.connect();
+            expect(socket.emit.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.REGISTER)
+                .every(([, payload]) => payload !== null && typeof payload === 'object' && !Object.hasOwn(payload, 'deviceLabel'))).toBe(true);
+            dispose();
+        } finally {
+            if (original) Object.defineProperty(Constants, 'deviceName', original);
+            else Reflect.deleteProperty(Constants, 'deviceName');
+        }
     });
 
     it('uses Engine.IO defaults in browser runtimes', async () => {

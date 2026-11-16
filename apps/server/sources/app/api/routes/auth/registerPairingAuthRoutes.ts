@@ -1,4 +1,5 @@
 import { z } from "zod/mini";
+import { sanitizeDeviceLabel } from '@happier-dev/protocol/auth/deviceLabel';
 import tweetnacl from "tweetnacl";
 import * as privacyKit from "privacy-kit";
 import { HomeQrPairingStatusV2Schema, verifyHomeQrRendezvousSecretV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
@@ -29,12 +30,6 @@ function decodeCanonicalBase64Url32(value: string): Uint8Array<ArrayBuffer> | nu
     } catch {
         return null;
     }
-}
-
-function sanitizeDeviceLabel(raw: unknown): string | null {
-    if (typeof raw !== "string") return null;
-    const trimmed = raw.trim().replace(/\s+/gu, " ");
-    return trimmed ? trimmed.slice(0, 120) : null;
 }
 
 const canonicalBase64Url32 = z.string().check(z.refine((value) => decodeCanonicalBase64Url32(value) !== null));

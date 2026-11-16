@@ -1,5 +1,5 @@
 import type { RpcAckResponseEmitter, RpcTargetSelectionResult } from "./_types";
-import { SocketRpcAnsweringClientCandidateV1Schema, type SocketRpcAnsweringClientV1 } from '@happier-dev/protocol/socketRpc';
+import type { SocketRpcAnsweringClientCandidateV1, SocketRpcAnsweringClientV1 } from '@happier-dev/protocol/socketRpc';
 
 export function selectRpcTarget(params: Readonly<{
     targets: RpcAckResponseEmitter[];
@@ -28,24 +28,28 @@ export function selectRpcTarget(params: Readonly<{
         const latestAt = focused.reduce((latest, target) => Math.max(latest, target.data!.uiLastFocusedAt as number), -Infinity);
         const latest = focused.filter(target => target.data!.uiLastFocusedAt === latestAt);
         if (latest.length === 1) return { type: 'target', target: latest[0], hadMultipleTargets: true,
-            clientIds: nonCallerTargets.map(target => target.id) };
-        return { type: 'ambiguous', clientIds: eligibleTargets.map(target => target.id), clients: eligibleTargets.map(target => {
-            const focus = target.data?.uiFocus;
-            const state = focus && typeof focus === 'object' ? focus as Record<string, unknown> : {};
-            return SocketRpcAnsweringClientCandidateV1Schema.parse({ id: target.id, deviceLabel: null,
-                ...(typeof state.computer === 'boolean' && typeof state.focused === 'boolean' ? { state: {
-                    computer: state.computer, focused: state.focused,
-                    ...(typeof target.data?.uiLastFocusedAt === 'number' && Number.isFinite(target.data.uiLastFocusedAt)
-                        ? { lastFocusedAt: target.data.uiLastFocusedAt } : {}),
-                } } : {}),
-            });
-        }) };
+            clientIds: nonCallerTargets.map(target => target.id), ...(params.answeringClient.includeCandidates ? { clients: nonCallerTargets.map(projectRpcAnsweringClient) } : {}) };
+        return { type: 'ambiguous', clientIds: eligibleTargets.map(target => target.id), clients: eligibleTargets.map(projectRpcAnsweringClient) };
     }
 
     return {
         type: "target",
         target: eligibleTargets[0],
         hadMultipleTargets: !params.answeringClient?.clientId && (eligibleTargets.length > 1 || distinctTargets.length > 1),
-        ...(params.answeringClient ? { clientIds: nonCallerTargets.map(target => target.id) } : {}),
+        ...(params.answeringClient ? { clientIds: nonCallerTargets.map(target => target.id), ...(params.answeringClient.includeCandidates ? { clients: nonCallerTargets.map(projectRpcAnsweringClient) } : {}) } : {}),
+    };
+}
+
+function projectRpcAnsweringClient(target: RpcAckResponseEmitter): SocketRpcAnsweringClientCandidateV1 {
+    const focus = target.data?.uiFocus;
+    const state = focus && typeof focus === 'object' ? focus as Record<string, unknown> : {};
+    return {
+        id: target.id,
+        deviceLabel: typeof target.data?.rpcDeviceLabel === 'string' ? target.data.rpcDeviceLabel : null,
+        ...(typeof state.computer === 'boolean' && typeof state.focused === 'boolean' ? { state: {
+            computer: state.computer, focused: state.focused,
+            ...(typeof target.data?.uiLastFocusedAt === 'number' && Number.isFinite(target.data.uiLastFocusedAt)
+                ? { lastFocusedAt: target.data.uiLastFocusedAt } : {}),
+        } } : {}),
     };
 }

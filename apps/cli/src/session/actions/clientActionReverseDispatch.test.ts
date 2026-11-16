@@ -235,7 +235,7 @@ describe('client Action reverse delivery', () => {
     const { selectRpcTarget } = await import('../../../../server/sources/app/api/socket/rpc/rpcTargetSelection');
     const effects: string[] = [];
     const sessionId = `c${'a'.repeat(24)}`;
-    const targets = clients.map(id => ({ id, timeout: () => ({ emitWithAck: async () => {
+    const targets = clients.map(id => ({ id, data: { rpcDeviceLabel: id === 'app-a' ? 'My phone' : null }, timeout: () => ({ emitWithAck: async () => {
       effects.push(id);
       return { v: 1, execution: { ok: true, result: { status: 'opened', sessionId, serverId: 'home' } } };
     } }) }));
@@ -244,7 +244,7 @@ describe('client Action reverse delivery', () => {
         expect(UiActionDispatchRequestV1Schema.safeParse(payload).success).toBe(true);
         const selection = selectRpcTarget({ targets, answeringClient: options.answeringClient });
         if (selection.type === 'ambiguous') return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_AMBIGUOUS,
-          answeringClients: selection.clientIds.map(id => ({ id, deviceLabel: null })) };
+          answeringClients: selection.clients };
         if (selection.type !== 'target') return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
         options.onIssued();
         return { ok: true, result: await selection.target.timeout(0).emitWithAck('rpc-request', {}) };
@@ -258,7 +258,7 @@ describe('client Action reverse delivery', () => {
       expect(result).toMatchObject({ ok: false, errorCode: expected });
       expect(effects).toEqual([]);
       if (expected === 'client_ambiguous') expect(result).toMatchObject({ details: {
-        clients: clients.map(id => ({ id, deviceLabel: null })), recovery: { inputField: 'clientId' },
+        clients: clients.map(id => ({ id, deviceLabel: id === 'app-a' ? 'My phone' : null })), recovery: { inputField: 'clientId' },
       } });
     }
   });
@@ -582,17 +582,17 @@ describe('client Action reverse delivery', () => {
     const client: ClientActionMachineRpc = {
       hasConnectedClientRpcHandler: () => true,
       callConnectedClientRpc: async (_method, _raw, options) => {
-        const target = { id: 'app-a', timeout: () => ({ emitWithAck: async () => ({ v: 1, execution: { ok: true, result } }) }) };
+        const target = { id: 'app-a', data: { rpcDeviceLabel: 'My phone' }, timeout: () => ({ emitWithAck: async () => ({ v: 1, execution: { ok: true, result } }) }) };
         const selection = selectRpcTarget({ targets: [target], answeringClient: options.answeringClient });
         if (selection.type !== 'target') return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
         options.onIssued();
         return { ok: true, result: await selection.target.timeout(0).emitWithAck('rpc-request', {}),
-          answeringClientId: selection.target.id, answeringClientIds: selection.clientIds };
+          answeringClientId: selection.target.id, answeringClientIds: selection.clientIds, answeringClients: selection.clients };
       },
     };
     expect(await executor(client).execute('plugins.execution_origin.list', { pluginId: 'acme.plugin' },
       { surface: 'mcp', authority: 'account_automation' })).toEqual({ ok: true,
-        result: { ...result, answeringClientId: 'app-a', answeringClientIds: ['app-a'] } });
+        result: { ...result, answeringClientId: 'app-a', answeringClientIds: ['app-a'], answeringClients: [{ id: 'app-a', deviceLabel: 'My phone' }] } });
   });
   it.each([
     { actionId: 'workspace.tabs.list', input: {}, result: { ok: true, tabs: [], groups: [], splits: [], rootNodeId: 'main', focusedGroupId: 'main', maximizedGroupId: null } },

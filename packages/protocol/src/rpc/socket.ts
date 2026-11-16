@@ -112,21 +112,12 @@ export type SocketRpcEvent = (typeof SOCKET_RPC_EVENTS)[keyof typeof SOCKET_RPC_
 /** An omitted deadline uses the relay default; null belongs to caller lifecycle. */
 export const SocketRpcTimeoutMsSchema = lazyZodSchema(() => z.optional(z.nullable(z.number().check(z.positive()))));
 
-/** Closed answering-client routing input; socket ids expire on reconnect. */
-export const SocketRpcAnsweringClientV1Schema = lazyZodSchema(() => z.strictObject({
-  clientId: z.optional(z.string().check(z.minLength(1))),
-  requireSingle: z.optional(z.literal(true)),
-}));
-export type SocketRpcAnsweringClientV1 = Readonly<z.infer<typeof SocketRpcAnsweringClientV1Schema>>;
-/** Ephemeral, non-content receiver facts; labels remain unknown when not advertised. */
-export const SocketRpcAnsweringClientCandidateV1Schema = lazyZodSchema(() => z.strictObject({
-  id: z.string().check(z.minLength(1)),
-  deviceLabel: z.nullable(z.string()),
-  state: z.optional(z.strictObject({ computer: z.boolean(), focused: z.boolean(),
-    lastFocusedAt: z.optional(z.number().check(z.nonnegative())) })),
-}));
-export const SocketRpcAnsweringClientCandidatesV1Schema = lazyZodSchema(() => z.array(SocketRpcAnsweringClientCandidateV1Schema));
-export type SocketRpcAnsweringClientCandidateV1 = Readonly<z.infer<typeof SocketRpcAnsweringClientCandidateV1Schema>>;
+export {
+  SocketRpcAnsweringClientV1Schema, SocketRpcAnsweringClientCandidateV1Schema,
+  SocketRpcAnsweringClientCandidatesV1Schema,
+  type SocketRpcAnsweringClientV1, type SocketRpcAnsweringClientCandidateV1,
+} from './answeringClient.js';
+import type { SocketRpcAnsweringClientV1 } from './answeringClient.js';
 // A distinct operation name prevents older relays from ignoring routing input
 // and delivering a mutation to an arbitrary client. It uses the same handler.
 export const ANSWERING_CLIENT_RPC_PREFIX_V1 = 'answering-client.v1/';

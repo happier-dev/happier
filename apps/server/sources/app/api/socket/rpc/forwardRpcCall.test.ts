@@ -193,16 +193,16 @@ describe('forwardRpcCall', () => {
     });
     it('refuses an ambiguous answering-client mutation before either app receives it', async () => {
         const emitWithAck = vi.fn(async () => 'applied');
-        const targets = ['app-a', 'app-b'].map(id => ({ id, data: { clientType: 'user-scoped' }, timeout: () => ({ emitWithAck }) }));
+        const targets = ['app-a', 'app-b'].map(id => ({ id, data: { clientType: 'user-scoped', rpcDeviceLabel: id === 'app-a' ? 'My phone' : null }, timeout: () => ({ emitWithAck }) }));
         const io = { sockets: { sockets: new Map(), adapter: { rooms: new Map() } }, in: () => ({ fetchSockets: async () => targets,
             timeout: () => ({ fetchSockets: async () => targets }) }) } as unknown as Server;
         const args = { io, targetUserId: 'user-1', method: `machine-1:${RPC_METHODS.UI_ACTION_EXECUTE}`,
             callParams: 'sealed-action', answeringClient: { requireSingle: true as const } };
         expect(await forwardRpcCall(args)).toMatchObject({ ok: false, errorCode: 'RPC_CLIENT_AMBIGUOUS',
-            answeringClients: [{ id: 'app-a', deviceLabel: null }, { id: 'app-b', deviceLabel: null }] });
+            answeringClients: [{ id: 'app-a', deviceLabel: 'My phone' }, { id: 'app-b', deviceLabel: null }] });
         expect(emitWithAck).not.toHaveBeenCalled();
-        expect(await forwardRpcCall({ ...args, answeringClient: { clientId: 'app-b' } }))
-            .toMatchObject({ ok: true, answeringClientId: 'app-b' });
+        expect(await forwardRpcCall({ ...args, answeringClient: { clientId: 'app-b', includeCandidates: true } }))
+            .toMatchObject({ ok: true, answeringClientId: 'app-b', answeringClients: [{ id: 'app-a', deviceLabel: 'My phone' }, { id: 'app-b', deviceLabel: null }] });
         expect(emitWithAck).toHaveBeenCalledOnce();
         expect(await forwardRpcCall({ ...args, answeringClient: { clientId: 'disconnected-app' } }))
             .toMatchObject({ ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE' });

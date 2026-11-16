@@ -12,6 +12,17 @@ function createCandidate(id: string) {
 }
 
 describe("selectRpcTarget", () => {
+    it('projects candidates only for discovery or ambiguity, never ordinary successful calls', () => {
+        let labelReads = 0;
+        const target = { ...createCandidate('app'), data: { get rpcDeviceLabel() { labelReads += 1; return 'My phone'; } } };
+        const targets = [target];
+        expect(selectRpcTarget({ targets, answeringClient: { requireSingle: true } })).not.toHaveProperty('clients');
+        expect(labelReads).toBe(0);
+        expect(selectRpcTarget({ targets, answeringClient: { requireSingle: true, includeCandidates: true } }))
+            .toMatchObject({ clients: [{ id: 'app', deviceLabel: 'My phone' }] });
+        expect(labelReads).toBeGreaterThan(0);
+    });
+
     it('uses the latest pushed focus fact, but never overrides an exact client or breaks ties', () => {
         const clock = vi.spyOn(Date, 'now');
         const candidate = (id: string) => {
