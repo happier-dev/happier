@@ -12,7 +12,7 @@ import { isDeploymentReadDemandActiveV1, isDeploymentReceiptObservationEligibleV
 import { createDeploymentReadPageLease } from './deploymentReadPageLease.js';
 import { createDeploymentReadFactLeaseV1 } from './deploymentReadFactLease.js';
 import { projectDeploymentChipV1 } from '../projection/deploymentSurfaceFacts.js';
-import { projectDeploymentReceiptFactsV1 } from '../projection/deploymentReceiptFacts.js';
+import { projectDeploymentReceiptFactsV1, projectDeploymentReceiptUrlFactsV1 } from '../projection/deploymentReceiptFacts.js';
 import { readDeploymentSecretRevisionFacts } from '../secrets/readDeploymentSecretRevisionFacts.js';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { deploymentEnvironmentHealthBasisV1, reconcileDeploymentEnvironmentHealthObservationV1,
@@ -120,6 +120,9 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         });
         const memberVersions = link ? deriveDeploymentMemberVersionsV1(link, retained,
             detail.targetLinks.map(item => item.targetLink)) : {};
+        const serving = link && retained.find(receipt => receipt.deployment.id === link.activeDeploymentId
+            && receipt.deployment.targetLinkId === link.id);
+        const builtInUrls = serving ? projectDeploymentReceiptUrlFactsV1(serving.content).builtInUrls : null;
         const secretRevisions = Object.values(memberVersions).map(member => {
             const generation = member.uncertain ? undefined : retained.find(receipt => receipt.deployment.id === member.deploymentId);
             const runningBindings = generation?.content.ownServer?.approvedInputBasis?.bindings;
@@ -128,7 +131,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                     ...(runningBindings === undefined ? {} : { runningBindings }),
                     ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }) }) };
         });
-        return { ...detail, runtimeTargetLink: link, memberVersions, secretRevisions };
+        return { ...detail, runtimeTargetLink: link, builtInUrls, memberVersions, secretRevisions };
     }
     function refreshMemberVersions(environmentId: string) {
         for (const entry of entries.values()) {

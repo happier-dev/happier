@@ -28,6 +28,48 @@ function networkBoundary() {
 }
 
 describe('deployment demand read controller', () => {
+    it('projects only the serving platform receipt built-in addresses into the Environment without another read', async () => {
+        const base = networkBoundary();
+        const link = base.environmentDetail.targetLinks[0]!.targetLink;
+        const targetLink = { ...link, source: { kind: 'plugin' as const, contribution: { pluginId: 'acme.deploy', localId: 'deploy' } },
+            targetKind: 'platform' as const, machines: [], members: [] };
+        base.transport.readEnvironment.mockResolvedValue({ ok: true, value: { ...base.environmentDetail,
+            targetLinks: [{ targetLink }] } });
+        const platformReceipt = { ...base.receiptDetail, content: {
+            sourceIntent: base.receiptDetail.content.sourceIntent, sourceMethod: 'gitIntegration',
+            machines: [], images: [], machineResults: [], steps: [], platform: {
+                targetLinkRevision: 1,
+                credentialPrincipal: { kind: 'account', accountId: 'account',
+                    purpose: { consumer: { pluginId: 'acme.deploy', localId: 'deploy' }, purpose: 'action-account' },
+                    target: { kind: 'account', account: { service: { pluginId: 'acme.deploy', localId: 'account' }, accountId: 'provider' } } },
+                providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
+                providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 2000,
+                    urls: ['https://app-exact.vercel.app'], builtInUrls: ['https://app.vercel.app'] },
+            },
+        } };
+        base.transport.readReceipt.mockResolvedValue({ ok: true, value: platformReceipt });
+        const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });
+        const environment = controller.acquireEnvironment(base.environment.id, active);
+        const receipt = controller.acquireReceipt(base.environment.id, base.receipt.id, hidden);
+        try {
+            await environment.refresh();
+            expect(environment.getSnapshot().value).toHaveProperty('builtInUrls', null);
+            receipt.setDemand(active); await receipt.refresh();
+            expect(environment.getSnapshot().value).toHaveProperty('builtInUrls', ['https://app.vercel.app']);
+            base.transport.readReceipt.mockResolvedValue({ ok: true, value: { ...platformReceipt,
+                content: { ...platformReceipt.content, platform: { ...platformReceipt.content.platform,
+                    observation: { ...platformReceipt.content.platform.observation, builtInUrls: [] } } } } });
+            await receipt.refresh();
+            expect(environment.getSnapshot().value).toHaveProperty('builtInUrls', []);
+            base.transport.readReceipt.mockResolvedValue({ ok: true, value: { ...platformReceipt,
+                deployment: { ...platformReceipt.deployment, targetLinkId: 'previous-link' } } });
+            await receipt.refresh();
+            expect(environment.getSnapshot().value).toHaveProperty('builtInUrls', null);
+            expect(base.transport.readEnvironment).toHaveBeenCalledTimes(1);
+            expect(base.transport.readReceipt).toHaveBeenCalledTimes(3);
+            expect(base.transport.observeReceipts).not.toHaveBeenCalled();
+        } finally { receipt.release(); environment.release(); controller.retire(); }
+    });
     it('retains database growth in the page owner and does no native reads while hidden', async () => {
         const base = networkBoundary();
         const detail = base.environmentDetail;

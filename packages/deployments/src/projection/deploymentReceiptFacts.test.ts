@@ -48,7 +48,7 @@ describe('receipt facts', () => {
         if (expected.kind === 'succeeded') expect(projectDeploymentReceiptFactsV1(receipt).restoration).toEqual({ kind: 'outcome_unknown' });
     });
 
-    it('offers the existing log viewer a platform receipt reference without native stage files', () => {
+    it('projects observed platform addresses and the existing log reference without native stage files', () => {
         const receipt = createDeploymentReceiptDetailV1();
         receipt.content.ownServer = undefined;
         receipt.content.platform = { targetLinkRevision: 1,
@@ -57,11 +57,18 @@ describe('receipt facts', () => {
                 target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
             providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
             providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
-                providerDeploymentId: 'dpl_exact' } };
+                providerDeploymentId: 'dpl_exact', urls: ['https://app-exact.vercel.app'],
+                builtInUrls: ['https://app.vercel.app'] } };
         receipt.deployment.acceptedExecution = undefined;
         expect(projectDeploymentReceiptFactsV1(receipt).logs).toEqual([{ scope: 'operation', excerpt: null, reference: {
             kind: 'build', environmentId: receipt.deployment.environmentId, deploymentId: receipt.deployment.id,
             targetLinkId: receipt.deployment.targetLinkId } }]);
+        expect(projectDeploymentReceiptFactsV1(receipt)).toMatchObject({ urls: ['https://app-exact.vercel.app'],
+            builtInUrls: ['https://app.vercel.app'] });
+        receipt.content.platform.observation.builtInUrls = [];
+        expect(projectDeploymentReceiptFactsV1(receipt).builtInUrls).toEqual([]);
+        delete receipt.content.platform.observation.builtInUrls;
+        expect(projectDeploymentReceiptFactsV1(receipt).builtInUrls).toBeNull();
     });
 
     it('says where a receipt ran from its target kind: a platform keeps its own releases, so no Machine keep count (COR4B ui-60)', () => {

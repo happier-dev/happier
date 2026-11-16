@@ -85,6 +85,8 @@ export type DeploymentReceiptFactsV1 = Readonly<{
     stageLogs: readonly DeploymentReceiptStepLogFactV1[];
     /** null = not captured; [] = provider explicitly observed no URLs. Native Domains have their own owner. */
     urls: readonly string[] | null;
+    /** Provider-observed built-in routing addresses, separate from unique deployment/preview URLs. */
+    builtInUrls: readonly string[] | null;
     urlsObservedAtMs: number | null;
     /** Historical receipt evidence, never a claim about current service health. */
     health: Readonly<{ source: 'receipt'; members: DeploymentReceiptDetailV1['content']['machineResults'] }>;
@@ -117,8 +119,9 @@ export function projectDeploymentReceiptSourceFactsV1(content: DeploymentReceipt
 
 /** Observed address facts without preparing unconsumed execution step/log trees. */
 export function projectDeploymentReceiptUrlFactsV1(content: DeploymentReceiptDetailV1['content']):
-    Pick<DeploymentReceiptFactsV1, 'urls' | 'urlsObservedAtMs'> {
-    return { urls: content.platform?.observation.urls ?? null, urlsObservedAtMs: content.platform?.observation.observedAtMs ?? null };
+    Pick<DeploymentReceiptFactsV1, 'urls' | 'builtInUrls' | 'urlsObservedAtMs'> {
+    return { urls: content.platform?.observation.urls ?? null, builtInUrls: content.platform?.observation.builtInUrls ?? null,
+        urlsObservedAtMs: content.platform?.observation.observedAtMs ?? null };
 }
 
 /** Historical evidence comes from the receipt; optional current retention facts share the opened history page. */

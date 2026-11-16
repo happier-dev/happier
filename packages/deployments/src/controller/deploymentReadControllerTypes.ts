@@ -20,6 +20,8 @@ import type { DeploymentReceiptFactsV1 } from '../projection/deploymentReceiptFa
 /** Local read projection over admitted link and demand-loaded receipt content, never a stored member vector. */
 export type DeploymentEnvironmentReadDetailV1 = DeploymentEnvironmentDetailV1 & Readonly<{
     runtimeTargetLink: DeploymentTargetLinkHeaderV1 | null;
+    /** Built-in routing addresses from the opened serving receipt; null until observed, [] when observed absent. */
+    builtInUrls: DeploymentReceiptFactsV1['builtInUrls'];
     memberVersions: Readonly<Record<string, DeploymentMemberVersionV1>>;
     secretRevisions: readonly Readonly<{ machineId: string; installationId: string; facts: readonly DeploymentSecretRevisionFactV1[] }>[];
     healthFeed?: DeploymentEnvironmentHealthFeedV1;
