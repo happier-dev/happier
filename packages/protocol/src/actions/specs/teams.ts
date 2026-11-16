@@ -243,6 +243,88 @@ function teamCredentialActionRow<TActionId extends TeamCredentialHomeActionIdV1>
   return row;
 }
 
+type ActionSpec<
+  Id extends PreNormalizedActionSpec['id'],
+  Input extends z.ZodMiniType,
+  Output extends z.ZodMiniType,
+> = Omit<PreNormalizedActionSpec, 'id' | 'inputSchema' | 'outputSchema' | 'surfaceBindings'> & Readonly<{
+  id: Id;
+  inputSchema: Input;
+  outputSchema: Output;
+  requiredAuthority: NonNullable<PreNormalizedActionSpec['requiredAuthority']>;
+}>;
+
+// Keep per-id schema correlations without serializing every schema's implementation
+// into the inferred factory declaration, matching the Execution Run spec boundary.
+export type TeamActionSpecs = readonly [
+  ActionSpec<'teams.credentials.usage.export', typeof TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1['teams.credentials.usage.export'], typeof TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1['teams.credentials.usage.export']>,
+  ActionSpec<'teams.members.history.preparation.get', typeof TeamMembershipHistoryInputV1Schema, typeof TeamMembershipHistoryReadinessV1Schema>,
+  ActionSpec<'teams.members.history.prepare', typeof TeamMembershipHistoryInputV1Schema, typeof TeamMembershipHistoryPreparationResultV1Schema>,
+  ...ReturnType<typeof teamCredentialActionRow>[],
+  ActionSpec<'teams.list', typeof TeamsListInputV1Schema, typeof TeamsPageV1Schema>,
+  ActionSpec<'teams.get', typeof TeamRefInputV1Schema, typeof TeamSummaryV1Schema>,
+  ActionSpec<'teams.create', typeof TeamCreateInputV1Schema, typeof TeamSummaryV1Schema>,
+  ActionSpec<'teams.update', typeof TeamUpdateInputV1Schema, typeof TeamSummaryV1Schema>,
+  ActionSpec<'teams.logo.set', typeof TeamLogoSetInputV1Schema, typeof TeamSummaryV1Schema>,
+  ActionSpec<'teams.logo.remove', typeof TeamRefInputV1Schema, typeof TeamSummaryV1Schema>,
+  ActionSpec<'teams.policy.set', typeof TeamPolicySetInputV1Schema, typeof TeamSummaryV1Schema>,
+  ActionSpec<'teams.archive', typeof TeamRefInputV1Schema, typeof TeamSummaryV1Schema>,
+  ActionSpec<'teams.restore', typeof TeamRefInputV1Schema, typeof TeamSummaryV1Schema>,
+  ActionSpec<'teams.members.list', typeof TeamMembersListInputV1Schema, typeof TeamMembersPageV1Schema>,
+  ActionSpec<'teams.members.get', typeof TeamMemberRefInputV1Schema, typeof TeamMembershipV1Schema>,
+  ActionSpec<'teams.members.add', typeof TeamMemberAddInputV1Schema, typeof TeamMembershipV1Schema>,
+  ActionSpec<'teams.members.role.set', typeof TeamMemberRoleSetInputV1Schema, typeof TeamMembershipV1Schema>,
+  ActionSpec<'teams.members.suspend', typeof TeamMemberRefInputV1Schema, typeof TeamMembershipV1Schema>,
+  ActionSpec<'teams.members.reactivate', typeof TeamMemberRefInputV1Schema, typeof TeamMembershipV1Schema>,
+  ActionSpec<'teams.members.remove', typeof TeamMemberRefInputV1Schema, typeof TeamMemberRemoveResultV1Schema>,
+  ActionSpec<'teams.members.leave', typeof TeamRefInputV1Schema, typeof TeamMemberRemoveResultV1Schema>,
+  ActionSpec<'teams.members.management.set', typeof TeamMemberManagementSetInputV1Schema, typeof TeamMembershipV1Schema>,
+  ActionSpec<'teams.members.groups.list', typeof TeamMemberGroupsListInputV1Schema, typeof TeamGroupsPageV1Schema>,
+  ActionSpec<'teams.groups.list', typeof TeamGroupsListInputV1Schema, typeof TeamGroupsPageV1Schema>,
+  ActionSpec<'teams.groups.get', typeof TeamGroupRefInputV1Schema, typeof TeamGroupV1Schema>,
+  ActionSpec<'teams.groups.create', typeof TeamGroupCreateInputV1Schema, typeof TeamGroupV1Schema>,
+  ActionSpec<'teams.groups.update', typeof TeamGroupUpdateActionInputV1Schema, typeof TeamGroupV1Schema>,
+  ActionSpec<'teams.groups.archive', typeof TeamGroupRefInputV1Schema, typeof TeamGroupV1Schema>,
+  ActionSpec<'teams.groups.restore', typeof TeamGroupRefInputV1Schema, typeof TeamGroupV1Schema>,
+  ActionSpec<'teams.groups.members.list', typeof TeamGroupMembersListInputV1Schema, typeof TeamGroupMembersPageV1Schema>,
+  ActionSpec<'teams.groups.members.add', typeof TeamGroupMemberAddInputV1Schema, typeof TeamGroupMemberMutationResultV1Schema>,
+  ActionSpec<'teams.groups.members.remove', typeof TeamGroupMemberRemoveInputV1Schema, typeof TeamGroupMemberMutationResultV1Schema>,
+  ActionSpec<'teams.invitations.list', typeof TeamInvitationListInputV1Schema, typeof TeamInvitationsPageV1Schema>,
+  ActionSpec<'teams.invitations.create', typeof TeamInvitationCreateInputV1Schema, typeof TeamInvitationCreateResultV1Schema>,
+  ActionSpec<'teams.invitations.revoke', typeof TeamInvitationRevokeInputV1Schema, typeof TeamInvitationRevokeResultV1Schema>,
+  ActionSpec<'teams.invitations.reissue', typeof TeamInvitationReissueInputV1Schema, typeof TeamInvitationReissueResultV1Schema>,
+  ActionSpec<'teams.invitations.preview', typeof TeamInvitationPreviewInputV1Schema, typeof TeamInvitationPreviewResultV1Schema>,
+  ActionSpec<'teams.invitations.accept.prepareApproval', typeof TeamInvitationAcceptApprovalPrepareInputV1Schema, typeof TeamInvitationAcceptApprovalPrepareResultV1Schema>,
+  ActionSpec<'teams.invitations.accept', typeof TeamInvitationAcceptInputV1Schema, typeof TeamInvitationAcceptResultV1Schema>,
+  ActionSpec<'teams.identity.connections.list', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.connections.list'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.connections.list']>,
+  ActionSpec<'teams.identity.connections.create', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.connections.create'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.connections.create']>,
+  ActionSpec<'teams.identity.connections.settings.update', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.connections.settings.update'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.connections.settings.update']>,
+  ActionSpec<'teams.identity.connections.enable', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.connections.enable'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.connections.enable']>,
+  ActionSpec<'teams.identity.connections.disable', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.connections.disable'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.connections.disable']>,
+  ActionSpec<'teams.identity.connections.remove.preview', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.connections.remove.preview'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.connections.remove.preview']>,
+  ActionSpec<'teams.identity.connections.remove', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.connections.remove'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.connections.remove']>,
+  ActionSpec<'teams.identity.connections.test.start', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.connections.test.start'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.connections.test.start']>,
+  ActionSpec<'teams.identity.connections.test.consume', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.connections.test.consume'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.connections.test.consume']>,
+  ActionSpec<'teams.identity.workos.connection.create', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.workos.connection.create'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.workos.connection.create']>,
+  ActionSpec<'teams.identity.workos.adminPortalLink.create', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.workos.adminPortalLink.create'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.workos.adminPortalLink.create']>,
+  ActionSpec<'teams.identity.workos.reconcile', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.workos.reconcile'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.workos.reconcile']>,
+  ActionSpec<'teams.identity.workos.connection.set', typeof TEAM_IDENTITY_ACTION_INPUT_SCHEMAS_V1['teams.identity.workos.connection.set'], typeof TEAM_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1['teams.identity.workos.connection.set']>,
+  ActionSpec<'teams.externalGroupBindings.list', typeof TEAM_EXTERNAL_GROUP_BINDING_ACTION_INPUT_SCHEMAS_V1['teams.externalGroupBindings.list'], typeof TEAM_EXTERNAL_GROUP_BINDING_ACTION_OUTPUT_SCHEMAS_V1['teams.externalGroupBindings.list']>,
+  ActionSpec<'teams.externalGroupBindings.set', typeof TEAM_EXTERNAL_GROUP_BINDING_ACTION_INPUT_SCHEMAS_V1['teams.externalGroupBindings.set'], typeof TEAM_EXTERNAL_GROUP_BINDING_ACTION_OUTPUT_SCHEMAS_V1['teams.externalGroupBindings.set']>,
+  ActionSpec<'teams.externalGroupBindings.remove', typeof TEAM_EXTERNAL_GROUP_BINDING_ACTION_INPUT_SCHEMAS_V1['teams.externalGroupBindings.remove'], typeof TEAM_EXTERNAL_GROUP_BINDING_ACTION_OUTPUT_SCHEMAS_V1['teams.externalGroupBindings.remove']>,
+  ActionSpec<'teams.directory.sourceSetup.list', typeof TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1['teams.directory.sourceSetup.list'], typeof TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1['teams.directory.sourceSetup.list']>,
+  ActionSpec<'teams.directory.sources.list', typeof TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1['teams.directory.sources.list'], typeof TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1['teams.directory.sources.list']>,
+  ActionSpec<'teams.directory.sources.get', typeof TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1['teams.directory.sources.get'], typeof TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1['teams.directory.sources.get']>,
+  ActionSpec<'teams.directory.people.list', typeof TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1['teams.directory.people.list'], typeof TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1['teams.directory.people.list']>,
+  ActionSpec<'teams.directory.groups.list', typeof TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1['teams.directory.groups.list'], typeof TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1['teams.directory.groups.list']>,
+  ActionSpec<'teams.directory.sources.create', typeof TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1['teams.directory.sources.create'], typeof TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1['teams.directory.sources.create']>,
+  ActionSpec<'teams.directory.sources.sync', typeof TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1['teams.directory.sources.sync'], typeof TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1['teams.directory.sources.sync']>,
+  ActionSpec<'teams.directory.sources.pause', typeof TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1['teams.directory.sources.pause'], typeof TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1['teams.directory.sources.pause']>,
+  ActionSpec<'teams.directory.sources.resume', typeof TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1['teams.directory.sources.resume'], typeof TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1['teams.directory.sources.resume']>,
+  ActionSpec<'teams.directory.sources.remove.preview', typeof TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1['teams.directory.sources.remove.preview'], typeof TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1['teams.directory.sources.remove.preview']>,
+  ActionSpec<'teams.directory.sources.remove', typeof TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1['teams.directory.sources.remove'], typeof TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1['teams.directory.sources.remove']>,
+];
+
 /**
  * Team rows. Every one of them is served behind the single `teams` feature gate
  * at its Home route; the row itself declares intent, transport and codecs and
@@ -256,7 +338,7 @@ function teamCredentialActionRow<TActionId extends TeamCredentialHomeActionIdV1>
  * Invitation preview and accept live under the public `/v1/team-invitations`
  * prefix because preview is the pre-authentication transport of the same owner.
  */
-function createTeamActionSpecs() {
+function createTeamActionSpecs(): TeamActionSpecs {
   return Object.freeze([
   {
     id: 'teams.credentials.usage.export', approval: {result: 'required'}, title: 'Export Team credential usage',
@@ -1270,4 +1352,4 @@ function createTeamActionSpecs() {
 ]) satisfies readonly PreNormalizedActionSpec[];
 }
 
-export const TEAM_ACTION_SPECS: ReturnType<typeof createTeamActionSpecs> = lazyActionSpecArray(createTeamActionSpecs);
+export const TEAM_ACTION_SPECS: TeamActionSpecs = lazyActionSpecArray(createTeamActionSpecs);
