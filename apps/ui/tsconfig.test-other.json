@@ -2922,6 +2922,7 @@
     "sources/theme.overlay.test.ts",
     "sources/theme/SurfaceFinishRuntime.test.tsx",
     "sources/theme/ThemeProfileRuntimeSync.test.tsx",
+    "sources/theme/css/themeStylesheet.network.web.test.ts",
     "sources/theme/parseThemeColor.test.ts",
     "sources/theme/profiles/builtInThemeProfiles.test.ts",
     "sources/theme/profiles/createThemeProfileDraft.test.ts",

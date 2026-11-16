@@ -1,3 +1,5 @@
+export { THEME_SURFACE_REGISTRY, themeSurfaceDataSet, isThemeSurfaceAddress, getThemeSurfacePaintMap } from './themeSurfaceRegistry.js';
+export type { SurfaceId, SurfacePart, ThemeSurfaceState, SurfaceAddress, ThemeSurfacePaintRole, ThemeSurfacePaintDescriptor } from './themeSurfaceRegistry.js';
 export type { PluginUiActionBinding } from './actionBinding.js';
 export { decodePluginUiManagedMachineInventory, type PluginUiManagedMachineInventory } from './managedMachineInventory.js';
 export { presentActionFailure } from './actionFailurePresentation.js';
