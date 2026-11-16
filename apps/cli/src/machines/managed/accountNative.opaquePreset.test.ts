@@ -5,8 +5,10 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createPluginAccountBundledSelectionV1, resolvePluginAccountExecutionSelectionV1 } from '@happier-dev/protocol/plugins/availability';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { LIMA_PLUGIN } from '@happier-dev/plugins-machine-lima/manifest';
 import { fixture as managedFixture, roleInput } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
-import { createCliManagedAccountNativeInvocation, resolveCliManagedAccountProvisioner } from './accountNative';
+import { createCliManagedAccountNativeInvocation, createCliManagedAccountNativeInvocationForLaunch, resolveCliManagedAccountProvisioner } from './accountNative';
 
 const input = { homeId: 'home', managedId: 'managed', expectedRevision: 1,
     when: 'now' as const, intent: 'start' as const };
@@ -35,6 +37,55 @@ function opaqueAccountNativeFixture() {
 }
 
 describe('CLI Account opaque preset native roles', () => {
+    it('runs Archive cleanup beneath its reviewed Account parent from the original launch without a Machine row', async () => {
+        const manifest = PluginManifestV2Schema.parse(LIMA_PLUGIN.manifest);
+        const selected = resolvePluginAccountExecutionSelectionV1({ pluginId: manifest.id, intentRead: null,
+            bundled: createPluginAccountBundledSelectionV1({ packageName: '@happier-dev/plugins-machine-lima', manifest }) });
+        if (selected.kind !== 'available') throw new Error('Expected the bundled Account selection');
+        const provisioner = manifest.contributes.machineProvisioners[0];
+        if (!provisioner?.preparation) throw new Error('Expected Lima preparation roles');
+        const launch = { provider: { pluginId: manifest.id, localId: provisioner.id }, schemaVersion: provisioner.schemaVersion,
+            choices: {} };
+        const credentialConfigurations = [{ account: { service: { pluginId: 'acme.accounts', localId: 'cloud' }, accountId: 'original-account' },
+            revision: 'original-configuration' }];
+        const archiveInput = { homeId: 'home', id: 'preset', expectedRevision: 7 };
+        const observed: unknown[] = [];
+        const executor = createActionExecutor({
+            prepareHostReviewedChildren: async request => request.actionId !== 'machines.presets.archive' ? null : {
+                children: [{ action: { pluginId: launch.provider.pluginId, localId: provisioner.preparation!.actions.inspect }, role: 'preparationInspect' },
+                    { action: { pluginId: launch.provider.pluginId, localId: provisioner.preparation!.actions.destroy }, role: 'preparationDestroy' }],
+                executeAdmittedAction: async ({ context }) => {
+                    const invoke = createCliManagedAccountNativeInvocationForLaunch({ launch,
+                        provisioner, selected, context, requestId, credentialConfigurations });
+                    await invoke('preparationInspect', { nativeOperation: { native: 'original-image' } });
+                    await invoke('preparationDestroy', { nativeOperation: { native: 'original-image' } });
+                    return { ok: true, result: { kind: 'refused', code: 'managed_not_found' } };
+                },
+            },
+            routeHostChildAction: async ({ actionId, input: childInput, context }) => {
+                expect(readHostReviewedChildOperationV1(context, actionId, childInput)?.parent)
+                    .toEqual({ actionId: 'machines.presets.archive', input: archiveInput });
+                expect(context.invocationServices).not.toHaveProperty('managedMachine');
+                expect(context.invocationServices).not.toHaveProperty('managedBootstrapCredential');
+                expect(context.invocationServices?.connectedAccountPurposeBinding).toMatchObject({
+                    managedOperation: { credentialConfigurations },
+                });
+                observed.push(childInput);
+                return { ok: true, result: { kind: 'confirmed' } };
+            },
+        });
+        const result = await executor.execute('machines.presets.archive', archiveInput, {
+            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner',
+            actionRequestId: requestId,
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
+            presentUserConfirmation: { actionId: 'machines.presets.archive',
+                inputDigest: computeActionInputApprovalDigestV1('machines.presets.archive', archiveInput), requestId,
+                accountId: 'owner', serverId: 'home' },
+        });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'refused', code: 'managed_not_found' } });
+        expect(observed).toHaveLength(2);
+    });
+
     it('routes opened power, resize, and diagnostics roles through the reviewed host child without exposing the opened machine', async () => {
         const { machine, selected, provisioner } = opaqueAccountNativeFixture();
         const routed: string[] = [];
