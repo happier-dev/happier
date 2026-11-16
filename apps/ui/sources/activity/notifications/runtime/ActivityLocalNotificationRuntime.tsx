@@ -24,7 +24,6 @@ import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVi
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useOptionalAuth } from '@/auth/context/AuthContext';
-import { navigateToSession } from '@/hooks/session/useNavigateToSession';
 import {
     areServerProfileIdentifiersEquivalent,
     getActiveServerSnapshot,
@@ -199,10 +198,8 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
             refreshAuth: refreshFromActiveServer ?? null,
             // Browser notifications remain clickable after their delivering effect retires.
             isDisposed: () => false,
-            navigate: () => {
-                fireAndForget(navigateToSession(command.sessionId, { serverId: command.serverId ?? undefined },
-                    { router, refreshFromActiveServer: refreshFromActiveServer ?? (async () => {}) }),
-                { tag: 'ActivityLocalNotificationRuntime.openSession' });
+            navigate: (href, options) => {
+                router.navigate(href ?? command.route, options);
             },
         }), { tag: 'ActivityLocalNotificationRuntime.admitSession' });
     };

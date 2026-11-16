@@ -12,6 +12,7 @@ import { buildScopedSessionRouteHref } from './sessionRouteServerScope';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { areServerProfileIdentifiersEquivalent, getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 type NavigateToSessionOptions = Readonly<{
     serverId?: string;
@@ -28,6 +29,8 @@ type NavigateToSessionOptions = Readonly<{
 export async function navigateToSession(sessionId: string, opts: NavigateToSessionOptions | undefined, owner: Readonly<{
     router: Pick<ReturnType<typeof useDestinationRouter>, 'navigate'>;
     refreshFromActiveServer: () => Promise<void>;
+    /** Account admission already established this active Home before handing off. */
+    activeHomeScope?: ServerAccountScope;
 }>): Promise<boolean> {
     /**
      * `query` is the same scoped-href query the route already understands
@@ -39,7 +42,7 @@ export async function navigateToSession(sessionId: string, opts: NavigateToSessi
      */
     const explicitServerId = String(opts?.serverId ?? '').trim();
     const normalizedSessionId = normalizeSessionId(sessionId);
-    const targetServerId = explicitServerId || String(resolvePreferredServerIdForSessionId(normalizedSessionId) ?? '').trim();
+    const targetServerId = owner.activeHomeScope?.serverId || explicitServerId || String(resolvePreferredServerIdForSessionId(normalizedSessionId) ?? '').trim();
     markSessionOpenRequestedForSessionUiTelemetry({
         sessionId: normalizedSessionId,
         source: 'navigate-hook',
@@ -52,7 +55,7 @@ export async function navigateToSession(sessionId: string, opts: NavigateToSessi
     // the focused Home, Lane 07.1) — so the tap still leads somewhere instead of dying
     // silently.
     let crossedHome = false;
-    if (targetServerId) {
+    if (targetServerId && !owner.activeHomeScope) {
         const sourceServerId = getActiveServerSnapshot().serverId;
         try {
             const switched = await setActiveServerAndSwitch({

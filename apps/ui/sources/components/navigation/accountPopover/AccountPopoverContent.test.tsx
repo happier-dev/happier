@@ -34,7 +34,7 @@ describe('AccountPopoverContent pairing entry', () => {
         const screen = await renderScreen(<AccountPopoverContent
             step="root" onStepChange={() => {}}
             servers={servers} targets={listServerSelectionTargets({ serverProfiles: servers, groupProfiles: [] })}
-            activeTargetKey="server:home-a" activeServerId="home-a" displayServerId="home-a"
+            activeGroupId={null} activeServerId="home-a" displayServerId="home-a"
             displayServerProfile={servers[0]!} displayHomeLabel="settingsAccount.thisHomeTitle" pendingServerId={null}
             homeSummary={resolveHomeConnectionSummary({ healthKind: 'healthy' })}
             machineSummary={{ kind: 'unknown' }} showsMachineGuidance={false}
@@ -56,7 +56,7 @@ describe('AccountPopoverContent pairing entry', () => {
         const onClose = vi.fn();
         const screen = await renderScreen(<AccountPopoverContent
             step="root" onStepChange={() => {}}
-            servers={[]} targets={[]} activeTargetKey="server:home-a"
+            servers={[]} targets={[]} activeGroupId={null}
             activeServerId="home-a" displayServerId="home-b" displayServerProfile={null}
             displayHomeLabel="Home B" pendingServerId={null}
             homeSummary={resolveHomeConnectionSummary({ healthKind: 'healthy' })}

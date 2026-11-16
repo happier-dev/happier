@@ -69,7 +69,8 @@ describe('useServerSettingsScreenController single-Home selection', () => {
             groups: [{ id: 'grp-ab', serverIds: [a, b] }],
         });
         expect(getActiveServerSnapshot().serverId).toBe(a);
-        expect(hook.getCurrent().activeTargetKey).toBe(`server:${a}`);
+        expect(hook.getCurrent().activeGroupId).toBeNull();
+        expect(hook.getCurrent().activeServerId).toBe(a);
         if (signedIn) {
             expect(routerReplace).not.toHaveBeenCalled();
         } else {

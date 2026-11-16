@@ -20,7 +20,7 @@ describe('buildHomeCollection', () => {
     it('distinguishes unnamed peer Homes in their visible titles even when health occupies the status slot', () => {
         const collection = buildHomeCollection({
             servers: [profile('home-a'), profile('home-b')], groups: [], activeServerId: 'home-a',
-            activeTargetKey: null, deviceDefaultServerId: null,
+            activeGroupId: null, deviceDefaultServerId: null,
             authStatusByServerId: { 'home-a': 'signedIn', 'home-b': 'signedOut' },
             homeConnectionSummaryByServerId: {},
         });
@@ -37,7 +37,7 @@ describe('buildHomeCollection', () => {
             servers: [profile('acme', { name: 'Acme' }), profile('personal', { name: 'Studio' }), profile('cloud', { name: 'Cloud' })],
             groups: [{ id: 'g1', name: 'Work', serverIds: ['acme', 'cloud'] } as unknown as ServerSelectionGroup],
             activeServerId: 'personal',
-            activeTargetKey: null,
+            activeGroupId: 'g1',
             deviceDefaultServerId: null,
             authStatusByServerId: { acme: 'signedIn', personal: 'signedIn', cloud: 'signedOut' },
             homeConnectionSummaryByServerId: {},
@@ -50,7 +50,7 @@ describe('buildHomeCollection', () => {
         // A signed-out Home says so: its line is the state, and it is the one that needs the person.
         expect(collection.homes.find((row) => row.id === 'cloud')).toMatchObject({ statusKey: 'action_required', needsAttention: true });
         expect(collection.homes.find((row) => row.id === 'acme')).toMatchObject({ needsAttention: false });
-        expect(collection.groups.map((group) => [group.id, group.count])).toEqual([['g1', 2]]);
+        expect(collection.groups.map((group) => [group.id, group.count, group.current])).toEqual([['g1', 2, true]]);
     });
 });
 
@@ -58,7 +58,7 @@ describe('Home row status', () => {
     const summary = (kind: string, statusKey: string) => ({ kind, statusKey, statusLabelKey: 'status.unknown', action: 'none' }) as never;
     const homes = (kinds: Record<string, [string, string]>) => buildHomeCollection({
         servers: Object.keys(kinds).map((id) => profile(id, { name: id })), groups: [], activeServerId: 'connected',
-        activeTargetKey: null, deviceDefaultServerId: null, authStatusByServerId: {},
+        activeGroupId: null, deviceDefaultServerId: null, authStatusByServerId: {},
         homeConnectionSummaryByServerId: Object.fromEntries(Object.entries(kinds).map(([id, [kind, key]]) => [id, summary(kind, key)])),
     }).homes;
 

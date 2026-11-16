@@ -83,16 +83,15 @@ export function buildHomeCollection(input: Readonly<{
     servers: readonly ServerProfile[];
     groups: readonly ServerSelectionGroup[];
     activeServerId: string;
-    activeTargetKey: string | null;
+    activeGroupId: string | null;
     deviceDefaultServerId: string | null;
     authStatusByServerId: Readonly<Record<string, 'signedIn' | 'signedOut' | 'unknown'>>;
     homeConnectionSummaryByServerId: Readonly<Record<string, HomeConnectionSummary>>;
 }>): HomeCollection {
     const rows = input.servers.map((profile): HomeCollectionRow => {
         const id = resolveServerProfileScopeId(profile);
-        const current = input.activeTargetKey
-            ? input.activeTargetKey === `server:${id}`
-            : id === input.activeServerId || profile.id === input.activeServerId;
+        const current = areServerProfileIdentifiersEquivalent(id, input.activeServerId)
+            || areServerProfileIdentifiersEquivalent(profile.id, input.activeServerId);
         const authStatus = input.authStatusByServerId[id] ?? input.authStatusByServerId[profile.id] ?? 'unknown';
         const summary = input.homeConnectionSummaryByServerId[id]
             ?? input.homeConnectionSummaryByServerId[profile.id]
@@ -119,7 +118,7 @@ export function buildHomeCollection(input: Readonly<{
             group,
             title: group.name,
             count: group.serverIds.length,
-            current: input.activeTargetKey === `group:${group.id}`,
+            current: input.activeGroupId === group.id,
         })),
     };
 }

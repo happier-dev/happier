@@ -633,8 +633,8 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         servers,
     ]);
 
-    const activeTargetKey = React.useMemo(() => {
-        return `${resolvedTarget.activeTarget.kind}:${resolvedTarget.activeTarget.id}`;
+    const activeGroupId = React.useMemo(() => {
+        return resolvedTarget.activeTarget.kind === 'group' ? resolvedTarget.activeTarget.id : null;
     }, [resolvedTarget.activeTarget.id, resolvedTarget.activeTarget.kind]);
 
     const syncErrorPresentation = React.useMemo(() => {
@@ -974,7 +974,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             onStepChange={setPopoverStep}
             servers={servers}
             targets={serverTargets}
-            activeTargetKey={activeTargetKey}
+            activeGroupId={activeGroupId}
             activeServerId={activeServerId}
             displayServerId={displayServerId}
             displayServerProfile={displayServerProfile}

@@ -56,7 +56,7 @@ async function renderController() {
 }
 
 describe('useServerSettingsScreenController', () => {
-    it('uses explicit active server target kind/id when present', async () => {
+    it('keeps group view selection separate from the focused Home', async () => {
         const { a } = await addHomes();
         await updateEffectiveHomeViewState(() => ({
             version: 1,
@@ -64,7 +64,7 @@ describe('useServerSettingsScreenController', () => {
             activeTargetKind: 'group', activeTargetId: 'grp-one',
         }), { scope: 'device' });
         const hook = await renderController();
-        expect(hook.getCurrent().activeTargetKey).toBe('group:grp-one');
+        expect(hook.getCurrent().activeGroupId).toBe('grp-one');
     });
 
     it('keeps an explicit All Homes selection rather than treating it as a stale group', async () => {
@@ -74,7 +74,7 @@ describe('useServerSettingsScreenController', () => {
             version: 1, groups: [], activeTargetKind: 'group', activeTargetId: '@all-homes',
         }), { scope: 'device' });
         const hook = await renderController();
-        expect(hook.getCurrent().activeTargetKey).toBe('group:@all-homes');
+        expect(hook.getCurrent().activeGroupId).toBe('@all-homes');
         expect(loadEffectiveHomeViewState()).toMatchObject({
             activeTargetKind: 'group', activeTargetId: '@all-homes',
         });
@@ -86,7 +86,8 @@ describe('useServerSettingsScreenController', () => {
             version: 1, groups: [], activeTargetKind: 'server', activeTargetId: a,
         }), { scope: 'device' });
         const hook = await renderController();
-        expect(hook.getCurrent().activeTargetKey).toBe(`server:${a}`);
+        expect(hook.getCurrent().activeGroupId).toBeNull();
+        expect(hook.getCurrent().activeServerId).toBe(b);
         expect(getActiveServerSnapshot().serverId).toBe(b);
     });
 });

@@ -38,7 +38,7 @@ type SavedServersSectionProps = Readonly<{
     serverGroups?: ReadonlyArray<ServerSelectionGroup>;
     activeServerId: string;
     deviceDefaultServerId?: string | null;
-    activeTargetKey?: string | null;
+    activeGroupId?: string | null;
     authStatusByServerId: Record<string, 'signedIn' | 'signedOut' | 'unknown'>;
     homeConnectionSummaryByServerId?: Readonly<Record<string, HomeConnectionSummary>>;
     onSwitch: (profile: ServerProfile, scope?: 'tab' | 'device') => Promise<void> | void;
@@ -86,10 +86,8 @@ export function SavedServersSection(props: SavedServersSectionProps) {
 
     const rows = props.servers.map((profile): Omit<HomeRowModel, 'accessibleName'> => {
         const scopeId = resolveServerProfileScopeId(profile);
-        const targetKey = `server:${scopeId}`;
-        const isActive = props.activeTargetKey
-            ? props.activeTargetKey === targetKey
-            : scopeId === props.activeServerId || profile.id === props.activeServerId;
+        const isActive = areServerProfileIdentifiersEquivalent(scopeId, props.activeServerId)
+            || areServerProfileIdentifiersEquivalent(profile.id, props.activeServerId);
         const authStatus = props.authStatusByServerId[scopeId]
             ?? props.authStatusByServerId[profile.id]
             ?? 'unknown';
@@ -262,8 +260,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
             {groups.length > 0 || saved.length > 0 ? (
                 <ItemGroup title={t('server.savedServersTitle')} description={t('server.pageSections.savedDescription')}>
                     {groups.map((group) => {
-                        const targetKey = `group:${group.id}`;
-                        const isSelected = props.activeTargetKey ? props.activeTargetKey === targetKey : false;
+                        const isSelected = props.activeGroupId === group.id;
                         const actions: ItemAction[] = [
                             {
                                 id: 'switch',
@@ -297,7 +294,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                         ];
                         return (
                             <Item
-                                key={targetKey}
+                                key={group.id}
                                 title={group.name}
                                 subtitle={[
                                     t('server.serverCount', { count: group.serverIds.length }),

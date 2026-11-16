@@ -118,6 +118,53 @@ describe('useNavigateToSession (multi-server)', () => {
         } finally { await settleSwitches(); }
     });
 
+    it('lets the Home selector return to B after Search opens a Session on A', async () => {
+        const { AccountPopoverContent } = await import('@/components/navigation/accountPopover/AccountPopoverContent');
+        const { useActiveServerSnapshot } = await import('@/hooks/server/useActiveServerSnapshot');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { listServerProfiles, resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
+        const { listServerSelectionTargets } = await import('@/sync/domains/server/selection/serverSelectionResolver');
+        const { updateEffectiveHomeViewState } = await import('@/sync/domains/server/selection/homeViewSelectionState');
+        const { resolveHomeConnectionSummary } = await import('@/components/navigation/connectionStatus/resolveHomeConnectionSummary');
+        const { setActiveServerAndSwitch } = await import('@/sync/domains/server/activeServerSwitch');
+        const { useNavigateToSession } = await import('./useNavigateToSession');
+        await updateEffectiveHomeViewState(() => ({
+            version: 1, groups: [], activeTargetKind: 'server', activeTargetId: runtime.serverId,
+        }), { scope: 'tab' });
+        function Probe() {
+            navigate = useNavigateToSession();
+            const active = useActiveServerSnapshot();
+            const servers = listServerProfiles();
+            return <AccountPopoverContent step="root" onStepChange={() => {}}
+                servers={servers} targets={listServerSelectionTargets({
+                    serverProfiles: servers.map((profile) => ({ ...profile, id: resolveServerProfileScopeId(profile) })),
+                    groupProfiles: [],
+                })}
+                activeGroupId={null} activeServerId={active.serverId}
+                displayServerId={active.serverId} displayServerProfile={servers.find((s) => s.id === active.serverId) ?? null}
+                displayHomeLabel="Home" pendingServerId={null}
+                homeSummary={resolveHomeConnectionSummary({ healthKind: 'healthy' })}
+                machineSummary={{ kind: 'unknown' }} showsMachineGuidance={false}
+                runtimeOrigin={null} homeCarrier={null} retryBusy={false}
+                switchServer={(serverId, scope) => setActiveServerAndSwitch({ serverId, scope })}
+                onRetry={async () => {}} onRestore={() => {}} onAddHome={() => {}}
+                onManageHomes={() => {}} onOpenSettings={() => {}} onClose={() => {}} renderDetails={() => null}
+            />;
+        }
+        const screen = await renderScreen(<runtime.Wrapper><Probe /></runtime.Wrapper>);
+        try {
+            await act(async () => { await navigate('search-result-on-a', { serverId: otherHome.id }); });
+            expect(getActiveServerSnapshot().serverId).toBe(otherHome.id);
+            expectRoute('/session/search-result-on-a?serverId=' + otherHome.id);
+            const { SelectableRow } = await import('@/components/ui/lists/SelectableRow');
+            const row = screen.findAllByType(SelectableRow).find((item) =>
+                item.props.testID === 'connection-popover-home-server-' + runtime.serverId);
+            expect(row).toBeDefined();
+            await act(async () => { await row!.props.onPress(); });
+            expect(getActiveServerSnapshot().serverId).toBe(runtime.serverId);
+        } finally { await settleSwitches(); }
+    });
+
     it('opens another Home through the root router rather than the retired source tab', async () => {
         const { useNavigateToSession } = await import('./useNavigateToSession');
         const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');

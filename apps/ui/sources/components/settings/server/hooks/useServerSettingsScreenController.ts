@@ -70,7 +70,7 @@ export type ServerSettingsController = Readonly<{
     activeServerUrl: string;
     activeLocalRelayUrl: string | null;
     deviceDefaultServerId: string;
-    activeTargetKey: string | null;
+    activeGroupId: string | null;
     authStatusByServerId: Readonly<Record<string, 'signedIn' | 'signedOut' | 'unknown'>>;
     homeConnectionSummaryByServerId: Readonly<Record<string, HomeConnectionSummary>>;
     relayDriftBanner: RelayDriftBanner | null;
@@ -214,9 +214,9 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         servers,
     ]);
 
-    const activeTargetKey = React.useMemo(() => {
+    const activeGroupId = React.useMemo(() => {
         const target = resolvedActiveSelection.activeTarget;
-        return target.id ? `${target.kind}:${target.id}` : null;
+        return target.kind === 'group' ? target.id : null;
     }, [resolvedActiveSelection.activeTarget]);
 
     const authStatusByServerId = useServerAuthStatusByServerId(servers);
@@ -367,7 +367,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         activeServerUrl,
         activeLocalRelayUrl,
         deviceDefaultServerId,
-        activeTargetKey,
+        activeGroupId,
         authStatusByServerId,
         homeConnectionSummaryByServerId,
         relayDriftBanner,

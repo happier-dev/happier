@@ -355,13 +355,14 @@ describe('useNotificationResponseRouting exact-Home permission dispatch', () => 
             refreshAuth: async () => { refreshStarted.resolve(); await releaseRefresh.promise; },
             navigate: () => pushSpy('older') });
         await refreshStarted.promise;
+        const newer = navigateWithNotificationAccount({ target: { ...target, route: `/session/newer?serverId=${encodeURIComponent(homeA.id)}` },
+            isDisposed: () => false, refreshAuth: async () => {}, navigate: () => pushSpy('newer') });
         try {
-            await navigateWithNotificationAccount({ target: { ...target, route: `/session/newer?serverId=${encodeURIComponent(homeA.id)}` },
-                isDisposed: () => false, refreshAuth: async () => {}, navigate: () => pushSpy('newer') });
+            await waitFor(() => pushSpy.mock.calls.length === 1);
             expect(pushSpy.mock.calls).toEqual([['newer']]);
         } finally {
             releaseRefresh.resolve();
-            await older;
+            await Promise.all([older, newer]);
         }
         expect(pushSpy.mock.calls).toEqual([['newer']]);
     });

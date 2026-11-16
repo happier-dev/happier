@@ -2,6 +2,7 @@ import { AppState, Platform } from 'react-native';
 import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
 import { navigateToSession } from '@/hooks/session/useNavigateToSession';
 import { matchWorkspaceDestinationRoute } from '@/components/appShell/workspace/workspaceRoutes';
+import type { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
@@ -34,7 +35,8 @@ export function claimNotificationNavigationIntent(): NotificationNavigationInten
 /** Admits the notification's original Home and Account again before navigation. */
 export async function navigateWithNotificationAccount({ target, navigate, refreshAuth, isDisposed, intent: requestedIntent }: Readonly<{
     target: NotificationAccountNavigationTarget;
-    navigate: () => void;
+    navigate: (href?: Parameters<ReturnType<typeof useDestinationRouter>['navigate']>[0],
+        options?: Parameters<ReturnType<typeof useDestinationRouter>['navigate']>[1]) => void;
     refreshAuth: (() => Promise<void>) | null;
     isDisposed: () => boolean;
     intent?: NotificationNavigationIntent;
@@ -89,8 +91,9 @@ export async function navigateWithNotificationAccount({ target, navigate, refres
                 suffix: route.pathname.replace(/^\/session\/[^/]+/, ''),
                 query: Object.fromEntries(route.searchParams),
             }, {
-                router: { navigate: () => { if (!isInactive()) navigate(); } },
+                router: { navigate: (href, options) => { if (!isInactive()) navigate(href, options); } },
                 refreshFromActiveServer: refreshAuth ?? (async () => {}),
+                activeHomeScope: current.scope,
             });
             if (!opened) throw new Error('Notification Home switch blocked');
         } else navigate();

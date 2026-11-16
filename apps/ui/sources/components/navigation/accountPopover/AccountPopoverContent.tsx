@@ -74,7 +74,7 @@ export function AccountPopoverContent(props: Readonly<{
     onStepChange: (step: AccountPopoverStep) => void;
     servers: readonly ServerProfile[];
     targets: readonly ConnectionTarget[];
-    activeTargetKey: string;
+    activeGroupId: string | null;
     activeServerId: string;
     displayServerId: string;
     displayServerProfile: ServerProfile | null;
@@ -471,8 +471,9 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
         };
 
         return props.targets.map((target): ActionListItem => {
-            const targetKey = `${target.kind}:${target.id}`;
-            const selected = targetKey === props.activeTargetKey;
+            const selected = target.kind === 'server'
+                ? areServerProfileIdentifiersEquivalent(target.serverId, props.activeServerId)
+                : target.groupId === props.activeGroupId;
             const label = labelFor(target);
             const profile = target.kind === 'server' ? serverById.get(target.serverId) ?? null : null;
             // "All Homes" is a view, not a Home or a group someone made: a plain stack glyph, no monogram.
@@ -486,10 +487,7 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
                     size="list"
                 />
             );
-            const onPress = () => {
-                if (selected) return;
-                void switchTarget(target);
-            };
+            const onPress = () => switchTarget(target);
             if (target.kind !== 'server') {
                 const subtitle = getServerSelectionTargetSubtitle(target);
                 return {
@@ -551,7 +549,7 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
         homePolicy.disabled,
         authStatusByServerId,
         machineListStatusByServerId,
-        props.activeTargetKey,
+        props.activeGroupId,
         props.activeServerId,
         props.displayServerId,
         props.homeSummary,

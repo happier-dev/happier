@@ -128,7 +128,7 @@ describe('SavedServersSection actions', () => {
             servers: [],
             serverGroups: [{ id: 'group-1', name: 'Work', serverIds: ['server-a'], presentation: 'grouped' }],
             activeServerId: 'server-a',
-            activeTargetKey: 'server:server-a',
+            activeGroupId: null,
             authStatusByServerId: {},
             onSwitch: vi.fn(),
             onSwitchGroup,
