@@ -67,6 +67,17 @@ function dataManifest() {
 }
 
 describe('deployment target manifest admission', () => {
+    it('carries admitted plan facts into the normalized target without dropping provenance', () => {
+        const plans = [{ id: 'free', title: 'Free', facts: [{ label: 'Price', value: '$0' }], included: ['Custom domains'],
+            source: { url: 'https://example.com/pricing', checkedAt: '2026-11-16' } }];
+        const [declared] = admittedTargets(manifest([{ ...target, plans }])).targets;
+        const action = { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'example.deploy', localId: 'deploy' }) };
+        const normalized = DeploymentTargetV1Schema.parse({ ...declared, v: 1,
+            source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'runtime' } },
+            actions: { inspect: action, link: action, deploy: action, observe: action } });
+        expect(normalized.plans).toEqual(plans);
+    });
+
     it('admits read-only exact-resource data project observation for Account and daemon execution', () => {
         for (const execution of [{ target: 'daemon' }, { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } }]) {
             const value = manifest([]);

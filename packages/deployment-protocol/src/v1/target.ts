@@ -7,7 +7,7 @@ import { PluginLocalizedStringV2Schema } from '@happier-dev/protocol/plugins/con
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { DeploymentTargetStatusIntervalMsV1Schema, createDeploymentTargetRuntimeActionsV1Schema, createDeploymentTargetDataV1Schema, DeploymentTargetLinkProviderContentV1Schema,
+import { DeploymentTargetPlanV1Schema, DeploymentTargetStatusIntervalMsV1Schema, createDeploymentTargetRuntimeActionsV1Schema, createDeploymentTargetDataV1Schema, DeploymentTargetLinkProviderContentV1Schema,
     type DeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 export { DeploymentDataParentBranchRefV1Schema, type DeploymentDataParentBranchRefV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 export { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetProviderIdentityV1Schema,
@@ -71,6 +71,7 @@ const normalizedFields = () => ({
     ...deploymentTargetFitFieldsV1(),
     v: z.literal(1), id, source: DeploymentTargetSourceV1Schema, targetKind: id,
     title: PluginLocalizedStringV2Schema, description: z.optional(PluginLocalizedStringV2Schema), icon: PluginActionIconV2Schema,
+    plans: z.optional(z.array(DeploymentTargetPlanV1Schema)),
     targetSchema: PluginJsonSchemaV2Schema, linkSchema: PluginJsonSchemaV2Schema,
 });
 

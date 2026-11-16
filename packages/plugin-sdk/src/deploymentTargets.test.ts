@@ -45,12 +45,16 @@ it('preserves an external author runtime target through SDK projection and canon
         resultSchema: publicAuthoring.DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema, dangerLevel: 'safe', readOnly: true,
         run: async () => ({ v: 1, state: 'succeeded', observedAtMs: 1 }) } as const;
     const write = { ...read, title: 'Deploy', dangerLevel: 'writesLocal', readOnly: false } as const;
-    const definition = { role: 'runtime', title: 'External runtime', targetKind: 'external', icon: 'server-outline',
+    const plans = [{ id: 'free', title: 'Free', facts: [{ label: 'Price', value: '$0' }], included: ['Custom domains'],
+        source: { url: 'https://example.com/pricing', checkedAt: '2026-11-16' } }];
+    const definition = { role: 'runtime', title: 'External runtime', targetKind: 'external', icon: 'server-outline', plans,
         targetSchema: closed, linkSchema: closed,
-        actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } } as const satisfies publicAuthoring.DeploymentTargetAuthorDefinitionV1;
+        actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', create: 'create' } } as const satisfies publicAuthoring.DeploymentTargetAuthorDefinitionV1;
     const plugin = definePlugin({
         id: 'com.example.runtime-target', version: '1.0.0', displayName: 'External runtime',
         actions: {
+            create: { ...write, inputSchema: Reflect.get(publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1, 'create').jsonSchema,
+                resultSchema: Reflect.get(publicAuthoring, 'DeploymentTargetLinkProviderContentV1ProtocolSchema').jsonSchema },
             inspect: { ...read, inputSchema: publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.inspect.jsonSchema },
             link: { ...write, inputSchema: publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.link.jsonSchema },
             deploy: { ...write, inputSchema: publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.deploy.jsonSchema },
@@ -62,6 +66,6 @@ it('preserves an external author runtime target through SDK projection and canon
     expect(parsed.ok, parsed.ok ? undefined : JSON.stringify(parsed.diagnostics)).toBe(true);
     if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
     expect(parsed.manifest.contributes.deploymentTargets).toEqual([{ id: 'runtime', ...definition }]);
-    expect(parsed.manifest.contributes.actions.map(action => action.id).sort()).toEqual(['deploy', 'inspect', 'link', 'observe']);
+    expect(parsed.manifest.contributes.actions.map(action => action.id).sort()).toEqual(['create', 'deploy', 'inspect', 'link', 'observe']);
     expect(() => assertDefinePluginCatalogFamilyPolicyClosure(PLUGIN_CONTRIBUTION_CATALOG_V2, DEFINE_PLUGIN_FAMILY_POLICY_V2)).not.toThrow();
 });
