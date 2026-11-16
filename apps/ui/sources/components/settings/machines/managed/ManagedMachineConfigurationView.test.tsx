@@ -1790,14 +1790,21 @@ describe('mounted managed configurator', () => {
         harness.requestsFor('/v1/actions/machines.managed.acquire')[0]?.input,
       ).envelope,
     ).input;
-  it('presents an acquire Action failure through its typed owner cause', async () => {
+  it.each(['owner', 'authored'] as const)('presents an acquire Action failure through its %s cause', async (cause) => {
     const screen = await mountAddRoute('typed-acquire-failure');
     const serverId = route.params.serverId!;
     const { t } = await import('@/text');
+    const { PluginError } = await import('@happier-dev/plugin-sdk/errors');
+    const { readPluginActionError } = await import('@happier-dev/protocol/plugins/actions/invocation');
+    const authored = readPluginActionError(new PluginError({ code: 'credential_unavailable',
+      message: 'Sign in to Docker: run sbx login', remediation: { kind: 'retry' },
+      details: { privateNativeOutput: 'PRIVATE_PROVIDER_OUTPUT' } }));
+    if (!authored) throw new Error('Expected the provider PluginError contract');
     harness.answer(serverId, 'POST /v1/actions/machines.managed.acquire', { select: value => {
       const { envelope: request } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
       return { body: { v: 1, actionId: 'machines.managed.acquire', requestId: request.requestId,
-        execution: { ok: false, errorCode: 'action_failed', error: 'Private native diagnostic',
+        execution: { ok: false, errorCode: cause === 'authored' ? authored.code : 'action_failed', error: 'Private native diagnostic',
+          ...(cause === 'authored' ? { details: authored.data } : {}),
           failureCause: { phase: 'machines.managed.acquire', errorClass: 'ManagedMachineControllerError',
             errorCode: 'credential_scope_denied', httpStatus: null } } } };
     } });
@@ -1806,12 +1813,14 @@ describe('mounted managed configurator', () => {
       await screen.pressByTestIdAsync('managed-config.create');
       await waitForHomeGovernance(() => {
         expect(screen.findByTestId('managed-config.error')).not.toBeNull();
-        expect(screen.getTextContent()).toContain(t('errors.permissionDenied'));
+        expect(screen.getTextContent()).toContain(cause === 'authored'
+          ? `Sign in to Docker: run sbx login ${t('errors.tryAgain')}` : t('errors.permissionDenied'));
         const diagnostic = screen.tree.findAll(node => typeof node.props.diagnosticDetail === 'string')
           .map(node => node.props.diagnosticDetail).join('\n');
         expect(diagnostic).toContain('credential_scope_denied');
         expect(diagnostic).toContain('ManagedMachineControllerError');
         expect(screen.getTextContent()).not.toContain('Private native diagnostic');
+        expect(screen.getTextContent()).not.toContain('PRIVATE_PROVIDER_OUTPUT');
       });
     } finally { await screen.unmount(); }
   });

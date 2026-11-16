@@ -15,7 +15,7 @@ import { createManagedCredentialSelectionV1, readManagedCredentialSelectionValue
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ExternalActionManagedAdmissionReceiptV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ManagedAcquireInputV1, ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectManagedProvisionerFailure, type ManagedProvisionerFailure } from './managedProvisionerClient';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { isMachineProvisionerCredentialPurposeRequiredV1, readMachineProvisionerCredentialPurposeSelectorPathsV1, readMachineProvisionerPrerequisitesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -718,10 +718,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         else if (value.kind === 'refused' && props.presetId && isMachinePresetAccessLost(value.code)) presetQuery.withdraw(value.code);
         else setError(value.kind === 'conflict' ? 'conflict' : value.code, 'save');
     };
-    const failed = (code: string, during: 'read' | 'create' | 'save', diagnosticDetail?: string, failureCause?: ActionFailureCauseV1) => { if (activeBinding?.isCurrent()) {
+    const failed = (code: string, during: 'read' | 'create' | 'save', diagnosticDetail?: string, failure?: ManagedProvisionerFailure) => { if (activeBinding?.isCurrent()) {
         if (props.presetId && isMachinePresetAccessLost(code)) presetQuery.withdraw(code);
-        else { setBusy(false); setError(code, during, failureCause
-            ? resolveActionExecutionFailureMessage({ ok: false, errorCode: code, failureCause }, '') || undefined
+        else { setBusy(false); setError(code, during, failure
+            ? resolveActionExecutionFailureMessage({ ...failure, ok: false, errorCode: code }, '') || undefined
             : undefined, diagnosticDetail); }
     } };
     const repair = async (action: NonNullable<ManagedPrerequisiteV1['repairAction']>) => {
@@ -842,9 +842,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const result = await catalog.client.execute('machines.managed.acquire', input, { signal: abort.signal,
             ...(input.selection.kind === 'preset' && creationPreset ? { managedPresetOrigin: creationPreset } : {}),
             onApprovalPending, onApprovalSucceeded: created, onApprovalAdmitted: admitted,
-            onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId, failure?.failureCause), failure?.failureCause) });
+            onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId, failure?.failureCause), projectManagedProvisionerFailure(code, failure?.details, failure?.requestId, failure?.failureCause)) });
         if (!abort.signal.aborted) { if (result.kind === 'succeeded') await created(result.value); else if (result.kind === 'admitted') admitted(result.receipt); else if (result.kind === 'failed')
-            failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId, result.failureCause), result.failureCause); }
+            failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId, result.failureCause), result); }
         } catch { if (!abort.signal.aborted) failed('unavailable', 'create'); }
     };
     const rename = async () => {
@@ -989,10 +989,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                     if (!input) return;
                     const result = await catalog.client?.execute('machines.managed.acquire', input, { signal: abort.signal,
                         onApprovalPending, managedPresetOrigin: selected.presetOrigin, onApprovalSucceeded: created, onApprovalAdmitted: admitted,
-                        onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId, failure?.failureCause), failure?.failureCause) });
+                        onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId, failure?.failureCause), projectManagedProvisionerFailure(code, failure?.details, failure?.requestId, failure?.failureCause)) });
                     if (result?.kind === 'succeeded') await created(result.value);
                     else if (result?.kind === 'admitted') admitted(result.receipt);
-                    else if (result?.kind === 'failed') failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId, result.failureCause), result.failureCause);
+                    else if (result?.kind === 'failed') failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId, result.failureCause), result);
                 }
             } catch { if (!abort.signal.aborted) failed('unavailable', 'create'); }
             finally { if (!abort.signal.aborted && activeBinding.isCurrent()) setBusy(false); }

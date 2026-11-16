@@ -29,7 +29,7 @@ export type ManagedProvisionerClientOptions<T> = Omit<MachinePresetCollectionOpt
     onApprovalAdmitted?: (receipt: ExternalActionManagedAdmissionReceiptV1) => void;
     onApprovalFailed?: (code: string, failure?: ActionExecuteFailure) => void;
 }>;
-function managedFailure(code: string, details?: unknown, requestId?: string, failureCause?: ActionExecuteFailure['failureCause']): ManagedProvisionerFailure {
+export function projectManagedProvisionerFailure(code: string, details?: unknown, requestId?: string, failureCause?: ActionExecuteFailure['failureCause']): ManagedProvisionerFailure {
     // Only the canonical PluginError payload carries an authored reason; arbitrary transport text stays private.
     const authored = isPluginErrorData(details) && details.code === code ? details : undefined;
     const message = authored?.message?.trim();
@@ -86,7 +86,7 @@ export function createManagedProvisionerClient(scope: ServerAccountScope, homeId
             if (outcome.kind === 'failed') {
                 const code = homeDomainFailureCode(outcome.failure);
                 const receipt = admittedReceipt(actionId, code, outcome.failure.details);
-                return receipt ? { kind: 'admitted', receipt } : managedFailure(code, result.ok ? undefined : result.details,
+                return receipt ? { kind: 'admitted', receipt } : projectManagedProvisionerFailure(code, result.ok ? undefined : result.details,
                     actionId === 'machines.managed.acquire' && !result.ok ? result.requestId : undefined,
                     result.ok ? undefined : result.failureCause);
             }
@@ -113,7 +113,7 @@ export function createManagedProvisionerClient(scope: ServerAccountScope, homeId
                 return result.kind === 'approval_pending' ? { approvalPending: true }
                     : result.kind === 'succeeded' ? succeeded(result.value) : result;
             },
-            succeeded, failed: (code, failure) => managedFailure(code, failure?.details, undefined, failure?.failureCause),
+            succeeded, failed: (code, failure) => projectManagedProvisionerFailure(code, failure?.details, undefined, failure?.failureCause),
             aborted: () => ({ kind: 'failed', code: 'aborted' }), ...(options?.signal ? { signal: options.signal } : {}),
         });
     }

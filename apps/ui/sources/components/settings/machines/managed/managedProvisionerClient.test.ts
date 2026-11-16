@@ -145,11 +145,11 @@ describe('managed configurator uses the exact Home Action front door', () => {
         const actionId = 'machines.provisioners.options';
         const input = { homeId, controller: { machineId: 'host', installationId: 'installation' },
             contribution: { pluginId: 'custom.compute', localId: 'vm' }, selectors: {} };
-        harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId, requestId: envelope.requestId,
-                execution: { ok: true, result: { kind: 'approval_request_created', artifactId: 'native-approval', actionId } } } };
-        } });
+        await answerExternalActionAccountForHome(harness, serverId, {
+            machineId: input.controller.machineId, installationId: input.controller.installationId,
+            actionId, tokenEpoch: 0,
+            execute: () => ({ kind: 'approval_request_created', artifactId: 'native-approval', actionId }),
+        });
         const nativeCause = { httpStatusClass: '4xx', code: 'forbidden' } as const;
         const nativeDetails = { kind: 'managedNative', nativeCause } as const;
         const { PluginError } = await import('@happier-dev/plugin-sdk/errors');
@@ -170,6 +170,8 @@ describe('managed configurator uses the exact Home Action front door', () => {
         const pending = createManagedProvisionerClient({ serverId, accountId: 'owner' }, homeId).read(actionId, input,
             { onApprovalPending: value => { approval = value; } });
         await waitForHomeGovernance(() => expect(approval).toBeDefined());
+        expect(harness.requestsFor('/v1/machines/read-batch').length).toBeGreaterThan(0);
+        expect(harness.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(1);
         if (!approval || typeof approval === 'string') throw new Error('Expected the options approval continuation');
         approval.onTerminal?.('failed', { id: 'native-approval', title: null,
             header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request),
