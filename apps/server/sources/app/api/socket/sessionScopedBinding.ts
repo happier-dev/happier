@@ -10,6 +10,7 @@ import { getDbProviderFromEnv } from '@/storage/prisma';
 import { buildMachineAdmissionFactsSelect, projectActiveMachineAdmissionFromFacts } from '@/app/machines/machineAccess';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
+import { warn } from "@/utils/logging/log";
 
 /** One current exact tuple, with the facts its binding and Machine admission owners reuse. */
 export async function readCurrentSessionScopedMachineAccessFactsInTx(params: Readonly<{
@@ -408,6 +409,26 @@ export async function confirmSessionScopedMachineAccess(params: Readonly<{
     if (!await hasCurrentSessionScopedMachineAccessInTx({
         tx: db, accountId: params.accountId, sessionId: binding.sessionId, machineId: binding.machineId,
     })) withdrawnSessionScopedMachineAccess.add(params.socket);
+}
+
+/**
+ * Cluster backstop for the access-loss push: another node's withdrawal reaches this node as an
+ * at-most-once Redis Pub/Sub `serverSideEmit`. When this node's adapter subscriber is ready again
+ * (`onSocketClusterAdapterResubscribed`), re-read the access once for each local Session-scoped
+ * socket that is still admitted, and withdraw any that lost it. Nothing runs on the RPC path.
+ */
+export async function reconfirmSessionScopedMachineAccess(sockets: Iterable<Pick<Socket, 'data'>>): Promise<void> {
+    for (const socket of [...sockets]) {
+        if (withdrawnSessionScopedMachineAccess.has(socket)) continue;
+        const accountId = (socket.data as { userId?: unknown } | undefined)?.userId;
+        if (typeof accountId !== "string") continue;
+        try {
+            await confirmSessionScopedMachineAccess({ socket, accountId });
+        } catch (error) {
+            warn({ module: "session-scoped-binding", event: "access_reconfirm_failed", error },
+                "Session-scoped Machine access re-check after Redis resubscription failed; the access stays admitted");
+        }
+    }
 }
 
 export async function canRegisterSessionScopedRpcMethod(params: Readonly<{

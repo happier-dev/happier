@@ -241,6 +241,42 @@ export function getRedisSocketClusterClient(): Redis {
     return _instrumentedSocketClusterRedis!;
 }
 
+const socketClusterAdapterResubscribedListeners = new Set<() => void>();
+
+/**
+ * The adapter sends `serverSideEmit`, `fetchSockets` and broadcast-ack traffic over Redis
+ * Pub/Sub, which is at-most-once: a message published while this node's subscriber is down is
+ * never resent. Owners whose correctness depends on such a push subscribe here and reconcile
+ * once when the subscriber connection is ready again (not at its first ready).
+ */
+export function onSocketClusterAdapterResubscribed(listener: () => void): () => void {
+    socketClusterAdapterResubscribedListeners.add(listener);
+    return () => { socketClusterAdapterResubscribedListeners.delete(listener); };
+}
+
+function watchAdapterSubscriberResubscription(redis: Redis): void {
+    let subscriptionLost = false;
+    // `close` is emitted before ioredis replaces the connection condition, so `mode` still
+    // tells whether the lost connection was the Pub/Sub subscriber (not the Stream reader).
+    const onClose = (): void => {
+        if (redis.mode === "subscriber") subscriptionLost = true;
+    };
+    // ioredis has already re-sent SUBSCRIBE when it emits `ready`, so a listener's reads start
+    // after the resubscription is on the wire.
+    const onReady = (): void => {
+        if (!subscriptionLost) return;
+        subscriptionLost = false;
+        for (const listener of [...socketClusterAdapterResubscribedListeners]) listener();
+    };
+    const detach = (): void => {
+        redis.off("close", onClose);
+        redis.off("ready", onReady);
+    };
+    redis.on("close", onClose);
+    redis.on("ready", onReady);
+    redis.once("end", detach);
+}
+
 /**
  * Adapter-facing view of the same instrumented root client.
  *
@@ -260,12 +296,14 @@ export function getRedisSocketClusterAdapterClient(): Redis {
         const url = _socketClusterRedisUrl ?? undefined;
         const createAdapterDuplicate = (): Redis => {
             _socketClusterAdapterDuplicateCount += 1;
-            return createSocketClusterRedisConnection({
+            const connection = createSocketClusterRedisConnection({
                 kind: "adapter-duplicate",
                 diagnosticOrdinal: _socketClusterAdapterDuplicateCount,
                 maxRetriesPerRequest: null,
                 url,
-            }).client;
+            });
+            watchAdapterSubscriberResubscription(connection.rawClient);
+            return connection.client;
         };
         _socketClusterAdapterRedis = new Proxy(root, {
             get(target, property) {

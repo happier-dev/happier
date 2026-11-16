@@ -86,6 +86,7 @@ import {
     closeRedisSocketClusterClient,
     createRedisSocketClusterRelayAdmissionClient,
     getRedisSocketClusterAdapterClient,
+    onSocketClusterAdapterResubscribed,
 } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
 import { forwardRpcCall } from './socket/rpc/forwardRpcCall';
@@ -94,8 +95,8 @@ import { db, isPrismaErrorCode } from "@/storage/db";
 import { readSharedQaSchemaMismatchDiagnostic } from '@/storage/prismaErrors';
 import { isServerFeatureEnabledForHome, isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readMachineLiveStreamFeatureEnv, readMachineTransferFeatureEnv, readMachineTunnelFeatureEnv, readPeerMediationFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { confirmSessionScopedMachineAccess, readSessionScopedSocketBinding, resolveSessionScopedSocketBinding,
-    resolveSocketResourceIdentity, watchSessionScopedMachineAccess } from "./socket/sessionScopedBinding";
+import { confirmSessionScopedMachineAccess, readSessionScopedSocketBinding, reconfirmSessionScopedMachineAccess,
+    resolveSessionScopedSocketBinding, resolveSocketResourceIdentity, watchSessionScopedMachineAccess } from "./socket/sessionScopedBinding";
 import {
     resolveRestrictedSocketAdmission,
     type RestrictedSocketAdmission,
@@ -398,6 +399,11 @@ export function startSocket(app: Fastify): () => Promise<void> {
         });
     });
     const releaseMachineAccessLoss = registerMachineAccessLossHandler(io, input => eventRouter.receiveMachineAccessLoss(input));
+    // The cluster access-loss push is at-most-once Pub/Sub; re-check local Session-scoped sockets
+    // once when this node's adapter subscriber is ready again.
+    const releaseAdapterResubscribed = shouldEnableRedisAdapter
+        ? onSocketClusterAdapterResubscribed(() => { void reconfirmSessionScopedMachineAccess(io.of('/').sockets.values()); })
+        : () => {};
     const tunnelRelayBridge = createPeerTcpTunnelRelayBridge(io);
     const peerMediationObservabilityStore = createPeerMediationObservabilityStore();
     const peerMediationObservabilityEmitter = createPeerMediationObservabilityEmitter(peerMediationObservabilityStore);
@@ -732,8 +738,14 @@ export function startSocket(app: Fastify): () => Promise<void> {
             socket.data.authTokenAuthenticationEvidence = verified.authenticationEvidence;
             socket.data.clientType = clientType;
             socket.data.clientPurpose = clientPurpose;
-            socket.data.sessionId = sessionId;
-            socket.data.machineId = machineId;
+            // Optional app presentation, retained only for this authenticated live socket.
+            socket.data.rpcDeviceLabel = clientType === 'user-scoped' && clientPurpose === 'sync'
+                && !ephemeralRunnerAdmission && typeof socket.handshake.auth.deviceLabel === 'string'
+                ? socket.handshake.auth.deviceLabel : null;
+            // A Session-scoped socket carries the ids its handshake admitted, the same ones its rooms use.
+            const resourceIdentity = resolveSocketResourceIdentity({ ...socket.data, sessionId, machineId });
+            socket.data.sessionId = resourceIdentity.sessionId;
+            socket.data.machineId = resourceIdentity.machineId;
             if (ephemeralRunnerAdmission) {
                 socket.data.ephemeralRunnerAdmission = ephemeralRunnerAdmission;
             }
@@ -1302,6 +1314,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
     const close = async () => {
         releasePresenceDeadlineNotifications();
         releaseMachineAccessLoss();
+        releaseAdapterResubscribed();
         try {
             emitSocketPlannedRestart(io, plannedRestartRetryAfterMs);
         } catch (error) {

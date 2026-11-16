@@ -48,7 +48,7 @@ describe("startSocket handshake cache warmup", () => {
 
     afterAll(async () => { await harness.close(); });
 
-    async function runHandshake() {
+    async function runHandshake(ids: { sessionId: string; machineId: string } = { sessionId: "warmup-session", machineId: "warmup-machine" }) {
         const account = await db.account.create({ data: { publicKey: `warmup-${randomUUID()}` } });
         const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
         const server = createHandshakeServer();
@@ -57,12 +57,49 @@ describe("startSocket handshake cache warmup", () => {
             (socket: Record<string, unknown>, next: (error?: unknown) => void) => Promise<void>;
         const socket = {
             ...createFakeSocket({ id: "warmup-socket" }),
-            handshake: { auth: { token, clientType: "session-scoped", sessionId: "warmup-session", machineId: "warmup-machine" }, headers: {} },
+            handshake: { auth: { token, clientType: "session-scoped", ...ids }, headers: {} },
             conn: { transport: { name: "websocket" } },
             data: {} as Record<string, unknown>,
         };
         return { account, middleware, socket };
     }
+
+    it('retains handshake labels only on ordinary app sync sockets and projects reconnect discovery', async () => {
+        const { selectRpcTarget } = await import('./socket/rpc/rpcTargetSelection');
+        for (const [clientPurpose, deviceLabel, expected] of [
+            ['sync', 'My phone', 'My phone'], ['sync', null, null],
+            ['scoped-rpc', 'Not an app', null], ['sync', 42, null],
+        ] as const) {
+            const { middleware, socket } = await runHandshake();
+            Object.assign(socket.handshake.auth, { clientType: 'user-scoped', clientPurpose, deviceLabel });
+            const next = vi.fn();
+            await middleware(socket, next);
+            expect(next).toHaveBeenCalledWith();
+            expect(socket.data.rpcDeviceLabel ?? null).toBe(expected);
+            const target = { id: 'app', data: socket.data, timeout: () => ({ emitWithAck: async () => null }) };
+            expect(selectRpcTarget({ targets: [target], answeringClient: { requireSingle: true, includeCandidates: true } }))
+                .toMatchObject({ type: 'target', clients: [{ id: 'app', deviceLabel: expected }] });
+        }
+    });
+
+    // Admission trims the handshake ids. socket.data carries the admitted ones, the same ids its rooms
+    // use, so no later reader of socket.data can key a Session-scoped socket by the raw handshake.
+    it("stores the admitted Session and Machine ids on a Session-scoped socket, not the raw handshake ids", async () => {
+        const sessionId = `trim-session-${randomUUID()}`;
+        const machineId = `trim-machine-${randomUUID()}`;
+        const { account, middleware, socket } = await runHandshake({ sessionId: ` ${sessionId} `, machineId: `${machineId} ` });
+        Object.assign(socket.handshake.auth, { deviceLabel: 'Not an app' });
+        await db.session.create({ data: { id: sessionId, tag: sessionId, accountId: account.id, metadata: "{}", active: true } });
+        await db.machine.create({ data: { id: machineId, accountId: account.id, metadata: "{}", active: true } });
+        await db.accessKey.create({ data: { accountId: account.id, sessionId, machineId, data: "key" } });
+        const next = vi.fn();
+
+        await middleware(socket, next);
+        expect(socket.data.rpcDeviceLabel).toBeNull();
+
+        expect(next).toHaveBeenCalledWith();
+        expect(socket.data).toMatchObject({ sessionId, machineId });
+    });
 
     it("seeds session and machine validity from a successful machine-bound session handshake", async () => {
         const { account, middleware, socket } = await runHandshake();

@@ -116,13 +116,14 @@ export async function startRedisAdapterRecoveryCluster(options: { redisUrl?: str
         if (!nodeA || !nodeB) throw new Error("Recovery cluster requires two nodes");
         return {
             nodes: [nodeA, nodeB, ...nodes.slice(2)] as const,
-            recover: async (failure: "restart" | "silent partition") => {
+            recover: async (failure: "restart" | "silent partition", hooks: { duringOutage?: () => Promise<void> } = {}) => {
                 if (failure === "restart") {
                     if (!redisMemory) throw new Error("Caller owns Redis restart");
                     await redisMemory.stop();
                     await vi.waitFor(() => {
                         if (nodes.some((node) => node.redis.status === "ready")) throw new Error("Redis has not disconnected");
                     });
+                    await hooks.duringOutage?.();
                     await redisMemory.start();
                 } else {
                     proxy.partition();
