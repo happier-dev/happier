@@ -16,7 +16,7 @@ let publicShareViewerDigest: Promise<string> | undefined;
 /** One static payload promise, loaded on first demand, for both JS routes. */
 export function loadPublicShareViewerScript(): Promise<string> {
     return publicShareViewerScript ??= import('./publicShareViewerBundle.generated')
-        .then(module => module.PUBLIC_SHARE_VIEWER_SCRIPT);
+        .then(module => module.readPublicShareViewerScript());
 }
 
 /** The digest belongs to the exact static bytes and is computed once on demand. */

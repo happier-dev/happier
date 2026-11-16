@@ -6,7 +6,7 @@ import { encodePlainArtifactStoredContent, sealPublicShareDataKeyV1,
 import { ARTIFACT_HTML_BUNDLE_MIME_V1, encodeBase64 } from "@happier-dev/protocol/sharing/public-viewer";
 import { createHash } from 'node:crypto';
 import { loadPublicShareViewerContent, renderPublicShareViewer } from "./publicShareViewerClient";
-import { PUBLIC_SHARE_VIEWER_SCRIPT } from "./publicShareViewerBundle.generated";
+import { readPublicShareViewerScript } from "./publicShareViewerBundle.generated";
 import { readPublicSessionVisualMessages } from './publicSessionVisuals';
 import { normalizeRawMessages } from '@happier-dev/session-core/raw';
 import { createReducer, reducer } from '@happier-dev/session-core/reducer';
@@ -14,6 +14,7 @@ import { normalizeToolCallForRendering, resolveToolRowPresentation } from '@happ
 
 // The viewer clones JSON schema DTOs, not binary values. Its VM platform shim
 // must create VM-owned objects, as a browser's own structuredClone does.
+const PUBLIC_SHARE_VIEWER_SCRIPT = readPublicShareViewerScript();
 const viewerBrowserScript = `globalThis.structuredClone = value => JSON.parse(JSON.stringify(value));\n${PUBLIC_SHARE_VIEWER_SCRIPT}`;
 
 const secret = "A".repeat(43);
