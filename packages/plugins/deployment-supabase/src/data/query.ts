@@ -5,7 +5,7 @@ import { defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { DeploymentDataQuerySuccessV1ProtocolSchema, DeploymentDataQueryUnavailableV1ProtocolSchema, DeploymentTargetDataQueryInputV1ProtocolSchema,
   type DeploymentDataQuerySuccessV1, type DeploymentDataQueryUnavailableV1, type DeploymentTargetDataQueryInputV1 } from '@happier-dev/deployment-protocol';
 import { accountExecution } from './actions.js';
-import { request, resource } from './operations.js';
+import { openSupabaseReadOnlyTransport } from './transport.js';
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 function invalid(): never { throw new PluginError({ code: 'provider_response_invalid' }); }
@@ -22,33 +22,15 @@ async function query(input: DeploymentTargetDataQueryInputV1, context: PluginAcc
   // The public API binds positional parameters. Values never become SQL text.
   const keys = Object.keys(input.params).sort((a, b) => Number(a) - Number(b));
   if (keys.some((key, index) => key !== String(index + 1))) throw new PluginError({ code: 'query_parameters_invalid' });
-  const { branchRef } = resource(input);
-  // Official Management API 1.0.0, characterized 2026-11-10:
-  // https://supabase.com/docs/reference/api/v1-read-only-query
-  // This dedicated endpoint runs as supabase_read_only_user. Never use the
-  // writable query endpoint or a client-side SQL parser as authorization.
-  const path = `/v1/projects/${encodeURIComponent(branchRef)}/database/query/read-only`;
-  // The endpoint has no database selector. Confirm its actual database before
-  // caller SQL rather than silently treating a requested name as that default.
-  let selected: unknown;
+  const transport = await openSupabaseReadOnlyTransport(input, context);
+  if (!transport.ok) return transport;
+  let response;
   try {
-    selected = await request(context, path, 'POST', { query: 'SELECT current_database() AS database', parameters: [] }, true);
-  } catch (error) {
-    if (isPluginError(error) && error.code === 'plugin_fetch_response_too_large') return { ok: false,
-      error: 'deployment_unavailable', diagnostic: { code: 'action_result_size_limit' } };
-    throw error;
-  }
-  if (!Array.isArray(selected) || selected.length !== 1 || !record(selected[0]) || typeof selected[0].database !== 'string') return invalid();
-  if (selected[0].database !== input.database) return { ok: false, error: 'unsupported_action', diagnostic: { code: 'database_unsupported' } };
-  let response: unknown;
-  try {
-    response = await request(context, path, 'POST',
-      { query: input.sql, parameters: keys.map(key => input.params[key]) }, true);
+    response = await transport.execute({ sql: input.sql, parameters: keys.map(key => input.params[key]!) });
   } catch (error) {
     if (isPluginError(error) && error.code === 'plugin_fetch_response_too_large') return incomplete();
     throw error;
   }
-  if (!Array.isArray(response) || !response.every(record)) return invalid();
   const columns = Object.keys(response[0] ?? {}).map(name => ({ name }));
   const rows = response.map(row => {
     if (Object.keys(row).length !== columns.length || columns.some(column => !Object.hasOwn(row, column.name))) return invalid();
