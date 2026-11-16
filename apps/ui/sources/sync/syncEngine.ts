@@ -1538,6 +1538,13 @@ class Sync {
     private artifactInventoryRefreshTargets: (ArtifactInventorySelection | undefined)[] = [];
     /** Mounted surfaces whose census is still unknown; a run reads each only while it is still unknown. */
     private artifactInventoryLoadTargets: (ArtifactInventorySelection | undefined)[] = [];
+    /**
+     * Whole-inventory refreshes (snapshot repair, unknown changes) read only demanded selections.
+     * A selection read after the latest one still holds current rows: changes by id are applied
+     * regardless of consumers, so only a whole refresh it missed makes its remount re-read.
+     */
+    private artifactInventoryWholeRefreshes = 0;
+    private artifactInventoryReadAfterWholeRefresh = new Map<string, number>();
     /** Every unfinished acquisition (queued or a surface's explicit Retry), so no run starts a second one. */
     private artifactInventoryUnfinished = new Set<Readonly<{ generation: number; scope: ServerAccountScope | null; selection: ArtifactInventorySelection | undefined; signal?: AbortSignal }>>();
     private artifactInventoryConsumers = new Set<Readonly<{
@@ -3664,6 +3671,7 @@ class Sync {
         this.artifactInventoryRefreshPending = 'load';
         this.artifactInventoryRefreshTargets = [];
         this.artifactInventoryLoadTargets = [];
+        this.artifactInventoryReadAfterWholeRefresh.clear();
         this.artifactInventoryUnfinished.clear();
 
         this.lastSocketDisconnectedAtMs = null;
@@ -9437,8 +9445,9 @@ class Sync {
         const consumer = { scope, selection, includeProvenance: options?.includeProvenance === true, onSettled: options?.onSettled,
             window: options?.window };
         this.artifactInventoryConsumers.add(consumer);
-        if (options?.refreshOnAdmission) {
-            // Only the admitted consumer's own selection may have missed changes while unmounted.
+        if (options?.refreshOnAdmission && this.artifactInventoryReadAfterWholeRefresh.get(JSON.stringify(selection ?? null))
+            !== this.artifactInventoryWholeRefreshes) {
+            // Only the admitted consumer's own selection may have missed a whole refresh while unmounted.
             this.selectArtifactInventoryRefresh([selection]);
             this.artifactsSync.invalidate();
         }
@@ -9498,6 +9507,13 @@ class Sync {
         return read => windows.every(window => window(read));
     }
 
+    /** The read selection and every consumer selection it covers hold rows current as of its start. */
+    private recordArtifactInventoryRead(selection: ArtifactInventorySelection | undefined, wholeRefreshesAtStart: number): void {
+        const covered = [selection, ...this.readArtifactInventoryConsumers()
+            .filter(consumer => doesArtifactInventorySelectionCover(selection, consumer.selection)).map(consumer => consumer.selection)];
+        for (const read of covered) this.artifactInventoryReadAfterWholeRefresh.set(JSON.stringify(read ?? null), wholeRefreshesAtStart);
+    }
+
     private settleArtifactInventoryConsumers(scope: ServerAccountScope | null, selection: ArtifactInventorySelection | undefined,
         outcome: 'success' | 'failed'): void {
         if (!scope || !areServerAccountScopesEqual(scope, this.pendingSettingsScope)) return;
@@ -9512,6 +9528,7 @@ class Sync {
     }
 
     private selectArtifactRefresh(artifactIds?: readonly string[], kind: 'load' | 'refresh' = 'refresh'): void {
+        if (artifactIds === undefined && kind === 'refresh') this.artifactInventoryWholeRefreshes += 1;
         if (artifactIds === undefined) this.artifactInventoryRefreshPending =
             kind === 'refresh' || this.artifactInventoryRefreshPending === 'refresh' ? 'refresh' : 'load';
         else for (const id of artifactIds) this.artifactRefreshIds.add(id);
@@ -9617,6 +9634,7 @@ class Sync {
         let inventoryReadStartedWith = storage.getState().artifacts;
         const inventorySelectionReadStartedWith = selectArtifactInventoryRows(storage.getState(), selection);
         const unfinished = { generation: this.serverScopeGeneration, scope: inventoryScope, selection, signal: options?.signal };
+        const wholeRefreshesAtStart = this.artifactInventoryWholeRefreshes;
         this.artifactInventoryUnfinished.add(unfinished);
         try { const outcome = await this.withArtifactReadAuthority(options?.signal, params => fetchAndApplyArtifactsList({
             ...params,
@@ -9644,6 +9662,7 @@ class Sync {
                 if ((source === 'inventory' || source === 'unreadable' && selection !== 'browserListed')
                     && shouldContinue() && !params.signal?.aborted) {
                     this.settleArtifactInventoryConsumers(inventoryScope, selection, 'success');
+                    this.recordArtifactInventoryRead(selection, wholeRefreshesAtStart);
                 }
             },
         }));

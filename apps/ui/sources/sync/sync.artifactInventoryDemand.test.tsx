@@ -1036,6 +1036,34 @@ describe('Sync mounted Artifact inventory demand', () => {
         }
     }, 120_000);
 
+    it('reopens a Session approval selection from held rows and re-reads it only after a refresh it missed', async () => {
+        const { sync } = await import('./sync');
+        const { storage } = await import('./domains/state/storage');
+        const scope = storage.getState().profileScope!;
+        const selection = { approvalSessionIds: ['revisit-session'] };
+        const sessionPages = () => fixture.network.httpRequests.map(entry => new URL(entry.url))
+            .filter(url => url.pathname === '/v1/artifacts' && url.searchParams.get('approvalSessionIds') !== null).length;
+        await fixture.settleInventory();
+        fixture.network.httpRequests.length = 0;
+        let close = sync.observeArtifactInventory(scope, selection, { refreshOnAdmission: true });
+        await fixture.settleInventory();
+        expect(sessionPages()).toBe(1);
+        close();
+        // Revisiting the Session: its rows are held and every change since was applied by id.
+        for (let visit = 0; visit < 3; visit++) {
+            close = sync.observeArtifactInventory(scope, selection, { refreshOnAdmission: true });
+            await fixture.settleInventory();
+            close();
+        }
+        expect(sessionPages()).toBe(1);
+        // A structural refresh while no consumer held the selection is the one it missed.
+        await fixture.recoverSnapshot();
+        close = sync.observeArtifactInventory(scope, selection, { refreshOnAdmission: true });
+        await fixture.settleInventory();
+        close();
+        expect(sessionPages()).toBe(2);
+    });
+
     it('loads no inventory while retained hidden, refreshes on reveal, and releases demand on hide', async () => {
         const { useArtifactInventoryRead } = await import('@/components/artifacts/useArtifactInventoryRead');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
