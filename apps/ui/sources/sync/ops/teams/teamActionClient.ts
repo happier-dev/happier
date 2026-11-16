@@ -1,6 +1,7 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import {
     createActionApprovalContinuation,
@@ -145,6 +146,8 @@ export async function runTeamAction<TValue>(params: Readonly<{
     parse: (value: unknown) => TValue;
     /** Completed UI confirmation; explicit Ask settings still govern admission. */
     approval?: 'surface_confirmed';
+    /** Nested Actions retain the originating caller's surface and authority. */
+    actionContext?: ActionExecutorContext;
     signal?: AbortSignal;
     /**
      * Receives this intent's real answer once a deferred approval executes.
@@ -165,19 +168,19 @@ export async function runTeamAction<TValue>(params: Readonly<{
     const read = getActionSpec(params.actionId).sideEffectClass === 'read';
     // Observations and point surfaces supply their demand signal. A finite
     // caller without an observer instead retains its read until the decision.
-    const signal = params.signal ?? (read ? new AbortController().signal : undefined);
-    const executorOptions = read && signal ? {
+    const signal = params.signal ?? params.actionContext?.signal ?? (read ? new AbortController().signal : undefined);
+    const actionContext: ActionExecutorContext = {
+        ...(params.actionContext ?? { surface: 'ui', authority: 'present_user' }),
+        serverId: params.scope.serverId,
+        actionRequestId,
+        ...(signal ? { signal } : {}),
+    };
+    const executorOptions = read && signal && actionContext.surface === 'ui' ? {
         ...params.executorOptions,
         hostActionApprovalLifetime: { actionId: params.actionId, signal, surface: 'ui' as const },
     } : params.executorOptions;
     const execute = scopedHomeActionExecutor(params.scope, executorOptions);
-    const result = await (params.approval === 'surface_confirmed' ? execute.confirmed : execute)(params.actionId, params.input, {
-        surface: 'ui',
-        authority: 'present_user',
-        serverId: params.scope.serverId,
-        actionRequestId,
-        ...(signal ? { signal } : {}),
-    });
+    const result = await (params.approval === 'surface_confirmed' ? execute.confirmed : execute)(params.actionId, params.input, actionContext);
 
     const outcome = classifyHomeActionOutcome(result, params.actionId);
     if (outcome.kind === 'failed') {

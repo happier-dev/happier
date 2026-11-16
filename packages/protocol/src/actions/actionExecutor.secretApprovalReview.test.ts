@@ -136,4 +136,27 @@ describe('confidential Action review declarations', () => {
     expect(JSON.stringify(observations)).not.toContain(secret);
     expect(JSON.stringify(stored)).not.toContain(secret);
   });
+  it.each([undefined, { kind: 'host' } as const, { kind: 'session', sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 } as const])(
+    'asks before an agent caller updates a Saved Secret when Settings require agent approval (caller %o)', async actionCaller => {
+    const input = getActionSpec('secrets.shared.update').inputSchema.parse({ resourceId: shared.resourceId, expectedRevision: 3,
+      displayName: 'Renamed', kind: shared.kind, storedContent: { t: 'plain', v: { v: 1, name: 'Renamed', kind: shared.kind, value: secret } },
+      toMode: 'plain' });
+    const effects: unknown[] = [];
+    const created: unknown[] = [];
+    const executor = createActionExecutor({
+      approvalsCreate: async ({ request }) => { created.push(request); return { artifactId: 'agent-update-ask' }; },
+      approvalsGet: async () => null,
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'secrets.shared.update': { approvalRequiredSurfaces: ['agent'] } } }),
+      isApprovalExecutionOriginCurrent: async () => true,
+      homeDomainAction: async request => { effects.push(request.input); return { resourceId: shared.resourceId, revision: 4 }; },
+    });
+    const result = await executor.execute('secrets.shared.update', input, { surface: 'agent', authority: 'account_automation',
+      serverId: 'home', serverIdentityId: 'stable-home', runtimeAccountId: 'account', actionRequestId: 'agent-update',
+      ...(actionCaller ? { actionCaller } : {}) });
+    // The Account's agent Ask is the approval owner's decision; no Home effect runs before a person answers it.
+    expect(effects).toEqual([]);
+    expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(created).toHaveLength(1);
+  });
 });
