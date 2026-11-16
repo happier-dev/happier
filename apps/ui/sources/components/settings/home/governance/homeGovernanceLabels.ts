@@ -177,6 +177,7 @@ export function accountErasureFailureNotice(error: unknown): Readonly<{ title: s
     }
     if (error instanceof HappyError && error.code
         && error.code !== 'account_delete_failed' && error.code !== 'account_delete_invalid_response'
+        && error.code !== 'action_failed'
         && !isActionOutcomeUnknownErrorCodeV1(error.code)) {
         return Object.freeze({
             title: t('homeGovernance.changeFailedTitle'),

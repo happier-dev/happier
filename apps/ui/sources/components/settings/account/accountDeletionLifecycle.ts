@@ -1,14 +1,20 @@
+import type { AccountErasureResponseV1 } from '@happier-dev/protocol/auth/accountErasure';
 import type { AuthCredentialLifecycleResult } from '@/auth/context/AuthContext';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { AccountErasureManagedResourcesReviewRequiredError, type DeleteCurrentAccountOptions } from '@/sync/api/account/deleteCurrentAccount';
 import { reviewManagedResourceRemoval } from '@/components/settings/machines/managed/reviewManagedResourceRemoval';
 import { removeRunnerCreatorCustodyForAccount } from '@/sync/domains/ephemeralRunner/runnerCreatorDraftRemoval';
 
+export type AccountDeletionLifecycleResult = AuthCredentialLifecycleResult & Readonly<{
+    erasure: AccountErasureResponseV1 | null;
+}>;
+
 export class AccountDeletedLocalCleanupError extends Error {
-    readonly retryLocalCleanup: () => Promise<AuthCredentialLifecycleResult>;
+    readonly retryLocalCleanup: () => Promise<AccountDeletionLifecycleResult>;
 
     constructor(
-        retryLocalCleanup: () => Promise<AuthCredentialLifecycleResult>,
+        retryLocalCleanup: () => Promise<AccountDeletionLifecycleResult>,
+        readonly erasure: AccountErasureResponseV1,
         options?: ErrorOptions,
     ) {
         super('account_deleted_local_cleanup_failed', options);
@@ -19,33 +25,32 @@ export class AccountDeletedLocalCleanupError extends Error {
 
 export async function completeAccountDeletion(params: Readonly<{
     target: ServerAccountScopeLifetime;
-    deleteCurrentAccount(options?: DeleteCurrentAccountOptions): Promise<Readonly<{ status: 'deleted' }>>;
+    deleteCurrentAccount(options?: DeleteCurrentAccountOptions): Promise<AccountErasureResponseV1>;
     logout(options?: Readonly<{ beforeMutation?: () => void | Promise<void> }>): Promise<AuthCredentialLifecycleResult>;
     replace(path: '/'): void | Promise<void>;
     confirmManagedResourceRemoval?: boolean;
-}>): Promise<AuthCredentialLifecycleResult> {
-    let confirmed = false;
+}>): Promise<AccountDeletionLifecycleResult> {
+    let erasure: AccountErasureResponseV1 | null = null;
     const abortError = () => {
         const error = new Error('account_deletion_canceled');
         error.name = 'AbortError';
         return error;
     };
-    const attempt = async (deleteRemotely: boolean): Promise<AuthCredentialLifecycleResult> => {
+    const attempt = async (deleteRemotely: boolean): Promise<AccountDeletionLifecycleResult> => {
         const abort = new AbortController();
         const retirement = deleteRemotely ? params.target.onRetire(() => abort.abort()) : null;
         try {
             if (deleteRemotely && !params.target.isCurrent()) throw abortError();
-            return await params.logout({
+            const lifecycle = await params.logout({
                 beforeMutation: async () => {
                     if (deleteRemotely) {
                         let managedResourceDispositions: DeleteCurrentAccountOptions['managedResourceDispositions'];
                         while (true) {
                             if (!params.target.isCurrent() || abort.signal.aborted) throw abortError();
                             try {
-                                await params.deleteCurrentAccount({ signal: abort.signal,
+                                erasure = await params.deleteCurrentAccount({ signal: abort.signal,
                                     ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
                                 });
-                                confirmed = true;
                                 break;
                             } catch (cause) {
                                 if (!(cause instanceof AccountErasureManagedResourcesReviewRequiredError)) throw cause;
@@ -61,8 +66,9 @@ export async function completeAccountDeletion(params: Readonly<{
                     await params.replace('/');
                 },
             });
+            return { ...lifecycle, erasure };
         } catch (cause) {
-            if (confirmed) throw new AccountDeletedLocalCleanupError(() => attempt(false), { cause });
+            if (erasure) throw new AccountDeletedLocalCleanupError(() => attempt(false), erasure, { cause });
             throw cause;
         } finally { retirement?.dispose(); }
     };

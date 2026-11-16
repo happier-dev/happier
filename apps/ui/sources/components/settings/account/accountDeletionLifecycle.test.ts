@@ -59,7 +59,7 @@ describe('completeAccountDeletion', () => {
     expect(credentialsRemoved).toBe(false);
 
     runnerCustody.removeAccount.mockResolvedValueOnce(undefined);
-    await expect((failure as AccountDeletedLocalCleanupError).retryLocalCleanup()).resolves.toEqual({ kind: 'completed' });
+    await expect((failure as AccountDeletedLocalCleanupError).retryLocalCleanup()).resolves.toEqual({ kind: 'completed', erasure: { status: 'deleted' } });
     expect(remote).toHaveBeenCalledOnce();
     expect(logout).toHaveBeenCalledTimes(2);
     expect(credentialsRemoved).toBe(true);

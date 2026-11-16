@@ -18020,7 +18020,9 @@ const enSettingsAccount = {
   deleteAccountInvalidBody: 'Type DELETE exactly to continue.',
   deleteAccountFailedTitle: 'Deletion not confirmed',
   deleteAccountFailed:
-    'Happier could not confirm deletion. Your local sign-in was kept so you can retry or reconnect.',
+    "Happier could not confirm deletion. Your Account may already be disabled and data may remain. Ask a Home owner to check the Account and finish deletion.",
+  deleteAccountFinishing: "Your Account is disabled. Deletion is not finished. Ask a Home owner to finish deleting the remaining data.",
+  deleteAccountFinishingCleanupFailed: "Your Account is disabled and its data has not been fully deleted. This device also couldn’t finish signing out. Retry to clear this device’s sign-in, and ask a Home owner to finish deletion.",
   deleteAccountCleanupFailedTitle: 'Account deleted',
   deleteAccountCleanupFailed:
     'The Home confirmed deletion, but this device could not finish clearing local data. Reopen Happier, then sign out if this account still appears.',

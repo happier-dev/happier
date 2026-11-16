@@ -261,6 +261,7 @@ function createHomeGovernanceActionSpecs() {
     path: '/v1/home/accounts/delete',
     inputSchema: HomeAccountDeleteInputV1Schema,
     outputSchema: HomeAccountDeleteResultV1Schema,
+    accountAuthorityRetirementStatuses: ['deleted', 'disabled_pending_completion'],
     inputHints: { fields: [ACCOUNT_ID_FIELD] },
     approvalPresentation: { summary: () => null, inputHints: { fields: [
       ACCOUNT_ID_FIELD,

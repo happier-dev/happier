@@ -38,7 +38,7 @@ export const ACCOUNT_LIFECYCLE_ACTION_SPECS: readonly AccountLifecycleActionSpec
     inputSchema: inputs['account.credentials.forgetAll'], outputSchema: outputs['account.credentials.forgetAll'] },
   { ...common, id: 'account.delete', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' }, title: 'Delete your Account on this Home',
     confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true,
-    accountAuthorityRetirementStatuses: ['deleted', 'deleted_cleanup_pending'],
+    accountAuthorityRetirementStatuses: ['deleted', 'deleted_cleanup_pending', 'disabled_pending_completion'],
     description: 'Permanently erase your Account on this Home, reviewing retained resources before removing its local credentials.',
     safety: 'danger', sideEffectClass: 'danger', bindings: { mcpToolName: 'account_delete' },
     inputSchema: inputs['account.delete'], outputSchema: outputs['account.delete'] },

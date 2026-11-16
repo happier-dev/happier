@@ -94,7 +94,7 @@ installHomeGovernanceBoundaries(harness);
 
 // Load the real owner after transport setup, outside an individual test's deadline.
 await loadSyncSingletonForTests();
-const [{ HomeAdministrationAccountScreen }, { resetHomeGovernanceEngineForTests }, { ConcurrentSessionCacheRuntime }] = await Promise.all([
+const [{ HomeAdministrationAccountScreen }, { resetHomeGovernanceEngineForTests }, { AuthProvider, ConcurrentSessionCacheRuntime }] = await Promise.all([
     import('./HomeAdministrationAccountScreen'),
     import('@/sync/engine/home/governance/homeGovernanceEngine'),
     import('@/auth/context/AuthContext'),
@@ -578,6 +578,33 @@ describe('HomeAdministrationAccountScreen', () => {
         expect(routerBack).not.toHaveBeenCalled();
     });
 
+    it.each(['deleted', 'disabled_pending_completion'] as const)('retains its own Account deletion acknowledgement after remote sign-out (%s)', async status => {
+        const home = await addAdministeredHome({
+            projection: { viewer: { accountId: 'account-admin', homeRole: 'owner', status: 'active' } },
+            detail: homeAccountDetailFixture('account-admin', { homeRole: 'owner' }),
+        });
+        harness.answer(home, DELETE_PATH, { select: async () => {
+            const auth = (await import('@/auth/context/currentAuth')).getCurrentAuth();
+            if (!auth) throw new Error('Expected real authenticated Home owner');
+            await auth.logout();
+            return { body: { status } };
+        } });
+        const screen = await renderScreen(<AuthProvider initialCredentials={{ token: createAccountTokenForTests('account-admin', { currentAccount: true }) }}>
+            <HomeAdministrationAccountScreen serverId={home} accountId="account-admin" />
+        </AuthProvider>);
+        await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-account-machines'));
+        await screen.pressByTestIdAsync('home-account-delete');
+        await waitForHomeGovernance(() => {
+            if (status === 'disabled_pending_completion') {
+                expect(modalState.alerts).toContainEqual({ title: 'homeGovernance.deleteIncompleteTitle', body: 'homeGovernance.deleteIncompleteBody' });
+                expect(routerBack).not.toHaveBeenCalled();
+            } else expect(routerBack).toHaveBeenCalled();
+        });
+        expect((await import('@/auth/context/currentAuth')).getCurrentAuth()?.isAuthenticated).toBe(false);
+        expect(harness.requestsFor(DELETE_PATH)[0]?.input).toEqual({ accountId: 'account-admin' });
+        expect(harness.requestsFor(GET_PATH)).toHaveLength(1);
+    });
+
     it('leaves the person page once a deletion actually completed', async () => {
         const home = await addAdministeredHome();
         harness.answer(home, DELETE_PATH, { body: { status: 'deleted' } });
@@ -602,10 +629,8 @@ describe('HomeAdministrationAccountScreen', () => {
             return true;
         };
         await screen.pressByTestIdAsync('home-account-delete');
-        await waitForHomeGovernance(() => expect(harness.requestsFor(DELETE_PATH).length).toBeGreaterThan(0));
-        await flushHookEffects();
-        expect(modalState.confirms).toHaveLength(5);
         await waitForHomeGovernance(() => expect(routerBack).toHaveBeenCalled());
+        expect(modalState.confirms).toHaveLength(5);
         expect(modalState.confirms[1]?.options?.messageParagraphs?.some(paragraph => paragraph.text.includes('native-1'))).toBe(true);
         expect(harness.requestsFor(DELETE_PATH).map(request => ({ serverId: request.serverId, input: request.input }))).toEqual([
             { serverId: home, input: { accountId: 'ada' } },

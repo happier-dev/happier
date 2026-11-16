@@ -73,6 +73,7 @@ type HomeDomainActionRowInput<
   projectObservationOutput?: PreNormalizedActionSpec['projectObservationOutput'];
   approvalInputCustody?: PreNormalizedActionSpec['approvalInputCustody'];
   approvalResultCustody?: PreNormalizedActionSpec['approvalResultCustody'];
+  accountAuthorityRetirementStatuses?: PreNormalizedActionSpec['accountAuthorityRetirementStatuses'];
 }>;
 
 export type HomeDomainActionRow<
@@ -136,6 +137,7 @@ export function homeDomainActionRow<
     ...(spec.projectObservationOutput ? { projectObservationOutput: spec.projectObservationOutput } : {}),
     ...(spec.approvalInputCustody ? { approvalInputCustody: spec.approvalInputCustody } : {}),
     ...(spec.approvalResultCustody ? { approvalResultCustody: spec.approvalResultCustody } : {}),
+    ...(spec.accountAuthorityRetirementStatuses ? { accountAuthorityRetirementStatuses: spec.accountAuthorityRetirementStatuses } : {}),
     serverTransport: { method: spec.method ?? 'POST', path: spec.path,
       ...(spec.wireInputSchema ? { inputSchema: spec.wireInputSchema } : {}),
       ...(spec.preservePathFieldsInBody ? { preservePathFieldsInBody: true as const } : {}) },

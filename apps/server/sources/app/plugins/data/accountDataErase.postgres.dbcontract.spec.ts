@@ -67,24 +67,39 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
     it.each(['plugin', 'owner-retirement'] as const)('commits %s erasure after a hot Account cursor advances', async shape => {
         const account = await db.account.create({ data: { encryptionMode: 'plain', homeRole: shape === 'owner-retirement' ? 'owner' : 'member' } });
         const survivor = shape === 'owner-retirement' ? await db.account.create({ data: { encryptionMode: 'plain', homeRole: 'owner' } }) : null;
+        if (survivor) await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}' } });
         const pluginId = 'example.erasure-hot';
         const key = buildPluginAccountStoragePhysicalKey(pluginId);
         await db.userKVStore.create({ data: { accountId: account.id, key, version: 0, value: new TextEncoder().encode('erased fixture') } });
         const transaction = db.$transaction;
         let advances = 0;
+        const transactionElapsedMs: number[] = [];
+        const terminalDeleteElapsedMs: number[] = [];
         // Real concurrent commits invalidate every SSI attempt's Account view;
         // current admission under RC must still tombstone/retire exactly once.
         db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
             const callback = args[0];
             if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
-            return Reflect.apply(target, receiver, [async (tx: Tx) => {
+            const started = performance.now();
+            return Promise.resolve(Reflect.apply(target, receiver, [async (tx: Tx) => {
                 const current = await tx.account.findUnique({ where: { id: account.id }, select: { seq: true } });
                 if (current) {
                     advances += 1;
                     await db.account.update({ where: { id: account.id }, data: { seq: { increment: 1 } } });
                 }
-                return callback(tx);
-            }, ...args.slice(1)]);
+                return callback(new Proxy(tx, { get(inner, property, innerReceiver) {
+                    if (property !== 'account') return Reflect.get(inner, property, innerReceiver);
+                    return new Proxy(inner.account, { get(delegate, method, delegateReceiver) {
+                        const value = Reflect.get(delegate, method, delegateReceiver);
+                        if (method !== 'delete') return value;
+                        return new Proxy(value, { apply(deleteTarget, deleteReceiver, deleteArgs) {
+                            const deleteStarted = performance.now();
+                            return Promise.resolve(Reflect.apply(deleteTarget, deleteReceiver, deleteArgs))
+                                .finally(() => terminalDeleteElapsedMs.push(performance.now() - deleteStarted));
+                        } });
+                    } });
+                } }));
+            }, ...args.slice(1)])).finally(() => transactionElapsedMs.push(performance.now() - started));
         } });
         try {
             if (shape === 'plugin') {
@@ -94,8 +109,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
             } else {
                 expect(await deleteAccountForErasure({ accountId: account.id })).toEqual({ status: 'deleted' });
                 expect(await db.account.findUnique({ where: { id: account.id } })).toBeNull();
+                expect(await db.machine.count({ where: { accountId: account.id } })).toBe(0);
                 expect(await db.account.findUniqueOrThrow({ where: { id: survivor!.id }, select: { homeRole: true, status: true } }))
                     .toEqual({ homeRole: 'owner', status: 'active' });
+                // Descriptive measurements, never a second product deadline.
+                // Fixture matches the retained QA Account's one owned Machine.
+                console.info('account-erasure-phase-cost', { transactionElapsedMs, terminalDeleteElapsedMs,
+                    ownedMachines: 1, unrelatedSurvivingAccounts: 1 });
             }
         } finally {
             db.$transaction = transaction;

@@ -1,6 +1,7 @@
 import { ACCOUNT_LIFECYCLE_ACTION_IDS } from './accountLifecycleActionIdsV1.js';
 export { ACCOUNT_LIFECYCLE_ACTION_IDS } from './accountLifecycleActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
+import { AccountErasureResponseV1Schema } from '../auth/accountErasure.js';
 export type AccountLifecycleActionId = typeof ACCOUNT_LIFECYCLE_ACTION_IDS[number];
 const target = z.strictObject({ serverId: z.string().check(z.trim(), z.minLength(1)), accountId: z.string().check(z.trim(), z.minLength(1)) });
 export const ACCOUNT_LIFECYCLE_ACTION_INPUT_SCHEMAS = {
@@ -11,7 +12,8 @@ export const ACCOUNT_LIFECYCLE_ACTION_INPUT_SCHEMAS = {
 export const ACCOUNT_LIFECYCLE_ACTION_OUTPUT_SCHEMAS = {
   'account.signOut': z.strictObject({ status: z.enum(['signed_out', 'cancelled']) }),
   'account.credentials.forgetAll': z.strictObject({ status: z.enum(['forgotten', 'cancelled']) }),
-  'account.delete': z.strictObject({ status: z.enum(['deleted', 'deleted_cleanup_pending', 'cancelled']) }),
+  'account.delete': z.union([AccountErasureResponseV1Schema,
+    z.strictObject({ status: z.enum(['deleted_cleanup_pending', 'cancelled']) })]),
 } as const;
 export type AccountLifecycleActionInput = z.infer<(typeof ACCOUNT_LIFECYCLE_ACTION_INPUT_SCHEMAS)[AccountLifecycleActionId]>;
 export function isAccountLifecycleActionId(id: string): id is AccountLifecycleActionId {

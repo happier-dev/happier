@@ -175,9 +175,9 @@ export const HomeAccountDeleteInputV1Schema = lazyZodSchema(() => (<T extends z.
 export type HomeAccountDeleteInputV1 = z.infer<typeof HomeAccountDeleteInputV1Schema>;
 
 /**
- * Administrative deletion reports incomplete cleanup explicitly. It never
- * reports `deleted` before physical completion, and the released self-erasure
- * success shape is unchanged by this closed result union.
+ * Account erasure reports committed retirement separately from confirmed
+ * physical deletion. Both self-erasure and Home administration use this closed
+ * union; pending completion never certifies that the Account data was deleted.
  */
 export const HomeAccountDeleteResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('deleted') }),

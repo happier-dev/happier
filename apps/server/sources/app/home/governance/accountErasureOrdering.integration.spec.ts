@@ -13,6 +13,7 @@ import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { homeGovernanceRoutes } from "@/app/api/routes/home/homeGovernanceRoutes";
 import { registerAccountErasureRoute } from "@/app/api/routes/auth/registerAccountErasureRoute";
 import { db } from "@/storage/db";
+import type { Tx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { TEAM_CHANGE_ENTITY_ID } from "@/app/teams/teamChanges";
@@ -125,6 +126,138 @@ afterEach(async () => {
 });
 
 describe("Account erasure ordering against Home ownership", () => {
+    it("reports pending completion for a managed resource discovered after retirement and preserves Home-owner review", async () => {
+        const { accountId: ownerId } = await createAccountWithBlob({ homeRole: "owner" });
+        const { accountId, path } = await createAccountWithBlob({ homeRole: "member" });
+        const provider = { pluginId: "fixture.compute", localId: "cloud" };
+        const recovery = { reference: "purchase-in-progress", reason: "manual_recovery" };
+        const resource = { contributionRef: provider, schemaVersion: 1, value: { id: "paid-after-review" } };
+        const boundRecovery = { reference: "paid-after-review", reason: "manual_recovery" };
+        const managed = await db.managedMachine.create({ data: {
+            homeId: "late-native-home", custodianAccountId: accountId,
+            controllerMachineId: "late-controller", controllerInstallationId: "late-installation",
+            admittedActionRequestId: `late-native-${sequence}`, admittedInput: {},
+            launch: { provider, schemaVersion: 1, name: "Purchasing", choices: {} },
+            allocation: "may-exist", recovery, retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false,
+        } });
+        const disposition = { managedId: managed.id, expectedIntentRevision: 0, responsibility: "manual",
+            expectedAllocation: "may-exist", expectedRecovery: recovery };
+        const app = Fastify({ logger: false });
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        const typed = app.withTypeProvider<ZodTypeProvider>() as unknown as AppFastify;
+        enableAuthentication(typed);
+        startSocket(typed);
+        homeGovernanceRoutes(typed);
+        registerAccountErasureRoute(typed);
+        const ownerToken = await auth.createToken(ownerId, undefined, { kind: "account", authority: "present_user" });
+        const selfToken = await auth.createToken(accountId, undefined, { kind: "account", authority: "present_user" });
+        // A real provider can report its paid resource while object storage is
+        // deleting blobs. Persist that boundary update through the real DB.
+        duringBlobDeletion = async () => {
+            await db.managedMachine.update({ where: { id: managed.id }, data: {
+                allocation: "bound", resource, recovery: boundRecovery,
+            } });
+        };
+        try {
+            const response = await app.inject({ method: "POST", url: "/v1/auth/account/delete",
+                headers: { authorization: `Bearer ${selfToken}` },
+                payload: { confirmation: "DELETE", managedResourceDispositions: [disposition] } });
+            expect(await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { status: true, tokenEpoch: true } }))
+                .toEqual({ status: "disabled", tokenEpoch: 1 });
+            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id } }))
+                .toMatchObject({ allocation: "bound", resource, recovery: boundRecovery });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual({ status: "disabled_pending_completion" });
+            duringBlobDeletion = null;
+            const review = await app.inject({ method: "POST", url: "/v1/home/accounts/delete",
+                headers: { authorization: `Bearer ${ownerToken}` },
+                payload: { accountId, managedResourceDispositions: [disposition] } });
+            expect(review.statusCode).toBe(409);
+            expect(review.json()).toMatchObject({ error: "account_erasure_managed_resources_review_required",
+                resources: [{ managedId: managed.id, allocation: "bound", resource, recovery: boundRecovery }] });
+            expect(blobCalls).toEqual([{ path, accountStatusAtCall: "disabled" }]);
+            const completed = await app.inject({ method: "POST", url: "/v1/home/accounts/delete",
+                headers: { authorization: `Bearer ${ownerToken}` }, payload: { accountId, managedResourceDispositions: [{
+                    ...disposition, expectedAllocation: "bound", expectedResource: resource, expectedRecovery: boundRecovery,
+                }] } });
+            expect(completed.statusCode).toBe(200);
+            expect(completed.json()).toEqual({ status: "deleted" });
+            expect(await db.account.findUnique({ where: { id: accountId } })).toBeNull();
+            expect(await db.managedMachine.findUnique({ where: { id: managed.id } })).toBeNull();
+            expect(await db.account.findUniqueOrThrow({ where: { id: ownerId }, select: { status: true, homeRole: true } }))
+                .toEqual({ status: "active", homeRole: "owner" });
+        } finally {
+            duringBlobDeletion = null;
+            await app.close();
+            await db.managedMachine.deleteMany({ where: { id: managed.id } });
+        }
+    });
+
+    it.each([
+        { route: "home", failure: "deadline" }, { route: "self", failure: "deadline" },
+        { route: "home", failure: "unclassified" }, { route: "self", failure: "unclassified" },
+    ] as const)("reports committed retirement only for classified Phase C failures ($route / $failure), then resumes through Home administration", async ({ route, failure }) => {
+        const { accountId: ownerId } = await createAccountWithBlob({ homeRole: "owner" });
+        const { accountId, path } = await createAccountWithBlob({ homeRole: "member" });
+        const app = Fastify({ logger: false });
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        const typed = app.withTypeProvider<ZodTypeProvider>() as unknown as AppFastify;
+        enableAuthentication(typed);
+        startSocket(typed);
+        homeGovernanceRoutes(typed);
+        registerAccountErasureRoute(typed);
+        const ownerToken = await auth.createToken(ownerId, undefined, { kind: "account", authority: "present_user" });
+        const selfToken = await auth.createToken(accountId, undefined, { kind: "account", authority: "present_user" });
+        const transaction = db.$transaction;
+        // The database driver is the failure boundary. Real Phase A commits,
+        // then the real Phase C callback rolls back at its terminal DELETE.
+        duringBlobDeletion = async () => {
+            db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+                const callback = args[0];
+                if (typeof callback !== "function") return Reflect.apply(target, receiver, args);
+                return Reflect.apply(target, receiver, [async (tx: Tx) => callback(new Proxy(tx, { get(inner, property, innerReceiver) {
+                    if (property !== "account") return Reflect.get(inner, property, innerReceiver);
+                    return new Proxy(inner.account, { get(delegate, method, delegateReceiver) {
+                        if (method !== "delete") return Reflect.get(delegate, method, delegateReceiver);
+                        return async () => {
+                            if (failure === "unclassified") throw new Error("Unexpected database callback failure");
+                            throw Object.assign(new Error("A query cannot be executed on an expired transaction"), { code: "P2028" });
+                        };
+                    } });
+                } })), ...args.slice(1)]);
+            } });
+        };
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: route === "home" ? "/v1/home/accounts/delete" : "/v1/auth/account/delete",
+                headers: { authorization: `Bearer ${route === "home" ? ownerToken : selfToken}` },
+                payload: route === "home" ? { accountId } : { confirmation: "DELETE" },
+            });
+            expect(await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { status: true, tokenEpoch: true } }))
+                .toEqual({ status: "disabled", tokenEpoch: 1 });
+            expect(await db.uploadedFile.count({ where: { accountId } })).toBe(1);
+            expect(response.statusCode).toBe(failure === "deadline" ? 200 : 500);
+            if (failure === "deadline") expect(response.json()).toEqual({ status: "disabled_pending_completion" });
+            db.$transaction = transaction;
+            duringBlobDeletion = null;
+            for (const attempt of ["resume", "repeat"]) {
+                const resumed = await app.inject({ method: "POST", url: "/v1/home/accounts/delete",
+                    headers: { authorization: `Bearer ${ownerToken}` }, payload: { accountId } });
+                expect(resumed.statusCode, attempt).toBe(200);
+                expect(resumed.json(), attempt).toEqual({ status: "deleted" });
+            }
+            expect(await db.account.findUnique({ where: { id: accountId } })).toBeNull();
+            expect(blobCalls).toEqual([{ path, accountStatusAtCall: "disabled" }, { path, accountStatusAtCall: "disabled" }]);
+        } finally {
+            db.$transaction = transaction;
+            duringBlobDeletion = null;
+            await app.close();
+        }
+    });
+
     it.each(["home", "self"] as const)("reports bounded encryption cleanup through the %s route before retirement or object deletion", async (route) => {
         const { accountId: ownerId } = await createAccountWithBlob({ homeRole: "owner" });
         const { accountId, path } = await createAccountWithBlob({ homeRole: "member" });

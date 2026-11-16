@@ -160,7 +160,7 @@ describe('home governance mutations', () => {
             'home.accounts.role.set',
             { accountId: 'acc_target', homeRole: 'admin' },
             { surface: 'ui', serverId: homeA },
-        )).rejects.toThrow('action_home_signed_out');
+        )).resolves.toMatchObject({ ok: false, errorCode: 'action_home_signed_out' });
         expect(harness.requestsFor('/v1/home/accounts/role/set')).toEqual([]);
     });
 

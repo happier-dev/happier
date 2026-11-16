@@ -9,6 +9,9 @@ describe('known Account authority retirement receipts', () => {
     ['account.credentials.forgetAll', 'forgotten'],
     ['account.delete', 'deleted'],
     ['account.delete', 'deleted_cleanup_pending'],
+    ['account.delete', 'disabled_pending_completion'],
+    ['home.accounts.delete', 'deleted'],
+    ['home.accounts.delete', 'disabled_pending_completion'],
     ['session.pending.next', 'opened'],
   ] as const)('preserves only the declared %s completion status', (actionId, status) => {
     expect(projectKnownAccountAuthorityRetirementReceipt(getActionSpec(actionId), { ok: true, result: { status } }))

@@ -8,6 +8,7 @@ import { publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/or
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 const modal = vi.hoisted(() => ({ reviews: [] as string[], onConfirm: null as null | (() => Promise<boolean>) }));
 vi.mock('socket.io-client', async importOriginal =>
@@ -18,6 +19,7 @@ installApprovalCommonModuleMocks({ storage: original => original(), modal: async
 } }) });
 const { completeAccountDeletion } = await import('./accountDeletionLifecycle');
 const { deleteCurrentAccount } = await import('@/sync/api/account/deleteCurrentAccount');
+await loadSyncSingletonForTests();
 const account = createProviderSettingsAccountHarness();
 let target: ServerAccountScopeLifetime;
 let credentials: { token: string };
@@ -68,7 +70,7 @@ describe('ordinary Account erasure managed-resource review', () => {
         });
         await flushHookEffects();
         expect(requests).toHaveLength(3);
-        await expect(deletion).resolves.toEqual({ kind: 'completed' });
+        await expect(deletion).resolves.toEqual({ kind: 'completed', erasure: { status: 'deleted' } });
         expect(modal.reviews).toHaveLength(2);
         expect(requests).toEqual([{ confirmation: 'DELETE' }, ...resources.map(resource => ({ confirmation: 'DELETE',
             managedResourceDispositions: [{ managedId: resource.managedId, expectedIntentRevision: resource.intentRevision,

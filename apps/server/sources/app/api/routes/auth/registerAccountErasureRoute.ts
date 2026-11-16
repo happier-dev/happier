@@ -39,6 +39,11 @@ export function registerAccountErasureRoute(app: Fastify): void {
                 // Account is the last owner of: transfer ownership, then retry.
                 return await reply.code(409).send({ error: "team_owner_transfer_required" });
             }
+            if (result.status === "disabled_pending_completion"
+                || result.status === "failed" && (result.code === "account_erasure_blob_delete_failed"
+                    || result.code === "account_erasure_locator_mismatch")) {
+                return await reply.send({ status: "disabled_pending_completion" });
+            }
             if (result.status === "failed") {
                 throw new Error(`Account erasure failed before Account deletion: ${result.code}`);
             }

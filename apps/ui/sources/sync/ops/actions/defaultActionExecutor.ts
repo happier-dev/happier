@@ -24,6 +24,7 @@ import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { SessionArchiveActionInputV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { isSessionArchiveOperationCurrent, resolveSessionArchiveAddress, type SessionArchiveOperation } from '@/sync/domains/session/listing/sessionArchiveState';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
+import { AccountStorageCurrentnessUnavailableError } from '@/sync/encryption/accountStorageReadFailure';
 import type { ApprovalStaleReason } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { executeSessionMessageReplyReview } from './sessionMessageReplyReview';
 import { readSessionContinuationOnMachine, readSessionContinuationsOnMachine } from '@/sync/ops/sessionContinuationInspectionRpc';
@@ -3690,8 +3691,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
     },
     homeRuntimeActionExecute: createUiHomeRuntimeActionExecute(accountContext, opts?.homeRuntimeRunner),
-    ...(accountContext ? { accountLifecycleAction: createUiAccountLifecycleAction(accountContext,
-      async path => {
+    ...(accountContext ? { accountLifecycleAction: (args: Parameters<NonNullable<ActionExecutorDeps['accountLifecycleAction']>>[0]) =>
+      settleAccountSecurityAction(() => createUiAccountLifecycleAction(accountContext, async path => {
         if (opts?.openRoute) await opts.openRoute(path);
         else {
           const [{ router }, { openWorkspaceHrefOrElse }] = await Promise.all([
@@ -5772,6 +5773,8 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
       : null;
   const accountScopeFailure = (error: unknown) => isActionAccountScopeChangedError(error)
     ? { ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' }
+    : error instanceof AccountStorageCurrentnessUnavailableError
+      ? { ok: false as const, errorCode: error.code, error: error.message }
     : error instanceof ActionAdmissionHomeUnreachableError
       ? { ok: false as const, errorCode: 'server_unreachable', error: 'server_unreachable' }
       : null;

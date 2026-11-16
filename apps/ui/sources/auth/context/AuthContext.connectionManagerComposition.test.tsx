@@ -762,7 +762,7 @@ describe('AuthContext with the production connection manager', () => {
             expect(erasures).toEqual([homeA.serverUrl]);
             await act(async () => { await profiles.setActiveServerId(homeB.id, { scope: 'device' }); await auth.refreshFromActiveServer(); });
             expect(getCurrentAuth()?.credentials).toEqual(other);
-            await act(async () => { await expect(failure.retryLocalCleanup()).resolves.toEqual({ kind: 'completed' }); });
+            await act(async () => { await expect(failure.retryLocalCleanup()).resolves.toEqual({ kind: 'completed', erasure: { status: 'deleted' } }); });
             expect(erasures).toEqual([homeA.serverUrl]);
             expect(await TokenStorage.getCredentialsForServerUrl(homeA.serverUrl, { serverId: homeA.id })).toBeNull();
             expect(await TokenStorage.getCredentialsForServerUrl(homeB.serverUrl, { serverId: homeB.id })).toEqual(other);

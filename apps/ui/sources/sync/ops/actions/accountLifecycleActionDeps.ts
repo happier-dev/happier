@@ -3,7 +3,7 @@ import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actio
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
-import { AccountDeletedLocalCleanupError, completeAccountDeletion } from '@/components/settings/account/accountDeletionLifecycle';
+import { AccountDeletedLocalCleanupError, completeAccountDeletion, type AccountDeletionLifecycleResult } from '@/components/settings/account/accountDeletionLifecycle';
 import { Modal } from '@/modal';
 import { deleteCurrentAccount } from '@/sync/api/account/deleteCurrentAccount';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -56,17 +56,29 @@ export function createUiAccountLifecycleAction(account: LazyActionAccountContext
             logout: options => auth.logout({ ...options, target, expectedCredentials: account.credentials }),
             replace: () => leave(),
         });
+        const deletion: { erasure: AccountDeletionLifecycleResult['erasure'] } = { erasure: null };
         while (true) {
             try {
-                await presentFirstKeyCredentialLifecycle({ run, onCompleted: () => { completed = true; } });
-                return { ok: true, result: { status: completed ? 'deleted' : 'cancelled' } };
+                await presentFirstKeyCredentialLifecycle({ run: async () => {
+                    const result = await run();
+                    deletion.erasure = result.erasure;
+                    return result;
+                }, onCompleted: () => { completed = true; } });
+                const status = completed && deletion.erasure ? deletion.erasure.status : 'cancelled';
+                if (status === 'disabled_pending_completion') {
+                    await Modal.alertAsync(t('homeGovernance.deleteIncompleteTitle'), t('settingsAccount.deleteAccountFinishing'));
+                }
+                return { ok: true, result: { status } };
             } catch (error) {
                 if (!(error instanceof AccountDeletedLocalCleanupError)) throw error;
                 let retry = false;
-                await Modal.alertAsync(t('settingsAccount.deleteAccountCleanupFailedTitle'), t('settingsAccount.deleteAccountCleanupFailed'), [
+                const deletionPending = error.erasure.status === 'disabled_pending_completion';
+                await Modal.alertAsync(
+                    t(deletionPending ? 'homeGovernance.deleteIncompleteTitle' : 'settingsAccount.deleteAccountCleanupFailedTitle'),
+                    t(deletionPending ? 'settingsAccount.deleteAccountFinishingCleanupFailed' : 'settingsAccount.deleteAccountCleanupFailed'), [
                     { text: t('common.cancel'), style: 'cancel' }, { text: t('common.retry'), onPress: () => { retry = true; } },
                 ]);
-                if (!retry) return { ok: true, result: { status: 'deleted_cleanup_pending' } };
+                if (!retry) return { ok: true, result: { status: deletionPending ? 'disabled_pending_completion' : 'deleted_cleanup_pending' } };
                 run = error.retryLocalCleanup;
             }
         }

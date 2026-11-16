@@ -895,7 +895,7 @@ it.each(['same-home', 'other-home', 'other-account'] as const)(
             if (decisionScope === 'other-account') await homes.switchAccount(scenario.serverId, 'another-account', { currentAccount: true });
             if (decisionScope === 'other-home') {
                 await expect(decideApprovalAsInbox(receiverProfile.id, artifactId, 'approve'))
-                    .rejects.toMatchObject({ name: 'AccountStorageCurrentnessUnavailableError', reason: 'unauthorized', code: 'action_home_signed_out' });
+                    .resolves.toMatchObject({ ok: false, errorCode: 'action_home_signed_out' });
                 expect(scenario.effects).toEqual([]);
                 expect(scenario.source().owner).toEqual({ kind: 'account', accountId: 'account-owner' });
                 return;

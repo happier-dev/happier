@@ -269,30 +269,25 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
         const outcome = await runForCapturedAccount(
             { kind: 'delete' },
             async (scope, target) => {
-                const abort = new AbortController();
-                const retirement = target.onRetire(() => abort.abort());
                 let managedResourceDispositions: readonly ManagedResourceDispositionV1[] | undefined;
-                try {
-                    while (target.isCurrent() && !abort.signal.aborted) {
-                        const result = await deleteHomeAccount({ scope, accountId: detail.accountId, signal: abort.signal,
-                            ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
-                            ...(context.requestApproval ? { onApprovalPending: context.requestApproval } : {}),
-                        });
-                        if (!target.isCurrent() || abort.signal.aborted) return null;
-                        if (result.kind !== 'failed') return result;
-                        const review = HomeGovernanceErrorV1Schema.safeParse(result.failure.details);
-                        if (!review.success || review.data.error !== 'account_erasure_managed_resources_review_required') return result;
-                        const resources = review.data.resources;
-                        let reviewed: readonly ManagedResourceDispositionV1[] | null = null;
-                        const current = await confirmForCapturedAccount({ captureDestructiveTarget: () => target }, async () => {
-                            reviewed = await reviewManagedResourceRemoval(resources);
-                            return reviewed !== null;
-                        });
-                        if (!current || !reviewed) return null;
-                        managedResourceDispositions = reviewed;
-                    }
-                    return null;
-                } finally { retirement.dispose(); }
+                while (target.isCurrent()) {
+                    const result = await deleteHomeAccount({ scope, accountId: detail.accountId,
+                        ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
+                        ...(context.requestApproval ? { onApprovalPending: context.requestApproval } : {}),
+                    });
+                    if (result.kind !== 'failed') return result;
+                    const review = HomeGovernanceErrorV1Schema.safeParse(result.failure.details);
+                    if (!review.success || review.data.error !== 'account_erasure_managed_resources_review_required') return result;
+                    const resources = review.data.resources;
+                    let reviewed: readonly ManagedResourceDispositionV1[] | null = null;
+                    const current = await confirmForCapturedAccount({ captureDestructiveTarget: () => target }, async () => {
+                        reviewed = await reviewManagedResourceRemoval(resources);
+                        return reviewed !== null;
+                    });
+                    if (!current || !reviewed) return null;
+                    managedResourceDispositions = reviewed;
+                }
+                return null;
             },
         );
         // Only a finished deletion removes the person this page is about.

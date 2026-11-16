@@ -657,8 +657,7 @@ describe("plugin Account data erasure", () => {
             managedId: managed.id, expectedIntentRevision: 0, responsibility: 'manual',
             expectedAllocation: 'may-exist', expectedRecovery: recovery,
         }] });
-        expect(result).toMatchObject({ status: 'failed', code: 'account_erasure_managed_resources_review_required',
-            resources: [{ managedId: managed.id, allocation: 'bound', resource, recovery: { reference: 'paid-after-review' } }] });
+        expect(result).toEqual({ status: 'disabled_pending_completion' });
         expect(await db.account.findUniqueOrThrow({ where: { id: accountId } })).toMatchObject({ status: 'disabled' });
         expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id } })).toMatchObject({ allocation: 'bound', resource });
 
@@ -667,6 +666,12 @@ describe("plugin Account data erasure", () => {
         const administratorId = 'late-native-erasure-administrator';
         await createPlainAccount(administratorId);
         await db.account.update({ where: { id: administratorId }, data: { homeRole: 'owner' } });
+        await expect(deleteAccountForErasure({
+            accountId, actor: { kind: 'home_administration', actorAccountId: administratorId },
+            managedResourceDispositions: [{ managedId: managed.id, expectedIntentRevision: 0, responsibility: 'manual',
+                expectedAllocation: 'may-exist', expectedRecovery: recovery }],
+        })).resolves.toMatchObject({ status: 'failed', code: 'account_erasure_managed_resources_review_required',
+            resources: [{ managedId: managed.id, allocation: 'bound', resource, recovery: { reference: 'paid-after-review' } }] });
         vi.mocked(blobFiles.deletePublicFile).mockResolvedValueOnce(undefined);
         await expect(deleteAccountForErasure({
             accountId, actor: { kind: 'home_administration', actorAccountId: administratorId },

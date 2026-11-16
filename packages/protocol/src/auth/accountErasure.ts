@@ -1,4 +1,5 @@
 import { z } from '../zodRuntimePolicy.js';
+import { HomeAccountDeleteResultV1Schema } from '../home/governance/accounts.js';
 import { ManagedResourceDependencyV1Schema, ManagedResourceDispositionV1Schema } from '../machines/managed/managedDependencyV1.js';
 
 export const ACCOUNT_ERASURE_CONFIRMATION_V1 = 'DELETE' as const;
@@ -7,9 +8,8 @@ export const AccountErasureRequestV1Schema = z.strictObject({
   managedResourceDispositions: z.optional(z.array(ManagedResourceDispositionV1Schema)),
 });
 export type AccountErasureRequestV1 = z.infer<typeof AccountErasureRequestV1Schema>;
-export const AccountErasureResponseV1Schema = z.strictObject({
-  status: z.literal('deleted'),
-});
+// Both entry points report committed retirement separately from confirmed physical deletion.
+export const AccountErasureResponseV1Schema = HomeAccountDeleteResultV1Schema;
 export type AccountErasureResponseV1 = z.infer<typeof AccountErasureResponseV1Schema>;
 export const AccountErasureErrorV1Schema = z.union([z.strictObject({
   // `home_owner_transfer_required` and `team_owner_transfer_required` are

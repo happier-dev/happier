@@ -361,6 +361,7 @@ export function homeGovernanceRoutes(app: Fastify): void {
                 managedResourceDispositions: request.body.managedResourceDispositions,
                 actor: { kind: "home_administration", actorAccountId: request.userId },
             });
+            if (result.status === "disabled_pending_completion") return await reply.send(result);
             if (result.status === "deleted" || result.status === "already-deleted") {
                 // A retry that finds the Account gone finished the job; the
                 // authorized owner asked for exactly that outcome. Socket

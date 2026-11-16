@@ -2217,7 +2217,7 @@ describe('createDefaultActionExecutor approvals', () => {
         const signedOutHome = await homes.addHome({ name: 'Signed out', serverUrl: 'https://signed-out-approval.test', accountId: null, active: false });
         await expect(executor.execute('review.start', { sessionId: 's1', engineIds: ['codex'], instructions: 'Needs approval' }, {
             surface: 'ui', serverId: signedOutHome,
-        })).rejects.toThrow('action_home_signed_out');
+        })).resolves.toMatchObject({ ok: false, errorCode: 'action_home_signed_out' });
         expect(homes.artifacts(signedOutHome).list()).toEqual([]);
         expect(outgoing).toEqual([]);
     });

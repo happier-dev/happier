@@ -44,6 +44,7 @@ import { applyUserKvMutationsInTx, type KVMutation } from "@/app/kv/kvMutate";
 import { deletePublicFile, deletePrivateFile } from "@/storage/blob/files";
 import { hasPendingAccountPrivateFileUploadInTx, isAccountPrivateFileUpload } from "@/storage/privateFiles/accountPrivateFileCustody";
 import { afterTx, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
+import { isTransactionStorageError } from "@/storage/transactionErrors";
 import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/prisma";
 
 import { retirePluginCollectionCandidatePreparationStagesTx } from "./collections/candidatePreparationLifecycle";
@@ -494,6 +495,7 @@ export async function erasePluginAccountData(input: Readonly<{
 }
 
 export type DeleteAccountForErasureResult =
+    | Readonly<{ status: "disabled_pending_completion" }>
     | Readonly<{ status: "deleted" }>
     | Readonly<{ status: "already-deleted" }>
     | Readonly<{ status: "failed"; code: "account_erasure_managed_resources_review_required"; resources: readonly ManagedResourceDependencyV1[] }>
@@ -868,7 +870,7 @@ export async function deleteAccountForErasure(input: Readonly<{
     // Retirement and the Account fences protect admission and owned locators.
     // ReadCommitted lets late publication allocate current cursors for the wider
     // Home/Team/Session audience, including Accounts updated during this cleanup.
-    return await inTx(async (tx) => {
+    return await inTx<DeleteAccountForErasureResult>(async (tx) => {
         // Retirement already removed this Account from active ownership and
         // prevents new ownership/admission. Its existing Account fence also
         // serializes Session, content and managed-resource publication.
@@ -915,7 +917,10 @@ export async function deleteAccountForErasure(input: Readonly<{
         }
         const resources = await readManagedResourceDependenciesInTx(tx, { kind: "account", accountId: input.accountId });
         if (!acceptsManagedResourceDispositions(resources, input.managedResourceDispositions)) {
-            return { status: "failed", code: "account_erasure_managed_resources_review_required", resources };
+            // Retirement already committed. Preserve custody and report pending
+            // deletion; the next Home owner request reviews the current resource
+            // before erasure can continue.
+            return { status: "disabled_pending_completion" };
         }
         await publishAccountNativeCredentialPolicyChangesInTx(tx, input.accountId);
         const currentLocators = await captureAccountErasureBlobLocatorsInTx(tx, input.accountId);
@@ -1030,5 +1035,12 @@ export async function deleteAccountForErasure(input: Readonly<{
             });
         });
         return { status: "deleted" };
-    }, { isolationLevel: "ReadCommitted", transactionClass: "account-erasure.delete-retired" });
+    }, { isolationLevel: "ReadCommitted", transactionClass: "account-erasure.delete-retired" }).catch((error: unknown) => {
+        if (!isTransactionStorageError(error)) throw error;
+        // Phase A already committed credential revocation. A storage failure
+        // cannot turn that confirmed retirement into a no-effect refusal, and
+        // it does not certify physical deletion. The existing Home-owner
+        // erasure Action can resume this same composition.
+        return { status: "disabled_pending_completion" as const };
+    });
 }

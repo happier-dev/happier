@@ -6958,6 +6958,28 @@ This extends the undeployed V1 read response without changing cursor semantics.
 
 ### Direct sharing and Account erasure (development)
 
+Self-erasure and Home administration share the closed Account deletion result:
+`deleted` confirms physical completion; `disabled_pending_completion` confirms
+retirement and credential revocation while physical deletion remains unconfirmed.
+A typed database failure in the final deletion transaction preserves that partial
+result after the retirement transaction committed. Revocation is immediate. An
+active Home owner resumes cleanup through `home.accounts.delete` for the same
+Account; repeating completed deletion returns `deleted`. Recovery-key sign-in
+does not reactivate a disabled Account. No worker, timer or automatic retry is added.
+If a managed resource is reported after retirement, the same partial result
+preserves its custody. The next Home-owner request reviews its current resource
+identity before erasure can continue; preflight review retains its full resource list.
+The existing status-only retirement receipt admits these results for
+`account.delete` and `home.accounts.delete`, so a Home owner deleting their own
+Account can receive the acknowledgement without disclosing old Account data.
+
+This is an unreleased development-contract cut: matching Server, Protocol and UI
+readers reload together. The prior strict self-erasure response rejects the partial
+status; the scoped-clean `../0.2` frontier at
+`afd83d1e5bc594c624f6caa9546028b74a75de54` has no corresponding self-erasure
+endpoint or result schema. No persisted format, migration, wire epoch or adapter
+is introduced.
+
 The development Account-erasure transaction preserves direct grants that the erased
 Account authored on somebody else's Session. The canonical grant service reassigns
 their non-null `SessionShare.sharedByUserId` to that Session's owner, preserving the
