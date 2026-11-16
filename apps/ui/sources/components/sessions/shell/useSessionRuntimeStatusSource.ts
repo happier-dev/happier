@@ -11,6 +11,7 @@ import {
     deriveLatestPendingRequestObservedAtFromSession,
     derivePendingRequestFlagsFromSession,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
+import { hasMeaningfulActivityAfterRuntimeIssue } from '@/components/sessions/usageLimitRecovery/sessionUsageLimitActivityStaleness';
 
 type SessionRuntimeStatusFields = Pick<
     Session,
@@ -26,13 +27,17 @@ type SessionRuntimeStatusFields = Pick<
     | 'runtimeActivityActiveCount'
     | 'runtimeActivityObservedAt'
     | 'runtimeActivityRevision'
-    | 'meaningfulActivityAt'
     | 'lastRuntimeIssue'
     | 'pendingPermissionRequestCount'
     | 'pendingUserActionRequestCount'
     | 'optimisticThinkingAt'
     | 'resumingAt'
 > & Readonly<{
+    /**
+     * The one composer fact the Session's activity time feeds. Every arriving message moves
+     * `meaningfulActivityAt`; projecting it raw re-ran the whole composer controller per message.
+     */
+    hasActivityAfterRuntimeIssue: boolean;
     hasPendingPermissionRequests: boolean;
     hasPendingUserActionRequests: boolean;
     pendingRequestObservedAt: number | null;
@@ -58,8 +63,8 @@ function selectSessionRuntimeStatusFields(
         runtimeActivityActiveCount: session.runtimeActivityActiveCount,
         runtimeActivityObservedAt: session.runtimeActivityObservedAt,
         runtimeActivityRevision: session.runtimeActivityRevision,
-        meaningfulActivityAt: session.meaningfulActivityAt,
         lastRuntimeIssue: session.lastRuntimeIssue,
+        hasActivityAfterRuntimeIssue: hasMeaningfulActivityAfterRuntimeIssue(session),
         pendingPermissionRequestCount: session.pendingPermissionRequestCount,
         pendingUserActionRequestCount: session.pendingUserActionRequestCount,
         optimisticThinkingAt: session.optimisticThinkingAt ?? optimisticPendingUserMessageAt ?? null,
@@ -71,10 +76,17 @@ function selectSessionRuntimeStatusFields(
     };
 }
 
-export function useSessionRuntimeStatusSource(session: Session): Session;
+/**
+ * The composer's live runtime view of its Session. It carries no `meaningfulActivityAt`: the shell
+ * session leaves it out of its facts and this projection replaces it with `hasActivityAfterRuntimeIssue`,
+ * so a stale activity time can never be read from here.
+ */
+export type SessionRuntimeStatusSource = Omit<Session, 'meaningfulActivityAt'> & Readonly<{ hasActivityAfterRuntimeIssue: boolean }>;
+
+export function useSessionRuntimeStatusSource(session: Session): SessionRuntimeStatusSource;
 export function useSessionRuntimeStatusSource(session: null): null;
-export function useSessionRuntimeStatusSource(session: Session | null): Session | null;
-export function useSessionRuntimeStatusSource(session: Session | null): Session | null {
+export function useSessionRuntimeStatusSource(session: Session | null): SessionRuntimeStatusSource | null;
+export function useSessionRuntimeStatusSource(session: Session | null): SessionRuntimeStatusSource | null {
     const sessionId = session?.id ?? '';
     const activeServerId = useActiveServerSnapshot().serverId;
     const archiving = useSessionArchivePending(normalizeSessionAddress(session?.serverId ?? activeServerId, sessionId));
@@ -90,8 +102,10 @@ export function useSessionRuntimeStatusSource(session: Session | null): Session 
 
     return React.useMemo(() => {
         if (!session) return session;
+        const { meaningfulActivityAt: _shellActivityAt, ...shell } = session;
         return {
-            ...session,
+            ...shell,
+            hasActivityAfterRuntimeIssue: hasMeaningfulActivityAfterRuntimeIssue(session),
             ...runtimeFields,
             archiving,
         };

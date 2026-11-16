@@ -324,7 +324,6 @@ import { type SessionAuthSurfaceState } from "@/components/sessions/shell/sessio
 import { selectSessionViewShellSessionForRouteState } from "@/components/sessions/shell/sessionViewStableSession";
 import { useSessionRuntimeStatusSource } from "@/components/sessions/shell/useSessionRuntimeStatusSource";
 import { SESSION_USAGE_LIMIT_RECOVERY_BADGE_KEY, buildSessionUsageLimitRecoveryPresentation, resolveSessionUsageLimitRecoveryOperationStatus, isSessionUsageLimitRecoveryCheckNowAction, isSessionUsageLimitRecoveryCheckingOperationAction, readSessionUsageLimitRecoveryFromMetadata, type SessionUsageLimitRecoveryActionKind, type SessionUsageLimitRecoveryTranslate, type SessionUsageLimitRecoveryTranslationParams, type SessionUsageLimitRecoveryState, type UsageLimitRecoveryOperationStatus, type UsageLimitRecoverySettings } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation";
-import { hasMeaningfulActivityAfterRuntimeIssue } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitActivityStaleness";
 import { SessionUsageLimitRecoveryCard } from "@/components/sessions/usageLimitRecovery/SessionUsageLimitRecoveryBanner";
 import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
 import { buildSessionNearLimitPresentation, dismissSessionNearLimit, readDismissedSessionNearLimitKeys } from "@/components/sessions/usageLimitRecovery/sessionNearLimitPresentation";
@@ -1943,7 +1942,7 @@ export function useSessionComposerController({
         checkNowSupported: usageLimitRecoveryCheckNowSupported,
         recoveryCredits: usageLimitRecoveryCredits,
         runtimeWorking: sessionStatus.state === 'thinking',
-        hasActivityAfterRuntimeIssue: hasMeaningfulActivityAfterRuntimeIssue(sessionRuntimeStatusSource),
+        hasActivityAfterRuntimeIssue: sessionRuntimeStatusSource.hasActivityAfterRuntimeIssue,
         hasInterruptedWorkToResume,
         nowMs: usageLimitRecoveryNowMs,
         settings: usageLimitRecoverySettings,
@@ -1953,7 +1952,7 @@ export function useSessionComposerController({
         sessionRuntimeStatusSource.lastRuntimeIssue,
         sessionRuntimeStatusSource.latestTurnStatus,
         sessionRuntimeStatusSource.latestTurnStatusObservedAt,
-        sessionRuntimeStatusSource.meaningfulActivityAt,
+        sessionRuntimeStatusSource.hasActivityAfterRuntimeIssue,
         sessionStatus.state,
         hasInterruptedWorkToResume,
         usageLimitRecoveryCheckNowSupported,
@@ -1986,7 +1985,7 @@ export function useSessionComposerController({
         checkNowSupported: usageLimitRecoveryCheckNowSupported,
         recoveryCredits: usageLimitRecoveryCredits,
         runtimeWorking: sessionStatus.state === 'thinking',
-        hasActivityAfterRuntimeIssue: hasMeaningfulActivityAfterRuntimeIssue(sessionRuntimeStatusSource),
+        hasActivityAfterRuntimeIssue: sessionRuntimeStatusSource.hasActivityAfterRuntimeIssue,
         hasInterruptedWorkToResume,
         nowMs: usageLimitRecoveryNowMs,
         settings: usageLimitRecoverySettings,
@@ -1997,7 +1996,7 @@ export function useSessionComposerController({
         sessionRuntimeStatusSource.lastRuntimeIssue,
         sessionRuntimeStatusSource.latestTurnStatus,
         sessionRuntimeStatusSource.latestTurnStatusObservedAt,
-        sessionRuntimeStatusSource.meaningfulActivityAt,
+        sessionRuntimeStatusSource.hasActivityAfterRuntimeIssue,
         sessionStatus.state,
         hasInterruptedWorkToResume,
         usageLimitRecoveryCheckNowSupported,
@@ -4978,14 +4977,12 @@ export function useSessionComposerController({
                 latestReadyEventAt: sessionRuntimeStatusSource.latestReadyEventAt,
                 latestTurnStatus: sessionRuntimeStatusSource.latestTurnStatus,
                 latestTurnStatusObservedAt: sessionRuntimeStatusSource.latestTurnStatusObservedAt,
-                meaningfulActivityAt: sessionRuntimeStatusSource.meaningfulActivityAt,
             })
         ), [
             sessionRuntimeStatusSource.activeAt,
             sessionRuntimeStatusSource.latestReadyEventAt,
             sessionRuntimeStatusSource.latestTurnStatus,
             sessionRuntimeStatusSource.latestTurnStatusObservedAt,
-            sessionRuntimeStatusSource.meaningfulActivityAt,
         ]);
         const intentionalRestartSignals = React.useMemo<ReadonlyArray<SessionIntentionalRestartSignal>>(() => (
             deriveSessionIntentionalRestartSignals({
@@ -5142,7 +5139,7 @@ export function useSessionComposerController({
             // Staleness is the usage-limit owner's rule, reused rather than
             // re-decided: once the runtime has done meaningful work after the
             // refusal, the refusal is history and its banner must go.
-            if (transitionBanner === null && !hasMeaningfulActivityAfterRuntimeIssue(sessionRuntimeStatusSource)) {
+            if (transitionBanner === null && !sessionRuntimeStatusSource.hasActivityAfterRuntimeIssue) {
                 const teamCredentialDenial = presentSessionTeamCredentialDenial({
                     issue: sessionRuntimeStatusSource.lastRuntimeIssue ?? null,
                     resolveResourceDisplayName: (resourceId) => teamCredentialCatalog.displayNames[resourceId] ?? null,
@@ -5205,7 +5202,7 @@ export function useSessionComposerController({
             sessionRuntimeStatusSource.lastRuntimeIssue,
             sessionRuntimeStatusSource.latestTurnStatus,
             sessionRuntimeStatusSource.latestTurnStatusObservedAt,
-            sessionRuntimeStatusSource.meaningfulActivityAt,
+            sessionRuntimeStatusSource.hasActivityAfterRuntimeIssue,
             teamCredentialCatalog.displayNames, teamCredentialCatalog.resources,
         ]);
         // The binding family speaks on the composer's one status line, never as a card: its short state,

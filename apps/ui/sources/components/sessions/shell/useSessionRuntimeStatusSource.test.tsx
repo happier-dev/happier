@@ -82,3 +82,37 @@ it('updates the retained composer status after archive and unarchive settle', as
         storage.setState(previous, true);
     }
 });
+
+it('stays quiet while arriving messages only move the Session activity time, and follows activity after a runtime issue', async () => {
+    const previous = storage.getState();
+    const now = Date.now();
+    const issue = { v: 1, scope: 'primary_session', status: 'failed', source: 'usage_limit', code: 'usage_limit', occurredAt: now } as const;
+    const session = createSessionFixture({ id: 'arrivals-status', serverId: 'home', active: true, presence: 'online',
+        activeAt: now, updatedAt: now, meaningfulActivityAt: now - 60_000, lastRuntimeIssue: issue });
+    storage.getState().applySessions([session]);
+    let renders = 0;
+    const hook = await renderHook(() => {
+        renders += 1;
+        return useSessionRuntimeStatusSource(session);
+    });
+    try {
+        // Each arriving message moves only the Session's activity time; no composer fact changes.
+        renders = 0;
+        for (const seq of [2, 3, 4]) {
+            await act(async () => {
+                storage.getState().applySessions([{ ...session, seq, updatedAt: now - 50_000 + seq, meaningfulActivityAt: now - 50_000 + seq }], 'projection');
+            });
+        }
+        expect(renders).toBe(0);
+        expect(hook.getCurrent().hasActivityAfterRuntimeIssue).toBe(false);
+        // Activity after the runtime issue is the composer fact the activity time feeds.
+        await act(async () => {
+            storage.getState().applySessions([{ ...session, seq: 5, updatedAt: now + 120_000, meaningfulActivityAt: now + 120_000 }], 'projection');
+        });
+        expect(renders).toBe(1);
+        expect(hook.getCurrent().hasActivityAfterRuntimeIssue).toBe(true);
+    } finally {
+        await hook.unmount();
+        storage.setState(previous, true);
+    }
+});

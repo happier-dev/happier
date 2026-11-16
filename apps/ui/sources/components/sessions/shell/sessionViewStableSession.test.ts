@@ -576,7 +576,9 @@ describe('useSessionViewShellSession', () => {
                 published.add(hook.getCurrent().shell);
             }
             expect(published.size).toBe(1);
-            expect(hook.getCurrent().runtime?.meaningfulActivityAt).toBe(103);
+            // The runtime source carries the composer fact the activity time feeds, never the raw time.
+            expect(hook.getCurrent().runtime).not.toHaveProperty('meaningfulActivityAt');
+            expect(hook.getCurrent().runtime?.hasActivityAfterRuntimeIssue).toBe(false);
         } finally {
             await unmount?.();
             storage.setState(previousState);
