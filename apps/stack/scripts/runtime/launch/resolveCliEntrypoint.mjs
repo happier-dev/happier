@@ -1,8 +1,10 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { resolveDependencyInstallRoot, waitForDependencyRefresh } from '../../utils/proc/dependency_refresh.mjs';
+import { getStacksStorageRoot } from '../../utils/paths/paths.mjs';
+import { projectRemoteGuestCliPayloadEnvironment, readPublishedSourceRuntimeRecord, sourceRuntimeCandidateKey } from '../shared/source_bundle_record.mjs';
 import { readCliDistIntegrity, resolveCliDistEntrypointFromBin } from '../../utils/cli/cliDistIntegrity.mjs';
 
 function resolveTsxCliEntrypoint(cliDir) {
@@ -42,6 +44,16 @@ export async function resolveCliEntrypoint({ cliDir, preferSource = false, env =
   // writer before admitting the preload, without leasing a long-lived CLI.
   if (entrypoint?.kind === 'tsx') {
     await waitForDependencyRefresh({ installDir: resolveDependencyInstallRoot(root), env, signal });
+    let payloadEnv = projectRemoteGuestCliPayloadEnvironment(env);
+    if (!String(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim()) {
+      const repoDir = resolve(root, '../..');
+      const record = await readPublishedSourceRuntimeRecord({
+        bundleRoot: join(getStacksStorageRoot(env), 'source-bundles'),
+        candidateKey: sourceRuntimeCandidateKey({ repoDir, component: 'daemon', serverComponent: 'happier-server-light' }),
+      });
+      payloadEnv = projectRemoteGuestCliPayloadEnvironment(record?.env ?? {});
+    }
+    return { ...entrypoint, env: payloadEnv };
   }
   return entrypoint;
 }

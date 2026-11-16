@@ -1,6 +1,8 @@
+// @happier-test-preparation source-condition
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -112,4 +114,62 @@ test('source CLI selection waits for an in-progress installation before admittin
     })]);
   } finally { release.resolve(); await writer; }
   assert.equal((await selected).kind, 'tsx');
+});
+
+
+test('hot source CLI uses the completed producer guest tree without selecting a runtime bundle', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'source-cli-guest-payload-' });
+  const repoDir = fixture.path('repo');
+  const cliDir = join(repoDir, 'apps/cli');
+  await mkdir(join(cliDir, 'src'), { recursive: true });
+  await mkdir(join(repoDir, 'packages/cli-common'), { recursive: true });
+  await writeFile(join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs'), 'export {};\n');
+  await writeFile(join(cliDir, 'src/index.ts'), 'console.log(JSON.stringify({root:process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT??null,metadata:process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA??null}));\n');
+  const stacksRoot = fixture.path('stacks');
+  const bundleRoot = join(stacksRoot, 'source-bundles');
+  const outputName = 'runtime-completed-daemon';
+  const guestRoot = join(bundleRoot, outputName, 'guest-payload');
+  const metadata = JSON.stringify({ root: guestRoot, identity: 'a'.repeat(64) });
+  const producerEnv = { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: guestRoot,
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: metadata, UNRELATED_PRODUCER_SETTING: 'not-a-cli-setting' };
+  const env = { ...process.env, HAPPIER_STACK_STORAGE_DIR: stacksRoot,
+    HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer' };
+  delete env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
+  delete env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA;
+  const missing = await resolveCliEntrypoint({ cliDir, preferSource: true, env });
+  assert.equal(missing.env?.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT, undefined);
+  await mkdir(guestRoot, { recursive: true });
+  // This is the producer's persisted locator schema, not a replacement internal lookup.
+  const candidateKey = createHash('sha256').update(JSON.stringify([repoDir, 'daemon', 'happier-server-light', undefined])).digest('hex');
+  const candidate = { outputName, inputIdentity: 'b'.repeat(64), reuseFingerprint: 'c'.repeat(64),
+    producerCompletedAt: '2026-11-15T12:00:00.000Z', producerCandidateKey: candidateKey };
+  const record = { inputIdentity: candidate.inputIdentity, reuseFingerprint: candidate.reuseFingerprint,
+    env: producerEnv, guestPayload: { root: guestRoot, identity: 'a'.repeat(64) } };
+  await writeFile(join(bundleRoot, `candidate-${candidateKey}.json`), JSON.stringify(candidate));
+  const recordPath = join(bundleRoot, outputName, 'source-bundle.json');
+  await writeFile(recordPath, JSON.stringify(record));
+  const resolved = await resolveCliEntrypoint({ cliDir, preferSource: true, env });
+  assert.equal(resolved.kind, 'tsx');
+  assert.equal(resolved.nodeArgs.at(-1), join(cliDir, 'src/index.ts'));
+  const child = spawnSync(process.execPath, resolved.nodeArgs, { env: { ...env, ...resolved.env }, encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout), { root: guestRoot, metadata });
+  assert.equal(resolved.env.UNRELATED_PRODUCER_SETTING, undefined);
+  await writeFile(recordPath, JSON.stringify({ ...record, inputIdentity: 'd'.repeat(64) }));
+  const mismatched = await resolveCliEntrypoint({ cliDir, preferSource: true, env });
+  assert.equal(mismatched.env?.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT, undefined,
+    'an incomplete or replaced producer publication cannot supply the guest tree');
+  await writeFile(recordPath, JSON.stringify(record));
+  const explicitRoot = fixture.path('operator-payload');
+  const explicitMetadata = JSON.stringify({ root: explicitRoot, identity: 'e'.repeat(64) });
+  await mkdir(explicitRoot, { recursive: true });
+  const explicit = await resolveCliEntrypoint({ cliDir, preferSource: true, env: { ...env,
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: explicitRoot,
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: explicitMetadata } });
+  assert.deepEqual(explicit.env, { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: explicitRoot,
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: explicitMetadata });
+  const rootOnly = await resolveCliEntrypoint({ cliDir, preferSource: true, env: { ...env,
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: explicitRoot } });
+  assert.deepEqual(rootOnly.env, { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: explicitRoot },
+    'an operator root cannot acquire metadata from a different producer tree');
 });

@@ -27,7 +27,7 @@ import { readBundledPluginPackageResourceRelativePaths } from '../../../../packa
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 import { reapHistoricalTempRoots } from '../utils/dev_targets/historical_temp_roots.mjs';
 import { assertWebArtifactPayload } from '../runtime/shared/web_payload.mjs';
-import { readSelectedSourceRuntimeRecord, readSourceRuntimeBundleRecord } from '../runtime/shared/source_bundle_record.mjs';
+import { readPublishedSourceRuntimeRecord, readSelectedSourceRuntimeRecord, readSourceRuntimeBundleRecord, sourceBundleCandidatePath, sourceRuntimeCandidateKey } from '../runtime/shared/source_bundle_record.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshMarkerPath, resolveDependencyRefreshLockPath } from '../utils/proc/dependency_refresh.mjs';
 import { diagnoseSourceReloadFailure, emitSourceReloadRefusal, parseSourceReloadRefusalLine, recordSourceReloadRefusal } from '../runtime/shared/source_reload_refusal.mjs';
 import { emitSourceAuthorPackages, isFirstPartyBuiltInput } from './source_author_packages.mjs';
@@ -185,13 +185,6 @@ async function sourceBundleFingerprint({ repoDir, identityRepoDir = repoDir, com
     files: fingerprintFiles, options });
 }
 
-function sourceRuntimeCandidateKey({ repoDir, component, serverComponent, dbProvider }) {
-  // One current product per source/configuration context. Full checkout hashes
-  // cannot select this pointer: unconsumed source edits intentionally reuse the
-  // captured graph. Its exact completion identity is verified below instead.
-  return createHash('sha256').update(JSON.stringify([repoDir, component, serverComponent, dbProvider])).digest('hex');
-}
-
 /** Exact revision (+overlay) locator: the selection key of a revision build. */
 function sourceRuntimeRevisionCandidateKey({ repoDir, component, serverComponent, dbProvider, revisionKey }) {
   return `rev-${createHash('sha256').update(JSON.stringify([repoDir, component, serverComponent, dbProvider, revisionKey])).digest('hex')}`;
@@ -244,10 +237,6 @@ export async function readLatestBuiltSourceRevision({ repoDir, stackBaseDir }) {
 
 function sourceRuntimeCaptureCandidateKey(fingerprint) {
   return `capture-${fingerprint}`;
-}
-
-function sourceBundleCandidatePath({ bundleRoot, candidateKey }) {
-  return join(bundleRoot, `candidate-${candidateKey}.json`);
 }
 
 /** The completed product's publisher owns its exact locator. Domains choose
@@ -856,11 +845,10 @@ async function readCompletedProducerComponents({ repoDir, stackBaseDir, componen
     const records = {};
     for (const [index, descriptor] of components.entries()) {
       const candidate = candidates[index];
-      if (!/^(?:bundle|runtime)-[^\\/\0]+$/.test(candidate.outputName ?? '')) break;
-      const outputDir = join(bundleRoot, candidate.outputName);
       const record = await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-record' },
-        () => readOptionalJson(join(outputDir, 'source-bundle.json')));
-      if (record?.inputIdentity !== candidate.inputIdentity || record?.reuseFingerprint !== candidate.reuseFingerprint) break;
+        () => readPublishedSourceRuntimeRecord({ bundleRoot, candidate }));
+      if (!record) break;
+      const outputDir = join(bundleRoot, candidate.outputName);
       // A legacy linked product cannot satisfy a pinned capture, even when
       // its authored revision is equal. The producer must materialize it once.
       if (descriptor.component === 'daemon' && (revision || env.HAPPIER_STACK_RUNTIME_MODE === 'source-snapshot')

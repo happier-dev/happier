@@ -1,5 +1,7 @@
+// @happier-test-preparation source-condition
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -96,6 +98,8 @@ async function createTsxSourceCliFixture(t, options = {}) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-tsx-source-cli-fixture-' });
   const repoRoot = join(fixture.root, 'repo');
   await mkdir(join(repoRoot, 'apps', 'cli', 'src'), { recursive: true });
+  await mkdir(join(repoRoot, 'packages', 'cli-common'), { recursive: true });
+  await writeFile(join(repoRoot, 'packages', 'cli-common', 'registerSourceRuntime.mjs'), 'export {};\n');
   await mkdir(join(repoRoot, 'apps', 'ui'), { recursive: true });
   await mkdir(join(repoRoot, 'apps', 'server'), { recursive: true });
   await writeFile(join(repoRoot, 'apps', 'cli', 'package.json'), '{ "name": "@happier-dev/cli" }\n', 'utf8');
@@ -568,4 +572,34 @@ test('hstack happier source mode overrides stale TSX_TSCONFIG_PATH for the selec
   const payload = JSON.parse(res.stdout.trim());
   assert.equal(payload.tsconfigPath, join(fixture.repoRoot, 'apps', 'cli', 'tsconfig.json'));
   assert.deepEqual(payload.args, ['providers', 'list', '--json']);
+});
+
+
+test('hstack happier hot source child receives the completed producer guest payload environment', async t => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createTsxSourceCliFixture(t, { cliSource:
+    'console.log(JSON.stringify({root:process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT??null,metadata:process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA??null}));\n' });
+  const stacksRoot = join(fixture.repoRoot, 'stacks');
+  const bundleRoot = join(stacksRoot, 'source-bundles');
+  const outputName = 'runtime-completed-daemon';
+  const guestRoot = join(bundleRoot, outputName, 'guest-payload');
+  const metadata = JSON.stringify({ root: guestRoot, identity: 'a'.repeat(64) });
+  await mkdir(guestRoot, { recursive: true });
+  const candidateKey = createHash('sha256').update(JSON.stringify([fixture.repoRoot, 'daemon', 'happier-server-light', undefined])).digest('hex');
+  const record = { inputIdentity: 'b'.repeat(64), reuseFingerprint: 'c'.repeat(64), env: {
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: guestRoot,
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: metadata } };
+  await writeFile(join(bundleRoot, outputName, 'source-bundle.json'), JSON.stringify(record));
+  await writeFile(join(bundleRoot, `candidate-${candidateKey}.json`), JSON.stringify({ outputName,
+    inputIdentity: record.inputIdentity, reuseFingerprint: record.reuseFingerprint,
+    producerCompletedAt: '2026-11-15T12:00:00.000Z', producerCandidateKey: candidateKey }));
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR,
+    HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1', HAPPIER_STACK_STORAGE_DIR: stacksRoot,
+    HAPPIER_STACK_HOME_DIR: join(fixture.repoRoot, 'stack-home'),
+    HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer',
+    HAPPIER_STACK_REPO_DIR: fixture.repoRoot, HAPPIER_HOME_DIR: join(fixture.repoRoot, 'cli-home') };
+  const result = await runNode(['--conditions=happier-source', '--import', join(rootDir, 'bin/localSourceRuntimeBootstrap.mjs'),
+    join(rootDir, 'scripts/happier.mjs'), '--source', '--version'], { cwd: rootDir, env });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { root: guestRoot, metadata });
 });

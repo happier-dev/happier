@@ -59,6 +59,10 @@ If a development Home's guest payload is unavailable, choose a connected
 controller with that payload, then retry. An older Home that does not advertise
 its guest CLI source must be updated before managed installation can continue.
 
+In current development source, launch source controllers through the Stack
+wrapper after the source producer has prepared the guest payload. The launcher
+passes that payload to the controller; starting a CLI does not build it.
+
 If a provisioned machine cannot connect and its controller is offline, restore
 the controller with a compatible CLI and its existing Account/Home profile, then
 run the machine's Update or Retry install. Development Home payloads are supplied

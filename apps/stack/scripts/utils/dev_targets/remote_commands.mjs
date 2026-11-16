@@ -1,3 +1,5 @@
+import { projectRemoteGuestCliPayloadEnvironment } from '../../runtime/shared/source_bundle_record.mjs';
+export { projectRemoteGuestCliPayloadEnvironment };
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -1195,15 +1197,6 @@ export async function resolveCommandPublisherPolicy(commandArgs, options = {}) {
   const { selfPublisher, heavyClass, requiredTools } = await resolvePackageCommandPolicy(commandArgs, options);
   return { selfPublisher, heavyClass, requiredTools };
 }
-export function projectRemoteGuestCliPayloadEnvironment(env = process.env) {
-  const root = String(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim();
-  return root && !/[\0\r\n]/.test(root)
-    ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: root,
-      ...(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA
-        ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA } : {}) }
-    : {};
-}
-
 export function classifyRemoteCommand(commandArgs, options = {}) {
   const policy = resolveRemoteCommandPolicy(commandArgs, options);
   return { placement: policy.placement, commandClass: policy.commandClass, requiresDependencyBootstrap: policy.bootstrap === '1' };

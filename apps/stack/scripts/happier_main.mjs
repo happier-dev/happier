@@ -245,7 +245,7 @@ async function main() {
     });
   }
 
-  env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec });
+  env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec, sourceCliEnv: resolvedCli.env });
   // Auth recovery supplies the evidence required to refresh a retained Home's
   // endpoints. Its current endpoint and stable scope are already selected by
   // the environment; keep the authenticated descriptor intact until then.

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -5,6 +6,36 @@ import { dirname, join, resolve } from 'node:path';
 async function readOptionalJson(path) {
   try { return JSON.parse(await readFile(path, 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+
+export function sourceRuntimeCandidateKey({ repoDir, component, serverComponent, dbProvider }) {
+  // One current product per source/configuration context. Full checkout hashes
+  // cannot select this pointer: unconsumed source edits intentionally reuse the
+  // captured graph. Its exact completion identity is verified below instead.
+  return createHash('sha256').update(JSON.stringify([repoDir, component, serverComponent, dbProvider])).digest('hex');
+}
+
+export function sourceBundleCandidatePath({ bundleRoot, candidateKey }) {
+  return join(bundleRoot, `candidate-${candidateKey}.json`);
+}
+
+/** Read exactly the producer's current locator and its matching completed record.
+ * Callers that already hold publication custody may supply the admitted locator. */
+export async function readPublishedSourceRuntimeRecord({ bundleRoot, candidateKey, candidate }) {
+  candidate ??= await readOptionalJson(sourceBundleCandidatePath({ bundleRoot, candidateKey }));
+  if (!candidate?.reuseFingerprint || !/^(?:bundle|runtime)-[^\\/\0]+$/.test(candidate.outputName ?? '')) return null;
+  const record = await readOptionalJson(join(bundleRoot, candidate.outputName, 'source-bundle.json'));
+  return record?.inputIdentity === candidate.inputIdentity && record?.reuseFingerprint === candidate.reuseFingerprint
+    ? record : null;
+}
+
+export function projectRemoteGuestCliPayloadEnvironment(env = process.env) {
+  const root = String(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim();
+  return root && !/[\0\r\n]/.test(root)
+    ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: root,
+      ...(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA
+        ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA } : {}) }
+    : {};
 }
 
 export async function readSourceRuntimeBundleRecord(entrypoint) {

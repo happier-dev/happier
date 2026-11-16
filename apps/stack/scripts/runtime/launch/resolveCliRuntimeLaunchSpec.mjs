@@ -39,8 +39,8 @@ export function resolveCliRuntimeLaunchProvenance(cliLaunchSpec) {
   };
 }
 
-export function applyCliRuntimeLaunchProvenanceEnv({ env = {}, cliLaunchSpec = null } = {}) {
-  const projected = { ...env };
+export function applyCliRuntimeLaunchProvenanceEnv({ env = {}, cliLaunchSpec = null, sourceCliEnv = {} } = {}) {
+  const projected = { ...env, ...sourceCliEnv };
   for (const key of RUNTIME_PROVENANCE_ENV_KEYS) delete projected[key];
   const provenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
   if (cliLaunchSpec?.sourceSnapshot === true) {

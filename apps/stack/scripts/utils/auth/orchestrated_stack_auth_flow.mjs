@@ -18,16 +18,13 @@ import {
   guidedStackAuthLoginNow,
   assertGuidedAuthWebappReadyOrThrow,
   resolveStackWebappTargetForAuth,
-  resolveStackAuthCliExecutable,
+  resolveStackAuthCliLaunch,
 } from './stack_guided_login.mjs';
 import { checkDaemonStatePingAware, startLocalDaemonWithAuth } from '../../daemon.mjs';
 import { isTty } from '../cli/wizard.mjs';
 import { buildAuthSafeStackStartSpec } from './buildAuthSafeStackStartSpec.mjs';
-import { resolveStackRuntimeLaunchContext } from '../../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import {
-  applyCliRuntimeLaunchProvenanceEnv,
   resolveCliRuntimeLaunchProvenance,
-  resolveCliRuntimeLaunchSpec,
 } from '../../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 
 function appendCauseText(baseMessage, cause) {
@@ -398,13 +395,8 @@ export async function startDaemonPostAuth({
   const cliHomeDir =
     (mergedEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim() ||
     join(baseDir, 'cli');
-  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env: mergedEnv });
-  const cliLaunchSpec = runtimeLaunchContext.cliLaunchSpec ?? (runtimeLaunchContext.snapshot
-    ? await resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null);
-  const launchEnv = applyCliRuntimeLaunchProvenanceEnv({ env: mergedEnv, cliLaunchSpec });
+  const { cliLaunchSpec, cliExecutable: cliBin, env: launchEnv } = await resolveStackAuthCliLaunch({ rootDir, env: mergedEnv });
   const runtimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
-  const cliBin = cliLaunchSpec?.command
-    || await resolveStackAuthCliExecutable({ rootDir, env: mergedEnv });
 
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
   const explicitWebappUrl = String(webappUrl ?? '').trim();

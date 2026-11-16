@@ -504,23 +504,26 @@ async function prepareCoreAuthEnv({ stackName, webappUrl, env = process.env } = 
   };
 }
 
-async function resolveStackAuthCliLaunch({ rootDir, env = process.env } = {}) {
+export async function resolveStackAuthCliLaunch({ rootDir, env = process.env } = {}) {
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env });
   const cliLaunchSpec = runtimeLaunchContext.cliLaunchSpec ?? (runtimeLaunchContext.snapshot
     ? await resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null);
   if (cliLaunchSpec) {
-    return { cliExecutable: cliLaunchSpec.command, cliLaunchSpec };
+    return { cliExecutable: cliLaunchSpec.command, cliLaunchSpec,
+      env: applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec }) };
   }
 
   const cliDir = getComponentDir(rootDir, 'happier-cli', env);
-  const resolvedCli = resolveCliEntrypoint({
+  const resolvedCli = await resolveCliEntrypoint({
     cliDir,
+    env,
     preferSource: runtimeLaunchContext.runtimeMode.mode === 'source',
   });
   if (!resolvedCli) {
     throw new Error('[auth] cannot resolve the selected Happier CLI entrypoint');
   }
-  return { cliExecutable: join(cliDir, 'bin', 'happier.mjs'), cliLaunchSpec: null, resolvedCli };
+  return { cliExecutable: join(cliDir, 'bin', 'happier.mjs'), cliLaunchSpec: null, resolvedCli,
+    env: applyCliRuntimeLaunchProvenanceEnv({ env, sourceCliEnv: resolvedCli.env }) };
 }
 
 export async function resolveStackAuthCliExecutable({ rootDir, env = process.env } = {}) {
@@ -537,11 +540,8 @@ export async function buildStackAuthLoginInvocation({ rootDir, stackName, webapp
   if (!url) {
     throw new Error('[auth] buildStackAuthLoginInvocation requires a webappUrl');
   }
-  const { cliLaunchSpec, resolvedCli } = await resolveStackAuthCliLaunch({ rootDir: root, env });
-  const merged = applyCliRuntimeLaunchProvenanceEnv({
-    env: { ...(env ?? process.env), HAPPIER_WEBAPP_URL: url },
-    cliLaunchSpec,
-  });
+  const { cliLaunchSpec, resolvedCli, env: launchEnv } = await resolveStackAuthCliLaunch({ rootDir: root, env });
+  const merged = { ...launchEnv, HAPPIER_WEBAPP_URL: url };
   const method = String(merged.HAPPIER_AUTH_METHOD ?? '').trim().toLowerCase();
   if (method && method !== 'web' && method !== 'browser' && method !== 'mobile') {
     throw new Error(`[auth] invalid HAPPIER_AUTH_METHOD=${method} (expected: web|browser|mobile)`);

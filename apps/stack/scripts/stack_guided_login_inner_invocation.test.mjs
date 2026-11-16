@@ -5,13 +5,14 @@ import { join } from 'node:path';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
-import { createPrivateKey, createPublicKey, randomBytes, verify } from 'node:crypto';
+import { createHash, createPrivateKey, createPublicKey, randomBytes, verify } from 'node:crypto';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, createKeyChallengeV2SigningInput, formatRecoveryKey } from '@happier-dev/protocol';
 
 import {
   assertGuidedAuthWebappReadyOrThrow,
   buildStackAuthLoginInvocation,
   resolveServerPortForCoreAuth,
+  resolveStackAuthCliLaunch,
 } from './utils/auth/stack_guided_login.mjs';
 import { createAuthStackFixture, getStackRootFromMeta } from './testkit/auth_testkit.mjs';
 import { writeRuntimeSnapshotLayout } from './testkit/core/runtime_snapshot_layout.mjs';
@@ -23,6 +24,7 @@ function sourceRuntimeEnv() {
   return {
     ...process.env,
     HAPPIER_STACK_ENV_FILE: '',
+    HAPPIER_STACK_REPO_DIR: join(getStackRootFromMeta(import.meta.url), '../..'),
     HAPPIER_STACK_RUNTIME_MODE: 'source',
     HAPPIER_STACK_RUNTIME_STATE_PATH: '',
   };
@@ -296,4 +298,47 @@ test('guided stack auth login rejects generic runtime-backed HTML without the Ha
     }),
     /missing Happier UI readiness marker/i
   );
+});
+
+
+test('guided login and post-auth source launch retain the completed producer guest environment in their children', async t => {
+  const fixture = await createAuthStackFixture({ t, prefix: 'source-auth-guest-', stackName: 'consumer' });
+  const repoDir = join(fixture.tmpDir, 'repo');
+  const rootDir = join(repoDir, 'apps/stack');
+  const cliDir = join(repoDir, 'apps/cli');
+  await mkdir(join(cliDir, 'src'), { recursive: true });
+  await mkdir(join(cliDir, 'bin'), { recursive: true });
+  await mkdir(join(repoDir, 'packages/cli-common'), { recursive: true });
+  await writeFile(join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs'), 'export {};\n');
+  const childProbe = 'console.log(JSON.stringify({root:process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT??null,metadata:process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA??null}));\n';
+  await writeFile(join(cliDir, 'src/index.ts'), childProbe);
+  await writeFile(join(cliDir, 'bin/happier.mjs'), childProbe);
+  const bundleRoot = join(fixture.storageDir, 'source-bundles');
+  const outputName = 'runtime-completed-daemon';
+  const guestRoot = join(bundleRoot, outputName, 'guest-payload');
+  await mkdir(guestRoot, { recursive: true });
+  const metadata = JSON.stringify({ root: guestRoot, identity: 'a'.repeat(64) });
+  const candidateKey = createHash('sha256').update(JSON.stringify([repoDir, 'daemon', 'happier-server-light', undefined])).digest('hex');
+  const candidate = { outputName, inputIdentity: 'b'.repeat(64), reuseFingerprint: 'c'.repeat(64) };
+  await writeFile(join(bundleRoot, `candidate-${candidateKey}.json`), JSON.stringify(candidate));
+  await writeFile(join(bundleRoot, outputName, 'source-bundle.json'), JSON.stringify({
+    inputIdentity: candidate.inputIdentity, reuseFingerprint: candidate.reuseFingerprint,
+    env: { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: guestRoot,
+      HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: metadata },
+  }));
+  const env = fixture.buildEnv({ HAPPIER_STACK_REPO_DIR: repoDir, HAPPIER_STACK_RUNTIME_MODE: 'source',
+    HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer', HAPPIER_STACK_RUNTIME_STATE_PATH: '',
+    HAPPIER_STACK_SERVER_PORT: '5123', HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: '',
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: '', NODE_OPTIONS: '' });
+  const login = await buildStackAuthLoginInvocation({ rootDir, stackName: 'consumer',
+    webappUrl: 'https://auth.invalid', env });
+  const loginChild = await runCommandCapture(login.command, login.args, { env: login.env, cwd: repoDir });
+  assert.equal(loginChild.code, 0, loginChild.stderr);
+  assert.deepEqual(JSON.parse(loginChild.stdout), { root: guestRoot, metadata });
+  // Post-auth uses this complete launch result, retaining the existing bin contract.
+  const postAuth = await resolveStackAuthCliLaunch({ rootDir, env });
+  assert.equal(postAuth.cliExecutable, join(cliDir, 'bin/happier.mjs'));
+  const postAuthChild = await runCommandCapture(process.execPath, [postAuth.cliExecutable], { env: postAuth.env, cwd: repoDir });
+  assert.equal(postAuthChild.code, 0, postAuthChild.stderr);
+  assert.deepEqual(JSON.parse(postAuthChild.stdout), { root: guestRoot, metadata });
 });

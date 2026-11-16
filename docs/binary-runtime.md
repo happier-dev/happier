@@ -331,6 +331,15 @@ the replacement root, and reload READY records its identity and source capture i
 build failure leaves the incumbent runtime selected.
 Custom interpreter-script roots without canonical target metadata remain manual
 overrides and do not receive a source-build identity.
+
+Hot-source controllers also consume the completed source producer's guest tree.
+`resolveCliEntrypoint({ preferSource: true })` retains the authored TypeScript
+entry and returns its payload environment in `resolved.env`; custom source
+launchers must merge that environment when spawning the CLI. The Stack wrapper
+does this for `hstack happier --source`. An explicit operator payload root takes
+precedence. CLI launch does not compile a guest payload; when no completed tree
+is available, the existing supplier still reports `guest_payload_missing`.
+
 Standalone released SSH setup retains verified release acquisition when no payload
 root is supplied. Released CLI 0.2.17 predates the dedicated
 bootstrap interpreter and shared `HAPPIER_FIRST_PARTY_INSTALL_HOME` layout, so it
