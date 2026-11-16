@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { watchLoadSentinel, formatLoadSentinelResult } from './perf/load-sentinel.mjs';
+import { attributeBreakLane } from './perf/break-attribution.mjs';
 import { isPublicRuntimeImportDiagnostic } from './utils/proc/runtimeImportProbe.mjs';
 
 const argv = process.argv.slice(2);
@@ -43,6 +44,7 @@ if (argv.includes('--help')) {
           } catch (error) { error.phase = 'board-write'; throw error; }
         },
         onResult: result => console.log(JSON.stringify(formatLoadSentinelResult(result))),
+        attributeBreak: attribution => attributeBreakLane({ repoDir, board, ...attribution }),
       });
     } catch (error) {
       if (!controller.signal.aborted) throw error;

@@ -62,7 +62,7 @@ test('HEAD boot reports a missing producer member once and does not boot an unch
   assert.equal(results[0].status, 'failed');
   assert.equal(boots, 1);
   assert.equal(posts.length, 1);
-  assert.match(posts[0], /ALL leads — URGENT/);
+  assert.match(posts[0], /ORCH-TOP — URGENT/);
   assert.ok(posts[0].includes(revision));
   assert.match(posts[0], /attachMachineRolesRoutes/);
   await writeFile(entry, 'export {};');
@@ -72,7 +72,8 @@ test('HEAD boot reports a missing producer member once and does not boot an unch
   assert.equal(results.at(-1).status, 'passed');
   assert.equal(results.at(-1).revision, git('rev-parse', 'HEAD').toString().trim());
   assert.equal(boots, 2, 'a new HEAD is checked');
-  assert.equal(posts.length, 1, 'a successful revision does not publish an alarm');
+  assert.equal(posts.length, 2, 'a successful revision clears the alarm ORCH-TOP received');
+  assert.match(posts[1], /head-daemon-boot cleared/);
 });
 
 test('a slow HEAD boot does not delay the source graphs behind it', async t => {
@@ -128,7 +129,11 @@ test('HEAD commits with unchanged source trigger the boot graph through Git noti
   assert.notEqual(revisions[0], revisions[1]);
 });
 
-test('admission pushes post once per slot without rerunning source graphs', async t => {
+const SLOT_A = '11111111-2222-3333-4444-555555555555';
+const SLOT_B = '66666666-7777-8888-9999-000000000000';
+const overrun = (slotId, ageMs, p99DurationMs = 100) => ({ slotId, durationClass: 'targeted-validation', ageMs, p99DurationMs });
+
+test('admission overruns stay in the ledger until 4x p99 with waiters, then post once without rerunning graphs', async t => {
   const { fixture, graph } = await fixtureGraph(t);
   const controller = new AbortController();
   t.after(() => controller.abort());
@@ -140,42 +145,125 @@ test('admission pushes post once per slot without rerunning source graphs', asyn
   const watching = watchLoadSentinel({ repoDir: fixture.root, graphs: [graph], signal: controller.signal,
     onResult: () => { graphLoads += 1; ready.resolve(); },
     post: async notice => { posts.push(notice); posted.resolve(); },
+    readAdmissionStatus: async () => null,
     watchAdmissions: async ({ signal, onSample }) => {
       publish = onSample;
       await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
     } });
   await ready.promise;
-  const sample = { target: 'fixture', overruns: [{ slotId: '11111111-2222-3333-4444-555555555555',
-    durationClass: 'targeted-validation', ageMs: 201, p99DurationMs: 100 }] };
-  publish(sample);
+  const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+  // Flagged by the broker (2x p99) with a queue: recorded, not posted.
+  publish({ target: 'fixture', waitingCount: 3, overruns: [overrun(SLOT_A, 250)] });
+  await settle();
+  // Past 4x p99 but nobody waits: still nothing to route.
+  publish({ target: 'fixture', waitingCount: 0, overruns: [overrun(SLOT_A, 450)] });
+  await settle();
+  assert.equal(posts.length, 0, 'a flag without blocked waiters is ledger material');
+  const ledger = JSON.parse(await readFile(fixture.path('.project/tmp/load-sentinel/OVERRUNS.json'), 'utf8'));
+  assert.deepEqual(ledger.active.map(row => row.slotId), [SLOT_A]);
+  publish({ target: 'fixture', waitingCount: 2, overruns: [overrun(SLOT_A, 460)] });
   await posted.promise;
-  publish({ target: 'fixture', overruns: [] });
-  await new Promise(resolve => setImmediate(resolve));
-  publish(sample);
+  publish({ target: 'fixture', waitingCount: 2, overruns: [overrun(SLOT_A, 470)] });
+  await settle();
   controller.abort();
   await watching;
-  assert.equal(posts.length, 1, 'repeated producer observations announce the slot once');
-  assert.match(String(posts[0]).split('\n')[0], / → Systemic \(overruns\) — ASK — admission overrun /,
-    'an overrun is a broker-owner flag, never an ALL-leads URGENT');
+  assert.equal(posts.length, 1, 'a persisting, blocking overrun posts once');
+  assert.match(String(posts[0]).split('\n')[0], / → Systemic \(overruns\) — ASK — admission overrun blocking waiters /);
+  assert.match(posts[0], /waiting=2/);
   assert.equal(graphLoads, 1, 'admission-only pushes perform zero additional source graph loads');
 });
 
-test('a restarted sentinel keeps announced overruns off the board and rolls them into its status file', async t => {
+test('an overrun crossing 4x p99 between pushes is re-observed fresh at its deadline', async t => {
   const { fixture } = await fixtureGraph(t);
   const posts = [];
-  const overruns = [{ slotId: '11111111-2222-3333-4444-555555555555', durationClass: 'targeted-validation', ageMs: 201, p99DurationMs: 100 }];
+  const reads = [];
+  const posted = Promise.withResolvers();
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [], signal: t.signal,
+    post: async notice => { posts.push(notice); posted.resolve(); },
+    // The broker's push identity omits waitingCount; a blocked waiter never
+    // pushes. The deadline read is the only fresh evidence.
+    readAdmissionStatus: async target => { reads.push(target); return { waitingCount: 1, overruns: [overrun(SLOT_A, 85, 20)] }; },
+    readAdmissionSamples: async () => [{ target: 'fixture', waitingCount: 0, observedAt: Date.now(), overruns: [overrun(SLOT_A, 45, 20)] }] });
+  await sentinel.sampleAdmissions();
+  assert.equal(posts.length, 0);
+  await posted.promise;
+  await sentinel.idle();
+  assert.deepEqual(reads, ['fixture'], 'one read at the escalation deadline, no polling');
+  assert.match(posts[0], /slot=11111111-2222-3333-4444-555555555555/);
+});
+
+test('a restarted sentinel never reposts an escalated overrun, including legacy announced slots', async t => {
+  const { fixture } = await fixtureGraph(t);
+  const posts = [];
+  await mkdir(fixture.path('.project/tmp/load-sentinel'), { recursive: true });
+  await writeFile(fixture.path('.project/tmp/load-sentinel/OVERRUNS.json'), JSON.stringify({ active: [],
+    announced: { [`fixture/${SLOT_A}`]: '2026-11-15T14:00:59.062Z' } }));
+  const overruns = [overrun(SLOT_A, 500), overrun(SLOT_B, 500)];
   const start = () => createLoadSentinel({ repoDir: fixture.root, graphs: [], post: async notice => { posts.push(notice); },
-    readAdmissionSamples: async () => [{ target: 'fixture', overruns }] });
+    readAdmissionSamples: async () => [{ target: 'fixture', waitingCount: 1, overruns }] });
   await start().sampleAdmissions();
-  assert.equal(posts.length, 1, 'first sight posts once');
-  // A new process (unit restart) sees the same still-running slot and one new slot.
-  overruns.push({ slotId: '66666666-7777-8888-9999-000000000000', durationClass: 'targeted-validation', ageMs: 300, p99DurationMs: 100 });
   await start().sampleAdmissions();
-  assert.equal(posts.length, 2, 'only the newly seen slot reaches the board after a restart');
-  assert.match(String(posts[1]), /slot=66666666-7777-8888-9999-000000000000/);
+  assert.equal(posts.length, 1, 'only the not-yet-escalated slot posts, once across restarts');
+  assert.match(String(posts[0]), new RegExp(`slot=${SLOT_B}`));
   const status = JSON.parse(await readFile(fixture.path('.project/tmp/load-sentinel/OVERRUNS.json'), 'utf8'));
-  assert.deepEqual(status.active.map(row => row.slotId).sort(), overruns.map(row => row.slotId).sort(),
-    'repeat sightings are recorded in the sentinel status file');
+  assert.deepEqual(status.active.map(row => row.slotId).sort(), [SLOT_A, SLOT_B]);
+  assert.deepEqual(Object.keys(status.escalated).sort(), [`fixture/${SLOT_A}`, `fixture/${SLOT_B}`]);
+});
+
+test('a break goes to the attributed writer first, escalates to ALL leads only while still red, and stays quiet while red', async t => {
+  const { fixture, graph, entry } = await fixtureGraph(t);
+  const posts = [];
+  const attributions = [];
+  const escalated = Promise.withResolvers();
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [graph], signal: t.signal, breakEscalationMs: 2000,
+    waitForQuiet: async () => {},
+    attributeBreak: async attribution => { attributions.push(attribution); return { lane: 'WRITER-LANE', basis: 'uncommitted fixture' }; },
+    post: async notice => { posts.push(notice); if (notice.includes('→ ALL leads')) escalated.resolve(); } });
+  await writeFile(entry, 'throw new ReferenceError("firstBinding is not defined");');
+  await sentinel.request();
+  assert.equal(posts.length, 1);
+  assert.match(posts[0].split('\n')[0], /→ WRITER-LANE — URGENT — protocol-import-cycles broken/);
+  assert.equal(attributions[0].module, graph.entry, 'attribution starts from the importing module');
+  // A different failure in the same red graph is not a state change.
+  await writeFile(entry, 'throw new ReferenceError("secondBinding is not defined");');
+  await sentinel.request();
+  assert.equal(posts.length, 1, 'a still-red graph posts nothing more');
+  // Escalation fires from the first post's deadline, not from a later cycle.
+  await escalated.promise;
+  assert.equal(posts.length, 2);
+  assert.match(posts[1].split('\n')[0], /→ ALL leads — URGENT — protocol-import-cycles broken/);
+  assert.match(posts[1], /secondBinding/, 'the escalation carries the current failure');
+  assert.match(posts[1], /First sent to WRITER-LANE/);
+  await writeFile(entry, 'export {};');
+  await sentinel.request();
+  assert.equal(posts.length, 3);
+  assert.match(posts[2].split('\n')[0], /→ ORCH-TOP — RESULT — protocol-import-cycles cleared/);
+});
+
+test('a writer that repairs its own break inside the window gets no clear and nobody else is woken', async t => {
+  const { fixture, graph, entry } = await fixtureGraph(t);
+  const posts = [];
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [graph], signal: t.signal, breakEscalationMs: 60_000,
+    waitForQuiet: async () => {}, attributeBreak: async () => ({ lane: 'WRITER-LANE', basis: 'fixture' }),
+    post: async notice => posts.push(notice) });
+  await writeFile(entry, 'throw new ReferenceError("quickBinding is not defined");');
+  await sentinel.request();
+  await writeFile(entry, 'export {};');
+  await sentinel.request();
+  assert.equal(posts.length, 1);
+  assert.deepEqual(JSON.parse(await readFile(fixture.path('.project/tmp/load-sentinel/BREAKS.json'), 'utf8')).breaks, {});
+});
+
+test('a restarted sentinel does not repost a graph that stayed red', async t => {
+  const { fixture, graph, entry } = await fixtureGraph(t);
+  const posts = [];
+  const start = () => createLoadSentinel({ repoDir: fixture.root, graphs: [graph], signal: t.signal, breakEscalationMs: 60_000,
+    waitForQuiet: async () => {}, post: async notice => posts.push(notice) });
+  await writeFile(entry, 'throw new ReferenceError("stickyBinding is not defined");');
+  await start().request();
+  await start().request();
+  assert.equal(posts.length, 1);
+  assert.match(posts[0].split('\n')[0], /→ ORCH-TOP — URGENT/, 'an unattributed break goes to ORCH-TOP');
 });
 
 test('real graph load transitions post one failure and one clear; unchanged failures stay quiet', async t => {
@@ -441,20 +529,17 @@ test('UI bundler failures preserve the binding and the resolved authored import 
   for (const name of ['catalog.test.ts', 'middle.ts', 'leaf.ts']) assert.ok(posts[0].includes(name));
 });
 
-test('distinct breaks within one board minute remain distinct notifications until recovery', async t => {
+test('same-minute transitions keep distinct headings for board watchers', async t => {
   const { fixture, graph, entry } = await fixtureGraph(t);
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-10T08:00:00Z') });
   const posts = [];
   const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [graph],
     signal: t.signal, post: async entry => posts.push(entry) });
-  for (const symbol of ['firstBinding', 'secondBinding', 'firstBinding']) {
-    await writeFile(entry, `throw new ReferenceError("${symbol} is not defined");`);
+  for (const body of ['throw new ReferenceError("firstBinding is not defined");', 'export {};', 'throw new ReferenceError("firstBinding is not defined");', 'export {};']) {
+    await writeFile(entry, body);
     await sentinel.request();
   }
-  assert.equal(posts.length, 2, 'an already reported break must stay quiet');
-  await writeFile(entry, 'export {};');
-  await sentinel.request();
-  assert.equal(posts.length, 4, 'each observed break gets one confirmed clear');
+  assert.equal(posts.length, 4, 'each red/green transition posts once');
   assert.equal(new Set(posts.map(post => post.split('\n')[0])).size, 4, 'board watchers deduplicate on complete headings');
 });
 

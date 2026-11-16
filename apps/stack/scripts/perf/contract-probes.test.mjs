@@ -50,6 +50,8 @@ test('schema-sync probe detects stale sqlite and mysql projections through canon
     assert.equal(posts.length, 1);
     assert.match(posts[0], /URGENT/);
     await writeFile(path, original);
+    // Observe the repair: a sentinel never re-alarms a graph it recorded red.
+    assert.equal((await sample(t, fixture.root, 'schema-sync')).result.status, 'passed');
   }
   assert.equal((await sample(t, fixture.root, 'schema-sync')).result.status, 'passed');
 });
@@ -74,6 +76,7 @@ test('migration probe detects tracked deleted directories and missing SQL withou
     assert.equal(posts.length, 1);
     assert.match(posts[0], /URGENT/);
     await writeFile(fixture.path(path), 'SELECT 2;');
+    assert.equal((await sample(t, fixture.root, 'tracked-migrations')).result.status, 'passed');
   }
   await rm(dirname(fixture.path(paths[0])), { recursive: true });
   assert.equal((await sample(t, fixture.root, 'tracked-migrations')).result.status, 'failed');

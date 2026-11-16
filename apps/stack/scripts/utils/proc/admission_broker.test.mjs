@@ -55,9 +55,10 @@ test('status flags each admitted slot once only after twice its recorded class p
     } });
   await sentinel.request();
   await sentinel.request();
-  assert.equal(posts.length, 2, 'each overrun slot posts once through the existing sentinel board writer');
-  assert.ok(posts.every(post => post.includes('admission overrun') && post.includes('targeted-validation')));
-  assert.equal(((await readFile(board, 'utf8')).match(/— admission overrun \[/g) ?? []).length, 2);
+  assert.equal(posts.length, 0, 'a broker flag with no blocked waiters stays off the board');
+  const ledger = JSON.parse(await readFile(join(root, '.project/tmp/load-sentinel/OVERRUNS.json'), 'utf8'));
+  assert.deepEqual(ledger.active.map(row => row.slotId).sort(), first.overruns.map(slot => slot.slotId).sort(),
+    'each flagged slot is recorded in the sentinel ledger');
 });
 
 test('watch pushes a deadline crossing without new commands or resource observations', linux, async t => {
