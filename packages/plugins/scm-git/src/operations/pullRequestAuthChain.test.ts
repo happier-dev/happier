@@ -35,6 +35,15 @@ function createPullRequest(overrides: Partial<ScmPullRequestSummary> = {}): ScmP
 }
 
 describe('pull request auth-chain helpers', () => {
+    it.each(['draft', 'closed', 'merged'] as const)('only reuses an active %s pull request in the requested branch context', (state) => {
+        expect(matchesBranchHeadContext({
+            pullRequest: createPullRequest({ state, isDraft: state === 'draft', headRepositoryNameWithOwner: provider.nameWithOwner }),
+            provider,
+            baseBranch: 'main',
+            headBranch: 'feature/scm-pr-6',
+        })).toBe(state === 'draft');
+    });
+
     it('reads typed duplicate PR hints before falling back to parsed URLs', () => {
         const pullRequest = createPullRequest();
         const error = Object.assign(new Error('duplicate'), {

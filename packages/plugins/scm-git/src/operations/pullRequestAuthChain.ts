@@ -129,7 +129,7 @@ export function matchesBranchHeadContext(input: Readonly<{
     headRepositoryNameWithOwner?: string;
 }>): boolean {
     if (!sameProvider(input.pullRequest.provider, input.provider)) return false;
-    if (input.pullRequest.state !== 'open') return false;
+    if (input.pullRequest.state !== 'open' && input.pullRequest.state !== 'draft') return false;
     if (input.pullRequest.baseBranch !== input.baseBranch) return false;
     if (input.pullRequest.headBranch !== input.headBranch) return false;
     const expectedHeadRepository = normalizeNameWithOwner(
