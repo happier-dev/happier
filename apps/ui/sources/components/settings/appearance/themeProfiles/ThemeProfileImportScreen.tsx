@@ -1,4 +1,3 @@
-import { useThemeProfilesSnapshot } from '@/sync/store/useThemeProfiles';
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { File } from 'expo-file-system';
@@ -15,7 +14,7 @@ import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/
 import { t } from '@/text';
 import { getSupportedThemeProfileImportFormats, importThemeProfileFromJson } from '@/theme/profiles/themeProfileImportExport';
 import { nativePickFiles, type NativePickedFile } from '@/utils/files/nativePickFiles';
-import { nowThemeProfileTimestamp, upsertThemeProfile } from './themeProfileScreenUtils';
+import { nowThemeProfileTimestamp } from './themeProfileScreenUtils';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { THEMES_SETTINGS } from './themesSettings';
@@ -31,7 +30,6 @@ async function readPickedThemeFile(entry: NativePickedFile): Promise<string> {
 export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const { themeProfiles, legacyProfileIds } = useThemeProfilesSnapshot();
     const { setSetting } = useSettingActionFeedback();
     const [json, setJson] = React.useState('');
     const [error, setError] = React.useState<string | null>(null);
@@ -44,7 +42,6 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
     const submit = React.useCallback(async () => {
         const result = importThemeProfileFromJson(json, {
             now: nowThemeProfileTimestamp(),
-            existingProfileIds: new Set(themeProfiles.profiles.map((profile) => profile.id)),
         });
         if (!result.ok) {
             setError(t(`settingsAppearance.themeProfiles.importErrors.${result.error}`));
@@ -53,12 +50,12 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
         }
         setError(null);
         if (!await setSetting(THEMES_SETTINGS.settings.yourThemes,
-            SettingsDeclarationValueV1Schema.parse({ edit: { before: themeProfiles, next: upsertThemeProfile(themeProfiles, result.profile), legacyProfileIds } }))) return;
+            SettingsDeclarationValueV1Schema.parse({ saveDocument: result.document.raw }))) return;
         setWarnings(result.warnings.length);
         if (result.warnings.length === 0) {
             router.back();
         }
-    }, [json, legacyProfileIds, router, setSetting, themeProfiles]);
+    }, [json, router, setSetting]);
 
     const pickFile = React.useCallback(async () => {
         try {
