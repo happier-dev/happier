@@ -128,8 +128,8 @@ describe('runtime authentication recovery', () => {
     expect(readSessionStartupFailurePreview(code, null, issue?.failureCause)).toMatch(/choose.*model/iu);
     expect(readSessionStartupFailurePreview(code)).toMatch(/could not be applied/iu);
   });
-  it('admits the missing Team model choice as a closed preparation reason', () => {
-    const code = 'team_credential_model_selection_required';
+  it.each(['team_credential_model_selection_required', 'resource_corrupt', 'policy_denied'])(
+    'admits %s as a closed preparation reason', (code) => {
     expect(readSessionPreparationFailureCode(code)).toBe(code);
     expect(readSessionStartupFailurePreview(code)).toBeTruthy();
     expect(readSessionPreparationFailureCode(`${code}: private detail`)).toBeNull();

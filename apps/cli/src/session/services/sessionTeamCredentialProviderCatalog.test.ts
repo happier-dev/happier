@@ -195,6 +195,12 @@ describe('Session Team runtime catalog', () => {
     { deliveryMode: 'direct', readiness: { kind: 'source_unavailable' }, code: 'source_unavailable' },
     { deliveryMode: 'brokered', readiness: { kind: 'source_unavailable' }, code: 'source_unavailable' },
     { deliveryMode: 'brokered', readiness: { kind: 'update_required' }, code: 'update_required' },
+    { deliveryMode: 'brokered', readiness: { kind: 'resource_corrupt' }, code: 'resource_corrupt' },
+    { deliveryMode: 'direct', readiness: { kind: 'resource_corrupt' }, code: 'resource_corrupt' },
+    { deliveryMode: 'brokered', readiness: { kind: 'resource_unavailable' }, code: 'resource_unavailable' },
+    { deliveryMode: 'direct', readiness: { kind: 'resource_unavailable' }, code: 'resource_unavailable' },
+    { deliveryMode: 'brokered', readiness: { kind: 'policy_denied' }, code: 'policy_denied' },
+    { deliveryMode: 'direct', readiness: { kind: 'policy_denied' }, code: 'policy_denied' },
   ] satisfies readonly { deliveryMode: 'direct' | 'brokered'; readiness: TeamCredentialResourceReadinessV1; code: string | null }[])(
     'retains runtime readiness for $deliveryMode / $readiness.kind', async ({ deliveryMode, readiness, code }) => {
       const worker = await createManagedRunLaunchFixture();

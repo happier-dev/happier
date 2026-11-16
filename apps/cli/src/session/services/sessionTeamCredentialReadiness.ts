@@ -8,15 +8,11 @@ import type { TeamCredentialRouteV1 } from '@happier-dev/protocol/teams/credenti
 export function readTeamCredentialLaunchReadinessRefusal(
   resource: Pick<TeamCredentialResourceCatalogEntryV1, 'readiness' | 'deliveryUnavailableReason'>,
   deliveryMode: TeamCredentialRouteV1,
-): 'team_credential_usage_limit' | 'broker_unavailable' | 'source_unavailable' | 'update_required'
+): 'team_credential_usage_limit' | Exclude<TeamCredentialResourceCatalogEntryV1['readiness']['kind'], 'available' | 'limit_reached'>
   | typeof CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired | ProviderErrorCodeV1 | null {
   const readiness = readTeamCredentialDeliveryReadinessV1(resource.readiness, deliveryMode);
   if (readiness.kind !== 'available' && resource.deliveryUnavailableReason) return resource.deliveryUnavailableReason;
   if (readiness.kind === 'source_unavailable') return readiness.reason ?? readiness.kind;
-  if (readiness.kind === 'update_required') return 'update_required';
-  if (readiness.kind === 'broker_unavailable') {
-    return 'broker_unavailable';
-  }
   return readiness.kind === 'limit_reached'
-    ? 'team_credential_usage_limit' : null;
+    ? 'team_credential_usage_limit' : readiness.kind === 'available' ? null : readiness.kind;
 }

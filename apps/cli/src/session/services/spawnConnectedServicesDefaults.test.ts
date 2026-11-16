@@ -317,7 +317,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       },
     })).toEqual({
       kind: 'unavailable',
-      reason: 'connected_services_team_default_requires_current_resource',
+      reason: 'policy_denied',
     });
   });
 
@@ -455,6 +455,9 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       { readiness: { kind: 'broker_unavailable' as const, reason: 'response_invalid' as const },
         refusal: { code: 'broker_unavailable', details: { v: 1, source: 'team_credential' } } },
       { readiness: { kind: 'source_unavailable' as const }, refusal: { code: 'source_unavailable' } },
+      { readiness: { kind: 'resource_corrupt' as const }, refusal: { code: 'resource_corrupt' } },
+      { readiness: { kind: 'resource_unavailable' as const }, refusal: { code: 'resource_unavailable' } },
+      { readiness: { kind: 'policy_denied' as const }, refusal: { code: 'policy_denied' } },
     ]) {
       expect(() => resolvePurposeTeamCredentialBindingIntents({ teamResourceSelections,
         teamCredentialResourceCatalog: { ...catalog, resources: catalog.resources.map(resource => ({ ...resource,
