@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Message } from '@happier-dev/session-core/messages';
+import { matchFindText } from '@happier-dev/plugin-ui/presentation';
 import type { TranscriptJumpResult, TranscriptJumpTarget } from '../viewport/jump/transcriptJumpTargetTypes';
 import { createTranscriptFindModel } from './useTranscriptFind';
 import { revealTranscriptFindMatch } from './revealTranscriptFindMatch';
@@ -10,6 +11,12 @@ function message(id: string, text: string, seq = 1): Message {
 }
 
 const noJump = async (): Promise<TranscriptJumpResult> => ({ status: 'not-found', reason: 'unsupported' });
+
+// Call-through spy: the real matcher runs; the count shows how much text one refresh re-matches.
+vi.mock('@happier-dev/plugin-ui/presentation', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@happier-dev/plugin-ui/presentation')>();
+    return { ...actual, matchFindText: vi.fn(actual.matchFindText) };
+});
 
 describe('transcript Find model', () => {
     it('steps through admitted matches without rereading the corpus or republishing unaffected rows', async () => {
@@ -202,6 +209,43 @@ describe('transcript Find model', () => {
         expect(revealed).toEqual(['target']);
         expect(model.status).toMatchObject({ current: 2, total: 2 });
     });
+    it('re-matches only changed messages when a long transcript gains an arrival or an older page', async () => {
+        let messages = Array.from({ length: 2000 }, (_, index) => message(`row-${index}`, index % 100 === 0 ? 'needle' : 'plain', index + 10));
+        let older = 0;
+        const model = createTranscriptFindModel({
+            readCorpus: () => ({ messages, history: { isLoaded: true, hasOlder: older < 1, isLoadingOlder: false } }),
+            loadPage: async () => {
+                older += 1;
+                messages = [...Array.from({ length: 5 }, (_, index) => message(`older-${index}`, 'plain', index + 1)), ...messages];
+                return { loaded: 5, hasMore: false, status: 'loaded' };
+            },
+            jumpToTarget: noJump, reveal: async () => {},
+        });
+        const calls = vi.mocked(matchFindText);
+        try {
+            model.setQuery('needle');
+            await model.settled();
+            expect(model.status).toMatchObject({ total: 20 });
+
+            calls.mockClear();
+            messages = [...messages, message('arrival', 'needle', 3000)];
+            model.refresh();
+            expect(model.status).toMatchObject({ total: 21 });
+            const perArrival = calls.mock.calls.length;
+
+            calls.mockClear();
+            model.searchOlder();
+            await model.settled();
+            const perOlderPage = calls.mock.calls.length;
+            expect(older).toBe(1);
+            // One block per new message, plus the empty-corpus pattern check per recompute
+            // (the page's recompute and the settle after the search).
+            expect({ perArrival, perOlderPage }).toEqual({ perArrival: 2, perOlderPage: 7 });
+        } finally {
+            model.dispose();
+        }
+    });
+
     it('Search older continues past existing hits until an older page contains the query', async () => {
         let messages = [message('loaded', 'needle', 3)];
         let page = 0;

@@ -54,7 +54,13 @@ export function createTranscriptFindModel(input: TranscriptFindModelInput) {
     }
     const listeners = new Set<() => void>();
     const rowStore = createTranscriptFindRowStore();
-    const projections = new Map<string, Readonly<{ message: Message; context: TranscriptFindTextContext | undefined; blocks: readonly TranscriptFindTextBlock[] }>>();
+    // Per message: its display blocks and, for the query they were last matched with, each block's
+    // ranges. A refresh (an arrival, an older page) re-matches only messages that changed, so its
+    // cost follows the change rather than the loaded transcript length.
+    const projections = new Map<string, Readonly<{
+        message: Message; context: TranscriptFindTextContext | undefined; blocks: readonly TranscriptFindTextBlock[];
+        matchKey: string; ranges: readonly (readonly (readonly [number, number])[])[];
+    }>>();
 
     const sameMatch = (a: TranscriptFindMatch | null, b: TranscriptFindMatch) => a?.messageId === b.messageId
         && a.blockId === b.blockId && a.start === b.start && a.end === b.end;
@@ -125,17 +131,27 @@ export function createTranscriptFindModel(input: TranscriptFindModelInput) {
         const corpus = input.readCorpus();
         const next: TranscriptFindMatch[] = [];
         const present = new Set<string>();
+        const matchKey = `${snapshot.options.matchCase ? 'c' : '-'}${snapshot.options.regex ? 'r' : '-'}${snapshot.query}`;
         for (const message of corpus.messages) {
             present.add(message.id);
             const previous = projections.get(message.id);
             const context = corpus.displayContexts?.get(message.id);
-            const blocks = previous?.message === message && sameDisplayContext(previous.context, context)
-                ? previous.blocks : projectTranscriptFindText(message, context);
-            projections.set(message.id, { message, context, blocks });
-            for (const block of blocks) {
-                const result = matchFindText(block.text, snapshot.query, snapshot.options);
-                if ('invalidPattern' in result) { matches = []; current = null; clearRows(); emit({ kind: 'invalidPattern' }); return; }
-                for (const [start, end] of result.ranges) next.push({ messageId: message.id, blockId: block.id, start, end, message });
+            const unchanged = previous?.message === message && sameDisplayContext(previous.context, context);
+            const blocks = unchanged ? previous.blocks : projectTranscriptFindText(message, context);
+            let ranges = unchanged && previous.matchKey === matchKey ? previous.ranges : null;
+            if (ranges === null) {
+                const matched: (readonly (readonly [number, number])[])[] = [];
+                for (const block of blocks) {
+                    const result = matchFindText(block.text, snapshot.query, snapshot.options);
+                    if ('invalidPattern' in result) { matches = []; current = null; clearRows(); emit({ kind: 'invalidPattern' }); return; }
+                    matched.push(result.ranges);
+                }
+                ranges = matched;
+            }
+            projections.set(message.id, { message, context, blocks, matchKey, ranges });
+            for (let index = 0; index < blocks.length; index += 1) {
+                const block = blocks[index]!;
+                for (const [start, end] of ranges[index] ?? []) next.push({ messageId: message.id, blockId: block.id, start, end, message });
             }
         }
         // Validate even an empty corpus, so an invalid pattern is never misreported as zero.
