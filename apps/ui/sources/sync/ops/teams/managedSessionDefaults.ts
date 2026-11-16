@@ -11,6 +11,7 @@ import { resolveTeamViewState, type TeamViewState } from '@/components/settings/
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createTeamAddress } from '@/sync/domains/teams/teamAddress';
 import { getTeamSnapshot } from '@/sync/store/teams/teamsSnapshots';
+import { getHomeSessionDefaultsSnapshot } from '@/sync/store/home/governance/homeSessionDefaultsSnapshots';
 
 export type ManagedSessionDefaultsReadInput = Readonly<{
     serverId: string;
@@ -30,14 +31,24 @@ export type ManagedSessionDefaultsRead = Readonly<{ context: ManagedSessionDefau
         repairRequired: boolean;
     }>
     | Readonly<{ status: 'unavailable'; reason: 'invalid_scope' }>
+    | Readonly<{ status: 'unavailable'; reason: 'unobserved' }>
     | Readonly<{ status: 'unavailable'; reason: Exclude<TeamViewState, { kind: 'ready' }>['kind']; teamState: Exclude<TeamViewState, { kind: 'ready' }> }>
 );
 
-/** Synchronous, Home/Account-qualified read. useManagedSessionDefaults declares live Team demand. */
+/** Synchronous, Home/Account-qualified read. The hook declares the matching projection demand. */
 export function readManagedSessionDefaults(input: ManagedSessionDefaultsReadInput): ManagedSessionDefaultsRead {
     const policyDefaults = getOrganizationPolicySessionDefaults(readOrganizationPolicy());
     let context: ManagedSessionDefaultsContext = { policyDefaults, memberDefaults: input.memberDefaults ?? null };
     let repairRequired = false;
+    if (input.teamId === null) {
+        const scope = createServerAccountScope(input.serverId, input.memberAccountId);
+        if (!scope) return { status: 'unavailable', reason: 'invalid_scope', context };
+        const snapshot = getHomeSessionDefaultsSnapshot(scope);
+        // New Session already waits on this owner's readiness. A first read
+        // must settle before its unresolved fallback is serialized as explicit.
+        if (!snapshot) return { status: 'unavailable', reason: 'unobserved', context };
+        context = { ...context, homeDefaults: snapshot.data?.homeDefaults ?? null };
+    }
     if (input.teamId !== null) {
         const scope = createServerAccountScope(input.serverId, input.memberAccountId);
         const address = createTeamAddress(input.serverId, input.teamId);
