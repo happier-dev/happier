@@ -1,6 +1,7 @@
 import { isPluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountMaterialization, ConnectedAccountPortableRuntime, ConnectedAccountReadContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import { refreshSupabaseOAuth, revokeSupabaseOAuth, supabaseOAuthMode } from './oauth.js';
 
 const origin = 'https://api.supabase.com';
 type Context = ConnectedAccountAuthenticationContext | ConnectedAccountReadContext;
@@ -55,8 +56,13 @@ async function health(context: ConnectedAccountReadContext, options?: { signal?:
   try {
     const token = await context.credentials.get('token', { signal });
     if (!tokenValid(token)) return { status: 'reconnectRequired' as const, diagnostic: diagnostic('supabase_invalid_token') };
+    // Only OAuth grants carry an expiry; reporting it lets the host refresh ahead of it.
+    const expiry = context.configuration.target.modeId === 'oauth' ? await context.credentials.get('expiresAtMs', { signal }) : null;
+    const expiresAt = expiry === null ? undefined : Number(expiry);
+    if (expiresAt !== undefined && !(expiresAt > Date.now())) return { status: 'expired' as const };
     const result = await probe(token, context, signal);
-    return result.status === 'rejected' ? { status: 'reconnectRequired' as const, diagnostic: result.diagnostic } : result;
+    return result.status === 'rejected' ? { status: 'reconnectRequired' as const, diagnostic: result.diagnostic }
+      : result.status === 'connected' && expiresAt !== undefined ? { ...result, expiresAt } : result;
   } catch (error) {
     signal.throwIfAborted();
     const failureCause = projectActionFailureCauseV1(error, 'supabase.health', { allowUnknownErrorCode: isPluginError(error) });
@@ -88,10 +94,13 @@ export const supabaseConnectedAccountRuntime: ConnectedAccountRuntime = {
     try { await context.attemptCredentials.set('token', token, { signal }); }
     catch { signal.throwIfAborted(); return { status: 'unavailable', diagnostic: diagnostic('supabase_credential_storage_unavailable') }; }
     return result;
-  } } } },
+  } }, oauth: supabaseOAuthMode } },
   status: health,
-  refresh: health,
-  async revoke() { return { status: 'remoteUnsupported', diagnostic: diagnostic('supabase_manual_revoke_required') }; },
+  refresh(context, options) { return context.configuration.target.modeId === 'oauth' ? refreshSupabaseOAuth(context, options) : health(context, options); },
+  async revoke(context, options) {
+    if (context.configuration.target.modeId === 'oauth') return revokeSupabaseOAuth(context, options);
+    return { status: 'remoteUnsupported', diagnostic: diagnostic('supabase_manual_revoke_required') };
+  },
   materialize,
 };
 

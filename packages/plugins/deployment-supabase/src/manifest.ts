@@ -1,6 +1,7 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { supabaseConnectedAccountRuntime, supabasePortableRuntime } from './connectedAccounts/runtime.js';
+import { SUPABASE_OAUTH_SCOPES } from './connectedAccounts/oauth.js';
 import { accountExecution, dataActions } from './data/actions.js';
 import { actionResource } from './data/resources.js';
 import { dataInputResources, dataInputTypes } from './data/inputs.js';
@@ -22,8 +23,19 @@ export const plugin = definePlugin({
     scope: { serviceRefs: ['supabase'], operations: ['use'], materializationKinds: ['httpHeaders'] } }], optional: [] },
   connectedAccountDescriptors: { supabase: {
     declaration: { title: 'Supabase',
-      description: 'Use a Supabase management personal access token, not an application anon or service-role key. Choose the organization and optionally one existing project. Setup verifies that exact scope; Supabase checks permission for each operation. Project-scoped access cannot create organization projects.',
-      authentication: { account: { artifactId: 'account-runtime', exportName: 'activateAccount' }, defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual', title: 'Personal access token', credentialOrigin: 'authentication', outcomeReconciliation: 'none',
+      description: 'Sign in with Supabase and approve access to one organization, or use a management personal access token (not an application anon or service-role key). Supabase checks permission for each operation. Project-scoped tokens cannot create organization projects.',
+      authentication: { account: { artifactId: 'account-runtime', exportName: 'activateAccount' }, defaultModeId: 'oauth', modes: [
+      // No callbackUrl: the attempt uses the Home's Connected Account relay. The
+      // client fields are written by the runtime's own registration, never typed.
+      { id: 'oauth', kind: 'oauthAuthorizationCode', title: 'Sign in with Supabase', browserReachability: 'unreachable',
+        scopes: [...SUPABASE_OAUTH_SCOPES], pkce: 'required', outcomeReconciliation: 'none', postAuthenticationFieldIds: ['organizationSlug'],
+        configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+          { id: 'organizationSlug', title: 'Organization slug', required: false, secret: false, schema: { type: 'string', minLength: 1 } },
+          { id: 'oauthClientId', title: 'OAuth client', required: false, secret: false, presentation: { hidden: true }, schema: { type: 'string', minLength: 1 } },
+          { id: 'oauthRedirectUri', title: 'OAuth redirect URL', required: false, secret: false, presentation: { hidden: true }, schema: { type: 'string', minLength: 1 } },
+          { id: 'oauthClientSecret', title: 'OAuth client secret', required: false, secret: true, presentation: { hidden: true }, schema: { type: 'string', minLength: 1 } },
+        ] } },
+      { id: 'token', kind: 'manual', title: 'Personal access token', credentialOrigin: 'authentication', outcomeReconciliation: 'none',
         browserReachability: 'unreachable',
         setup: {
           url: 'https://supabase.com/dashboard/account/tokens',
