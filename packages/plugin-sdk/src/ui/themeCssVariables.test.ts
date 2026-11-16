@@ -57,4 +57,24 @@ describe('hosted-web theme CSS variables (§3.3, EU-8)', () => {
         );
         expect(written.get('--happier-plugin-color-canvas')).toBe('#123456');
     });
+
+    it('clears removed optional presentation values and skips unchanged context publications', () => {
+        const written = new Map<string, string>();
+        let writes = 0;
+        const target = { style: { setProperty: (property: string, value: string) => {
+            writes += 1;
+            if (value === '') written.delete(property);
+            else written.set(property, value);
+        } } };
+        applyPluginUiThemeCssVariables(theme, target);
+        expect(written.get('--happier-plugin-text-code-family')).toBe(theme.typography.code.fontFamily);
+        const initialWrites = writes;
+        applyPluginUiThemeCssVariables({ ...theme }, target);
+        expect(writes).toBe(initialWrites);
+        applyPluginUiThemeCssVariables({ ...theme, typography: { ...theme.typography,
+            code: { fontSize: theme.typography.code.fontSize, lineHeight: theme.typography.code.lineHeight },
+        } }, target);
+        expect(written.has('--happier-plugin-text-code-family')).toBe(false);
+        expect(written.get('--happier-plugin-color-canvas')).toBe(theme.colors.canvas);
+    });
 });

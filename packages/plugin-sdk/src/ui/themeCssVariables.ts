@@ -47,20 +47,29 @@ export interface PluginUiThemeVariableTarget {
     readonly style: Readonly<{ setProperty(property: string, value: string): void }>;
 }
 
+const appliedVariables = new WeakMap<PluginUiThemeVariableTarget, Readonly<Record<string, string>>>();
+
 /**
  * Write the theme onto an element (normally `document.documentElement`).
  *
- * Idempotent and additive: re-applying a new snapshot after a `watchContext`
- * push overwrites the same custom properties, so a theme change repaints without
- * the surface re-rendering itself.
+ * Replace this helper's previous projection, clearing optional values removed
+ * by a later snapshot. Unrelated context publications produce no style writes.
  */
 export function applyPluginUiThemeCssVariables(
     theme: PluginUiThemeV1,
     target: PluginUiThemeVariableTarget,
 ): void {
-    for (const [property, value] of Object.entries(buildPluginUiThemeCssVariables(theme))) {
-        target.style.setProperty(property, value);
+    const next = buildPluginUiThemeCssVariables(theme);
+    const previous = appliedVariables.get(target);
+    if (previous) {
+        for (const property of Object.keys(previous)) {
+            if (!(property in next)) target.style.setProperty(property, '');
+        }
     }
+    for (const [property, value] of Object.entries(next)) {
+        if (previous?.[property] !== value) target.style.setProperty(property, value);
+    }
+    appliedVariables.set(target, next);
 }
 
 function toKebabCase(value: string): string {
