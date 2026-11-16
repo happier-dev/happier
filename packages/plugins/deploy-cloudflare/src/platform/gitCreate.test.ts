@@ -4,7 +4,7 @@ import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import * as entry from '../index.js';
 import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { resolvePublishTargetRecommendation } from '@happier-dev/protocol/deployments/resolvePublishTargetRecommendation';
-import { DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
+import { DeploymentTargetRoleResultV1ProtocolSchema, type JsonValue } from '@happier-dev/plugin-sdk';
 
 // Provider response projection from the Pages create API example, read 2026-11-16.
 // https://developers.cloudflare.com/api/resources/pages/subresources/projects/methods/create/
@@ -17,8 +17,8 @@ it.each([
 ])('inspects the $product $sourceMethod notice before Create without resource discovery', async ({ product, sourceMethod, notices }) => {
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry });
   try {
-    const draft = { v: 1, serverId: 'home', credentialRef,
-      providerEnvironment: product === 'workers' ? { kind: 'script', scriptName: 'reviewed-app' } : { kind: 'production' },
+    const providerEnvironment: JsonValue = product === 'workers' ? { kind: 'script', scriptName: 'reviewed-app' } : { kind: 'production' };
+    const draft = { v: 1, serverId: 'home', credentialRef, providerEnvironment,
       credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
         localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
       product, sourceMethod };
@@ -106,8 +106,9 @@ it('builds the Pages Git branch and reports the observed SHA through the receipt
 });
 
 it.each(['github', 'gitlab', 'bitbucket', 'gitea'])('offers executable Cloudflare source paths for %s', repositoryProviderKind => {
-  const targets = entry.manifest.contributes.deploymentTargets.filter(target => target.role === 'runtime').map(target => ({
-    ...target, targetClass: 'platform' as const, availability: 'available' as const,
+  const targets = entry.manifest.contributes.deploymentTargets!.filter(target => target.role === 'runtime').map(target => ({
+    ...target, sources: target.sources ? { ...target.sources, gitIntegration: [...target.sources.gitIntegration] } : undefined,
+    targetClass: 'platform' as const, availability: 'available' as const,
   }));
   const recommend = (output: 'static' | 'workers', uploadAvailable: boolean) => resolvePublishTargetRecommendation({
     definition: null, deploy: { framework: 'html', output }, targets, repositoryProviderKind,

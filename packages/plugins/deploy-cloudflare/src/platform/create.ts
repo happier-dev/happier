@@ -52,7 +52,7 @@ async function create(input: CreateInput, context: PluginAccountActionContext, p
     providerEnvironment: environment, sourceMethod: input.sourceMethod,
     ...(source && input.repository ? { repositoryAccess: pagesRepositoryAccess(native.source, input.repository, input.providerAccountId) } : {}),
     ...(product === 'pages' ? { providerUrl: `https://dash.cloudflare.com?to=/${encodeURIComponent(input.providerAccountId)}/pages/view/${encodeURIComponent(native.name)}` } : {}),
-    preparedNative: { projectName: native.name, reviewNotice: cloudflareReviewNotice(product, input.sourceMethod),
+    preparedNative: { projectName: native.name, reviewNotice: cloudflareReviewNotice(product, input.sourceMethod!),
       ...(product === 'pages' ? {
         pages: { projectMode: native.source ? 'gitIntegration' : 'directUpload', productionBranch: native.production_branch } } : {}) } });
 }
