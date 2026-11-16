@@ -2,7 +2,6 @@ import * as React from 'react';
 
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { SessionSwitcherContent } from '@/components/navigation/mobile/chrome/lateralSwipe/SessionSwitcherContent';
-import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useSignalSessionCockpitDismiss } from '@/hooks/session/useSignalSessionCockpitDismiss';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import type { TranscriptExperience } from '@/components/sessions/transcript/viewport/lifecycle/transcriptSameSessionHandoff';
@@ -12,15 +11,12 @@ import { SessionCockpitTabNavigator } from './SessionCockpitTabNavigator';
 
 type SessionCockpitShellProps = Readonly<{
     experience?: TranscriptExperience;
-    surfaceFocusedOverride?: boolean;
-    surfaceVisibleOverride?: boolean;
     sessionId: string;
     scopeId: string;
     surface: SessionMobileSurface;
     safeAreaPadding?: boolean;
     jumpToSeq?: number | null;
     jumpToMessageId?: string | null;
-    paneUrlState?: SessionPaneUrlState | null;
     initialAttachmentDrafts?: readonly AttachmentDraft[] | null;
     terminalTabAvailable?: boolean;
     routeServerId?: string | null;
@@ -37,15 +33,12 @@ export const SessionCockpitShell = React.memo((props: SessionCockpitShellProps) 
         <SessionSwitcherContent>
             <SessionCockpitTabNavigator
                 experience={props.experience}
-                surfaceFocusedOverride={props.surfaceFocusedOverride}
-                surfaceVisibleOverride={props.surfaceVisibleOverride}
                 sessionId={props.sessionId}
                 scopeId={props.scopeId}
                 initialSurface={props.surface}
                 safeAreaPadding={props.safeAreaPadding}
                 jumpToSeq={props.jumpToSeq}
                 jumpToMessageId={props.jumpToMessageId}
-                paneUrlState={props.paneUrlState}
                 initialAttachmentDrafts={props.initialAttachmentDrafts}
                 terminalTabAvailable={props.terminalTabAvailable}
                 routeServerId={props.routeServerId}

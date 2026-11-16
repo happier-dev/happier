@@ -38,10 +38,8 @@ describe('Session bootstrap reachability', () => {
         const presence = await renderHook(() => useSessionMachineReachability(session.id, serverId));
         await waitForHomeGovernance(() => expect(presence.getCurrent().machineReachability).toBe('reachable'));
         const bootstrap = await renderHook(() => useSessionViewBootstrap({
-            sessionId: session.id, serverId, paneScopeId: 'bootstrap-source', paneUrlState: null,
-            multiPaneEnabled: false, sessionsRightPaneDefaultOpen: false, deviceType: 'desktop',
-            sessionPath: null, sessionAccepted: false, surfaceFocused: false, surfaceVisible: false,
-            routeAnchor: false, paneUrlSyncRouteActive: false, paneEffectsEnabled: false,
+            sessionId: session.id, serverId, paneScopeId: 'bootstrap-source',
+            sessionPath: null, sessionAccepted: false,
         }), { wrapper: ({ children }) => <AppPaneProvider>{children}</AppPaneProvider> });
         expect(bootstrap.getCurrent()).toMatchObject({ machineReachable: true, machineReachability: 'reachable' });
         await bootstrap.unmount();

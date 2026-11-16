@@ -85,7 +85,7 @@ const loadWorkspaceProduction = () => Promise.all([
     import('../panes/hooks/useAppPaneScope'), import('@/sync/domains/scope/activeServerAccountScope'),
     import('@/sync/domains/plugins/ui/projectionUnion'),
     import('@/components/sessions/shell/view/useSessionViewBootstrap'),
-    import('@/components/sessions/panes/url/sessionPaneUrlState'),
+    import('@/components/sessions/shell/view/SessionPaneUrlSyncHost'),
     import('@/components/sessions/plugins/useSessionPluginRuntime'),
     import('@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1'),
     import('@/sync/domains/plugins/availability/projection'),
@@ -130,9 +130,10 @@ describe('workspace tabs production composition', () => {
             { PluginProjectionV2Schema }, { normalizePluginUiDestinationBindingV1 },
             { normalizePluginUiProjection }, { useAppPaneScope }, { captureActiveServerAccountScopeLifetime },
             { unionPluginUiProjections, readPluginUiContributionOrigin }, { useSessionViewBootstrap },
-            { parseSessionPaneUrlState }, { createSessionPaneSurfaceScope }, { PluginMachineExecutionOriginV1Schema },
+            { SessionPaneUrlSyncHost }, { createSessionPaneSurfaceScope }, { PluginMachineExecutionOriginV1Schema },
             { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection }] = production;
         const { storage } = await import('@/sync/domains/state/storage');
+        const { useSessionSurfaceActivation } = await import('@/components/sessions/shell/view/useSessionSurfaceActivation');
         const initial = storage.getState();
         const scope = initial.profileScope!;
         const sessionA = 'reviewer-a';
@@ -207,15 +208,15 @@ describe('workspace tabs production composition', () => {
             currentSession = sessionId;
             const scopeId = useRegisterSessionPaneDriver(sessionId, scope.serverId, runtime);
             const paneSurfaceScope = React.useMemo(() => createSessionPaneSurfaceScope(sessionId, runtime), [sessionId]);
-            const current = navigation.state.tabs[navigation.state.groups[navigation.state.focusedGroupId].activeTabId];
-            pane = useSessionViewBootstrap({ sessionId, serverId: scope.serverId, paneScopeId: scopeId,
-                paneUrlState: parseSessionPaneUrlState(current.target.params), multiPaneEnabled: true,
-                sessionsRightPaneDefaultOpen: false, deviceType: 'tablet', sessionPath: null,
-                sessionAccepted: true, surfaceFocused: true, surfaceVisible: true, routeAnchor: true,
-                paneUrlSyncRouteActive: true }).pane;
+            useSessionViewBootstrap({ sessionId, serverId: scope.serverId, paneScopeId: scopeId, sessionPath: null,
+                sessionAccepted: true });
+            useSessionSurfaceActivation({ sessionId, serverId: scope.serverId, surfaceFocused: true, surfaceVisible: true, routeAnchor: true });
+            pane = useAppPaneScope(scopeId);
             openInspector = useOpenAppRightSidebarTab();
             return <SessionRightSidebarProvider sessionId={sessionId} scopeId={scopeId}
                 paneSurfaceScope={paneSurfaceScope}>
+                <SessionPaneUrlSyncHost paneScopeId={scopeId} multiPaneEnabled sessionsRightPaneDefaultOpen={false}
+                    deviceType="tablet" surfaceVisible paneUrlSyncRouteActive paneEffectsEnabled />
                 <AppPaneScopeHost scopeId={scopeId} main={<React.Fragment />} />
             </SessionRightSidebarProvider>;
         }
@@ -312,14 +313,15 @@ describe('workspace tabs production composition', () => {
         disposeHome = homes.dispose; disconnectHome = await homes.restoreActiveConnection();
         const [{ storage }, { useWorkspaceFileOpener }, { useRegisterSessionPaneDriver }, { useAppPaneScope },
             { PanePresentationProvider }, { useAppPaneContext }, { router }, { normalizeActionsSettingsV1 },
-            { useSessionViewBootstrap }, { parseSessionPaneUrlState }, { useSessionTrack }] = await Promise.all([
+            { useSessionViewBootstrap }, { SessionPaneUrlSyncHost }, { useSessionTrack }] = await Promise.all([
             import('@/sync/domains/state/storage'), import('@/components/workspaces/files/useWorkspaceFileOpener'),
             import('@/components/sessions/panes/useRegisterSessionPaneDriver'), import('../panes/hooks/useAppPaneScope'),
             import('../panes/panePresentation'), import('../panes/AppPaneProvider'), import('expo-router'),
             import('@happier-dev/protocol/actions/actionSettings'),
-            import('@/components/sessions/shell/view/useSessionViewBootstrap'), import('@/components/sessions/panes/url/sessionPaneUrlState'),
+            import('@/components/sessions/shell/view/useSessionViewBootstrap'), import('@/components/sessions/shell/view/SessionPaneUrlSyncHost'),
             import('@/components/sessions/files/track/SessionTrack'),
         ]);
+        const { useSessionSurfaceActivation } = await import('@/components/sessions/shell/view/useSessionSurfaceActivation');
         const initial = storage.getState();
         const scope = initial.profileScope!;
         const [{ InjectedAuthProvider }, { TokenStorage }] = await Promise.all([
@@ -344,16 +346,16 @@ describe('workspace tabs production composition', () => {
         const foregroundInput = document.createElement('input');
         function TrackEntry() {
             const scopeId = useRegisterSessionPaneDriver('tracked', scope.serverId);
-            const currentTab = navigation.state.tabs[navigation.state.groups[navigation.state.focusedGroupId].activeTabId];
-            pane = useSessionViewBootstrap({ sessionId: 'tracked', serverId: scope.serverId, paneScopeId: scopeId,
-                paneUrlState: parseSessionPaneUrlState(currentTab.target.params), multiPaneEnabled: true,
-                sessionsRightPaneDefaultOpen: false, deviceType: platform === 'web' ? 'desktop' : 'phone',
-                sessionPath: '/repo', sessionAccepted: true, surfaceFocused: true, surfaceVisible: true,
-                routeAnchor: true, paneUrlSyncRouteActive: true }).pane;
+            useSessionViewBootstrap({ sessionId: 'tracked', serverId: scope.serverId, paneScopeId: scopeId,
+                sessionPath: '/repo', sessionAccepted: true });
+            useSessionSurfaceActivation({ sessionId: 'tracked', serverId: scope.serverId, surfaceFocused: true, surfaceVisible: true, routeAnchor: true });
+            pane = useAppPaneScope(scopeId);
             paneContext = useAppPaneContext();
             track = useSessionTrack({ scopeId, sessionAddress: { serverId: scope.serverId, sessionId: 'tracked' },
                 workspaceRoot: '/repo', active: true });
-            opener = useWorkspaceFileOpener(); return null;
+            opener = useWorkspaceFileOpener();
+            return <SessionPaneUrlSyncHost paneScopeId={scopeId} multiPaneEnabled sessionsRightPaneDefaultOpen={false}
+                deviceType={platform === 'web' ? 'desktop' : 'phone'} surfaceVisible paneUrlSyncRouteActive paneEffectsEnabled />;
         }
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><PanePresentationProvider value={intent => { presentations.push(intent); }}><AppPaneProvider>
             <WorkspaceProvider enabled={platform === 'web'} phone={platform === 'ios'} catalog={catalog}>{owner => {

@@ -6,6 +6,7 @@ import { BackHandler, Platform, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationFocus, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationInstance, type DestinationInstanceContextValue } from '@/components/appShell/workspace/destinationInstanceContext';
 import type { PluginUiDestinationReferenceV1 } from '@happier-dev/protocol/plugins/ui';
 
 import {
@@ -49,10 +50,10 @@ import { SessionTranscriptNavigationPane } from '@/components/sessions/panes/Ses
 import { SessionBrowseFilesSurface } from '@/components/sessions/panes/surfaces/SessionBrowseFilesSurface';
 import { SessionGitSurface } from '@/components/sessions/panes/surfaces/SessionGitSurface';
 import { SessionTerminalSurface } from '@/components/sessions/panes/surfaces/SessionTerminalSurface';
-import {
-    type SessionPaneUrlDetailsTarget,
-    type SessionPaneUrlState,
-} from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { parseSessionPaneUrlState, type SessionPaneUrlDetailsTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { useSessionPaneUrlFact } from '@/components/sessions/panes/url/useSessionPaneUrlState';
+import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
+import type { PaneScopeState } from '@/components/appShell/panes/model/appPaneReducer';
 import { SessionView } from '@/components/sessions/shell/SessionViewHost';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { SessionBoardPane } from '@/components/sessions/board/SessionBoardPane';
@@ -113,15 +114,12 @@ const SessionSkillsPane = retryableLazy<React.ComponentProps<typeof import('@/co
 export type SessionCockpitSurfaceScreenProps = Readonly<{
     catalog: readonly SessionCockpitMobileCatalogEntry[];
     experience?: TranscriptExperience;
-    surfaceFocusedOverride?: boolean;
-    surfaceVisibleOverride?: boolean;
     sessionId: string;
     scopeId: string;
     surface: SessionMobileSurface;
     safeAreaPadding?: boolean;
     jumpToSeq?: number | null;
     jumpToMessageId?: string | null;
-    paneUrlState?: SessionPaneUrlState | null;
     initialAttachmentDrafts?: readonly AttachmentDraft[] | null;
     terminalTabAvailable?: boolean;
     routeServerId?: string | null;
@@ -151,6 +149,18 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
         );
 });
 
+/** The pane facts the cockpit renders from; a Details tab or bottom-panel edit keeps the same value. */
+function selectCockpitPaneFacts(scope: PaneScopeState | null) {
+    return {
+        activeRightTabId: scope?.right.activeTabId ?? null,
+        rightIsOpen: scope?.right.isOpen ?? false,
+        detailsIsOpen: scope?.details.isOpen ?? false,
+        selectedRightDestination: scope?.right.selectedDestination ?? null,
+    };
+}
+const readHasDeepLinkedDetailsTarget = (params: Readonly<Record<string, string | string[] | undefined>>) =>
+    parseSessionPaneUrlState(params)?.details != null;
+
 const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurfaceScreenProps) => {
     const router = useRouter();
     const { open: openWorkspaceFile } = useWorkspaceFileOpener();
@@ -158,14 +168,16 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
     // This native focus belongs to the cockpit's independent scene navigator,
     // not the outer Expo route. Both owners must admit effects for a hosted scene.
     const sceneFocused = useIsFocused();
-    const instanceKey = useDestinationInstanceKey();
-    // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is fixed for this mounted body.
-    const destinationFocused = instanceKey === null ? true : useDestinationFocus();
     const cockpit = props.experience !== 'classic';
-    const surfaceFocused = props.surfaceFocusedOverride ?? destinationFocused;
-    const surfaceVisible = props.surfaceVisibleOverride ?? true;
-    const isFocused = cockpit && sceneFocused && surfaceFocused && surfaceVisible;
-    const pane = useAppPaneScope(props.scopeId);
+    const hosted = useDestinationInstanceKey() !== null;
+    // Only a cockpit scene acts on its tab's focus here; the Session view's own readers follow it
+    // themselves, so a classic tab's switch does not render this screen.
+    const selectDestinationActive = React.useCallback((instance: DestinationInstanceContextValue | null) =>
+        cockpit && instance !== null && instance.focused && instance.visible, [cockpit]);
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is fixed for this mounted body.
+    const destinationActive = hosted ? useDestinationInstance(selectDestinationActive, Object.is) : useDestinationFocus();
+    const isFocused = cockpit && sceneFocused && destinationActive;
+    const pane = useAppPaneScope(props.scopeId, selectCockpitPaneFacts);
     const surfaceNavigation = useSessionCockpitSurfaceNavigation();
     // Phone Ask (P5 D-4): the Session screen keeps the one composer and seats it in the Ask sheet over the File page.
     const phoneAsk = usePhoneAskSheet();
@@ -204,17 +216,16 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
         sessionId: props.sessionId,
         onAfterOpen: switchToBrowserSurface,
     });
-    const activeRightTabId = pane.scopeState?.right?.activeTabId ?? null;
-    const rightIsOpen = pane.scopeState?.right?.isOpen ?? false;
-    const detailsIsOpen = pane.scopeState?.details?.isOpen ?? false;
+    const { activeRightTabId, rightIsOpen, detailsIsOpen } = pane.scopeState;
     const openRight = pane.openRight;
     const closeRight = pane.closeRight;
     const closeDetails = pane.closeDetails;
     const selectRightDestination = pane.selectRightDestination;
     const setRightTab = pane.setRightTab;
     const terminalTabAvailable = props.terminalTabAvailable !== false;
-    const { dispatchPane, startIsPresented } = useAppPaneContext(value => ({
+    const { dispatchPane, readPaneState, startIsPresented } = useAppPaneContext(value => ({
         dispatchPane: value.dispatch,
+        readPaneState: value.getReadState,
         startIsPresented: value.detailsStartScopeId === props.scopeId,
     }));
     const terminalPageActive = isFocused && props.surface === 'terminal' && terminalTabAvailable;
@@ -223,11 +234,8 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
         dispatchPane({ type: 'setTerminalPageActive', scopeId: props.scopeId, active: true });
         return () => dispatchPane({ type: 'setTerminalPageActive', scopeId: props.scopeId, active: false });
     }, [dispatchPane, props.scopeId, terminalPageActive]);
-    const hasDeepLinkedDetailsTarget = props.paneUrlState?.details != null;
+    const hasDeepLinkedDetailsTarget = useSessionPaneUrlFact(readHasDeepLinkedDetailsTarget);
     const presentPane = usePanePresentation();
-    // Read when Tabs is pressed, so pane edits never re-register the cockpit chrome.
-    const detailsRef = React.useRef(pane.scopeState?.details);
-    detailsRef.current = pane.scopeState?.details;
     const runtimeAdmission = React.useMemo(() => Object.freeze({
         platform: pluginProjection.platform,
         formFactor: resolvePluginUiRuntimeFormFactor({ deviceType }),
@@ -303,8 +311,8 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
         pluginProjection.machineId,
         pluginProjection.serverId,
     ]);
-    const selectedRightPluginDestination = pane.scopeState?.right.selectedDestination?.kind === 'plugin'
-        ? pane.scopeState.right.selectedDestination
+    const selectedRightPluginDestination = pane.scopeState.selectedRightDestination?.kind === 'plugin'
+        ? pane.scopeState.selectedRightDestination
         : null;
     const activeInstanceKey = selectedRightPluginDestination
         && pluginMobileTab
@@ -380,7 +388,9 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
         // Tabs on a phone (owner ruling 2026-10-31) opens or focuses the pane's page as its own rail tab, through the
         // layout's own-tab presentation; the Session tab keeps its scene and route. Without one, Tabs is a scene.
         if (surface === 'tabs') {
-            const details = detailsRef.current;
+            // Read when Tabs is pressed, so pane edits never re-register the cockpit chrome.
+            const scope = readPaneState().scopes[props.scopeId];
+            const details = scope ? buildDetailsWorkspaceStateView(scope.details) : null;
             const tab = details?.tabs.find(item => item.key === details.activeTabKey);
             if (tab && presentPane?.({ scopeId: props.scopeId, pane: 'details', tab, fromDetails: true }) === 'ownTab') {
                 return 'ownTab';
@@ -399,7 +409,7 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
             if (surface === 'chat') closeRight();
         }
         surfaceNavigationRef.current?.switchSurface(surface);
-    }, [closeDetails, closeRight, hasDeepLinkedDetailsTarget, openRight, presentPane, props.scopeId, props.surface, terminalTabAvailable]);
+    }, [closeDetails, closeRight, hasDeepLinkedDetailsTarget, openRight, presentPane, props.scopeId, props.surface, readPaneState, terminalTabAvailable]);
     const requestCloseDetails = React.useCallback(() => {
         closeDetails();
         surfaceNavigationRef.current?.returnToPreviousSurface();
@@ -687,11 +697,9 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
             routeHydrationState={props.routeHydrationState}
             jumpToSeq={props.jumpToSeq}
             jumpToMessageId={props.jumpToMessageId}
-            paneUrlState={props.paneUrlState ?? undefined}
             initialAttachmentDrafts={props.initialAttachmentDrafts}
-            surfaceFocusedOverride={surfaceFocused && (cockpit ? sceneFocused || askSheetOpen : true)}
-            surfaceVisibleOverride={surfaceVisible && (cockpit ? sceneFocused || askSheetOpen : true)}
-            routeAnchorOverride={cockpit ? Platform.OS === 'web' ? undefined : true : surfaceFocused && surfaceVisible}
+            surfaceSceneActive={cockpit ? sceneFocused || askSheetOpen : true}
+            routeAnchorOverride={cockpit ? Platform.OS === 'web' ? undefined : true : 'surface'}
             contentOverride={contentOverride}
             headerAccessory={pageStrip}
             safeAreaTopMode={safeAreaTopMode}
@@ -708,12 +716,9 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
         headerSafeAreaTopMode,
         cockpit,
         sceneFocused,
-        surfaceFocused,
-        surfaceVisible,
         props.initialAttachmentDrafts,
         props.jumpToSeq,
         props.jumpToMessageId,
-        props.paneUrlState,
         props.routeServerId,
         props.routeHydrationState,
         props.sessionId,

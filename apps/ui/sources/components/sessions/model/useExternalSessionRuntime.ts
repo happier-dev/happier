@@ -10,6 +10,7 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { Metadata } from '@happier-dev/session-core/state';
 import {
     machineExternalSessionAttach,
@@ -152,7 +153,11 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
         { serverId: explicitServerId, sessionId: normalizedSessionId },
         runtimeEnabled,
     );
-    const sessionServerId = preferredSessionServerId;
+    // An explicit, exact Session address needs no lookup: it stays the same while the surface is hidden,
+    // so a hide/show keeps this runtime's identity. Only the legacy bare-id lookup follows `runtimeEnabled`.
+    const sessionServerId = explicitServerId !== null && normalizedSessionId
+        ? normalizeSessionAddress(explicitServerId, normalizedSessionId)?.serverId ?? preferredSessionServerId
+        : preferredSessionServerId;
     React.useEffect(() => () => {
         generationRef.current += 1;
         refreshControllerRef.current?.abort();
@@ -251,8 +256,11 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
         previousRuntimeScopeRef.current = nextRuntimeScope;
     }, [externalSessionTargetKey, normalizedSessionId, runtimeEnabled]);
 
+    // Commands read the current gate when they run, so a hide/show keeps `refreshNow`'s identity.
+    const runtimeEnabledRef = React.useRef(runtimeEnabled);
+    runtimeEnabledRef.current = runtimeEnabled;
     const refreshNow = React.useCallback(async (): Promise<ExternalSessionRuntimeStatus | null> => {
-        if (!runtimeEnabled) {
+        if (!runtimeEnabledRef.current) {
             if (statusRef.current !== null) {
                 statusRef.current = null;
                 setStatus(null);
@@ -325,7 +333,7 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
 
         inFlightRefreshRef.current = refreshPromise;
         return refreshPromise;
-    }, [externalSessionTarget, normalizedSessionId, runtimeEnabled, sessionServerId]);
+    }, [externalSessionTarget, normalizedSessionId, sessionServerId]);
 
     React.useEffect(() => {
         if (!externalSessionTarget || !runtimeActive || !runtimeEnabled) {

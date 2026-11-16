@@ -1,49 +1,42 @@
-import { useDestinationRouter, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { Platform } from 'react-native';
-import * as React from 'react';
-
-import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
-import { useSessionPaneUrlSync } from '@/components/sessions/panes/url/useSessionPaneUrlSync';
+import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
+import type { PaneScopeState } from '@/components/appShell/panes/model/appPaneReducer';
 import { useWarmRepositoryDirectoryCacheOnSessionOpen } from '@/hooks/session/files/useWarmRepositoryDirectoryCacheOnSessionOpen';
-import { sync } from '@/sync/sync';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
-import { useSessionSurfaceActivation } from './useSessionSurfaceActivation';
 
 export type UseSessionViewBootstrapInput = Readonly<{
     sessionId: string;
     serverId?: string | null;
     paneScopeId: string;
-    paneUrlState: SessionPaneUrlState | null;
-    multiPaneEnabled: boolean;
-    sessionsRightPaneDefaultOpen: boolean;
-    deviceType: string;
     sessionPath: string | null;
     sessionAccepted: boolean;
-    surfaceFocused: boolean;
-    surfaceRetained?: boolean;
-    surfaceVisible: boolean;
-    routeAnchor: boolean;
-    paneUrlSyncRouteActive: boolean;
-    /**
-     * `false` for a Session presented inside another surface: it never mirrors pane state into
-     * the URL or route params and never opens a pane on its own. Default `true`.
-     */
-    paneEffectsEnabled?: boolean;
 }>;
 
+export type SessionViewPaneFacts = Readonly<{ details: ReturnType<typeof buildDetailsWorkspaceStateView> }>;
+const paneFactsByDetails = new WeakMap<PaneScopeState['details'], SessionViewPaneFacts>();
+/**
+ * The pane facts the Session view reads: its Details workspace (the Board's visibility and the
+ * presentation commands' press-time reads). A side-tab or bottom change keeps the same value; the
+ * URL mirror reads the whole scope in its own leaf (`SessionPaneUrlSyncHost`).
+ */
+function selectSessionViewPaneFacts(scope: PaneScopeState | null): SessionViewPaneFacts | null {
+    if (!scope) return null;
+    let facts = paneFactsByDetails.get(scope.details);
+    if (!facts) {
+        facts = { details: buildDetailsWorkspaceStateView(scope.details) };
+        paneFactsByDetails.set(scope.details, facts);
+    }
+    return facts;
+}
+
 export type UseSessionViewBootstrapResult = Readonly<{
-    pane: ReturnType<typeof useAppPaneScope>;
+    pane: Omit<AppPaneScopeApi, 'scopeState'> & { scopeState: SessionViewPaneFacts | null };
     machineReachable: boolean;
     machineReachability: 'reachable' | 'unreachable' | 'unknown';
-    isSurfaceFocused: boolean;
 }>;
 
 export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): UseSessionViewBootstrapResult {
-    const router = useDestinationRouter();
-    const hosted = useDestinationInstanceKey() !== null;
-    const pane = useAppPaneScope(input.paneScopeId);
-    const paneEffectsEnabled = input.paneEffectsEnabled !== false;
+    const pane = useAppPaneScope(input.paneScopeId, selectSessionViewPaneFacts);
     const {
         machineReachable,
         machineOnline,
@@ -52,57 +45,8 @@ export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): Us
     const machineReachability = observedMachineReachability
         ?? (machineReachable ? 'reachable' : 'unreachable');
 
-    useSessionPaneUrlSync({
-        enabled: paneEffectsEnabled
-            && (hosted ? input.surfaceVisible : input.paneUrlSyncRouteActive)
-            && input.multiPaneEnabled
-            && Platform.OS === 'web',
-        browserMirrorsEnabled: paneEffectsEnabled && !hosted,
-        routeParamSyncEnabled: paneEffectsEnabled && (hosted || input.paneUrlSyncRouteActive),
-        scopeKey: input.paneScopeId,
-        scopeState: pane.scopeState,
-        urlState: input.paneUrlState,
-        pane,
-        setParams: paneEffectsEnabled
-            && (hosted || input.paneUrlSyncRouteActive)
-            && typeof router.setParams === 'function'
-            ? router.setParams.bind(router)
-            : null,
-    });
-
-    React.useEffect(() => {
-        if (!paneEffectsEnabled) return;
-        if (!input.sessionsRightPaneDefaultOpen) return;
-        if (!input.multiPaneEnabled) return;
-        if (!(Platform.OS === 'web' || input.deviceType === 'tablet')) return;
-        if (input.paneUrlState?.rightTabId) return;
-        const right = pane.scopeState?.right;
-        if (right?.isOpen === true) return;
-        if (right?.activeTabId != null) return;
-        pane.openRight({ tabId: 'files' });
-        pane.setRightTab('files');
-    }, [
-        input.deviceType,
-        input.multiPaneEnabled,
-        input.paneUrlState?.rightTabId,
-        input.sessionsRightPaneDefaultOpen,
-        pane,
-        paneEffectsEnabled,
-    ]);
-
-    const visibleSurfaceCanSync = input.surfaceFocused || input.routeAnchor;
-    const activation = useSessionSurfaceActivation({
-        sessionId: input.sessionId,
-        serverId: input.serverId,
-        onSessionVisible: input.sessionAccepted && visibleSurfaceCanSync
-            ? sync.onSessionVisible
-            : undefined,
-        surfaceFocused: input.surfaceFocused,
-        surfaceRetained: input.surfaceRetained,
-        surfaceVisible: input.surfaceVisible,
-        routeAnchor: input.routeAnchor,
-    });
-
+    // Surface activation (visible/focused/anchored marks) belongs to the Session view's presence
+    // leaf: a tab switch must not render this bootstrap's host.
     useWarmRepositoryDirectoryCacheOnSessionOpen({
         sessionId: input.sessionId,
         sessionPath: input.sessionAccepted ? input.sessionPath : null,
@@ -113,6 +57,5 @@ export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): Us
         pane,
         machineReachable,
         machineReachability,
-        isSurfaceFocused: activation.isSurfaceFocused,
     };
 }

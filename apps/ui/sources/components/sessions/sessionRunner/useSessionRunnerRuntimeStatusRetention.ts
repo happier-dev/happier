@@ -23,15 +23,17 @@ export function useSessionRunnerRuntimeStatusRetention(input: Readonly<{
     const machineId = typeof input.machineId === 'string' && input.machineId.trim()
         ? input.machineId.trim()
         : null;
+    // The identity (and the status it reads) outlives a hide: only the refresh below follows `enabled`,
+    // so hiding and showing the Session keeps its last status and its commands' identity.
     const identity = React.useMemo<SessionRunnerRuntimeStatusIdentity | null>(() => (
-        input.enabled && input.sessionId && machineId
+        input.sessionId && machineId
             ? {
                 serverId: input.serverId,
                 machineId,
                 sessionId: input.sessionId,
             }
             : null
-    ), [input.enabled, input.serverId, input.sessionId, machineId]);
+    ), [input.serverId, input.sessionId, machineId]);
     const requestRevisionRef = React.useRef(0);
     const [refreshRevision, setRefreshRevision] = React.useState(0);
     const [, setStatusRevision] = React.useState(0);
@@ -44,7 +46,7 @@ export function useSessionRunnerRuntimeStatusRetention(input: Readonly<{
     }, [identity]);
 
     React.useEffect(() => {
-        if (!identity || !machineId || !input.sessionId) return;
+        if (!input.enabled || !identity || !machineId || !input.sessionId) return;
 
         const controller = new AbortController();
         const requestRevision = requestRevisionRef.current;
@@ -74,6 +76,7 @@ export function useSessionRunnerRuntimeStatusRetention(input: Readonly<{
             retire();
         };
     }, [
+        input.enabled,
         identity,
         input.serverId,
         input.sessionId,

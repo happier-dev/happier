@@ -559,15 +559,18 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
             ? 'folded'
             : true;
     const railOnCanvas = railTail !== null;
+    // Focus reaches the rail only through the vacant ⋯ host it chooses: a tab switch that leaves that host
+    // unchanged keeps the rail's context, so its consumers (the whole action rail) do not render.
+    const vacantMoreHost = railVacant && destinationFocused ? railTail?.railMoreHost ?? null : null;
     const railContext = React.useMemo(() => ({
         visible: showActionRail,
         mirrored,
         onCanvas: railOnCanvas,
         onVacantChange: setRailVacant,
-        vacantMoreHost: railVacant && destinationFocused ? railTail?.railMoreHost ?? null : null,
+        vacantMoreHost,
         contentWidthPx: containerWidthPx,
         rightPaneHiddenByDetails,
-    }), [showActionRail, mirrored, railOnCanvas, containerWidthPx, rightPaneHiddenByDetails, railVacant, destinationFocused, railTail?.railMoreHost]);
+    }), [showActionRail, mirrored, railOnCanvas, containerWidthPx, rightPaneHiddenByDetails, vacantMoreHost]);
     const detailsAvailable = resolvePaneLayout({ ...paneLayoutInput, rightOpen: true, detailsOpen: true }).details === 'docked';
     const layoutContext = React.useMemo<AppPaneScopeLayoutState>(() => ({
         arrangement, mainHidden, mainDrawerOpen, effectiveDetailsOpen: detailsOpen,

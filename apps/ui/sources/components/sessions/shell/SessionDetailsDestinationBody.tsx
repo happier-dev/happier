@@ -197,8 +197,6 @@ export function SessionDetailsDestinationBody() {
             {sessionHydrated ? (
                 cockpitEnabled ? (
                     <SessionCockpitShell
-                        surfaceFocusedOverride={isFocused}
-                        surfaceVisibleOverride={visible}
                         sessionId={sessionId}
                         scopeId={scopeId}
                         surface="tabs"

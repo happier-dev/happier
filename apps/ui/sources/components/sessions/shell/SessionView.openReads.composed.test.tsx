@@ -12,11 +12,13 @@ import { SessionDestinationBody } from './SessionDestinationBody';
 import { storage } from '@/sync/domains/state/storageStore';
 import { sync } from '@/sync/sync';
 import { hasCurrentSessionTurnsProjection } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
+import { getSessionSurfaceVisibilitySnapshot } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema } from '@happier-dev/protocol/sessions';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 import { ChatList } from '@/components/sessions/transcript/ChatList';
+import { createCommittedFiberRenderCounter, readTestRendererRoot } from '@/dev/testkit/performance/committedFiberCounts';
 import type { Socket } from 'socket.io-client';
 
 vi.mock('socket.io-client', async importOriginal =>
@@ -156,4 +158,53 @@ it('reads one page per ordinary or Voice Session open and preserves a warm reope
         } finally { await screen.unmount(); }
     }
     expect(reads).toHaveLength(3);
+});
+
+it('renders only its focus readers when its retained Session tab is hidden and shown again', async () => {
+    installShippedNativeFrameScheduler();
+    const id = 'retained-switch';
+    storage.getState().applySessions([createSessionFixture({ id, serverId: runtime.serverId, seq: 4, encryptionMode: 'plain' })]);
+    await sync.ensureSessionVisibleForMessageRoute(id, { serverId: runtime.serverId, hydrateMessages: false });
+    const counts = createCommittedFiberRenderCounter();
+    let readRoot: (() => ReturnType<ReturnType<typeof readTestRendererRoot>>) | null = null;
+    const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+    const ref = { kind: 'session' as const, params: { id, serverId: runtime.serverId } };
+    // The workspace's retained tab host keeps its body element: a tab switch flips only these two facts.
+    const body = <SessionDestinationBody />;
+    const tab = (shown: boolean) => <React.Profiler id="session-tab" onRender={() => { if (readRoot) counts.onCommitRoot(readRoot()); }}>
+        <DestinationInstanceHost tabId={id} ref={ref} pathname={`/session/${id}`} focused={shown} visible={shown} navigation={navigation}>
+            {body}
+        </DestinationInstanceHost>
+    </React.Profiler>;
+    const screen = await renderScreen(tab(true), { wrapper: runtime.Wrapper });
+    try {
+        await act(async () => {
+            await waitForHomeGovernance(() => expect(storage.getState().sessionMessages[id]?.isLoaded).toBe(true));
+            await waitForHomeGovernance(() => expect(hasCurrentSessionTurnsProjection(storage.getState().sessions[id] ?? {})).toBe(true));
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        expect(screen.getTextContent()).toContain('Turn 1');
+        readRoot = readTestRendererRoot(screen.tree.root);
+        counts.start();
+        await screen.update(tab(false));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        // Hidden: the Session's demand withdraws (no visible or focused surface claims it).
+        expect(getSessionSurfaceVisibilitySnapshot()).toMatchObject({ focusedSessionId: null, visibleSessionIds: [] });
+        await screen.update(tab(true));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(getSessionSurfaceVisibilitySnapshot()).toMatchObject({ focusedSessionId: id, visibleSessionIds: [id] });
+        counts.stop();
+        expect(screen.getTextContent()).toContain('Turn 1');
+        const renders = counts.read().renders;
+        const total = [...renders.values()].reduce((sum, count) => sum + count, 0);
+        const summary = JSON.stringify(Object.fromEntries([...renders].sort((a, b) => b[1] - a[1]).slice(0, 25)));
+        // Focus reaches the Session view's readers, not the view: its loaded frame, the cockpit
+        // around it and the side rail draw nothing from a hide or show (a tab switch).
+        expect(renders.get('SessionViewLoaded') ?? 0, summary).toBe(0);
+        expect(renders.get('RightSidebarActionRailView') ?? 0, summary).toBe(0);
+        expect(renders.get('SessionCockpitPanePresentationBoundary') ?? 0, summary).toBe(0);
+        expect(total, summary).toBeLessThan(400);
+    } finally {
+        await screen.unmount();
+    }
 });

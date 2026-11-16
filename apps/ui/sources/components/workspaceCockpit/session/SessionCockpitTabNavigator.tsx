@@ -28,6 +28,7 @@ import { useOptionalWorkspaceNavigation, type WorkspacePhoneControls } from '@/c
 import { useDestinationParamsSelector, useDestinationPathname, useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useSessionViewerPresentingReader } from '@/components/sessions/viewer/SessionViewerDestinationScope';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneContext';
+import { useSessionPaneUrlState } from '@/components/sessions/panes/url/useSessionPaneUrlState';
 
 import {
     isSessionPluginMobileSurface,
@@ -315,7 +316,6 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
                                     readViewerPresenting={readViewerPresenting}
                                     fallbackInitialSurface={isSessionPluginMobileSurface(requestedInitialSurface) ? 'chat' : initialSurface}
                                     requestedInitialSurface={requestedInitialSurface}
-                                    paneUrlState={props.paneUrlState}
                                     terminalTabAvailable={terminalTabAvailable}
                                 />
                             )}
@@ -485,10 +485,11 @@ const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTab
     readViewerPresenting: () => boolean;
     fallbackInitialSurface: SessionMobileSurface;
     requestedInitialSurface: SessionMobileSurface;
-    paneUrlState?: SessionCockpitSurfaceScreenProps['paneUrlState'];
     terminalTabAvailable: boolean;
 }>) => {
     const readPaneState = useAppPaneContext(value => value.getReadState);
+    // This bridge renders nothing; it is the navigator's one reader of the pane URL.
+    const paneUrlState = useSessionPaneUrlState();
     const activeSurface = normalizeSessionMobileSurface(props.state.routes[props.state.index]?.name) ?? 'chat';
     const routeSurface = resolveSessionCockpitRouteFromPathname(useDestinationPathname())?.surface;
     const presentsDetails = routeSurface === 'tabs';
@@ -530,11 +531,11 @@ const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTab
 
     const restoredInitialPluginSurfaceRef = React.useRef<SessionMobileSurface | null>(null);
     const requestedRouteIntent = JSON.stringify([props.requestedInitialSurface,
-        presentsDetails ? props.paneUrlState?.details ?? null : props.paneUrlState ?? null, presentsDetails]);
+        presentsDetails ? paneUrlState?.details ?? null : paneUrlState ?? null, presentsDetails]);
     const consumedRouteIntentRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         if (!props.cockpit) return;
-        const paneIntentSurface = resolveSessionPaneIntentSurface(props.paneUrlState, props.terminalTabAvailable, explicitSurfaceHint);
+        const paneIntentSurface = resolveSessionPaneIntentSurface(paneUrlState, props.terminalTabAvailable, explicitSurfaceHint);
         const hasPaneIntent = presentsDetails || paneIntentSurface !== null;
         // A Details route presents retained/contributed tabs even when its URL still carries a sidebar.
         const requestedSurface = presentsDetails ? 'tabs' : paneIntentSurface ?? props.requestedInitialSurface;
@@ -583,7 +584,7 @@ const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTab
         props.fallbackInitialSurface,
         props.navigation,
         props.requestedInitialSurface,
-        props.paneUrlState,
+        paneUrlState,
         props.terminalTabAvailable,
         explicitSurfaceHint,
         requestedRouteIntent,

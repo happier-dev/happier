@@ -5,8 +5,10 @@ import { createSessionBoardDetailsTab } from '@/components/sessions/panes/detail
 import type { SessionPresentationMutationOutcome } from './sessionCompanionPresentationAdapter';
 
 type CompanionPane = Pick<AppPaneScopeApi,
-    'scopeState' | 'openDetailsTab' | 'setActiveDetailsTab' | 'focusDetailsGroup'
-    | 'closeDetails' | 'closeDetailsTab'>;
+    'openDetailsTab' | 'setActiveDetailsTab' | 'focusDetailsGroup'
+    | 'closeDetails' | 'closeDetailsTab'> & Readonly<{
+    scopeState: Readonly<{ details: NonNullable<AppPaneScopeApi['scopeState']>['details'] }> | null;
+}>;
 
 /** Session presentation intents use the same scoped pane operations as the person's controls. */
 export function createSessionCompanionPanePresentation(input: Readonly<{

@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { useDestinationParams, useDestinationFocus, useDestinationVisibility, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
 import type { PaneScopeState } from '@/components/appShell/panes/model/appPaneReducer';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { TranscriptSameSessionHandoffProvider } from '@/components/sessions/transcript/viewport/lifecycle/transcriptSameSessionHandoff';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
-import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
 import {
     resolveSessionMobileSurfaceIntent,
@@ -88,12 +88,19 @@ const selectSessionSurfaceFacts = (scope: PaneScopeState | null) => ({
     detailsTargetPresent: scope ? buildDetailsWorkspaceStateView(scope.details).tabs.length > 0 : false,
 });
 
+/** Focus and visibility are read here, in the leaf that draws them: a tab switch does not render the body. */
+function SessionLoadingAtmosphere(props: Readonly<{ address: SessionAddress }>) {
+    const focused = useDestinationFocus();
+    const visible = useDestinationVisibility();
+    return <AtmosphereSurfaceFrame surface={{ session: props.address }} session focused={focused} visible={visible}>
+        <PaneLoadingFallback />
+    </AtmosphereSurfaceFrame>;
+}
+
 export function SessionDestinationBody(props: Readonly<{
     messageTarget?: Readonly<{ routeMessageId: string; seq: number }>;
 }> = {}) {
     const instanceKey = useDestinationInstanceKey();
-    const focused = useDestinationFocus();
-    const visible = useDestinationVisibility();
     const params = useDestinationParams<{
         id?: string | string[];
         serverId?: string | string[];
@@ -142,7 +149,6 @@ export function SessionDestinationBody(props: Readonly<{
         const data = getTempData<{ attachmentDrafts?: readonly AttachmentDraft[] | null }>(trimmedRecoveryDataId);
         return Array.isArray(data?.attachmentDrafts) ? data.attachmentDrafts : null;
     }, [recoveryDataId]);
-    const paneUrlState = React.useMemo(() => parseSessionPaneUrlState(params), [params]);
     const scopeId = createSessionPaneScopeId(sessionId, routeScope.serverId, instanceKey);
     const { scopeState: surfaceFacts } = useAppPaneScope(scopeId, selectSessionSurfaceFacts);
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
@@ -218,9 +224,7 @@ export function SessionDestinationBody(props: Readonly<{
 
     if (routeHydrationState.kind === 'loading' && !sessionCached && !authRecoveryActive) {
         // The route already supplies the atmosphere's address; Session detail is not a paint prerequisite.
-        return <AtmosphereSurfaceFrame surface={{ session: routeSessionAddress }} session focused={focused} visible={visible}>
-            <PaneLoadingFallback />
-        </AtmosphereSurfaceFrame>;
+        return <SessionLoadingAtmosphere address={routeSessionAddress} />;
     }
 
     return (
@@ -231,8 +235,6 @@ export function SessionDestinationBody(props: Readonly<{
             {(experience) => (
                     <SessionCockpitShell
                         experience={experience}
-                        surfaceFocusedOverride={focused}
-                        surfaceVisibleOverride={visible}
                         sessionId={sessionId}
                         scopeId={scopeId}
                         surface={resolveSessionMobileSurfaceIntent({
@@ -244,7 +246,6 @@ export function SessionDestinationBody(props: Readonly<{
                         })}
                         jumpToSeq={jumpToSeq}
                         jumpToMessageId={props.messageTarget?.routeMessageId}
-                        paneUrlState={paneUrlState ?? undefined}
                         initialAttachmentDrafts={recoverableAttachmentDrafts}
                         terminalTabAvailable={terminalTabAvailable}
                         routeServerId={routeServerId.trim() || undefined}

@@ -19,6 +19,18 @@ function componentIdentity(type: unknown): unknown {
     return type;
 }
 
+/**
+ * The committed host root of a react-test-renderer tree, read at commit time (a `React.Profiler`'s
+ * `onRender`) by `onCommitRoot`. The renderer's private fiber handle is an untyped instrumentation boundary.
+ */
+export function readTestRendererRoot(instance: unknown): () => CountedFiber {
+    let fiber = (instance as { _fiber?: CountedFiber & { return: unknown; stateNode: unknown } })._fiber;
+    while (fiber && (fiber as { tag: number }).tag !== 3) fiber = (fiber as { return: typeof fiber }).return;
+    if (!fiber) throw new Error('Expected a mounted react-test-renderer root for commit measurement');
+    const root = fiber.stateNode as { current: CountedFiber };
+    return () => root.current;
+}
+
 /** Observe committed React DOM work without replacing any component or subscription owner. */
 export function createCommittedFiberRenderCounter() {
     const state = { enabled: false, commits: 0, renders: new Map<string, number>(), componentCommits: new Map<unknown, number>(), renderedMessageIds: new Map<string, number>(), changedProps: new Map<string, number>() };
@@ -28,17 +40,22 @@ export function createCommittedFiberRenderCounter() {
         for (let previous = parent.child; previous; previous = previous.sibling) if (previous === child) return true;
         return false;
     };
-    return {
+    const api = {
         onCommit(container: Element) {
             if (!state.enabled) return;
             const key = Object.keys(container).find(name => name.startsWith('__reactContainer$'));
             // React DOM's private renderer handle is an untyped instrumentation boundary.
             const root = key ? (container as unknown as Record<string, { stateNode: { current: CountedFiber } }>)[key] : null;
             if (!root) throw new Error('Expected a mounted React DOM root for commit measurement');
+            api.onCommitRoot(root.stateNode.current);
+        },
+        /** The same count from any renderer's committed host root fiber (react-test-renderer: see `readTestRendererRoot`). */
+        onCommitRoot(current: CountedFiber) {
+            if (!state.enabled) return;
             state.commits += 1;
             const renderedMessageIds = new Set<string>();
             const committedComponents = new Set<unknown>();
-            const stack = [root.stateNode.current];
+            const stack = [current];
             while (stack.length) {
                 const fiber = stack.pop()!;
                 for (let child = fiber.child; child; child = child.sibling) {
@@ -75,4 +92,5 @@ export function createCommittedFiberRenderCounter() {
                 renderedMessageIds: new Map(state.renderedMessageIds), changedProps: new Map(state.changedProps) };
         },
     };
+    return api;
 }

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import {
     presentExternalSessionOperationActionError,
@@ -32,7 +32,9 @@ export type UseExternalSessionMaterializeResult = Readonly<{
 export function useExternalSessionMaterialize(
     params: UseExternalSessionMaterializeParams,
 ): UseExternalSessionMaterializeResult {
-    const presentationActive = useLayoutPresentationActive();
+    // Presentation only starts and stops this owner's request lifetime: a subscription, so hiding or
+    // showing the surface does not render the Session view that hosts it.
+    const presentation = useLayoutPresentationSignal();
     const [materializeInFlight, setMaterializeInFlight] = React.useState(false);
     const mountedRef = React.useRef(true);
     const generationRef = React.useRef(0);
@@ -56,22 +58,36 @@ export function useExternalSessionMaterialize(
     }, [normalizedSessionId, params.externalSessionRuntime.externalSessionLink]);
 
     React.useEffect(() => {
-        mountedRef.current = presentationActive;
-        const controller = new AbortController();
-        requestControllerRef.current = controller;
-        const retirement = captureActiveServerAccountScopeCurrentness().onRetire(() => controller.abort());
-        generationRef.current += 1;
-        requestPromiseRef.current = null;
-        idempotencyKeyRef.current = null;
-        setMaterializeInFlight(false);
-        return () => {
-            controller.abort();
-            retirement.dispose();
-            mountedRef.current = false;
+        const begin = (presentationActive: boolean) => {
+            mountedRef.current = presentationActive;
+            const controller = new AbortController();
+            requestControllerRef.current = controller;
+            const retirement = captureActiveServerAccountScopeCurrentness().onRetire(() => controller.abort());
             generationRef.current += 1;
             requestPromiseRef.current = null;
+            idempotencyKeyRef.current = null;
+            setMaterializeInFlight(false);
+            return () => {
+                controller.abort();
+                retirement.dispose();
+                mountedRef.current = false;
+                generationRef.current += 1;
+                requestPromiseRef.current = null;
+            };
         };
-    }, [materializeScopeKey, params.externalSessionRuntime.sessionServerId, presentationActive]);
+        let presented = presentation.get();
+        let end = begin(presented);
+        const unsubscribe = presentation.subscribe(() => {
+            if (presentation.get() === presented) return;
+            presented = presentation.get();
+            end();
+            end = begin(presented);
+        });
+        return () => {
+            unsubscribe();
+            end();
+        };
+    }, [materializeScopeKey, params.externalSessionRuntime.sessionServerId, presentation]);
 
     const requestMaterialize = React.useCallback((): Promise<boolean> => {
         const signal = requestControllerRef.current?.signal;

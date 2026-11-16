@@ -81,7 +81,7 @@ import { readSessionUiTelemetryNowMs } from "@/sync/runtime/performance/sessionU
 import { syncPerformanceTelemetry } from "@/sync/runtime/syncPerformanceTelemetry";
 import { openNewSessionSourceContextNavigation } from "@/components/sessions/new/navigation/newSessionSourceContextNavigation";
 import { requireActionSuccess } from "@/sync/ops/actions/frontDoorRuntimeActionExecutor";
-import { useDestinationParams, useDestinationPathname, useDestinationVisibility, useDestinationInstanceKey } from "@/components/appShell/workspace/DestinationInstanceHost";
+import { useDestinationParams, useDestinationPathname, useDestinationInstanceKey } from "@/components/appShell/workspace/DestinationInstanceHost";
 import { useNewSessionDockHoldsComposerSeat, useNewSessionEntryRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 import * as React from "react";
 import { AtmosphereSurfaceFrame } from "@/components/atmosphere/AtmosphereSurfaceFrame";
@@ -127,7 +127,8 @@ import { useSessionAddressForSessionId, useSessionPluginRuntime, type SessionPlu
 import { createSessionPaneScopeId } from "@/components/sessions/panes/sessionPaneScopeId";
 import { SessionBoardControllerProvider, useMountedSessionBoardController } from "@/components/sessions/board/SessionBoardControllerProvider";
 import { SessionScreenTestIdsProvider } from "./sessionScreenTestIds";
-import { useSessionScreenIsFocused } from "./useSessionScreenIsFocused";
+import { SessionSurfacePresenceProvider, useSessionSurfacePresence } from "./sessionSurfacePresence";
+import { useSessionSurfaceActivation } from "./view/useSessionSurfaceActivation";
 import { resolveMultiPaneDeviceType } from "@/components/appShell/panes/layout/resolveMultiPaneDeviceType";
 import { buildScopedSessionRouteHref } from "@/hooks/session/sessionRouteServerScope";
 import { SessionResumeProvider } from "@/components/sessions/model/SessionResumeContext";
@@ -189,8 +190,6 @@ import type { PluginSurfaceOpenHandler, PluginSurfaceOpenOutcome } from "@/compo
 import { useServerCredentialAccountScopeBindings, type ServerCredentialAccountScopeBinding } from "@/sync/domains/scope/useServerCredentialAccountScopes";
 import { resolveSessionViewExternalControlFooter } from "./view/resolveSessionViewExternalControlFooter";
 import { readExternalSessionOperationPresentationFromMetadata } from "../transcript/items/externalSessionOperationMetadata";
-import { isSessionRootRoutePathActive, isSessionRoutePathActive } from "@/sync/domains/session/sessionSurfaceVisibility";
-import { useSurfaceAnchorPathname } from "./surface/sessionSurfaceAnchorPathname";
 import { resolveSessionWorkspaceDisplayPresentation } from "@/sync/domains/session/listing/sessionWorkspaceDisplayPresentation";
 import { useSessionReachableMachineTarget } from "../model/useSessionMachineReachability";
 import { useSessionMachineControlTarget } from "../model/useSessionMachineTarget";
@@ -219,9 +218,13 @@ type SessionViewProps = Readonly<{
     jumpToSeq?: number | null;
     jumpToMessageId?: string | null;
     initialAttachmentDrafts?: readonly AttachmentDraft[] | null;
+    /** A host's own focus and visibility, replacing the destination's (embedded, pane, onboarding stage). */
     surfaceFocusedOverride?: boolean | null;
     surfaceVisibleOverride?: boolean | null;
-    routeAnchorOverride?: boolean | null;
+    /** A cockpit scene's own activity, narrowing the destination's focus and visibility. */
+    surfaceSceneActive?: boolean | null;
+    /** `surface`: anchors the route while focused and visible (a hosted classic cockpit tab). */
+    routeAnchorOverride?: boolean | 'surface' | null;
     routeHydrationState?: SessionRouteHydrationState | null;
     contentOverride?: React.ReactNode;
     /** Drawn under the Session header on every surface (a cockpit phone's top page strip). */
@@ -281,15 +284,87 @@ function resolveRouteHydrationRetryStatusKey(
     return null;
 }
 
+/** Whether this surface is the presented, focused one: the commands that act on the user's current Session. */
+function useSessionSurfaceActive(): boolean {
+    const presence = useSessionSurfacePresence();
+    return presence.visible && presence.focused && presence.presented;
+}
+
+/** Marks this Session visible, focused and anchored while its surface is (effects only). */
+const SessionSurfaceActivationHost = React.memo(function SessionSurfaceActivationHost(props: Readonly<{
+    sessionId: string;
+    serverId: string | null;
+    sessionAccepted: boolean;
+}>) {
+    const presence = useSessionSurfacePresence();
+    useSessionSurfaceActivation({
+        sessionId: props.sessionId,
+        serverId: props.serverId,
+        onSessionVisible: props.sessionAccepted && (presence.focused || presence.routeAnchor) ? sync.onSessionVisible : undefined,
+        surfaceFocused: presence.focused,
+        // A web route host releases a mounted Session it no longer presents; native back stacks keep theirs.
+        surfaceRetained: Platform.OS === 'web' ? presence.presented : true,
+        surfaceVisible: presence.visible,
+        routeAnchor: presence.routeAnchor,
+    });
+    return null;
+});
+
+/** Menus, panes and selections claim Escape first through the shared stack; then Escape leaves the focused Session. */
+const SessionSurfaceEscapeToHome = React.memo(function SessionSurfaceEscapeToHome(props: Readonly<{
+    router: Readonly<{ replace: (href: '/') => void }>;
+}>) {
+    const presence = useSessionSurfacePresence();
+    const { router } = props;
+    useEscapeLayer({
+        enabled: Platform.OS === 'web' && presence.focused && presence.visible,
+        priority: ESCAPE_LAYER_PRIORITIES.focusSessionSurface,
+        onEscape: (event) => {
+            const key = event as Partial<KeyboardEvent>;
+            if (key.repeat || key.shiftKey || key.altKey || key.ctrlKey || key.metaKey) return false;
+            router.replace('/');
+            return true;
+        },
+    });
+    return null;
+});
+
+/** The pane URL mirror follows this surface's visibility and route ownership. */
+function SessionSurfacePaneUrlSync(props: Omit<React.ComponentProps<typeof SessionPaneUrlSyncHost>, 'surfaceVisible' | 'paneUrlSyncRouteActive'>) {
+    const presence = useSessionSurfacePresence();
+    return <SessionPaneUrlSyncHost {...props} surfaceVisible={presence.visible} paneUrlSyncRouteActive={presence.paneUrlSyncRouteActive} />;
+}
+
+/** The terminal commands follow the destination's focus and the whole pane scope: a leaf of their own. */
+const SessionTerminalJumpShortcut = React.memo(function SessionTerminalJumpShortcut(props: Readonly<{ paneScopeId: string }>) {
+    useTerminalJumpShortcut(props.paneScopeId);
+    return null;
+});
+
+function SessionSurfaceTestIdsProvider(props: Readonly<{ children: React.ReactNode }>) {
+    return <SessionScreenTestIdsProvider enabled={useSessionSurfacePresence().focused}>{props.children}</SessionScreenTestIdsProvider>;
+}
+
+const SessionWorkspaceFileOriginReturn = React.memo(function SessionWorkspaceFileOriginReturn(props: Readonly<{ scopeId: string }>) {
+    useWorkspaceFileOriginReturn(props.scopeId, useSessionSurfaceActive());
+    return null;
+});
+
+const SessionTranscriptCodeAskControls = React.memo(function SessionTranscriptCodeAskControls(
+    props: Omit<React.ComponentProps<typeof TranscriptCodeAskControls>, 'active'>,
+) {
+    return <TranscriptCodeAskControls {...props} active={useSessionSurfaceActive()} />;
+});
+
 const SessionContentOverrideViewedLifecycle = React.memo(function SessionContentOverrideViewedLifecycle({
     serverId,
     sessionId,
-    surfaceFocused,
 }: Readonly<{
     serverId: string;
     sessionId: string;
-    surfaceFocused: boolean;
 }>) {
+    const presence = useSessionSurfacePresence();
+    const surfaceFocused = presence.visible && presence.focused;
     const sessionSeq = useSessionViewShellSessionSeq(sessionId);
     useSessionViewedLifecycle({
         address: { serverId, sessionId },
@@ -322,13 +397,13 @@ const SessionTranscriptViewedLifecycle = React.memo(function SessionTranscriptVi
     serverId,
     sessionId,
     latestTurnStatus,
-    surfaceFocused,
 }: Readonly<{
     serverId: string;
     sessionId: string;
     latestTurnStatus: Session['latestTurnStatus'];
-    surfaceFocused: boolean;
 }>) {
+    const presence = useSessionSurfacePresence();
+    const surfaceFocused = presence.visible && presence.focused;
     const sessionSeq = useSessionViewShellSessionSeq(sessionId);
     const visibleReadSeq = useSessionVisibleReadSeq(sessionId, {
         sessionSeq,
@@ -833,19 +908,6 @@ export const SessionView = React.memo((props: SessionViewProps) => {
         sessionId,
     );
     const sessionSurfaceKey = routeAddress ? sessionAddressKey(routeAddress) : null;
-    const routeFocused = useSessionScreenIsFocused();
-    const destinationVisible = useDestinationVisibility();
-    const pathname = useDestinationPathname();
-    const isFocused = typeof props.surfaceFocusedOverride === 'boolean'
-        ? props.surfaceFocusedOverride
-        : routeFocused;
-    const isSurfaceVisible = typeof props.surfaceVisibleOverride === 'boolean'
-        ? props.surfaceVisibleOverride
-        : destinationVisible;
-    const anchorPathname = useSurfaceAnchorPathname(pathname);
-    const isRouteAnchor = typeof props.routeAnchorOverride === 'boolean'
-        ? props.routeAnchorOverride
-        : isSessionRoutePathActive(anchorPathname, sessionId);
 
     if (routeAddress === null || sessionSurfaceKey === null) {
         if (props.presentation?.kind === 'embedded') {
@@ -875,17 +937,35 @@ export const SessionView = React.memo((props: SessionViewProps) => {
             routeServerId={routeAddress.serverId}
             sessionId={sessionId}
             sessionSurfaceKey={sessionSurfaceKey}
-            isFocused={isFocused}
-            isSurfaceVisible={isSurfaceVisible}
-            isRouteAnchor={isRouteAnchor}
         />
     );
-    // The embedded arm's part claims outlive the per-Session surface, so a Session moving between
-    // loading, ready and blocked re-publishes its parts into the same slots.
-    return props.presentation?.kind === 'embedded'
-        ? <PluginSurfaceNestingBoundary><EmbeddedSessionPartClaimsScope>{surface}</EmbeddedSessionPartClaimsScope></PluginSurfaceNestingBoundary>
-        : <AtmosphereSurfaceFrame surface={{ session: routeAddress }} session focused={isFocused} visible={isSurfaceVisible}>{surface}</AtmosphereSurfaceFrame>;
+    const embeddedPresentation = props.presentation?.kind === 'embedded';
+    // Focus and visibility reach this surface's readers through the presence context, not as props:
+    // a workspace tab switch renders those readers only.
+    return (
+        <SessionSurfacePresenceProvider
+            sessionId={sessionId}
+            focusedOverride={typeof props.surfaceFocusedOverride === 'boolean' ? props.surfaceFocusedOverride : null}
+            visibleOverride={typeof props.surfaceVisibleOverride === 'boolean' ? props.surfaceVisibleOverride : null}
+            sceneActive={typeof props.surfaceSceneActive === 'boolean' ? props.surfaceSceneActive : null}
+            routeAnchorOverride={props.routeAnchorOverride ?? null}
+            presentedWhileVisible={embeddedPresentation || typeof props.surfaceVisibleOverride === 'boolean'
+                || typeof props.surfaceSceneActive === 'boolean'}
+        >
+            {embeddedPresentation
+                // The embedded arm's part claims outlive the per-Session surface, so a Session moving between
+                // loading, ready and blocked re-publishes its parts into the same slots.
+                ? <PluginSurfaceNestingBoundary><EmbeddedSessionPartClaimsScope>{surface}</EmbeddedSessionPartClaimsScope></PluginSurfaceNestingBoundary>
+                : <SessionSurfaceAtmosphereFrame address={routeAddress}>{surface}</SessionSurfaceAtmosphereFrame>}
+        </SessionSurfacePresenceProvider>
+    );
 });
+
+function SessionSurfaceAtmosphereFrame(props: Readonly<{ address: SessionAddress; children: React.ReactNode }>) {
+    const presence = useSessionSurfacePresence();
+    const surface = React.useMemo(() => ({ session: props.address }), [props.address]);
+    return <AtmosphereSurfaceFrame surface={surface} session focused={presence.focused} visible={presence.visible}>{props.children}</AtmosphereSurfaceFrame>;
+}
 
 const EMBEDDED_PANE_DRIVER_OPTIONS = Object.freeze({ registerDriver: false });
 
@@ -894,14 +974,9 @@ const EMBEDDED_PANE_DRIVER_OPTIONS = Object.freeze({ registerDriver: false });
 const SessionViewRetainedSurface = React.memo((props: SessionViewProps & {
     sessionId: string;
     sessionSurfaceKey: string;
-    isFocused: boolean;
-    isSurfaceVisible: boolean;
-    isRouteAnchor: boolean;
 }) => {
     // Hosts supply visibility independently of focus and route ownership.
-    const isPresented = props.presentation?.kind === 'embedded' || typeof props.surfaceVisibleOverride === 'boolean'
-        ? props.isSurfaceVisible
-        : (props.isFocused || props.isRouteAnchor) && props.isSurfaceVisible;
+    const isPresented = useSessionSurfacePresence().presented;
     const [hasBeenPresented, setHasBeenPresented] = React.useState(isPresented);
     React.useLayoutEffect(() => {
         if (isPresented && !hasBeenPresented) {
@@ -935,10 +1010,7 @@ const SessionViewRetainedSurface = React.memo((props: SessionViewProps & {
             }}
             {...accessibilityProps}
         >
-            <SessionViewFocusedSurface
-                {...props}
-                isPresented={isPresented}
-            />
+            <SessionViewFocusedSurface {...props} />
         </View>
     );
 });
@@ -946,9 +1018,6 @@ const SessionViewRetainedSurface = React.memo((props: SessionViewProps & {
 type SessionViewFocusedSurfaceProps = SessionViewProps & {
     sessionId: string;
     sessionSurfaceKey: string;
-    isFocused: boolean;
-    isSurfaceVisible: boolean;
-    isPresented: boolean;
 };
 
 const SessionViewFocusedSurface = React.memo((props: SessionViewFocusedSurfaceProps) => (
@@ -1016,8 +1085,7 @@ const SessionViewFocusedSurfaceContent = React.memo((props: SessionViewFocusedSu
 
 const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocusedSurfaceContentProps) => {
     const sessionId = props.sessionId;
-    const isFocused = props.isFocused;
-    const isSurfaceVisible = props.isSurfaceVisible;
+    const surfacePresence = useSessionSurfacePresence();
     const router = useNewSessionEntryRouter();
     const pathname = useDestinationPathname();
     const routeParams = useDestinationParams<{ mobileSurface?: string | string[] }>();
@@ -1049,18 +1117,6 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
             fallbackHref: '/',
         });
     }, [router]);
-    // Menus, panes and selections claim Escape first through the shared stack.
-    // An embedded Session leaves navigation to its containing surface.
-    useEscapeLayer({
-        enabled: Platform.OS === 'web' && isFocused && isSurfaceVisible && !embedded,
-        priority: ESCAPE_LAYER_PRIORITIES.focusSessionSurface,
-        onEscape: (event) => {
-            const key = event as Partial<KeyboardEvent>;
-            if (key.repeat || key.shiftKey || key.altKey || key.ctrlKey || key.metaKey) return false;
-            router.replace('/');
-            return true;
-        },
-    });
     const acceptedSessionId = session ? sessionId : '';
     const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(
         acceptedSessionId,
@@ -1083,19 +1139,6 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     const hasAuthCredentials = Boolean(auth.credentials);
     const endpointConnectivity = useEndpointConnectivity();
     const syncError = useSyncError();
-    // Visibility follows the anchor route (an overlay such as /new does not replace the screen
-    // behind it); URL ownership below deliberately stays on the raw pathname, because while an
-    // overlay is open the address bar belongs to the overlay.
-    const anchorPathname = useSurfaceAnchorPathname(pathname);
-    const activeSessionRoute = isSessionRoutePathActive(anchorPathname, sessionId);
-    const isActiveSessionRoute = typeof props.routeAnchorOverride === 'boolean'
-        ? props.routeAnchorOverride
-        : activeSessionRoute;
-    const isPaneUrlSyncRouteActive = isFocused && isSurfaceVisible && (
-        typeof props.routeAnchorOverride === 'boolean'
-            ? props.routeAnchorOverride
-            : isSessionRootRoutePathActive(pathname, sessionId)
-    );
     const explicitRouteServerId = (routeHydrationState?.serverId ?? props.routeServerId ?? '').trim();
     const currentSessionRouteServerId =
         explicitRouteServerId
@@ -1144,10 +1187,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     const sessionEncryptionMode: 'e2ee' | 'plain' = (session?.encryptionMode ?? 'e2ee');
     const isEncryptedSessionLocked = Boolean(session && sessionEncryptionMode === 'e2ee' && !hasAuthCredentials);
     const showTopHeader = !embedded && !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web');
-    const shouldRenderSessionSurface = props.isPresented;
-    const shouldRetainSessionSurface = Platform.OS === 'web'
-        ? shouldRenderSessionSurface
-        : true;
+    const shouldRenderSessionSurface = surfacePresence.presented;
     const routeHydrationInFlight =
         routeHydrationState?.kind === 'loading' ||
         routeHydrationState?.kind === 'retrying';
@@ -1193,8 +1233,6 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         props.sessionPluginRuntime,
         paneDriverOptions,
     );
-    // ⌘J / ⌥J: Jump to a terminal of this session. An embedded presentation is not the focused session.
-    useTerminalJumpShortcut(embedded ? '' : paneScopeId);
     const actionRailVisible = useAppPaneActionRailVisible(paneScopeId);
     // Without a visible rail the header's ⋯ reaches Terminal and Browser through their own openers.
     const headerTerminalAction = useSessionTerminalAction({ sessionId, scopeId: paneScopeId, serverId: props.routeServerId ?? null });
@@ -1217,18 +1255,14 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         pane,
         machineReachable: isMachineReachable,
         machineReachability,
-        isSurfaceFocused,
     } = useSessionViewBootstrap({
         sessionId,
         serverId: session?.serverId ?? currentSessionRouteServerId,
         paneScopeId,
         sessionPath: ownerMetadata?.path ?? null,
         sessionAccepted: session != null,
-        surfaceFocused: isFocused,
-        surfaceRetained: shouldRetainSessionSurface,
-        surfaceVisible: isSurfaceVisible,
-        routeAnchor: isActiveSessionRoute,
     });
+    const isSurfaceFocused = sessionId.length > 0 && surfacePresence.visible && surfacePresence.focused;
     const { messages: pendingMessages, isLoaded: pendingMessagesLoaded, readState: pendingReadState } = useSessionPendingMessages(sessionId);
     const managedWakePresentation = useSessionManagedWakePresentation({
         session: shouldRenderSessionSurface && !headerBlockedSurface ? session : null,
@@ -1248,7 +1282,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         metadata: ownerMetadata,
         enabled: isSurfaceFocused && session != null,
     });
-    const externalAgentPresentationClockEnabled = isSurfaceVisible
+    const externalAgentPresentationClockEnabled = surfacePresence.visible
         && externalSessionRuntime.externalSessionLink !== null;
     const externalAgentPresentationNowMs = useSessionListRuntimeNowMs(externalAgentPresentationClockEnabled);
     const externalSessionRuntimePresentation = React.useMemo(() => {
@@ -1877,14 +1911,20 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         <SessionWorkSourcesProvider value={sessionWorkSources}>
         <SessionBrowserContextRuntimeProvider runtime={sessionBrowserContextRuntime}>
         <SessionExternalSessionRuntimeProvider value={externalSessionRuntime}>
-        <SessionScreenTestIdsProvider enabled={isFocused}>
-            <SessionPaneUrlSyncHost
+        <SessionSurfaceTestIdsProvider>
+            <SessionSurfaceActivationHost
+                sessionId={sessionId}
+                serverId={session?.serverId ?? currentSessionRouteServerId}
+                sessionAccepted={session != null}
+            />
+            {embedded ? null : <SessionSurfaceEscapeToHome router={router} />}
+            {/* ⌘J / ⌥J: Jump to a terminal of this session. An embedded presentation is not the focused session. */}
+            {embedded ? null : <SessionTerminalJumpShortcut paneScopeId={paneScopeId} />}
+            <SessionSurfacePaneUrlSync
                 paneScopeId={paneScopeId}
                 multiPaneEnabled={multiPaneEnabled}
                 sessionsRightPaneDefaultOpen={sessionsRightPaneDefaultOpen === true}
                 deviceType={deviceType}
-                surfaceVisible={isSurfaceVisible}
-                paneUrlSyncRouteActive={isPaneUrlSyncRouteActive}
                 paneEffectsEnabled={!embedded}
             />
             {props.contentOverride == null ? (
@@ -1898,14 +1938,12 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                     <SessionContentOverrideViewedLifecycle
                         serverId={currentSessionRouteServerId}
                         sessionId={sessionId}
-                        surfaceFocused={isSurfaceVisible && isFocused}
                     />
                 ) : (
                     <SessionTranscriptViewedLifecycle
                         serverId={currentSessionRouteServerId}
                         sessionId={sessionId}
                         latestTurnStatus={session.latestTurnStatus}
-                        surfaceFocused={isSurfaceVisible && isFocused}
                     />
                 )
             ) : null}
@@ -1981,8 +2019,6 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                            pane={pane}
                            isMachineReachable={isMachineReachable}
                            machineReachability={machineReachability}
-                           surfaceFocused={isSurfaceFocused}
-                           surfacePresented={props.isPresented}
                            onBackPress={handleBackPress}
                            isEncryptedSessionLocked={isEncryptedSessionLocked}
                            executionRunsEnabled={executionRunsEnabled}
@@ -2026,7 +2062,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                   )}
                 </PaneHeaderScrollScope>
             </View>
-        </SessionScreenTestIdsProvider>
+        </SessionSurfaceTestIdsProvider>
         </SessionExternalSessionRuntimeProvider>
         </SessionBrowserContextRuntimeProvider>
         </SessionWorkSourcesProvider>
@@ -2090,7 +2126,10 @@ function SessionComposerSlot({ renderComposer }: Readonly<{ renderComposer?: Ses
 
 /** Composer state updates its own slot, not the transcript/pane layout. */
 function SessionViewLoadedContent(props: Omit<React.ComponentProps<typeof SessionViewLoadedFrame>, keyof SessionComposerView>) {
-    const { composer, view } = useSessionComposerController(props);
+    // The composer acts on this surface's focus and presentation: it reads them here, beside its controller.
+    const presence = useSessionSurfacePresence();
+    const surfaceFocused = presence.visible && presence.focused;
+    const { composer, view } = useSessionComposerController({ ...props, surfaceFocused, surfacePresented: presence.presented });
     return <SessionComposerModelContext.Provider value={composer}>
         <SessionViewLoadedFrame {...props} {...view} />
     </SessionComposerModelContext.Provider>;
@@ -2124,8 +2163,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     routeMobileSurface,
     session,
     pane,
-    surfaceFocused,
-    surfacePresented,
     onBackPress,
     isEncryptedSessionLocked,
     executionRunsEnabled,
@@ -2203,8 +2240,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     pane: ReturnType<typeof useSessionViewBootstrap>['pane'];
     isMachineReachable: boolean;
     machineReachability: ReturnType<typeof useSessionViewBootstrap>['machineReachability'];
-    surfaceFocused: boolean;
-    surfacePresented: boolean;
     onBackPress: () => void;
     isEncryptedSessionLocked: boolean;
     executionRunsEnabled: boolean;
@@ -2631,7 +2666,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
             activityColor={theme.colors.text.secondary}
         />
     );
-    useWorkspaceFileOriginReturn(pane.scopeId, surfaceFocused && surfacePresented);
 
     const transcriptSelectionToolbar = transcriptMessageSelectionEnabled === true ? (
         <TranscriptSelectionToolbarController
@@ -2648,8 +2682,9 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
         <PaneMainComposerAnchor style={{ gap: theme.space.s8 }}>
             {transcriptSelectionToolbar}
             <SessionPhoneTrackWatchCapsule sessionId={sessionId} serverId={sessionRouteServerId.trim() || null} />
-            <TranscriptCodeAskControls sessionId={sessionId} serverId={sessionRouteServerId.trim() || null}
-                scopeId={pane.scopeId} active={surfaceFocused && surfacePresented} />
+            <SessionWorkspaceFileOriginReturn scopeId={pane.scopeId} />
+            <SessionTranscriptCodeAskControls sessionId={sessionId} serverId={sessionRouteServerId.trim() || null}
+                scopeId={pane.scopeId} />
             {/* The notices and the composer share one stack, spaced as the composer's own banners are. */}
             {/* With a composer, the notices join its card stack and share the column's room with the input. */}
             <View testID="session-notice-seat">

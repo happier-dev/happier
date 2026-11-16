@@ -125,6 +125,16 @@ vi.mock('expo-router', async () => {
     }).module;
 });
 
+/** The Session destination's URL changes as a route write would: its pane readers select it from the route params. */
+async function setPaneUrl(state: import('@/components/sessions/panes/url/sessionPaneUrlState').SessionPaneUrlState | null) {
+    const { router } = await import('expo-router');
+    const { serializeSessionPaneUrlState, SESSION_PANE_URL_PARAM_KEYS } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
+    await act(async () => {
+        router.setParams({ ...Object.fromEntries(SESSION_PANE_URL_PARAM_KEYS.map(key => [key, undefined])),
+            ...(state ? serializeSessionPaneUrlState(state) : {}) });
+    });
+}
+
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return {
@@ -587,6 +597,7 @@ describe('SessionCockpitSurfaceScreen navigation surface', () => {
         cockpitNavigatorState.unhandledActions = [];
         cockpitNavigatorState.hardwareBackHandlers = [];
         cockpitNavigatorState.platformOS = 'web';
+        await setPaneUrl(null);
         const { transcriptNavigationPaneStore } = await import('@/components/sessions/transcript/navigation/transcriptNavigationPaneStore');
         transcriptNavigationPaneStore.set('session-1', null);
     });
@@ -682,18 +693,19 @@ describe('SessionCockpitSurfaceScreen navigation surface', () => {
         const { SessionCockpitChromeRegistryProvider } = await import('./SessionCockpitChromeRegistry');
         const { SessionCockpitShell } = await import('./SessionCockpitShell');
         cockpitNavigatorState.pathname = '/session/session-1/details';
-        const render = (paneUrlState: import('@/components/sessions/panes/url/sessionPaneUrlState').SessionPaneUrlState | null) => (
+        const render = () => (
             <AppPaneProvider><SessionCockpitChromeRegistryProvider>
                 <SessionCockpitShell surface="tabs" routeServerId="server-1" scopeId="session:session-1" sessionId="session-1"
-                    terminalTabAvailable={false} paneUrlState={paneUrlState} />
+                    terminalTabAvailable={false} />
             </SessionCockpitChromeRegistryProvider></AppPaneProvider>
         );
-        const screen = await renderScreen(render({ rightTabId: 'agents' }));
+        await setPaneUrl({ rightTabId: 'agents' });
+        const screen = await renderScreen(render());
         expect(cockpitNavigatorState.activeSurface).toBe('tabs');
         const pane = screen.tree.findAllByType('SessionView' as never)[0]!.props.pane as import('@/components/appShell/panes/hooks/useAppPaneScope').AppPaneScopeApi;
         await act(async () => pane.setRightTab('agents'));
         expect(cockpitNavigatorState.activeSurface).toBe('agents');
-        await screen.update(render(null));
+        await setPaneUrl(null);
         expect(cockpitNavigatorState.activeSurface, 'A retained-sidebar echo must not undo the explicit return to Work').toBe('agents');
     });
 
@@ -751,14 +763,11 @@ describe('SessionCockpitSurfaceScreen navigation surface', () => {
         const { SessionCockpitChromeRegistryProvider } = await import('./SessionCockpitChromeRegistry');
         const { SessionCockpitShell } = await import('./SessionCockpitShell');
         const { parseSessionPaneUrlState } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
-        const render = (paneUrlState: import('@/components/sessions/panes/url/sessionPaneUrlState').SessionPaneUrlState | null) => (
-            <AppPaneProvider><SessionCockpitChromeRegistryProvider>
-                <SessionCockpitShell surface="chat" routeServerId="server-1" scopeId="session:session-1" sessionId="session-1"
-                    terminalTabAvailable={false} paneUrlState={paneUrlState} />
-            </SessionCockpitChromeRegistryProvider></AppPaneProvider>
-        );
-        const screen = await renderScreen(render(null));
-        await screen.update(render(parseSessionPaneUrlState({ details: 'scmReview', view: 'walkthrough' })));
+        await renderScreen(<AppPaneProvider><SessionCockpitChromeRegistryProvider>
+            <SessionCockpitShell surface="chat" routeServerId="server-1" scopeId="session:session-1" sessionId="session-1"
+                terminalTabAvailable={false} />
+        </SessionCockpitChromeRegistryProvider></AppPaneProvider>);
+        await setPaneUrl(parseSessionPaneUrlState({ details: 'scmReview', view: 'walkthrough' }));
         expect(cockpitNavigatorState.activeSurface).toBe('tabs');
         await act(async () => cockpitNavigatorState.goBack?.());
         expect(cockpitNavigatorState.activeSurface).toBe('chat');
