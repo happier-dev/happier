@@ -11,6 +11,31 @@ import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, reso
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 describe('Action failure presentation', () => {
+    it('explains the retired plugin UI generation from the Install refusal and keeps its diagnostic reference', () => {
+        // Captured product Install result: TH-QA-POOLS-1116/r2-install-cli.json.
+        const failure = { ok: false as const, errorCode: 'plugin_ui_generation_retired', error: 'plugin_ui_generation_retired',
+            requestId: 'bae9b445-56e4-4836-aff4-18af13e17405',
+            details: { name: 'PluginError', code: 'plugin_ui_generation_retired', message: 'plugin_ui_generation_retired', retryable: false },
+            failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'plugin_ui_generation_retired', httpStatus: null } } as const;
+        const expected = t('pluginRuntime.viewNotCurrent');
+        expect(resolveActionExecutionFailureMessage(failure, 'Fallback')).toBe(expected);
+        const presented = presentActionExecutionFailure(failure);
+        expect(presented.reason).toBe(expected);
+        expect(presented.technicalDetails).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'code', value: failure.errorCode }),
+            expect.objectContaining({ key: 'requestId', value: failure.requestId }),
+        ]));
+    });
+    it.each(['stale_surface', 'plugin_ui_generation_retired', 'plugin_action_generation_retired'])(
+        'explains a code-only %s failure while retaining authored recovery', code => {
+            const expected = t('pluginRuntime.viewNotCurrent');
+            expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, message: code }, 'Fallback')).toBe(expected);
+            expect(resolveActionExecutionErrorMessage(new PluginError({ code, message: code }), 'Fallback')).toBe(expected);
+            const message = 'Reopen the Dev Containers page on the selected machine.';
+            expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, message }, 'Fallback')).toBe(message);
+            expect(resolveActionExecutionErrorMessage(new PluginError({ code, message }), 'Fallback')).toBe(message);
+        },
+    );
     it('says the Machine is not answering when the Home refuses its target as offline (Deploy draft, QA #27b)', () => {
         const fallback = t('common.requestFailed');
         // The Home's action route answers 409 with the Machine admission's typed availability diagnostic.

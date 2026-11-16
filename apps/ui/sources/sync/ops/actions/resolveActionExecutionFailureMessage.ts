@@ -18,7 +18,7 @@ import { discussionFailureLabel } from '@/components/discussions/discussionFailu
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
-import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { resolvePluginSurfaceStaleReasonMessage, resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { getUiFeatureDefinition } from '@/sync/domains/features/featureRegistry';
 
@@ -127,9 +127,10 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     const authoredMessage = pluginError ? value.data.message
         : !(value instanceof Error) && isFailedResult(record) ? record.message : undefined;
     const message = typeof authoredMessage === 'string' ? authoredMessage.trim() : '';
+    const code = record.errorCode ?? record.code ?? record.rpcErrorCode;
     const remediation = pluginError ? readPluginActionFailureAuthorPayload(value.data).remediation
         : PluginDiagnosticRemediationV1Schema.safeParse(record.remediation).data;
-    const reason = message || readFailureFallbackMessage(record, options);
+    const reason = (message && message !== code ? message : null) || readFailureFallbackMessage(record, options);
     return reason && remediation?.kind === 'retry' ? `${reason} ${t('errors.tryAgain')}` : reason;
 }
 
@@ -140,6 +141,8 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         return resolveSessionSpawnNewResultFailureMessage(childSession.data);
     }
     const code = record.errorCode ?? record.code ?? record.rpcErrorCode;
+    const stalePluginViewMessage = typeof code === 'string' ? resolvePluginSurfaceStaleReasonMessage(code) : null;
+    if (stalePluginViewMessage) return stalePluginViewMessage;
     if (code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE) return t('errors.networkError');
     const transient = readTransientFailure(record, options);
     if (transient) return !options?.safeToRetry && transient.effectMayHaveApplied ? t('toolView.pending.unknownDescription') : transient.message;

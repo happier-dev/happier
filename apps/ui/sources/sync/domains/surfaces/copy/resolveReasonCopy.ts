@@ -412,10 +412,12 @@ const PLUGIN_RUNTIME_KEYS = {
     targeted_contributions_timeout: 'pluginRuntime.transportUnavailable',
     targeted_contributions_error: 'pluginRuntime.transportUnavailable',
     artifact_source_unavailable: 'pluginRuntime.sourceUnavailable',
+    stale_surface: 'pluginRuntime.viewNotCurrent',
     artifact_not_current: 'pluginRuntime.viewNotCurrent',
     plugin_generation_stale: 'pluginRuntime.viewNotCurrent',
     plugin_occurrence_stale: 'pluginRuntime.viewNotCurrent',
     plugin_action_generation_retired: 'pluginRuntime.viewNotCurrent',
+    plugin_ui_generation_retired: 'pluginRuntime.viewNotCurrent',
     artifact_lease_revoked: 'pluginRuntime.viewNotCurrent',
     source_unavailable: 'pluginRuntime.sourceUnavailable',
     response_invalid: 'pluginRuntime.responseInvalid',
@@ -492,6 +494,12 @@ const PLUGIN_RUNTIME_KEYS = {
     // The Account's mode read failed: the Home (its server) did not answer, so nothing on the page can open yet.
     account_encryption_mode_unavailable: 'pluginRuntime.homeUnreachableReason',
 } as const satisfies Record<string, PluginRuntimeMessageKey>;
+
+/** Action failures share the surface owner's currentness recovery vocabulary. */
+export function resolvePluginSurfaceStaleReasonMessage(reasonCode: string): string | null {
+    const key = PLUGIN_RUNTIME_KEYS[reasonCode as keyof typeof PLUGIN_RUNTIME_KEYS];
+    return key === 'pluginRuntime.viewNotCurrent' ? t(key) : null;
+}
 
 /** A cause that is not the plugin's names itself in the card's title, in place of "{plugin} can't open". */
 const PLUGIN_RUNTIME_TITLE_KEYS = {
