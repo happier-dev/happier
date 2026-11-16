@@ -45,6 +45,8 @@ const ROW_ICONS: Readonly<Record<MachineThisMachinePageId, IconName>> = {
 export const MachineThisMachineSection = React.memo(function MachineThisMachineSection(props: Readonly<{
     serverId: string;
     machine: Machine;
+    /** The Isolation row (Where sessions run), placed after Terminal as the lab orders This machine. */
+    isolationRow?: React.ReactNode;
 }>) {
     const language = usePreferredLanguage();
     const router = useRouter();
@@ -83,15 +85,17 @@ export const MachineThisMachineSection = React.memo(function MachineThisMachineS
         <View testID="machine-page-this-machine">
             <ItemGroup title={t('machineDetailPage.thisMachineTitle')}>
                 {MACHINE_THIS_MACHINE_PAGES.map((page) => (
-                    <Item
-                        key={page}
-                        testID={`machine-page-row-${page}`}
-                        title={t(MACHINE_SUB_PAGE_TITLE_KEYS[page])}
-                        subtitle={summaries[page]}
-                        icon={<Icon name={ROW_ICONS[page]} />}
-                        showChevron
-                        onPress={() => open(page)}
-                    />
+                    <React.Fragment key={page}>
+                        <Item
+                            testID={`machine-page-row-${page}`}
+                            title={t(MACHINE_SUB_PAGE_TITLE_KEYS[page])}
+                            subtitle={summaries[page]}
+                            icon={<Icon name={ROW_ICONS[page]} />}
+                            showChevron
+                            onPress={() => open(page)}
+                        />
+                        {page === 'terminal' ? props.isolationRow : null}
+                    </React.Fragment>
                 ))}
             </ItemGroup>
         </View>

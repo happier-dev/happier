@@ -173,7 +173,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             perMonth: "/月",
             perUnit: ({ unit }: { unit: string }) => `/${unit}`,
             checked: ({ provider, time }: { provider: string; time: string }) => `${provider} の価格 · ${time} に確認`,
-            unavailable: ({ provider }: { provider: string | null }) => provider ? `価格なし · ${provider} から直接請求` : '価格なし',
+            unavailable: ({ provider }: { provider: string | null }) => provider ? `プロバイダーの料金がかかります · ${provider} から直接請求` : 'プロバイダーの料金がかかります',
             aboutMonthly: ({ amount }: { amount: string }) => `存在する間、月約 ${amount}`,
             noBill: "請求なし",
             runsOn: ({ computer }: { computer: string }) => `${computer} で実行`,

@@ -7,6 +7,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { Text } from '@/components/ui/text/Text';
+import { LeadSentence, type LeadSentenceContent } from '@/components/ui/text/LeadSentence';
 import { Typography } from '@/constants/Typography';
 import { useClaimSettingsBack } from '@/components/settings/shell/SettingsModalFloatingControls';
 import { useNavigationChromeShowsBack } from '@/components/ui/layout/navigationTitleChrome';
@@ -20,7 +21,7 @@ import { useNavigationChromeShowsBack } from '@/components/ui/layout/navigationT
  * the column edge are the same on every one.
  */
 /** A page's leading statement in ink, and the quiet clause that finishes it. */
-export type MachinePageLead = Readonly<{ statement: string; detail: string | null }>;
+export type MachinePageLead = LeadSentenceContent;
 
 export function MachineTabSubHead(props: Readonly<{
     /** Null for a page that could not be read (no name to give): the way back stands alone. */
@@ -37,6 +38,8 @@ export function MachineTabSubHead(props: Readonly<{
      * and 443." then a quiet clause), in place of a purpose sentence once the facts can say it.
      */
     lead?: MachinePageLead | null;
+    /** A freshness line under the name ("devbox is offline · Retry"), before the lead it qualifies. */
+    notice?: React.ReactNode;
     testID?: string;
     /**
      * `tab` (default): under the machine's header and tabs. `page`: the page's own head (a This machine page), so it
@@ -74,12 +77,11 @@ export function MachineTabSubHead(props: Readonly<{
                     {props.aside ? <Text style={styles.aside}>{props.aside}</Text> : null}
                 </View>
             )}
+            {props.notice ?? null}
             {props.description ? <Text style={styles.description}>{props.description}</Text> : null}
             {props.lead ? (
-                <Text testID={props.testID ? `${props.testID}-lead` : undefined} style={styles.lead}>
-                    <Text style={styles.leadStatement}>{props.lead.statement}</Text>
-                    {props.lead.detail ? ` ${props.lead.detail}` : null}
-                </Text>
+                <LeadSentence testID={props.testID ? `${props.testID}-lead` : undefined} style={styles.lead}
+                    statement={props.lead.statement} detail={props.lead.detail} />
             ) : null}
             {props.children}
         </ItemGroup>
@@ -134,14 +136,7 @@ const styles = StyleSheet.create((theme) => ({
         marginTop: theme.space.s4,
     },
     lead: {
-        ...Typography.variant('heading', 'regular'),
-        color: theme.colors.text.secondary,
         marginTop: theme.space.s4,
-        maxWidth: PAGE_LIST_METRICS.columnMaxWidthPx.reading,
-    },
-    leadStatement: {
-        ...Typography.variant('heading', 'semiBold'),
-        color: theme.colors.text.primary,
     },
     title: {
         ...Typography.default('semiBold'),

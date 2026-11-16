@@ -205,7 +205,8 @@ export function useAgentInputPopoverLayout(input: Readonly<{
             flip: true,
             gap: DEFAULT_POPOVER_GAP,
             edgePadding,
-            portal,
+            // A field's picker opens at the field's own width and edge, as a field select's menu does.
+            portal: { ...portal, matchAnchorWidth: true },
             ...(pickerWidth === 'window' ? {} : { horizontalBoundaryRef: columnRef }),
         };
     }

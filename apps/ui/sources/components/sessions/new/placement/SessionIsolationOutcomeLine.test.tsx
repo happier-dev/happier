@@ -52,6 +52,14 @@ describe('session isolation outcome line', () => {
         expect(workflow.link).toBeUndefined();
     });
 
+    it('says an offline Machine keeps the draft, with no override to offer until it is back', async () => {
+        const { text, link } = await render({ snapshot: stored, outcome: proposeMachineIsolationOutcome(stored, 'sessions') ?? undefined,
+            offline: true, onOverrideChange: vi.fn() });
+        expect(text).toContain('machineDetailPage.isolation.outcome.offline');
+        expect(text).not.toContain('machineDetailPage.isolation.outcome.fresh');
+        expect(link).toBeUndefined();
+    });
+
     it('says the one-time override and puts the sandbox back', async () => {
         const onOverrideChange = vi.fn();
         const { text, link } = await render({ snapshot: stored, outcome: proposeMachineIsolationOutcome(stored, 'sessions', 'directly') ?? undefined,

@@ -99,7 +99,9 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
     const containingSurfaceGroup = useContainingGlassSurfaceGroup();
     const spansFloatingFormColumn = inDocumentPanel && containingSurfaceGroup === 'floating';
     const maxWidthCap = React.useMemo(() => {
-        const baseMaxWidthCap = spansFloatingFormColumn ? Number.MAX_SAFE_INTEGER : props.maxWidthCap ?? 420;
+        // A field-anchored picker takes its field's width (the layout matches the anchor), so no chip cap applies.
+        const baseMaxWidthCap = spansFloatingFormColumn ? Number.MAX_SAFE_INTEGER
+            : props.maxWidthCap ?? (props.anchor === 'field' ? Number.MAX_SAFE_INTEGER : 420);
         if (!usesMobileWebBoundaryLayout) {
             return baseMaxWidthCap;
         }
@@ -108,7 +110,7 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
             baseMaxWidthCap,
             Math.max(0, Math.floor(windowWidth - MOBILE_WEB_AGENT_INPUT_POPOVER_VIEWPORT_MARGIN * 2)),
         );
-    }, [props.maxWidthCap, spansFloatingFormColumn, usesMobileWebBoundaryLayout, windowWidth]);
+    }, [props.anchor, props.maxWidthCap, spansFloatingFormColumn, usesMobileWebBoundaryLayout, windowWidth]);
     // The header sits outside the content's own height budget, so the content keeps what is left.
     const [headerHeight, setHeaderHeight] = React.useState(0);
 

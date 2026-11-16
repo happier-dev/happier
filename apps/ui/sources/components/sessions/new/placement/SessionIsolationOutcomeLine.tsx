@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { MachineIsolationGetResultV1 } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
 
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { proposeMachineIsolationOutcome } from '@/sync/domains/machines/machineIsolationPolicy';
@@ -30,6 +32,8 @@ export function SessionIsolationOutcomeLine(
     snapshot: MachineIsolationGetResultV1;
     outcome: SessionIsolationOutcome | undefined;
     override?: 'directly';
+    /** The chosen Machine is offline: the draft waits, and the line says what happens once it is back. */
+    offline?: boolean;
     onOverrideChange?: (value: 'directly' | undefined) => void;
     testID?: string;
   }>,
@@ -40,13 +44,23 @@ export function SessionIsolationOutcomeLine(
     outcome?.status === 'proposed' && outcome.choice.kind === 'sandbox'
       ? outcome.configuredSandbox?.presetId
       : undefined;
-  const presetName = usePresetName(props.serverId, presetId);
+  const preset = usePreset(props.serverId, presetId);
   if (!machineName || snapshot.status !== 'ready') return null;
   const machine = machineName;
+  if (props.offline)
+    return (
+      <OutcomeRow
+        testID={testID}
+        glyph="cloud-slash"
+        text={t('machineDetailPage.isolation.outcome.offline', { machine })}
+        link={null}
+      />
+    );
   if (props.override === 'directly') {
     return (
       <OutcomeRow
         testID={testID}
+        glyph="desktop"
         text={t('machineDetailPage.isolation.outcome.directlyOnce', {
           machine,
         })}
@@ -65,6 +79,7 @@ export function SessionIsolationOutcomeLine(
     return (
       <OutcomeRow
         testID={testID}
+        glyph="desktop"
         text={t('machineDetailPage.isolation.outcome.directly', { machine })}
         link={null}
       />
@@ -73,6 +88,7 @@ export function SessionIsolationOutcomeLine(
     return (
       <OutcomeRow
         testID={testID}
+        glyph="warning"
         text={t('machineDetailPage.isolation.outcome.unavailable', { machine })}
         link={null}
         warning
@@ -82,11 +98,12 @@ export function SessionIsolationOutcomeLine(
     return (
       <OutcomeRow
         testID={testID}
+        glyph="desktop"
         text={t('machineDetailPage.isolation.outcome.directly', { machine })}
         link={null}
       />
     );
-  const name = presetName ?? t('machineDetailPage.isolation.summary.unnamed');
+  const name = preset?.name ?? t('machineDetailPage.isolation.summary.unnamed');
   const text =
     outcome.choice.lifecycle === 'fresh'
       ? t('machineDetailPage.isolation.outcome.fresh', { name, machine })
@@ -94,6 +111,9 @@ export function SessionIsolationOutcomeLine(
   return (
     <OutcomeRow
       testID={testID}
+      // The sandbox's own mark, as the Isolation page draws it; a preset not read yet takes the generic one.
+      mark={preset && props.serverId ? <ManagedPresetMark serverId={props.serverId} preset={preset} size={OUTCOME_MARK_SIZE} /> : undefined}
+      glyph="cube"
       text={text}
       link={
         props.onOverrideChange
@@ -107,11 +127,11 @@ export function SessionIsolationOutcomeLine(
   );
 }
 
-/** The chosen preset's own name, read from the Account's preset resource only while a sandbox is proposed. */
-function usePresetName(
+/** The chosen preset, read from the Account's preset resource only while a sandbox is proposed. */
+function usePreset(
   serverId: string | null,
   presetId: string | undefined,
-): string | null {
+) {
   const serverIds = React.useMemo(
     () => (serverId && presetId ? [serverId] : NO_SERVERS),
     [serverId, presetId],
@@ -123,23 +143,33 @@ function usePresetName(
           (entry) => entry.id === presetId,
         )
       : undefined;
-  return preset && isOpenedManagedMachinePresetV1(preset) ? preset.name : null;
+  return preset && isOpenedManagedMachinePresetV1(preset) ? preset : null;
 }
+
+/** The meta line's mark: one step under the row mark, the size of the line's own glyphs. */
+const OUTCOME_MARK_SIZE = 14;
 
 function OutcomeRow(
   props: Readonly<{
     testID: string;
     text: string;
+    glyph: IconName;
+    mark?: React.ReactNode;
     warning?: boolean;
     link: Readonly<{ label: string; onPress: () => void }> | null;
   }>,
 ) {
+  const { theme } = useUnistyles();
   return (
     <View
       testID={props.testID}
       style={styles.row}
       accessibilityLiveRegion="polite"
     >
+      <View style={styles.mark} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        {props.mark ?? <Icon name={props.glyph} size={OUTCOME_MARK_SIZE}
+          color={props.warning ? theme.colors.state.warning.foreground : theme.colors.text.secondary} />}
+      </View>
       <Text style={props.warning ? styles.warning : styles.text}>
         {props.text}
       </Text>
@@ -160,12 +190,13 @@ const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    alignItems: 'baseline',
+    alignItems: 'center',
     columnGap: theme.space.s8,
     rowGap: theme.space.s2,
     marginTop: theme.space.s8,
   },
-  text: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
+  mark: { alignSelf: 'center' },
+  text: { ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 },
   warning: {
     ...Typography.variant('meta'),
     color: theme.colors.state.warning.foreground,

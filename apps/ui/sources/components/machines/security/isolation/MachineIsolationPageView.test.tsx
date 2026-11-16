@@ -75,6 +75,10 @@ describe('Machine isolation page', () => {
         expect(target('sessions')).toMatchObject({ selectedId: 'node', disabled: true });
         expect(lifecycle('sessions')?.disabled).toBe(true);
         expect(nativeSwitch.disabled).toBe(true);
+        // Offline is said once, by the page head's freshness line: the section repeats nothing, controls stay disabled.
+        const offline = await render({ policy: CONFIGURED, entries: ENTRIES, readOnlyReason: 'offline-reason', offline: true });
+        expect(findTestInstanceByTypeWithProps(offline.screen, ItemGroup, { testID: 'machine-isolation-where' })?.props.description).toBeUndefined();
+        expect(offline.target('sessions')?.disabled).toBe(true);
     });
 
     it('shows a failed save and a failed type check with their reason and Retry', async () => {
@@ -102,12 +106,19 @@ describe('Machine isolation page', () => {
 
     it('offers one way to add a sandbox, which stays put while nothing can change', async () => {
         const onAdd = vi.fn();
-        const editable = await render({ onAdd });
+        // Nothing added yet: the invitation's one action; with sandboxes added, the add row under them.
+        const empty = await render({ onAdd });
+        const inviteAction = (screen: typeof empty.screen) => findTestInstanceByTypeWithProps(screen, SurfaceStateCard,
+            { testID: 'machine-isolation-sandboxes-empty' })?.props.action;
+        expect(inviteAction(empty.screen)?.disabled).toBeFalsy();
+        await inviteAction(empty.screen)?.onPress();
+        expect(onAdd).toHaveBeenCalledOnce();
+        const editable = await render({ onAdd, policy: CONFIGURED, entries: ENTRIES });
         const add = findTestInstanceByTypeWithProps(editable.screen, Item, { testID: 'machine-isolation-add' })?.props;
         expect(add?.disabled).toBeFalsy();
         add?.onPress();
-        expect(onAdd).toHaveBeenCalledOnce();
+        expect(onAdd).toHaveBeenCalledTimes(2);
         const offline = await render({ onAdd, readOnlyReason: 'offline-reason' });
-        expect(findTestInstanceByTypeWithProps(offline.screen, Item, { testID: 'machine-isolation-add' })?.props.disabled).toBe(true);
+        expect(inviteAction(offline.screen)?.disabled).toBe(true);
     });
 });

@@ -77,7 +77,7 @@ const NO_SANDBOXES_SCENE = defineHappierScene({
 function MachineSandboxesEmpty(props: Readonly<{ machineName: string; onOpenIsolation: () => void }>) {
     return (
         <EmptyState testID="machine-sandboxes-empty" layout="page" scene={NO_SANDBOXES_SCENE}
-            title={t('machineDetailPage.isolation.host.emptyTitle')}
+            title={t('machineDetailPage.isolation.host.emptyTitle', { machine: props.machineName })}
             subtitle={t('machineDetailPage.isolation.host.emptyReason', { machine: props.machineName })}
             primaryAction={{ label: t('machineDetailPage.isolation.host.emptyAction'), onPress: props.onOpenIsolation,
                 testID: 'machine-sandboxes-empty-add' }} />

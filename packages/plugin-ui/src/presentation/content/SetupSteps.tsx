@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import { HAPPIER_SPACE_STEPS } from '../../environment/spacing.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierSpinner, iconMatchedSpinnerSize } from '../feedback/Spinner.js';
 import type { HappierFontWeight } from '../portableTypes.js';
@@ -25,9 +26,10 @@ export type HappierSetupStepState = HappierStepProgress;
  * How the steps paint. `numbered`: a rail of numbered steps for a setup the reader walks through.
  * `checklist`: one row per step with its state glyph, for progress the system reports (installing,
  * importing, creating). `compact`: one quiet line per step with ink marks, for a popover or a card's
- * corner beside other content.
+ * corner beside other content. `strip`: the steps of a flow the reader walks through, on one line joined by
+ * hairlines (a sheet's Kind · Set up · Preset), the step being worked on in ink.
  */
-export type HappierSetupStepsVariant = 'numbered' | 'checklist' | 'compact';
+export type HappierSetupStepsVariant = 'numbered' | 'checklist' | 'compact' | 'strip';
 
 /** The states whose mark is a glyph from the adapter's icon owner. */
 export type HappierSetupStepGlyphState =
@@ -93,6 +95,11 @@ const GLYPH_PAINT = {
     size: 14,
     ring: 10,
   },
+  strip: {
+    tone: { done: 'muted', failed: 'danger', waiting: 'neutral' },
+    size: 14,
+    ring: 10,
+  },
 } as const satisfies Record<
   HappierSetupStepsVariant,
   Readonly<{
@@ -139,7 +146,7 @@ function resolveTitlePresentation(
   if (working) return title(colors.text, 'medium');
   if (state === 'upcoming' || state === 'cancelled')
     return title(colors.mutedText, 'regular');
-  if (variant === 'compact')
+  if (variant === 'compact' || variant === 'strip')
     return title(
       state === 'failed' ? colors.danger : colors.secondaryText,
       'regular',
@@ -228,6 +235,46 @@ export function HappierSetupSteps(props: HappierSetupStepsProps) {
       />
     );
   };
+
+  if (variant === 'strip') {
+    return (
+      <View
+        testID={props.testID}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.small }}
+        accessibilityRole="list"
+      >
+        {props.steps.map((step, index) => {
+          const state = step.state ?? 'upcoming';
+          return (
+            <View
+              key={step.key}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.small, flexShrink: 1, minWidth: 0 }}
+            >
+              {index > 0 ? (
+                <View
+                  aria-hidden
+                  style={{ width: HAPPIER_SPACE_STEPS.s48, flexShrink: 1, minWidth: HAPPIER_SPACE_STEPS.s12, height: StyleSheet.hairlineWidth, backgroundColor: theme.colors.divider }}
+                />
+              ) : null}
+              <View
+                testID={step.testID}
+                {...(state === 'current' ? { 'aria-current': 'step' } : {})}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}
+              >
+                <View
+                  aria-hidden
+                  style={{ width: paint.size, height: paint.size, alignItems: 'center', justifyContent: 'center' }}
+                >
+                  {renderMark(state)}
+                </View>
+                {renderTitle(step, state)}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    );
+  }
 
   if (variant !== 'numbered') {
     const checklist = variant === 'checklist';

@@ -304,6 +304,7 @@ export function NewSessionComposerCard(input: Readonly<{
                         {props.sessionIsolation && !workflowSelected ? (
                             <SessionIsolationOutcomeLine serverId={props.sessionIsolation.serverId} machineName={props.sessionIsolation.machineName}
                                 snapshot={props.sessionIsolation.snapshot} outcome={props.sessionIsolation.proposedOutcome}
+                                offline={props.sessionIsolation.offline}
                                 override={props.sessionIsolation.override} onOverrideChange={props.sessionIsolation.onOverrideChange} />
                         ) : null}
                         {props.composerBottomContent}

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { HappierPageRowFieldLayoutContext } from '@happier-dev/plugin-ui/presentation';
 import type {
   MachineIsolationPolicyV1,
   MachineIsolationWorkChoiceV1,
@@ -53,6 +54,8 @@ export type MachineIsolationPageViewProps = Readonly<{
   entries: readonly MachineIsolationEntryRow[];
   /** Why nothing here can change right now (offline, not a manager); the policy stays visible. */
   readOnlyReason: string | null;
+  /** Offline is said once, by the page head's freshness line; the section then repeats nothing. */
+  offline?: boolean;
   busy: boolean;
   saveFailure: MachineIsolationFailure | null;
   /** The sandbox types' declarations could not be read; native support stays unknown until Retry. */
@@ -142,7 +145,7 @@ export function MachineIsolationPageView(props: MachineIsolationPageViewProps) {
       <ItemGroup
         testID="machine-isolation-where"
         title={t('machineDetailPage.isolation.whereTitle')}
-        description={props.readOnlyReason ?? undefined}
+        description={props.offline ? undefined : props.readOnlyReason ?? undefined}
       >
         {MACHINE_ISOLATION_WORK_KINDS.map((kind) => (
           <MachineIsolationWorkKindRow
@@ -198,9 +201,7 @@ export function MachineIsolationPageView(props: MachineIsolationPageViewProps) {
             ? t('machineDetailPage.isolation.sandboxes.description', {
                 machine: machineName,
               })
-            : t('machineDetailPage.isolation.sandboxes.empty', {
-                machine: machineName,
-              })
+            : undefined
         }
       >
         {props.checkFailure ? (
@@ -228,7 +229,27 @@ export function MachineIsolationPageView(props: MachineIsolationPageViewProps) {
             onRemove={props.onRemove}
           />
         ))}
-        {props.onAdd ? (
+        {entries.length === 0 ? (
+          // Nothing added yet: the same invitation the Sandboxes tab makes, with its one action.
+          <SurfaceStateCard
+            testID="machine-isolation-sandboxes-empty"
+            // Section scale, beside the rows it will hold: the inline invite, not a whole-pane state.
+            layout="inline"
+            kind="empty"
+            title={t('machineDetailPage.isolation.host.emptyTitle', { machine: machineName })}
+            reason={t('machineDetailPage.isolation.host.emptyReason', { machine: machineName })}
+            {...(props.onAdd
+              ? {
+                  action: {
+                    label: t('machineDetailPage.isolation.host.emptyAction'),
+                    onPress: props.onAdd,
+                    disabled,
+                    testID: 'machine-isolation-add',
+                  },
+                }
+              : {})}
+          />
+        ) : props.onAdd ? (
           <ItemAddRow
             testID="machine-isolation-add"
             title={t('machineDetailPage.isolation.host.emptyAction')}
@@ -290,8 +311,9 @@ function MachineIsolationWorkKindRow(
       showChevron={false}
       accessoryLayout="adaptive"
       rightElement={
-        <View style={styles.controls}>
+        <MachineIsolationRowControls>{(stacked) => <>
           <ValueFieldSelect
+            fill={stacked}
             testID={`machine-isolation-target-${kind}`}
             label={t('machineDetailPage.isolation.runsWhere')}
             items={props.targets}
@@ -317,10 +339,16 @@ function MachineIsolationWorkKindRow(
               testIDPrefix={`machine-isolation-lifecycle-${kind}`}
             />
           ) : null}
-        </View>
+        </>}</MachineIsolationRowControls>
       }
     />
   );
+}
+
+/** Beside its label the target and lifecycle trail it; when the row stacks them (a phone), they span the row beneath. */
+function MachineIsolationRowControls(props: Readonly<{ children: (stacked: boolean) => React.ReactNode }>) {
+  const stacked = React.useContext(HappierPageRowFieldLayoutContext)?.stacked === true;
+  return <View style={[styles.controls, stacked ? styles.controlsStacked : null]}>{props.children(stacked)}</View>;
 }
 
 function MachineIsolationEntryItem(
@@ -388,5 +416,11 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s8,
     flexWrap: 'wrap',
     justifyContent: 'flex-end',
+  },
+  controlsStacked: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    // A wrapping column sizes its line to the widest control; one line spans the row.
+    flexWrap: 'nowrap',
   },
 }));

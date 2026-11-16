@@ -97,7 +97,7 @@ describe('a preset offered as a new machine in the picker (lab m-pick)', () => {
         expect(describeManagedPresetOffer({ reviewedFacts: { ...reviewedFacts, nativeFacts } })).toBe('CX32 · Falkenstein');
         expect(describeManagedPresetOffer({})).toBeUndefined();
     });
-    it('costs No bill on the computer that runs it, a returned price with when it was read, and nothing it cannot know', () => {
+    it('costs No bill on the computer that runs it, a returned price with when it was read, and says provider charges apply when unpriced', () => {
         const local = { location: 'local' as const, stoppedBilling: 'not-billed' as const };
         expect(presentManagedPresetCost({ billing: local, provider: 'Lima', runsOn: 'Mac Studio' })).toEqual({
             value: t('managedMachines.price.noBill'), detail: t('managedMachines.price.runsOn', { computer: 'Mac Studio' }) });
@@ -105,8 +105,9 @@ describe('a preset offered as a new machine in the picker (lab m-pick)', () => {
         const headline = presentManagedCost({ kind: 'price', prices: [price] });
         expect(presentManagedPresetCost({ prices: [price], billing: reviewedFacts.billing, provider: 'Hetzner' })).toEqual({
             value: `${headline.value} ${headline.unit}`, detail: formatPriceSource(price, null) });
-        // A cloud machine without a returned price shows no figure: never a guess (lab m-pick Truth).
-        expect(presentManagedPresetCost({ billing: reviewedFacts.billing, provider: 'Hetzner' })).toBeNull();
+        // A cloud machine without a returned price never shows a figure, and never a blank that reads as free (PLAN §3).
+        expect(presentManagedPresetCost({ billing: reviewedFacts.billing, provider: 'Hetzner' })).toEqual({
+            value: t('managedMachines.price.unavailable', { provider: null }) });
     });
 });
 describe('one managed configuration receipt projection', () => {

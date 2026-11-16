@@ -44,7 +44,7 @@ function needsRuntimeHost(provisioner: MachineProvisionersListResultV1['provisio
 }
 
 export type ManagedProvisionerSelection = Readonly<{ serverId: string; provisioner: string; controller?: ManagedControllerV1; connectPurpose?: string }>;
-type MachineProvisionerPickerProps = Readonly<{
+export type MachineProvisionerPickerProps = Readonly<{
     serverId: string; presetOnly?: boolean;
     /** Machine Security configures sandboxes on its named controller. */
     controller?: ManagedControllerV1;
@@ -68,7 +68,12 @@ export function MachineProvisionerPicker(props: MachineProvisionerPickerProps) {
     return <MachineProvisionerCatalog key={selectedHome} {...shared} />;
 }
 
-function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
+/**
+ * The provider catalog's one reading for a Home and a controller: its offers as cards (status, repair, the next
+ * step), what waits for a computer, and the page-level line. The Add-a-machine picker paints it as sections; a
+ * Machine's Add a sandbox sheet paints the same cards as its kind list.
+ */
+export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
     const handler = React.useRef<(registration: ActionApprovalRegistration) => void>(() => {});
     const onApprovalPending = React.useCallback((registration: ActionApprovalRegistration) => handler.current(registration), []);
     // "Managed from": the Machine that runs the offers placed on a Machine. The invoking host can also place
@@ -266,6 +271,13 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
     const setUpThisComputer = props.onSetUpThisComputer ?? (() => router.push('/settings/machines/add?path=thisComputer' as never));
     // The first read reserves the catalog's own layout (its cards' skeletons), not a lone loading line.
     const reading = !shown && (catalog.loading || !props.presetOnly && !scope.hasCandidates && scope.machineList === 'loading');
+    return { approval, router, cards, waiting, scope, scopeState, homeUnreachable, catalog, compact, localDescription,
+        sectionScope, shown, reading, pageSections, retryMachineList, setUpThisComputer, controllerName };
+}
+
+function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
+    const { approval, router, cards, waiting, scope, scopeState, homeUnreachable, catalog, compact, localDescription,
+        sectionScope, shown, reading, pageSections, retryMachineList, setUpThisComputer } = useMachineProvisionerCatalog(props);
     return <View testID="managed-picker">
         {approval.approvalId ? <AttentionBanner testID="managed-picker.approval" title={t('approvals.title')} description={t('approvals.status.open')}
             action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}

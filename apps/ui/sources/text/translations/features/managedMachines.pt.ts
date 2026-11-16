@@ -173,7 +173,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             perMonth: "por mês",
             perUnit: ({ unit }: { unit: string }) => `por ${unit}`,
             checked: ({ provider, time }: { provider: string; time: string }) => `Preço de ${provider} · verificado às ${time}`,
-            unavailable: ({ provider }: { provider: string | null }) => provider ? `Preço indisponível · cobrado diretamente por ${provider}` : 'Preço indisponível',
+            unavailable: ({ provider }: { provider: string | null }) => provider ? `Aplicam-se custos do fornecedor · cobrado diretamente por ${provider}` : 'Aplicam-se custos do fornecedor',
             aboutMonthly: ({ amount }: { amount: string }) => `Cerca de ${amount} por mês enquanto existir`,
             noBill: "Sem cobrança",
             runsOn: ({ computer }: { computer: string }) => `Roda em ${computer}`,

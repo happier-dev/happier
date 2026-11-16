@@ -173,7 +173,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             perMonth: "每月",
             perUnit: ({ unit }: { unit: string }) => `每${unit}`,
             checked: ({ provider, time }: { provider: string; time: string }) => `價格來自 ${provider} · ${time} 查詢`,
-            unavailable: ({ provider }: { provider: string | null }) => provider ? `暫無價格 · 由 ${provider} 直接收費` : '暫無價格',
+            unavailable: ({ provider }: { provider: string | null }) => provider ? `適用提供者費用 · 由 ${provider} 直接收費` : '適用提供者費用',
             aboutMonthly: ({ amount }: { amount: string }) => `存在期間約每月 ${amount}`,
             noBill: "不收費",
             runsOn: ({ computer }: { computer: string }) => `在 ${computer} 上執行`,

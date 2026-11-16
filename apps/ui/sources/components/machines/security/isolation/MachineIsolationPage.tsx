@@ -158,11 +158,12 @@ export function MachineIsolationPage(
   );
   const canAdd = readOnlyReason === null && isolation.snapshot.status === 'ready';
   const openAdd = React.useCallback((useFor?: MachineIsolationWorkKind) => {
-    Modal.show({ component: MachineIsolationAddSandboxModal, props: { serverId, controller,
+    Modal.show({ component: MachineIsolationAddSandboxModal, props: { serverId, controller, machineName,
+      ...(useFor ? { useFor } : {}),
       onAdded: (entry: MachineIsolationAddedSandbox) => {
         if (latestPolicy.current) void save(withMachineIsolationSandbox(latestPolicy.current, { ...entry, ...(useFor ? { useFor } : {}) }, randomUUID).policy);
       } } });
-  }, [serverId, controller, save]);
+  }, [serverId, controller, machineName, save]);
   const onAdd = React.useCallback(() => openAdd(), [openAdd]);
   const { addFor, onAddHandled } = props;
   React.useEffect(() => {
@@ -193,6 +194,7 @@ export function MachineIsolationPage(
     status: isolation.snapshot.status,
     policy,
     readOnlyReason,
+    offline: canManageMachine(machine) && props.online !== true,
     busy: isolation.saving,
     saveFailure,
     onRetryRead,

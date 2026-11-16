@@ -2067,3 +2067,79 @@ describe('provisioner picker demand', () => {
     await screen.unmount();
   });
 });
+
+describe('Add a sandbox sheet (the catalog as Kind → Set up → Preset)', () => {
+  it('lists this Machine’s kinds as one choice, goes straight to presets for a ready kind and through Set up for one that is not', async () => {
+    const { MachineIsolationAddSandboxModal } = await import('@/components/machines/security/isolation/MachineIsolationAddSandboxModal');
+    const serverId = await harness.addHome({ name: 'Add sandbox', serverUrl: 'https://add-sandbox.example.test',
+      serverIdentityId: 'srv_add_sandbox', accountId: 'owner', currentAccount: true });
+    await publishNoAccountProvisioners(serverId);
+    const controller = { machineId: 'devbox', installationId: 'installation' };
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
+      createControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId, activeAt: Date.now(), kind: 'persistent' }),
+    ]);
+    const descriptor = { id: 'ready', title: 'Dev container', icon: 'server', resourceKind: 'Container', schemaVersion: 1,
+      launchSchema: { type: 'object', properties: {}, additionalProperties: false },
+      resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
+      billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
+      sessionPlacement: { kind: 'controller-local' },
+      actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' } };
+    const list = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: [
+      { contribution: { pluginId: 'sbx.kinds', localId: 'ready' }, descriptor },
+      { contribution: { pluginId: 'sbx.kinds', localId: 'missing' }, descriptor: { ...descriptor, id: 'missing', title: 'Lima VM' } },
+      { contribution: { pluginId: 'sbx.kinds', localId: 'gone' }, descriptor: { ...descriptor, id: 'gone', title: 'macOS VM' } },
+      { contribution: { pluginId: 'sbx.kinds', localId: 'remote' }, descriptor: { ...descriptor, id: 'remote', title: 'Cloud', sessionPlacement: { kind: 'remote' } } },
+    ].map(entry => ({ ...entry, occurrenceId: `occurrence-${entry.contribution.localId}`, credentialPurposes: [], acquireExecutionTarget: 'daemon' })) });
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId, execution: { ok: true, result: list } } };
+    } });
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      const kind = (request.input as { contribution: { localId: string } }).contribution.localId;
+      // Lima has its own install step; the macOS VM has none here, so nothing on this Machine can set it up.
+      const result = kind === 'ready' ? { available: true } : { available: false,
+        prerequisites: [{ requirement: { kind: 'systemTool', id: kind }, status: 'unavailable',
+          ...(kind === 'missing' ? { repairAction: { action: { pluginId: 'sbx.kinds', localId: 'install' }, input: {} } } : {}) }] };
+      return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId, execution: { ok: true, result } } };
+    } });
+    // The modal host's chrome is a boundary: the sheet hands it the footer, which this host draws beneath. Like
+    // CustomModal, the host keeps the sheet's element stable, so drawing a new footer never re-renders the sheet.
+    function Host() {
+      const [footer, setFooter] = React.useState<React.ReactNode>(null);
+      const setChrome = React.useCallback((chrome: { footer?: React.ReactNode } | null) => setFooter(chrome?.footer ?? null), []);
+      const sheet = React.useMemo(() => <MachineIsolationAddSandboxModal {...({ onClose: () => {}, setChrome } as never)}
+        serverId={serverId} controller={controller} machineName="devbox" useFor="sessions" onAdded={() => {}} />, [setChrome]);
+      return <>{sheet}{footer}</>;
+    }
+    const screen = await renderPicker(<Host />);
+    try {
+      await waitForHomeGovernance(() => {
+        expect(screen.tree.findAll(node => node.props.testID === 'machine-isolation-add.kind:sbx.kinds/ready').length).toBeGreaterThan(0);
+        expect(screen.tree.findAll(node => node.props.testID === 'machine-isolation-add.kind:sbx.kinds/missing').length).toBeGreaterThan(0);
+        expect(screen.tree.findAll(node => node.props.testID === 'machine-isolation-add.elsewhere')
+          .some(group => group.findAll(node => node.props.testID === 'machine-isolation-add.kind:sbx.kinds/gone').length > 0)).toBe(true);
+      });
+      // A remote kind is never offered as a sandbox here, and nothing is acquired by choosing.
+      expect(screen.tree.findAll(node => node.props.testID === 'machine-isolation-add.kind:sbx.kinds/remote')).toHaveLength(0);
+      const press = async (testID: string) => {
+        const [node] = screen.tree.findAll(candidate => candidate.props.testID === testID && typeof candidate.props.onPress === 'function');
+        await act(async () => { node!.props.onPress(); });
+        await flushHookEffects();
+      };
+      // The ready kind is picked to start with: Continue goes to its presets, past Set up.
+      await press('machine-isolation-add.continue');
+      await waitForHomeGovernance(() => {
+        expect(screen.tree.findAll(node => node.props.testID === 'machine-isolation-add.presets').length).toBeGreaterThan(0);
+      });
+      await press('machine-isolation-add.back');
+      await press('machine-isolation-add.kind:sbx.kinds/missing');
+      await press('machine-isolation-add.continue');
+      await waitForHomeGovernance(() => {
+        expect(screen.tree.findAll(node => node.props.testID === 'machine-isolation-add.setup:sbx.kinds/missing').length).toBeGreaterThan(0);
+        expect(screen.tree.findAll(node => node.props.testID === 'machine-isolation-add.presets')).toHaveLength(0);
+      });
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
+});

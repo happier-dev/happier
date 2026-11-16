@@ -293,13 +293,15 @@ export function describeManagedPresetOffer(preset: Readonly<{
 
 /**
  * A preset offer's cost column (lab m-pick): "No bill" and the computer it runs on for a local machine, or the
- * provider's returned price with when it was read. Unpriced says nothing: the column never guesses a figure.
+ * provider's returned price with when it was read. Unpriced says provider charges apply: the column never guesses a figure.
  */
 export function presentManagedPresetCost(input: Readonly<{
     prices?: ManagedConfigurationFactsV1['prices']; billing?: BillingCapabilitiesV1; provider: string | null; runsOn?: string;
 }>): Readonly<{ value: string; detail?: string }> | null {
     const cost = resolveManagedConfigurationCost({ prices: input.prices, billing: input.billing, provider: input.provider });
-    if (cost.kind === 'unpriced') return null;
+    // Unpriced: the owner's short "Provider charges apply" (the offer line already names the provider), never a
+    // blank that reads as free and never a figure.
+    if (cost.kind === 'unpriced') return { value: presentManagedCost({ kind: 'unpriced', provider: null }).value };
     const headline = presentManagedCost(cost);
     if (cost.kind === 'local') return { value: headline.value,
         ...(input.runsOn ? { detail: t('managedMachines.price.runsOn', { computer: input.runsOn }) } : {}) };

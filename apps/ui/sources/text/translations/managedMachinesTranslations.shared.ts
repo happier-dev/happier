@@ -179,7 +179,7 @@ export const managedMachinesEn = {
             perMonth: "a month",
             perUnit: ({ unit }: { unit: string }) => `per ${unit}`,
             checked: ({ provider, time }: { provider: string; time: string }) => `Price from ${provider} · checked ${time}`,
-            unavailable: ({ provider }: { provider: string | null }) => provider ? `Price unavailable · billed directly by ${provider}` : 'Price unavailable',
+            unavailable: ({ provider }: { provider: string | null }) => provider ? `Provider charges apply · billed directly by ${provider}` : 'Provider charges apply',
             aboutMonthly: ({ amount }: { amount: string }) => `About ${amount} a month while it exists`,
             noBill: "No bill",
             runsOn: ({ computer }: { computer: string }) => `Runs on ${computer}`,
