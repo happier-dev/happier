@@ -27,7 +27,7 @@ function vendorBoundary(exitCode: number | null = null) {
   const client: ModalNativeClient = {
     version: vi.fn(() => '0.11.0'),
     apps: { fromName: vi.fn(async (_name, _options) => app) },
-    images: { fromRegistry: vi.fn((_name, _options) => image) },
+    images: { fromRegistry: vi.fn((_name, _options) => image), fromId: vi.fn(async () => image) },
     sandboxes: {
       create: vi.fn(async (_app, _image, _input) => sandbox),
       fromId: vi.fn(async (_id) => sandbox),

@@ -110,13 +110,13 @@ describe('Modal scoped SDK construction', () => {
     }
   });
 
-  it('preserves late allocation custody rather than killing the acquire worker on abort', async () => {
+  it.each(['acquire', 'prepareBuild'] as const)('preserves late allocation custody rather than killing the %s worker on abort', async role => {
     workerBoundary.holdCompletion = true;
     workerBoundary.terminated = false;
     const cancellation = new AbortController();
     let settled = false;
     const custody = { kind: 'bound', resource: { value: { appId: 'ap-dummy', sandboxId: 'sb-dummy' } } };
-    const pending = invokeScopedModalRole('acquire', {}, context(credentials, cancellation.signal).value)
+    const pending = invokeScopedModalRole(role, {}, context(credentials, cancellation.signal).value)
       .then(value => { settled = true; return value; });
     await new Promise<void>(resolve => setImmediate(resolve));
     cancellation.abort();

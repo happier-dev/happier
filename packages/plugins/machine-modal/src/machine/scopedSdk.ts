@@ -7,9 +7,10 @@ import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { createModalProvisionerRoles } from './roles.js';
+import type { createModalPreparationRoles } from './preparation.js';
 import { MODAL_ACCOUNT_PURPOSE, MODAL_ENV_KEYS } from './connectedAccount.js';
 
-export type ModalRole = keyof ReturnType<typeof createModalProvisionerRoles>;
+export type ModalRole = keyof ReturnType<typeof createModalProvisionerRoles> | keyof ReturnType<typeof createModalPreparationRoles>;
 export type ModalScopedRequest = Readonly<{ role: ModalRole; input: unknown; observedAt: number; aborted: boolean }>;
 
 /** Per-invocation vendor isolation: modal@0.11.0 reads config during evaluation
@@ -38,7 +39,7 @@ export async function invokeScopedModalRole(role: ModalRole, input: unknown, con
     return await new Promise<unknown>((resolve, reject) => {
       const abort = () => {
         worker.postMessage({ kind: 'cancel' });
-        if (role !== 'acquire') {
+        if (role !== 'acquire' && role !== 'prepareBuild') {
           cleanup();
           reject(Object.assign(new Error('Modal operation cancelled with native outcome unconfirmed'), { code: 'modal_operation_cancelled' }));
         }

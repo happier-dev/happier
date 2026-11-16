@@ -14,6 +14,7 @@ import { MODAL_BILLING, MODAL_PLUGIN_ID, MODAL_PROVISIONER_ID } from './machine/
 import { MODAL_ROLE_SCHEMAS, MODAL_RECONCILIATION_SCHEMAS, ModalOptionsInputV1Schema, ModalNativeOperationV1Schema, ModalLaunchV1Schema, ModalResourceV1Schema } from './machine/schemas.js';
 import { invokeScopedModalRole } from './machine/scopedSdk.js';
 import { MODAL_CONFIGURATION_LABELS } from './ui/translations.js';
+import { ModalPreparationInputSchema, ModalPreparedArtifactSchema, ModalPreparationOperationSchema, MODAL_PREPARATION_SCHEMAS } from './machine/preparation.js';
 
 const networkAccess = 'modal-network';
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [MODAL_ACCOUNT_PURPOSE, networkAccess] } as const;
@@ -39,6 +40,9 @@ export const MODAL_MACHINE_PROVISIONER = {
   nativeDurationInput: { path: 'timeoutMs', unit: 'milliseconds' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
   reconciliation: { nativeOperationSchema: ModalNativeOperationV1Schema.jsonSchema, action: 'reconcile' },
+  preparation: { inputSchema: ModalPreparationInputSchema.jsonSchema, artifactSchema: ModalPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: ModalPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const MODAL_PLUGIN = definePlugin({
@@ -133,6 +137,17 @@ export const MODAL_PLUGIN = definePlugin({
         try { return MODAL_RECONCILIATION_SCHEMAS.destroyResult.parse(await invokeScopedModalRole('destroy', input, context)); }
         catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: code(error) })); }
       } },
+    'prepare-build': { ...defaults, title: 'Prepare Modal image', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Prepare this Modal image?', body: 'Provider charges apply for compute and image storage. See https://modal.com/pricing. Exit images expire after 30 days.' },
+      inputSchema: MODAL_PREPARATION_SCHEMAS.buildInput, resultSchema: MODAL_PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return MODAL_PREPARATION_SCHEMAS.buildResult.parse(await invokeScopedModalRole('prepareBuild', input, context)); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect prepared Modal image', dangerLevel: 'safe',
+      inputSchema: MODAL_PREPARATION_SCHEMAS.inspectInput, resultSchema: MODAL_PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return MODAL_PREPARATION_SCHEMAS.inspectResult.parse(await invokeScopedModalRole('prepareInspect', input, context)); } },
+    'prepare-destroy': { ...defaults, title: 'Delete prepared Modal image', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Modal image?', body: 'Stop its build and permanently delete this owned prepared image.' },
+      inputSchema: MODAL_PREPARATION_SCHEMAS.destroyInput, resultSchema: MODAL_PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return MODAL_PREPARATION_SCHEMAS.destroyResult.parse(await invokeScopedModalRole('prepareDestroy', input, context)); } },
     exec: { ...defaults, ...effectConfirmation, title: 'Execute private Modal bootstrap IO', dangerLevel: 'writesRemote', inputSchema: MODAL_ROLE_SCHEMAS.execInput,
       resultSchema: MachineProvisionerNativeExecResultV1Schema, async run(input, context) {
         return MachineProvisionerNativeExecResultV1Schema.parse(await invokeScopedModalRole('exec', input, context));

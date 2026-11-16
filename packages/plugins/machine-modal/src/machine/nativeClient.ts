@@ -20,7 +20,7 @@ export interface ModalSandboxHandle {
 export interface ModalNativeClient {
   version(): string;
   readonly apps: Pick<ModalClient['apps'], 'fromName'>;
-  readonly images: Pick<ModalClient['images'], 'fromRegistry'>;
+  readonly images: Pick<ModalClient['images'], 'fromRegistry' | 'fromId'>;
   readonly sandboxes: {
     create(app: App, image: Image, input: SandboxCreateParams): Promise<ModalSandboxHandle>;
     fromId(sandboxId: string): Promise<ModalSandboxHandle>;

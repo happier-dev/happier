@@ -4,6 +4,7 @@ import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliation
 
 // Modal 0.11.0 accepts milliseconds; native Sandboxes allow at most 24 hours.
 export const MODAL_MAX_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+export const MODAL_PREPARATION_HOME = '/opt/happier';
 // Reference normalization belongs at the native query boundary, not in an
 // unprojectable schema transform. Warm and stored/cold parsers stay identical.
 const reference = defineProtocolString({ minLength: 1, pattern: '\\S' });
@@ -25,6 +26,7 @@ export const ModalCheckRequestV1Schema = defineProtocolObject({ appReference: re
 
 export const ModalLaunchV1Schema = defineProtocolObject({
   imageReference: reference,
+  preparedImageId: reference.optional(),
   appReference: reference,
   resources: defineProtocolObject({ cpu, memoryMb }, closed),
   timeoutMs,

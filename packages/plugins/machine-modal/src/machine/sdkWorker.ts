@@ -2,6 +2,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createModalProvisionerRoles } from './roles.js';
+import { createModalPreparationClient, createModalPreparationRoles } from './preparation.js';
 import type { ModalScopedRequest } from './scopedSdk.js';
 
 if (!parentPort) throw new Error('Modal SDK worker requires its private parent channel');
@@ -26,7 +27,8 @@ try {
     || client.environmentName() !== (process.env.MODAL_ENVIRONMENT ?? '')) {
     throw Object.assign(new Error('Modal selected SDK profile mismatch'), { code: 'modal_profile_mismatch' });
   }
-  const roles = createModalProvisionerRoles(client, request.observedAt, cancellation.signal);
+  const roles = { ...createModalProvisionerRoles(client, request.observedAt, cancellation.signal),
+    ...createModalPreparationRoles(createModalPreparationClient(client), cancellation.signal) };
   const value = await roles[request.role](request.input);
   port.postMessage({ ok: true, value });
 } catch (error) {

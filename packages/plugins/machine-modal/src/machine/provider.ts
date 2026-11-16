@@ -155,7 +155,9 @@ export function createModalNativeProvider(client: ModalNativeClient) {
       if (signal?.aborted) return failure('modal_operation_cancelled');
       let image: Image;
       try {
-        image = client.images.fromRegistry(launch.imageReference);
+        if (launch.preparedImageId) {
+          image = await client.images.fromId(launch.preparedImageId);
+        } else image = client.images.fromRegistry(launch.imageReference);
       } catch (error) {
         return failure('modal_image_invalid', error);
       }

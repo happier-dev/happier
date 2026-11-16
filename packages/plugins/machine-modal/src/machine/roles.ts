@@ -4,7 +4,7 @@ import type { MachineProvisionerDestroyResultV1, MachineProvisionerNativeCauseV1
 import { observeMachineProvisionerNativeRead } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createModalNativeProvider } from './provider.js';
 import type { ModalNativeClient } from './nativeClient.js';
-import { MODAL_ROLE_SCHEMAS, MODAL_RECONCILIATION_SCHEMAS, ModalOptionsInputV1Schema, ModalLaunchV1Schema, hasExactModalCpuEncoding } from './schemas.js';
+import { MODAL_ROLE_SCHEMAS, MODAL_RECONCILIATION_SCHEMAS, MODAL_PREPARATION_HOME, ModalOptionsInputV1Schema, ModalLaunchV1Schema, hasExactModalCpuEncoding } from './schemas.js';
 import type { ModalNativeOperationV1 } from './schemas.js';
 
 export const MODAL_PLUGIN_ID = 'happier.machine.modal';
@@ -59,7 +59,9 @@ export function createModalProvisionerRoles(client: ModalNativeClient, observedA
       const duration = { id: String(launch.timeoutMs), title: `${launch.timeoutMs / 1000} s`, afterMs: launch.timeoutMs,
         ...(launch.idleTimeoutMs === undefined ? {} : { idleAfterMs: launch.idleTimeoutMs }) };
       return { base: { launch, guestPlatform: 'linux' as const }, dimensions: { ...emptyDimensions,
-        image: [{ id: image.id, title: image.title, guestPlatform: 'linux' as const, assignments: [], nativeFacts: { image } }],
+        image: [{ id: image.id, title: image.title, guestPlatform: 'linux' as const, assignments: [], nativeFacts: { image,
+          preparationGuest: { target: { os: 'linux' as const, arch: 'x64' as const }, remoteHomeDir: MODAL_PREPARATION_HOME },
+        } }],
         size: [{ id: size.id, title: size.title, assignments: [], nativeFacts: { size } }],
         duration: [{ id: duration.id, title: duration.title, assignments: [], nativeFacts: { duration } }],
       } };

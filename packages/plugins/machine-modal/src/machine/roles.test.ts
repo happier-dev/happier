@@ -34,7 +34,7 @@ function boundary(exit: number | null = null) {
   const client: ModalNativeClient = {
     version: () => '0.11.0', apps: { fromName: vi.fn(async () => ({ appId: resource.appId })) },
     // Opaque vendor handles are boundary fixtures; the native SDK never executes them.
-    images: { fromRegistry: vi.fn(() => ({ imageId: 'im-selected' }) as Image) },
+    images: { fromRegistry: vi.fn(() => ({ imageId: 'im-selected' }) as Image), fromId: vi.fn(async () => ({ imageId: 'im-prepared' }) as Image) },
     sandboxes: { fromId: vi.fn(async () => sandbox), create: vi.fn(async () => sandbox),
       list: vi.fn(async function* (input) { if (!input?.tags) yield sandbox; }) },
   };
@@ -42,6 +42,14 @@ function boundary(exit: number | null = null) {
 }
 
 describe('Modal public machine provisioner roles', () => {
+  it('launches a prepared image by native ID without rebuilding or pulling the registry base', async () => {
+    const { roles, client } = boundary();
+    expect(await roles.acquire({ launch: { ...launch, preparedImageId: 'im-prepared' }, managedId: 'managed-prepared' }))
+      .toMatchObject({ kind: 'bound' });
+    expect(client.images.fromId).toHaveBeenCalledWith('im-prepared');
+    expect(client.images.fromRegistry).not.toHaveBeenCalled();
+    expect(client.sandboxes.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ imageId: 'im-prepared' }), expect.anything());
+  });
   it.each([undefined, 600_000])('retains the requested native lifetime and idle limit %s in the durable reviewed facts', async idleTimeoutMs => {
     const { roles, client } = boundary();
     // modal@0.11.0 SandboxInfo schema fixture, not a captured paid-resource response.
