@@ -72,7 +72,7 @@ async function associatePendingFreshStartup(params: Readonly<{
     || !Number.isInteger(metadata.hostPid) || (metadata.hostPid ?? 0) <= 0) return null;
   const readIdentity = startup.readProcessIdentityByPid ?? readProcessIdentityByPid;
   const correlation = await resolveSessionReportTrackedCorrelation({
-    metadata, pid: metadata.hostPid!, trackedSessionsByKey: params.trackedSessionsByKey,
+    metadata, pid: metadata.hostPid!, sessionId: params.sessionId, trackedSessionsByKey: params.trackedSessionsByKey,
     spawnAwaiterByKey: startup.spawnAwaiterByKey, readProcessIdentityByPidFn: readIdentity,
     readAllWindowsProcessFactsFn: startup.readAllWindowsProcessFactsFn,
   });

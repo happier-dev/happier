@@ -12,6 +12,12 @@ import type { TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 export const SKILL_SESSION_DIR_PATH = '/skills/session-dir';
 export const SKILL_USAGE_PATH = '/skills/usage';
+export const SkillSessionDirUnavailableSchema = z.strictObject({
+    errorCode: z.literal('skills_unavailable'),
+    cause: z.enum(['daemon_shutting_down', 'skill_store_unavailable', 'skill_parent_identity_missing',
+        'skill_session_identity_mismatch', 'skill_session_correlation_refused', 'skill_session_identity_unavailable',
+        'skill_session_tracking_unavailable', 'skill_session_registration_failed']),
+});
 export const RecordSkillUseInputSchema = z.strictObject({
     skillIds: z.array(z.string().check(z.minLength(1))),
     account: z.strictObject({ accountId: z.string().check(z.minLength(1)), serverHttpBaseUrl: z.string().check(z.url()) }),
@@ -40,45 +46,48 @@ export function registerSkillControlRoutes(app: FastifyInstance, input: Readonly
     });
     app.withTypeProvider<ZodTypeProvider>().post(SKILL_SESSION_DIR_PATH, {
         schema: { body: SkillSessionDirControlRequestSchema, response: { 200: EnsureSkillSessionDirResultSchema,
-            503: z.strictObject({ errorCode: z.literal('skills_unavailable') }) } },
+            503: SkillSessionDirUnavailableSchema } },
         preHandler: input.requireAuth,
     }, async (request, reply) => {
-        if (input.isShuttingDown() || !input.skillStore) return reply.code(503).send({ errorCode: 'skills_unavailable' });
+        const unavailable = (cause: z.infer<typeof SkillSessionDirUnavailableSchema>['cause']) =>
+            reply.code(503).send({ errorCode: 'skills_unavailable' as const, cause });
+        if (input.isShuttingDown()) return unavailable('daemon_shutting_down');
+        if (!input.skillStore) return unavailable('skill_store_unavailable');
         const { startupIdentity, ...content } = request.body;
         // Run folders share their parent Session's existing process custody;
         // the context names that parent, never the Run resolver's process.
         if (content.ownerKey.includes('/') && !startupIdentity) {
-            return reply.code(503).send({ errorCode: 'skills_unavailable' });
+            return unavailable('skill_parent_identity_missing');
         }
         if (startupIdentity) {
             const { metadata, pid } = startupIdentity;
             if (!metadata || typeof metadata !== 'object' || metadata.hostPid !== pid || typeof metadata.path !== 'string'
                 || (metadata.happyHomeDir && metadata.happyHomeDir !== configuration.happyHomeDir)) {
-                return reply.code(503).send({ errorCode: 'skills_unavailable' });
+                return unavailable('skill_session_identity_mismatch');
             }
             const sessionId = content.ownerKey.split('/')[0]!;
-            const correlated = await resolveSessionReportTrackedCorrelation({ metadata, pid,
+            const correlated = await resolveSessionReportTrackedCorrelation({ metadata, pid, sessionId,
                 trackedSessionsByKey: new Map(input.getChildren().map(tracked => [tracked.trackingKey, tracked])),
                 // Identity binding must not claim or settle the readiness waiter.
                 spawnAwaiterByKey: new Map(),
             });
             if (correlated.kind === 'refused') {
-                return reply.code(503).send({ errorCode: 'skills_unavailable' });
+                return unavailable('skill_session_correlation_refused');
             }
             if (correlated.kind === 'matched') {
                 if (!input.getChildren().includes(correlated.tracked)
                     || correlated.tracked.reportMarkerCustody?.retiring
                     || !bindTrackedSessionIdentity(correlated.tracked, sessionId)) {
-                    return reply.code(503).send({ errorCode: 'skills_unavailable' });
+                    return unavailable('skill_session_identity_unavailable');
                 }
                 if ('cancellationIdentity' in correlated) {
                     adoptTrackedSessionRunnerIdentity(correlated.tracked, correlated.cancellationIdentity);
                 }
             } else {
-                if (!input.trackedSessionsByKey) return reply.code(503).send({ errorCode: 'skills_unavailable' });
+                if (!input.trackedSessionsByKey) return unavailable('skill_session_tracking_unavailable');
                 const tracked = await registerExternalSessionIdentity({ trackedSessionsByKey: input.trackedSessionsByKey, pid, sessionId, metadata });
                 if (!tracked) {
-                    return reply.code(503).send({ errorCode: 'skills_unavailable' });
+                    return unavailable('skill_session_registration_failed');
                 }
             }
         }

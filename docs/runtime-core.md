@@ -605,6 +605,13 @@ overrides, then opens only selected Artifact bodies through the shared skill-pla
 preparer. Startup, Session-owned Runs and live reapply do not enumerate unrelated
 Account Artifacts. Machine previews still supply a complete choice inventory to
 that same preparer; library listing and cache collection retain their inventory owners.
+In 0.3 development, daemon folder materialization correlates the supplied Session
+id with its host process through the shared Session correlation owner. Several
+Sessions may share a PID; the PID alone cannot select their skill delivery.
+Built-in skills use this same delivery path. Their content is bundled, but a
+delivery failure still makes them unavailable. The daemon returns a closed
+materialization cause, which the client preserves in the Session capability
+notice rather than replacing it with the generic `skills_unavailable` code.
 An exact Artifact read confirming absence makes retained skill rules and Session
 includes inert: the deleted skill is not delivered and emits no load warning.
 Read failures and malformed existing content remain unavailable; a readable

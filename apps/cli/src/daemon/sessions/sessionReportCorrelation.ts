@@ -9,7 +9,7 @@ import { readProcessIdentityByPid } from '../processIdentity';
 import { captureExactWindowsTerminalLaunchProcess, readAllWindowsProcessFacts, type ExactWindowsProcessCancellationIdentity } from '../platform/windows/windowsProcessCustody';
 import type { ProcessCensusProcessFact } from '@/processes/census/processFacts';
 import { resolveWindowsHostedIdentity } from '../platform/windows/windowsHostedSessionRuntime';
-import { trackedSessionForSingleSessionProcess, type ReadonlyTrackedSessionMap, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { trackedSessionForSingleSessionProcess, trackedSessionOnProcess, type ReadonlyTrackedSessionMap, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 /**
  * Get the parent PID of a process.
@@ -175,15 +175,16 @@ export async function resolveOrdinaryDaemonParentCorrelation(params: Readonly<{
 export async function resolveSessionReportTrackedCorrelation(params: Readonly<{
   metadata: Metadata;
   pid: number;
+  sessionId?: string;
   trackedSessionsByKey: ReadonlyTrackedSessionMap;
   spawnAwaiterByKey: ReadonlyMap<SessionTrackingKey, unknown>;
   getParentPidFn?: (pid: number) => number | null | Promise<number | null>;
   readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
   readAllWindowsProcessFactsFn?: () => Promise<ReadonlyMap<number, ProcessCensusProcessFact>>;
 }>) {
-  const direct = trackedSessionForSingleSessionProcess(params.trackedSessionsByKey, params.pid);
-  if (direct) return { kind: 'matched' as const, tracked: direct };
-  const runner = findTrackedSessionByRunnerPid(params.trackedSessionsByKey, params.pid);
+  const direct = trackedSessionOnProcess(params.trackedSessionsByKey, params.pid, params.sessionId);
+  if (direct?.pid === params.pid) return { kind: 'matched' as const, tracked: direct };
+  const runner = direct ?? findTrackedSessionByRunnerPid(params.trackedSessionsByKey, params.pid);
   if (runner && (!runner.windowsTerminalLaunchCustody || runner.pid === params.pid)) {
     return { kind: 'matched' as const, tracked: runner };
   }

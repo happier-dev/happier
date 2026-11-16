@@ -154,7 +154,7 @@ import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed'
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { resolveAbsolutePathFromWorkingDirectory } from '@/utils/path/expandHomeDirPath';
 import { SKILL_SESSION_DIR_PATH, SKILL_USAGE_PATH, SkillSessionStartupIdentitySchema, RecordSkillUseInputSchema,
-  RecordSkillUseResultSchema } from '@/prompts/skills/store/controlRoutes';
+  RecordSkillUseResultSchema, SkillSessionDirUnavailableSchema } from '@/prompts/skills/store/controlRoutes';
 import { EnsureSkillSessionDirResultSchema, type EnsureSkillSessionDirInput, type EnsureSkillSessionDirResult } from '@/prompts/skills/store/skillStore';
 import type { RecordSkillUseInput } from '@/prompts/skills/store/skillUsage';
 
@@ -170,12 +170,19 @@ export async function recordDaemonSkillUse(input: RecordSkillUseInput, options: 
 export async function ensureSkillSessionDirHttp(input: EnsureSkillSessionDirInput,
   options: DaemonControlRequestOptions = {}, startupIdentity?: Readonly<{ pid: number; metadata: unknown }>): Promise<EnsureSkillSessionDirResult> {
   // The store queue belongs to this request's lifetime; the caller may still supply its own deadline.
-  const response = EnsureSkillSessionDirResultSchema.safeParse(await daemonPost(SKILL_SESSION_DIR_PATH, {
+  const raw: unknown = await daemonPost(SKILL_SESSION_DIR_PATH, {
     ...input, ...(startupIdentity ? { startupIdentity: SkillSessionStartupIdentitySchema.parse(startupIdentity) } : {}),
   }, {
     timeoutMs: null, ...options, mutation: true,
-  }));
-  if (!response.success) throw Object.assign(new Error('Skill delivery is unavailable'), { code: 'skills_unavailable' });
+  });
+  const response = EnsureSkillSessionDirResultSchema.safeParse(raw);
+  if (!response.success) {
+    const refusal = SkillSessionDirUnavailableSchema.safeParse(raw && typeof raw === 'object' && 'response' in raw ? raw.response : raw);
+    const code = refusal.success ? refusal.data.cause
+      : raw && typeof raw === 'object' && 'errorCode' in raw && typeof raw.errorCode === 'string'
+        ? raw.errorCode : 'skill_materialization_response_invalid';
+    throw Object.assign(new Error('Skill delivery is unavailable'), { code });
+  }
   return response.data;
 }
 
