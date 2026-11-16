@@ -1,11 +1,9 @@
+import { parseThemeImportJsonLikeText } from '@happier-dev/protocol/account/settings/themeProfileExternalThemeImportVsCode';
+import { createThemeProfileFile, ThemeProfileFileEnvelopeSchema } from '@happier-dev/protocol/account/settings/themeProfileFile';
 import { ThemeProfileIdSchema, ThemeProfileNameSchema, isReservedThemeProfileId, migrateThemeProfileOverrideTokenId, migrateThemeProfileOverrideTokenIds } from '@happier-dev/protocol/account/settings/themeProfiles';
 import {
     DEFAULT_IMPORTED_THEME_PROFILE_NAME,
-    THEME_PROFILE_EXPORT_KIND,
-    THEME_PROFILE_ID_PREFIX,
-    THEME_PROFILE_MAX_JSON_BYTES,
     THEME_PROFILE_MAX_OVERRIDES_PER_MODE,
-    THEME_PROFILE_MAX_PROFILES,
     THEME_PROFILE_SCHEMA_VERSION,
 } from './themeProfileConstants';
 import { isValidThemeProfileColorValue } from './themeProfileColorValidation';
@@ -14,7 +12,9 @@ import { resolveThemeProfile } from './resolveThemeProfile';
 import { readThemeProfilePathValue } from './themeProfilePathAccess';
 import { inferThemeProfileAssetAppearance, isThemeProfileAssetAppearance } from './themeProfileAssetAppearance';
 import { resolveExternalThemeProfileImportProfile } from './themeProfileExternalThemeImport';
-import type { ThemeProfileColorOverrides, ThemeProfileMode, ThemeProfileV1 } from './themeProfileTypes';
+import { mergeThemeProfileDocumentEdit, parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { randomUUID } from '@/platform/randomUUID';
+import type { ThemeProfileDocument, ThemeProfileColorOverrides, ThemeProfileMode, ThemeProfileV1 } from './themeProfileTypes';
 
 export { getSupportedThemeProfileImportFormats } from './themeProfileExternalThemeImport';
 
@@ -24,19 +24,13 @@ export type ThemeProfileImportWarning =
     | Readonly<{ code: 'migratedToken'; tokenId: string; migratedTokenId: string; mode: ThemeProfileMode }>;
 
 export type ThemeProfileImportResult =
-    | Readonly<{ ok: true; profile: ThemeProfileV1; warnings: readonly ThemeProfileImportWarning[] }>
-    | Readonly<{ ok: false; error: 'invalidJson' | 'unsupportedSchema' | 'invalidProfile' | 'tooLarge' }>;
+    | Readonly<{ ok: true; profile: ThemeProfileV1; document: ThemeProfileDocument; warnings: readonly ThemeProfileImportWarning[] }>
+    | Readonly<{ ok: false; error: 'invalidJson' | 'unsupportedSchema' | 'invalidProfile' }>;
 
 type ImportOptions = Readonly<{
     now: string;
     existingProfileIds?: ReadonlySet<string>;
     generateId?: () => string;
-}>;
-
-type ThemeProfileExportPayload = Readonly<{
-    kind: typeof THEME_PROFILE_EXPORT_KIND;
-    schemaVersion: typeof THEME_PROFILE_SCHEMA_VERSION;
-    profile: ThemeProfileV1;
 }>;
 
 type ExportThemeProfileOptions = Readonly<{
@@ -52,19 +46,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> => (
 );
 
 const stableStringify = (value: unknown): string => JSON.stringify(value, null, 2);
-
-const getUtf8ByteLength = (value: string): number => {
-    let bytes = 0;
-    for (const character of value) {
-        const codePoint = character.codePointAt(0);
-        if (codePoint === undefined) continue;
-        if (codePoint <= 0x7F) bytes += 1;
-        else if (codePoint <= 0x7FF) bytes += 2;
-        else if (codePoint <= 0xFFFF) bytes += 3;
-        else bytes += 4;
-    }
-    return bytes;
-};
 
 export { migrateThemeProfileOverrideTokenIds } from '@happier-dev/protocol/account/settings/themeProfiles';
 
@@ -94,13 +75,7 @@ export const isRouteSafeThemeProfileId = (id: string): boolean => {
 
 export { isReservedThemeProfileId } from '@happier-dev/protocol/account/settings/themeProfiles';
 
-export const createThemeProfileId = (): string => {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-        return `${THEME_PROFILE_ID_PREFIX}${crypto.randomUUID()}`;
-    }
-
-    return `${THEME_PROFILE_ID_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-};
+export const createThemeProfileId = (): string => randomUUID();
 
 const sanitizeId = (id: unknown, options: ImportOptions): string => {
     const sourceId = typeof id === 'string' && id.trim().length > 0 ? id.trim() : createThemeProfileId();
@@ -190,6 +165,7 @@ const sanitizeProfile = (
     if (light.invalid || dark.invalid) return null;
 
     const sanitizedProfileWithoutAssetAppearance = {
+        ...profile,
         schemaVersion: THEME_PROFILE_SCHEMA_VERSION,
         id: sanitizeId(profile.id, options),
         name,
@@ -208,80 +184,6 @@ const sanitizeProfile = (
             ? profile.assetAppearance
             : inferThemeProfileAssetAppearance(sanitizedProfileWithoutAssetAppearance),
     };
-};
-
-const parseProfile = (value: unknown): ThemeProfileV1 | undefined => {
-    if (!isRecord(value)) return undefined;
-    if (value.schemaVersion !== THEME_PROFILE_SCHEMA_VERSION) return undefined;
-    if (!isRecord(value.base) || value.base.light !== 'light' || value.base.dark !== 'dark') return undefined;
-    if (!isRecord(value.overrides)) return undefined;
-
-    return value as ThemeProfileV1;
-};
-
-const stripJsonComments = (text: string): string => {
-    let output = '';
-    let inString = false;
-    let stringQuote: '"' | '\'' | null = null;
-    let isEscaped = false;
-
-    for (let index = 0; index < text.length; index += 1) {
-        const character = text[index];
-        const nextCharacter = text[index + 1];
-
-        if (inString) {
-            output += character;
-            if (isEscaped) {
-                isEscaped = false;
-                continue;
-            }
-            if (character === '\\') {
-                isEscaped = true;
-                continue;
-            }
-            if (character === stringQuote) {
-                inString = false;
-                stringQuote = null;
-            }
-            continue;
-        }
-
-        if (character === '"' || character === '\'') {
-            inString = true;
-            stringQuote = character;
-            output += character;
-            continue;
-        }
-
-        if (character === '/' && nextCharacter === '/') {
-            while (index < text.length && text[index] !== '\n') index += 1;
-            output += '\n';
-            continue;
-        }
-
-        if (character === '/' && nextCharacter === '*') {
-            index += 2;
-            while (index < text.length - 1 && !(text[index] === '*' && text[index + 1] === '/')) index += 1;
-            index += 1;
-            continue;
-        }
-
-        output += character;
-    }
-
-    return output;
-};
-
-const parseJsonLikeText = (json: string): unknown | null => {
-    try {
-        return JSON.parse(json);
-    } catch {
-        try {
-            return JSON.parse(stripJsonComments(json).replace(/,\s*([}\]])/g, '$1'));
-        } catch {
-            return null;
-        }
-    }
 };
 
 const resolveCompleteModeOverrides = (profile: ThemeProfileV1, mode: ThemeProfileMode): ThemeProfileColorOverrides => {
@@ -305,51 +207,50 @@ const resolveExportProfile = (profile: ThemeProfileV1, options: ExportThemeProfi
     };
 };
 
-export const exportThemeProfileToJson = (profile: ThemeProfileV1, options: ExportThemeProfileOptions = {}): string => {
+export const exportThemeProfileToJson = (input: ThemeProfileV1 | ThemeProfileDocument, options: ExportThemeProfileOptions = {}): string => {
+    if ('raw' in input) return stableStringify(createThemeProfileFile(input.raw));
+    const profile = input;
     const warnings: ThemeProfileImportWarning[] = [];
     const sanitizedProfile = sanitizeProfile(resolveExportProfile(profile, options), { now: profile.updatedAt }, warnings);
     if (!sanitizedProfile) {
         throw new Error('Cannot export an invalid theme profile.');
     }
 
-    const payload: ThemeProfileExportPayload = {
-        kind: THEME_PROFILE_EXPORT_KIND,
-        schemaVersion: THEME_PROFILE_SCHEMA_VERSION,
-        profile: sanitizedProfile,
-    };
-
-    return stableStringify(payload);
+    return stableStringify(createThemeProfileFile(sanitizedProfile));
 };
 
 export const importThemeProfileFromJson = (json: string, options: ImportOptions): ThemeProfileImportResult => {
-    if (getUtf8ByteLength(json) > THEME_PROFILE_MAX_JSON_BYTES) {
-        return { ok: false, error: 'tooLarge' };
-    }
-
-    const parsed = parseJsonLikeText(json);
+    const parsed = parseThemeImportJsonLikeText(json);
     if (parsed === null) {
         return { ok: false, error: 'invalidJson' };
     }
 
-    let parsedProfile: ThemeProfileV1 | null = null;
-    if (isRecord(parsed) && parsed.kind === THEME_PROFILE_EXPORT_KIND && parsed.schemaVersion === THEME_PROFILE_SCHEMA_VERSION) {
-        parsedProfile = parseProfile(parsed.profile) ?? null;
-        if (!parsedProfile) {
-            return { ok: false, error: 'invalidProfile' };
-        }
+    let rawProfile: unknown;
+    const nativeFile = ThemeProfileFileEnvelopeSchema.safeParse(parsed);
+    if (nativeFile.success) {
+        rawProfile = nativeFile.data.profile;
     } else {
-        parsedProfile = resolveExternalThemeProfileImportProfile(parsed, options);
-        if (!parsedProfile) {
+        rawProfile = resolveExternalThemeProfileImportProfile(parsed, options);
+        if (!rawProfile) {
             return { ok: false, error: 'unsupportedSchema' };
         }
     }
 
-    if ((options.existingProfileIds?.size ?? 0) >= THEME_PROFILE_MAX_PROFILES) {
-        return { ok: false, error: 'invalidProfile' };
-    }
-
+    if (!isRecord(rawProfile)) return { ok: false, error: 'invalidProfile' };
+    const name = sanitizeThemeProfileName(rawProfile.name, { defaultBlankName: true });
+    if (!name) return { ok: false, error: 'invalidProfile' };
+    const read = parseThemeProfileDocument({ ...rawProfile,
+        id: sanitizeId(rawProfile.id, options), name,
+        createdAt: typeof rawProfile.createdAt === 'string' ? rawProfile.createdAt : options.now,
+        updatedAt: typeof rawProfile.updatedAt === 'string' ? rawProfile.updatedAt : options.now,
+    });
+    if (!read.ok) return { ok: false, error: 'invalidProfile' };
+    // Files import editable copies; source-owned records are admitted by their installer.
+    const document = read.document.profile.source && read.document.profile.source.kind !== 'yours'
+        ? mergeThemeProfileDocumentEdit(read.document, { source: { kind: 'yours' } })
+        : read.document;
     const warnings: ThemeProfileImportWarning[] = [];
-    const profile = sanitizeProfile(parsedProfile, options, warnings, {
+    const profile = sanitizeProfile(document.profile, options, warnings, {
         defaultBlankName: true,
         rejectInvalidColors: true,
         rejectTooManyOverrides: true,
@@ -361,6 +262,7 @@ export const importThemeProfileFromJson = (json: string, options: ImportOptions)
     return {
         ok: true,
         profile,
+        document,
         warnings,
     };
 };

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { ArtifactCreateIdV1Schema } from '@happier-dev/protocol/artifacts/artifactIdV1';
 
-import { THEME_PROFILE_MAX_JSON_BYTES, THEME_PROFILE_MAX_OVERRIDES_PER_MODE, THEME_PROFILE_MAX_PROFILES } from './themeProfileConstants';
-import { exportThemeProfileToJson, getSupportedThemeProfileImportFormats, importThemeProfileFromJson, migrateThemeProfileOverrideTokenIds } from './themeProfileImportExport';
+import { THEME_PROFILE_MAX_OVERRIDES_PER_MODE } from './themeProfileConstants';
+import { createThemeProfileId, exportThemeProfileToJson, getSupportedThemeProfileImportFormats, importThemeProfileFromJson, migrateThemeProfileOverrideTokenIds } from './themeProfileImportExport';
 import { THEME_PROFILE_PUBLIC_TOKEN_IDS } from './themeProfileTokenRegistry';
 import type { ThemeProfileV1 } from './themeProfileTypes';
 
@@ -29,6 +31,25 @@ const profileWithDarkAssets: ThemeProfileV1 & { assetAppearance: 'dark' } = {
 };
 
 describe('theme profile import/export', () => {
+    it('allocates Artifact-compatible creation ids so the editor route keeps the acknowledged identity', () => {
+        expect(ArtifactCreateIdV1Schema.safeParse(createThemeProfileId()).success).toBe(true);
+    });
+    it('exports and imports a retained newer document without replacing its unknown presentation', () => {
+        const raw = { ...profile, schemaVersion: 2, overrides: { light: {}, dark: {} },
+            style: { radius: 'future-shape', futureGlow: { strength: 0.7 } },
+            futurePresentation: { material: 'ink' } };
+        const read = parseThemeProfileDocument(raw);
+        expect(read.ok).toBe(true);
+        if (!read.ok) return;
+        const exported = exportThemeProfileToJson(read.document);
+        expect(JSON.parse(exported).profile).toEqual(raw);
+        const imported = importThemeProfileFromJson(exported, { now: profile.updatedAt });
+        expect(imported.ok).toBe(true);
+        if (imported.ok) {
+            expect(imported.document.raw).toEqual(raw);
+            expect(imported.document.compatibility.status).toBe('partial');
+        }
+    });
     it('exports stable JSON and prunes empty, unknown, deprecated, and invalid overrides', () => {
         const exported = exportThemeProfileToJson(profile);
         const parsed = JSON.parse(exported) as { profile: ThemeProfileV1 };
@@ -179,19 +200,6 @@ describe('theme profile import/export', () => {
         ]);
     });
 
-    it('rejects JSON payloads over the profile import size limit', () => {
-        const oversizedJson = JSON.stringify({
-            kind: 'happier.themeProfile',
-            schemaVersion: 1,
-            profile: {
-                ...profile,
-                name: 'x'.repeat(THEME_PROFILE_MAX_JSON_BYTES),
-                overrides: { light: {}, dark: {} },
-            },
-        });
-
-        expect(importThemeProfileFromJson(oversizedJson, { now: '2026-05-12T00:00:00.000Z' })).toEqual({ ok: false, error: 'tooLarge' });
-    });
 
     it('warns on unknown public token ids and does not keep them in runtime overrides', () => {
         const json = JSON.stringify({
@@ -242,23 +250,6 @@ describe('theme profile import/export', () => {
         expect(result).toEqual({ ok: false, error: 'invalidProfile' });
     });
 
-    it('rejects imports when the profile limit is already reached', () => {
-        const exported = exportThemeProfileToJson({
-            ...profile,
-            overrides: { light: { 'background.canvas': '#fafafa' }, dark: {} },
-        });
-        const existingProfileIds = new Set(
-            Array.from({ length: THEME_PROFILE_MAX_PROFILES }, (_, index) => `theme_${index}`),
-        );
-
-        const result = importThemeProfileFromJson(exported, {
-            existingProfileIds,
-            generateId: () => 'theme_imported',
-            now: '2026-05-12T00:00:00.000Z',
-        });
-
-        expect(result).toEqual({ ok: false, error: 'invalidProfile' });
-    });
 
     it('rejects imports with too many overrides in one mode', () => {
         const overrides = Object.fromEntries(
@@ -436,5 +427,30 @@ describe('theme profile import/export', () => {
 
             expect(importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' })).toEqual({ ok: false, error: 'invalidProfile' });
         }
+    });
+});
+
+
+describe('portable presentation retention', () => {
+    it('round trips CSS, seeds, corners, typeface and future presentation', () => {
+        const portable = { ...profile, overrides: { light: {}, dark: {} }, seeds: { canvas: '#112233', accent: '#abcdef' },
+            style: { radius: 'round', fontFamily: 'Inter', futureGlow: true }, css: '[data-surface="card"]{opacity:.9}',
+            futurePresentation: { blur: 3 } };
+        const exported = JSON.parse(exportThemeProfileToJson(portable));
+        expect(exported.profile).toMatchObject(portable);
+        const imported = importThemeProfileFromJson(JSON.stringify(exported), { now: portable.updatedAt });
+        expect(imported.ok).toBe(true);
+        if (imported.ok) expect(imported.document.raw).toMatchObject(portable);
+    });
+});
+
+
+describe('Artifact-owned theme capacity', () => {
+    it('imports a CSS-rich profile beyond former settings import limits into a populated library', () => {
+        const portable = { ...profile, overrides: { light: {}, dark: {} }, css: '.card{color:red}\n'.repeat(5000) };
+        const result = importThemeProfileFromJson(JSON.stringify({ kind: 'happier.themeProfile', schemaVersion: 1, profile: portable }),
+            { now: portable.updatedAt, existingProfileIds: new Set(Array.from({ length: 60 }, (_, i) => `saved_${i}`)) });
+        expect(result.ok).toBe(true);
+        if (result.ok) expect(result.profile.css).toBe(portable.css);
     });
 });

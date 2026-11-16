@@ -1,8 +1,9 @@
 import type { TranslationKeyNoParams } from '@/text';
-import type { BuiltInThemeProfilePresetId, ThemeProfileV1 } from '@happier-dev/protocol/account/settings/themeProfiles';
+import type { BuiltInThemeProfilePresetId, ThemeProfileV1, ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 export type { BuiltInThemeProfilePresetId, ThemeProfileV1 } from '@happier-dev/protocol/account/settings/themeProfiles';
 
-export type ThemeProfileMode = 'light' | 'dark';
+export type { ThemeProfileMode, ThemeReference, ThemeUndoHandle, ThemeProfileDocument, ThemeMiniatureData, ThemeLibraryEntry, ThemeProfileLibrary, ThemeUndoContext, ThemeLibraryChange, ThemeLibraryMutationResult, ThemeProfileSource, ThemePresentationCompatibility } from '@happier-dev/protocol/account/settings/themeProfiles';
+import type { ThemeProfileMode } from '@happier-dev/protocol/account/settings/themeProfiles';
 
 export type CanonicalBaseThemeId = 'light' | 'dark';
 
@@ -12,10 +13,10 @@ export type ThemeProfileColorOverrides = Readonly<Record<ThemeProfilePublicToken
 
 export type ThemeProfileSelectionByMode = Readonly<Record<ThemeProfileMode, string | null>>;
 
-/** Canonical Account ids stay strings; an unpromoted local selection retains its origin. */
+/** Released ids retain their origin until transfer; current choices are tagged references. */
 export type ThemeProfileDeviceSelectionByMode = Readonly<Record<
     ThemeProfileMode,
-    string | Readonly<{ legacyProfileId: string }> | null
+    ThemeReference | string | Readonly<{ legacyProfileId: string }> | null
 >>;
 
 
