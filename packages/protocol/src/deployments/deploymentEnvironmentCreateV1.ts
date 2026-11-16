@@ -4,7 +4,7 @@ import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './depl
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import { DeploymentBindingSavedSecretRevisionsV1Schema } from './deploymentBindingPatchV1.js';
 import { DeploymentNewProjectV1Schema, hasOneDeploymentProjectV1, DeploymentTargetManagedRetentionV1Schema } from './storedAppInputV1.js';
-import { DeploymentEnvironmentDeployerPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
+import { DeploymentEnvironmentPeopleModeV1Schema, DeploymentEnvironmentPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
 import { DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReferenceV1.js';
 import { DeploymentEnvironmentCopySourceV1Schema, DeploymentEnvironmentCopyFromV1Schema, DeploymentEnvironmentCopyPlanV1Schema } from './deploymentEnvironmentCopyV1.js';
 
@@ -19,8 +19,8 @@ export const DeploymentEnvironmentCreateBaseInputV1Schema = lazyZodSchema(() => 
   serverId: DeploymentIdentifierV1Schema, requestKey: DeploymentIdentifierV1Schema, ...DeploymentArtifactContentReferenceV1Schema.shape,
   projectSourceId: z.optional(DeploymentIdentifierV1Schema), newProject: z.optional(DeploymentNewProjectV1Schema),
   protection: z.enum(['production', 'nonProduction']), purpose: z.enum(['standard', 'preview']),
-  deployerMode: z.enum(['managers', 'members', 'chosen']),
-  deployerPrincipals: z.optional(DeploymentEnvironmentDeployerPrincipalsV1Schema),
+  deployerMode: DeploymentEnvironmentPeopleModeV1Schema,
+  deployerPrincipals: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
   controllerMachineId: DeploymentIdentifierV1Schema,
   buildMachineId: z.optional(DeploymentIdentifierV1Schema),
   /** Omission offers until-delete in the target review; keep declines the allocation change. */

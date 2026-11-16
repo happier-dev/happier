@@ -213,8 +213,8 @@ describe('Environment → Permissions: chosen people', () => {
 
   it('removes one chosen person through deployments.environments.update with the remaining principals', async () => {
     const principals = [
-      { principalKind: 'account', principalId: 'account-ana' },
-      { principalKind: 'teamGroup', principalId: 'group-ops' },
+      { kind: 'account', accountId: 'account-ana' },
+      { kind: 'group', teamId: 'team-a', groupId: 'group-ops' },
     ];
     const detail = manager({
       owner: { kind: 'team', teamId: 'team-a' },
@@ -231,7 +231,7 @@ describe('Environment → Permissions: chosen people', () => {
       />,
     );
     expect(
-      screen.findByTestId(`${prefix}.chosen.teamGroup.group-ops`),
+      screen.findByTestId(`${prefix}.chosen.group.group-ops`),
     ).not.toBeNull();
     await screen.pressByTestIdAsync(
       `${prefix}.chosen.account.account-ana.remove`,

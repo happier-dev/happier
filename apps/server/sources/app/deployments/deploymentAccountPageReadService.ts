@@ -18,11 +18,12 @@ import { projectDeploymentDomainHeader } from './deploymentDomainService';
 import { projectDeploymentListRow, projectDeploymentSourcePresentation } from './deploymentListProjection';
 import { admitDeploymentStoredContentsInTx, projectDeploymentStoredContentAuthority, projectDeploymentStoredContentRevision, type DeploymentContentReference } from './deploymentStoredContent';
 import { openDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
+import { deploymentEnvironmentPrincipalSelect, type DeploymentEnvironmentPrincipalRow } from './deploymentEnvironmentDeployers';
 
 type Kind = 'domains' | 'data';
 type Input = DeploymentDomainPageInputV1 | DeploymentDataPageInputV1;
 type Environment = DeploymentEnvironmentRow & {
-    deployers: { principalKind: string; principalId: string }[];
+    principals: DeploymentEnvironmentPrincipalRow[];
     previewCompanionOfEnvironment: { previewTemplateEnvironmentId: string | null } | null;
 };
 type Domain = Parameters<typeof projectDeploymentDomainHeader>[0];
@@ -47,7 +48,8 @@ async function capturePostgresPage(tx: Tx, actorAccountId: string, input: Input,
             to_jsonb(e) || jsonb_build_object(
                 'createdAt', EXTRACT(EPOCH FROM e."createdAt") * 1000, 'updatedAt', EXTRACT(EPOCH FROM e."updatedAt") * 1000,
                 'deletedAt', EXTRACT(EPOCH FROM e."deletedAt") * 1000,
-                'deployers', COALESCE((SELECT jsonb_agg(jsonb_build_object('principalKind', dp."principalKind", 'principalId', dp."principalId"))
+                'principals', COALESCE((SELECT jsonb_agg(jsonb_build_object('purpose', dp."purpose", 'principalKind', dp."principalKind",
+                        'principalId', dp."principalId", 'principalTeamId', dp."principalTeamId"))
                     FROM "DeploymentEnvironmentDeployer" dp WHERE dp."environmentId" = e."id"), '[]'::jsonb),
                 'previewCompanionOfEnvironment', (SELECT jsonb_build_object('previewTemplateEnvironmentId', parent."previewTemplateEnvironmentId")
                     FROM "DeploymentEnvironment" parent WHERE parent."id" = e."previewCompanionOfEnvironmentId")) AS environment,
@@ -76,7 +78,7 @@ async function capturePostgresPage(tx: Tx, actorAccountId: string, input: Input,
 }
 
 async function capturePortablePage(tx: Tx, input: Input, kind: Kind, cursor: string | undefined, limit: number) {
-    const include = { deployers: { select: { principalKind: true, principalId: true } },
+    const include = { principals: deploymentEnvironmentPrincipalSelect,
         previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } } } as const;
     const environmentWhere = { deletedAt: null, ...(input.projectSourceId ? { projectSourceId: input.projectSourceId } : {}) };
     const candidates: Candidate[] = kind === 'domains'

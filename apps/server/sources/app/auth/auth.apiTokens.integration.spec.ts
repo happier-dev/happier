@@ -546,7 +546,8 @@ describe("auth (API tokens)", () => {
                 purpose: "standard", deployerMode, controllerMachineId: machine.id, ...reference,
             } });
             if (selectedGroupId) await db.deploymentEnvironmentDeployer.create({ data: { environmentId: environment.id,
-                principalKind: "teamGroup", principalId: selectedGroupId, createdByAccountId: creator.id } });
+                purpose: "deploy", principalKind: "group", principalId: selectedGroupId, principalTeamId: team.id,
+                createdByAccountId: creator.id } });
             const target = await db.deploymentTargetLink.create({ data: { environmentId: environment.id,
                 createdByAccountId: creator.id, role: "runtime", sourceKind: "host", hostTargetId: "own-server",
                 targetKind: "ownServer", state: "deployed", ...await content("deployment-target-link.v1") } });

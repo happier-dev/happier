@@ -7,7 +7,7 @@ import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createProjectSourceInTx, updateProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { createTeamGroupForActorInTx, addTeamGroupMemberForActorInTx } from '@/app/teams/groups/groupService';
-import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachinesInTx } from './deploymentAdmission';
+import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachinesInTx, canEditDeploymentEnvironmentData } from './deploymentAdmission';
 import { createSavedSecretResourceInTx, readSavedSecretResourcesForPrincipalInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import nacl from 'tweetnacl';
@@ -1199,8 +1199,8 @@ describe('current Source deployment authority', () => {
         // The protocol owner is part of this contract: ignoring an unknown policy operand cannot pass RED.
         const createInput = DeploymentEnvironmentCreateInputV1Schema.parse({ ...reference, serverId, projectSourceId: source.source.id,
             requestKey: crypto.randomUUID(), protection: 'production', purpose: 'standard', deployerMode: 'chosen',
-            controllerMachineId: machine.id, deployerPrincipals: [{ principalKind: 'account', principalId: selected.id },
-                { principalKind: 'teamGroup', principalId: group.id }] });
+            controllerMachineId: machine.id, deployerPrincipals: [{ kind: 'account', accountId: selected.id },
+                { kind: 'group', teamId: team.id, groupId: group.id }] });
         const created = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, createInput));
         if (!created.ok) throw new Error(created.error);
         const environmentId = created.environmentId;
@@ -1222,7 +1222,7 @@ describe('current Source deployment authority', () => {
         expect(await update({ deployerPrincipals: [...createInput.deployerPrincipals!].reverse() })).toMatchObject({ ok: true, revision: created.revision });
         expect(await db.deploymentEnvironmentDeployer.findMany({ where: { environmentId } })).toEqual(relations);
         expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(sequence);
-        expect(await update({ deployerPrincipals: [{ principalKind: 'account', principalId: outsider.id }] }))
+        expect(await update({ deployerPrincipals: [{ kind: 'account', accountId: outsider.id }] }))
             .toEqual({ ok: false, error: 'deployment_access_denied' });
         expect(await db.deploymentEnvironmentDeployer.findMany({ where: { environmentId } })).toEqual(relations);
         expect(await update({ deployerMode: 'members' })).toMatchObject({ ok: true, revision: created.revision + 1 });
@@ -1256,7 +1256,7 @@ describe('current Source deployment authority', () => {
         if (!otherSource.ok) throw new Error(otherSource.error);
         const otherEnvironment = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, {
             ...createInput, projectSourceId: otherSource.source.id, requestKey: crypto.randomUUID(),
-            deployerPrincipals: [{ principalKind: 'teamGroup', principalId: group.id }],
+            deployerPrincipals: [{ kind: 'group', teamId: team.id, groupId: group.id }],
         }));
         if (!otherEnvironment.ok) throw new Error(otherEnvironment.error);
         const removed = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: source.source.id,
@@ -1282,16 +1282,81 @@ describe('current Source deployment authority', () => {
         expect(await inTx(tx => updateDeploymentEnvironmentInTx(tx, owner.id,
             DeploymentEnvironmentUpdateStorageInputV1Schema.parse({ ...reference, serverId, environmentId,
                 expectedRevision: created.revision + 3, patch: { buildMachineId: machine.id, deployerMode: 'chosen',
-                    deployerPrincipals: [{ principalKind: 'account', principalId: selected.id }] },
+                    deployerPrincipals: [{ kind: 'account', accountId: selected.id }] },
                 preparedBindings: { grants: [], referencedSavedSecretRevisions: [] },
             })))).toMatchObject({ ok: true, revision: created.revision + 4 });
         expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environmentId } }))
             .toMatchObject({ buildMachineId: machine.id, deployerMode: 'chosen', revision: created.revision + 4 });
         expect(await db.deploymentEnvironmentDeployer.findMany({ where: { environmentId } }))
-            .toMatchObject([{ principalKind: 'account', principalId: selected.id }]);
+            .toMatchObject([{ purpose: 'deploy', principalKind: 'account', principalId: selected.id }]);
         expect(await projection(selected.id)).toMatchObject({ capabilities: { role: 'deployer', deploy: true } });
         await db.deploymentEnvironment.update({ where: { id: environmentId }, data: { deletedAt: new Date() } });
         expect(await projection(selected.id)).toMatchObject({ capabilities: { role: 'reader', deploy: false } });
+    });
+
+    it('admits a chosen Team for deploys and database edits through one matcher until membership ends (TS.P3.F5a)', async () => {
+        const [owner, member, outsider] = await Promise.all(Array.from({ length: 3 }, () =>
+            db.account.create({ data: { encryptionMode: 'plain' } })));
+        const team = await db.team.create({ data: { name: 'Chosen Team' } });
+        const otherTeam = await db.team.create({ data: { name: 'Other Team' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+        const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+        await db.teamMembership.create({ data: { teamId: otherTeam.id, accountId: outsider.id, role: 'member' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId, requestKey: crypto.randomUUID(),
+            name: 'Team authority', audience: [{ principal: { kind: 'team', teamId: team.id }, level: 'view' }] }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+            metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            installationId: crypto.randomUUID() } });
+        const content = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Team authority' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify({ name: 'Team authority',
+                retainPreviousDeployments: 1, bindings: [], definition: { kind: 'stored', document: '{"services":{"app":{"image":"app:1"}}}',
+                    contentRevision: 1, composeDigest: 'sha256:' + 'b'.repeat(64), profiles: [], services: ['app'] } }) })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!content.ok) throw new Error(content.error);
+        const reference = { contentArtifactId: content.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        const teamRef = { kind: 'team' as const, teamId: team.id };
+        const created = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, DeploymentEnvironmentCreateInputV1Schema.parse({
+            ...reference, serverId, projectSourceId: source.source.id, requestKey: crypto.randomUUID(), protection: 'production',
+            purpose: 'standard', deployerMode: 'chosen', controllerMachineId: machine.id, deployerPrincipals: [teamRef] })));
+        if (!created.ok) throw new Error(created.error);
+        const environmentId = created.environmentId;
+        const load = (accountId: string) => inTx(tx => loadDeploymentEnvironmentInTx(tx, accountId, serverId, environmentId));
+        const projection = async (accountId: string) => {
+            const loaded = await load(accountId);
+            return loaded.ok ? projectDeploymentEnvironmentHeader(loaded.row, serverId, loaded.admission) : loaded;
+        };
+        const canEdit = async (accountId: string) => {
+            const loaded = await load(accountId);
+            return loaded.ok && canEditDeploymentEnvironmentData(loaded.admission, loaded.row);
+        };
+        // G1 control: the Team member is admitted to deploy through the chosen Team before any refusal counts.
+        expect(await projection(member.id)).toMatchObject({ capabilities: { role: 'deployer', deploy: true },
+            deployerPrincipals: [teamRef], dataEditorMode: 'off', dataAgentAccess: 'read', dataEditors: [] });
+        expect(await canEdit(member.id)).toBe(false);
+        expect(await canEdit(owner.id)).toBe(false);
+        const update = (patch: unknown, expectedRevision: number) => inTx(tx => updateDeploymentEnvironmentInTx(tx, owner.id,
+            DeploymentEnvironmentUpdateInputV1Schema.parse({ ...reference, serverId, environmentId, expectedRevision, patch })));
+        // A Team the Source does not name cannot be chosen.
+        expect(await update({ dataEditorMode: 'chosen', dataEditors: [{ kind: 'team', teamId: otherTeam.id }] }, created.revision))
+            .toEqual({ ok: false, error: 'deployment_access_denied' });
+        expect(await update({ dataEditorMode: 'chosen', dataEditors: [teamRef] }, created.revision))
+            .toMatchObject({ ok: true, revision: created.revision + 1 });
+        // An unchanged Save writes nothing.
+        expect(await update({ dataEditorMode: 'chosen', dataEditors: [teamRef], dataAgentAccess: 'read' }, created.revision + 1))
+            .toMatchObject({ ok: true, revision: created.revision + 1 });
+        expect((await db.deploymentEnvironmentDeployer.findMany({ where: { environmentId }, orderBy: { purpose: 'asc' } }))
+            .map(row => [row.purpose, row.principalKind, row.principalId])).toEqual([['dataEdit', 'team', team.id], ['deploy', 'team', team.id]]);
+        expect(await projection(member.id)).toMatchObject({ dataEditorMode: 'chosen', dataEditors: [teamRef], deployerPrincipals: [teamRef] });
+        expect(await canEdit(member.id)).toBe(true);
+        expect(await projection(outsider.id)).toEqual({ ok: false, error: 'deployment_unavailable' });
+        // Membership ends: the next admission refuses both the deploy and the database edit.
+        await db.teamMembership.delete({ where: { id: membership.id } });
+        expect(await projection(member.id)).toEqual({ ok: false, error: 'deployment_unavailable' });
+        expect(await canEdit(member.id)).toBe(false);
+        expect(await update({ dataEditorMode: 'off' }, created.revision + 1)).toMatchObject({ ok: true, revision: created.revision + 2 });
+        expect(await canEdit(owner.id)).toBe(false);
     });
 
     it('uses the explicit Team owner and its Machine grant, surviving the creating member leaving', async () => {

@@ -37,6 +37,7 @@ import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/sett
 import { readSavedSecretResourcesForAccountInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { DeploymentApprovalEnvironmentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { readArtifactHeadersForCallerInTx } from '@/app/artifacts/artifactAccessService';
+import { deploymentEnvironmentPrincipalSelect, type DeploymentEnvironmentPrincipalRow } from './deploymentEnvironmentDeployers';
 
 type AcceptedDeploymentRead = NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
 
@@ -75,11 +76,11 @@ export async function readDeploymentEnvironmentAccessInTx(tx: Tx, actorAccountId
     if (!environmentIds.length) return { ok: true, items: [] };
     if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.access.server', causeKind: 'server_mismatch' });
     const environments = new Map<string, Readonly<{ id: string; projectSourceId: string; deletedAt: Date | null; deployerMode: string;
-        deployers: readonly Readonly<{ principalKind: string; principalId: string }>[] }>>();
+        principals: readonly DeploymentEnvironmentPrincipalRow[] }>>();
     for (const ids of portableQueryChunks({ values: environmentIds, bindingsPerValue: 1, fixedBindings: 1 })) {
         const rows = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...ids] } },
             select: { id: true, projectSourceId: true, deletedAt: true, deployerMode: true,
-                deployers: { select: { principalKind: true, principalId: true } } } });
+                principals: deploymentEnvironmentPrincipalSelect } });
         for (const row of rows) environments.set(row.id, row);
     }
     const sources = await resolveProjectSourcesAccessInTx(tx, actorAccountId,
@@ -306,7 +307,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     // Newly generated Environment ids lead the finite inventory; continuation visits older ids.
     const readRows = (where: Prisma.DeploymentEnvironmentWhereInput) => tx.deploymentEnvironment.findMany({
         where, orderBy: { id: 'desc' }, take: limit + 1,
-        include: { deployers: { select: { principalKind: true, principalId: true } },
+        include: { principals: deploymentEnvironmentPrincipalSelect,
             previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } },
             // Exact visible groups consume Environment headers, not latest-attempt
             // history. Ordinary inventory retains its incumbent receipt projection.
@@ -400,7 +401,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
                 while (true) {
                     const candidates = await tx.deploymentEnvironment.findMany({ where: selectionWhere(after), orderBy: { id: 'desc' },
                         take: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, include: {
-                            deployers: { select: { principalKind: true, principalId: true } },
+                            principals: deploymentEnvironmentPrincipalSelect,
                             previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } },
                         } });
                     for (const row of await admitRows(candidates)) {

@@ -8,7 +8,7 @@ import {
   DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
   deploymentOperationForRootActionV1,
 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import type { DeploymentEnvironmentDeployerPrincipalV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { MachineAuthorityPresentationV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -40,7 +40,7 @@ import { DeployOutcomeBanner } from './DeploymentEnvironmentDetail';
 import type { DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
 
 type DeployerMode = DeploymentEnvironmentReadDetailV1['environment']['deployerMode'];
-type Principal = DeploymentEnvironmentDeployerPrincipalV1;
+type Principal = PrincipalRefV1;
 const noop = () => {};
 const NO_PRINCIPALS: readonly Principal[] = Object.freeze([]);
 const AUDIENCE = ENVIRONMENT_APPROVAL_AUDIENCE;

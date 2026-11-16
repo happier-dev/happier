@@ -9,7 +9,7 @@ import { useTeamGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames
 import { useTeamGroup } from '@/hooks/teams/useTeamGroups';
 import { useDiscussionParticipantProfiles } from '@/components/discussions/useDiscussionParticipantProfiles';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
-import type { DeploymentEnvironmentDeployerPrincipalV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
+import { deploymentEnvironmentPrincipalKeyV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
 
 import { TeamCredentialAudiencePicker, type TeamCredentialAudiencePrincipal } from '@/components/settings/teams/credentials/TeamCredentialAudiencePicker';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -21,8 +21,10 @@ import { createTeamAddress, type TeamAddress } from '@/sync/domains/teams/teamAd
 import { t } from '@/text';
 
 type DeployerMode = DeploymentEnvironmentReadDetailV1['environment']['deployerMode'];
-type Principal = DeploymentEnvironmentDeployerPrincipalV1;
-const principalKey = (principal: Principal) => JSON.stringify([principal.principalKind, principal.principalId]);
+type Principal = PrincipalRefV1;
+const principalKey = deploymentEnvironmentPrincipalKeyV1;
+const principalLeafId = (principal: Principal) =>
+  principal.kind === 'account' ? principal.accountId : principal.kind === 'team' ? principal.teamId : principal.groupId;
 
 /** The same deployer controls author a draft and edit an existing Environment. Admission stays with the Action. */
 export function DeploymentDeployerFields(props: Readonly<{
@@ -112,7 +114,7 @@ function ChosenPeople(
   const viewerProfile = useShareViewerProfile(props.scope);
   const accountIds = [...new Set([
     ...props.direct.flatMap(candidate => candidate.ref.kind === 'account' ? [candidate.ref.accountId] : []),
-    ...props.principals.flatMap(principal => principal.principalKind === 'account' ? [principal.principalId] : []),
+    ...props.principals.flatMap(principal => principal.kind === 'account' ? [principal.accountId] : []),
   ])];
   const profiles = useDiscussionParticipantProfiles({ scope: props.scope, roster: null, accountIds,
     enabled: true, accountLifetime: props.lifetime });
@@ -120,23 +122,22 @@ function ChosenPeople(
   const [picked, setPicked] = React.useState<ReadonlyMap<string, string>>(new Map());
   const names = React.useMemo(() => {
     const map = new Map(props.direct.map(principal => {
-      const key = principalKey({ principalKind: principal.ref.kind === 'account' ? 'account' : 'teamGroup',
-        principalId: principal.ref.kind === 'account' ? principal.ref.accountId : principal.ref.kind === 'group' ? principal.ref.groupId : '' });
+      const key = principalKey(principal.ref);
       return [key, presentSharePrincipal({ ref: principal.ref, viewerAccountId: props.scope.accountId, viewerProfile,
         profile: principal.ref.kind === 'account' ? profiles.accounts.get(principal.ref.accountId)?.profile : null }).displayName] as const;
     }));
     for (const [accountId, actor] of profiles.accounts) {
       const presentation = presentSharePrincipal({ ref: { kind: 'account', accountId }, profile: actor.profile,
         viewerAccountId: props.scope.accountId, viewerProfile });
-      map.set(principalKey({ principalKind: 'account', principalId: accountId }), presentation.displayName);
+      map.set(principalKey({ kind: 'account', accountId }), presentation.displayName);
     }
     for (const [key, name] of picked) map.set(key, name);
     return map;
   }, [picked, profiles.accounts, props.direct, props.scope.accountId, viewerProfile]);
-  const choose = (chosen: TeamCredentialAudiencePrincipal) => {
+  const choose = (chosen: TeamCredentialAudiencePrincipal, teamId: string) => {
     const principal: Principal = chosen.kind === 'member'
-      ? { principalKind: 'account', principalId: chosen.accountId }
-      : { principalKind: 'teamGroup', principalId: chosen.id };
+      ? { kind: 'account', accountId: chosen.accountId }
+      : { kind: 'group', teamId, groupId: chosen.id };
     if (props.principals.some(item => principalKey(item) === principalKey(principal))) return;
     setPicked(current => new Map(current).set(principalKey(principal), chosen.name));
     props.onAdd(principal);
@@ -148,19 +149,19 @@ function ChosenPeople(
         <Item testID={`${prefix}.empty`} title={t('projects.deployments.editors.chosenEmpty')} mode="info" />
       ) : props.principals.map(principal => {
         const key = principalKey(principal);
-        const group = principal.principalKind === 'teamGroup';
+        const group = principal.kind !== 'account';
         const name = names.get(key) ?? (group ? t('projects.deployments.editors.chosenGroup') : t('projects.deployments.editors.chosenUnknown'));
         const render = (displayName: string) => (
           <Item
             key={key}
-            testID={`${prefix}.${principal.principalKind}.${principal.principalId}`}
+            testID={`${prefix}.${principal.kind}.${principalLeafId(principal)}`}
             icon={<Icon name={group ? 'users' : 'user-circle'} size={18} color={theme.colors.text.secondary} />}
             title={displayName}
             subtitle={group ? t('projects.deployments.editors.chosenGroup') : undefined}
             mode="info"
             rightElement={props.editable ? (
               <IconButton
-                testID={`${prefix}.${principal.principalKind}.${principal.principalId}.remove`}
+                testID={`${prefix}.${principal.kind}.${principalLeafId(principal)}.remove`}
                 iconName="x"
                 variant="plain"
                 accessibilityLabel={`${t('projects.deployments.editors.chosenRemove')} ${displayName}`}
@@ -169,20 +170,18 @@ function ChosenPeople(
             ) : undefined}
           />
         );
-        const sourceGroup = group ? props.direct.find(candidate => candidate.ref.kind === 'group' && candidate.ref.groupId === principal.principalId)?.ref : undefined;
-        return sourceGroup?.kind === 'group' ? <SourceGroupName key={key} scope={props.scope} principal={sourceGroup}>{render}</SourceGroupName> : render(name);
+        const sourceGroup = principal.kind === 'group' && props.direct.some(candidate => principalKey(candidate.ref) === key) ? principal : undefined;
+        return sourceGroup ? <SourceGroupName key={key} scope={props.scope} principal={sourceGroup}>{render}</SourceGroupName> : render(name);
       })}
       {props.editable ? <>
         {props.direct.map(candidate => {
           const ref = candidate.ref;
           if (ref.kind === 'team') return null;
-          const principal: Principal = ref.kind === 'account'
-            ? { principalKind: 'account', principalId: ref.accountId }
-            : { principalKind: 'teamGroup', principalId: ref.groupId };
+          const principal: Principal = ref;
           if (props.principals.some(item => principalKey(item) === principalKey(principal))) return null;
           const presentation = presentSharePrincipal({ ref, viewerAccountId: props.scope.accountId, viewerProfile,
             profile: ref.kind === 'account' ? profiles.accounts.get(ref.accountId)?.profile : null });
-          const render = (name: string) => <Item key={candidate.key} testID={`${prefix}.add.${principal.principalKind}.${principal.principalId}`}
+          const render = (name: string) => <Item key={candidate.key} testID={`${prefix}.add.${principal.kind}.${principalLeafId(principal)}`}
             title={name} subtitle={presentation.secondaryLabel}
             accessibilityLabel={name}
             icon={<Icon name={ref.kind === 'group' ? 'users' : 'user-circle'} size={18} color={theme.colors.text.secondary} />}
@@ -193,8 +192,8 @@ function ChosenPeople(
         {props.teams.map((team, index) => <TeamDeployerPicker key={team.teamId}
           testID={index === 0 ? `${prefix}.add` : `${prefix}.add.${team.teamId}`}
           scope={props.scope} address={team} multiple={props.teams.length > 1}
-          excludedGroupIds={props.principals.flatMap(item => item.principalKind === 'teamGroup' ? [item.principalId] : [])}
-          onChoose={choose} />)}
+          excludedGroupIds={props.principals.flatMap(item => item.kind === 'group' ? [item.groupId] : [])}
+          onChoose={chosen => choose(chosen, team.teamId)} />)}
       </> : null}
     </>
   );

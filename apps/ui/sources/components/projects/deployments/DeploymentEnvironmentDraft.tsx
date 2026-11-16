@@ -13,7 +13,7 @@ import { DeploymentPartialProgress } from './DeploymentPartialProgress';
 import { DeploymentProjectChoiceGroups, type DeploymentProjectChoiceModel } from './DeploymentProjectChoice';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentEnvironmentCopyChoicesV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentCopyV1';
-import type { DeploymentEnvironmentDeployerPrincipalV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { environmentSecretBindingIdentityV1, projectEnvironmentSecretBindingIdentityV1, type DeploymentTemplateRefV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -195,7 +195,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [deployerMode, setDeployerMode] = React.useState<DeploymentEnvironmentDetailV1['environment']['deployerMode']>(
       props.copyFrom?.environment.deployerMode ?? 'managers',
     );
-    const [deployerPrincipals, setDeployerPrincipals] = React.useState<readonly DeploymentEnvironmentDeployerPrincipalV1[]>(
+    const [deployerPrincipals, setDeployerPrincipals] = React.useState<readonly PrincipalRefV1[]>(
       props.copyFrom?.environment.deployerPrincipals ?? [],
     );
     const [saving, setSaving] = React.useState(false);

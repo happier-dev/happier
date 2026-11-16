@@ -3656,7 +3656,7 @@ model Artifact {
 
 model DeploymentEnvironment {
     domains DeploymentDomain[]
-    deployers DeploymentEnvironmentDeployer[]
+    principals DeploymentEnvironmentDeployer[]
     machineSecretGrants MachineSecretGrant[]
     id String @id @default(cuid())
     projectSourceId String
@@ -3678,6 +3678,10 @@ model DeploymentEnvironment {
     previewCompanionOfEnvironment DeploymentEnvironment? @relation("DeploymentPreviewDataCompanion", fields: [previewCompanionOfEnvironmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
     previewDataCompanion DeploymentEnvironment? @relation("DeploymentPreviewDataCompanion")
     deployerMode String
+    /// Database editing: 'off' or the deployer people mode; chosen editors are `principals` rows with purpose 'dataEdit'.
+    dataEditorMode String @default("off")
+    /// Database agent level (D13); admitted values are 'none' and 'read' until the write levels land.
+    dataAgentAccess String @default("read")
     controllerMachineId String
     controllerMachine Machine @relation("DeploymentController", fields: [controllerMachineId], references: [id], onDelete: Restrict)
     buildMachineId String?
@@ -3707,16 +3711,20 @@ model DeploymentEnvironment {
     @@index([contentArtifactId])
 }
 
+/// Chosen Environment principals: deployers (`purpose` 'deploy') and database editors ('dataEdit').
+/// `principalKind` is a PrincipalRefV1 kind (account, team, group); `principalTeamId` is set only for a group.
 model DeploymentEnvironmentDeployer {
     environmentId String
     environment DeploymentEnvironment @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+    purpose String
     principalKind String
     principalId String
+    principalTeamId String?
     createdByAccountId String
     createdByAccount Account @relation(fields: [createdByAccountId], references: [id], onDelete: Restrict)
     createdAt DateTime @default(now())
 
-    @@id([environmentId, principalKind, principalId])
+    @@id([environmentId, purpose, principalKind, principalId])
 }
 
 model DeploymentTargetLink {

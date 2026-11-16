@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { isDeploymentEnvironmentUpdateNativeAdmissionV1,
     type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentDeployerPrincipalsV1Schema, DeploymentPreviewDataTargetsV1Schema,
-    type DeploymentEnvironmentDeployerPrincipalV1, type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
+import { DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentPrincipalsV1Schema, DeploymentPreviewDataTargetsV1Schema,
+    type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
     machineSecretGrantSubjectKey, resolveDeploymentStoredDefinitionRevisionV1,
     isDeploymentEnvironmentBindingsOnlyUpdateV1, reconcileDeploymentRemovedDataServicesV1,
@@ -35,7 +36,9 @@ import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProject
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { linkDeploymentTargetForAdmittedEnvironmentInTx, readCurrentManagedDataTargetLinksInTx,
     readDeploymentTargetRuntimeInstallations } from './deploymentTargetLinkService';
-import { admitDeploymentDeployerPrincipalsInTx, replaceDeploymentDeployerPrincipalsInTx, sameDeploymentDeployerPrincipals } from './deploymentEnvironmentDeployers';
+import { admitDeploymentEnvironmentPrincipalsInTx, createDeploymentEnvironmentPrincipalRows, deploymentEnvironmentPrincipalSelect,
+    readDeploymentEnvironmentPrincipals, replaceDeploymentEnvironmentPrincipalsInTx, sameDeploymentEnvironmentPrincipals,
+    type DeploymentEnvironmentPrincipalRow } from './deploymentEnvironmentDeployers';
 import { admitPreviewEnvironmentRelationInTx } from './previewEnvironmentRelation';
 import { readDeploymentDomainInventoryInTx } from './deploymentDomainService';
 
@@ -75,7 +78,7 @@ export function readDeploymentPreviewTemplateEnvironmentId(row: Readonly<{
 }
 
 export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow & Readonly<{
-    deployers?: readonly Readonly<{ principalKind: string; principalId: string }>[];
+    principals?: readonly DeploymentEnvironmentPrincipalRow[];
     previewCompanionOfEnvironment?: Readonly<{ previewTemplateEnvironmentId: string | null }> | null;
 }>, serverId: string, admission: DeploymentSourceAdmission) {
     const canDeploy = canDeployDeploymentEnvironment(admission, row);
@@ -88,7 +91,9 @@ export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow
         ...(row.previewCompanionOfEnvironmentId ? { previewCompanionOfEnvironmentId: row.previewCompanionOfEnvironmentId } : {}),
         ...(row.purpose === 'preview' ? { previewRepositoryId: row.previewRepositoryId, previewPullRequestId: row.previewPullRequestId,
             previewTargetLinkId: row.previewTargetLinkId } : {}),
-        ...(row.deployers ? { deployerPrincipals: row.deployers.map(({ principalKind, principalId }) => ({ principalKind, principalId })) } : {}),
+        ...(row.principals ? { deployerPrincipals: readDeploymentEnvironmentPrincipals(row.principals, 'deploy') } : {}),
+        dataEditorMode: row.dataEditorMode, dataAgentAccess: row.dataAgentAccess,
+        ...(row.principals ? { dataEditors: readDeploymentEnvironmentPrincipals(row.principals, 'dataEdit') } : {}),
         controllerMachineId: row.controllerMachineId,
         ...(row.buildMachineId ? { buildMachineId: row.buildMachineId } : {}),
         // Full mode lives in protected content; null edge custody never implies Tunnel.
@@ -110,7 +115,7 @@ export async function loadDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
     acceptedRead?: Readonly<{ environmentId: string }>,
 ) {
     const row = await tx.deploymentEnvironment.findUnique({ where: { id: environmentId },
-        include: { deployers: { select: { principalKind: true, principalId: true } },
+        include: { principals: deploymentEnvironmentPrincipalSelect,
             previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } } } });
     if (!row) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.load', causeKind: 'not_found' });
     if (acceptedRead?.environmentId === row.id) {
@@ -292,7 +297,7 @@ async function createDeploymentEnvironmentForSourceInTx(tx: Tx, actorAccountId: 
     const source = await resolveDeploymentEnvironmentAdmissionInTx(tx, actorAccountId, { ...input, includeDeletedSource: false }, authentication);
     if (!source.ok) return source;
     if (!source.admission.canManage) return deploymentFailure('deployment_access_denied');
-    if (!await admitDeploymentDeployerPrincipalsInTx(tx, source.admission, input.deployerPrincipals ?? [])) {
+    if (!await admitDeploymentEnvironmentPrincipalsInTx(tx, source.admission, input.deployerPrincipals ?? [])) {
         return deploymentFailure('deployment_access_denied');
     }
     const now = await readTransactionDatabaseTime(tx);
@@ -357,12 +362,12 @@ async function createDeploymentEnvironmentForSourceInTx(tx: Tx, actorAccountId: 
         projectSourceId: input.projectSourceId, createdByAccountId: actorAccountId,
         protection: input.protection, purpose: input.purpose, deployerMode: input.deployerMode,
         ...preview.relation,
-        deployers: { create: (input.deployerPrincipals ?? []).map(principal => ({ ...principal, createdByAccountId: actorAccountId })) },
+        principals: { create: createDeploymentEnvironmentPrincipalRows(actorAccountId, { deploy: input.deployerPrincipals }) },
         controllerMachineId: input.controllerMachineId, buildMachineId: input.buildMachineId,
         // Pending identities are admitted without claiming completed routing or grants.
         referencedSavedSecretRevisions: pending?.captures ?? [],
         ...deploymentContentReference(input),
-    }, include: { deployers: { select: { principalKind: true, principalId: true } },
+    }, include: { principals: deploymentEnvironmentPrincipalSelect,
         previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } } } });
     let revision = row.revision;
     let runtimeTargetLinkId: string | undefined;
@@ -417,12 +422,21 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
     const currentDeployerMode = DeploymentEnvironmentHeaderV1Schema.shape.deployerMode.parse(loaded.row.deployerMode);
     const deployerMode = input.patch?.deployerMode ?? currentDeployerMode;
     const principalsChanged = input.patch?.deployerPrincipals !== undefined
-        && !sameDeploymentDeployerPrincipals(loaded.row.deployers, input.patch.deployerPrincipals);
-    if (input.patch?.deployerPrincipals !== undefined || (deployerMode === 'chosen' && deployerMode !== loaded.row.deployerMode)) {
-        const principals = DeploymentEnvironmentDeployerPrincipalsV1Schema.safeParse(input.patch?.deployerPrincipals
-            ?? loaded.row.deployers.map(({ principalKind, principalId }) => ({ principalKind, principalId })));
+        && !sameDeploymentEnvironmentPrincipals(loaded.row.principals, 'deploy', input.patch.deployerPrincipals);
+    const dataEditorMode = input.patch?.dataEditorMode ?? loaded.row.dataEditorMode;
+    const dataAgentAccess = input.patch?.dataAgentAccess ?? loaded.row.dataAgentAccess;
+    const dataEditorsChanged = input.patch?.dataEditors !== undefined
+        && !sameDeploymentEnvironmentPrincipals(loaded.row.principals, 'dataEdit', input.patch.dataEditors);
+    // Deployers and database editors share one chosen-principal admission against the Source's scope.
+    for (const selection of [
+        { purpose: 'deploy' as const, mode: deployerMode, currentMode: loaded.row.deployerMode, next: input.patch?.deployerPrincipals },
+        { purpose: 'dataEdit' as const, mode: dataEditorMode, currentMode: loaded.row.dataEditorMode, next: input.patch?.dataEditors },
+    ]) {
+        if (selection.next === undefined && !(selection.mode === 'chosen' && selection.mode !== selection.currentMode)) continue;
+        const principals = DeploymentEnvironmentPrincipalsV1Schema.safeParse(selection.next
+            ?? readDeploymentEnvironmentPrincipals(loaded.row.principals, selection.purpose));
         if (!principals.success) return deploymentFailure('deployment_invalid');
-        if (!await admitDeploymentDeployerPrincipalsInTx(tx, loaded.admission, principals.data)) {
+        if (!await admitDeploymentEnvironmentPrincipalsInTx(tx, loaded.admission, principals.data)) {
             return deploymentFailure('deployment_access_denied');
         }
     }
@@ -518,7 +532,8 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
     const pending = input.referencedSavedSecretRevisions ? await preparePendingDeploymentBindingCapturesInTx(tx,
         actorAccountId, loaded.admission, input.referencedSavedSecretRevisions, loaded.row.referencedSavedSecretRevisions, authentication) : undefined;
     if (pending && !pending.ok) return pending;
-    if (!principalsChanged && deployerMode === loaded.row.deployerMode
+    if (!principalsChanged && deployerMode === loaded.row.deployerMode && !dataEditorsChanged
+        && dataEditorMode === loaded.row.dataEditorMode && dataAgentAccess === loaded.row.dataAgentAccess
         && buildMachineId === loaded.row.buildMachineId && edgeMachineId === loaded.row.edgeMachineId && protection === loaded.row.protection
         && !input.preparedBindings && (!pending || isDeepStrictEqual(pending.captures, loaded.row.referencedSavedSecretRevisions))
         && isDeepStrictEqual(deploymentContentReference(loaded.row), deploymentContentReference(input))) {
@@ -529,9 +544,10 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
         return setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx, actorAccountId, {
             serverId: input.serverId, environmentId: input.environmentId, expectedRevision: input.expectedRevision,
             ...deploymentContentReference(input), ...input.preparedBindings,
-        }, loaded, authentication, { buildMachineId, deployerMode,
+        }, loaded, authentication, { buildMachineId, deployerMode, dataEditorMode, dataAgentAccess,
             ...(ingress !== undefined ? { edgeMachineId } : {}),
             ...(input.patch?.deployerPrincipals !== undefined ? { deployerPrincipals: input.patch.deployerPrincipals } : {}),
+            ...(input.patch?.dataEditors !== undefined ? { dataEditors: input.patch.dataEditors } : {}),
             ...(input.patch?.protection !== undefined ? { protection: input.patch.protection } : {}) });
     }
     if (buildChanged) {
@@ -545,11 +561,14 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
             ...(input.patch?.buildMachineId !== undefined ? { buildMachineId: input.patch.buildMachineId } : {}),
             ...(ingress !== undefined ? { edgeMachineId } : {}),
             ...(input.patch?.protection !== undefined ? { protection: input.patch.protection } : {}),
-            deployerMode,
+            deployerMode, dataEditorMode, dataAgentAccess,
             revision: { increment: 1 } } });
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during content CAS');
     if (principalsChanged && input.patch?.deployerPrincipals !== undefined) {
-        await replaceDeploymentDeployerPrincipalsInTx(tx, loaded.row.id, actorAccountId, loaded.row.deployers, input.patch.deployerPrincipals);
+        await replaceDeploymentEnvironmentPrincipalsInTx(tx, loaded.row.id, actorAccountId, 'deploy', loaded.row.principals, input.patch.deployerPrincipals);
+    }
+    if (dataEditorsChanged && input.patch?.dataEditors !== undefined) {
+        await replaceDeploymentEnvironmentPrincipalsInTx(tx, loaded.row.id, actorAccountId, 'dataEdit', loaded.row.principals, input.patch.dataEditors);
     }
     if (pending && !isDeepStrictEqual(pending.captures, loaded.row.referencedSavedSecretRevisions)) {
         await publishSavedSecretUsageChangesInTx(tx, pending.captures.map(capture => capture.resourceId));
@@ -590,7 +609,8 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     placement?: Readonly<{ buildMachineId: string | null; protection?: DeploymentEnvironmentCreateStorageInputV1['protection'];
         edgeMachineId?: string | null;
         deployerMode?: DeploymentEnvironmentCreateStorageInputV1['deployerMode'];
-        deployerPrincipals?: readonly DeploymentEnvironmentDeployerPrincipalV1[] }>,
+        deployerPrincipals?: readonly PrincipalRefV1[];
+        dataEditorMode?: string; dataAgentAccess?: string; dataEditors?: readonly PrincipalRefV1[] }>,
 ) {
     const resourceIds = [...new Set([
         ...input.referencedSavedSecretRevisions,
@@ -813,8 +833,13 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         if (machineFailure) return machineFailure;
     }
     const principalsChanged = placement?.deployerPrincipals !== undefined
-        && !sameDeploymentDeployerPrincipals(loaded.row.deployers, placement.deployerPrincipals);
-    if (!linkCandidate && !grantsChanged && !principalsChanged && (placement?.deployerMode ?? loaded.row.deployerMode) === loaded.row.deployerMode
+        && !sameDeploymentEnvironmentPrincipals(loaded.row.principals, 'deploy', placement.deployerPrincipals);
+    const dataEditorsChanged = placement?.dataEditors !== undefined
+        && !sameDeploymentEnvironmentPrincipals(loaded.row.principals, 'dataEdit', placement.dataEditors);
+    if (!linkCandidate && !grantsChanged && !principalsChanged && !dataEditorsChanged
+        && (placement?.dataEditorMode ?? loaded.row.dataEditorMode) === loaded.row.dataEditorMode
+        && (placement?.dataAgentAccess ?? loaded.row.dataAgentAccess) === loaded.row.dataAgentAccess
+        && (placement?.deployerMode ?? loaded.row.deployerMode) === loaded.row.deployerMode
         && (placement?.protection ?? loaded.row.protection) === loaded.row.protection
         && buildMachineId === loaded.row.buildMachineId
         && (placement?.edgeMachineId === undefined || placement.edgeMachineId === loaded.row.edgeMachineId)
@@ -831,11 +856,16 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         data: { ...deploymentContentReference(input), ...(placement ? { buildMachineId,
             ...(placement.edgeMachineId !== undefined ? { edgeMachineId: placement.edgeMachineId } : {}),
             ...(placement.protection !== undefined ? { protection: placement.protection } : {}),
-            ...(placement.deployerMode !== undefined ? { deployerMode: placement.deployerMode } : {}) } : {}),
+            ...(placement.deployerMode !== undefined ? { deployerMode: placement.deployerMode } : {}),
+            ...(placement.dataEditorMode !== undefined ? { dataEditorMode: placement.dataEditorMode } : {}),
+            ...(placement.dataAgentAccess !== undefined ? { dataAgentAccess: placement.dataAgentAccess } : {}) } : {}),
             referencedSavedSecretRevisions, revision: { increment: 1 } } });
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during binding CAS');
     if (principalsChanged && placement?.deployerPrincipals !== undefined) {
-        await replaceDeploymentDeployerPrincipalsInTx(tx, loaded.row.id, actorAccountId, loaded.row.deployers, placement.deployerPrincipals);
+        await replaceDeploymentEnvironmentPrincipalsInTx(tx, loaded.row.id, actorAccountId, 'deploy', loaded.row.principals, placement.deployerPrincipals);
+    }
+    if (dataEditorsChanged && placement?.dataEditors !== undefined) {
+        await replaceDeploymentEnvironmentPrincipalsInTx(tx, loaded.row.id, actorAccountId, 'dataEdit', loaded.row.principals, placement.dataEditors);
     }
     if (!isDeepStrictEqual(previousCaptures, referencedSavedSecretRevisions)) {
         await publishSavedSecretUsageChangesInTx(tx, [

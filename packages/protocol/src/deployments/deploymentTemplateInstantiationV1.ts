@@ -12,7 +12,7 @@ import { SharedSavedSecretCreateInputV1Schema } from '../account/settings/savedS
 import { DeploymentTemplateV1Schema, DeploymentTemplateSecretProfileV1Schema } from '../plugins/contributions/deploymentTemplates.js';
 import { ResolvedDeploymentCreationDefaultsV1Schema, DeploymentRetainPreviousDeploymentsV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
-import { DeploymentEnvironmentDeployerPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
+import { DeploymentEnvironmentPeopleModeV1Schema, DeploymentEnvironmentPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from './deploymentReceiptResultV1.js';
@@ -35,7 +35,7 @@ import { ScmRepositoryFilesPullRequestResultV1Schema } from '../scm/repositoryFi
 const existingEnvironment = lazyZodSchema(() => z.strictObject({ kind: z.literal('existing'), environmentId: id, expectedRevision: revision }));
 const createEnvironment = lazyZodSchema(() => z.strictObject({ kind: z.literal('create'), name: StoredAppPresetInputV1Schema.shape.name, requestKey: id,
   protection: z.enum(['production', 'nonProduction']), purpose: z.literal('standard'),
-    deployerMode: z.enum(['managers', 'members', 'chosen']), deployerPrincipals: z.optional(DeploymentEnvironmentDeployerPrincipalsV1Schema), controllerMachineId: id, buildMachineId: z.optional(id),
+    deployerMode: DeploymentEnvironmentPeopleModeV1Schema, deployerPrincipals: z.optional(DeploymentEnvironmentPrincipalsV1Schema), controllerMachineId: id, buildMachineId: z.optional(id),
     retainPreviousDeployments: z.optional(ResolvedDeploymentCreationDefaultsV1Schema.shape.values.shape.retainPreviousDeployments) }));
 const existingTarget = lazyZodSchema(() => z.strictObject({ kind: z.literal('existing'), targetLinkId: id,
   expectedRevision: revision, installationId: id }));

@@ -8,7 +8,7 @@ import * as protocol from '@happier-dev/protocol';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeploymentPrepareInputV1Schema, encodeBase64, computeDeploymentTransitionRequestDigestV1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, ArtifactJsonCreateHttpInputV1Schema,
-    DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DeploymentEnvironmentDeployerPrincipalsV1Schema, type JsonValue } from '@happier-dev/protocol';
+    DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DeploymentEnvironmentPrincipalsV1Schema, type JsonValue } from '@happier-dev/protocol';
 import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { ArtifactRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { SESSION_DATA_KEY_ENVELOPE_BYTES_V1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
@@ -1167,7 +1167,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
             pullRequestId: '42', runtimeTargetLinkId: 'runtime' } : undefined;
         const input = { mode, serverId, projectSourceId: 'source', requestKey: 'authored-create', ...(preview ? { preview } : {}),
             name: 'Reviewed app', protection: 'nonProduction', purpose, deployerMode: 'chosen',
-            deployerPrincipals: DeploymentEnvironmentDeployerPrincipalsV1Schema.parse([{ principalKind: 'account', principalId: 'account' }]),
+            deployerPrincipals: DeploymentEnvironmentPrincipalsV1Schema.parse([{ kind: 'account', accountId: 'account' }]),
             definition: { from: 'image', image: 'nginx:1', port: 80 },
             firstTargetLink: { machines: [{ machineId: 'machine', installationId: 'installation' }] } };
         try {
@@ -1186,7 +1186,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
             for (const altered of [{ ...prepared, requestKey: 'another' }, { ...prepared, protection: 'production' },
                 { ...prepared, deployerMode: 'members' }, { ...prepared, projectSourceId: 'another' },
                 { ...prepared, serverId: 'another-home' },
-                { ...prepared, deployerPrincipals: DeploymentEnvironmentDeployerPrincipalsV1Schema.parse([{ principalKind: 'account', principalId: 'other-account' }]) }]) {
+                { ...prepared, deployerPrincipals: DeploymentEnvironmentPrincipalsV1Schema.parse([{ kind: 'account', accountId: 'other-account' }]) }]) {
                 expect.soft(await verify('/v1/deployments/environments', altered, 'POST', altered)).toBeNull();
             }
             const reads = [

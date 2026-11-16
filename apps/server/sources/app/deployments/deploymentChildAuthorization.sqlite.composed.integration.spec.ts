@@ -2251,7 +2251,7 @@ describe('deployment children retain their controller Action authority', () => {
                 audience: [{ principal: { kind: 'account', accountId: f.account.id }, level: 'view' }],
             } });
             await db.deploymentEnvironmentDeployer.create({ data: { environmentId: f.environment.id,
-                principalKind: 'account', principalId: f.account.id, createdByAccountId: owner.id } });
+                purpose: 'deploy', principalKind: 'account', principalId: f.account.id, createdByAccountId: owner.id } });
             await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { deployerMode: 'chosen' } });
             const deployer = await inTx(tx => loadDeploymentEnvironmentInTx(tx, f.account.id, serverId, f.environment.id));
             expect(deployer.ok, 'the non-manager must retain readable Source custody').toBe(true);

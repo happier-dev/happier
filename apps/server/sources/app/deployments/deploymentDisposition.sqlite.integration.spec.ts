@@ -597,7 +597,7 @@ it('teardown plain detach keeps manager-only removal and retained failed receipt
         { principal: { kind: 'account', accountId: deployer.id }, level: 'view' },
     ] } });
     await db.deploymentEnvironmentDeployer.create({ data: { environmentId: f.environment.id,
-        principalKind: 'account', principalId: deployer.id, createdByAccountId: f.owner.id } });
+        purpose: 'deploy', principalKind: 'account', principalId: deployer.id, createdByAccountId: f.owner.id } });
     await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { deployerMode: 'chosen' } });
     await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { sourceKind: 'plugin',
         hostTargetId: null, pluginId: 'example.platform', contributionLocalId: 'runtime', targetKind: 'platform',

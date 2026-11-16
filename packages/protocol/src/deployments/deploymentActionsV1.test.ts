@@ -1173,8 +1173,9 @@ describe('deployment target link identity and readable-scope transport', () => {
 });
 
 describe('chosen deployment principal policy', () => {
-  it('carries exact Account/Group references through create/update while rejecting ambiguous authority', () => {
-    const principals = [{ principalKind: 'account', principalId: 'selected' }, { principalKind: 'teamGroup', principalId: 'group' }];
+  it('carries exact Account/Team/Group references through create/update while rejecting ambiguous authority', () => {
+    const principals = [{ kind: 'account', accountId: 'selected' }, { kind: 'team', teamId: 'team' },
+      { kind: 'group', teamId: 'team', groupId: 'group' }];
     const create = getActionSpec('deployments.environments.create').inputSchema;
     const input = { serverId: 'home', projectSourceId: 'source', requestKey: 'create', protection: 'production',
       purpose: 'standard', deployerMode: 'chosen', controllerMachineId: 'controller', contentArtifactId: 'private',
@@ -1188,12 +1189,12 @@ describe('chosen deployment principal policy', () => {
     expect(resolveActionPermissionChangingV1(getActionSpec('deployments.environments.update'), { ...update, patch: { buildMachineId: 'builder' } })).toBe(false);
     expect(DeploymentEnvironmentUpdateInputV1Schema.parse({ ...update, patch: { deployerPrincipals: [] } }).patch)
       .toEqual({ deployerPrincipals: [] });
-    for (const bad of [[principals[0], principals[0]], [{ principalKind: 'team', principalId: 'team' }],
-      [{ principalKind: 'account', principalId: 'selected', role: 'manager' }]]) {
+    for (const bad of [[principals[0], principals[0]], [{ principalKind: 'teamGroup', principalId: 'group' }],
+      [{ kind: 'group', groupId: 'group' }], [{ kind: 'account', accountId: 'selected', role: 'manager' }]]) {
       expect(create.safeParse({ ...input, deployerPrincipals: bad }).success).toBe(false);
     }
     // Same id in distinct principal namespaces is intentional and remains two exact selections.
-    expect(create.safeParse({ ...input, deployerPrincipals: [principals[0], { principalKind: 'teamGroup', principalId: 'selected' }] }).success).toBe(true);
+    expect(create.safeParse({ ...input, deployerPrincipals: [principals[0], { kind: 'team', teamId: 'selected' }] }).success).toBe(true);
   });
 });
 

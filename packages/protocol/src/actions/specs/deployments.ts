@@ -274,7 +274,10 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(previewForInput ? { safetyForInput: (input: unknown): 'safe' | 'danger' => previewForInput(input) ? 'safe' : 'danger' } : {}),
     ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 ? { permissionChangingForInput: (input: unknown): boolean => {
       const parsed = DeploymentActionInputSchemasV1[deploymentActionIds.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1].safeParse(input);
-      return parsed.success && (parsed.data.patch?.deployerMode !== undefined || parsed.data.patch?.deployerPrincipals !== undefined);
+      const patch = parsed.success ? parsed.data.patch : undefined;
+      // Who may deploy or edit the Environment's databases, and how far agents may go, are all authority changes.
+      return patch !== undefined && [patch.deployerMode, patch.deployerPrincipals, patch.dataEditorMode, patch.dataEditors,
+        patch.dataAgentAccess].some(value => value !== undefined);
     } } : {}),
     approval: { result: 'required' }, approvalPolicy: { uiConfirmation: irreversible || rolloutReview ? 'policy' : 'direct',
       ...(id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && previewForInput

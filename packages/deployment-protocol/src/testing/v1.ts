@@ -56,7 +56,7 @@ export function createDeploymentEnvironmentV1(overrides: Partial<DeploymentEnvir
     return DeploymentEnvironmentV1Schema.parse({
         v: 1, id: 'environment-staging', serverId: 'home', projectSourceId: 'source-app', revision: 1,
         owner: { kind: 'account', accountId: 'account-owner' }, protection: 'nonProduction', purpose: 'standard',
-        deployerMode: 'managers', runtimeTargetLinkId: 'target-link', controllerMachineId: 'machine-a', buildMachineId: 'machine-a',
+        deployerMode: 'managers', dataEditorMode: 'off', dataAgentAccess: 'read', runtimeTargetLinkId: 'target-link', controllerMachineId: 'machine-a', buildMachineId: 'machine-a',
         content: { t: 'plain', v: { name: 'Staging', retainPreviousDeployments: 1,
             definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [], primaryService: 'app' } },
             bindings: [], ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true } } },

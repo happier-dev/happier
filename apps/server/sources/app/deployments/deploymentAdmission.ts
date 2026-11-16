@@ -11,6 +11,10 @@ import type { Tx } from '@/storage/inTx';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { withActionFailureDiagnostic, type ActionFailureDiagnosticInput } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { log } from '@/utils/logging/log';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import { deploymentEnvironmentPrincipalKeyV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
+import { readDeploymentEnvironmentPrincipals, type DeploymentEnvironmentPrincipalPurpose,
+    type DeploymentEnvironmentPrincipalRow } from './deploymentEnvironmentDeployers';
 
 type DeploymentActionFailure = z.infer<typeof DeploymentActionFailureV1Schema>;
 // Shared resource admission never executes an unavailable native operation.
@@ -40,26 +44,45 @@ export interface DeploymentSourceAdmission {
     readonly owner: ProjectSourceOwnerV1;
     readonly canManage: boolean;
     readonly canDeployMember: boolean;
-    readonly effectivePrincipals: readonly Readonly<{ principalKind: 'account' | 'teamGroup'; principalId: string }>[];
+    readonly effectivePrincipals: readonly PrincipalRefV1[];
 }
 
 /** Deployment management belongs to the Source owner, independent of audience management grants. */
 export function projectDeploymentSourceAdmission(read: ProjectSourceAccess): DeploymentSourceAdmission {
     return { source: read.source, owner: read.owner, canManage: read.canManageOwner, canDeployMember: read.canDeployMember,
-        effectivePrincipals: read.effectivePrincipals.map(principal => principal.kind === 'account'
-            ? { principalKind: 'account' as const, principalId: principal.accountId }
-            : { principalKind: 'teamGroup' as const, principalId: principal.groupId }) };
+        effectivePrincipals: read.effectivePrincipals };
+}
+
+/** The one selection rule shared by deployers and database editors: does the actor's live membership match a chosen principal? */
+export function matchesDeploymentEnvironmentPrincipals(admission: DeploymentSourceAdmission,
+    principals: readonly DeploymentEnvironmentPrincipalRow[] | undefined, purpose: DeploymentEnvironmentPrincipalPurpose,
+): boolean {
+    if (!principals) return false;
+    const effective = new Set(admission.effectivePrincipals.map(deploymentEnvironmentPrincipalKeyV1));
+    return readDeploymentEnvironmentPrincipals(principals, purpose).some(principal => effective.has(deploymentEnvironmentPrincipalKeyV1(principal)));
+}
+
+/** Who may act under one Environment people mode (shared by deployers and editors). */
+function admitsDeploymentEnvironmentPeople(admission: DeploymentSourceAdmission, mode: string,
+    principals: readonly DeploymentEnvironmentPrincipalRow[] | undefined, purpose: DeploymentEnvironmentPrincipalPurpose,
+): boolean {
+    return admission.canManage || (mode === 'members' && admission.canDeployMember)
+        || (mode === 'chosen' && matchesDeploymentEnvironmentPrincipals(admission, principals, purpose));
 }
 
 /** Projection and new-effect admission share current Source authority and exact chosen relations. */
 export function canDeployDeploymentEnvironment(admission: DeploymentSourceAdmission,
-    environment: Readonly<{ deletedAt: Date | null; deployerMode: string; deployers?: readonly Readonly<{ principalKind: string; principalId: string }>[] }>,
+    environment: Readonly<{ deletedAt: Date | null; deployerMode: string; principals?: readonly DeploymentEnvironmentPrincipalRow[] }>,
 ): boolean {
-    return !environment.deletedAt && (admission.canManage
-        || (environment.deployerMode === 'members' && admission.canDeployMember)
-        || (environment.deployerMode === 'chosen' && environment.deployers?.some(selected =>
-            admission.effectivePrincipals.some(principal => principal.principalKind === selected.principalKind
-                && principal.principalId === selected.principalId)) === true));
+    return !environment.deletedAt && admitsDeploymentEnvironmentPeople(admission, environment.deployerMode, environment.principals, 'deploy');
+}
+
+/** Database editing (P3 M1): Off, or the same people choice and member predicate as deployers, over 'dataEdit' rows. */
+export function canEditDeploymentEnvironmentData(admission: DeploymentSourceAdmission,
+    environment: Readonly<{ deletedAt: Date | null; dataEditorMode: string; principals?: readonly DeploymentEnvironmentPrincipalRow[] }>,
+): boolean {
+    return !environment.deletedAt && environment.dataEditorMode !== 'off'
+        && admitsDeploymentEnvironmentPeople(admission, environment.dataEditorMode, environment.principals, 'dataEdit');
 }
 
 /** Removed Environments retain resources that only their current Source manager may tear down. */

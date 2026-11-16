@@ -167,8 +167,8 @@ describe('Environment draft Machine Home', () => {
     // The opened header is also the read path for an agent-authored chosen audience.
     const detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment,
       owner: sourceKind === 'team' ? { kind: 'team', teamId: 'team-a' } : { kind: 'account', accountId: 'alice' }, protection: 'production', deployerMode: 'chosen',
-      deployerPrincipals: [{ principalKind: 'account', principalId: 'account-ana' },
-        { principalKind: 'teamGroup', principalId: 'group-ops' }],
+      deployerPrincipals: [{ kind: 'account', accountId: 'account-ana' },
+        { kind: 'group', teamId: 'team-a', groupId: 'group-ops' }],
     } });
     const authored: unknown[] = [];
     const createdInputs: ReturnType<typeof DeploymentEnvironmentCreateInputV1Schema.parse>[] = [];
@@ -235,8 +235,8 @@ describe('Environment draft Machine Home', () => {
         kind: 'group', id: 'group-release', name: 'Release',
       }));
       const expectedPrincipals = [
-        { principalKind: 'teamGroup', principalId: 'group-ops' }, { principalKind: 'account', principalId: 'account-bo' },
-        { principalKind: 'teamGroup', principalId: 'group-release' },
+        { kind: 'group', teamId: 'team-a', groupId: 'group-ops' }, { kind: 'account', accountId: 'account-bo' },
+        { kind: 'group', teamId: 'team-a', groupId: 'group-release' },
       ];
       if (sourceKind === 'account-shared') {
         expect(screen.findAllByType(TeamCredentialAudiencePicker).map(node => node.props.address.teamId)).toEqual(['team-a', 'team-b']);
@@ -261,15 +261,15 @@ describe('Environment draft Machine Home', () => {
         });
         await waitForHomeGovernance(async () => {
           await act(async () => {});
-          expect(choiceTitle(`${prefix}.chosen.add.teamGroup.group-shared`)).toBe('Shared operations');
+          expect(choiceTitle(`${prefix}.chosen.add.group.group-shared`)).toBe('Shared operations');
         });
         await screen.pressByTestIdAsync(`${prefix}.chosen.add.account.account-cam`);
-        await screen.pressByTestIdAsync(`${prefix}.chosen.add.teamGroup.group-shared`);
+        await screen.pressByTestIdAsync(`${prefix}.chosen.add.group.group-shared`);
         await act(async () => screen.findAllByType(TeamCredentialAudiencePicker)[1]!.props.onChoose({
           kind: 'member', id: 'membership-dee', accountId: 'account-dee', name: 'Dee',
         }));
-        expectedPrincipals.push({ principalKind: 'account', principalId: 'account-cam' },
-          { principalKind: 'teamGroup', principalId: 'group-shared' }, { principalKind: 'account', principalId: 'account-dee' });
+        expectedPrincipals.push({ kind: 'account', accountId: 'account-cam' },
+          { kind: 'group', teamId: 'team-c', groupId: 'group-shared' }, { kind: 'account', accountId: 'account-dee' });
       }
       const header = () => screen.findAllByType(PageHeader)[0]!;
       await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, value => value === false);
@@ -315,11 +315,11 @@ describe('Environment draft Machine Home', () => {
           serverId, review: { pendingId: null, request: () => {}, open: () => {} }, onChanged: () => {} }} />);
       expect(panel.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === `${prefix}.deployers`)?.props.value).toBe('chosen');
       expect(panel.findByTestId(`${prefix}.chosen.account.account-bo`)).not.toBeNull();
-      expect(panel.findByTestId(`${prefix}.chosen.teamGroup.group-release`)).not.toBeNull();
+      expect(panel.findByTestId(`${prefix}.chosen.group.group-release`)).not.toBeNull();
       if (sourceKind === 'account-shared') {
         expect(panel.findAllByType(TeamCredentialAudiencePicker).map(node => node.props.address.teamId)).toEqual(['team-a', 'team-b']);
         expect(panel.findByTestId(`${prefix}.chosen.account.account-cam`)).not.toBeNull();
-        expect(panel.findByTestId(`${prefix}.chosen.teamGroup.group-shared`)).not.toBeNull();
+        expect(panel.findByTestId(`${prefix}.chosen.group.group-shared`)).not.toBeNull();
         expect(panel.findByTestId(`${prefix}.chosen.account.account-dee`)).not.toBeNull();
         const savedTitle = (id: string) => panel.findAllByType(Item).find(node => node.props.testID === id)?.props.title;
         await waitForHomeGovernance(async () => {
@@ -328,7 +328,7 @@ describe('Environment draft Machine Home', () => {
         });
         await waitForHomeGovernance(async () => {
           await act(async () => {});
-          expect(savedTitle(`${prefix}.chosen.teamGroup.group-shared`)).toBe('Shared operations');
+          expect(savedTitle(`${prefix}.chosen.group.group-shared`)).toBe('Shared operations');
         });
       }
       await panel.unmount();

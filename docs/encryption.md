@@ -1506,6 +1506,16 @@ sealing; new persisted Environment content still requires a valid UUID reference
 Matching 0.3 development Protocol, daemon and UI peers reload together for this
 authored-input correction; no stored-content migration is involved.
 
+Deployment Environment access is a server-readable decision exception (owner
+ruling 2026-11-11, decision arm; database workbench R15). On every Account mode
+the Home stores `deployerMode`, `dataEditorMode`, `dataAgentAccess` and the chosen
+principal rows (`DeploymentEnvironmentDeployer`: `purpose` deploy or dataEdit,
+`principalKind`, `principalId`, `principalTeamId`) because the server alone admits
+another person's deploy or database write and every agent's database access.
+These are ids and enums only. The Environment header projects them as
+`PrincipalRefV1` ids with no display name; clients resolve names through the
+existing private-label readers, and sealed Group labels stay sealed.
+
 Group names and descriptions bind ciphertext to the immutable Group id with
 `entity: 'team_group'` and their respective `field: 'name'` or `field: 'description'`.
 Both use the human author's persisted Account mode and the same current Team

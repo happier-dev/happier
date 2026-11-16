@@ -4,7 +4,7 @@ import * as managedActionIds from '../machines/managed/actionIdsV1.js';
 import * as deploymentActionIds from './deploymentActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { DeploymentEnvironmentDeployerPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
+import { DeploymentEnvironmentPeopleModeV1Schema, DeploymentEnvironmentPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { readDeploymentTemplateDeployIntentV1 } from './deploymentTemplateInstantiationV1.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
@@ -40,7 +40,7 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
     newProject: z.optional(DeploymentNewProjectV1Schema),
     catalogApp: z.optional(DeploymentCatalogAppDefinitionInputV1Schema.shape.templateRef),
     requestKey: id, protection: z.enum(['production', 'nonProduction']), purpose: z.enum(['standard', 'preview']),
-    deployerMode: z.enum(['managers', 'members', 'chosen']), deployerPrincipals: z.optional(DeploymentEnvironmentDeployerPrincipalsV1Schema),
+    deployerMode: DeploymentEnvironmentPeopleModeV1Schema, deployerPrincipals: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
     copyFrom: z.optional(DeploymentEnvironmentCopySourceV1Schema),
     preview: z.optional(DeploymentPreviewReferenceV1Schema), previewCompanionOfEnvironmentId: z.optional(id),
     candidate: z.optional(DeploymentArtifactContentReferenceV1Schema) }),
@@ -60,8 +60,8 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
     environment: z.discriminatedUnion('kind', [
       z.strictObject({ kind: z.literal('existing'), environmentId: id, expectedRevision: revision }),
       z.strictObject({ kind: z.literal('create'), requestKey: id, protection: z.enum(['production', 'nonProduction']),
-        purpose: z.literal('standard'), deployerMode: z.enum(['managers', 'members', 'chosen']),
-        deployerPrincipals: z.optional(DeploymentEnvironmentDeployerPrincipalsV1Schema),
+        purpose: z.literal('standard'), deployerMode: DeploymentEnvironmentPeopleModeV1Schema,
+        deployerPrincipals: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
         controllerMachineId: id, buildMachineId: z.optional(id) }),
     ]),
     target: z.discriminatedUnion('kind', [

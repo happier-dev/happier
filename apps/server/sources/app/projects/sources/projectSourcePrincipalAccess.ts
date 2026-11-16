@@ -35,17 +35,24 @@ export function projectSourcePrincipalCanRead(principal: ProjectSourceGrantV1['p
 /** Validate exact requested identities without enumerating the Source's audience or copying roles. */
 export async function admitProjectSourcePrincipalSelectionInTx(tx: Tx,
     input: Readonly<{ owner: ProjectSourceOwnerV1; audience: readonly ProjectSourceGrantV1[];
-        accountIds: readonly string[]; groupIds: readonly string[] }>,
+        accountIds: readonly string[]; teamIds: readonly string[]; groups: readonly Readonly<{ id: string; teamId: string }>[] }>,
 ): Promise<boolean> {
     const sourcePrincipals = [input.owner, ...input.audience.map(grant => grant.principal)];
     const teamIds = [...new Set(sourcePrincipals.flatMap(principal => principal.kind === 'account' ? [] : [principal.teamId]))];
+    // A whole Team is selectable only where the Source itself names that Team.
+    const requestedTeamIds = [...new Set(input.teamIds)];
+    if (requestedTeamIds.some(teamId => !sourcePrincipals.some(principal => principal.kind === 'team' && principal.teamId === teamId))) return false;
+    if (requestedTeamIds.length > 0 && await tx.team.count({ where: { id: { in: requestedTeamIds }, archivedAt: null } }) !== requestedTeamIds.length) return false;
     const eligibleGroupIds = new Set<string>();
-    for (const ids of portableQueryChunks({ values: [...new Set(input.groupIds)], bindingsPerValue: 1, fixedBindings: 1 })) {
+    for (const ids of portableQueryChunks({ values: [...new Set(input.groups.map(group => group.id))], bindingsPerValue: 1, fixedBindings: 1 })) {
         const groups = await tx.teamGroup.findMany({ where: { id: { in: [...ids] }, archivedAt: null,
             team: { archivedAt: null } }, select: { id: true, teamId: true } });
-        for (const group of groups) if (projectSourceAdmitsGroup(sourcePrincipals, group)) eligibleGroupIds.add(group.id);
+        for (const group of groups) {
+            if (projectSourceAdmitsGroup(sourcePrincipals, group)
+                && input.groups.every(requested => requested.id !== group.id || requested.teamId === group.teamId)) eligibleGroupIds.add(group.id);
+        }
     }
-    if (input.groupIds.some(id => !eligibleGroupIds.has(id))) return false;
+    if (input.groups.some(group => !eligibleGroupIds.has(group.id))) return false;
     const accountIds = [...new Set(input.accountIds)];
     const activeAccountIds = new Set<string>();
     for (const ids of portableQueryChunks({ values: accountIds, bindingsPerValue: 1, fixedBindings: 2 })) {

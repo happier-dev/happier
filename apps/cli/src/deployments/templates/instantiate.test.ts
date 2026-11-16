@@ -949,8 +949,8 @@ it('applies admitted Project defaults and preserves Team content audience throug
         // An unrelated Project edit after the first admitted content write
         // cannot retire the finite install or its reviewed Team audience.
         afterContentCreate = () => { afterContentCreate = undefined; sourceRevision++; };
-        const deployerPrincipals = [{ principalKind: 'account' as const, principalId: 'teammate' },
-            { principalKind: 'teamGroup' as const, principalId: 'deployers' }];
+        const deployerPrincipals = [{ kind: 'account' as const, accountId: 'teammate' },
+            { kind: 'group' as const, teamId: 'team', groupId: 'deployers' }];
         const environment = createDeploymentEnvironmentDetailV1();
         environment.environment.projectSourceId = 'project';
         environment.environment.owner = projectOwner;

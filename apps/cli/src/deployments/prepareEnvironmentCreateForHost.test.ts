@@ -550,7 +550,7 @@ describe('authored Environment creation through protected preparation and the ex
             async dispatchReceipt() { throw new Error('Create cannot execute a deployment'); } });
         const input = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ serverId: 'home', projectSourceId: 'source',
             requestKey: 'image-create', name: 'Image app', protection: 'nonProduction', purpose: 'standard', deployerMode: 'chosen',
-            deployerPrincipals: [{ principalKind: 'account', principalId: 'teammate' }],
+            deployerPrincipals: [{ kind: 'account', accountId: 'teammate' }],
             controllerMachineId: 'controller', buildMachineId: 'builder', retainPreviousDeployments: 0, managedRetention: 'keep',
             firstTargetLink: { machines: [{ machineId: 'runtime', installationId: 'runtime-installation' }] },
             definition: adopted ? { from: 'compose', document: JSON.stringify({ services: { app: { image: 'example/app:1', expose: ['8080'] } } }),

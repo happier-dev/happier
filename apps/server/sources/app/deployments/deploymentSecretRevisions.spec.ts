@@ -39,7 +39,7 @@ it('projects current usable bound Secret revisions without acquiring values or e
     const captures = ['corrupt', 'foreign', 'ready'].map(resourceId => ({ resourceId, revision: 1 }));
     const now = new Date(1);
     mocks.db.deploymentEnvironment.findUnique.mockResolvedValue({ id: 'environment', projectSourceId: 'source',
-        revision: 1, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', deployers: [],
+        revision: 1, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', principals: [],
         controllerMachineId: 'machine', runtimeTargetLinkId: null, buildMachineId: null, edgeMachineId: null,
         contentArtifactId: 'artifact', contentHeaderVersion: 1, contentBodyVersion: 1,
         referencedSavedSecretRevisions: captures, pendingDeployContent: null, deletedAt: null,

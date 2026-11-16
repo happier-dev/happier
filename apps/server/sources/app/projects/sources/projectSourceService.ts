@@ -16,6 +16,7 @@ import {
 import { isProjectSourceAttachmentKindV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import { applyPromptStackIntentV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { Prisma } from '@prisma/client';
 import type { Tx } from '@/storage/inTx';
 import { prismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
@@ -123,6 +124,8 @@ export function composeProjectSourceAdmission(input: Readonly<{
             const scopedTeamIds = [...new Set(principals.flatMap(principal => principal.kind === 'account' ? [] : [principal.teamId]))];
             // The batch shares current membership reads, never another Source's scope.
             return [{ kind: 'account' as const, accountId: actorAccountId },
+                ...scopedTeamIds.flatMap(teamId => principals.some(principal => principal.kind === 'team' && principal.teamId === teamId)
+                    && canReadPrincipal({ kind: 'team', teamId }) ? [{ kind: 'team' as const, teamId }] : []),
                 ...scopedTeamIds.flatMap(teamId => admittedTeam(teamId) ? [...(groups.get(teamId) ?? [])]
                     .filter(groupId => projectSourceAdmitsGroup(principals, { teamId, id: groupId }))
                     .map(groupId => ({ kind: 'group' as const, teamId, groupId })) : [])];
@@ -248,8 +251,8 @@ export interface ProjectSourceAccess {
     readonly canManage: boolean;
     readonly canManageOwner: boolean;
     readonly canDeployMember: boolean;
-    readonly effectivePrincipals: readonly (Readonly<{ kind: 'account'; accountId: string }>
-        | Readonly<{ kind: 'group'; teamId: string; groupId: string }>)[];
+    /** The actor's own identity plus the Source-scoped Teams and Groups it currently belongs to. */
+    readonly effectivePrincipals: readonly PrincipalRefV1[];
 }
 export type ProjectSourceAccessResult = ProjectSourceAccess | Readonly<{ ok: false; failure: ReturnType<typeof unavailable> | ReturnType<typeof invalid> }>;
 

@@ -13,6 +13,7 @@ import { projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { projectDeploymentListRow } from './deploymentListProjection';
 import { openDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
+import { deploymentEnvironmentPrincipalSelect } from './deploymentEnvironmentDeployers';
 
 /** Inventory headers and their private content use the same persisted owner and live-Link scope. */
 export function deploymentTargetLinkInventoryWhere(input: Pick<DeploymentTargetLinksListInputV1, 'scope' | 'selection'>): Prisma.DeploymentTargetLinkWhereInput {
@@ -50,7 +51,7 @@ export async function listDeploymentTargetLinksInTx(tx: Tx, actorAccountId: stri
     const rows = await tx.deploymentTargetLink.findMany({ where: { ...deploymentTargetLinkInventoryWhere({ scope, selection }),
         ...(cursor ? { id: { gt: cursor } } : {}),
     }, orderBy: { id: 'asc' }, take: limit + 1,
-    include: { environment: { include: { deployers: { select: { principalKind: true, principalId: true } } } }, machines: { orderBy: { position: 'asc' } } } });
+    include: { environment: { include: { principals: deploymentEnvironmentPrincipalSelect } }, machines: { orderBy: { position: 'asc' } } } });
     const sources = new Map<string, Awaited<ReturnType<typeof resolveDeploymentEnvironmentAdmissionInTx>>>();
     const candidates: { row: (typeof rows)[number]; environment: ReturnType<typeof projectDeploymentEnvironmentHeader>;
         targetLink: ReturnType<typeof projectDeploymentTargetHeader> }[] = [];

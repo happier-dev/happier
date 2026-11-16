@@ -92,8 +92,12 @@ import { DeploymentEnvironmentCreateInputV1Schema, DeploymentTargetMachinesV1Sch
 export { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema,
   DeploymentTargetLinkMachineV1Schema, DeploymentOwnServerTargetMachinesV1Schema } from './deploymentEnvironmentCreateV1.js';
 export type { DeploymentEnvironmentCreateInputV1, DeploymentEnvironmentCreateStorageInputV1 } from './deploymentEnvironmentCreateV1.js';
-import { DeploymentEnvironmentDeployerPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
-export { DeploymentEnvironmentDeployerPrincipalV1Schema, DeploymentEnvironmentDeployerPrincipalsV1Schema, type DeploymentEnvironmentDeployerPrincipalV1 } from './deploymentEnvironmentDeployerV1.js';
+import { DatabaseAgentAccessV1Schema, DeploymentEnvironmentDataEditorModeV1Schema, DeploymentEnvironmentPeopleModeV1Schema,
+  DeploymentEnvironmentPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
+export { DeploymentEnvironmentPeopleModeV1Schema, DeploymentEnvironmentPrincipalsV1Schema, deploymentEnvironmentPrincipalKeyV1,
+  DeploymentEnvironmentDataEditorModeV1Schema, DatabaseAgentAccessV1Schema, DatabaseAgentLevelV1Schema,
+  type DeploymentEnvironmentPeopleModeV1, type DeploymentEnvironmentDataEditorModeV1, type DatabaseAgentAccessV1,
+  type DatabaseAgentLevelV1 } from './deploymentEnvironmentDeployerV1.js';
 import { DeploymentPendingDeployV1Schema } from './storedAppInputV1.js';
 import { DeploymentStoredDefinitionInputV1Schema, DeploymentNewProjectV1Schema } from './storedAppInputV1.js';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
@@ -160,8 +164,11 @@ export const DeploymentEnvironmentHeaderV1Schema = lazyZodSchema(() => z.strictO
   v: z.literal(1), id: DeploymentIdentifierV1Schema, serverId: DeploymentIdentifierV1Schema,
   projectSourceId: DeploymentIdentifierV1Schema, revision: DeploymentRevisionV1Schema,
   owner: DeploymentEnvironmentOwnerV1Schema, protection: z.enum(['production', 'nonProduction']),
-  purpose: z.enum(['standard', 'preview']), deployerMode: z.enum(['managers', 'members', 'chosen']),
-  deployerPrincipals: z.optional(DeploymentEnvironmentDeployerPrincipalsV1Schema),
+  purpose: z.enum(['standard', 'preview']), deployerMode: DeploymentEnvironmentPeopleModeV1Schema,
+  deployerPrincipals: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
+  /** Database access (P3): server-readable decision facts, ids only (docs/encryption.md). */
+  dataEditorMode: DeploymentEnvironmentDataEditorModeV1Schema, dataEditors: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
+  dataAgentAccess: DatabaseAgentAccessV1Schema,
   controllerMachineId: DeploymentIdentifierV1Schema, buildMachineId: z.optional(DeploymentIdentifierV1Schema),
   ingress: z.optional(DeploymentIngressV1Schema),
   runtimeTargetLinkId: z.optional(DeploymentIdentifierV1Schema),
@@ -210,8 +217,11 @@ export const DeploymentEnvironmentUpdatePatchV1Schema = lazyZodSchema(() => z.st
     buildMachineId: z.optional(DeploymentIdentifierV1Schema),
     ...DeploymentEnvironmentContentPatchV1Schema.shape,
     protection: z.optional(DeploymentEnvironmentHeaderV1Schema.shape.protection),
-    deployerMode: z.optional(z.enum(['managers', 'members', 'chosen'])),
-    deployerPrincipals: z.optional(DeploymentEnvironmentDeployerPrincipalsV1Schema),
+    deployerMode: z.optional(DeploymentEnvironmentPeopleModeV1Schema),
+    deployerPrincipals: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
+    dataEditorMode: z.optional(DeploymentEnvironmentDataEditorModeV1Schema),
+    dataEditors: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
+    dataAgentAccess: z.optional(DatabaseAgentAccessV1Schema),
 }));
 /** Content CAS and reviewed build/ingress placement share one manager-owned update. */
 export const DeploymentEnvironmentUpdateInputV1BaseSchema = lazyZodSchema(() => z.strictObject({
