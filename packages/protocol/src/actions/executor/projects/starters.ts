@@ -48,7 +48,8 @@ export async function createProjectFromStarter(input: ProjectStarterCreateInputV
       starterSelector = address.selector;
     }
     phase = 'account';
-    const described = await execute('scm.hostingRepository.describePublishTargets', { cwd: input.destinationParentPath, providerKind: input.repository.providerKind });
+    const described = await execute('scm.hostingRepository.describePublishTargets', { cwd: input.destinationParentPath, providerKind: input.repository.providerKind,
+      ...(input.repository.providerId ? { providerId: input.repository.providerId } : {}) });
     if (!described.ok) return described;
     const targets = ScmHostingRepositoryDescribePublishTargetsResponseSchema.parse(described.result);
     if (!targets.success) return failed(targets.errorCode ?? 'scm_account_required', targets.remediation);
@@ -96,6 +97,8 @@ export async function createProjectFromStarter(input: ProjectStarterCreateInputV
     }
     phase = 'publish';
     const published = await execute('scm.hostingRepository.publish', { cwd: directory, providerKind: input.repository.providerKind,
+      ...(input.repository.providerId ? { providerId: input.repository.providerId } : {}),
+      ...(input.repository.providerBaseUrl ? { providerBaseUrl: input.repository.providerBaseUrl } : {}),
       owner: input.repository.owner, repositoryName: input.repository.name, visibility: input.repository.visibility,
       remoteName: 'origin', remoteUrlKind: 'https', remoteConflictStrategy: 'set-url', pushCurrentBranch: !scratch });
     if (!published.ok) return failed(published.errorCode);

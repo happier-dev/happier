@@ -12,6 +12,7 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createGithubForgeHttpFixture } from '@/testkit/scm/githubForgeHttp';
 import { createBitbucketForgeHttpFixture } from '@/testkit/scm/bitbucketForgeHttp';
+import { createAzureDevopsForgeCliFixture } from '@/testkit/scm/azureDevopsForgeCli';
 import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
 import { executeConfiguredFilesystemEffect } from '@/rpc/handlers/fileSystem/filesystemEffectOperation';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
@@ -27,6 +28,7 @@ afterEach(async () => {
 });
 
 it.each([{ destination: 'absent', providerKind: 'github' }, { destination: 'absent', providerKind: 'bitbucket' },
+  { destination: 'absent', providerKind: 'azure-devops' },
   { destination: 'occupied', providerKind: 'github' }, { destination: 'file', providerKind: 'github' }] as const)(
   'creates scratch through the real filesystem, SCM, $providerKind Forge and Project owners at an $destination destination', async ({ destination, providerKind }) => {
   const root = await mkdtemp(join(tmpdir(), 'scratch-project-'));
@@ -38,10 +40,12 @@ it.each([{ destination: 'absent', providerKind: 'github' }, { destination: 'abse
     await writeFile(join(directory, 'personal.txt'), 'keep');
   }
   if (destination === 'file') await writeFile(directory, 'keep');
-  const cloneUrl = `https://${providerKind === 'github' ? 'github.com' : 'bitbucket.org'}/alice/bakery.git`;
+  const cloneUrl = providerKind === 'azure-devops' ? 'https://dev.azure.com/team-b/apps/_git/bakery'
+    : `https://${providerKind === 'github' ? 'github.com' : 'bitbucket.org'}/alice/bakery.git`;
   const forge = providerKind === 'github'
     ? createGithubForgeHttpFixture({ nameWithOwner: 'alice/bakery', cloneUrl, repositoryExists: false })
-    : createBitbucketForgeHttpFixture({ nameWithOwner: 'alice/bakery', cloneUrl });
+    : providerKind === 'bitbucket' ? createBitbucketForgeHttpFixture({ nameWithOwner: 'alice/bakery', cloneUrl })
+    : createAzureDevopsForgeCliFixture({ cloneUrl });
   const registration = createGitScmBackendRuntimeRegistration();
   if (!registration.runtime) throw new Error('Git runtime missing');
   const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
@@ -84,7 +88,8 @@ it.each([{ destination: 'absent', providerKind: 'github' }, { destination: 'abse
   const description = '\nBuild a bakery website.\nKeep this message.\n';
   const result = await executor.execute('projects.starters.create', { serverId: 'srv_test_home', machineId: 'machine',
     requestKey: 'scratch-bakery', source: { kind: 'scratch' }, description, destinationParentPath: root,
-    destinationDirectoryName: 'bakery', repository: { providerKind, owner: 'alice', name: 'bakery' } },
+    destinationDirectoryName: 'bakery', repository: { providerKind, owner: providerKind === 'azure-devops' ? 'team-b/apps' : 'alice', name: 'bakery',
+      ...('providerId' in forge ? { providerId: forge.providerId, providerBaseUrl: forge.providerBaseUrl } : {}) } },
   { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
   if (destination !== 'absent') {
     expect(result).toMatchObject({ ok: true, result: { kind: 'failed', phase: 'checkout',
@@ -101,7 +106,10 @@ it.each([{ destination: 'absent', providerKind: 'github' }, { destination: 'abse
   expect(runScmExecutable(directory, 'git', ['branch', '--show-current'])).toBe('main');
   expect(runScmExecutable(directory, 'git', ['remote', 'get-url', 'origin'])).toBe(cloneUrl);
   expect(await readdir(directory)).toEqual(['.git']);
-  expect(forge.httpRequests.filter(request => request.method === 'POST')).toEqual([{ method: 'POST',
+  if ('httpRequests' in forge) expect(forge.httpRequests.filter(request => request.method === 'POST')).toEqual([{ method: 'POST',
     path: providerKind === 'github' ? '/user/repos' : '/2.0/repositories/alice/bakery' }]);
+  else expect(forge.nativeRequests.filter(args => args[0] === 'repos' && args[1] === 'create')).toEqual([
+    ['repos', 'create', '--organization', forge.providerBaseUrl, '--project', 'apps', '--name', 'bakery', '--output', 'json'],
+  ]);
   expect(rows.length).toBeGreaterThan(0);
 });

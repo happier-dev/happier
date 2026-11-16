@@ -11045,7 +11045,9 @@ daemon startup path. A stored running observation cannot hide a vendor-side stop
 `projects.starters.create` accepts a whole-repository registry starter or
 `source.kind: 'scratch'` and composes the existing filesystem, SCM, Source and
 Project open Actions. The review covers the source, Machine and destination,
-repository forge, owner/name and visibility (private by default). Existing
+repository forge, owner/name and visibility (private by default). The selected
+target retains its provider identity and deployment base URL through the
+canonical SCM publication owner. Existing
 starter callers may still supply `starterId`; the repository forge defaults to
 GitHub when omitted. Publication reuses an existing repository only when its
 observed visibility matches the requested visibility; a mismatch returns the

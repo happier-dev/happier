@@ -15,6 +15,8 @@ export type ProjectSourcesActionInputById = {
             owner: string;
             name: string;
             providerKind?: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown' | undefined;
+            providerId?: string | undefined;
+            providerBaseUrl?: string | undefined;
             visibility?: 'private' | 'public' | undefined;
         };
         starterId?: string | undefined;

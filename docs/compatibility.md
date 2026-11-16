@@ -9035,9 +9035,16 @@ the development direct cut; older strict development readers reject the new
 field. This adds no persisted format, migration, wire epoch or compatibility
 adapter.
 
+The suggestion catalog always includes `forges`, containing the admitted
+repository publishers. Recommendations may select `repositoryProviderKind`;
+before selection, the recommender considers all catalog publishers. An empty
+publisher list cannot admit a code-creating pair.
+
 The same development cut extends `projects.starters.create` with a selected
 repository `providerKind` and a `source` alternative for an empty scratch
-repository. Existing starter operands retain their meaning. Scratch results may
+repository. Optional `providerId` and `providerBaseUrl` retain the selected
+deployment through the existing SCM publication contract. Existing starter
+operands retain their meaning. Scratch results may
 omit the informational starter id and commit because the repository has no
 initial commit. The create executor still returns the ordinary Project, Source
 and Session handoff; no new deployment or Session lifecycle is introduced.

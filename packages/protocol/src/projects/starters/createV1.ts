@@ -1,7 +1,7 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ScmRepositoryCloneInputSchema } from '../../scm/repositoryClone.js';
-import { ScmRepositoryProvisioningRemediationSchema } from '../../scm/repositoryProvisioning.js';
+import { ScmHostingRepositoryDescribePublishTargetsRequestSchema, ScmHostingRepositoryPublishRequestSchema, ScmRepositoryProvisioningRemediationSchema } from '../../scm/repositoryProvisioning.js';
 import { ScmHostingProviderKindSchema } from '../../scm/pullRequests.js';
 import { WorkspaceAddressV1Schema } from '../../workspaces/workspaceRefV1.js';
 import { ProjectSourceRepositorySelectorV1Schema } from '../sources/projectSourceV1.js';
@@ -29,6 +29,8 @@ export const ProjectStarterCreateInputV1Schema = lazyZodSchema(() => z.strictObj
   destinationParentPath: ScmRepositoryCloneInputSchema.shape.destinationParentPath,
   destinationDirectoryName: ScmRepositoryCloneInputSchema.shape.destinationDirectoryName,
   repository: z.strictObject({ providerKind: z._default(ScmHostingProviderKindSchema, DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1),
+    providerId: ScmHostingRepositoryDescribePublishTargetsRequestSchema.shape.providerId,
+    providerBaseUrl: ScmHostingRepositoryPublishRequestSchema.shape.providerBaseUrl,
     owner: text(), name: text(), visibility: z._default(z.enum(['private', 'public']), 'private') }),
 }).check(z.refine(input => input.source !== undefined || input.starterId !== undefined, {
   path: ['source'], message: 'Choose a starter or scratch source',
