@@ -107,6 +107,7 @@ export const en = {
     historyOlder: "Show older",
     sharingTitle: "Sharing",
     sharingDescription: "They can see and copy this value, and use it without your Machine. You can stop future access, but a copy already obtained cannot be taken back. Rotate or revoke the credential with its provider to invalidate that copy.",
+    sharingNote: "Their devices hold their own copy. Stopping blocks new copies, but can't take back one they already have.",
     deleteSecret: "Delete secret",
     deleteNote: "Deleting removes it for good. Anything still using it has to switch to another secret first.",
     deleteNoteShared: "Deleting removes it for good, for everyone you shared it with. Anything still using it has to switch to another secret first.",

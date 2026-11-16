@@ -10852,6 +10852,7 @@ const fr: SecretsSettingsCopy = {
     historyOlder: "Afficher les plus anciens",
     sharingTitle: "Partage",
     sharingDescription: "Ils peuvent voir et copier cette valeur et l’utiliser sans ta machine. Tu peux arrêter l’accès futur, mais pas reprendre une copie déjà obtenue. Renouvelle ou révoque l’identifiant auprès de son fournisseur pour invalider cette copie.",
+    sharingNote: "Leurs appareils gardent leur propre copie. Arrêter bloque les nouvelles copies, mais ne reprend pas celle qu’ils ont déjà.",
     deleteSecret: "Supprimer le secret",
     deleteNote: "La suppression est définitive. Ce qui l’utilise encore doit d’abord passer à un autre secret.",
     deleteNoteShared: "La suppression est définitive, pour toutes les personnes avec qui vous l’avez partagé. Ce qui l’utilise encore doit d’abord passer à un autre secret.",

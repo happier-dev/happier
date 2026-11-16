@@ -10851,6 +10851,7 @@ const it: SecretsSettingsCopy = {
     historyOlder: "Mostra precedenti",
     sharingTitle: "Condivisione",
     sharingDescription: "Possono vedere e copiare questo valore e usarlo senza la tua macchina. Puoi interrompere l’accesso futuro, ma non recuperare una copia già ottenuta. Ruota o revoca la credenziale presso il fornitore per invalidare quella copia.",
+    sharingNote: "I loro dispositivi conservano una propria copia. Interrompere blocca nuove copie, ma non recupera quella che hanno già.",
     deleteSecret: "Elimina segreto",
     deleteNote: "L’eliminazione è definitiva. Ciò che lo usa ancora deve prima passare a un altro segreto.",
     deleteNoteShared: "L’eliminazione è definitiva, anche per tutti quelli con cui l’hai condiviso. Ciò che lo usa ancora deve prima passare a un altro segreto.",

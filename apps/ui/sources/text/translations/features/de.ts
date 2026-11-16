@@ -10836,6 +10836,7 @@ const de: SecretsSettingsCopy = {
     historyOlder: "Ältere anzeigen",
     sharingTitle: "Freigabe",
     sharingDescription: "Sie können diesen Wert ansehen, kopieren und ohne deine Maschine verwenden. Du kannst zukünftigen Zugriff stoppen, aber eine erhaltene Kopie nicht zurückholen. Rotiere oder widerrufe die Zugangsdaten beim Anbieter, um die Kopie ungültig zu machen.",
+    sharingNote: "Ihre Geräte behalten eine eigene Kopie. Beenden verhindert neue Kopien, holt aber keine zurück, die sie schon haben.",
     deleteSecret: "Secret löschen",
     deleteNote: "Löschen entfernt es endgültig. Was es noch verwendet, muss vorher auf ein anderes Secret umgestellt werden.",
     deleteNoteShared: "Löschen entfernt es endgültig, auch für alle, mit denen du es geteilt hast. Was es noch verwendet, muss vorher auf ein anderes Secret umgestellt werden.",

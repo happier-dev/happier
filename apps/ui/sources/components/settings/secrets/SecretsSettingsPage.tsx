@@ -890,7 +890,8 @@ const SharedSecretPage = React.memo(function SharedSecretPage(props: Readonly<{
             <SecretUsedBySection testID={`${testID}:used-by`} usedBy={usedBy} deletable={canDelete} onOpen={props.onOpenUsedBy} />
 
             {canShare ? (
-                <ItemGroup title={t('secretsSettings.sharingTitle')} description={t('secretsSettings.sharingDescription')}>
+                // The full disclosure is confirmed when sharing starts; the page keeps one line, and only once it is shared.
+                <ItemGroup title={t('secretsSettings.sharingTitle')} description={shared ? t('secretsSettings.sharingNote') : undefined}>
                     <Item
                         testID={`${testID}:access`}
                         title={savedSecretAudienceSummary(entry)}

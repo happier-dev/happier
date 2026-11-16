@@ -10835,6 +10835,7 @@ const zhHans: SecretsSettingsCopy = {
     historyOlder: "显示更早的记录",
     sharingTitle: "共享",
     sharingDescription: "对方可以查看和复制此值，并在没有你的机器的情况下使用。你可以停止未来的访问，但无法收回已取得的副本。请向提供商轮换或撤销凭据，以使副本失效。",
+    sharingNote: "对方的设备会保留各自的副本。停止共享可阻止新的副本，但无法收回已有的副本。",
     deleteSecret: "删除密钥",
     deleteNote: "删除后无法恢复。仍在使用它的内容需要先改用其他密钥。",
     deleteNoteShared: "删除后无法恢复，与你共享的所有人也将无法使用。仍在使用它的内容需要先改用其他密钥。",

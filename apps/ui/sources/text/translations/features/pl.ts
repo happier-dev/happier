@@ -10865,6 +10865,7 @@ const pl: SecretsSettingsCopy = {
     historyOlder: "Pokaż starsze",
     sharingTitle: "Udostępnianie",
     sharingDescription: "Mogą zobaczyć i skopiować tę wartość oraz używać jej bez Twojej maszyny. Możesz zatrzymać przyszły dostęp, ale nie odebrać już uzyskanej kopii. Zmień lub unieważnij dane uwierzytelniające u dostawcy, aby unieważnić kopię.",
+    sharingNote: "Ich urządzenia przechowują własną kopię. Zatrzymanie blokuje nowe kopie, ale nie odbierze tej, którą już mają.",
     deleteSecret: "Usuń sekret",
     deleteNote: "Usunięcie jest trwałe. To, co nadal go używa, musi najpierw przejść na inny sekret.",
     deleteNoteShared: "Usunięcie jest trwałe, także dla wszystkich, którym go udostępniono. To, co nadal go używa, musi najpierw przejść na inny sekret.",

@@ -10851,6 +10851,7 @@ const ca: SecretsSettingsCopy = {
     historyOlder: "Mostra més antics",
     sharingTitle: "Compartició",
     sharingDescription: "Poden veure i copiar aquest valor i fer-lo servir sense la teva màquina. Pots aturar l’accés futur, però no recuperar una còpia ja obtinguda. Rota o revoca la credencial amb el proveïdor per invalidar-la.",
+    sharingNote: "Els seus dispositius en guarden una còpia. Aturar-ho impedeix còpies noves, però no recupera la que ja tenen.",
     deleteSecret: "Elimina el secret",
     deleteNote: "L’eliminació és definitiva. Tot el que encara el fa servir ha de passar abans a un altre secret.",
     deleteNoteShared: "L’eliminació és definitiva, també per a tothom amb qui l’has compartit. Tot el que encara el fa servir ha de passar abans a un altre secret.",

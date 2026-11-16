@@ -5,7 +5,6 @@ import { useSharedSavedSecretActivity } from '@/components/secrets/useSharedSave
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Item } from '@/components/ui/lists/Item';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getDeviceAnalyticsId } from '@/track/settingsAnalytics/deviceAnalyticsIdentity';
@@ -56,7 +55,8 @@ export const SharedSavedSecretHistory = React.memo(
     return (
       <>
         {state.status === 'ready' && state.entries.length === 0 ? (
-          <EmptyState testID={props.testID} layout="line" title={t('secretsSettings.historyEmpty')} />
+          // A row like the page's other empty sections ("Not used yet", "Only you").
+          <Item testID={props.testID} title={t('secretsSettings.historyEmpty')} mode="info" showChevron={false} showDivider={false} />
         ) : state.status !== 'ready' ? (
           <SectionContentRow>
             <SurfaceStateCard

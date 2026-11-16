@@ -10834,6 +10834,7 @@ const zhHant: SecretsSettingsCopy = {
     historyOlder: "顯示更早的記錄",
     sharingTitle: "共用",
     sharingDescription: "對方可以查看及複製此值，並在沒有你的機器的情況下使用。你可以停止未來的存取，但無法收回已取得的副本。請向供應商輪替或撤銷憑證，使副本失效。",
+    sharingNote: "對方的裝置會保留各自的副本。停止共享可阻止新的副本，但無法收回已有的副本。",
     deleteSecret: "刪除密鑰",
     deleteNote: "刪除後無法復原。仍在使用它的項目需要先改用其他密鑰。",
     deleteNoteShared: "刪除後無法復原，與你共用的所有人也將無法使用。仍在使用它的項目需要先改用其他密鑰。",
