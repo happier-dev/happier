@@ -642,3 +642,43 @@ test('TypeScript require() calls do not add compiler roots the compiler would ne
   assert.ok(files.includes(join(root, 'src/entry.ts')));
   assert.deepEqual(files.filter(file => file.includes('/node_modules/dev-runtime/')), []);
 });
+
+
+test('server build scripts keep testkit imports out of the Server declaration project cycle', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-server-script-owner-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cli = join(root, 'apps/cli');
+  // Reproduced nl3 edges: Server lightSqliteHarness -> tests cache declaration;
+  // tests serverLight -> Server generateClients. The source modules are acyclic.
+  const files = {
+    'apps/cli/src/entry.ts': 'export const entry = true;',
+    'apps/cli/src/consumer.test.ts': 'import { launch } from "../../../packages/tests/src/serverLight"; import { harness } from "../../server/sources/harness"; export { launch, harness };',
+    'apps/server/sources/harness.ts': 'import { cache } from "../../../packages/tests/src/cache.mjs"; export const harness = cache;',
+    'apps/server/scripts/generateClients.ts': 'export const current = true;',
+    'packages/tests/src/serverLight.ts': 'import { current } from "../../../apps/server/scripts/generateClients"; export const launch = current;',
+    'packages/tests/src/ambient.ts': 'import { launch } from "./serverLight"; declare global { var fixtureLaunch: typeof launch; }',
+    'packages/tests/src/cache.d.mts': 'export declare const cache: boolean;',
+    ...Object.fromEntries(['cli', 'server', 'tests'].map(name => [
+      name === 'tests' ? 'packages/tests/tsconfig.json' : `apps/${name}/tsconfig.json`,
+      JSON.stringify({ compilerOptions: { strict: true, module: 'esnext', moduleResolution: 'bundler', types: [],
+        paths: { '@/*': [name === 'server' ? './sources/*' : name === 'tests' ? '../../apps/cli/src/*' : './src/*'] } },
+        include: [name === 'server' ? 'sources/**/*.ts' : 'src/**/*'] }),
+    ])),
+  };
+  // Copy the owning production configuration when present, retaining the RED
+  // graph rather than failing fixture setup before that owner is introduced.
+  const scriptsConfig = await readFile(new URL('../../apps/server/scripts/tsconfig.json', import.meta.url), 'utf8')
+    .catch(error => { if (error.code !== 'ENOENT') throw error; });
+  if (scriptsConfig !== undefined) files['apps/server/scripts/tsconfig.json'] = scriptsConfig;
+  for (const [path, text] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), text);
+  }
+  const names = ['foundation', 'services', 'core', 'source', 'test', 'test-ui'];
+  for (const name of names) await writeFile(join(cli, `tsconfig.${name}.json`), JSON.stringify({
+    extends: './tsconfig.json', files: [], include: [],
+  }));
+  const inventory = await deriveCliTypecheckProjects(cli);
+  const projects = inventory.map(item => ({ project: item.configPath, authoredProject: join(cli, `tsconfig.${item.project}.json`) }));
+  await prepareReferencedTypecheckDeclarations(projects, cli, inventory);
+});
