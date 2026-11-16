@@ -58,9 +58,15 @@ export async function tailscaleServeHttpsUrlForInternalServerUrl(internalServerU
   }
 }
 
-export async function tailscaleServeHttpsUrl({ internalServerUrl } = {}) {
+export async function tailscaleServeHttpsUrl({ internalServerUrl, httpsPort } = {}) {
   try {
     const comparable = String(internalServerUrl ?? '').trim() || (await resolveStackServerEndpoint()).internalServerUrl;
+    if (httpsPort !== undefined) {
+      const { upstream, servePath } = getServeConfig(comparable);
+      return tailscaleServeHttpsUrlForOwnedConfigFromStatus({
+        serveStatusText: await tailscaleServeStatus(), internalServerUrl: upstream, servePath, httpsPort,
+      });
+    }
     return tailscaleServeHttpsUrlForInternalServerUrlFromStatus(await tailscaleServeStatus(), comparable);
   } catch (error) {
     if (error instanceof TailscaleCommandError && error.failure) throw error;

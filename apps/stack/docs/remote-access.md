@@ -44,6 +44,18 @@ listeners, including database routes, remain configured. Setting
 `HAPPIER_STACK_TAILSCALE_RESET_ON_EXIT=1` uses the same scoped cleanup.
 Enabling Serve refuses to replace an unrelated root mapping on that listener.
 
+In current 0.3 development source, use `--https-port=<n>` with `enable`, `url`
+and `disable` (or `reset`) to select an explicit HTTPS listener. Inspect
+`tailscale serve status` on the server host and choose an unused port when the
+default listener belongs to another route. Pass the same port to later URL and
+cleanup commands; these commands do not select or retain a port automatically.
+
+```bash
+hstack stack tailscale:enable <name> --https-port=8444
+hstack stack tailscale:url <name> --https-port=8444
+hstack stack tailscale:disable <name> --https-port=8444
+```
+
 ### Mac execution hosts
 
 In unreleased 0.3 development source, an execution host's `hstack start` or

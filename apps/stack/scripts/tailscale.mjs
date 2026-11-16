@@ -147,10 +147,10 @@ async function main() {
   const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
   const usageByCmd = new Map([
     ['status', 'hstack tailscale status [--json]'],
-    ['enable', 'hstack tailscale enable [--json]'],
-    ['disable', 'hstack tailscale disable [--json]'],
-    ['url', 'hstack tailscale url [--json]'],
-    ['reset', 'hstack tailscale reset [--json]'],
+    ['enable', 'hstack tailscale enable [--https-port=<n>] [--json]'],
+    ['disable', 'hstack tailscale disable [--https-port=<n>] [--json]'],
+    ['url', 'hstack tailscale url [--https-port=<n>] [--json]'],
+    ['reset', 'hstack tailscale reset [--https-port=<n>] [--json]'],
   ]);
 
   if (wantsHelpFlag && cmd !== 'help') {
@@ -176,9 +176,9 @@ async function main() {
         sectionTitle('Usage'),
         bullets([
           `${dim('status:')} ${cmdFmt('hstack tailscale status')} ${dim('[--json]')}`,
-          `${dim('enable:')} ${cmdFmt('hstack tailscale enable')} ${dim('[--json]')}`,
-          `${dim('disable:')} ${cmdFmt('hstack tailscale disable')} ${dim('[--json]')}`,
-          `${dim('url:')} ${cmdFmt('hstack tailscale url')} ${dim('[--json]')}`,
+          `${dim('enable:')} ${cmdFmt('hstack tailscale enable')} ${dim('[--https-port=<n>] [--json]')}`,
+          `${dim('disable:')} ${cmdFmt('hstack tailscale disable')} ${dim('[--https-port=<n>] [--json]')}`,
+          `${dim('url:')} ${cmdFmt('hstack tailscale url')} ${dim('[--https-port=<n>] [--json]')}`,
         ]),
         '',
         sectionTitle('Notes'),
@@ -190,7 +190,7 @@ async function main() {
         '',
         sectionTitle('Legacy / advanced'),
         bullets([
-          `${dim('low-level:')} ${dim('node scripts/tailscale.mjs enable --upstream=<url> --path=/ [--json]')}`,
+          `${dim('low-level:')} ${dim('node scripts/tailscale.mjs enable --upstream=<url> --path=/ [--https-port=<n>] [--json]')}`,
         ]),
       ].join('\n'),
     });
@@ -254,6 +254,10 @@ async function main() {
   if (flags.has('--path') || kv.get('--path')) {
     process.env.HAPPIER_STACK_TAILSCALE_SERVE_PATH = kv.get('--path') ?? '/';
   }
+  const serveOptions = {
+    internalServerUrl,
+    ...(kv.has('--https-port') ? { httpsPort: Number(kv.get('--https-port')) } : {}),
+  };
 
   switch (cmd) {
     case 'status': {
@@ -269,7 +273,7 @@ async function main() {
       return;
     }
     case 'url': {
-      const url = await tailscaleServeHttpsUrl({ internalServerUrl });
+      const url = await tailscaleServeHttpsUrl(serveOptions);
       if (!url) {
         throw new Error('[tailscale] no https:// URL found in `tailscale serve status` output');
       }
@@ -287,7 +291,7 @@ async function main() {
       const stackName = getStackName(process.env);
       const envPath = (process.env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim() || resolveStackEnvPath(stackName, process.env).envPath;
       const { upstream } = getServeConfig(internalServerUrl);
-      const res = await tailscaleServeEnable({ internalServerUrl });
+      const res = await tailscaleServeEnable(serveOptions);
       if (res?.enableUrl && !res?.httpsUrl) {
         printResult({
           json,
@@ -325,7 +329,7 @@ async function main() {
             'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
         );
       }
-      await tailscaleServeReset();
+      await tailscaleServeReset(serveOptions);
       printResult({ json, data: { ok: true }, text: `${green('✓')} tailscale serve reset` });
       return;
     }

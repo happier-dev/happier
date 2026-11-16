@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildStackFixtureEnv } from './testkit/core/env_scope.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
+import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
 
 function runNode(args, { cwd, env }) {
   return new Promise((resolve, reject) => {
@@ -22,6 +24,58 @@ function runNode(args, { cwd, env }) {
 
 function stripAnsi(s) {
   return String(s ?? '').replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+for (const action of ['enable', 'url', 'disable']) {
+  test(`tailscale ${action} honors an explicit HTTPS listener without changing another listener`, async (t) => {
+    const fixture = await createTempFixture(t, { prefix: 'tailscale-cli-port-' });
+    const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+    const upstream = 'http://127.0.0.1:35550';
+    const originalRoot = action === 'url' ? upstream : 'http://127.0.0.1:3999';
+    const configPath = fixture.path('serve.json');
+    writeFileSync(configPath, JSON.stringify({
+      443: { '/': originalRoot },
+      ...(action === 'enable' ? {} : { 8443: { '/': upstream } }),
+    }));
+    // Model the external Tailscale process; keep Stack routing and ownership checks real.
+    const { binPath } = writeFakeBin({ root: fixture.root, name: 'tailscale', content: `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const configPath = process.env.TEST_SERVE_CONFIG;
+const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+if (args[0] !== 'serve') process.exit(1);
+if (args[1] === 'status') {
+  for (const [port, routes] of Object.entries(config)) {
+    console.log('https://qa.example.ts.net' + (port === '443' ? '' : ':' + port));
+    for (const [route, upstream] of Object.entries(routes)) console.log('|-- ' + route + ' proxy ' + upstream);
+  }
+} else {
+  const port = args.find(a => a.startsWith('--https='))?.split('=')[1] || '443';
+  if (args.at(-1) === 'off') delete config[port];
+  else (config[port] ||= {})['/'] = args.at(-1);
+  fs.writeFileSync(configPath, JSON.stringify(config));
+}
+` });
+    const envPath = fixture.path('stack.env');
+    writeFileSync(envPath, 'HAPPIER_STACK_SERVER_PORT=35550\n');
+    const result = await runNode(['apps/stack/scripts/tailscale.mjs', action, '--https-port=8443', '--json'], {
+      cwd: repoRoot,
+      env: buildStackFixtureEnv({ homeDir: fixture.path('home'), storageDir: fixture.path('storage'),
+        stackName: 'repo-port-test', envPath, stripStackEnv: true,
+        extraEnv: { HAPPIER_TAILSCALE_BIN: binPath, TEST_SERVE_CONFIG: configPath,
+          HAPPIER_STACK_SERVER_PORT: '35550', HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL: '1' },
+      }),
+    });
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    const output = JSON.parse(result.stdout);
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    assert.deepEqual(config['443'], { '/': originalRoot });
+    if (action === 'disable') assert.equal(config['8443'], undefined);
+    else {
+      assert.deepEqual(config['8443'], { '/': upstream });
+      assert.equal(action === 'url' ? output.url : output.httpsUrl, 'https://qa.example.ts.net:8443');
+    }
+  });
 }
 
 test('tailscale enable output includes stack context + upstream', async () => {
