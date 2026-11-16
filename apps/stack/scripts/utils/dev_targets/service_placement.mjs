@@ -11,6 +11,9 @@ import { hasRetainedServerData } from './retained_server_data.mjs';
 import { HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
 
 export const DEFAULT_QA_TARGET_NAMES = Object.freeze(['nl3', 'nl1']);
+// Managed QA browsers may also run on the Mac host (owner 2026-11-16, ORCH-TOP 11:52Z RULING; first
+// verified start 13:37Z) to take Chrome load off nl3. QA daemons keep DEFAULT_QA_TARGET_NAMES.
+export const DEFAULT_QA_BROWSER_TARGET_NAMES = Object.freeze([...DEFAULT_QA_TARGET_NAMES, 'mac-host']);
 
 /** Commands follow the service's observed placement, including local fallback. */
 export function resolveObservedDevTargetService({ config, runtimeState, service }) {
@@ -103,7 +106,7 @@ export async function resolveControlledQaBrowserTarget({ stackName, sourceDir, t
   const daemon = loaded.config.runtimePlacement.daemon;
   if (!['prefer-target', 'local'].includes(daemon.mode)) throw new Error('[dev-targets] QA browser requires one fixed daemon host or a local daemon');
   const names = targetName ? [targetName] : qaTargetNames(env,
-    qaTargetNames(env, DEFAULT_QA_TARGET_NAMES.filter(name => loaded.config.targets.some(target => target.name === name))),
+    qaTargetNames(env, DEFAULT_QA_BROWSER_TARGET_NAMES.filter(name => loaded.config.targets.some(target => target.name === name))),
     'HAPPIER_STACK_QA_BROWSER_TARGETS');
   assertQaPoolEligibility(loaded.config.targets, names, 'browser');
   sourceDir ||= getRepoDir(getRootDir(import.meta.url), env);

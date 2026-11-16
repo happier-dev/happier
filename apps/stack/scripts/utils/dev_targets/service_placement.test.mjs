@@ -141,8 +141,9 @@ test('local QA daemon browser selects the most unreserved QA pool host without w
         assert.equal(policy.bootstrap, '0', 'host observations need no dependencies');
         assert.equal(policy.workspaceSync, '0', 'host observations need no fresh checkout bytes');
       }
-      // OWNER-RULINGS 2026-10-29: managed browsers use the nl3/nl1 pool.
-      assert.deepEqual(probes, explicitDaemon ? ['--target=linux3', '--target=linux2', '--target=linux1'] : ['--target=nl3', '--target=nl1']);
+      // OWNER-RULINGS 2026-10-29: managed browsers use the nl3/nl1 pool; owner 2026-11-16 (ORCH-TOP 11:52Z
+      // RULING): the Mac host joins the default browser pool once verified (13:37Z), never the daemon pool.
+      assert.deepEqual(probes, explicitDaemon ? ['--target=linux3', '--target=linux2', '--target=linux1'] : ['--target=nl3', '--target=nl1', '--target=mac-host']);
       assert.deepEqual(await readFile(path), before, 'browser selection cannot move or initialize a daemon pin');
     }
   });
@@ -169,7 +170,7 @@ test('remote QA daemon browser ranks the pool without moving its fixed Machine',
         }, logger: { warn() {} },
       });
       assert.equal(result.target.name, registeredHosts.at(-1));
-      assert.deepEqual(probes, ['nl3', 'nl1'].filter(name => registeredHosts.includes(name)).map(name => `--target=${name}`));
+      assert.deepEqual(probes, [...['nl3', 'nl1'].filter(name => registeredHosts.includes(name)), 'mac-host'].map(name => `--target=${name}`));
       assert.deepEqual(await readFile(path), before);
     }
   });
@@ -184,7 +185,8 @@ test('default browser pool uses configured approved hosts when nl1 observation i
       logger: { warn() {} }, runCaptureResult: async (_command, args) => {
         const name = args.find(arg => arg.startsWith('--target='));
         if (name === '--target=nl1') return { ok: false, exitCode: 255, err: 'observation unavailable' };
-        const unreservedMemoryKiB = name === '--target=nl3' ? 9000000 : 90000000;
+        // mac-host is an approved pool host (2026-11-16) with less headroom here; the rest are unapproved.
+        const unreservedMemoryKiB = name === '--target=nl3' ? 9000000 : name === '--target=mac-host' ? 1000000 : 90000000;
         return { ok: true, err: '', out: `HSTACK_QA_HOST=${JSON.stringify({
           platform: 'linux', arch: 'x64', remote: true, unreservedMemoryKiB,
         })}\n` };
