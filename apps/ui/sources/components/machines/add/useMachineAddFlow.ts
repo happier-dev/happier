@@ -168,6 +168,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     commands: Record<MachineAddCommandOs, string> | null;
     remoteHomeUnavailable: boolean;
     commandUnavailableMessage: string | null;
+    commandUnavailableDetails: readonly string[] | undefined;
     ssh: {
         draft: ReturnType<typeof readMachineAddFlowDraft>['sshDraft'];
         setDraft: (draft: MachineAddSshDraft) => void;
@@ -234,6 +235,8 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         fallbackHomeUrl: profile?.serverUrl ?? null, remote: draft.path !== 'thisComputer' }), [descriptor, draft.path, profile]);
     const remoteHomeUnavailable = commandTarget.kind === 'unavailable'
         && (commandTarget.code === 'home_not_guest_reachable' || paths.find(path => path.id === draft.path)?.runs === 'command');
+    const commandUnavailableDetails = React.useMemo(() => commandTarget.kind === 'unavailable'
+        ? [commandTarget.code] : undefined, [commandTarget]);
     const commandUnavailableMessage = commandTarget.kind === 'unavailable' && 'message' in commandTarget ? commandTarget.message : null;
     const localTask = useThisComputerSetupTask({ runner, taskId: draft.thisComputerTask?.taskId ?? null,
         onTaskIdChange: (id) => replaceTaskId('thisComputer', draft.thisComputerTask?.taskId ?? null, id),
@@ -381,7 +384,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     }, [respondSsh, sshPrompt]);
     return {
         serverId, homeName: resolveHomeDisplayName(profile) ?? t('settingsAccount.thisHomeTitle'), paths, path: draft.path,
-        choosePath, os: draft.os, detectedOs, setOs: (os: MachineAddCommandOs) => update((current) => ({ ...current, os })), commands, remoteHomeUnavailable, commandUnavailableMessage,
+        choosePath, os: draft.os, detectedOs, setOs: (os: MachineAddCommandOs) => update((current) => ({ ...current, os })), commands, remoteHomeUnavailable, commandUnavailableMessage, commandUnavailableDetails,
         ssh: { draft: draft.sshDraft, setDraft, ready: isSshCredentialsDraftReady(draft.sshDraft) && sshActions.ready,
             hostError: taskError && ['connection-failed', 'network-captive-portal'].includes(taskError.code) ? t('machineAdd.cannotReachHost') : null,
             suggestions, supportedAuthModes: getMachineAddSshSupportedAuthModes(runner),

@@ -45,7 +45,15 @@ describe('machine add commands', () => {
         const root = mkdtempSync(join(tmpdir(), 'machine-add-command-'));
         try {
             // Installer download and the installed CLI are process boundaries. Run the generated shell unchanged.
-            writeFileSync(join(root, 'curl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+            writeFileSync(join(root, 'curl'), `#!/bin/sh
+cat <<'INSTALLER'
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--" ]; then shift; exec happier setup "$@"; fi
+  shift
+done
+exit 2
+INSTALLER
+`, { mode: 0o755 });
             writeFileSync(join(root, 'happier'), '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "--home-descriptor-file" ]; then cat "$2"; rm "$2"; exit; fi\n  shift\ndone\nexit 2\n', { mode: 0o755 });
             const command = buildMachineAddCommand({ ...home, descriptor, remote: true, os: 'linux', kind: 'joinHome' });
             if (!command) throw new Error('No remote command');
@@ -86,7 +94,7 @@ describe('machine add commands', () => {
                 v: 1, homeServerIdentityId: 'srv_home', canonicalServerUrl: 'http://127.0.0.1:3005', revision: 1,
                 endpoints: [{ kind: 'https', url: 'https://published.example.test' }],
             } });
-            expect(command).toContain(' setup --home-url https://published.example.test');
+            expect(command).toContain(os === 'windows' ? '-Run setup --home-url https://published.example.test' : '--run setup -- --home-url https://published.example.test');
             expect(command).not.toContain('127.0.0.1');
             expect(command).toContain(os === 'windows' ? 'install.ps1' : 'curl -fsSL');
         }
@@ -102,7 +110,7 @@ describe('machine add commands', () => {
             const command = buildMachineAddCommand({ ...home, kind: 'sshMachine', os, sshDraft: {
                 ...createDefaultSshCredentialsDraft(), host: 'build-box', username: 'operator', port: '2222', authMode: 'keyfile', identityFilePath: '/keys/id_ed25519',
             } });
-            expect(command).toContain(' machine enroll ');
+            expect(command).toContain(os === 'windows' ? '-Run machine-enroll ' : '--run machine-enroll -- ');
             expect(command).toContain('--home-url https://home.example.test');
             expect(command).toContain('--ssh-host build-box');
             expect(command).toContain('--ssh-user operator');
@@ -137,7 +145,7 @@ describe('machine add commands', () => {
     });
     it('uses the account-service journey only when no Home target was supplied', () => {
         const command = buildMachineAddCommand({ ...home, fallbackHomeUrl: null, kind: 'joinHome', os: 'linux' });
-        expect(command).toMatch(/&& happier setup$/);
+        expect(command).toMatch(/--run setup$/);
         expect(command).not.toContain('--home-');
     });
 });

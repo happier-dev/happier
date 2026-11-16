@@ -1624,6 +1624,14 @@ function Invoke-PostInstallAction {
   $requiredSubcommand = $null
   $argsToPass = @()
   switch ($runValue) {
+    "home-create" {
+      $argsToPass = @("home", "create") + $RunArgs
+      $requiredSubcommand = "home"
+    }
+    "machine-enroll" {
+      $argsToPass = @("machine", "enroll") + $RunArgs
+      $requiredSubcommand = "machine"
+    }
     "setup-relay" {
       $argsToPass = @("relay", "host", "install") + $setupRelayDefaultArgs + $RunArgs
       $requiredSubcommand = "relay"
@@ -1653,7 +1661,7 @@ function Invoke-PostInstallAction {
       $requiredSubcommand = "providers"
     }
     default {
-      throw "Unknown -Run action '$Run'. Expected one of: setup-relay, setup, auth-login, service-install, providers-setup."
+      throw "Unknown -Run action '$Run'. Expected one of: home-create, machine-enroll, setup-relay, setup, auth-login, service-install, providers-setup."
     }
   }
 

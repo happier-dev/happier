@@ -75,6 +75,28 @@ async function typeHost(name: string) {
 }
 
 describe('Over SSH', () => {
+  it.each(['thisComputer', 'ssh', 'anotherComputer'] as const)('names the Home payload refusal in Details for browser %s', async initialPath => {
+    const serverId = await harness.addHome({ name: 'Source Home', serverUrl: 'https://source-home.example.test',
+      serverIdentityId: 'srv_source_home', accountId: 'owner' });
+    const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+    await upsertServerProfile({ serverUrl: 'https://source-home.example.test', name: 'Source Home', source: 'stack-env' });
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const features = createRootLayoutFeaturesResponse({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'publicdev' } } });
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    harness.answer(serverId, '/v1/features', { body: features });
+    harness.answer(serverId, '/v1/features/authenticated', { body: features });
+    const { MachineAddForm } = await import('./MachineAddForm');
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+      <MachineAddForm layout="page" initialPath={initialPath} testID="form"
+        onClose={() => {}} onStartSession={() => {}} />
+    </InjectedAuthProvider>);
+    await waitForHomeGovernance(() => expect(byId(screen, `${PANE}.homeUnavailable`).length).toBeGreaterThan(0));
+    expect(byId(screen, `${PANE}.homeUnavailable`)[0]?.props.details).toEqual(['guest_payload_missing']);
+    expect(byId(screen, `${PANE}.command`)).toHaveLength(0);
+    await screen.unmount();
+  });
   it.each(['anotherComputer', 'ssh'] as const)('explains a controller-only Home before offering the %s journey', async initialPath => {
     await harness.addHome({ name: 'Local Home', serverUrl: 'http://happier-agent-qa-unified-work-dev.localhost:3009',
       serverIdentityId: 'srv_local_home', accountId: 'owner' });

@@ -316,7 +316,8 @@ function MachineAddPane(props: Readonly<{
     if (flow.remoteHomeUnavailable && !flow.run) {
         return <PaneSection onPage={onPage}>
             <AttentionBanner testID={`${testID}.homeUnavailable`} tone="warning"
-                title={flow.commandUnavailableMessage ?? t('managedMachines.creation.homeNotGuestReachable')} />
+                title={flow.commandUnavailableMessage ?? t('managedMachines.creation.homeNotGuestReachable')}
+                details={flow.commandUnavailableDetails} />
         </PaneSection>;
     }
 

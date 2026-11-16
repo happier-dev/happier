@@ -2366,6 +2366,14 @@ run_post_install_action() {
   local -a cmd=()
   local required_subcommand=""
   case "${op}" in
+    home-create)
+      cmd=(home create)
+      required_subcommand="home"
+      ;;
+    machine-enroll)
+      cmd=(machine enroll)
+      required_subcommand="machine"
+      ;;
     setup-relay|relay-host-install)
       cmd=(relay host install)
       required_subcommand="relay"
@@ -2388,7 +2396,7 @@ run_post_install_action() {
       ;;
     *)
       echo "Unknown --run action: ${op}" >&2
-      echo "Expected one of: setup-relay, setup, auth-login, service-install, providers-setup" >&2
+      echo "Expected one of: home-create, machine-enroll, setup-relay, setup, auth-login, service-install, providers-setup" >&2
       return 1
       ;;
   esac

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -8,6 +8,33 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+
+for (const [action, command] of [['home-create', ['home', 'create']], ['machine-enroll', ['machine', 'enroll']]]) {
+  test(`install.sh --run ${action} invokes its installed binary outside PATH`, async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-installer-byom-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const installDir = join(root, 'install');
+    const cliDir = join(installDir, 'cli-dev', 'current');
+    const output = join(root, 'args');
+    await mkdir(cliDir, { recursive: true });
+    const cliPath = join(cliDir, 'happier');
+    // Executable boundary fixture: preserve the real installer dispatch and argv.
+    await writeFile(cliPath, `#!/bin/bash
+if [[ "$1" == "--help" ]]; then
+  printf 'happier home\\nhappier machine\\n'
+else
+  printf '%s\\n' "$@" > "$BYOM_ARGS_FILE"
+fi
+`);
+    await chmod(cliPath, 0o755);
+    const res = spawnSync('bash', [join(repoRoot, 'scripts/release/installers/install.sh'), '--channel', 'dev', '--run', action, '--', '--home-url', 'https://home.example.test'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: '/usr/bin:/bin', HAPPIER_INSTALL_DIR: installDir, HAPPIER_BIN_DIR: join(root, 'bin'), BYOM_ARGS_FILE: output },
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.deepEqual((await readFile(output, 'utf8')).trim().split('\n'), [...command, '--home-url', 'https://home.example.test']);
+  });
+}
 
 test('install.sh --run setup-relay applies the default relay install arguments without network', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-run-'));
