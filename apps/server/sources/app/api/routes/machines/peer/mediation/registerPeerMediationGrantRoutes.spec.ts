@@ -673,7 +673,7 @@ describe("registerPeerMediationGrantRoutes", () => {
 
         const { response, reply } = await route.invoke({ userId: "account_1" });
 
-        expect(response).toBeUndefined();
+        expect(response).toEqual({ error: "not_found" });
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(reply.send).toHaveBeenCalledWith({ error: "not_found" });
     });
@@ -1022,7 +1022,7 @@ describe("registerPeerMediationGrantRoutes", () => {
             userId: "account_1",
         });
 
-        expect(response).toBeUndefined();
+        expect(response).toEqual({ error: "not_found" });
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(reply.send).toHaveBeenCalledWith({ error: "not_found" });
     });
@@ -1069,7 +1069,7 @@ describe("registerPeerMediationGrantRoutes", () => {
             userId: "account_1",
         });
 
-        expect(response).toBeUndefined();
+        expect(response).toEqual({ error: "not_found" });
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(reply.send).toHaveBeenCalledWith({ error: "not_found" });
     });
@@ -1093,7 +1093,7 @@ describe("registerPeerMediationGrantRoutes", () => {
             userId: "account_1",
         });
 
-        expect(response).toBeUndefined();
+        expect(response).toEqual({ error: "not_found" });
         expect(route.app.authenticate).not.toHaveBeenCalled();
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(reply.send).toHaveBeenCalledWith({ error: "not_found" });
@@ -1205,7 +1205,7 @@ describe("direct voice_media peer mediation grant gating", () => {
 
         const { response, reply } = await route.invoke({ userId: "account_1" });
 
-        expect(response).toBeUndefined();
+        expect(response).toEqual({ error: "not_found" });
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(reply.send).toHaveBeenCalledWith({ error: "not_found" });
     });
