@@ -1,5 +1,6 @@
 import { setStdioTtyForTest } from '@/testkit/process/stdio';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
+import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
 import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleCatalogCliCommand';
 import { dispatchCli } from './dispatch';
 import { createServer } from 'node:http';
@@ -20,6 +21,7 @@ import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { readStoredCredentials, writeCredentialsTokenOnly, writeDaemonState } from '@/persistence';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -44,6 +46,10 @@ import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../../packages/plugin
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { bindProcessLogger, Logger } from '@/ui/logger';
 import { CliApiTokenChildContinuationError } from '@/auth/cliApiToken';
+import { attemptNativeForkOpen } from '@/session/actions/lifecycle/fork/attemptNativeForkOpen';
+import { buildHappySessionControlArgs } from '@/daemon/sessionSpawnArgs';
+import { prepareForegroundAgentRuntimeAdmission } from '@/daemon/agentRuntime/prepareForegroundAdmission';
+import { projectCurrentAgentSessionView } from '@happier-dev/agents';
 
 afterEach(() => { vi.restoreAllMocks(); reloadConfiguration(); });
 
@@ -51,12 +57,18 @@ type ForegroundAuthorityCase = Readonly<{
   prior: string | undefined; definitionId: string | undefined; missingCli: boolean; profileRouting?: boolean;
   disabled?: boolean; explicitProfile?: boolean; fileStoreAgent?: 'pi' | 'ohmypi'; hostedScope?: string;
   providerConnectionId?: string;
+  policyHandoff?: boolean | 'attach';
+  nativeForkPolicy?: 'directly' | 'sandbox';
   modelSelection?: 'native' | 'provider';
   diagnosticDebug?: Readonly<{ host: string | undefined; session: string | undefined }>;
 }>;
 
 describe('foreground CLI runner authority scope', () => {
   it.each<ForegroundAuthorityCase>([
+    { prior: undefined, definitionId: undefined, missingCli: false, nativeForkPolicy: 'directly' },
+    { prior: undefined, definitionId: undefined, missingCli: false, nativeForkPolicy: 'sandbox' },
+    { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: true },
+    { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'attach' },
     { prior: undefined, definitionId: undefined, missingCli: false, profileRouting: false },
     { prior: '', definitionId: undefined, missingCli: false },
     { prior: 'previous-invocation', definitionId: undefined, missingCli: false },
@@ -76,7 +88,7 @@ describe('foreground CLI runner authority scope', () => {
     ...(['pi', 'ohmypi'] as const).flatMap(fileStoreAgent => ['first', 'second'].map(hostedScope => ({
       prior: undefined, definitionId: undefined, missingCli: false, fileStoreAgent, hostedScope,
     }))),
-  ])('exposes foreground admission through the CLI sink and restores prior paths (%o)', async ({ prior, definitionId, missingCli, profileRouting, disabled, explicitProfile, fileStoreAgent, hostedScope, providerConnectionId, modelSelection, diagnosticDebug }) => {
+  ])('exposes foreground admission through the CLI sink and restores prior paths (%o)', async ({ prior, definitionId, missingCli, profileRouting, disabled, explicitProfile, fileStoreAgent, hostedScope, providerConnectionId, modelSelection, diagnosticDebug, policyHandoff, nativeForkPolicy }) => {
     const home = await mkdtemp(join(tmpdir(), 'happier-foreground-cli-authority-'));
     const fileStorePlugin = fileStoreAgent === 'pi' ? PI_PLUGIN : OH_MY_PI_PLUGIN;
     const fileStoreTestkit = fileStoreAgent ? await createPluginTestkit({
@@ -115,6 +127,7 @@ describe('foreground CLI runner authority scope', () => {
     const directory = join(home, hostedScope ?? 'workspace');
     const requests: string[] = [];
     const boundaryErrors: unknown[] = [];
+    let policySpawnInput: unknown;
     // This is the daemon/Home HTTP boundary. CLI parsing, credentials, engine
     // resolution, physical Agent admission and Session construction stay real.
     const profile = { v: 2, id: 'profile-default', name: 'Profile Default',
@@ -135,6 +148,10 @@ describe('foreground CLI runner authority scope', () => {
       try {
         let text = '';
         for await (const chunk of request) text += String(chunk);
+        const pluginAvailability = absentAccountPluginAvailabilityHttpResponse(
+          `${origin}${path}`, text ? JSON.parse(text) : undefined,
+        );
+        if (pluginAvailability) return respond(pluginAvailability.status, pluginAvailability.data);
         if (path === '/v1/machines' && request.method === 'POST') return respond(200, { machine: {
           ...JSON.parse(text), daemonState: null, metadataVersion: 1, daemonStateVersion: 0 } });
         if (path.startsWith('/v1/artifacts')) return respond(200, artifactListResponse(path, []));
@@ -150,10 +167,32 @@ describe('foreground CLI runner authority scope', () => {
         if (path === '/v1/account/entity-rows/profiles/transfer') return respond(200, transferControl);
         if (path === '/v1/account/authoring-memory/lastUsedProfile') return respond(200, { status: 'present', revision: 1, content: { t: 'plain', v: null } });
         if (path === '/ping') return respond(200, { success: true });
+        if (path === '/actions/root/execute') {
+          const root = JSON.parse(text);
+          if (root.actionId !== 'session.spawn_new') throw new Error('Expected canonical Session spawn');
+          policySpawnInput = root.input;
+          if (policyHandoff === 'attach') return respond(200, { ok: true, result: {
+            type: 'success', disposition: 'created', sessionId: 'cforegroundpolicysession01',
+            executionTarget: { serverId: 'foreground-fixture', machineId: 'policy-machine' },
+            organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
+          } });
+          return respond(200, { ok: false, errorCode: 'target_unavailable', error: 'policy-fixture-refusal' });
+        }
         if (path === FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH) {
           const admission = ForegroundAgentRuntimeAdmissionRequestV1Schema.parse(JSON.parse(text));
+          if (nativeForkPolicy) expect(admission.nativeFork).toBe(true);
+          if (nativeForkPolicy === 'sandbox') return respond(200, await prepareForegroundAgentRuntimeAdmission({ ...admission, machineId: 'policy-machine' }, {
+            readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: { isolationPolicyV1: {
+              configuredSandboxes: { local: { provisioner: { pluginId: 'acme.sandbox', localId: 'sandbox' }, presetId: 'preset' } },
+              workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
+                botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } },
+            } } }),
+          }));
           admittedProfileId = admission.profileId;
           admittedModelSelection = admission.selection;
+          if (policyHandoff) return respond(200, { ok: false,
+            error: { kind: 'launch_error', code: 'target_unavailable', message: 'Canonical spawn required' },
+            sessionSpawnRequired: { machineId: 'policy-machine' } });
           if (missingCli) return respond(200, { ok: false, error: SessionSpawnLaunchErrorV1Schema.parse({
             kind: 'launch_error', code: 'agent_cli_missing', message: AGENT_CLI_MISSING_PREVIEW,
           }) });
@@ -192,6 +231,11 @@ describe('foreground CLI runner authority scope', () => {
         if (path === '/v1/account/encryption/currentness') {
           return respond(200, createAccountEncryptionCurrentnessFixture());
         }
+        // Successful birth hands control to the real attach owner. Stop at its
+        // Home transport boundary, before opening an external terminal client.
+        if (policyHandoff === 'attach' && path.startsWith('/v2/sessions/cforegroundpolicysession01')) {
+          return respond(503, { error: 'attach-fixture-unavailable' });
+        }
         if (path === '/v1/sessions') {
           const owner = StoredSessionOwnerMetadataEnvelopeV1Schema.parse(JSON.parse(text).ownerMetadata);
           if (owner.t !== 'plain') throw new Error('Expected the plain fixture Account');
@@ -220,8 +264,9 @@ describe('foreground CLI runner authority scope', () => {
     try {
       await writeCredentialsTokenOnly({ token: 'foreground-fixture-token' });
       fixture = agentTarget ? await createAdmittedPluginRuntimeFixture({ happyHomeDir: home,
-
+        controller: pluginReloadController,
         runtimeOptions: { pluginIds: [agentTarget.identity.pluginId] } }) : await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: home,
+ controller: pluginReloadController,
  plugins: [{
         manifest: createPluginManifestV2Fixture({ id: 'acme.foreground', contributes: { agents: [{
           id: 'fixture', title: 'Foreground CLI fixture',
@@ -256,12 +301,30 @@ describe('foreground CLI runner authority scope', () => {
         startedWithCliVersion: resolveComparableCliVersion({ fallbackVersion: configuration.currentCliVersion,
           projectRootPath: projectPath(), readFileSyncImpl: readFileSync }) });
       vi.spyOn(console, 'error').mockImplementation(() => {});
+      let nativeForkArgs: string[] = [];
+      if (nativeForkPolicy) {
+        const runtimeDescriptor = { v: 1 as const, agentId, agent: { providerSessionId: 'native-parent' } };
+        await attemptNativeForkOpen({ credentials: { token: 'foreground-fixture-token', encryption: null },
+          parentSessionId: 'native-parent-session', parentMetadata: projectCurrentAgentSessionView({ runtimeDescriptorV1: runtimeDescriptor }, {
+            agentId, runtimeDescriptor, nativeResumeIdentity: { v: 1, vendorResumeId: 'native-parent' },
+          }), directory, forkPoint: { type: 'latest' }, targetSeqInclusive: 1, effectiveCutoffSeqInclusive: 1,
+          spawnNonce: 'native-fork-foreground', forkBackendResolution: { ok: true, catalogAgentId: agentId,
+            agentHintAgentId: agentId, backendTargetV2: { kind: 'backend', backendId: agentId, sourceKind: 'built_in' },
+            backendTarget: { kind: 'builtInAgent', agentId }, replayFlavor: agentId, metadataOverlay: {} },
+          inheritedForkOverrides: { spawn: {}, metadata: {} },
+          spawnSession: async options => {
+            nativeForkArgs = buildHappySessionControlArgs({ nativeForkSource: options.nativeForkSource });
+            return { type: 'error', errorCode: 'INVALID_REQUEST', errorMessage: 'Captured native process launch' };
+          }, stopSession: async () => true,
+        });
+        expect(nativeForkArgs).not.toEqual([]);
+      }
       const processExit = vi.spyOn(process, 'exit').mockImplementation((() => {
         expect(process.env[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]).toBe(previous[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]);
         expect(process.env[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]).toBe(previous[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]);
         throw new Error('foreground-command-exit');
       }) as never);
-      const invoke = () => explicitProfile ? handleConfiguredAcpCatalogCliCommand({ args: ['acp-catalog', '--backend', definitionId!, '--profile', 'ignored-profile', '--profile', profile.id], rawArgv: [], terminalRuntime: null }) : profileRouting ? dispatchCli({ args: ['--profile', 'ignored-profile', '--profile', profile.id], rawArgv: diagnosticDebug ? ['happier', '--api-token', 'foreground-fixture-token', 'session-diagnostic-fixture'] : [], terminalRuntime: null }) : runBackendSessionCliCommand({ resolveSessionRuntimePreferences: null, context: { args: agentTarget || modelSelection ? ['--model', 'fixture-native-model', ...(providerConnectionId ? ['--provider-connection', providerConnectionId] : [])] : [], rawArgv: [], terminalRuntime: null },
+      const invoke = () => explicitProfile ? handleConfiguredAcpCatalogCliCommand({ args: ['acp-catalog', '--backend', definitionId!, '--profile', 'ignored-profile', '--profile', profile.id], rawArgv: [], terminalRuntime: null }) : profileRouting ? dispatchCli({ args: ['--profile', 'ignored-profile', '--profile', profile.id], rawArgv: diagnosticDebug ? ['happier', '--api-token', 'foreground-fixture-token', 'session-diagnostic-fixture'] : [], terminalRuntime: null }) : runBackendSessionCliCommand({ resolveSessionRuntimePreferences: null, context: { args: nativeForkPolicy ? nativeForkArgs : policyHandoff ? ['--native-flag', 'native value'] : agentTarget || modelSelection ? ['--model', 'fixture-native-model', ...(providerConnectionId ? ['--provider-connection', providerConnectionId] : [])] : [], rawArgv: [], terminalRuntime: null },
         backendIdForSessionRuntime: agentId, runtimeAuthorityAgentId: agentId,
         ...(fileStoreAgent ? { agentIdForAccountSettings: agentId } : {}),
         ...(agentTarget ? { resolveExtraOptions: () => ({ agentTarget,
@@ -275,6 +338,24 @@ describe('foreground CLI runner authority scope', () => {
       if (hosted) await run;
       else await expect(run).rejects.toThrow('foreground-command-exit');
       expect(boundaryErrors).toEqual([]);
+      if (nativeForkPolicy === 'sandbox') {
+        expect(vi.mocked(console.error).mock.calls.flat().join(' ')).toContain('target_unavailable');
+        expect(requests).not.toContain('/actions/root/execute');
+        expect(requests).not.toContain('/v1/sessions');
+        expect(authorizations).toHaveLength(0);
+        return;
+      }
+      if (policyHandoff) {
+        expect(policySpawnInput, JSON.stringify(vi.mocked(console.error).mock.calls)).toMatchObject({ executionTarget: { machineId: 'policy-machine' },
+          directory: { kind: 'path' }, agentArgs: ['--native-flag', 'native value'] });
+        expect(requests).not.toContain('/v1/sessions');
+        expect(authorizations).toHaveLength(0);
+        if (policyHandoff === 'attach') {
+          expect(requests.some(path => path.startsWith('/v2/sessions/cforegroundpolicysession01'))).toBe(true);
+        }
+        expect(processExit).toHaveBeenCalledWith(1);
+        return;
+      }
       if (diagnosticDebug) {
         const hasRawStack = vi.mocked(console.error).mock.calls.some(call =>
           call.some(value => typeof value === 'string' && /\n\s+at /.test(value)));

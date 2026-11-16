@@ -78,6 +78,8 @@ export const ForegroundAgentRuntimeAdmissionRequestV1Schema = z.strictObject({
   previousBinding: z.optional(z.nullable(SessionProviderBindingMetadataV1Schema)),
   connectedServices: ConnectedServicesBindingsIngressSchema,
   vendorResumeId: z.optional(BoundedIdSchema),
+  /** Continuation locality only; this private intent never grants placement authority. */
+  nativeFork: z.optional(z.literal(true)),
   /**
    * Optional one-shot, value-free Saved Secret reference override for this
    * launch. It carries references and revisions only; the daemon materializer
@@ -167,6 +169,8 @@ export const ForegroundAgentRuntimeAdmissionResponseV1Schema =
     z.strictObject({
       ok: z.literal(false),
       error: z.union([ProviderErrorV1Schema, ForegroundProjectAgentLaunchRefusalV1Schema, SessionSpawnLaunchErrorV1Schema]),
+      /** New terminal starts on a policy Machine use the canonical spawn Action. */
+      sessionSpawnRequired: z.optional(z.strictObject({ machineId: BoundedIdSchema })),
     }),
   ]);
 

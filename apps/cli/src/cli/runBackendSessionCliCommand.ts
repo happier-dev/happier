@@ -151,6 +151,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
     const sessionEnvironment = sessionProcessEnvironment();
     let releaseForegroundAdmission: (() => void | Promise<void>) | null = null;
     let restoreForegroundRuntimeEnvironment: (() => void) | null = null;
+    const foregroundHandoffComplete = Symbol('foregroundHandoffComplete');
     const applyForegroundRuntimeEnvironment = (claim: Readonly<{
       bootstrapFilePath: string;
       authorityFilePath: string;
@@ -523,10 +524,49 @@ Provider CLI Options:
               ? { connectedServices: directConnectedServices }
               : {}),
             ...(resume ? { vendorResumeId: resume } : {}),
+            ...(parsed.nativeForkSource ? { nativeFork: true as const } : {}),
           }, {
             ...(params.context.signal ? { signal: params.context.signal } : {}),
           });
           if (!admission.ok) {
+            if (admission.sessionSpawnRequired) {
+              const [{ requestDaemonSignedRootActionExecution }, { readAgentCatalogSnapshot },
+                { SessionSpawnNewInputV2Schema }, { SessionSpawnNewActionResultV1Schema }, { handleAttachCommand }] = await Promise.all([
+                import('@/daemon/controlClient'), import('@/agent/catalog/snapshot'),
+                import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2'),
+                import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1'), import('@/cli/commands/attach'),
+              ]);
+              const contribution = readAgentCatalogSnapshot().agentDefinitionsById.get(runtimeAuthorityAgentId);
+              const selectedAgentTarget = agentTarget ?? (contribution?.identity
+                ? { kind: 'agent' as const, identity: contribution.identity } : undefined);
+              if (!selectedAgentTarget) throw new Error('agent_contribution_unavailable');
+              const input = SessionSpawnNewInputV2Schema.parse({
+                creationKey: attemptId,
+                executionTarget: { serverId: configuration.activeServerId, machineId: admission.sessionSpawnRequired.machineId },
+                directory: { kind: 'path', path: directory }, agentTarget: selectedAgentTarget,
+                agentArgs: parsed.providerArgs,
+                ...(selectedProfile ? { profileId: selectedProfile.id } : {}),
+                ...(parsed.secretReferenceOverlay ? { secretReferenceOverlay: parsed.secretReferenceOverlay } : {}),
+                ...(modelSelection ? { modelSelection } : {}),
+                ...(resolved.permissionMode ? { permissionMode: resolved.permissionMode } : {}),
+                ...(resolved.sessionModeId ? { agentModeId: resolved.sessionModeId } : {}),
+                ...(directConnectedServices ? { connectedServices: directConnectedServices } : {}),
+                ...(initialAccess !== undefined ? { initialAccess } : {}),
+                ...(parsed.primaryTeamId !== undefined ? { primaryTeamId: parsed.primaryTeamId } : {}),
+                ...(parsed.teamCredentialBindings !== undefined ? { teamCredentialBindings: parsed.teamCredentialBindings } : {}),
+                ...(parsed.initialTitle ? { title: parsed.initialTitle } : {}),
+              });
+              const execution = await requestDaemonSignedRootActionExecution({ actionId: 'session.spawn_new', input,
+                surface: 'cli', actionRequestId: attemptId,
+                target: { kind: 'machine', machineId: admission.sessionSpawnRequired.machineId } },
+              { ...(params.context.signal ? { signal: params.context.signal } : {}) });
+              if (!execution.ok) throw Object.assign(new Error(execution.error), { code: execution.errorCode });
+              const result = SessionSpawnNewActionResultV1Schema.parse(execution.result);
+              if (result.type !== 'success') throw Object.assign(new Error(result.type === 'error' ? result.code : 'session_spawn_pending'),
+                { code: result.type === 'error' ? result.code : 'outcome_unknown' });
+              await handleAttachCommand([result.sessionId], { terminalRuntime: params.context.terminalRuntime });
+              throw foregroundHandoffComplete;
+            }
             throw createForegroundAdmissionError(admission.error);
           }
           return Object.freeze({
@@ -1021,6 +1061,7 @@ Provider CLI Options:
         );
       }
     } catch (error) {
+      if (error === foregroundHandoffComplete) return;
       const { reportSessionRunnerFailure } = await import('./resolveSessionRunnerFailureExitCode');
       const exitCode = reportSessionRunnerFailure(error);
       const rawLines = error instanceof DirectProviderLaunchError

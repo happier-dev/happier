@@ -30,6 +30,41 @@ import { ForegroundAgentRuntimeAdmissionResponseV1Schema } from './foregroundAdm
 afterEach(() => vi.restoreAllMocks());
 
 describe('foreground admission composed real Provider authorization seam', () => {
+  it.each(['directly', 'sandbox'] as const)('preserves native fork locality under %s Session policy', async kind => {
+    await withForegroundProviderFixture({}, async fixture => {
+      const result = await fixture.prepare({ profileId: undefined, nativeFork: true }, {
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {
+          isolationPolicyV1: { configuredSandboxes: { local: {
+            provisioner: { pluginId: 'acme.sandbox', localId: 'sandbox' }, presetId: 'preset' } }, workKinds: {
+            sessions: kind === 'directly' ? { kind: 'directly' } : { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
+            botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' },
+          } },
+        } }),
+      });
+      if (kind === 'directly') {
+        expect(result).toMatchObject({ ok: true });
+      } else {
+        const response = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(result);
+        expect(response).toMatchObject({ ok: false, error: { kind: 'launch_error', code: 'target_unavailable' } });
+        expect(response).not.toHaveProperty('sessionSpawnRequired');
+        expect(await fixture.bootstrapFiles()).toEqual([]);
+      }
+    });
+  });
+  it('hands a new policy-Machine start to session.spawn_new before issuing local Agent authority', async () => {
+    await withForegroundProviderFixture({}, async fixture => {
+      const result = await fixture.prepare({ profileId: undefined }, {
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {
+          isolationPolicyV1: { configuredSandboxes: {}, workKinds: {
+            sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' },
+          } },
+        } }),
+      });
+      expect(result).toMatchObject({ ok: false, sessionSpawnRequired: { machineId: 'machine-1' } });
+      expect(ForegroundAgentRuntimeAdmissionResponseV1Schema.safeParse(result).success).toBe(true);
+      expect(await fixture.bootstrapFiles()).toEqual([]);
+    });
+  });
   it('keeps the missing native CLI cause at the strict foreground admission sink', async () => {
     await withForegroundProviderFixture({}, async fixture => {
       vi.stubEnv(resolveAgentCliOverrideEnvKey('codex'), join(fixture.home, 'missing-agent-cli'));

@@ -179,6 +179,7 @@ function readExactForegroundProfileSnapshot(
 }
 
 export type PrepareForegroundAgentRuntimeAdmissionDependencies = Readonly<{
+  readMachineMetadataSnapshot?: () => import('@happier-dev/protocol/machines/machineMetadataFieldV1').MachineMetadataFieldReadV1;
   agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
   signal?: AbortSignal;
   prepareAgentIsolationMember?: PrepareAgentIsolationMember;
@@ -507,6 +508,22 @@ export async function prepareForegroundAgentRuntimeAdmission(
   const requester = dependencies.requesterSessionBootstrap;
   if (dependencies.requesterSessionRuntimeContext && dependencies.requesterSessionRuntimeContext.bootstrap !== requester) {
     return refusal(createProviderErrorV1('provider_authorization_changed', { machineId: request.machineId }));
+  }
+  if (!request.existingSessionId && !request.vendorResumeId && dependencies.readMachineMetadataSnapshot) {
+    const snapshot = dependencies.readMachineMetadataSnapshot();
+    if (snapshot.status !== 'ready') return { ok: false,
+      error: { kind: 'launch_error', code: 'target_unavailable', message: 'Machine isolation policy is unavailable.' } };
+    const { readMachineIsolationPolicyV1 } = await import('@happier-dev/protocol/machines/machineIsolationV1');
+    try {
+      const policy = readMachineIsolationPolicyV1(snapshot.metadata);
+      if (request.nativeFork && policy?.workKinds.sessions.kind === 'sandbox') return { ok: false,
+        error: { kind: 'launch_error', code: 'target_unavailable', message: 'Native forks cannot relocate into a Machine sandbox.' } };
+      if (policy && !request.nativeFork) return { ok: false,
+        error: { kind: 'launch_error', code: 'target_unavailable', message: 'This Machine starts new Sessions through its daemon.' },
+        sessionSpawnRequired: { machineId: request.machineId } };
+    } catch {
+      return { ok: false, error: { kind: 'launch_error', code: 'target_unavailable', message: 'Machine isolation policy is unreadable.' } };
+    }
   }
   const readAccountSettingsSnapshot = () => readForegroundAccountSnapshot(dependencies);
   const withAccountHome = <T>(operation: () => Promise<T>): Promise<T> => requester
