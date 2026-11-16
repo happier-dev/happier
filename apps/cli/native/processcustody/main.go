@@ -79,6 +79,7 @@ usage:
   happier-process-custody job-join --job=<name> --pid=<pid> --holder-pid=<pid>
   happier-process-custody job-release --holder-pid=<pid> --holder-handle=<handle> --holder-start-time-ms=<ms>
   happier-process-custody process-census [--scope=own_principal|all] [--pids=<csv>] [--caller-pid=<pid>] [--job=<verified-name>]...
+  happier-process-custody windows-program-files
   happier-process-custody vitals-sample [--extras]
   happier-process-custody keep-awake
   happier-process-custody scope-exec --unit=<scope> --evidence=<path> -- <command> [args...]
@@ -124,6 +125,8 @@ func main() {
 		err = releaseCustodyJobHandle(rest)
 	case "process-census":
 		err = processCensusCommand(rest)
+	case "windows-program-files":
+		err = windowsProgramFilesCommand(rest)
 	case "vitals-sample":
 		err = vitalsSampleCommand(rest)
 	case "keep-awake":

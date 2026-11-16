@@ -34,5 +34,10 @@ export {
   type WindowsSystemToolName,
 } from './windows/windowsSystemToolPath.js';
 export { spawnBackgroundSync } from './spawnBackgroundSync.js';
+export {
+  PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME,
+  resolveProcessCustodySupportExecutable,
+  resolveProcessCustodyTargetExecutable,
+} from './processCustodySupportExecutable.js';
 
 export { resolveExecutableCommand, resolveExecutableSearchPath } from './resolveExecutableCommand.js';

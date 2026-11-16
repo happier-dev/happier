@@ -1,4 +1,6 @@
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
+import { resolveProcessCustodySupportExecutable } from '../process/processCustodySupportExecutable.js';
 
 type NativeLibrary = Readonly<{ symbols: Record<string, (...args: number[]) => number>; close(): void }>;
 type WindowsFfi = Readonly<{
@@ -9,8 +11,20 @@ type WindowsFfi = Readonly<{
 
 /** Native machine path: ambient ProgramFiles variables never select policy authority. */
 export function resolveWindowsProgramFiles(): string {
-  // The shipped CLI is Bun. Node development without this native facility
-  // reports path_unavailable at the policy boundary rather than reading a user path.
+  if (!process.versions.bun) {
+    const helper = resolveProcessCustodySupportExecutable('win32');
+    if (!helper) throw new Error('known_folder_unavailable');
+    const result: unknown = JSON.parse(execFileSync(helper, ['windows-program-files'], {
+      encoding: 'utf8', windowsHide: true,
+    }));
+    if (!result || typeof result !== 'object' || !('v' in result) || result.v !== 1
+      || !('path' in result) || typeof result.path !== 'string' || !result.path) {
+      throw new Error('known_folder_unavailable');
+    }
+    return result.path;
+  }
+  // Bun hosts retain their native SDK adapter; both adapters ask Windows for
+  // the same machine KnownFolder rather than trusting ambient path variables.
   const require = createRequire(import.meta.url);
   const ffi = require('bun:ffi') as WindowsFfi;
   const shell = ffi.dlopen('shell32.dll', { SHGetKnownFolderPath: { args: ['ptr', 'u32', 'u64', 'ptr'], returns: 'i32' } });

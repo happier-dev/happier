@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
 import { constants, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +5,12 @@ import { randomUUID } from 'node:crypto';
 import { spawn as nodeSpawn, type SpawnOptions } from 'node:child_process';
 import type { Socket } from 'node:net';
 
-import { execFileWithDeadline } from '@happier-dev/cli-common/process';
+import {
+    execFileWithDeadline,
+    resolveProcessCustodySupportExecutable as resolveSharedProcessCustodySupportExecutable,
+    resolveProcessCustodyTargetExecutable as resolveSharedProcessCustodyTargetExecutable,
+} from '@happier-dev/cli-common/process';
+export { PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME } from '@happier-dev/cli-common/process';
 
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { parseProcessOwnerTag, PROCESS_OWNER_ENV_KEY, resolveProcessOwnerScopeKey } from '@/processes/ownerTag';
@@ -48,27 +52,10 @@ import { configuration } from '@/configuration';
  * authority, and result projection remain in the workspace-sync owner.
  */
 
-export const PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME = 'happier-process-custody';
-
 /** Windows job-custody identity: `winjob:<jobName>`. */
 const WINDOWS_JOB_IDENTITY_PREFIX = 'winjob:';
 /** Darwin native subsecond identity: `darwin-proc:<pid>:<sec>:<usec>`. */
 const DARWIN_NATIVE_IDENTITY_PREFIX = 'darwin-proc:';
-
-function stagedCustodyExecutableName(platform: NodeJS.Platform): string {
-    return platform === 'win32'
-        ? `${PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME}.exe`
-        : PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME;
-}
-
-/** The one staged location owner for the runtime support binary. */
-function resolveStagedCustodyBinaryPath(platform: NodeJS.Platform, executableName: string): string | null {
-    const stagedPath = resolveCliRuntimeAssetPath('tools', 'unpacked', executableName);
-    if (existsSync(stagedPath)) return stagedPath;
-    const sourceCheckoutPath = resolveCliRuntimeAssetPath('apps', 'cli', 'tools', 'unpacked', executableName);
-    if (existsSync(sourceCheckoutPath)) return sourceCheckoutPath;
-    return null;
-}
 
 /**
  * Resolve the staged native support helper for a purpose-specific command.
@@ -78,16 +65,12 @@ function resolveStagedCustodyBinaryPath(platform: NodeJS.Platform, executableNam
 export function resolveProcessCustodySupportExecutable(
     platform: NodeJS.Platform = process.platform,
 ): string | null {
-    if (platform !== 'linux' && platform !== 'darwin' && platform !== 'win32') return null;
-    return resolveStagedCustodyBinaryPath(platform, stagedCustodyExecutableName(platform));
+    return resolveSharedProcessCustodySupportExecutable(platform, resolveCliRuntimeAssetPath);
 }
 
 /** Static Linux targets or the matching controller's published Darwin helper. */
 export function resolveProcessCustodyTargetExecutable(arch: 'x64' | 'arm64', platform: 'linux' | 'darwin' = 'linux'): string | null {
-    if (platform === 'darwin') {
-        return process.platform === 'darwin' && process.arch === arch ? resolveProcessCustodySupportExecutable('darwin') : null;
-    }
-    return resolveStagedCustodyBinaryPath('linux', join('targets', `${PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME}.linux-${arch}`));
+    return resolveSharedProcessCustodyTargetExecutable(arch, platform, resolveCliRuntimeAssetPath);
 }
 
 export type ProcessCustodySpawnSpec = Readonly<{

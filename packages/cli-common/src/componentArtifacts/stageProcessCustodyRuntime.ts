@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import { ensureFileExists, type RunCommand } from './commands.js';
 import type { BinaryTarget } from './targets.js';
+import { PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME } from '../process/processCustodySupportExecutable.js';
 
 /**
  * The one native process-custody runtime. Its Go module (`apps/cli/native/processcustody`)
@@ -16,7 +17,6 @@ import type { BinaryTarget } from './targets.js';
  * permission to publish an incomplete payload: the owner builds from current
  * source and fails closed if the Go toolchain is unavailable.
  */
-const PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME = 'happier-process-custody';
 const GO_BUILD_FLAGS = ['build', '-trimpath', '-buildvcs=false'];
 
 function buildEnvironment(target: BinaryTarget): NodeJS.ProcessEnv {
