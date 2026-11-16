@@ -1,8 +1,10 @@
 import axios from '@/api/client/credentialAxios';
+import { isAxiosError } from 'axios';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { admitProjectSourceAttachmentV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import {
@@ -46,8 +48,15 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
         if (body && typeof body === 'object') body = { ...body, serverId: signedHomeId };
       }
       context.signal?.throwIfAborted();
-      const headers = await params.resolveRequestHeaders(context, actionId, { method, path,
-        ...(body === undefined ? {} : { body }) });
+      let headers: Readonly<Record<string, string>> | null;
+      try {
+        headers = await params.resolveRequestHeaders(context, actionId, { method, path,
+          ...(body === undefined ? {} : { body }) });
+      } catch (error) {
+        if (context.signal?.aborted) throw error;
+        // A refusing requester signer is this owner's missing-headers decision; keep its cause.
+        return { ...failure('project_requester_authority_unavailable'), failureCause: projectActionFailureCauseV1(error, actionId) };
+      }
       if (!headers) return failure('project_requester_authority_unavailable');
       if (prepare) {
         const admission = await prepare();
@@ -75,9 +84,14 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
       return projectConfirmedActionHttpRefusal(output, response.status);
     } catch (error) {
       const outcome = classifyHomeDomainHttpMutationFailureV1({ error, issued, aborted: context.signal?.aborted === true });
-      return failure(outcome === 'cancelled' ? 'cancelled'
-        : method !== 'GET' && outcome === 'outcome_unknown' ? 'outcome_unknown'
-          : context.signal?.aborted ? 'cancelled' : 'home_unreachable');
+      if (outcome === 'cancelled' || context.signal?.aborted) return { ...failure('cancelled'), failureCause: projectActionFailureCauseV1(error, actionId) };
+      if (method !== 'GET' && outcome === 'outcome_unknown') return { ...failure('outcome_unknown'), failureCause: projectActionFailureCauseV1(error, actionId) };
+      // Only a Home request that got no response proves Home unreachable;
+      // anything else keeps its own classified cause.
+      if (isAxiosError(error) && error.response === undefined) {
+        return { ...failure('home_unreachable'), failureCause: projectActionFailureCauseV1(error, actionId) };
+      }
+      return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
     }
   }
   return {

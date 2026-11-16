@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import tweetnacl from 'tweetnacl';
@@ -345,12 +346,24 @@ describe('Source Actions through the CLI Account front door', () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it('reports home_unreachable only for a Home request without a response and keeps other typed causes', async () => {
+    const request = vi.spyOn(axios, 'request')
+      .mockRejectedValueOnce(new axios.AxiosError('socket hang up', 'ECONNRESET'))
+      .mockRejectedValueOnce(createActionExecuteFailureError({ ok: false, errorCode: 'database_transaction_timeout', error: 'database_transaction_timeout' }));
+    const owner = deps();
+    const input = { serverId: 'source-home', sourceId: source.id };
+    expect(await owner.projectSourcesRead!(input, {})).toMatchObject({ ok: false, errorCode: 'home_unreachable' });
+    expect(await owner.projectSourcesRead!(input, {})).toMatchObject({ ok: false, errorCode: 'database_transaction_timeout' });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps mutation uncertainty after dispatch and cancels before dispatch without retry', async () => {
     const request = vi.spyOn(axios, 'request').mockRejectedValue(new Error('connection_reset'));
     const owner = deps();
     expect(owner.projectSourcesCreate).toBeTypeOf('function');
     const input = { serverId: 'source-home', requestKey: 'create-uncertain-app', name: source.name, repository: source.repository };
-    expect(await owner.projectSourcesCreate!(input, {})).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+    expect(await owner.projectSourcesCreate!(input, {})).toMatchObject({ ok: false, errorCode: 'outcome_unknown',
+      failureCause: { phase: 'projects.sources.create', errorClass: 'Error' } });
     const controller = new AbortController(); controller.abort();
     expect(await owner.projectSourcesCreate!(input, { signal: controller.signal })).toMatchObject({ ok: false, errorCode: 'cancelled' });
     expect(request).toHaveBeenCalledTimes(1);
