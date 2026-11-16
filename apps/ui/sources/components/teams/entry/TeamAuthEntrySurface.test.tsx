@@ -657,7 +657,7 @@ describe('TeamAuthEntrySurface', () => {
         expect(endpointFetch).not.toHaveBeenCalled();
         expect(screen.findAllByTestId('team-auth-entry-action:home-password')).toHaveLength(0);
         expect(screen.findByTestId('team-auth-entry-account-label')?.props.children)
-            .toBe('Signed in to Acme Home as Alice Chen');
+            .toBe('Signed in as Alice Chen');
 
         await screen.pressByTestIdAsync('team-auth-entry-continue');
         expect(onContinue).toHaveBeenCalledTimes(1);
@@ -685,7 +685,7 @@ describe('TeamAuthEntrySurface', () => {
         );
         await waitForTestId(screen, 'team-auth-entry-account-label');
         expect(screen.findByTestId('team-auth-entry-account-label')?.props.children)
-            .toBe('Signed in to Acme Home as Alice Chen');
+            .toBe('Signed in as Alice Chen');
 
         await screen.update(
             <TeamAuthEntrySurface
@@ -698,7 +698,7 @@ describe('TeamAuthEntrySurface', () => {
         );
         await waitForTestId(screen, 'team-auth-entry-account-label');
         expect(screen.findByTestId('team-auth-entry-account-label')?.props.children)
-            .toBe('Signed in to Acme Home as Bob');
+            .toBe('Signed in as Bob');
     });
 
     it('keeps a member on ordinary admission when the Home does not project continuation', async () => {

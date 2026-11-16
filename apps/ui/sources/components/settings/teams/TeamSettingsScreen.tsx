@@ -616,7 +616,7 @@ const TeamLifecycleSection = React.memo(function TeamLifecycleSection(props: Rea
                         testID="team-settings-archive"
                         size="small"
                         display="destructive"
-                        title={t('teams.archive.action', { name })}
+                        title={t('teams.archive.action')}
                         titleNumberOfLines="complete"
                         loading={busy}
                         disabled={busy || !context.canMutate}
@@ -662,34 +662,39 @@ export const TeamSettingsScreen = React.memo(function TeamSettingsScreen(props: 
             description={t('teams.pages.settings')}
             restoresHere
         >
-            {(context) => (
-                <>
-                    {/* A viewer who can change none of this still sees what the Team is set to and who
-                        changes it, rather than an empty page (lab `tsSettings-D`). */}
-                    {context.archived ? (
-                        <TeamLifecycleSection context={context} />
-                    ) : !context.team.capabilities.manageSettings && !context.team.capabilities.managePolicy ? (
-                        <TeamSettingsReadOnlyBanner context={context} />
-                    ) : null}
-                    {/* The Team section carries the logo row with the name and description. An
-                        archived Team shows them as text, like every other value on the page. */}
-                    {context.team.capabilities.manageSettings && !context.archived
-                        ? <TeamIdentitySection context={context} />
-                        : <TeamIdentityFacts context={context} />}
-                    <TeamPolicySections context={context} />
-                    {/* What members' new sessions start with; an archived Team starts none. */}
-                    {context.archived ? null : (
-                        <TeamMemberDefaultsSection
-                            testID="team-settings-member-defaults"
-                            context={context}
-                            scope={TEAM_DEFAULTS_SCOPE}
-                            access={memberDefaultsAccess(TEAM_DEFAULTS_SCOPE, context.team.capabilities)}
-                            writable={context.canMutate}
-                        />
-                    )}
-                    {context.archived ? null : <TeamLifecycleSection context={context} />}
-                </>
-            )}
+            {(context) => {
+                // One owner for "this viewer changes nothing here": the banner says it, the sections do not.
+                const settingsLocked = !context.team.capabilities.manageSettings && !context.team.capabilities.managePolicy;
+                return (
+                    <>
+                        {/* A viewer who can change none of this still sees what the Team is set to and who
+                            changes it, rather than an empty page (lab `tsSettings-D`). */}
+                        {context.archived ? (
+                            <TeamLifecycleSection context={context} />
+                        ) : settingsLocked ? (
+                            <TeamSettingsReadOnlyBanner context={context} />
+                        ) : null}
+                        {/* The Team section carries the logo row with the name and description. An
+                            archived Team shows them as text, like every other value on the page. */}
+                        {context.team.capabilities.manageSettings && !context.archived
+                            ? <TeamIdentitySection context={context} />
+                            : <TeamIdentityFacts context={context} />}
+                        <TeamPolicySections context={context} />
+                        {/* What members' new sessions start with; an archived Team starts none. */}
+                        {context.archived ? null : (
+                            <TeamMemberDefaultsSection
+                                testID="team-settings-member-defaults"
+                                context={context}
+                                scope={TEAM_DEFAULTS_SCOPE}
+                                access={memberDefaultsAccess(TEAM_DEFAULTS_SCOPE, context.team.capabilities)}
+                                writable={context.canMutate}
+                                readOnlyReasonOnPage={settingsLocked}
+                            />
+                        )}
+                        {context.archived ? null : <TeamLifecycleSection context={context} />}
+                    </>
+                );
+            }}
         </TeamSection>
     );
 });

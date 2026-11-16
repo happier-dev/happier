@@ -12,9 +12,10 @@ export const TEAM_ENTRY_LOGO_SIZE = 52;
 export type TeamEntryLogo = Readonly<{ url?: string | null; thumbhash?: string | null }> | null;
 
 /**
- * The Team's identity at the top of every Team entry step: its logo and name,
- * then "Continue to <Team>". The entry page and the chosen sign-in step render
- * this one header, so moving between them only swaps what sits beneath it.
+ * The Team's identity at the top of every Team entry step: its logo, then
+ * "Continue to <Team>", which names the Team once. The entry page and the chosen
+ * sign-in step render this one header, so moving between them only swaps what
+ * sits beneath it.
  */
 export function TeamEntryIdentity(props: Readonly<{
     testIDPrefix: string;
@@ -43,14 +44,6 @@ export function TeamEntryIdentity(props: Readonly<{
                         monogram={teamName}
                     />
                 </View>
-                <Text
-                    testID={`${testIDPrefix}-team-name`}
-                    accessibilityLabel={teamName}
-                    numberOfLines={2}
-                    style={styles.teamName}
-                >
-                    {teamName}
-                </Text>
             </View>
             <View>
                 <Text
@@ -75,12 +68,6 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 14,
         minWidth: 0,
-    },
-    teamName: {
-        flex: 1,
-        minWidth: 0,
-        ...Typography.variant('heading'),
-        color: theme.colors.text.primary,
     },
     heading: {
         ...Typography.variant('display'),

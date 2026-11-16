@@ -79,7 +79,7 @@ it.each(['none', 'retry', 'new_invitation'] as const)('reaches the admitted prof
         serverId: request.serverId,
         authenticatedAsAdmittedAccount: request.token === credentials.token,
     }))).toEqual([{ serverId, authenticatedAsAdmittedAccount: true }]);
-    const identityHeading = screen.findByTestId('team-auth-entry-team-name');
+    const identityHeading = screen.findByTestId('team-auth-entry-heading');
     const writeStorage = MMKV.prototype.set;
     // Profile selection uses the native SDK boundary in this Node renderer,
     // independently of the credential store's explicit web platform fixture.
@@ -94,7 +94,7 @@ it.each(['none', 'retry', 'new_invitation'] as const)('reaches the admitted prof
         await screen.pressByTestIdAsync('team-auth-entry-join');
         if (recovery !== 'none') {
             await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-destination-home-retry'), screen.getTextContent()).not.toBeNull());
-            expect(screen.findByTestId('team-auth-entry-team-name')).toBe(identityHeading);
+            expect(screen.findByTestId('team-auth-entry-heading')).toBe(identityHeading);
             expect(screen.findByTestId('team-auth-entry-admission-complete-name-field')).toBeNull();
             expect(home.requestsFor('/v1/team-invitations/accept')).toHaveLength(1);
             focusStorage?.mockRestore();
@@ -120,7 +120,7 @@ it.each(['none', 'retry', 'new_invitation'] as const)('reaches the admitted prof
         }
         await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-admission-complete-action'), screen.getTextContent()).not.toBeNull());
         expect(screen.findByTestId('team-auth-entry-admission-complete-name-field'), screen.getTextContent()).not.toBeNull();
-        expect(screen.findByTestId('team-auth-entry-team-name')).toBe(identityHeading);
+        expect(screen.findByTestId('team-auth-entry-heading')).toBe(identityHeading);
         expect(home.requestsFor('/v1/team-invitations/accept')).toEqual([
             expect.objectContaining({ serverId, token: credentials.token }),
         ]);
@@ -333,7 +333,7 @@ it.each([
         // The chosen method continues inside the same split shell, under the
         // Team's identity, instead of replacing the page with a bare form.
         await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-step-shell'), screen.getTextContent()).not.toBeNull());
-        expect(screen.findByTestId('team-auth-step-team-name')?.props.children).toBe('Acme Team');
+        expect(screen.findByTestId('team-auth-step-heading')?.props.children).toContain('Acme Team');
         if (method === 'email_password') {
             // The entry card already chose this form; the step does not ask again.
             expect(screen.findByTestId(actionId)).toBeNull();

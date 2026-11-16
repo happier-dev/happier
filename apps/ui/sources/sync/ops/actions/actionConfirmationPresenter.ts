@@ -66,7 +66,7 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
         confirmLabel: actionId === 'account.delete' ? t('settingsAccount.deleteAccount') : presentation.confirmLabel ?? t('approvals.approve'),
         ...(actionId === 'account.delete' ? { typedConfirmation: { text: 'DELETE', placeholder: 'DELETE',
           instruction: t('settingsAccount.deleteAccountConfirmBody') } } : {}),
-        irreversible: getActionSpec(actionId).irreversible === true,
+        irreversible: getActionSpec(actionId).irreversible === true, destructive: presentation.destructive === true,
         serverId: accountContext.serverId, ...(context.signal ? { signal: context.signal } : {}) })
       : actionId === 'account.delete'
       ? await Modal.prompt(t('settingsAccount.deleteAccountConfirmTitle'), t('settingsAccount.deleteAccountConfirmBody'), {

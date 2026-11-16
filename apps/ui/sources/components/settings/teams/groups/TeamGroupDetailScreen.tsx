@@ -24,6 +24,7 @@ import { CollectionRows } from '@/components/ui/lists/collection/CollectionList'
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
@@ -276,6 +277,8 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
     const [busy, setBusy] = React.useState(false);
     const [notice, setNotice] = React.useState<string | null>(null);
     const [picking, setPicking] = React.useState(false);
+    /** The person whose add is in flight, so their row shows it until the Home answers. */
+    const [addingAccountId, setAddingAccountId] = React.useState<string | null>(null);
     const mutationInFlightRef = React.useRef(false);
 
     React.useEffect(() => () => {
@@ -351,12 +354,14 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
      */
     const groupCurrent = detail.isCurrent;
     const groupStale = group !== null && !groupCurrent;
-    const canEditRoster = group !== null
+    // Whether this viewer edits the roster at all; a change in flight only pauses it, so the roster's
+    // controls keep their place instead of disappearing for the length of a request.
+    const rosterEditable = group !== null
         && group.capabilities.manageNativeMembers
         && context.canMutate
         && groupCurrent
-        && !archived
-        && !busy;
+        && !archived;
+    const canEditRoster = rosterEditable && !busy;
     const nativeAccountIds = React.useMemo(() => new Set(
         members.rows.filter((member) => member.contributions.native).map((member) => member.accountId),
     ), [members.rows]);
@@ -486,12 +491,13 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         if (group === null) return result;
         const add = (key: string, render: () => React.ReactElement) => result.push({ key, render });
         // Adding happens in the roster: its section carries the "+", which opens the picker below.
-        const addMemberAction = canEditRoster ? (
+        const addMemberAction = rosterEditable ? (
             <SectionActionButton
                 testID="team-group-add-member"
                 icon="plus"
                 title={t('teams.groups.addMember')}
                 expanded={picking}
+                disabled={busy}
                 onPress={() => setPicking((current) => !current)}
             />
         ) : undefined;
@@ -628,6 +634,53 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         const displayName = person.name;
                         const external = contributionLabel(member);
                         const isNative = member.contributions.native;
+                        const rowActions: ItemAction[] = [
+                            ...(rosterEditable ? [isNative ? {
+                                id: 'remove-from-group',
+                                title: t('teams.groups.removeNative'),
+                                icon: 'user-minus' as const,
+                                destructive: true,
+                                disabled: busy,
+                                onPress: () => {
+                                    void runRosterChange(
+                                        () => removeTeamGroupMember({
+                                            scope: context.scope,
+                                            address: context.address,
+                                            groupId,
+                                            accountId: member.accountId,
+                                            // `contribution_removed` is not
+                                            // `removed`; an approved removal
+                                            // owes that distinction too.
+                                            onApprovalSucceeded: (result) =>
+                                                settleRosterChange(result, external),
+                                            onApprovalFailed: () =>
+                                                setNotice(t('teams.errors.generic')),
+                                        }),
+                                        external,
+                                    );
+                                },
+                            } : {
+                                id: 'add-to-group',
+                                title: t('teams.groups.addMember'),
+                                icon: 'user-plus' as const,
+                                disabled: busy,
+                                onPress: () => { void addNative(member); },
+                            }] : []),
+                            ...member.contributions.external.map((contribution) => ({
+                                id: `open-external-source:${contribution.bindingId}`,
+                                title: `${t('common.open')}: ${contribution.label}`,
+                                icon: 'arrow-square-out' as const,
+                                onPress: () => router.push(contribution.owner.kind === 'directory_source'
+                                    ? teamDirectorySourcePath(
+                                        context.address,
+                                        contribution.owner.directorySourceId,
+                                    )
+                                    : teamIdentityConnectionPath(
+                                        context.address,
+                                        contribution.owner.teamIdentityConnectionId,
+                                    )),
+                            })),
+                        ];
                         return (
                             <Item
                                 key={member.membershipId}
@@ -642,73 +695,25 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                         monogram={person.named ? person.name : null}
                                     />
                                 )}
-                                // An external-only row is not read-only: a native
-                                // contribution can be added so the person keeps
-                                // Group access if that source stops supplying them.
-                                detail={isNative ? undefined : t('teams.groups.addMember')}
-                                disabled={!canEditRoster}
-                                rightElement={(
+                                // A person row opens the person, like every other roster. Changes to this
+                                // Group's roster live in the row's menu, behind the Action's own confirmation.
+                                // An external-only row is not read-only: a native contribution can be added so
+                                // the person keeps Group access if that source stops supplying them.
+                                rightElement={rowActions.length > 0 ? (
                                     <ItemRowActions
                                         title={displayName}
-                                        actions={[
-                                            {
-                                                id: 'open-member-detail',
-                                                title: t('common.open'),
-                                                icon: 'arrow-square-out',
-                                                inlineTestID: 'open-member-detail',
-                                                onPress: () => router.push(teamGroupMemberDetailPath(
-                                                    context.address,
-                                                    member.membershipId,
-                                                    groupId,
-                                                    member.accountId,
-                                                )),
-                                            },
-                                            ...member.contributions.external.map((contribution) => ({
-                                                id: `open-external-source:${contribution.bindingId}`,
-                                                title: `${t('common.open')}: ${contribution.label}`,
-                                                icon: 'arrow-square-out' as const,
-                                                inlineTestID: `open-external-source:${contribution.bindingId}`,
-                                                onPress: () => router.push(contribution.owner.kind === 'directory_source'
-                                                    ? teamDirectorySourcePath(
-                                                        context.address,
-                                                        contribution.owner.directorySourceId,
-                                                    )
-                                                    : teamIdentityConnectionPath(
-                                                        context.address,
-                                                        contribution.owner.teamIdentityConnectionId,
-                                                    )),
-                                            })),
-                                        ]}
-                                        compactActionIds={['open-member-detail']}
+                                        overflowOnly
+                                        actions={rowActions}
                                         overflowTriggerTestID={`team-group-member-actions:${member.accountId}`}
-                                        overflowTriggerAccessibilityLabel={t('common.open')}
                                     />
-                                )}
+                                ) : undefined}
                                 rightElementOutsidePressable
-                                onPress={canEditRoster
-                                    ? async () => {
-                                        if (!isNative) {
-                                            await addNative(member);
-                                            return;
-                                        }
-                                        await runRosterChange(
-                                            () => removeTeamGroupMember({
-                                                scope: context.scope,
-                                                address: context.address,
-                                                groupId,
-                                                accountId: member.accountId,
-                                                // `contribution_removed` is not
-                                                // `removed`; an approved removal
-                                                // owes that distinction too.
-                                                onApprovalSucceeded: (result) =>
-                                                    settleRosterChange(result, external),
-                                                onApprovalFailed: () =>
-                                                    setNotice(t('teams.errors.generic')),
-                                            }),
-                                            external,
-                                        );
-                                    }
-                                    : undefined}
+                                onPress={() => router.push(teamGroupMemberDetailPath(
+                                    context.address,
+                                    member.membershipId,
+                                    groupId,
+                                    member.accountId,
+                                ))}
                                 showChevron={false}
                             />
                         );
@@ -803,31 +808,43 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         title={first ? t('teams.members.personLabel') : undefined}
                         virtualizedSegment={{ first, last }}
                     >
-                        {chunk.map((membership) => (
+                        {chunk.map((membership) => {
+                            const person = resolveAccountDisplayName({ profile: membership.account, accountId: membership.accountId, viewerAccountId: context.scope.accountId });
+                            return (
                                 <Item
                                     key={membership.id}
                                     testID={`team-group-candidate:${membership.accountId}`}
-                                    title={resolveAccountDisplayName({ profile: membership.account, accountId: membership.accountId, viewerAccountId: context.scope.accountId }).name}
-                                    subtitle={resolveAccountDisplayName({ profile: membership.account, accountId: membership.accountId, viewerAccountId: context.scope.accountId }).hint ?? undefined}
+                                    title={person.name}
+                                    subtitle={person.hint ?? undefined}
                                     leftElement={(
                                         <Avatar
                                             id={membership.accountId}
                                             size={PAGE_LIST_METRICS.rowIdentityMarkPx}
                                             imageUrl={membership.account.avatarUrl}
-                                            monogram={resolveAccountDisplayName({ profile: membership.account, accountId: membership.accountId, viewerAccountId: context.scope.accountId }).name}
+                                            // Initials only for a named Account, like the roster above.
+                                            monogram={person.named ? person.name : null}
                                         />
                                     )}
                                     disabled={!canEditRoster}
+                                    loading={addingAccountId === membership.accountId}
                                     onPress={async () => {
-                                        setPicking(false);
-                                        await addNative({
-                                            accountId: membership.accountId,
-                                            membershipId: membership.id,
-                                        });
+                                        // The picker stays open on this person, marked in progress, until the
+                                        // Home answers (or hands the add to an approval).
+                                        setAddingAccountId(membership.accountId);
+                                        try {
+                                            await addNative({
+                                                accountId: membership.accountId,
+                                                membershipId: membership.id,
+                                            });
+                                        } finally {
+                                            setAddingAccountId(null);
+                                            setPicking(false);
+                                        }
                                     }}
                                     showChevron={false}
                                 />
-                            ))}
+                            );
+                        })}
                     </ItemGroup>
                 ));
             }
@@ -929,39 +946,46 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
 
         if (group.capabilities.archive && !archived) {
             add('archive', () => (
+                // Archive closes the page the way a Team's does: the destructive button at the far edge
+                // with its consequence beneath it (one placement for both).
                 <ItemGroup surface="none">
-                    <SectionButtonRow>
-                    <RoundButton
-                        testID="team-group-archive"
-                        size="small"
-                        display="destructive"
-                        title={t('teams.groups.archiveAction')}
-                        titleNumberOfLines="complete"
-                        disabled={busy || !context.canMutate || !groupCurrent}
-                        onPress={async () => {
-                            if (mutationInFlightRef.current) return;
-                            mutationInFlightRef.current = true;
-                            setBusy(true);
-                            try {
-                                const outcome = await archiveTeamGroup({
-                                    scope: context.scope,
-                                    address: context.address,
-                                    groupId,
-                                });
-                                if (outcome.kind === 'succeeded') router.back();
-                                else {
-                                    setNotice(teamMutationFailureLabel(outcome.failure));
-                                    if (outcome.failure.kind === 'outcome_unknown') void detail.reload();
-                                }
-                            } catch (cause) {
-                                if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.artifactId);
-                                else setNotice(t('teams.errors.generic'));
-                            } finally {
-                                mutationInFlightRef.current = false;
-                                setBusy(false);
-                            }
-                        }}
-                    />
+                    <SectionButtonRow
+                        footnote={t('teams.groups.archiveBody')}
+                        trailing={(
+                            <RoundButton
+                                testID="team-group-archive"
+                                size="small"
+                                display="destructive"
+                                title={t('teams.groups.archiveAction')}
+                                titleNumberOfLines="complete"
+                                disabled={busy || !context.canMutate || !groupCurrent}
+                                onPress={async () => {
+                                    if (mutationInFlightRef.current) return;
+                                    mutationInFlightRef.current = true;
+                                    setBusy(true);
+                                    try {
+                                        const outcome = await archiveTeamGroup({
+                                            scope: context.scope,
+                                            address: context.address,
+                                            groupId,
+                                        });
+                                        if (outcome.kind === 'succeeded') router.back();
+                                        else {
+                                            setNotice(teamMutationFailureLabel(outcome.failure));
+                                            if (outcome.failure.kind === 'outcome_unknown') void detail.reload();
+                                        }
+                                    } catch (cause) {
+                                        if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.artifactId);
+                                        else setNotice(t('teams.errors.generic'));
+                                    } finally {
+                                        mutationInFlightRef.current = false;
+                                        setBusy(false);
+                                    }
+                                }}
+                            />
+                        )}
+                    >
+                        {null}
                     </SectionButtonRow>
                 </ItemGroup>
             ));
@@ -970,6 +994,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         return result;
     }, [
         addNative,
+        addingAccountId,
         archived,
         busy,
         canEditRoster,
@@ -988,8 +1013,10 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         members,
         notice,
         picking,
+        rosterEditable,
         router,
         runRosterChange,
+        settleRosterChange,
         theme.colors.state.warning.foreground,
         theme.colors.text.secondary,
     ]);
@@ -1044,7 +1071,11 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     {
                         key: 'members',
                         testID: 'team-group-member-count',
-                        text: t('teams.groups.memberCount', { count: group.memberCount }),
+                        // An archived Group's effective membership is zero by contract; its kept members return
+                        // on restore, so the fact says that rather than "0 members".
+                        text: archived
+                            ? t('teams.groups.archivedMemberCount')
+                            : t('teams.groups.memberCount', { count: group.memberCount }),
                     },
                     ...(managedBy ? [{ key: 'managed', text: managedBy }] : []),
                 ]}

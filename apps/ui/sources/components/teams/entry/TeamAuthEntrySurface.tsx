@@ -714,7 +714,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                             accessibilityRole="text"
                             style={styles.guidance}
                         >
-                            {t('teams.entry.signedInTo', { home: homeDisplayName, account: accountLabel })}
+                            {t('teams.entry.signedInTo', { account: accountLabel })}
                         </Text>
                     ) : null}
                 </TeamEntryIdentity>
@@ -815,6 +815,8 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                                 <WelcomeActionCard
                                     testID="team-auth-entry-continue"
                                     primary
+                                    // The one way on for a member is a centred button, not a choice card.
+                                    presentation="button"
                                     title={invitation
                                         ? t('teams.join.openTeam', { team: teamName })
                                         : t('common.continue')}

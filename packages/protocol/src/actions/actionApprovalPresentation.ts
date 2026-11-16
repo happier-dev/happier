@@ -216,6 +216,8 @@ function describeApprovalKeyReference(key: string | undefined, value: unknown): 
   if (key === 'serverId') return { kind: 'home', id: value.trim() };
   if (key === 'accountId') return { kind: 'account', id: value.trim() };
   if (key === 'discussionId') return { kind: 'discussion', id: value.trim() };
+  // A Team id names a Team wherever an Action carries it; its name reads instead of the id.
+  if (key === 'teamId') return { kind: 'team', id: value.trim() };
   return readApprovalSavedSecretReference('', key, value);
 }
 
@@ -277,6 +279,11 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
   if (savedSecret) return savedSecret;
   // A Home identity reads by the Home's name, like a `serverId` key.
   if (field.path === 'homeId') return { kind: 'home', id: value.trim() };
+  // In a Team Action, `groupId` is that Team's Group; elsewhere it names a widget group, a pane or a paused commit.
+  if (actionId.startsWith('teams.') && field.path === 'groupId' && isRecord(input)
+      && typeof input.teamId === 'string' && input.teamId.trim()) {
+    return { kind: 'group', id: value.trim(), teamId: input.teamId.trim() };
+  }
   if (actionId.startsWith('artifact.') && field.path === 'artifactId') return { kind: 'artifact', id: value };
   if (actionId === 'skills.rules.set' && field.path === 'items.[].skillId') return { kind: 'skill', id: value };
   if (actionId === 'mcp.rules.set' && field.path === 'items.[].serverId') return { kind: 'mcpServer', id: value };
@@ -1033,7 +1040,11 @@ export function describeApprovalActionFields(input: Readonly<{
     }
     if (kindValue !== null) entries = undefined;
     const technical = technicalPaths.includes(field.path)
-      || isRedundantCreatedConnection(input.actionId, reference, presentationInput) || !reference && (isTechnicalApprovalKey(field.path.split('.').at(-1))
+      || isRedundantCreatedConnection(input.actionId, reference, presentationInput)
+      // A Team Group already reads with its Team ("Design reviewers, Platform"), so its Team row would say it twice.
+      || input.actionId.startsWith('teams.') && field.path === 'teamId' && isRecord(presentationInput)
+        && typeof presentationInput.groupId === 'string'
+      || !reference && (isTechnicalApprovalKey(field.path.split('.').at(-1))
       // An operand that carries nothing (`savedSecretId: null`) is no reading; its exact literal stays in Details.
       || values.length > 0 && values.every(value => value === null)
       || values.length > 0 && values.every(isEmptyApprovalValue) && !(rulesAction && field.path === 'change.rules')

@@ -369,6 +369,23 @@ describe('native confirmation of a carried executor review', () => {
       }
     },
   );
+  it('draws a destructive confirm for a recoverable removal without promising it cannot be undone', async () => {
+    const screen = await renderScreen(<ModalProvider />);
+    const answer = confirmActionReview({ actionId: 'teams.groups.members.remove',
+      actionArgs: { v: 1, teamId: 'team-1', groupId: 'group-1', accountId: 'account-1' }, preview: {},
+      title: 'Remove Grace from this Group?', summary: null, confirmLabel: 'Remove', irreversible: false, destructive: true,
+      serverId: null });
+    try {
+      await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+      expect(screen.tree.root.findAllByProps({ testID: 'actions.confirmation-review.decision-approve' })
+        .map(node => node.props.display)).toContain('destructive');
+      expect(screen.findByTestId('approvals.irreversible-note')).toBeNull();
+    } finally {
+      await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
+      await answer;
+      await screen.unmount();
+    }
+  });
   it('shows a carried consequence once when native chrome already presents its summary', async () => {
     const { Modal } = await import('@/modal');
     const summary = 'This allows unattended administrator access.';

@@ -75,6 +75,8 @@ type TeamMemberDefaultsSectionProps = Readonly<{
   access: MemberDefaultsAccess;
   writable: boolean;
   testID: string;
+  /** The page already says who changes these (its lock banner), so the section does not repeat it. */
+  readOnlyReasonOnPage?: boolean;
 }> | Readonly<{
   context: HomeAdministrationContext;
   scope: { kind: 'team' };
@@ -172,7 +174,7 @@ export const TeamMemberDefaultsSection = React.memo(
       t('teams.settings.memberDefaults.description'),
       access.editable
         ? null
-          : access.reason === 'team' && !home
+          : access.reason === 'team' && !home && !('readOnlyReasonOnPage' in props && props.readOnlyReasonOnPage)
           ? t('teams.settings.memberDefaults.readOnlyTeam')
           : access.reason === 'group' ? t('teams.settings.memberDefaults.readOnlyGroup') : null,
     ]
@@ -257,6 +259,29 @@ const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
     props.conflicts.permissionMode ||
     props.conflicts.model ||
     props.conflicts.connectedServices.size > 0;
+  const icon = (
+    <AgentCatalogIdentityIcon
+      entry={props.entry}
+      machineId={null}
+      serverId={props.state.serverId}
+      current={false}
+      color={theme.colors.text.secondary}
+      size={24}
+    />
+  );
+  // Read-only with nothing set, opening would only repeat "None": the row is a value, like the Machine row.
+  if (!props.state.editable && setLabels.length === 0) {
+    return (
+      <Item
+        testID={`${props.testID}:header`}
+        title={props.entry.title}
+        detail={t('teams.settings.memberDefaults.none')}
+        icon={icon}
+        mode="info"
+        showChevron={false}
+      />
+    );
+  }
   return (
     <ExpandableItem
       testID={props.testID}
@@ -276,16 +301,7 @@ const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
               ? undefined
               : setLabels.join(' · ') || t('teams.settings.memberDefaults.none')
           }
-          icon={
-            <AgentCatalogIdentityIcon
-              entry={props.entry}
-              machineId={null}
-              serverId={props.state.serverId}
-              current={false}
-              color={theme.colors.text.secondary}
-              size={24}
-            />
-          }
+          icon={icon}
         />
       )}
     >

@@ -45,6 +45,10 @@ function activityKindLabel(kind: TeamCredentialActivityKindV1): string {
     }
 }
 
+function isExternalKeyActivity(event: Readonly<{ kind: string }>): boolean {
+    return event.kind === 'external_key_created' || event.kind === 'external_key_revoked';
+}
+
 const CredentialActivity = React.memo(function CredentialActivity(props: Readonly<{
     context: TeamSectionContext;
     resourceId: string;
@@ -65,7 +69,7 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
             key: `${event.createdAt}:${index}`,
             // Historical resource snapshots remain resource-bound; an external
             // key snapshot deliberately carries its own immutable AAD id.
-            binding: event.kind === 'external_key_created' || event.kind === 'external_key_revoked'
+            binding: isExternalKeyActivity(event) && 'externalApiKeyId' in event
                 ? teamCredentialExternalApiKeyLabelBinding(event.externalApiKeyId)
                 : teamCredentialDisplayNameBinding(resourceId),
             label: event.subjectDisplayName,
@@ -77,6 +81,11 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
         requests: activityLabelRequests,
         enabled: view.featureEnabled && managesResources,
     });
+
+    const newestCredentialEvent = activity.rows.findIndex((event) => !isExternalKeyActivity(event));
+    const credentialName = newestCredentialEvent >= 0
+        ? openedActivityDisplayNames[`${activity.rows[newestCredentialEvent]!.createdAt}:${newestCredentialEvent}`] ?? null
+        : null;
 
     if (!view.featureEnabled || (view.resolved && view.resource === null)) {
         return (
@@ -153,11 +162,15 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
             ) : null}
 
             {activity.rows.length > 0 ? (
-                <ItemGroup surface="none" title={t('teams.credentials.activity.title')}>
+                // The page is titled Activity; the list is titled by the credential it is about (its newest
+                // name), so a row names its subject only when that is something else: an external key, or
+                // the credential under a name it had before.
+                <ItemGroup surface="none" title={credentialName ?? undefined}>
                     <CollectionRows>
                     {activity.rows.map((event, index) => {
                         const key = `${event.createdAt}:${index}`;
-                        const subjectDisplayName = openedActivityDisplayNames[key] ?? t('common.unavailable');
+                        const opened = openedActivityDisplayNames[key] ?? t('common.unavailable');
+                        const subjectDisplayName = isExternalKeyActivity(event) || opened !== credentialName ? opened : null;
                         return <Item
                             // The history has no event identity of its own, so the
                             // position in the sequence is the only stable key; the
@@ -168,7 +181,7 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
                             subtitle={[
                                 event.actorDisplayName ?? t('teams.credentials.activity.unknownActor'),
                                 subjectDisplayName,
-                            ].join(' · ')}
+                            ].filter((part): part is string => part !== null).join(' · ')}
                             detail={formatShortRelativeTime(Date.parse(event.createdAt))}
                             showChevron={false}
                         />;

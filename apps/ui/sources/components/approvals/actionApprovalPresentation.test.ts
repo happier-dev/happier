@@ -381,6 +381,27 @@ describe('the shared Action approval presentation owner', () => {
         expect(presentActionApproval({ actionId: 'plugins.uninstall' }).destructive).toBe(true);
         // An update asks by policy, but is not declared irreversible.
         expect(presentActionApproval({ actionId: 'updates.batch.start' }).destructive).toBeFalsy();
+    it.each(['en', 'fr'] as const)('asks to remove a person from a Group in words, with its consequence and a destructive Remove, in %s', async language => {
+        await preloadTranslations(language);
+        setPreferredLanguageFromSettings(language);
+        const actionArgs = { v: 1, teamId: 'team-1', groupId: 'group-1', accountId: 'account-grace' };
+        // The person removed names the request, not the Team or Group it happens in.
+        expect(readActionApprovalSubject({ actionId: 'teams.groups.members.remove', actionArgs }))
+            .toEqual({ kind: 'account', id: 'account-grace' });
+        const confirmation = presentActionApproval({ actionId: 'teams.groups.members.remove', kind: 'confirmation',
+            actionArgs, subject: 'Grace' });
+        expect(confirmation).toEqual({
+            title: t('teams.groups.removeMemberTitle', { name: 'Grace' }),
+            summary: t('teams.groups.removeMemberBody'),
+            confirmLabel: t('common.remove'),
+            destructive: true,
+        });
+        expect(confirmation.title).not.toContain(getActionSpec('teams.groups.members.remove').title);
+        // A retained request keeps its approval title, and says the same consequence.
+        expect(presentActionApproval({ actionId: 'teams.groups.members.remove', actionArgs, subject: 'Grace' }).summary)
+            .toBe(t('teams.groups.removeMemberBody'));
+    });
+
     });
 
     it('uses declared irreversibility even when the UI does not ask by default', () => {

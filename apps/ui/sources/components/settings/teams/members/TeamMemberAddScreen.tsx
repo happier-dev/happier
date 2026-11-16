@@ -198,6 +198,8 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
         <>
             <ItemGroup
                 title={t('teams.members.personLabel')}
+                // A Team search finds an exact account ID or verified email, never a name prefix.
+                description={t('teams.members.personHelp')}
                 accessibilityRole={candidates.length > 0 ? 'radiogroup' : undefined}
                 accessibilityLabel={t('teams.members.personLabel')}
             >
@@ -253,8 +255,8 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
                 {search.status === 'ready' && candidates.length === 0 ? (
                     <Item
                         testID="team-member-add-search-empty"
-                        title={t('teams.members.emptyTitle')}
-                        subtitle={t('teams.members.emptyBody')}
+                        title={t('teams.members.personEmptyTitle')}
+                        subtitle={t('teams.members.personEmptyBody')}
                         mode="info"
                         showChevron={false}
                     />

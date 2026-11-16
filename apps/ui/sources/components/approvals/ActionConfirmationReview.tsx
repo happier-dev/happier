@@ -31,13 +31,15 @@ type ConfirmationReviewModalProps = CustomModalInjectedProps &
     serverId: string | null;
     confirmLabel: string;
     irreversible: boolean;
+    /** A removal the person can recover from still confirms with a destructive verb, without the irreversible note. */
+    destructive?: boolean;
     summaryPlacement?: 'body' | 'host';
     typedConfirmation?: TypedConfirmation;
     onAnswer: (confirmed: boolean) => void;
   }>;
 
 function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
-  const { onAnswer, onClose, setChrome, confirmLabel, irreversible, typedConfirmation } = props;
+  const { onAnswer, onClose, setChrome, confirmLabel, irreversible, destructive, typedConfirmation } = props;
   const [typedValue, setTypedValue] = React.useState('');
   const answer = React.useCallback(
     (confirmed: boolean) => {
@@ -59,14 +61,14 @@ function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
           <RoundButton
             testID="actions.confirmation-review.decision-approve"
             size="normal"
-            display={irreversible ? 'destructive' : 'default'}
+            display={irreversible || destructive ? 'destructive' : 'default'}
             title={confirmLabel}
             onPress={() => answer(true)}
           />
         </ModalCardFooterActions>
       ),
     });
-  }, [answer, confirmLabel, irreversible, setChrome]);
+  }, [answer, confirmLabel, destructive, irreversible, setChrome]);
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
       <View testID="actions.confirmation-review" style={styles.body}>
@@ -105,6 +107,7 @@ export function confirmActionReview(
       typedConfirmation?: TypedConfirmation;
       confirmLabel: string;
       irreversible: boolean;
+      destructive?: boolean;
       serverId: string | null;
       signal?: AbortSignal;
     }>,
@@ -130,6 +133,7 @@ export function confirmActionReview(
         serverId: input.serverId,
         confirmLabel: input.confirmLabel,
         irreversible: input.irreversible,
+        destructive: input.destructive === true,
         summaryPlacement: input.summaryPlacement,
         typedConfirmation: input.typedConfirmation,
         onAnswer: settle,

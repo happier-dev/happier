@@ -14,6 +14,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { accountDisplayProfileFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import { teamCapabilitiesFixture, teamGroupFixture, teamGroupMemberFixture, teamMembershipFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
@@ -126,6 +127,25 @@ async function addManagedHome(): Promise<string> {
     return serverId;
 }
 
+/** Opens a roster row's ⋯ menu unless it is already open (a closing menu can keep its last items). */
+async function openRowMenu(
+    screen: Awaited<ReturnType<typeof renderGroupDetail>>,
+    accountId: string,
+): Promise<void> {
+    const open = screen.findAllByTestId(`team-group-member-actions:${accountId}`)
+        .some((node) => node.props.accessibilityState?.expanded === true);
+    if (!open) await screen.pressByTestIdAsync(`team-group-member-actions:${accountId}`);
+}
+
+/** A menu entry runs once its menu has closed, so callers wait on its effect. */
+async function removeFromGroupThroughMenu(
+    screen: Awaited<ReturnType<typeof renderGroupDetail>>,
+    accountId: string,
+): Promise<void> {
+    await openRowMenu(screen, accountId);
+    await screen.pressByTestIdAsync('remove-from-group');
+}
+
 async function waitForTestId(
     screen: Awaited<ReturnType<typeof renderGroupDetail>>,
     testID: string,
@@ -135,7 +155,10 @@ async function waitForTestId(
     });
 }
 
+// A roster row's ⋯ menu opens in a Popover, which measures against the web window.
+let restorePopoverGlobals: (() => void) | null = null;
 beforeEach(async () => {
+    restorePopoverGlobals = withPopoverWebGlobals();
     resetTeamsSnapshotsForTests();
     resetTeamsDirectoryEngineForTests();
     await harness.reset();
@@ -145,6 +168,8 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+    restorePopoverGlobals?.();
+    restorePopoverGlobals = null;
     standardCleanup();
 });
 
@@ -403,7 +428,7 @@ describe('TeamGroupDetailScreen', () => {
         expect(screen.getTextContent()).toContain('teams.errors.forbidden');
     });
 
-    it('offers a non-destructive member-detail action for encrypted access preparation', async () => {
+    it('opens the person when a roster row is pressed, and keeps removal in its menu', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, GROUP_GET_PATH, {
             body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES }),
@@ -416,10 +441,14 @@ describe('TeamGroupDetailScreen', () => {
         await waitForTestId(screen, 'team-group-member:account-ada');
         expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-group-save');
 
-        await screen.pressByTestIdAsync('open-member-detail');
+        // Every person row opens the person; a press never removes anyone.
+        await screen.pressByTestIdAsync('team-group-member:account-ada');
         expect(groupRouterPush).toHaveBeenCalledWith(
             `/settings/teams/${encodeURIComponent(serverId)}/team-1/members/membership-ada?groupId=group-1&accountId=account-ada`,
         );
+        expect(harness.requestsFor(GROUP_MEMBER_REMOVE_PATH)).toHaveLength(0);
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('open-member-detail');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-group-member-actions:account-ada');
     });
 
     it('refreshes the rendered point detail when another client publishes a Teams AccountChange', async () => {
@@ -492,14 +521,16 @@ describe('TeamGroupDetailScreen', () => {
         const screen = await renderGroupDetail(serverId);
         await waitForTestId(screen, 'team-group-member:account-ada');
 
+        await openRowMenu(screen, 'account-ada');
         await screen.pressByTestIdAsync('open-external-source:binding-okta');
-        expect(groupRouterPush).toHaveBeenLastCalledWith(
+        await vi.waitFor(() => expect(groupRouterPush).toHaveBeenLastCalledWith(
             `/settings/teams/${encodeURIComponent(serverId)}/team-1/authentication/directory/source-okta`,
-        );
+        ));
+        await openRowMenu(screen, 'account-ada');
         await screen.pressByTestIdAsync('open-external-source:binding-sso');
-        expect(groupRouterPush).toHaveBeenLastCalledWith(
+        await vi.waitFor(() => expect(groupRouterPush).toHaveBeenLastCalledWith(
             `/settings/teams/${encodeURIComponent(serverId)}/team-1/authentication/connection-acme`,
-        );
+        ));
     });
 
     it('opens the exact source owner of directory-created Group metadata', async () => {
@@ -585,6 +616,46 @@ describe('TeamGroupDetailScreen', () => {
         expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
     });
 
+    it('shows the add in flight on the chosen person until the Home answers', async () => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, GROUP_GET_PATH, {
+            body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, memberCount: 0 }),
+        });
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(serverId, TEAM_MEMBERS_LIST_PATH, {
+            body: {
+                items: [teamMembershipFixture({ id: 'membership-grace', accountId: 'account-grace',
+                    account: accountDisplayProfileFixture('Grace') })],
+                nextCursor: null,
+            },
+        });
+        let release!: () => void;
+        harness.answer(serverId, GROUP_MEMBER_ADD_PATH, {
+            respondAfter: new Promise<void>((resolve) => { release = resolve; }),
+            body: { status: 'added', member: teamGroupMemberFixture({ accountId: 'account-grace',
+                membershipId: 'membership-grace', account: accountDisplayProfileFixture('Grace') }) },
+        });
+
+        const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-add-member');
+        act(() => screen.pressByTestId('team-group-add-member'));
+        await waitForTestId(screen, 'team-group-candidate:account-grace');
+        const press = screen.pressByTestIdAsync('team-group-candidate:account-grace');
+        await vi.waitFor(() => {
+            expect(harness.requestsFor(GROUP_MEMBER_ADD_PATH)).toHaveLength(1);
+        });
+        // The pressed person stays in view, marked in progress, and the section's add stays where it was.
+        const pending = () => screen.tree.root.findAll((node) =>
+            node.props.testID === 'team-group-candidate:account-grace' && node.props.loading === true);
+        await vi.waitFor(() => expect(pending().length).toBeGreaterThan(0));
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-group-add-member');
+        release();
+        await press;
+        await vi.waitFor(() => {
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-group-candidate:account-grace');
+        });
+    });
+
     it('presents Group history as a radio group and explains a failed candidate load with retry', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, GROUP_GET_PATH, {
@@ -658,7 +729,7 @@ describe('TeamGroupDetailScreen', () => {
 
         const screen = await renderGroupDetail(serverId);
         await waitForTestId(screen, 'team-group-member:account-ada');
-        await screen.pressByTestIdAsync('team-group-member:account-ada');
+        await removeFromGroupThroughMenu(screen, 'account-ada');
 
         await vi.waitFor(() => {
             expect(harness.requestsFor(GROUP_MEMBER_REMOVE_PATH)).toHaveLength(1);
@@ -696,11 +767,11 @@ describe('TeamGroupDetailScreen', () => {
         const screen = await renderGroupDetail(serverId);
         await waitForTestId(screen, 'team-group-member:account-ada');
         vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
-        await screen.pressByTestIdAsync('team-group-member:account-ada');
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        await removeFromGroupThroughMenu(screen, 'account-ada');
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
         expect(harness.requestsFor(GROUP_MEMBER_REMOVE_PATH)).toHaveLength(0);
         expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-group-member:account-ada');
-        await screen.pressByTestIdAsync('team-group-member:account-ada');
+        await removeFromGroupThroughMenu(screen, 'account-ada');
 
         await vi.waitFor(() => {
             expect(harness.requestsFor(GROUP_MEMBER_REMOVE_PATH)).toHaveLength(1);
@@ -785,10 +856,9 @@ describe('TeamGroupDetailScreen', () => {
         const screen = await renderGroupDetail(serverId);
         await waitForTestId(screen, 'team-group-member:account-ada');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-group-stale');
-        // While the Group is current the roster row is activatable; this is the
-        // control that makes the withheld assertion below discriminating.
-        expect(screen.findAllByTestId('team-group-member:account-ada')
-            .find((node) => typeof node.props?.onPress === 'function')).toBeDefined();
+        // While the Group is current the row offers its roster change in its menu;
+        // this is the control that makes the withheld assertion below discriminating.
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-group-member-actions:account-ada');
 
         harness.answer(serverId, GROUP_GET_PATH, { status: 503, body: { error: 'unavailable' } });
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
@@ -801,12 +871,9 @@ describe('TeamGroupDetailScreen', () => {
         // Retained, not discarded.
         expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-group-member:account-ada');
         expect(screen.findByTestId('team-group-archive')?.props.disabled).toBe(true);
-        // The roster row carries its right-hand actions outside its pressable,
-        // so the row's own testID node is not the one holding `disabled`. What
-        // matters is that the row cannot be activated at all: no node under
-        // that id exposes a press handler while the Group is not current.
-        expect(screen.findAllByTestId('team-group-member:account-ada')
-            .find((node) => typeof node.props?.onPress === 'function')).toBeUndefined();
+        // The row still opens the person (a read), but its roster change is
+        // withheld: the menu that carried it is gone while the Group is not current.
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-group-member-actions:account-ada');
 
         harness.answer(serverId, GROUP_GET_PATH, {
             body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES }),
@@ -859,10 +926,11 @@ describe('TeamGroupDetailScreen', () => {
 
         const screen = await renderGroupDetail(serverId);
         await waitForTestId(screen, 'team-group-member:account-ada');
-        await screen.pressByTestIdAsync('team-group-member:account-ada');
+        await openRowMenu(screen, 'account-ada');
+        await screen.pressByTestIdAsync('add-to-group');
 
         // A directory-created Group still accepts native roster edits, so an
-        // external-only row is an add, never a read-only row.
+        // external-only row offers an add, never a read-only row.
         await vi.waitFor(() => {
             expect(harness.requestsFor(GROUP_MEMBER_ADD_PATH)).toHaveLength(1);
         });
@@ -1017,6 +1085,9 @@ describe('TeamGroupDetailScreen', () => {
 
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-group-members-empty');
         expect(screen.getTextContent()).not.toContain('No members in this Group yet');
+        // Its header says the kept members come back, not that it has none.
+        expect(screen.getTextContent()).toContain('teams.groups.archivedMemberCount');
+        expect(screen.getTextContent()).not.toContain('teams.groups.memberCount(count=0)');
     });
 
     it('withholds a second Group restore while its shared UI confirmation is unresolved', async () => {

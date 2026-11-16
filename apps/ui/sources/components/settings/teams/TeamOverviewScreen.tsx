@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { presentHomeInvitePeople, teamInvitePeopleAction } from '@/components/settings/home/governance/HomeInvitePeopleDialog';
 import { Avatar } from '@/components/ui/avatar/Avatar';
+import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SetupSteps, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
@@ -450,6 +451,8 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
                         id={membership.accountId}
                         size={MEMBER_PREVIEW_AVATAR_SIZE}
                         imageUrl={membership.account.avatarUrl}
+                        // Initials only for a named Account, like every other person mark.
+                        monogram={formatAccountDisplayName(membership.account)}
                       />
                     ),
                   }))}

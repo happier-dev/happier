@@ -97,8 +97,12 @@ export function readActionApprovalSubject(input: ActionApprovalPresentationInput
     if (input.actionId === 'scm.diffSummary.result.clear' && input.executionOriginV1?.machineId) {
         return { kind: 'machine', id: input.executionOriginV1.machineId };
     }
-    // The Home only routes the request: the thing acted on (a Machine, a Session) is the subject when there is one.
-    return references.find(reference => reference.kind !== 'home') ?? references[0];
+    // The Home only routes the request: the thing acted on (a Machine, a Session, a person) is the subject when there
+    // is one, before the Group and then the Team it happens in.
+    const rank = (reference: ApprovalActionReference) => reference.kind === 'home' ? 3
+        : reference.kind === 'team' ? 2 : reference.kind === 'group' ? 1 : 0;
+    return references.reduce<ApprovalActionReference | undefined>(
+        (best, reference) => best === undefined || rank(reference) < rank(best) ? reference : best, undefined);
 }
 
 /** Shared by immediate confirmation and retained decisions without rebuilding the consequence body. */
@@ -165,6 +169,17 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
                 source: t('capabilities.registries.detail.remove'), subject }),
             summary: t('capabilities.registries.detail.removeConfirm'),
             confirmLabel,
+        };
+    }
+    // Removing someone from a Group asks about that person and says what they lose; Details name the Group.
+    if (spec.id === 'teams.groups.members.remove') {
+        return {
+            title: input.kind === 'confirmation'
+                ? input.subject?.trim() ? t('teams.groups.removeMemberTitle', { name: input.subject.trim() }) : t('teams.groups.removeNative')
+                : t('actionPresentation.title', { actionId: spec.id, source: t('teams.groups.removeNative'), subject }),
+            summary: t('teams.groups.removeMemberBody'),
+            confirmLabel,
+            destructive: true,
         };
     }
     // Removing a provider says one verb everywhere: its menu row ("Remove provider"), this title and its button.

@@ -752,7 +752,7 @@ describe('TeamSettingsScreen', () => {
         // destructive emphasis.
         const archiveRow = screen.findAll((node) => (
             node.props.testID === 'team-settings-archive'
-            && node.props.title === 'teams.archive.action(name=Platform)'
+            && node.props.title === 'teams.archive.action'
         ))[0];
         expect(archiveRow).toBeDefined();
         expect(archiveRow?.props.destructive).not.toBe(true);
@@ -953,6 +953,20 @@ describe('TeamSettingsScreen defaults for members', () => {
             teamId: 'team-1',
             managedDefaults: { team: { permissionModeByAgentTargetKey: { [key]: 'read-only' } }, groups },
         });
+    });
+
+    it('says once, in the lock banner, that a viewer who changes nothing here cannot change the defaults', async () => {
+        const serverId = await addHomeWithTeam(teamSummaryFixture({
+            capabilities: teamCapabilitiesFixture({ manageSettings: false, managePolicy: false }),
+        }));
+
+        const screen = await renderSettings(serverId);
+        await waitForTestId(screen, 'team-settings-read-only');
+        await waitForTestId(screen, 'team-settings-member-defaults-agent:claude:header');
+        expect(screen.getTextContent()).not.toContain('teams.settings.memberDefaults.readOnlyTeam');
+        // Nothing is set for Claude, so its read-only row is a value that opens nothing.
+        expect(screen.tree.root.findAll((node) => node.props.testID === 'team-settings-member-defaults-agent:claude:header'
+            && typeof node.props.onPress === 'function')).toHaveLength(0);
     });
 
     it('shows members\' defaults to a viewer who cannot change them as values, with the reason', async () => {

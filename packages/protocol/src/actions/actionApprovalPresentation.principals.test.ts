@@ -23,4 +23,19 @@ describe('approval principal references', () => {
       { kind: 'account', id: 'person' }, { kind: 'team', id: 'team' }, { kind: 'group', id: 'group', teamId: 'team' },
     ]);
   });
+
+  it('names the Team and Group a Team membership Action acts in, so their raw ids leave Details', () => {
+    const rows = describeApprovalActionFields({ actionId: 'teams.groups.members.remove',
+      actionArgs: { v: 1, teamId: 'team-1', groupId: 'group-1', accountId: 'account-1' } }).rows;
+    expect(rows.find(row => row.path === 'teamId')).toMatchObject({ reference: { kind: 'team', id: 'team-1' },
+      // The Group reads with its Team, so the Team row moves to Technical details rather than repeating it.
+      technical: true });
+    expect(rows.find(row => row.path === 'groupId')).toHaveProperty('reference', { kind: 'group', id: 'group-1', teamId: 'team-1' });
+    expect(rows.find(row => row.path === 'accountId')).toHaveProperty('reference', { kind: 'account', id: 'account-1' });
+    // `groupId` is not a Team Group outside Team Actions (a widget group, a paused commit).
+    const commitRow = describeApprovalActionFields({ actionId: 'scm.diffSummary.commitPlan.includeHookChanges',
+      actionArgs: { cwd: '/repo', resultId: 'result', expectedRevision: 2, groupId: 'first', teamId: 'team-1',
+        beforeTreeOid: '1'.repeat(40), afterTreeOid: '2'.repeat(40) } }).rows.find(row => row.path === 'groupId');
+    expect(commitRow).not.toHaveProperty('reference');
+  });
 });
