@@ -727,6 +727,38 @@ describe('runner Agent session runtime source', () => {
         }));
     });
 
+    it('reports a development leaf that fails to evaluate as a plugin load failure naming its entry', async () => {
+        const { PluginModuleLoadError } = await import('@/plugins/runtime/moduleFailure');
+        const developmentAuthority = {
+            ...authority(),
+            retainedAgent: {
+                ...authority().retainedAgent,
+                pluginId: 'acme.development-agent',
+                agentId: 'acme.development-agent/codex',
+                sourceCustody: { kind: 'development' as const, registeredRootId: '/trusted/development/acme-agent' },
+                loadMode: 'source-ts' as const,
+            },
+        };
+        mocks.readAuthority.mockResolvedValue(developmentAuthority);
+        const evaluation = new TypeError('evaluation exploded');
+        mocks.loadFactory.mockRejectedValue(new PluginModuleLoadError('PLUGIN_DAEMON_MODULE_LOAD_FAILED',
+            "Failed to load plugin daemon entry '/trusted/development/acme-agent/src/index.ts': evaluation exploded", evaluation));
+
+        const source = await createRunnerAgentSessionRuntimeSource({
+            happyHomeDir: '/tmp/happier-runner-source',
+            publicReleaseRing: 'stable',
+            authorityFilePath: '/tmp/happier-runner-source/authority.json',
+            occurrenceId: 'occurrence:development-agent:current',
+        });
+
+        const failure = await source!.createRuntime({ signal: new AbortController().signal }).catch((error: unknown) => error);
+        expect(failure).toMatchObject({
+            code: 'PLUGIN_DAEMON_MODULE_LOAD_FAILED',
+            message: expect.stringContaining('/trusted/development/acme-agent/src/index.ts'),
+            cause: evaluation,
+        });
+    });
+
     it('does not mint runner-local currentness for a development authority without a daemon occurrence', async () => {
         mocks.readAuthority.mockResolvedValue({
             ...authority(),

@@ -61,6 +61,7 @@ import {
     resolveCurrentAgentRuntimeDaemonTurnContributions,
 } from './agentRuntimeDaemonServiceAuthorityClient';
 import { loadRetainedAgentRuntimeLeaf } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
+import { findPluginModuleLoadError } from '@/plugins/runtime/moduleFailure';
 import { runnerPinnedBundledCustodyCanSupersedeBootstrap } from '@/plugins/runtime/retainedPluginSourceAttestation';
 import {
     resolveAgentContributionQualifiedId,
@@ -936,6 +937,9 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     : {}),
             }).catch((error: unknown) => {
                 if (binding.sourceCustody.kind !== 'development') throw error;
+                // A present source that fails to evaluate is a plugin defect, not a
+                // stale runner: keep its typed load error, entry and cause.
+                if (findPluginModuleLoadError(error)?.code === 'PLUGIN_DAEMON_MODULE_LOAD_FAILED') throw error;
                 const message = error instanceof Error
                     ? error.message
                     : 'current trusted development Agent source is unavailable';
