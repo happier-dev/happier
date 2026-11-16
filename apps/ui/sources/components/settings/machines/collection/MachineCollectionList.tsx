@@ -26,16 +26,14 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { useMachinesSettingsViewModel, type MachinesSettingsViewModel } from '../machinesSettingsViewModel';
-import { useActiveActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
-import { readManagedInstallationPrompt } from '../managed/managedCreationPresentation';
 import { MachinePoolsSection } from '../sections/MachinePoolsSection';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import {
     MACHINES_ADD_ROUTE,
     MACHINES_THIS_COMPUTER_ROUTE,
+    buildMachineCollection,
     isMachineCollectionRowSelected,
     machineCollectionHref,
-    managedMachineConsentKey,
     machineCollectionRowKey,
     machinesIndexHref,
     partitionMachineCollectionRailRows,
@@ -326,14 +324,14 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     const selectedKey = rail ? resolveSelectedMachineCollectionKey(pathname, { serverId: readParam(params.serverId) }) : null;
 
     const [query, setQuery] = React.useState(() => readLastVisitedMachine()?.query ?? '');
-    const unfiltered = useMachineCollection({
+    const total = React.useMemo(() => buildMachineCollection({
         groups: viewModel.visibleMachineGroups,
         groupedByHome: viewModel.showMachinesGroupedByServer,
         managedByServerId: viewModel.managedByServerId,
         managedFirstAnswerPending: viewModel.managedFirstAnswerPending,
         presetsByServerId: viewModel.presetsByServerId,
-    });
-    const total = unfiltered.count;
+    }).count, [viewModel.visibleMachineGroups, viewModel.showMachinesGroupedByServer, viewModel.managedByServerId,
+        viewModel.managedFirstAnswerPending, viewModel.presetsByServerId]);
     const searchable = total > SEARCH_THRESHOLD;
     const teamServerIds = React.useMemo(() => Object.entries(viewModel.presetsByServerId ?? {})
         .filter(([, presets]) => presets.some(preset => preset.owner.kind === 'team')).map(([serverId]) => serverId), [viewModel.presetsByServerId]);
@@ -343,32 +341,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         for (const row of [...teams.rows, ...teams.archivedRows]) (names[row.address.serverId] ??= {})[row.team.id] = row.team.name;
         return names;
     }, [teams.rows, teams.archivedRows]);
-    // A creation waiting on the user's consent says so on its row; its page asks the question.
-    const activeOperations = useActiveActionOperations();
-    const awaitingConsentKey = activeOperations.flatMap(operation => {
-        const prompt = readManagedInstallationPrompt(operation);
-        const reference = operation.snapshot.domainRef;
-        return prompt && reference?.kind === 'managedMachine' ? [managedMachineConsentKey(operation.serverId, reference.id)] : [];
-    }).sort().join('\n');
-    const awaitingConsent = React.useMemo(() => new Set(awaitingConsentKey ? awaitingConsentKey.split('\n') : []), [awaitingConsentKey]);
-    // A creation in flight reads on its row the way its page reads it ("Creating", not "May exist"): each created
-    // machine's latest active operation goes to the lifecycle owner, which decides what it means. Only the facts it
-    // classifies by key the map, so progress within one state leaves the collection alone.
-    const latestByMachine = new Map<string, (typeof activeOperations)[number]>();
-    for (const operation of activeOperations) {
-        const reference = operation.snapshot.domainRef;
-        if (reference?.kind !== 'managedMachine') continue;
-        const key = managedMachineConsentKey(operation.serverId, reference.id);
-        const previous = latestByMachine.get(key);
-        if (!previous || operation.snapshot.createdAt > previous.snapshot.createdAt) latestByMachine.set(key, operation);
-    }
-    const creationEntries = [...latestByMachine];
-    const creationOperationsKey = creationEntries.map(([key, operation]) => [key, operation.snapshot.operationId,
-        operation.snapshot.state, operation.observation, operation.isUnavailableProjection].join('\t')).sort().join('\n');
-    const creationOperations = React.useMemo(() => new Map(creationEntries), [creationOperationsKey]);
     const collection = useMachineCollection({
-        awaitingConsent,
-        creationOperations,
         groups: viewModel.visibleMachineGroups,
         groupedByHome: viewModel.showMachinesGroupedByServer,
         managedFirstAnswerPending: viewModel.managedFirstAnswerPending,

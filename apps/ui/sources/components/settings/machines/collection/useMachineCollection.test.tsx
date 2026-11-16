@@ -8,12 +8,14 @@ import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePres
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { preloadTranslationsForSettings, setPreferredLanguageFromSettings, getPreferredLanguage, t } from '@/text';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
 import type { MachineCollection, MachineCollectionRow } from './machineCollectionModel';
 
 installDisconnectedServerSocketBoundary();
 const { machineCollectionRowKey } = await import('./machineCollectionModel');
 const { storage } = await import('@/sync/domains/state/storageStore');
+const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
 const { useMachineCollection, useMachineCollectionRowPresence, useMachineCollectionPresenceRows, useMachineFleetPresence } = await import('./useMachineCollection');
 const { useMachineListByServerId } = await import('@/sync/domains/state/storage');
 const { useMachinePresenceSummary } = await import('@/sync/domains/machines/reachability/useMachinePresenceSummary');
@@ -70,7 +72,77 @@ function Fleet() {
     return collection.sections.flatMap(section => section.rows.map(row => <Row key={machineCollectionRowKey(row)} row={row} />));
 }
 
-afterEach(() => { standardCleanup(); counters.clear(); });
+afterEach(() => { standardCleanup(); counters.clear(); actionOperationStore.reset(); });
+
+function managedOperationCollection(allocation: 'bound' | 'may-exist') {
+    const managed = ManagedMachineV1Schema.parse({ id: 'operation-machine', homeId: HOME, custodianAccountId: SCOPE.accountId,
+        enrolledMachineId: allocation === 'bound' ? 'joined-machine' : undefined,
+        launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
+        controller: { machineId: 'controller', installationId: 'installation' }, allocation, creationState: 'active',
+        ...(allocation === 'bound' ? { resource: { contributionRef: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, value: {} } } : {}),
+        desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+    const groups: readonly ActiveSelectionMachineGroup[] = [{ serverId: HOME, serverName: 'Home', accountScope: SCOPE, status: 'idle', machines: [] }];
+    const input = { groups, groupedByHome: false, managedByServerId: { [HOME]: [managed] } };
+    const snapshot: ActionOperationSnapshotV1 = { version: 1, operationId: 'managed-operation', revision: 1,
+        actionId: allocation === 'may-exist' ? 'machines.managed.acquire' : 'machines.managed.power.set', state: 'running',
+        scope: { accountId: SCOPE.accountId, machineId: 'controller' }, title: 'Manage machine', createdAt: 1, startedAt: 2, cancellation: 'supported',
+        domainRef: { kind: 'managedMachine', id: managed.id,
+            ...(allocation === 'bound' ? { controller: managed.controller, resource: managed.resource } : {}) } };
+    return { input, managed, snapshot };
+}
+
+it('gives rail and index collection consumers the same qualified acquire without waking for unrelated operations', async () => {
+    const { input, snapshot } = managedOperationCollection('may-exist');
+    let renders = 0;
+    const hook = await renderHook(() => {
+        renders++;
+        return { rail: useMachineCollection(input), index: useMachineCollection(input) };
+    });
+    const rows = () => [hook.getCurrent().rail, hook.getCurrent().index].map(value => value.sections.flatMap(section => section.rows)[0]!);
+    try {
+        expect(rows().map(row => row.presenceWord)).toEqual(Array(2).fill(t('managedMachines.creation.mayExistShort')));
+        await act(async () => actionOperationStore.mergeSnapshots({ serverId: HOME, snapshots: [snapshot] }));
+        expect(rows().map(row => row.presenceWord)).toEqual(Array(2).fill(t('managedMachines.creation.creatingShort')));
+        const before = renders;
+        const retained = hook.getCurrent();
+        await act(async () => {
+            actionOperationStore.mergeSnapshots({ serverId: 'other-home', snapshots: [{ ...snapshot, operationId: 'wrong-home', createdAt: 20 }] });
+            actionOperationStore.mergeSnapshots({ serverId: HOME, snapshots: [
+                { ...snapshot, operationId: 'wrong-account', createdAt: 30, scope: { ...snapshot.scope, accountId: 'other-account' } },
+                { ...snapshot, operationId: 'wrong-controller', createdAt: 40, scope: { ...snapshot.scope, machineId: 'other-controller' } },
+                { ...snapshot, operationId: 'wrong-resource', createdAt: 50, domainRef: { kind: 'managedMachine', id: 'other-resource' } },
+            ] });
+        });
+        expect(renders - before).toBe(0);
+        expect(hook.getCurrent()).toBe(retained);
+        await act(async () => actionOperationStore.mergeSnapshots({ serverId: HOME, snapshots: [{ ...snapshot, revision: 2,
+            state: 'failed', settledAt: 3, error: { error: 'Purchase failed', errorCode: 'provider_unavailable' } }] }));
+        expect(rows().map(row => row.presenceWord)).toEqual(Array(2).fill(t('managedMachines.creation.mayExistShort')));
+    } finally { await hook.unmount(); }
+});
+
+it('updates collection status for phase-only changes and retains terminal setup diagnostics on the enrolled target', async () => {
+    const { input, managed, snapshot } = managedOperationCollection('bound');
+    const hook = await renderHook(() => useMachineCollection(input));
+    const row = () => hook.getCurrent().sections.flatMap(section => section.rows)[0]!;
+    const initialPresence = row().presence;
+    try {
+        const busy = { ...snapshot, progress: { kind: 'phase' as const, phase: 'managed.intent.busy' } };
+        await act(async () => actionOperationStore.mergeSnapshots({ serverId: HOME, snapshots: [busy] }));
+        expect(row().presence).toBe(t('managedRetention.busy'));
+        await act(async () => actionOperationStore.mergeSnapshots({ serverId: HOME, snapshots: [{ ...busy, revision: 2,
+            progress: { kind: 'phase', phase: 'managed.intent.draining' } }] }));
+        expect(row().presence).toBe(t('managedRetention.draining'));
+        const setup: ActionOperationSnapshotV1 = { ...snapshot, operationId: 'setup', actionId: 'machines.setup.apply', createdAt: 10,
+            scope: { accountId: SCOPE.accountId, machineId: managed.enrolledMachineId! },
+            domainRef: { kind: 'machineSetup', serverId: managed.homeId, machineId: managed.enrolledMachineId!, managedId: managed.id } };
+        await act(async () => actionOperationStore.mergeSnapshots({ serverId: HOME, snapshots: [setup] }));
+        expect(row().presence).toBe(initialPresence);
+        await act(async () => actionOperationStore.mergeSnapshots({ serverId: HOME, snapshots: [{ ...setup, revision: 2,
+            state: 'failed', settledAt: 11, error: { error: 'Credential unavailable', errorCode: 'credential_unavailable' } }] }));
+        expect(row().presence).toBe(t('managedMachines.credential.refused'));
+    } finally { await hook.unmount(); }
+});
 
 it('keeps the sidebar and header on one presence fact after Create and a facts-equal inventory refresh', async () => {
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://collection-identity.test', serverIdentityId: HOME });
