@@ -14,7 +14,7 @@ import { log } from "@/utils/logging/log";
 import { db } from "@/storage/db";
 import { Socket } from "socket.io";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
+import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { recordMachineAlive } from "@/app/presence/presenceRecorder";
 import { replayWorkflowRunMachineWakes } from '@/app/workflows/workflowRunMachineRouting';
@@ -53,7 +53,6 @@ import { serializeMachineKeyBasis } from "@/app/machines/machineSerialization";
 import { readMachineDevcontainerChildInTx } from '@/app/machines/managed/managedRows';
 import { USAGE_SOURCES_INVALIDATION_EVENT_V1, UsageSourcesInvalidationV1Schema } from '@happier-dev/protocol/usage/usageSources';
 import {
-    resolveMachineAdmissionInTx,
     resolveMachineAccessInTx,
     resolveMachineAccessForActorsInTx,
     resolveCurrentMachineRecipientAccountIdsInTx,
@@ -716,18 +715,19 @@ export function machineUpdateHandler(
         }
     });
 
+    // The handshake admitted this socket only for its custodian Account's own, unrevoked Machine and
+    // verified installation; revoke, replacement and installation change disconnect it by push. A
+    // content-free invalidation to that same Account re-reads no Machine row per event: recipients
+    // re-authorize their own reads (OWNER-RULINGS 2026-11-16, remove overbuilt re-checks).
+    const isAdmittedCustodianInstallationPublisher = (installationId: string): boolean =>
+        socket.connected && hasCurrentMachineSocketInstallation(socket, installationId);
+
     socket.on(SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, async (data: unknown) => {
         try {
             const parsed = ScmDiffSummaryMachineResultUpdateSchema.safeParse(data);
             const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
             if (!parsed.success || !machineId || !socket.connected) return;
-            const admitted = await inReadSnapshot(async tx => {
-                const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
-                return admission.kind === 'admitted' && admission.custodianAccountId === userId
-                    && admission.installationId === parsed.data.installationId
-                    && hasCurrentMachineSocketInstallation(socket, admission.installationId);
-            });
-            if (!admitted) return;
+            if (!isAdmittedCustodianInstallationPublisher(parsed.data.installationId)) return;
             // Private saved-result identity stays with the custodian Account. Reads retain their existing authorization.
             eventRouter.emitEphemeral({ userId, payload: { type: SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, machineId,
                 resultId: parsed.data.resultId, revision: parsed.data.revision }, recipientFilter: { type: 'user-scoped-only' } });
@@ -743,13 +743,7 @@ export function machineUpdateHandler(
             const parsed = ExecutionRunMachineActivityV1Schema.safeParse(data);
             const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
             if (!parsed.success || !machineId || !socket.connected) return;
-            const admitted = await inReadSnapshot(async tx => {
-                const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
-                return admission.kind === 'admitted' && admission.custodianAccountId === userId
-                    && admission.installationId === parsed.data.installationId
-                    && hasCurrentMachineSocketInstallation(socket, admission.installationId);
-            });
-            if (!admitted) return;
+            if (!isAdmittedCustodianInstallationPublisher(parsed.data.installationId)) return;
             // This is a private source invalidation, not Session roster state or
             // a publication to every person who can access this Machine.
             eventRouter.emitEphemeral({ userId, payload: { type: 'execution-run-updated', machineId,
@@ -766,13 +760,7 @@ export function machineUpdateHandler(
             const parsed = UsageSourcesInvalidationV1Schema.safeParse(data);
             const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
             if (!parsed.success || !machineId || !socket.connected) return;
-            const admitted = await inTx(async tx => {
-                const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
-                return admission.kind === 'admitted' && admission.custodianAccountId === userId
-                    && admission.installationId === parsed.data.installationId
-                    && hasCurrentMachineSocketInstallation(socket, admission.installationId);
-            });
-            if (!admitted) return;
+            if (!isAdmittedCustodianInstallationPublisher(parsed.data.installationId)) return;
             // Only the capture Account is woken. Shared Machine access grants no
             // right to its custodian's private source inventory or accounting.
             eventRouter.emitEphemeral({ userId, payload: parsed.data, recipientFilter: { type: 'user-scoped-only' } });

@@ -11,6 +11,8 @@ import { setAccountStatusInTx } from '@/app/home/governance/accountLifecycle';
 import { eventRouter } from '@/app/events/connectionEventRouter';
 import type { ClientConnection } from '@/app/events/eventPayloadTypes';
 import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { updateMachineInstallationIdentityInTx } from '@/app/machines/installationIdentityUpdate';
+import { revokeMachineInTx } from '@/app/machines/machineMutations';
 import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { activityCache } from '@/app/presence/sessionCache';
 import { markMachinePresenceInactive, persistMachinePresence } from '@/app/presence/persistMachinePresence';
@@ -1127,7 +1129,8 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
         },
     );
 
-    it.each(['installation', 'custodian', 'revoked', 'scope', 'private_payload'] as const)(
+    // Machine.accountId never changes after registration, so custodian loss is not a reachable case.
+    it.each(['installation', 'revoked', 'scope', 'private_payload'] as const)(
         'admits content-free usage source settlement only while publisher authority is current (%s)', async loss => {
             const owner = await db.account.create({ data: { publicKey: `usage-${randomUUID()}`, encryptionMode: 'plain' } });
             const machine = await createMachine(owner.id);
@@ -1144,6 +1147,10 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
                 ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
             } });
             const payload = { type: 'usage-sources-invalidated', machineId: machine.id, installationId: machine.installationId };
+            publisher.disconnect.mockImplementation(() => { publisher.connected = false; });
+            const publisherConnection: ClientConnection = { userId: owner.id, connectionType: 'machine-scoped', machineId: machine.id,
+                socket: publisher as unknown as Socket };
+            eventRouter.addConnection(owner.id, publisherConnection);
             const wakes = () => reader.emit.mock.calls.filter(([event, value]) => event === 'ephemeral' && value?.type === payload.type)
                 .map(([, value]) => value);
             try {
@@ -1151,16 +1158,17 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
                 await invalidate(payload);
                 expect(wakes()).toEqual([payload]);
                 reader.emit.mockClear();
-                if (loss === 'installation') await db.machine.update({ where: { id: machine.id }, data: { installationId: 'replacement' } });
-                if (loss === 'custodian') {
-                    const next = await db.account.create({ data: { publicKey: `usage-next-${randomUUID()}`, encryptionMode: 'plain' } });
-                    await db.machine.update({ where: { id: machine.id }, data: { accountId: next.id } });
-                }
-                if (loss === 'revoked') await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
+                // Losses arrive through their canonical owners, which disconnect the admitted socket.
+                if (loss === 'installation') await inTx(tx => updateMachineInstallationIdentityInTx(tx, machine, { installationId: 'replacement' }));
+                if (loss === 'revoked') await inTx(tx => revokeMachineInTx(tx, { accountId: owner.id, machineId: machine.id }));
+                if (loss === 'installation' || loss === 'revoked') expect(publisher.connected).toBe(false);
                 if (loss === 'scope') publisher.data!.clientType = 'user-scoped';
                 await invalidate(loss === 'private_payload' ? { ...payload, root: '/private/source' } : payload);
                 expect(wakes()).toEqual([]);
-            } finally { eventRouter.removeConnection(owner.id, connection); }
+            } finally {
+                eventRouter.removeConnection(owner.id, publisherConnection);
+                eventRouter.removeConnection(owner.id, connection);
+            }
         },
     );
 
@@ -1208,10 +1216,15 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             await publish(payload);
             expect(updates(0)).toEqual([]);
             publisher.data!.clientType = 'machine-scoped';
-            await db.machine.update({ where: { id: machine.id }, data: { installationId: 'replacement-installation' } });
+            // An installation change disconnects the admitted socket through its canonical owner.
+            await inTx(tx => updateMachineInstallationIdentityInTx(tx, machine, { installationId: 'replacement-installation' }));
+            expect(publisher.connected).toBe(false);
             await publish(payload);
             expect(updates(0)).toEqual([]);
-            await db.machine.update({ where: { id: machine.id }, data: { installationId: machine.installationId } });
+            // The daemon reconnects under its restored, verified installation.
+            await inTx(tx => updateMachineInstallationIdentityInTx(tx, { ...machine, installationId: 'replacement-installation' },
+                { installationId: machine.installationId }));
+            publisher.connected = true;
             await publish(payload);
             expect(updates(0)).toHaveLength(1);
             readers[0]!.socket.emit.mockClear();
@@ -1224,6 +1237,46 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
         } finally {
             eventRouter.removeConnection(owner.id, publisherConnection);
             for (const reader of readers) eventRouter.removeConnection(reader.accountId, reader.connection);
+        }
+    });
+
+    // OWNER-RULINGS 2026-11-16 "Remove overbuilt re-reads": the handshake admitted this exact
+    // custodian Machine socket and installation; revoke and installation change disconnect it by push.
+    // A content-free invalidation to the same Account therefore reads no Machine row per event.
+    it('relays content-free Machine invalidations from the admitted socket without a Machine read per event', async () => {
+        const owner = await db.account.create({ data: { publicKey: `relay-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const reader = Object.assign(createFakeSocket({ id: `relay-reader-${randomUUID()}`, data: { clientType: 'user-scoped' } }),
+            { disconnect: vi.fn() });
+        const connection: ClientConnection = { userId: owner.id, connectionType: 'user-scoped', socket: reader as unknown as Socket };
+        eventRouter.addConnection(owner.id, connection);
+        const publisher = Object.assign(createFakeSocket({ data: {
+            clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId,
+        } }), { disconnect: vi.fn() });
+        machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+        } });
+        const installationId = machine.installationId;
+        const events = [
+            ['execution-run-updated', { machineId: machine.id, installationId, runId: 'detached-run' }],
+            ['scm-diff-summary-result-updated', { machineId: machine.id, installationId,
+                ...ScmDiffSummaryResultRevisionHintSchema.parse({ resultId: 'accepted-proposal', revision: 10 }) }],
+            ['usage-sources-invalidated', { type: 'usage-sources-invalidated', machineId: machine.id, installationId }],
+        ] as const;
+        let machineReads = 0;
+        const stopObserving = observeSqliteRequests({ before: request => {
+            if (request.model === 'Machine') machineReads += 1;
+        } });
+        try {
+            for (const [event, payload] of events) {
+                for (let index = 0; index < 3; index += 1) await getSocketHandler(publisher, event)(payload);
+            }
+            expect(reader.emit.mock.calls.filter(([name]) => name === 'ephemeral')).toHaveLength(9);
+            expect(machineReads).toBe(0);
+        } finally {
+            stopObserving();
+            eventRouter.removeConnection(owner.id, connection);
         }
     });
 
