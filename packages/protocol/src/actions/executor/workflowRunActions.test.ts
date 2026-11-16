@@ -3314,8 +3314,16 @@ describe('shared Account workflow run owner', () => {
     expect(readReportPolicy).toHaveBeenCalledTimes(scenario.delivery ? 1 : 0);
   });
 
-  it.each(['restore_action', 'retry_action', 'restore_parallel'] as const)(
-    'recovers non-Agent progress and rejoins an identical response-loss replay (%s)', async scenario => {
+  it.each(['restore_action', 'retry_action', 'restore_parallel', 'restore_denied', 'restore_cancelled', 'restore_unknown',
+    'retry_rejoin_unavailable', 'restore_rejoin_unavailable', 'retry_rejoin_cancelled', 'restore_rejoin_cancelled'] as const)(
+    'preserves non-Agent recovery outcomes and response-loss causes (%s)', async testCase => {
+    const rejoinFailure = testCase.includes('_rejoin_');
+    const restoreFailure = testCase === 'restore_denied' || testCase === 'restore_cancelled' || testCase === 'restore_unknown';
+    const scenario = testCase.startsWith('retry_') ? 'retry_action' : testCase === 'restore_parallel' ? testCase : 'restore_action';
+    const failure = testCase.endsWith('_cancelled') ? Object.assign(new Error('cancelled'), { name: 'AbortError' })
+      : testCase === 'restore_denied' ? Object.assign(new Error('run_access_denied'), { code: 'run_access_denied' })
+      : testCase === 'restore_unknown' ? new Error('restore_observation_failed')
+      : Object.assign(new Error('storage_unavailable'), { code: 'storage_unavailable' });
     const snapshot = runSnapshot();
     const accepted = await materializeWorkflowAcceptedSnapshotV1({
       definition: validateWorkflowDefinition({ version: 1, inputs: [], defaults: {},
@@ -3364,13 +3372,19 @@ describe('shared Account workflow run owner', () => {
     let replacementProgress: unknown;
     let restorations = 0;
     let admissions = 0;
+    let recoveryIssued = false;
     const rows = new Map([[root.index.id, { index: root.index, contentEnvelope: root.contentEnvelope, parentRevision: 2 }],
       [recordId, { index, contentEnvelope, parentRevision: 2 }]]);
     const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
-      if (operation.operation === 'get') return { ...snapshot, checkpointEnvelope };
+      if (operation.operation === 'get') {
+        if (recoveryIssued && rejoinFailure) throw failure;
+        return { ...snapshot, checkpointEnvelope };
+      }
       if (operation.operation === 'invocations.get') return { invocation: rows.get(String(operation.invocationId)) };
       if (operation.operation === 'invocations.list') return { invocations: [...rows.values()].map(row => row.index), nextCursor: null };
       if (operation.operation !== 'invocations.recover') throw new Error('unexpected_storage_operation');
+      recoveryIssued = true;
+      if (rejoinFailure) throw Object.assign(new Error('connection_lost'), { code: 'ECONNRESET' });
       // Substitute only persistent storage; recovery opens and seals the real envelopes.
       const recoveries = operation.recoveries as { newInvocationId: string; contentEnvelope: string }[];
       expect(recoveries).toHaveLength(1);
@@ -3393,7 +3407,7 @@ describe('shared Account workflow run owner', () => {
       admissions++;
       return { disposition: 'accepted', run: snapshot.run, invocations: [replacement] };
     } }), observeRecovery: async () => ({ activity: 'not_active', canReattach: false, canContinueConversation: false }),
-      restoreWorkspace: async () => { restorations++; return { ok: true }; } });
+      restoreWorkspace: async () => { restorations++; if (restoreFailure) throw failure; return { ok: true }; } });
     const context = { authority: 'present_user', callerPermissionMode: 'safe-yolo', actionRequestId: 'recover-non-agent',
       externalActionTarget: { kind: 'machine', machineId: 'machine-a' } } as const;
     const args = scenario === 'retry_action'
@@ -3403,6 +3417,15 @@ describe('shared Account workflow run owner', () => {
         invocations: [{ kind: 'restore_workspace' as const, invocation: { recordId }, conversation: 'fresh_agent' as const, input: { kind: 'original' as const } }] }, context };
     const expected = { run: { state: 'queued', revision: 3 },
       ...(scenario === 'retry_action' ? { disposition: 'accepted' } : { intent: 'resumed' }) };
+    if (restoreFailure || rejoinFailure) {
+      const result = owner.execute(args);
+      if (rejoinFailure && !testCase.endsWith('_cancelled')) {
+        await expect(result).rejects.toMatchObject({ code: 'storage_unavailable' });
+      } else await expect(result).rejects.toBe(failure);
+      expect(admissions).toBe(0);
+      expect(replacementProgress).toBeUndefined();
+      return;
+    }
     await expect(owner.execute(args)).resolves.toMatchObject(expected);
     await expect(owner.execute(args)).resolves.toMatchObject(expected);
     expect(admissions).toBe(1);

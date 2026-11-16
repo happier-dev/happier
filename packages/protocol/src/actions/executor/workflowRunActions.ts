@@ -2174,48 +2174,43 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         }
       }
       if (isIndeterminateWrite(error) || code === 'conflict' || code === 'currentness_conflict') {
-        try {
-          const fresh = await openAccepted(args.input.runId, signal);
-          const freshEncryption = { accountId: fresh.accountId, enc: fresh.enc };
-          const reopened = await Promise.all(prepared.flatMap((item) => [
-            readPriorProgress(args.input.runId, item.prior.index.id, freshEncryption, signal),
-            readPriorProgress(args.input.runId, item.newId, freshEncryption, signal),
-          ]));
-          const freshCheckpoint = await openSnapshotCheckpoint({
-            runId: args.input.runId,
-            checkpointEnvelope: fresh.snapshot.checkpointEnvelope,
-            ...freshEncryption,
-            ...(signal ? { signal } : {}),
+        const fresh = await openAccepted(args.input.runId, signal);
+        const freshEncryption = { accountId: fresh.accountId, enc: fresh.enc };
+        const reopened = await Promise.all(prepared.flatMap((item) => [
+          readPriorProgress(args.input.runId, item.prior.index.id, freshEncryption, signal),
+          readPriorProgress(args.input.runId, item.newId, freshEncryption, signal),
+        ]));
+        const freshCheckpoint = await openSnapshotCheckpoint({
+          runId: args.input.runId,
+          checkpointEnvelope: fresh.snapshot.checkpointEnvelope,
+          ...freshEncryption,
+          ...(signal ? { signal } : {}),
+        });
+        const exact = prepared.every((item, index) => {
+          const freshPrior = reopened[index * 2]!;
+          const replacement = reopened[index * 2 + 1]!;
+          return freshPrior.index.lifecycle === 'superseded'
+            && replacement.parentRevision === fresh.snapshot.run.revision
+            && replacement.index.parentRecordId === item.parentRecordId
+            && replacement.index.memberOrdinal === item.prior.index.memberOrdinal
+            && replacement.index.attempt === item.newAttempt
+            && replacement.index.lifecycle === 'pending'
+            && sameStrictJsonValue(replacement.progress, item.progress);
+        });
+        if (fresh.snapshot.run.revision === args.input.expectedRevision + 1
+          && exact
+          && freshCheckpoint?.nextSequence === (BigInt(checkpoint.nextSequence) + BigInt(prepared.length)).toString()) {
+          const selected = reopened[prepared.findIndex((item) => item.prior.index.id === prior.index.id) * 2 + 1]!;
+          return WorkflowActionOutputSchemasV1['workflow.run.invocations.retry'].parse({
+            run: fresh.snapshot.run,
+            invocation: selected.index,
+            disposition: 'accepted',
           });
-          const exact = prepared.every((item, index) => {
-            const freshPrior = reopened[index * 2]!;
-            const replacement = reopened[index * 2 + 1]!;
-            return freshPrior.index.lifecycle === 'superseded'
-              && replacement.parentRevision === fresh.snapshot.run.revision
-              && replacement.index.parentRecordId === item.parentRecordId
-              && replacement.index.memberOrdinal === item.prior.index.memberOrdinal
-              && replacement.index.attempt === item.newAttempt
-              && replacement.index.lifecycle === 'pending'
-              && sameStrictJsonValue(replacement.progress, item.progress);
-          });
-          if (fresh.snapshot.run.revision === args.input.expectedRevision + 1
-            && exact
-            && freshCheckpoint?.nextSequence === (BigInt(checkpoint.nextSequence) + BigInt(prepared.length)).toString()) {
-            const selected = reopened[prepared.findIndex((item) => item.prior.index.id === prior.index.id) * 2 + 1]!;
-            return WorkflowActionOutputSchemasV1['workflow.run.invocations.retry'].parse({
-              run: fresh.snapshot.run,
-              invocation: selected.index,
-              disposition: 'accepted',
-            });
-          }
-          if (code === 'conflict' || code === 'currentness_conflict') {
-            return WorkflowActionOutputSchemasV1['workflow.run.invocations.retry'].parse({ run: fresh.snapshot.run, invocation: prior.index, disposition: 'conflict' });
-          }
-          throw workflowError('currentness_conflict');
-        } catch (rejoinError) {
-          if ((rejoinError as { code?: unknown }).code === 'content_unavailable') throw rejoinError;
-          throw workflowError('currentness_conflict');
         }
+        if (code === 'conflict' || code === 'currentness_conflict') {
+          return WorkflowActionOutputSchemasV1['workflow.run.invocations.retry'].parse({ run: fresh.snapshot.run, invocation: prior.index, disposition: 'conflict' });
+        }
+        throw workflowError('currentness_conflict');
       }
       translateStorageError(error);
     }
@@ -2332,13 +2327,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           if (prior.progress.execution && choice.acknowledgeUncertainPriorEffects !== true) throw workflowError('workflow_outcome_unresolved');
           if (choice.conversation === 'same_conversation' && !evidence.canContinueConversation) throw workflowError('ineligible_state');
           for (const workspace of restoreWorkspaces) {
-            let restored;
-            try {
-              restored = await deps.restoreWorkspace?.(workspace)
-                ?? { ok: false as const, code: 'workflow_workspace_restore_unavailable' as const };
-            } catch {
-              throw workflowError('workflow_workspace_restore_failed');
-            }
+            const restored = await deps.restoreWorkspace?.(workspace)
+              ?? { ok: false as const, code: 'workflow_workspace_restore_unavailable' as const };
             if (!restored.ok) throw workflowError(restored.code);
           }
         }
@@ -2437,41 +2427,36 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     } catch (error) {
       const code = (error as { response?: { data?: { error?: unknown } } })?.response?.data?.error;
       if (isIndeterminateWrite(error) || code === 'conflict' || code === 'currentness_conflict') {
-        try {
-          const fresh = await openAccepted(args.input.runId, signal);
-          const freshEncryption = { accountId: fresh.accountId, enc: fresh.enc };
-          const rows = await Promise.all(preparedRecoveries.flatMap((prepared) => [
-            readPriorProgress(args.input.runId, prepared.prior.index.id, freshEncryption, signal),
-            readPriorProgress(args.input.runId, prepared.newId, freshEncryption, signal),
-          ]));
-          const freshCheckpoint = await openSnapshotCheckpoint({
-            runId: args.input.runId,
-            checkpointEnvelope: fresh.snapshot.checkpointEnvelope,
-            ...freshEncryption,
-            ...(signal ? { signal } : {}),
-          });
-          const exact = fresh.snapshot.run.revision === args.input.expectedRevision + 1
-            && preparedRecoveries.every((prepared, index) => {
-              const freshPrior = rows[index * 2]!;
-              const replacement = rows[index * 2 + 1]!;
-              return freshPrior.index.lifecycle === 'superseded'
-                && replacement.parentRevision === fresh.snapshot.run.revision
-                && replacement.index.runId === args.input.runId
-                && replacement.index.parentRecordId === prepared.prior.index.parentRecordId
-                && replacement.index.memberOrdinal === prepared.prior.index.memberOrdinal
-                && replacement.index.sequence === prepared.newSequence
-                && replacement.index.attempt === prepared.newAttempt
-                && replacement.index.lifecycle === 'pending'
-                && replacement.progress.previousAttemptRecordId === prepared.prior.index.id
-                && sameStrictJsonValue(replacement.progress, prepared.progress);
-            })
-            && freshCheckpoint?.nextSequence === nextSequence.toString();
-          if (exact) return WorkflowActionOutputSchemasV1['workflow.run.resume'].parse({ run: fresh.snapshot.run, intent: 'resumed' });
-          throw workflowError('currentness_conflict');
-        } catch (rejoinError) {
-          if ((rejoinError as { code?: unknown }).code === 'content_unavailable') throw rejoinError;
-          throw workflowError('currentness_conflict');
-        }
+        const fresh = await openAccepted(args.input.runId, signal);
+        const freshEncryption = { accountId: fresh.accountId, enc: fresh.enc };
+        const rows = await Promise.all(preparedRecoveries.flatMap((prepared) => [
+          readPriorProgress(args.input.runId, prepared.prior.index.id, freshEncryption, signal),
+          readPriorProgress(args.input.runId, prepared.newId, freshEncryption, signal),
+        ]));
+        const freshCheckpoint = await openSnapshotCheckpoint({
+          runId: args.input.runId,
+          checkpointEnvelope: fresh.snapshot.checkpointEnvelope,
+          ...freshEncryption,
+          ...(signal ? { signal } : {}),
+        });
+        const exact = fresh.snapshot.run.revision === args.input.expectedRevision + 1
+          && preparedRecoveries.every((prepared, index) => {
+            const freshPrior = rows[index * 2]!;
+            const replacement = rows[index * 2 + 1]!;
+            return freshPrior.index.lifecycle === 'superseded'
+              && replacement.parentRevision === fresh.snapshot.run.revision
+              && replacement.index.runId === args.input.runId
+              && replacement.index.parentRecordId === prepared.prior.index.parentRecordId
+              && replacement.index.memberOrdinal === prepared.prior.index.memberOrdinal
+              && replacement.index.sequence === prepared.newSequence
+              && replacement.index.attempt === prepared.newAttempt
+              && replacement.index.lifecycle === 'pending'
+              && replacement.progress.previousAttemptRecordId === prepared.prior.index.id
+              && sameStrictJsonValue(replacement.progress, prepared.progress);
+          })
+          && freshCheckpoint?.nextSequence === nextSequence.toString();
+        if (exact) return WorkflowActionOutputSchemasV1['workflow.run.resume'].parse({ run: fresh.snapshot.run, intent: 'resumed' });
+        throw workflowError('currentness_conflict');
       }
       translateStorageError(error);
     }
