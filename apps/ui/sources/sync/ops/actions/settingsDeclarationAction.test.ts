@@ -748,12 +748,13 @@ describe('Home atmosphere picture and Project mutations', () => {
 const { storage } = await import('@/sync/domains/state/storage');
 async function installVoiceMachineFixture(machines: Readonly<Record<string, Machine>>) {
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishMachineActivityForTest, publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
     const serverId = getActiveServerSnapshot().serverId;
     const scope = await activateStorageAccountScope({ serverId, accountId: 'test-account' });
     onTestFinished(() => { scope.dispose(); });
-    storage.setState({ machines: { ...machines }, machineListByServerId: {
-        ...storage.getState().machineListByServerId, [serverId]: Object.values(machines),
-    } });
+    // These fixtures may already occupy the retained projection before ingress.
+    publishMachineActivityForTest(Object.values(machines));
+    await publishMachineInventoryForTest({ serverId, accountId: 'test-account' }, Object.values(machines));
 }
 await import('@/voice/settings/panels/realtime/confirmRealtimeProviderSettingChange');
 const { voiceSettingsDeclarationRegistry } = await import('@/voice/settings/voiceContributedSettingsDeclarations');
@@ -2175,6 +2176,8 @@ describe('declared settings owner', () => {
     });
     it('executes catalog Preview and Stop through the real Action front door and contribution-owned catalog', async () => {
         const before = storage.getState();
+        const scope = await activateStorageAccountScope({ serverId: 'test-home', accountId: 'test-account' });
+        onTestFinished(() => scope.dispose());
         vi.stubGlobal('navigator', { userActivation: { isActive: true } });
         onTestFinished(() => { vi.unstubAllGlobals(); });
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/elevenlabs/src/manifest');
@@ -2200,7 +2203,9 @@ describe('declared settings owner', () => {
         const account = applySettings(settingsDefaults, normalizeVoiceSettingsLocalDelta({ voice: { ...settingsDefaults.voice, providerId } }, settingsDefaults));
         storage.setState({ settings: account, settingsScope: { serverId: 'test-home', accountId: 'test-account' } });
         const owner = createOwner(undefined, true, true, account);
-        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1, {
+            presentUserActionConfirmation: async () => true,
+        });
         const discovered = await owner.action({ actionId: 'settings.list', input: { pageId: 'voiceConversations' } });
         if (!('items' in discovered) || !discovered.items) throw new Error('Missing operation discovery');
         const preview = discovered.items.find(item => item.anchor.includes(providerId) && item.anchor.endsWith('.preview'));
@@ -2230,7 +2235,7 @@ describe('declared settings owner', () => {
         expect(isApprovalRequiredByActionsSettings('settings.invoke', ActionsSettingsV1Schema.parse({ v: 1 }), { surface: 'agent', authority: 'account_automation' },
             resolveSettingsDeclarationOperationApprovalPolicy(stop.anchor, account).requiresApproval ? 'danger' : 'safe')).toBe(false);
         await executor.execute('settings.invoke', { anchor: preview.anchor, input: { kind: 'voice_preview', voiceId: 'voice_a' } }, ctx);
-        storage.setState({ settingsScope: { serverId: 'different-home', accountId: 'test-account' } });
+        scope.dispose();
         const { readRealtimeCatalogPreview } = await import('@/voice/settings/panels/realtime/catalogPreview');
         expect(readRealtimeCatalogPreview()).toBeNull();
         expect(owner.openedInteractions).toEqual([]);
@@ -2291,7 +2296,9 @@ describe('declared settings owner', () => {
         });
         let current = true;
         const owner = createOwner(undefined, true, true, account, undefined, undefined, undefined, { isCurrent: () => current });
-        const executor = throughActionExecutor(owner.action);
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1, {
+            presentUserActionConfirmation: async () => true,
+        });
         const result = await executor.execute('settings.invoke', { anchor: 'voiceAdvanced.installSpeechModel', input: { kind: 'model_pack', packId, machineId: 'voice-machine' } }, { surface: 'ui', authority: 'present_user' });
         expect(settingsMachineRpc.mock.calls.map(([request]) => request.method))
             .toEqual(['daemon.voiceInference.models.status', 'daemon.voiceInference.models.install']);
@@ -2390,11 +2397,13 @@ describe('declared settings owner', () => {
     });
     it.each([
         { agentId: '', feature: true, machineId: null, code: 'settings_missing_required_setting', recoveryAction: 'open_provider_settings' },
-        { agentId: 'codex', feature: false, machineId: null, code: 'server_feature_disabled', recoveryAction: 'switch_provider' },
+        { agentId: 'codex', feature: false, machineId: null, code: 'feature_policy_disabled', recoveryAction: 'enable_voice_agent' },
         { agentId: 'codex', feature: true, machineId: 'offline-machine', code: 'execution_machine_incompatible', recoveryAction: 'select_execution_machine' },
     ])('reads the canonical Think recovery for $code', async ({ agentId, feature, machineId, code, recoveryAction }) => {
         const before = storage.getState();
-        onTestFinished(() => { storage.setState(before, true); settingsMachineRpc.mockReset(); });
+        const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { getAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        onTestFinished(() => { storage.setState(before, true); settingsMachineRpc.mockReset(); resetServerFeaturesClientForTests(); });
         const local = readLocalConversationVoiceSettings(settingsDefaults.voice);
         const voice = writeLocalConversationVoiceSettings(settingsDefaults.voice, { ...local, conversationMode: 'agent',
             agent: { ...local.agent, agentSource: 'agent', agentId },
@@ -2407,13 +2416,14 @@ describe('declared settings owner', () => {
         // The Home payload and Account preferences feed the real feature decision owner.
         const featureSnapshot: ServerFeaturesSnapshot = { status: 'ready',
             features: FeaturesResponseSchema.parse({ features: { voice: { enabled: true }, execution: { runs: { enabled: true } } }, capabilities: {} }) };
+        primeServerFeaturesSnapshot({ serverId: getAppliedActiveServerSnapshot().serverId, snapshot: featureSnapshot });
         const owner = createOwner(undefined, true, true, account, undefined, undefined, undefined, undefined, featureSnapshot);
         const executor = throughActionExecutor(owner.action);
         expect(await executor.execute('settings.invoke', { anchor: 'voiceConversations.readiness' }, { surface: 'agent', authority: 'account_automation' }))
             .toMatchObject({ ok: true, result: { status: 'completed', value: { roles: { think: { code, recoveryAction } } } } });
         expect(settingsMachineRpc).not.toHaveBeenCalled();
     });
-    it('reads a machine-free contributed cloud service and independent Dictation readiness', async () => {
+    it('requires the plugin conversation Machine while reading independent device Dictation readiness', async () => {
         const before = storage.getState();
         vi.stubGlobal('SpeechRecognition', function SpeechRecognition() {});
         const pluginId = 'fixture.voice.readiness';
@@ -2438,7 +2448,8 @@ describe('declared settings owner', () => {
         const context = { surface: 'agent' as const, authority: 'account_automation' as const };
         expect(await executor.execute('settings.invoke', { anchor: 'voiceConversations.readiness' }, context))
             .toMatchObject({ ok: true, result: { status: 'completed', value: { providerId, machineId: null,
-                readiness: { status: 'ready', recoveryAction: 'none' }, roles: { hear: { status: 'ready' }, think: { status: 'ready' }, speak: { status: 'ready' } } } } });
+                readiness: { status: 'needs_setup', code: 'execution_machine_missing', recoveryAction: 'select_execution_machine' },
+                roles: { hear: { status: 'needs_setup' }, think: { status: 'needs_setup' }, speak: { status: 'needs_setup' } } } } });
         expect(await executor.execute('settings.invoke', { anchor: 'voiceDictation.readiness' }, context))
             .toMatchObject({ ok: true, result: { status: 'completed', value: { providerId: 'device', readiness: { status: 'ready', recoveryAction: 'none' } } } });
         expect(settingsMachineRpc).not.toHaveBeenCalled();
@@ -2484,7 +2495,7 @@ describe('declared settings owner', () => {
             } } });
         expect(settingsMachineRpc).toHaveBeenCalled();
     });
-    it('cancels semantic readiness after Account retirement or selection replacement during its final read', async () => {
+    it('does not reread admitted settings while inspecting finite semantic readiness', async () => {
         const before = storage.getState();
         onTestFinished(() => { storage.setState(before, true); settingsMachineRpc.mockReset(); });
         const local = readLocalConversationVoiceSettings(settingsDefaults.voice);
@@ -2492,20 +2503,16 @@ describe('declared settings owner', () => {
             stt: { ...local.stt, provider: 'device' }, tts: { ...local.tts, provider: 'device' } });
         const account = applySettings(settingsDefaults, normalizeVoiceSettingsLocalDelta({ voice: { ...voice, providerId: 'local_conversation',
             executionMachine: { mode: 'fixed' as const, machineId: null } } }, settingsDefaults));
-        for (const retireAccount of [true, false]) {
-            storage.setState({ settings: account, machines: {} });
-            let reads = 0;
-            let current = true;
-            const owner = createOwner(undefined, true, true, account, undefined, undefined, undefined, {
-                isCurrent: () => current,
-                onReadAccount: () => { if (++reads >= 3) { if (retireAccount) current = false;
-                    else storage.setState({ settings: applySettings(account, normalizeVoiceSettingsLocalDelta({
-                        voice: { ...account.voice, executionMachine: { mode: 'fixed', machineId: 'changed' } },
-                    }, account)) }); } },
-            });
-            expect(await throughActionExecutor(owner.action).execute('settings.invoke', { anchor: 'voiceConversations.readiness' }, { surface: 'agent', authority: 'account_automation' }))
-                .toMatchObject({ ok: true, result: { status: 'cancelled' } });
-        }
+        storage.setState({ settings: account, machines: {} });
+        let reads = 0;
+        const owner = createOwner(undefined, true, true, account, undefined, undefined, undefined, {
+            isCurrent: () => true,
+            onReadAccount: () => { reads += 1; },
+        });
+        expect(await throughActionExecutor(owner.action).execute('settings.invoke', { anchor: 'voiceConversations.readiness' }, { surface: 'agent', authority: 'account_automation' }))
+            .toMatchObject({ ok: true, result: { status: 'completed', value: { providerId: 'local_conversation' } } });
+        // One declaration read and one admitted operation read; finite work does not reauthorize its settings.
+        expect(reads).toBe(2);
     });
     it('reports the unselected conversation provider honestly before readiness inspection', async () => {
         const before = storage.getState();
@@ -2575,20 +2582,20 @@ describe('declared settings owner', () => {
         expect(await owner.action({ actionId: 'settings.invoke', input: { anchor: 'voicePrivacy.diagnosticsLocation' } }))
             .toMatchObject({ status: 'cancelled' });
     });
-    it('does not disclose diagnostics when the Account retires during the final settings reread', async () => {
+    it('does not reread admitted settings while inspecting finite diagnostics', async () => {
         const before = storage.getState();
         onTestFinished(() => storage.setState(before, true));
         const account = applySettings(settingsDefaults, { voiceSettingsV1: { ...settingsDefaults.voice,
             executionMachine: { mode: 'fixed', machineId: null } } });
         storage.setState({ settings: account, machines: {} });
-        let current = true;
         let reads = 0;
         const owner = createOwner(undefined, true, true, account, undefined, undefined, undefined, {
-            isCurrent: () => current,
-            onReadAccount: () => { if (++reads === 3) queueMicrotask(() => { current = false; }); },
+            isCurrent: () => true,
+            onReadAccount: () => { reads += 1; },
         });
         expect(await owner.action({ actionId: 'settings.invoke', input: { anchor: 'voicePrivacy.diagnosticsLocation' } }))
-            .toMatchObject({ status: 'cancelled' });
+            .toMatchObject({ status: 'completed', value: { daemonStatus: null } });
+        expect(reads).toBe(2);
     });
     it('stops the incumbent native preview through its declaration, including late playback registration', async () => {
         const before = storage.getState();
