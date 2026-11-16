@@ -1104,6 +1104,13 @@ state, and the original Pending input remains in custody. Native error prose,
 paths, credentials and input content are excluded. This is source behavior,
 not evidence that an already-running daemon or server has loaded it.
 
+The shared server writer stores these closed diagnostic values as a JSON tuple
+of failure code, reason, spawn error code and runtime reason (absent optional
+values are null). This preserves every fact within the existing MySQL
+`VARCHAR(191)` column without truncation, and uses the same representation on
+Postgres and SQLite. The owner still reads retained diagnostic objects and plain
+failure codes; Session read projections keep their existing typed shape.
+
 The same terminal failure transaction blocks its exact still-unclaimed main
 Pending row with `session_input_target_unavailable` and publishes the changed
 Pending version and badge. It preserves the failed activation stamp. A row

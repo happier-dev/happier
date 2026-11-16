@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PendingActivationFailureDetailsV1Schema, PendingActivationRuntimeFailureReasonV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
+import { readFileSync } from 'node:fs';
+import { PendingActivationFailureCodeV1Schema, PendingActivationFailureDetailsV1Schema, PendingActivationRuntimeFailureReasonV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { SpawnSessionErrorCodeSchema } from '@happier-dev/protocol/spawnSession';
 import {
     createAccountCursorRawQueryTransactionModel,
@@ -105,7 +106,10 @@ describe('pending activation authorization owner', () => {
         expect(owner.shouldArmPendingActivationAuthorization({ requestedAction: { kind: 'steer_now' }, resumeWhenAvailable: false })).toBe(false);
     });
     it('fits every admitted diagnostic in the existing MySQL VARCHAR(191) field', async () => {
+        const migration = readFileSync(new URL('../../../../prisma/mysql/migrations/20260902120000_add_pending_activation_authorization/migration.sql', import.meta.url), 'utf8');
+        const columnLimit = Number(migration.match(/`pendingActivationFailureCode` VARCHAR\((\d+)\)/)?.[1]);
         const longest = (values: readonly string[]) => values.reduce((a, b) => a.length >= b.length ? a : b);
+        const failureCode = PendingActivationFailureCodeV1Schema.parse(longest(PendingActivationFailureCodeV1Schema.options));
         const session = { lastActiveAt: new Date(100), pendingActivationRequestId: 'p1',
             pendingActivationRequestedAt: new Date(101), pendingActivationStatus: 'waiting', pendingActivationFailureCode: null as string | null };
         const details = PendingActivationFailureDetailsV1Schema.parse({
@@ -114,9 +118,21 @@ describe('pending activation authorization owner', () => {
             runtimeReason: longest(PendingActivationRuntimeFailureReasonV1Schema.options),
         });
         await markPendingActivationAuthorizationFailedInTx({ tx: createTx(session), sessionId: 's1', requestId: 'p1',
-            requestedAt: new Date(101), failureCode: 'runtime_start_failed', failureDetails: details });
-        expect(session.pendingActivationFailureCode!.length).toBeLessThanOrEqual(191);
+            requestedAt: new Date(101), failureCode, failureDetails: details });
+        expect(session.pendingActivationFailureCode!.length).toBeLessThanOrEqual(columnLimit);
+        expect(mapPendingActivationAuthorization(session)).toMatchObject({ status: 'failed', failureCode });
         expect(mapPendingActivationFailureDetails(session)).toEqual(details);
+    });
+    it('reads retained diagnostic objects and plain failure codes', () => {
+        const session = { lastActiveAt: new Date(100), pendingActivationRequestId: 'p1',
+            pendingActivationRequestedAt: new Date(101), pendingActivationStatus: 'failed' };
+        const details = { reason: 'spawn-rejected', spawnErrorCode: 'SPAWN_VALIDATION_FAILED' };
+        const retained = { ...session, pendingActivationFailureCode: JSON.stringify({ failureCode: 'runtime_start_failed', ...details }) };
+        expect(mapPendingActivationFailureDetails(retained)).toEqual(details);
+        expect(mapPendingActivationAuthorization(retained)).toMatchObject({ status: 'failed', failureCode: 'runtime_start_failed' });
+        const plain = { ...session, pendingActivationFailureCode: 'runtime_start_failed' };
+        expect(mapPendingActivationAuthorization(plain)).toMatchObject({ status: 'failed', failureCode: 'runtime_start_failed' });
+        expect(mapPendingActivationFailureDetails(plain)).toBeUndefined();
     });
     it('retains failure diagnostics in the existing state while preserving the predecessor authorization projection', async () => {
         const session = { lastActiveAt: new Date(100), pendingActivationRequestId: 'p1',

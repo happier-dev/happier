@@ -22,12 +22,30 @@ import { PendingActivationFailureCodeV1Schema, PendingActivationFailureDetailsV1
 import type { PendingMessageRowRaw } from './mapPendingMessageRow';
 
 const StoredActivationFailureSchema = z.extend(PendingActivationFailureDetailsV1Schema, { failureCode: PendingActivationFailureCodeV1Schema });
+// The shared writer also serves MySQL's existing VARCHAR(191) column. Store
+// closed diagnostic values without repeating object keys; never truncate facts.
+const StoredActivationFailureTupleSchema = z.tuple([
+    PendingActivationFailureCodeV1Schema,
+    PendingActivationFailureDetailsV1Schema.shape.reason,
+    z.nullable(PendingActivationFailureDetailsV1Schema.shape.spawnErrorCode),
+    z.nullable(PendingActivationFailureDetailsV1Schema.shape.runtimeReason),
+]);
 
 function readStoredActivationFailure(value: unknown) {
     const code = PendingActivationFailureCodeV1Schema.safeParse(value);
     if (code.success) return { failureCode: code.data };
     if (typeof value !== 'string') return undefined;
-    try { return StoredActivationFailureSchema.safeParse(JSON.parse(value)).data; } catch { return undefined; }
+    try {
+        const stored: unknown = JSON.parse(value);
+        const tuple = StoredActivationFailureTupleSchema.safeParse(stored);
+        if (tuple.success) {
+            const [failureCode, reason, spawnErrorCode, runtimeReason] = tuple.data;
+            return { failureCode, reason,
+                ...(spawnErrorCode != null ? { spawnErrorCode } : {}),
+                ...(runtimeReason != null ? { runtimeReason } : {}) };
+        }
+        return StoredActivationFailureSchema.safeParse(stored).data;
+    } catch { return undefined; }
 }
 
 /** Read-only sibling projection; the predecessor's closed authorization envelope stays unchanged. */
@@ -384,8 +402,10 @@ export async function markPendingActivationAuthorizationFailedInTx(params: Reado
         },
         data: {
             pendingActivationStatus: 'failed',
-            pendingActivationFailureCode: params.failureDetails ? JSON.stringify({ failureCode: params.failureCode,
-                ...PendingActivationFailureDetailsV1Schema.parse(params.failureDetails) }) : params.failureCode,
+            pendingActivationFailureCode: params.failureDetails ? JSON.stringify(StoredActivationFailureTupleSchema.parse([
+                params.failureCode, params.failureDetails.reason,
+                params.failureDetails.spawnErrorCode ?? null, params.failureDetails.runtimeReason ?? null,
+            ])) : params.failureCode,
         },
     });
     return updated.count > 0;
