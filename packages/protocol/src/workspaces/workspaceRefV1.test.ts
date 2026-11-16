@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import { ProjectKeyV1Schema, WorkspaceRefV1Schema, WorkspaceRefV1WriteSchema } from './workspaceRefV1.js';
+import { ProjectKeyV1Schema, WorkspaceRefV1Schema, WorkspaceRefV1WriteSchema, WorkspaceAddressV1Schema, WorkspaceAddressV2Schema } from './workspaceRefV1.js';
 import { matchSessionProjectFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
 import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, projectWorkspaceRefV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1, resolveWorkspaceProjectKeyV1, resolveWorkspaceGroupingV1 } from './workspaceRefResolutionV1.js';
 
 describe('workspaceRefV1', () => {
+  it('keeps native addresses distinct from host Machine addresses', () => {
+    const machine = { serverId: 'home', workspaceId: 'host-checkout', machineId: 'controller', rootPath: '/repo' };
+    const native = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'guest-checkout', managedId: 'sandbox',
+      controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/repo' };
+    expect(WorkspaceAddressV2Schema.parse(machine)).toEqual(machine);
+    expect(WorkspaceAddressV2Schema.parse(native)).toEqual(native);
+    expect(WorkspaceAddressV1Schema.safeParse(native).success).toBe(false);
+    expect(WorkspaceAddressV2Schema.safeParse({ ...native, machineId: 'controller' }).success).toBe(false);
+    expect(WorkspaceAddressV2Schema.safeParse({ ...machine, kind: 'managed' }).success).toBe(false);
+    expect(WorkspaceAddressV2Schema.safeParse({ ...native, controller: { machineId: 'controller' } }).success).toBe(false);
+  });
   it('keeps repository observations optional, closes publication and projects additive stored facts recursively', () => {
     const ref = { id: 'checkout', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
     expect(WorkspaceRefV1Schema.parse(ref).repositoryObservation).toBeUndefined();

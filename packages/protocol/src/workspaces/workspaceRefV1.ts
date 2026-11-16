@@ -56,6 +56,21 @@ export const WorkspaceAddressV1Schema = lazyZodSchema(() => z.strictObject({
   rootPath: LookupNonEmptyStringSchema,
 }));
 export type WorkspaceAddressV1 = z.infer<typeof WorkspaceAddressV1Schema>;
+/** Native list addresses retain guest identity and controller installation; V1 remains Machine-only. */
+export const ManagedWorkspaceAddressV2Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(2), kind: z.literal('managed'), machineId: z.optional(z.never()),
+  serverId: LookupNonEmptyStringSchema, workspaceId: LookupNonEmptyStringSchema,
+  managedId: LookupNonEmptyStringSchema,
+  controller: z.strictObject({ machineId: LookupNonEmptyStringSchema, installationId: LookupNonEmptyStringSchema }),
+  rootPath: LookupNonEmptyStringSchema,
+}));
+export const WorkspaceAddressV2Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...WorkspaceAddressV1Schema.shape, kind: z.optional(z.never()) }),
+  ManagedWorkspaceAddressV2Schema,
+]));
+export type WorkspaceAddressV2 = z.infer<typeof WorkspaceAddressV2Schema>;
+/** Exact native namespace lookup when no logical workspace row id is available. */
+export type ManagedWorkspaceLocatorV2 = Omit<z.infer<typeof ManagedWorkspaceAddressV2Schema>, 'workspaceId'>;
 /** Feature protocols embed the canonical accepted-checkout address. */
 export const WorkspaceAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceAddressV1Schema));
 
