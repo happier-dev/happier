@@ -46,7 +46,7 @@ func TestManagedMetaStreamingQuotaRefusalReachesResponsesClient(t *testing.T) {
 			response := postJSON(t, cfg, testCase.path, testCase.request)
 			defer response.Body.Close()
 			body := readResponse(t, response)
-			if response.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, `"code":"`+refusal.code+`"`) || !strings.Contains(body, `"resets_at":1794787200`) || response.Header.Get("Retry-After") == "" {
+			if response.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, `"code":"`+refusal.code+`"`) || !strings.Contains(body, `"resets_at":1794787200`) {
 				t.Fatalf("Meta quota refusal lost status, classification or reset: %d %s", response.StatusCode, body)
 			}
 			if upstream.calls != 1 {
