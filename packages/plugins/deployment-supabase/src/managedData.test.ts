@@ -58,6 +58,23 @@ async function host(respond: (request: HttpRequest) => unknown | Promise<unknown
 }
 
 describe('activated Supabase managed data target', () => {
+  it.each([404, 200, 403, 503, 'timeout'] as const)('observes exact project absence without replaying deletion after HTTP %s', async status => {
+    const h = await host(() => {
+      if (status === 'timeout') throw new PluginError({ code: 'timeout', message: 'private token' });
+      return status === 200 ? project : { message: 'constructed provider failure' };
+    }, undefined, typeof status === 'number' ? status : 200);
+    try {
+      const outcome = h.kit.invokeAction('projects-observe', linked);
+      if (status === 404) await expect(outcome).resolves.toMatchObject({ v: 1, state: 'succeeded', providerResourceAbsent: true });
+      else await expect(outcome).rejects.toMatchObject({ code: 'outcome_unknown', ...(status === 200 ? {} : {
+        data: { failureCause: status === 'timeout' ? { errorCode: 'timeout' } : { httpStatus: status } },
+      }) });
+      expect(h.requests.map(request => [request.method, request.url])).toEqual([
+        ['GET', 'https://api.supabase.com/v1/projects/parent-ref'],
+      ]);
+    } finally { await h.kit.dispose(); }
+  });
+
   it.each(['deleted', 'already gone', 'lost response'] as const)('settles project deletion only after exact-resource absence: %s', async kind => {
     const h = await host(request => {
       if (request.method === 'DELETE' && kind === 'lost response') throw new TypeError('private provider response lost');

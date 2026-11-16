@@ -18,6 +18,7 @@ function action(operation: Operation, title: string, readOnly: boolean) {
 }
 export const dataActions = {
   'projects-delete': action('projects-delete', 'Delete the recorded Supabase project and all of its data', false),
+  'projects-observe': action('projects-observe', 'Observe the recorded Supabase project after deletion', true),
   'projects-list': action('projects-list', 'List Supabase projects', true),
   'provision-options': action('provision-options', 'Read Supabase provision options', true),
   'projects-provision': action('projects-provision', 'Create Supabase project', false),

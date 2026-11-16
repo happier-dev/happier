@@ -378,27 +378,34 @@ export async function deleteBranch(input: Input & { branchId: string; correlatio
     return { status: 'outcome_unknown' as const, providerProjectId: selected.providerProjectId, branchId: input.branchId, code: unknownCode(error) };
   }
 }
-/** The admitted link owns the exact project identity; names never select deletion. */
-export async function deleteProject(input: Input, context: Context) {
+function projectAbsent() {
+  return { v: 1 as const, state: 'succeeded' as const, observedAtMs: Date.now(), providerResourceAbsent: true as const };
+}
+/** Deletion confirmation and recovery observe the same exact recorded identity. */
+export async function observeProject(input: Input, context: Context, priorWriteFailure?: unknown) {
   const path = projectPath(input.providerIdentity!.providerResourceId);
-  const absent = () => ({ v: 1 as const, state: 'succeeded' as const, observedAtMs: Date.now(), providerResourceAbsent: true as const });
-  let writeFailure: unknown;
-  try { await request(context, path, 'DELETE'); }
-  catch (error) {
-    if (httpStatus(error, 404)) return absent();
-    if (!isPluginError(error) || error.code !== 'outcome_unknown' && !httpStatus(error, 503)) throw error;
-    writeFailure = error;
-  }
+  let failure = priorWriteFailure;
   if (!context.signal.aborted) {
     try { await request(context, path); }
     catch (error) {
-      if (httpStatus(error, 404)) return absent();
-      writeFailure ??= error;
+      if (httpStatus(error, 404)) return projectAbsent();
+      failure ??= error;
     }
   }
   throw new PluginError({ code: 'outcome_unknown',
-    failureCause: projectActionFailureCauseV1(writeFailure ?? new PluginError({ code: 'outcome_unknown' }), 'deployment.neon.project.delete'),
+    failureCause: projectActionFailureCauseV1(failure ?? new PluginError({ code: 'outcome_unknown' }), 'deployment.neon.project.observe'),
   });
+}
+/** The admitted link owns the exact project identity; names never select deletion. */
+export async function deleteProject(input: Input, context: Context) {
+  let writeFailure: unknown;
+  try { await request(context, projectPath(input.providerIdentity!.providerResourceId), 'DELETE'); }
+  catch (error) {
+    if (httpStatus(error, 404)) return projectAbsent();
+    if (!isPluginError(error) || error.code !== 'outcome_unknown' && !httpStatus(error, 503)) throw error;
+    writeFailure = error;
+  }
+  return observeProject(input, context, writeFailure);
 }
 async function recoverProject(input: Input & { name: string; requestKey: string; cursor?: string }, context: Context) {
   const page = await projects({ ...input, search: input.name }, context);

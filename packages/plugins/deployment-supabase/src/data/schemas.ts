@@ -22,6 +22,7 @@ export const operands = {
     desiredInstanceSize: string.optional() }, closed),
   'projects-link': defineProtocolObject({ projectRef: string }, closed),
   'projects-delete': defineProtocolObject({}, closed),
+  'projects-observe': defineProtocolObject({}, closed),
   'branches-list': defineProtocolObject({}, closed),
   'branches-create': defineProtocolObject({ name: string, gitBranch: string.optional(), withData: defineProtocolLiteral(false),
     parentBranchRef: DeploymentDataParentBranchRefV1ProtocolSchema.optional() }, closed),
@@ -39,6 +40,7 @@ const selected = new Set<Operation>(['branches-list', 'branches-create', 'branch
 export function actionSchema(operation: Operation): PluginJsonSchema {
   const base = operation === 'branches-list' ? DeploymentTargetRoleInputProtocolSchemasV1['branches.list']
     : operation === 'projects-delete' ? DeploymentTargetRoleInputProtocolSchemasV1['projects.delete']
+    : operation === 'projects-observe' ? DeploymentTargetRoleInputProtocolSchemasV1['projects.observe']
     : selected.has(operation) ? DeploymentTargetRoleInputProtocolSchemasV1['branches.create']
       : DeploymentTargetPreparationBaseV1ProtocolSchema;
   const product = operands[operation];
@@ -87,6 +89,7 @@ const pairResult = resultObject({ status: { type: 'string', enum: ['complete', '
 export function resultSchema(operation: Operation): PluginJsonSchema {
   switch (operation) {
     case 'projects-delete': return DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema;
+    case 'projects-observe': return DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema;
     case 'projects-list': return resultObject({ projects: array(projectResult) });
     case 'provision-options': return resultObject({ organizationSlug: s, regions: array(resultObject({ code: s, name: s, type: s, provider: s, status: s }, ['status'])),
       subscription: literal('organization'), price: literal('unknown'), entitlementsObserved: b, desiredInstanceSize: s }, ['desiredInstanceSize']);

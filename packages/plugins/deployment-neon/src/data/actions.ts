@@ -16,6 +16,9 @@ function context(value: PluginAccountActionContext): provider.Context {
 }
 
 export const dataActions = {
+  'projects-observe': { ...read, title: 'Observe the recorded Neon project after deletion',
+    inputSchema: schemas.inputSchema(schemas.observeProjectInput, true), resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
+    run: (input: JsonValue, ctx: PluginAccountActionContext) => provider.observeProject(schemas.readInput(schemas.observeProjectInput, input), context(ctx)) },
   'projects-delete': { ...write, dangerLevel: 'destructive', title: 'Delete the recorded Neon project',
     confirmation: { title: 'Delete this Neon project and all of its data?' },
     inputSchema: schemas.inputSchema(schemas.deleteProjectInput, true), resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,

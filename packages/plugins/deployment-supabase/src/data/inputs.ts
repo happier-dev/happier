@@ -58,6 +58,7 @@ export const dataInputHints = {
 
 export const dataActionInputHints = {
   'projects-delete': { fields: [] },
+  'projects-observe': { fields: [] },
   'projects-list': { fields: [dataInputHints.account] },
   'provision-options': { fields: [dataInputHints.account] },
   'projects-link': { fields: [dataInputHints.account, dataInputHints.project] },

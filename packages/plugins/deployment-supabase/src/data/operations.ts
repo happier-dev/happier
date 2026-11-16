@@ -67,13 +67,17 @@ export async function request(context: Pick<Context, 'signal'> & Readonly<{ serv
   }
   if (response.finalUrl !== `${origin}${path}`) return failure(readOnlyRequest ? 'provider_response_invalid' : 'outcome_unknown');
   if (readOnly && (response.status < 200 || response.status >= 300)) return failure(`provider_http_${response.status}`);
-  if (response.status < 200 || response.status >= 300) throw new PluginError({
-    code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
-      : response.status === 404 ? 'deployment_unavailable'
-        : method !== 'GET' && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed',
-    details: { httpStatus: response.status },
-    failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'deployment.supabase.provider'),
-  });
+  if (response.status < 200 || response.status >= 300) {
+    const error = new PluginError({
+      code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
+        : response.status === 404 ? 'deployment_unavailable'
+          : method !== 'GET' && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed',
+      details: { httpStatus: response.status },
+      failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'deployment.supabase.provider'),
+    });
+    throw response.status === 404 ? withActionFailureDiagnostic(error,
+      { phase: 'deployment.supabase.provider', causeKind: 'not_found' }) : error;
+  }
   try { return JSON.parse(new TextDecoder().decode(response.body)) as unknown; }
   catch { return failure(readOnlyRequest ? 'provider_response_invalid' : 'outcome_unknown'); }
 }
@@ -217,27 +221,33 @@ async function save(input: Scope & Operands<'connections-save'>, context: Contex
   return output();
 }
 
-async function deleteProject(input: Scope, context: Context) {
+function projectAbsent() {
+  return { v: 1 as const, state: 'succeeded' as const, observedAtMs: Date.now(), providerResourceAbsent: true as const };
+}
+const projectNotFound = (error: unknown) => isPluginError(error) && object(error.details) && error.details.httpStatus === 404;
+async function observeProject(input: Scope, context: Context, priorWriteFailure?: unknown) {
   const path = `/v1/projects/${encode(input.providerIdentity!.providerResourceId)}`;
-  const absent = () => ({ v: 1 as const, state: 'succeeded' as const, observedAtMs: Date.now(), providerResourceAbsent: true as const });
-  const notFound = (error: unknown) => isPluginError(error) && object(error.details) && error.details.httpStatus === 404;
-  let writeFailure: unknown;
-  try { await request(context, path, 'DELETE'); }
-  catch (error) {
-    if (notFound(error)) return absent();
-    if (!isPluginError(error) || error.code !== 'outcome_unknown') throw error;
-    writeFailure = error;
-  }
+  let failure = priorWriteFailure;
   if (!context.signal.aborted) {
     try { await request(context, path); }
     catch (error) {
-      if (notFound(error)) return absent();
-      writeFailure ??= error;
+      if (projectNotFound(error)) return projectAbsent();
+      failure ??= error;
     }
   }
   throw new PluginError({ code: 'outcome_unknown',
-    failureCause: projectActionFailureCauseV1(writeFailure ?? new PluginError({ code: 'outcome_unknown' }), 'deployment.supabase.project.delete'),
+    failureCause: projectActionFailureCauseV1(failure ?? new PluginError({ code: 'outcome_unknown' }), 'deployment.supabase.project.observe'),
   });
+}
+async function deleteProject(input: Scope, context: Context) {
+  let writeFailure: unknown;
+  try { await request(context, `/v1/projects/${encode(input.providerIdentity!.providerResourceId)}`, 'DELETE'); }
+  catch (error) {
+    if (projectNotFound(error)) return projectAbsent();
+    if (!isPluginError(error) || error.code !== 'outcome_unknown') throw error;
+    writeFailure = error;
+  }
+  return observeProject(input, context, writeFailure);
 }
 
 export async function run<K extends Operation>(operation: K, value: JsonValue, context: Context): Promise<JsonValue> {
@@ -245,6 +255,7 @@ export async function run<K extends Operation>(operation: K, value: JsonValue, c
   if (context.signal.aborted) return failure('operation_cancelled');
   switch (operation) {
     case 'projects-delete': return deleteProject(input, context);
+    case 'projects-observe': return observeProject(input, context);
     case 'projects-list': {
       const response = await request(context, '/v1/projects');
       if (!Array.isArray(response)) return failure('provider_response_invalid');
