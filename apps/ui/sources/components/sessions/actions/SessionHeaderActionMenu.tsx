@@ -682,9 +682,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const accountShowToolCalls = useSetting('transcriptShowToolCalls');
   const actions = React.useMemo(() => {
     const actionItems: DropdownMenuItem[] = listActionSpecs()
+      // Placement first: only the few specs placed in this menu reach the enablement check.
+      .filter((spec) => Array.isArray(spec.placements) && spec.placements.includes('session_action_menu' as any))
       .filter((spec) => spec.surfaces.ui === true)
       .filter((spec) => isActionEnabledInState({ settings } as any, spec.id, { surface: 'ui', placement: 'session_action_menu' } as any))
-      .filter((spec) => Array.isArray(spec.placements) && spec.placements.includes('session_action_menu' as any))
       .filter((spec) => spec.id !== 'session.fork' || canForkConversation({
         session,
         replayEnabled: sessionReplayEnabled,
