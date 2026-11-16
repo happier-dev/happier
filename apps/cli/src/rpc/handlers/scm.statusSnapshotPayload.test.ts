@@ -151,4 +151,44 @@ describe('SCM status snapshot RPC payload', () => {
         expect(summaryWire.length).toBeLessThan(fullWire.length / 2);
         expect(factsWire.length).toBeLessThan(fullWire.length / 2);
     });
+
+    it('answers a re-read of an unchanged changed-file list without the list, and resends it once the working copy changes', async () => {
+        vi.stubEnv('HAPPIER_SCM_STATUS_SNAPSHOT_CACHE_TTL_MS', '0');
+        const root = await mkdtemp(join(tmpdir(), 'scm-payload-unchanged-'));
+        directories.push(root);
+        await execFile('git', ['init', '--quiet'], { cwd: root });
+        for (let index = 0; index < 40; index += 1) await writeFile(join(root, `file-${index}.txt`), `line ${index}\n`);
+        const registration = createGitScmBackendRuntimeRegistration();
+        const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+            definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.backend.git/git',
+            executableDefinition: registration.runtime!, registration,
+            hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(),
+        })]);
+        const handlers = new Map<string, RpcHandler>();
+        registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, root, { registry });
+        const status = handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT);
+        if (!status) throw new Error('Status handler was not registered');
+        const request = { cwd: root, outcomeVersion: 1 };
+
+        const firstWire = JSON.stringify(await status(request));
+        const first = ScmStatusSnapshotResponseSchema.parse(JSON.parse(firstWire));
+        const listRevision = first.snapshot?.listRevision;
+        expect(first.snapshot?.entries).toHaveLength(40);
+        expect(listRevision).toEqual(expect.any(String));
+
+        // A fresh scan of the same working copy: only the fact that nothing changed crosses the wire.
+        const unchangedWire = JSON.stringify(await status({ ...request, knownListRevision: listRevision }));
+        expect(ScmStatusSnapshotResponseSchema.parse(JSON.parse(unchangedWire))).toEqual({ success: true, unchanged: true });
+        expect(unchangedWire.length).toBeLessThan(100);
+        // Another delivery shape is another answer, never "unchanged".
+        const page = ScmStatusSnapshotResponseSchema.parse(await status({ ...request, knownListRevision: listRevision, entriesPage: { limit: 5 } }));
+        expect(page.snapshot?.entries).toHaveLength(5);
+
+        await writeFile(join(root, 'file-0.txt'), 'line 0\nline 1\n');
+        const changed = ScmStatusSnapshotResponseSchema.parse(await status({ ...request, knownListRevision: listRevision }));
+        expect(changed.unchanged).toBeUndefined();
+        expect(changed.snapshot?.entries).toHaveLength(40);
+        expect(changed.snapshot?.listRevision).toEqual(expect.any(String));
+        expect(changed.snapshot?.listRevision).not.toBe(listRevision);
+    });
 });

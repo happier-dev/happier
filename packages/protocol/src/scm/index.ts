@@ -203,6 +203,9 @@ export const ScmStatusSnapshotRequestSchema = lazyZodSchema(() => z.extend(ScmRe
     cursor: z.optional(z.number().check(z.int(), z.nonnegative())),
     path: z.optional(z.string().check(z.minLength(1))),
   })),
+  // The `listRevision` of the full changed-file list the caller already holds. When a fresh scan
+  // delivers the same list, the reply is `{ success: true, unchanged: true }` without a snapshot.
+  knownListRevision: z.optional(z.string().check(z.minLength(1))),
 }));
 export type ScmStatusSnapshotRequest = z.infer<typeof ScmStatusSnapshotRequestSchema>;
 
@@ -249,6 +252,8 @@ export type ScmWorktreesEnrichmentResponse = z.infer<typeof ScmWorktreesEnrichme
 
 export const ScmStatusSnapshotResponseSchema = lazyZodSchema(() => z.object({
   success: z.boolean(),
+  // Answer to `knownListRevision`: the held full list is still current, so no snapshot is sent.
+  unchanged: z.optional(z.literal(true)),
   snapshot: z.optional(ScmWorkingSnapshotSchema),
   freshness: z.optional(VcsLocalStateFreshnessSchema),
   refreshPolicy: z.optional(ProviderRefreshPolicySchema),

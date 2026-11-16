@@ -207,6 +207,9 @@ export const ScmWorkingSnapshotSchema = lazyZodSchema(() => z.object({
   // because the working copy is clean. 'summary' carries `summary`; 'facts' measured no working
   // copy, so its `totals`, `hasConflicts` and `entries` say nothing and must not be read.
   detail: z.optional(ScmSnapshotDetailSchema),
+  // Content revision of a full changed-file list reply (no `detail`, no `entriesPage`). It changes
+  // with any delivered fact and ignores observation times; send it back as `knownListRevision`.
+  listRevision: z.optional(z.string().check(z.minLength(1))),
   summary: z.optional(z.object({
     changedFiles: z.number().check(z.int(), z.nonnegative()),
     includedAdded: z.number().check(z.int()),
