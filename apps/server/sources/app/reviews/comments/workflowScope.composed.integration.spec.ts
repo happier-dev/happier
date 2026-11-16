@@ -49,7 +49,6 @@ function actionDependencies(overrides: Partial<ActionExecutorDeps>): ActionExecu
         sessionRecentMessagesGet: unused, resetGlobalVoiceAgent: () => { throw new Error('unexpected_voice_dependency'); },
         teleportVoiceAgentToSessionRoot: unused,
         daemonMemorySearch: unused, daemonMemoryGetWindow: unused, daemonMemoryEnsureUpToDate: unused,
-        isActionApprovalRequired: () => false,
         ...overrides,
     };
 }

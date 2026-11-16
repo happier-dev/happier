@@ -1,3 +1,4 @@
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import fastify, { type FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -2398,7 +2399,9 @@ describe('installed Session proposal admission at the Home mint route', () => {
                         && verifyExternalActionApprovalInputV1({ authorizationToken: authorization.token,
                             actionId: request.actionId, input: request.actionArgs, target: authorization.binding.target,
                             signature: request.executionOriginV1.externalActionInputSignature!, publicKey: installation.publicKey }),
-                    isActionApprovalRequired: () => true,
+                    readActionsSettings: () => normalizeActionsSettingsV1({ v: 1, actions: {
+                        [actionId]: { approvalRequiredSurfaces: ['agent'] },
+                    } }),
                 };
                 // Unused transport arms are absent from this boundary fixture.
                 const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);

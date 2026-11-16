@@ -282,7 +282,7 @@ describe("Session RPC final access admission on SQLite", () => {
             resolveTransportForSession: async () => { throw new Error('Worker copy has no Session'); },
         });
         const approvals: unknown[] = [];
-        const executor = createActionExecutor({ ...handoffDeps, isActionApprovalRequired: () => false,
+        const executor = createActionExecutor({ ...handoffDeps,
             // Artifact persistence is a boundary; no relationship may run before consent.
             approvalsCreate: async input => { approvals.push(input); return { artifactId: 'worker-approval' }; },
         });

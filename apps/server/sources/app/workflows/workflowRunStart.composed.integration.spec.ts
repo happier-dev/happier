@@ -144,8 +144,7 @@ describe("composed saved Workflow start admission", () => {
             }, list: unused, create: unused, update: unused, delete: unused,
         } });
         // Discovery runs the real executor; unused external host/native ports fail loudly.
-        const discovery = createActionExecutor({ isActionApprovalRequired: () => false,
-            executionRunStart: unused, executionRunList: unused, executionRunGet: unused,
+        const discovery = createActionExecutor({ executionRunStart: unused, executionRunList: unused, executionRunGet: unused,
             detachedExecutionRunSend: unused, executionRunStop: unused, executionRunAction: unused, executionRunWait: unused,
             sessionOpen: unused, sessionFork: unused, sessionRollback: unused, sessionSpawnNew: unused,
             pathsListRecent: unused, projectsList: unused, machinesList: unused, serversList: unused,

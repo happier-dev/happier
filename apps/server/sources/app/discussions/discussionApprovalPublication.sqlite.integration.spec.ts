@@ -89,7 +89,6 @@ describe('Approved Discussion publication settlement (SQLite)', () => {
             // These ports replace HTTP/Artifact persistence and Machine currentness only.
             // Policy, approval CAS/replay, original custody, projection and invalidation stay real.
             const deps: Partial<ActionExecutorDeps> = {
-                isActionApprovalRequired: () => false,
                 isApprovalExecutionOriginCurrent: async () => true,
                 approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId }; },
                 approvalsGet: async () => stored ?? null,
