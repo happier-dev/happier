@@ -40,6 +40,8 @@ const route = vi.hoisted(() => ({ pathname: '/session/done' }));
 const mountedRowCost = vi.hoisted(() => ({
     os: 'web' as 'web' | 'ios',
     counters: new Map<string, ReturnType<typeof createRenderCommitCounter>>(),
+    /** Mounts of counted row roots, by testID. */
+    mounts: new Map<string, number>(),
 }));
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
@@ -59,6 +61,10 @@ vi.mock('react-native', async () => {
     // root commits, without replacing its row, subscription, view model or memo.
     const Pressable = ReactModule.forwardRef<unknown, Record<string, unknown>>(function CountedNativePressable(props, ref) {
         useCounter(mountedRowCost.counters.get(String(props.testID ?? '')) ?? unmeasured);
+        const testID = String(props.testID ?? '');
+        ReactModule.useEffect(() => {
+            if (mountedRowCost.counters.has(testID)) mountedRowCost.mounts.set(testID, (mountedRowCost.mounts.get(testID) ?? 0) + 1);
+        }, [testID]);
         return ReactModule.createElement(boundary.Pressable, { ...props, ref });
     });
     return { ...boundary, Pressable, Platform: { ...boundary.Platform, get OS() { return mountedRowCost.os; } } };
@@ -808,6 +814,52 @@ describe('visible session-list retained attention through real state', () => {
                 await flushHookEffects();
             }
             expect(mounts - settled).toBe(0);
+        } finally { await screen.unmount(); }
+    });
+
+    it('keeps every populated phone row mounted while a page covers the list and after Back', async () => {
+        const { SessionsListPaneContent } = await import('@/components/sessions/shell/SessionsListPaneContent');
+        const { buildSessionListIndexNodeId } = await import('@/sync/domains/sessionList/sessionListIndexIdentity');
+        const sessions = Array.from({ length: 6 }, (_, index) => createSessionFixture({
+            id: `covered-row-${index}`, serverId, owner: 'u1', createdAt: 20 + index, seq: 1,
+            viewer: currentViewer(1, 1), active: false, presence: 0, updatedAt: 100 + index,
+        }));
+        listedSessions = sessions;
+        snapshotResponse.resolve();
+        const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
+        await getSyncSingleton().refreshSessions({ awaitSessionListHydration: true });
+        route.pathname = '/';
+        mountedRowCost.os = 'ios';
+        mountedRowCost.counters.clear();
+        mountedRowCost.mounts.clear();
+        const rowIds = sessions.map(session => `session-list-item-${buildSessionListIndexNodeId({
+            type: 'session', serverId, sessionId: session.id, occurrenceRole: 'base',
+        })}`);
+        for (const id of rowIds) mountedRowCost.counters.set(id, createRenderCommitCounter());
+        // The phone root list (SessionsListWrapper): a pushed page withdraws visibility and data demand.
+        const pane = (covered: boolean) => <InjectedAuthProvider credentials={account!.credentials}>
+            <InboxSummaryProvider><AppPaneProvider><CommandPaletteProvider>
+                <SessionsListPaneContent fallbackGuidanceVariant="phone" pathname="/" surfaceRoutePathname={covered ? '/session/covered-row-0' : '/'}
+                    sessionListSurfaceDataActive={!covered}
+                    surfaceOwnership={{ visible: !covered, interactive: !covered, dataActive: !covered }} />
+            </CommandPaletteProvider></AppPaneProvider></InboxSummaryProvider>
+        </InjectedAuthProvider>;
+        const screen = await renderScreen(pane(false));
+        try {
+            await flushHookEffects({ cycles: 4, turns: 3 });
+            await vi.waitFor(() => expect(rowIds.every(id => (mountedRowCost.mounts.get(id) ?? 0) > 0)).toBe(true));
+            const settledMounts = [...mountedRowCost.mounts.values()].reduce((sum, count) => sum + count, 0);
+            for (const counter of mountedRowCost.counters.values()) counter.reset();
+            for (let visit = 0; visit < 3; visit += 1) {
+                await screen.update(pane(true));
+                await flushHookEffects();
+                await screen.update(pane(false));
+                await flushHookEffects();
+            }
+            const mounts = [...mountedRowCost.mounts.values()].reduce((sum, count) => sum + count, 0) - settledMounts;
+            expect(mounts).toBe(0);
+            expect(screen.root.findAll(node => typeof node.type === 'string' && rowIds.includes(String(node.props.testID ?? '')))
+                .map(node => String(node.props.testID)).sort()).toEqual([...rowIds].sort());
         } finally { await screen.unmount(); }
     });
 

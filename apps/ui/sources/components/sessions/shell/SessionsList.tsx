@@ -332,8 +332,8 @@ type SessionsListViewContentProps = Readonly<{
 
 function SessionsListViewContent(props: SessionsListViewContentProps) {
     const surfaceOwnership = normalizeSessionListSurfaceOwnership(props.surfaceOwnership);
-    if (!surfaceOwnership.visible) return null;
-
+    // A covered surface (a page pushed over it) stays mounted with its data demand withdrawn, so Back finds
+    // the rows it left instead of mounting every one again.
     return (
         <VisibleSessionsListViewContent
             {...props}

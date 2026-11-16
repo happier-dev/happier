@@ -111,8 +111,9 @@ function getRetainablePaneState(
     return getRetainablePaneStateSnapshot(retainedPaneState, props)?.paneState ?? EMPTY_SESSIONS_LIST_PANE_STATE;
 }
 
-function ActiveSessionsListPaneStateSubscriber(props: SessionsListPaneContentProps & Readonly<{
+function SessionsListPaneStateSubscriber(props: SessionsListPaneContentProps & Readonly<{
     storageKind: SessionListStorageFilter;
+    dataActive: boolean;
     retainedPathname?: string | null;
     retainedVisibleSessionListIndex?: VisibleSessionListPaneState['visibleSessionListIndex'];
     retainedEmptyState?: boolean;
@@ -127,15 +128,17 @@ function ActiveSessionsListPaneStateSubscriber(props: SessionsListPaneContentPro
         retainedPathname: props.retainedPathname,
         retainedVisibleSessionListIndex: props.retainedVisibleSessionListIndex,
         retainedEmptyState: props.retainedEmptyState,
-        sessionListSurfaceDataActive: true,
+        sessionListSurfaceDataActive: props.dataActive,
         attentionInteractionHeld: props.surfaceOwnership.interactive && attentionInteractionHeld,
     });
 
     // Reported before paint: the pane draws it in the same commit pass as the subscription that produced it.
+    // A withdrawn demand reports nothing; the pane keeps showing what it last reported.
     const onPaneState = props.onPaneState;
+    const dataActive = props.dataActive;
     React.useLayoutEffect(() => {
-        onPaneState(sessionListPaneState);
-    }, [onPaneState, sessionListPaneState]);
+        if (dataActive) onPaneState(sessionListPaneState);
+    }, [dataActive, onPaneState, sessionListPaneState]);
 
     return null;
 }
@@ -324,7 +327,9 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
     }, [props.surfaceRoutePathname, retentionIdentity, sessionListSurfaceDataActive]);
 
     // The subscriber renders nothing: the content view stays at one position whether the data demand is active or
-    // withdrawn (a page over the tab), so a return never remounts it.
+    // withdrawn (a page over the tab), so a return never remounts it. The subscriber itself stays mounted with its
+    // demand withdrawn, so its query keeps the rows it answered: a return re-presents them instead of starting an
+    // empty first query that drops and rebuilds every row.
     const [subscribedPaneState, setSubscribedPaneState] = React.useState<VisibleSessionListPaneState | null>(null);
     const reportPaneState = React.useCallback((paneState: VisibleSessionListPaneState) => {
         setSubscribedPaneState(paneState);
@@ -340,18 +345,17 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
 
     return (
         <SessionListAttentionInteractionContext.Provider value={attentionInteraction}>
-            {sessionListSurfaceDataActive ? (
-                <ActiveSessionsListPaneStateSubscriber
-                    {...props}
-                    storageKind={storageKind}
-                    retainedPathname={retainedPaneState?.surfaceRoutePathname ?? null}
-                    retainedVisibleSessionListIndex={retainedPaneState?.paneState.visibleSessionListIndex ?? null}
-                    retainedEmptyState={retainedPaneState?.paneState.showEmptyState}
-                    surfaceOwnership={surfaceOwnership}
-                    filterController={filterController}
-                    onPaneState={reportPaneState}
-                />
-            ) : null}
+            <SessionsListPaneStateSubscriber
+                {...props}
+                storageKind={storageKind}
+                dataActive={sessionListSurfaceDataActive}
+                retainedPathname={retainedPaneState?.surfaceRoutePathname ?? null}
+                retainedVisibleSessionListIndex={retainedPaneState?.paneState.visibleSessionListIndex ?? null}
+                retainedEmptyState={retainedPaneState?.paneState.showEmptyState}
+                surfaceOwnership={surfaceOwnership}
+                filterController={filterController}
+                onPaneState={reportPaneState}
+            />
             <SessionsListPaneContentView
                 {...props}
                 storageKind={storageKind}

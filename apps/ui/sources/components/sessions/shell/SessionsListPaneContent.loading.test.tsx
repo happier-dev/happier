@@ -8,6 +8,8 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 const sessionListState = vi.hoisted(() => ({
     calls: 0,
+    /** Mounts of the pane-state owner (it holds the list's query and its answered rows). */
+    mounts: 0,
     callOptions: [] as Array<Record<string, unknown> | undefined>,
     paneState: {
         summary: {
@@ -67,6 +69,8 @@ installSessionShellCommonModuleMocks({
 
 vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
     useVisibleSessionListPaneState: (_storageKind: string, options?: Record<string, unknown>) => {
+        // eslint-disable-next-line react-hooks/rules-of-hooks -- called as the hook it replaces.
+        React.useEffect(() => { sessionListState.mounts += 1; }, []);
         sessionListState.calls += 1;
         sessionListState.callOptions.push(options);
         return sessionListState.paneState;
@@ -110,6 +114,7 @@ const { SessionsListPaneContent } = await import('./SessionsListPaneContent');
 describe('SessionsListPaneContent (loading)', () => {
     beforeEach(() => {
         sessionListState.calls = 0;
+        sessionListState.mounts = 0;
         sessionListState.callOptions = [];
         filterControllerState.controller.filters.source = 'all';
         filterControllerState.controller.queryEnabled = true;
@@ -137,6 +142,21 @@ describe('SessionsListPaneContent (loading)', () => {
         const list = screen.findByType('SessionsListViewWithFilterController' as any);
         expect(list.props.paneState).toBe(sessionListState.paneState);
         expect(sessionListState.calls).toBe(1);
+    });
+
+    it('keeps the pane-state owner (and its query) mounted with its demand withdrawn while a page covers the list', async () => {
+        const pane = (covered: boolean) => (
+            <SessionsListPaneContent fallbackGuidanceVariant="phone" sessionListSurfaceDataActive={!covered}
+                surfaceOwnership={{ visible: !covered, interactive: !covered, dataActive: !covered }} />
+        );
+        const screen = await renderScreen(pane(false));
+        for (let visit = 0; visit < 3; visit += 1) {
+            await screen.update(pane(true));
+            expect(sessionListState.callOptions.at(-1)).toMatchObject({ sessionListSurfaceDataActive: false });
+            await screen.update(pane(false));
+            expect(sessionListState.callOptions.at(-1)).toMatchObject({ sessionListSurfaceDataActive: true });
+        }
+        expect(sessionListState.mounts).toBe(1);
     });
 
     it('uses the retained filter controller query when resolving the global pane', async () => {
