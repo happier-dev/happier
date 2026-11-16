@@ -5970,6 +5970,8 @@ membership; otherwise validation uses stored triggers, without changing save
 ordering. A removed Event produces a non-blocking `missing_reference` warning;
 an invalid declared path blocks with `invalid_input`. Copies retain references
 even when their triggers are not copied.
+Inline definitions supplied to trigger add or update use the same validator
+against the Event being enrolled, including retained inline references.
 
 Trigger admission seals only referenced leaves in the private accepted snapshot.
 Other Events, Run now, schedules and Session lifecycle admissions leave the value

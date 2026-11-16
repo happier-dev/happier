@@ -261,6 +261,73 @@ function fixture(savedDefinition = definition) {
   };
 }
 
+describe('inline Event reference authoring', () => {
+  const event = { pluginId: 'com.acme.events', localId: 'pull-request' };
+  const eventTrigger = { kind: 'pluginEvent' as const, enabled: true, eventRef: event,
+    sourceInstanceId: 'pull-requests', sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'Pull requests',
+    filter: null, maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull' as const,
+      watcherMaterializationRef: { machineId: project.machineId, pluginId: event.pluginId, materializationId: 'events' } } };
+  const payloadSchema = { type: 'object', properties: { number: { type: 'number' },
+    repository: { type: 'object' }, labels: { type: 'array', items: { type: 'string' } } } } as const;
+  const target = (path: string[], referencedEvent = event) => ({ kind: 'inline' as const,
+    definition: WorkflowDefinitionV1Schema.parse({ ...definition, blocks: [{ ...definition.blocks[0],
+      input: [{ kind: 'trigger_event', event: referencedEvent, path }] }] }) });
+  function inlineFixture(unavailable = false) {
+    const f = fixture();
+    let declarationReads = 0;
+    const actions = createWorkflowTriggerActions({ ...f.deps, automations: { ...f.deps.automations,
+      readTriggerEventDeclarations: async () => { declarationReads += 1;
+        return { triggerEvents: [{ event, payloadSchema: unavailable ? null : payloadSchema }] }; },
+    } });
+    return { ...f, actions, declarationReads: () => declarationReads };
+  }
+
+  it.each(['repository', 'labels'])('refuses an inline %s path before add or update persistence', async path => {
+    const f = inlineFixture();
+    await expect(f.actions.add({ project, target: target([path]), trigger: eventTrigger }))
+      .rejects.toMatchObject({ code: 'invalid_input' });
+    expect(f.rows.size).toBe(0);
+    expect(f.declarationReads()).toBe(1);
+    const saved = await f.actions.add({ project, target: target(['number']), trigger: eventTrigger });
+    expect(f.declarationReads()).toBe(2);
+    const before = f.rows.get(saved.set.automationId)!;
+    // The authenticated detail boundary carries the current declaration for a retained Event.
+    f.rows.set(before.id, { ...before, triggers: before.triggers.map(trigger => ({ ...trigger, payloadSchema })) });
+    await expect(f.actions.update({ automationId: before.id, expectedRevision: before.templateVersion,
+      patch: { target: target([path]) } })).rejects.toMatchObject({ code: 'invalid_input' });
+    expect(f.rows.get(before.id)?.templateVersion).toBe(before.templateVersion);
+    expect(f.declarationReads()).toBe(2);
+    await f.actions.update({ automationId: before.id, expectedRevision: before.templateVersion,
+      patch: { target: target(['number']) } });
+    expect(f.rows.get(before.id)?.templateVersion).toBe(before.templateVersion + 1);
+    expect(f.declarationReads()).toBe(2);
+  });
+
+  it('validates retained inline inputs on trigger-only update against the declaration already read', async () => {
+    const f = inlineFixture(true);
+    const saved = await f.actions.add({ project, target: target(['repository']), trigger: eventTrigger });
+    const before = f.rows.get(saved.set.automationId)!;
+    f.rows.set(before.id, { ...before, triggers: before.triggers.map(trigger => ({ ...trigger, payloadSchema })) });
+    await expect(f.actions.update({ automationId: before.id, expectedRevision: before.templateVersion,
+      patch: { enabled: false } }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
+      .rejects.toMatchObject({ code: 'invalid_input' });
+    expect(f.rows.get(before.id)?.templateVersion).toBe(before.templateVersion);
+    expect(f.declarationReads()).toBe(1);
+  });
+
+  it.each(['different', 'unavailable'] as const)('keeps an inline reference to a %s Event nonblocking', async state => {
+    const f = inlineFixture(state === 'unavailable');
+    const authored = target(['repository'], state === 'different' ? { ...event, localId: 'another-event' } : event);
+    const saved = await f.actions.add({ project, target: authored, trigger: eventTrigger });
+    expect(f.rows.get(saved.set.automationId)?.executionRecipe).toMatchObject({ workflow: { t: 'plain', v: {
+      inlineDefinition: authored.definition,
+    } } });
+    await f.actions.update({ automationId: saved.set.automationId, expectedRevision: saved.set.revision,
+      patch: { target: authored } });
+    expect(f.rows.get(saved.set.automationId)?.templateVersion).toBe(saved.set.revision + 1);
+  });
+});
+
 describe('trigger source display provenance', () => {
   it('reads declared Event schemas from stored identity or intended current source without trusting authored schemas', async () => {
     const f = fixture();
