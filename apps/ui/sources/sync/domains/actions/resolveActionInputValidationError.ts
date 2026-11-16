@@ -48,7 +48,7 @@ export function resolveActionInputValidationError(args: Readonly<{
     fields: readonly ActionInputFieldHint[];
 }>): string | null {
     const parsed = (args.spec.inputSchema as { safeParse: (value: unknown) => unknown }).safeParse({
-        sessionId: args.sessionId,
+        ...(args.sessionId !== null ? { sessionId: args.sessionId } : {}),
         ...(args.input ?? {}),
     }) as
         | { success: true }

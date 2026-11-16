@@ -43,6 +43,13 @@ export function useComparisonReviewDraft(params: Readonly<{
     const narratorEngineId = narrator && typeof narrator === 'object' && 'engineId' in narrator && typeof narrator.engineId === 'string'
         ? narrator.engineId : null;
     const enabled = params.comparisonReview !== null;
+    // The retained draft uses [] to remember an explicit findings-only choice.
+    // The Action represents that choice by omitting outputs.
+    const launchInput = React.useMemo(() => {
+        if (!enabled || !Array.isArray(params.actionInput.outputs) || params.actionInput.outputs.length > 0) return params.actionInput;
+        const { outputs: _outputs, ...input } = params.actionInput;
+        return input;
+    }, [enabled, params.actionInput]);
     const machineInventory = params.machineInventory;
     React.useEffect(() => {
         if (!enabled) return;
@@ -106,5 +113,5 @@ export function useComparisonReviewDraft(params: Readonly<{
         error: enginesError ?? (inventoryFailed ? t('machineAgents.unknown') : null),
         onRetry: inventoryFailed ? onRetryInventory : undefined,
     }), [enginesError, inventoryFailed, onRetryInventory, plan, scopeDetail, scopeLabel, setActionInput, walkthrough]);
-    return { plan, engines, enginesError, submit, fields };
+    return { plan, engines, enginesError, submit, fields, launchInput };
 }

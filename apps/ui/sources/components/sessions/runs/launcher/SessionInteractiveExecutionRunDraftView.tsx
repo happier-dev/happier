@@ -43,7 +43,7 @@ import {
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { useExecutionRunMachineName } from '@/components/sessions/runs/details/useExecutionRunMachineName';
-import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { readActionExecutionFailureRecord, resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveActionInputValidationError } from '@/sync/domains/actions/resolveActionInputValidationError';
 import { Typography } from '@/constants/Typography';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -469,7 +469,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         if (submitInFlightRef.current) throw new Error(t('common.loading'));
         const targetFieldPath = resolveExecutionRunTargetFieldPath(boundedIntent);
         const drafted: Record<string, unknown> = {
-            ...actionInput,
+            ...comparisonReview.launchInput,
             instructions: submission.text,
             ...(secretOverlayState.overlay ? { secretReferenceOverlay: secretOverlayState.overlay } : {}),
         };
@@ -539,7 +539,8 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             // start are said out loud, not dropped; only a start where none did is refused.
             const runId = startedRunId;
             if (!runId) {
-                throw new Error(resolveActionExecutionFailureMessage(result, t('common.requestFailed')) ?? t('common.requestFailed'));
+                throw Object.assign(new Error(resolveActionExecutionFailureMessage(result, t('common.requestFailed')) ?? t('common.requestFailed')),
+                    { code: readActionExecutionFailureRecord(result)?.errorCode });
             }
             const notStarted = members.filter((member) => member.runId === null).map((member) => (
                 options.backendChoices.find((choice) => choice.targetKey === member.key || choice.backendId === member.key)?.title ?? member.key
@@ -570,7 +571,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         } finally {
             submitInFlightRef.current = false;
         }
-    }, [accountLifetime, childChoice.begin, childChoice.offer, comparisonReview.submit, launcher, startAction, identity.correlationId, actionInput, options.actionId, options.actionSpec, options.backendChoices, options.fields, props.comparisonReview, props.credentialSelectionOnly, props.selectionIsCurrent, props.onLaunchSelection, props.onRunStarted, props.sessionId, secretOverlayState.overlay, secretOverlayState.readiness.ok, teamCredential.available]);
+    }, [accountLifetime, childChoice.begin, childChoice.offer, comparisonReview.submit, comparisonReview.launchInput, launcher, startAction, identity.correlationId, options.actionId, options.actionSpec, options.backendChoices, options.fields, props.comparisonReview, props.credentialSelectionOnly, props.selectionIsCurrent, props.onLaunchSelection, props.onRunStarted, props.sessionId, secretOverlayState.overlay, secretOverlayState.readiness.ok, teamCredential.available]);
 
     submitBoundedStartRef.current = submitBoundedStart;
 

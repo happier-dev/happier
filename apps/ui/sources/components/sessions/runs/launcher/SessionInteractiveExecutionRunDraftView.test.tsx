@@ -1897,14 +1897,24 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await settle();
         expect(emittedStarts).toHaveLength(1);
     });
-    it('translates a structured-output model refusal through the actual comparison Start', async () => {
+    it.each([
+        { detached: false, findingsOnly: false },
+        { detached: true, findingsOnly: false },
+        { detached: false, findingsOnly: true },
+    ])('translates a structured-output model refusal through the actual comparison Start ($detached, $findingsOnly)', async ({ detached, findingsOnly }) => {
         const onStarted = vi.fn();
         const code = 'model_structured_output_unsupported';
         startResults.push({ ok: false, error: code, errorCode: code,
             details: withExecutionRunStartFailureDetails({ modelId: 'default', structuredOutput: 'unknown' }, 'noRunCreated') });
-        await mount({ intent: 'review', onRunStarted: onStarted, comparisonReview: { cwd: '/repo',
-            comparison: { kind: 'workingTree' }, comparisonId: 'captured-1', scopeLabel: 'Pending changes', defaultWalkthrough: false } });
+        await mount({ intent: 'review', onRunStarted: onStarted,
+            ...(detached ? { sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' } } : {}),
+            comparisonReview: { cwd: '/repo',
+            comparison: { kind: 'workingTree' }, comparisonId: 'captured-1', scopeLabel: 'Pending changes', defaultWalkthrough: findingsOnly } });
         await reviewers(['claude']);
+        if (findingsOnly) {
+            const walkthrough = await renderChipContent('execution-run-start-walkthrough');
+            await walkthrough.pressByTestIdAsync('start-review-walkthrough');
+        }
         await settle();
         await send('Keep this review request');
         await waitFor(() => expect(screen.getTextContent()).toContain(t('walkthrough.generationFailure.modelUnavailable')));

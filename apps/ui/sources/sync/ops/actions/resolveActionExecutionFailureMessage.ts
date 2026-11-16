@@ -239,11 +239,11 @@ function isFailedResult(value: unknown): boolean {
 
 /** Both thrown adapters and returned Action envelopes use the cause owner's title. */
 export function resolveActionExecutionFailureTitle(value: unknown, fallbackTitle: string): string {
-    const failure = readFailureRecord(value) ?? asRecord(value);
+    const failure = readActionExecutionFailureRecord(value) ?? asRecord(value);
     return readTransientFailure(failure)?.title ?? fallbackTitle;
 }
 
-function readFailureRecord(value: unknown): Record<string, unknown> | null {
+export function readActionExecutionFailureRecord(value: unknown): Record<string, unknown> | null {
     const topLevel = asRecord(value);
     if (!topLevel || isFailedResult(topLevel)) return topLevel;
     const inner = asRecord(topLevel.result);
@@ -258,7 +258,7 @@ export function resolveActionExecutionFailureMessage(
     options?: FailurePresentationOptions,
 ): string | null {
     if (!asRecord(result)) return fallbackMessage;
-    const failure = readFailureRecord(result);
+    const failure = readActionExecutionFailureRecord(result);
     return failure ? readFailureMessage(failure, options) ?? fallbackMessage : null;
 }
 
