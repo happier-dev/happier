@@ -4,7 +4,9 @@ export * from './credentials/index.js';
 export * from './cursor.js';
 export * from './errors.js';
 export * from './group.js';
-export { TeamGroupLabelEnvelopeRepairV1Schema, TeamGroupLabelEnvelopeRepairsV1Schema, TeamGroupLabelEnvelopeWorkV1Schema } from './groupLabel.js';
+export {
+  TeamLabelEnvelopeBindingV1Schema, TeamLabelEnvelopeRepairsV1Schema, TeamLabelEnvelopeWorkV1Schema } from './groupLabel.js';
+export type { TeamLabelEnvelopeBindingV1, TeamLabelEnvelopeRepairsV1, TeamLabelEnvelopeWorkV1 } from './groupLabel.js';
 export * from './managedDefaults.js';
 export * from './invitation.js';
 export * from './membership.js';

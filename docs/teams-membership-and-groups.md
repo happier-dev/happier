@@ -218,7 +218,8 @@ non-guest members; a Group is exactly the narrower audience.
   recipient projection carries only that viewer's envelope. Raw pre-envelope text
   remains readable until its next normal metadata save. The server orders and
   targets Groups by structural IDs; display names need not be unique.
-  Development clients distribute existing encrypted Group-label keys to new
+  Development clients distribute existing encrypted Group-label keys (and the
+  same Team's credential, External API key and Team Pool label keys) to new
   eligible Team members on the Team-change wake and reconnect, without editing
   the saved labels. Repair changes envelopes only and admits the current Team
   audience; it cannot replace a concurrently edited label's ciphertext.

@@ -66,11 +66,11 @@ describe('Team Group description privacy through HTTP and storage', () => {
         const joined = await inTx(tx => admitTeamMemberInTx(tx, { teamId: a.team.id, accountId: b.account.id,
             role: 'member', historyAccess: 'all_existing' }));
         expect(joined.ok).toBe(true);
-        const pending = await app.inject({ method: 'GET', url: '/v2/teams/groups/label-envelopes',
+        const pending = await app.inject({ method: 'GET', url: '/v2/teams/label-envelopes',
             headers: { 'x-test-user-id': a.account.id } });
         expect(pending.statusCode).toBe(200);
-        expect(pending.json().teams.flatMap((team: { labels: { groupId: string }[] }) => team.labels)
-            .some((label: { groupId: string }) => label.groupId === a.groupId)).toBe(true);
+        expect(pending.json().teams.flatMap((team: { labels: { binding: { id: string } }[] }) => team.labels)
+            .some((label: { binding: { id: string } }) => label.binding.id === a.groupId)).toBe(true);
         const dataKey = openEncryptedDataKeyEnvelopeV1({
             envelope: decodeBase64(description.recipients[0]!.envelope.encryptedDataKey, 'base64'),
             recipientSecretKeyOrSeed: a.content!.secretKey,
@@ -81,9 +81,9 @@ describe('Team Group description privacy through HTTP and storage', () => {
                 recipientPublicKey: f.content!.publicKey, randomBytes: tweetnacl.randomBytes }), 'base64'),
             recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(f.content!.publicKey),
         } }));
-        const publish = (actor = a.account.id) => app.inject({ method: 'PATCH', url: '/v2/teams/groups/label-envelopes',
+        const publish = (actor = a.account.id) => app.inject({ method: 'PATCH', url: '/v2/teams/label-envelopes',
             headers: { 'x-test-user-id': actor }, payload: { teamId: a.team.id,
-                labels: [{ groupId: a.groupId, field: 'description', label: { ...description, recipients } }] } });
+                labels: [{ binding: { entity: 'team_group', field: 'description', id: a.groupId }, label: { ...description, recipients } }] } });
         expect((await publish()).statusCode).toBe(200);
         const read = await app.inject({ method: 'POST', url: '/v1/teams/groups/get',
             headers: { 'x-test-user-id': b.account.id }, payload: { v: 1, teamId: a.team.id, groupId: a.groupId } });
@@ -100,9 +100,9 @@ describe('Team Group description privacy through HTTP and storage', () => {
                 recipientPublicKey: f.content!.publicKey, randomBytes: tweetnacl.randomBytes }), 'base64'),
             recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(f.content!.publicKey),
         } }));
-        const poisoned = await app.inject({ method: 'PATCH', url: '/v2/teams/groups/label-envelopes',
+        const poisoned = await app.inject({ method: 'PATCH', url: '/v2/teams/label-envelopes',
             headers: { 'x-test-user-id': b.account.id }, payload: { teamId: a.team.id,
-                labels: [{ groupId: a.groupId, field: 'description', label: {
+                labels: [{ binding: { entity: 'team_group', field: 'description', id: a.groupId }, label: {
                     ...description, recipients: poisonedRecipients,
                 } }] } });
         expect(poisoned.statusCode, poisoned.body).toBe(200);
@@ -122,9 +122,9 @@ describe('Team Group description privacy through HTTP and storage', () => {
                 recipientPublicKey: rotatedContent.publicKey, randomBytes: tweetnacl.randomBytes }), 'base64'),
             recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(rotatedContent.publicKey),
         };
-        const rotated = await app.inject({ method: 'PATCH', url: '/v2/teams/groups/label-envelopes',
+        const rotated = await app.inject({ method: 'PATCH', url: '/v2/teams/label-envelopes',
             headers: { 'x-test-user-id': a.account.id }, payload: { teamId: a.team.id,
-                labels: [{ groupId: a.groupId, field: 'description', label: { ...description,
+                labels: [{ binding: { entity: 'team_group', field: 'description', id: a.groupId }, label: { ...description,
                     recipients: recipients.map(row => row.accountId === b.account.id ? { ...row, envelope: rotatedEnvelope } : row),
                 } }] } });
         expect(rotated.statusCode, rotated.body).toBe(200);
@@ -136,18 +136,18 @@ describe('Team Group description privacy through HTTP and storage', () => {
             readPolicy: { kind: 'team-resource' }, accountKey: rotatedContent.secretKey,
         }) : null).toBe('Saved before join');
         expect(a.openDescription((await a.post('get', {})).json())).toBe('Saved before join');
-        const changed = await app.inject({ method: 'PATCH', url: '/v2/teams/groups/label-envelopes',
+        const changed = await app.inject({ method: 'PATCH', url: '/v2/teams/label-envelopes',
             headers: { 'x-test-user-id': a.account.id }, payload: { teamId: a.team.id,
-                labels: [{ groupId: a.groupId, field: 'description', label: {
+                labels: [{ binding: { entity: 'team_group', field: 'description', id: a.groupId }, label: {
                     ...description, content: (await a.seal('description', 'Changed content')).content, recipients,
                 } }] } });
         expect(changed.statusCode).toBe(409);
         await db.teamMembership.delete({ where: { teamId_accountId: { teamId: a.team.id, accountId: b.account.id } } });
         expect((await publish()).statusCode).toBe(400);
         expect((await publish(b.account.id)).statusCode).toBe(403);
-        expect((await app.inject({ method: 'PATCH', url: '/v2/teams/groups/label-envelopes',
+        expect((await app.inject({ method: 'PATCH', url: '/v2/teams/label-envelopes',
             headers: { 'x-test-user-id': a.account.id }, payload: { teamId: a.team.id,
-                labels: [{ groupId: a.groupId, field: 'description', label: {
+                labels: [{ binding: { entity: 'team_group', field: 'description', id: a.groupId }, label: {
                     ...description, recipients: recipients.filter(row => row.accountId === a.account.id),
                 } }] } })).statusCode).toBe(200);
         const afterRemoval = await db.teamGroup.findUniqueOrThrow({ where: { id: a.groupId } });

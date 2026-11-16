@@ -4,8 +4,6 @@ import { decodeMembershipSessionDataKeyEnvelopeCursorV1, MembershipSessionDataKe
 import {
     TeamErrorV1Schema,
     TeamGroupCreateInputV1Schema,
-    TeamGroupLabelEnvelopeRepairsV1Schema,
-    TeamGroupLabelEnvelopeWorkV1Schema,
     TeamGroupMemberAddInputV1Schema,
     TeamGroupMemberMutationResultV1Schema,
     TeamGroupMemberRemoveInputV1Schema,
@@ -16,6 +14,8 @@ import {
     TeamGroupV1Schema,
     TeamGroupsListInputV1Schema,
     TeamGroupsPageV1Schema,
+    TeamLabelEnvelopeRepairsV1Schema,
+    TeamLabelEnvelopeWorkV1Schema,
     teamErrorHttpStatusV1,
     type TeamErrorCodeV1,
 } from "@happier-dev/protocol/teams";
@@ -32,7 +32,7 @@ import { inTx } from "@/storage/inTx";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { readTeamOperationAuthenticationFromRequest } from "../actorContext";
 import { createTeamRouteApp } from "../teamRouteApp";
-import { readTeamGroupLabelEnvelopeWorkInTx, repairTeamGroupLabelEnvelopesInTx } from './labelEnvelopes';
+import { readTeamLabelEnvelopeWorkInTx, repairTeamLabelEnvelopesInTx } from '../labelEnvelopes';
 
 import {
     addTeamGroupMemberForActorInTx,
@@ -99,20 +99,21 @@ export function registerTeamGroupRoutes(app: Fastify) {
         reply.code(teamErrorHttpStatusV1(error)).send({ error });
     }
 
-    teamsApp.get('/v2/teams/groups/label-envelopes', {
+    // One recipient-only repair owner for every Team-audience private label (Groups, credentials, Pools).
+    teamsApp.get('/v2/teams/label-envelopes', {
         preHandler: app.authenticate,
-        schema: { response: { 200: TeamGroupLabelEnvelopeWorkV1Schema, ...TEAM_ERROR_RESPONSES } },
-    }, async (request, reply) => reply.send(await inTx(tx => readTeamGroupLabelEnvelopeWorkInTx(tx,
+        schema: { response: { 200: TeamLabelEnvelopeWorkV1Schema, ...TEAM_ERROR_RESPONSES } },
+    }, async (request, reply) => reply.send(await inTx(tx => readTeamLabelEnvelopeWorkInTx(tx,
         request.userId, readTeamOperationAuthenticationFromRequest(request)))));
 
-    teamsApp.patch('/v2/teams/groups/label-envelopes', {
+    teamsApp.patch('/v2/teams/label-envelopes', {
         preHandler: app.authenticate,
         attachValidation: true,
-        schema: { body: TeamGroupLabelEnvelopeRepairsV1Schema,
+        schema: { body: TeamLabelEnvelopeRepairsV1Schema,
             response: { 200: z.strictObject({ ok: z.literal(true) }), ...TEAM_ERROR_RESPONSES } },
     }, async (request, reply) => {
         if (request.validationError) return fail(reply, 'invalid_team_input');
-        const result = await inTx(tx => repairTeamGroupLabelEnvelopesInTx(tx, request.userId, request.body,
+        const result = await inTx(tx => repairTeamLabelEnvelopesInTx(tx, request.userId, request.body,
             readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'ReadCommitted' });
         if (result !== 'ready') return fail(reply, result);
         return reply.send({ ok: true });

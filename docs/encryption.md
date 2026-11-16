@@ -1518,12 +1518,20 @@ Group sorting and search run over the client's opened loaded collection. The
 server uses structural IDs for order and cursors; `nameKey` is removed. Credential
 audit subjects retain the resource binding and are opened by the client. Label
 writes prepare the current Team audience. In 0.3 development, current members'
-clients also repair missing Group-name/description envelopes automatically on
-the existing Team-change wake and reconnect. This wraps the existing data key
-for the current audience without changing ciphertext or requiring a metadata
-save. Repair admission uses current membership and recipient keys; a departed
-member receives no new seals. The Home never opens labels. A keyholding client
-must be online; historical audit snapshots are outside this Group-label repair.
+clients also repair missing envelopes automatically on the existing Team-change
+wake and reconnect, through one owner (`GET`/`PATCH /v2/teams/label-envelopes`,
+`apps/server/sources/app/teams/labelEnvelopes.ts`). It covers every Team-audience
+label: Group names/descriptions, credential display names, External API key
+labels, and Team Pool names/descriptions (whose audience also keeps the owning
+Account, as their writer does). Items are addressed by the label's immutable
+binding. This wraps the existing data key for the current audience without
+changing ciphertext or requiring a save. Only a current, authenticated member who
+already holds a wrap of that label may submit envelopes; the submitted set must
+equal the current recipient census, existing current wraps are kept, and the
+write is a compare-and-swap so a concurrent ordinary save wins. A departed member
+receives no new seals, and Plain or legacy-plaintext labels are skipped. The Home
+never opens labels. A keyholding client must be online; historical audit
+snapshots are outside this repair.
 
 An External API key has its own private label identity, not its parent
 credential-resource binding. Creation supplies the immutable key id before

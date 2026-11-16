@@ -19,24 +19,34 @@ export type TeamGroupLabelProjectionV1 = z.infer<typeof TeamGroupLabelProjection
 export const TeamGroupNameProjectionV1Schema = TeamGroupLabelProjectionV1Schema;
 export type TeamGroupNameProjectionV1 = TeamGroupLabelProjectionV1;
 
-/** Recipient-only repair keeps the immutable Group binding and ciphertext. */
-export const TeamGroupLabelEnvelopeRepairV1Schema = lazyZodSchema(() => z.strictObject({
-  groupId: z.string().check(z.minLength(1)),
-  field: z.enum(['name', 'description']),
-  label: PrivateLabelStoredV1Schema,
-}));
-export const TeamGroupLabelEnvelopeRepairsV1Schema = lazyZodSchema(() => z.strictObject({
+/**
+ * Team-audience private labels whose stored data key current keyholders may rewrap for the current
+ * Team recipient census. The binding is the label's immutable cipher identity and its storage address.
+ */
+export const TeamLabelEnvelopeBindingV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ entity: z.literal('team_group'), field: z.enum(['name', 'description']), id: z.string().check(z.minLength(1)) }),
+  z.strictObject({ entity: z.literal('team_credential_resource'), field: z.literal('displayName'), id: z.string().check(z.minLength(1)) }),
+  z.strictObject({ entity: z.literal('team_credential_external_api_key'), field: z.literal('label'), id: z.string().check(z.minLength(1)) }),
+  z.strictObject({ entity: z.literal('machine_pool'), field: z.enum(['name', 'description']), id: z.string().check(z.minLength(1)) }),
+]));
+export type TeamLabelEnvelopeBindingV1 = z.infer<typeof TeamLabelEnvelopeBindingV1Schema>;
+
+/** Recipient-only repair keeps the immutable binding and ciphertext. */
+export const TeamLabelEnvelopeRepairsV1Schema = lazyZodSchema(() => z.strictObject({
   teamId: z.string().check(z.minLength(1)),
-  labels: z.array(TeamGroupLabelEnvelopeRepairV1Schema),
+  labels: z.array(z.strictObject({ binding: TeamLabelEnvelopeBindingV1Schema, label: PrivateLabelStoredV1Schema })),
 }));
-export const TeamGroupLabelEnvelopeWorkV1Schema = lazyZodSchema(() => z.strictObject({
+export type TeamLabelEnvelopeRepairsV1 = z.infer<typeof TeamLabelEnvelopeRepairsV1Schema>;
+
+/** Labels the caller can already open, each with the complete recipient census its next envelope set must cover. */
+export const TeamLabelEnvelopeWorkV1Schema = lazyZodSchema(() => z.strictObject({
   teams: z.array(z.strictObject({
     teamId: z.string().check(z.minLength(1)),
-    recipients: z.array(SavedSecretResourceEnvelopeCensusRecipientV1Schema),
     labels: z.array(z.strictObject({
-      groupId: z.string().check(z.minLength(1)),
-      field: z.enum(['name', 'description']),
+      binding: TeamLabelEnvelopeBindingV1Schema,
       label: PrivateLabelReadV1Schema,
+      recipients: z.array(SavedSecretResourceEnvelopeCensusRecipientV1Schema),
     })),
   })),
 }));
+export type TeamLabelEnvelopeWorkV1 = z.infer<typeof TeamLabelEnvelopeWorkV1Schema>;
