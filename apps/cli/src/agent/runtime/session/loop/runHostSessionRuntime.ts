@@ -3152,6 +3152,7 @@ async function runHostedSessionRuntime(
         serverId: sessionOpenContext.home.serverId,
         serverIdentityId: sessionOpenContext.serverIdentityId,
         serverHttpBaseUrl: sessionOpenContext.home.serverUrl,
+        resolveServerFeaturesSnapshot: () => currentLifecycleSession.getServerFeaturesSnapshot(),
         ...(config.runtimeActionSettingsProvider ? { actionsSettingsProvider: config.runtimeActionSettingsProvider } : {}),
       }).prepareNativeGoalOwner(signal);
     },

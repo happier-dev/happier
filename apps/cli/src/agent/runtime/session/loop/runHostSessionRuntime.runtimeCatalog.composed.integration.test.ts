@@ -4496,6 +4496,26 @@ describe('runHostSessionRuntime', () => {
     ]);
   });
 
+  it('uses the current Home feature observation for native Goal cleanup', async () => {
+    const harness = createHarness();
+    harness.session.getStoredContentEncryptionContext = () => ({ mode: 'plain', ctx: null });
+    harness.session.getServerFeaturesSnapshot = () => ({ ...harnessHomeFeatures,
+      features: FeaturesResponseSchema.parse({ features: {
+        automations: { enabled: true }, workflows: { enabled: false },
+      }, capabilities: harnessHomeFeatures.features.capabilities }),
+    });
+    let prepareNativeGoal: ((signal: AbortSignal) => Promise<void>) | undefined;
+    setSessionRuntimeFactory(harness.config, params => {
+      prepareNativeGoal = params.prepareNativeGoalOwner;
+      return { operations: harness.runtime, nativeRuntime: harness.runtime };
+    });
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    // Exercise the callback supplied to the native runtime, with startup settled.
+    // Disabled Workflows require no cleanup and must still permit native Goals.
+    if (!prepareNativeGoal) throw new Error('Native Goal cleanup is unavailable');
+    await expect(prepareNativeGoal(new AbortController().signal)).resolves.toBeUndefined();
+  });
+
   it('applies a resumed initial goal after runtime open and before prompt admission', async () => {
     const harness = createHarness();
     const order: string[] = [];
