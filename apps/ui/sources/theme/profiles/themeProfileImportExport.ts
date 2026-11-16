@@ -208,7 +208,16 @@ const resolveExportProfile = (profile: ThemeProfileV1, options: ExportThemeProfi
 };
 
 export const exportThemeProfileToJson = (input: ThemeProfileV1 | ThemeProfileDocument, options: ExportThemeProfileOptions = {}): string => {
-    if ('raw' in input) return stableStringify(createThemeProfileFile(input.raw));
+    if ('raw' in input) {
+        if (!options.includeResolvedValues || !options.mode) return stableStringify(createThemeProfileFile(input.raw));
+        const mode = options.mode;
+        const overrides = isRecord(input.raw.overrides) ? input.raw.overrides : {};
+        const authored = isRecord(overrides[mode]) ? overrides[mode] : {};
+        return stableStringify(createThemeProfileFile({
+            ...input.raw,
+            overrides: { ...overrides, [mode]: { ...resolveCompleteModeOverrides(input.profile, mode), ...authored } },
+        }));
+    }
     const profile = input;
     const warnings: ThemeProfileImportWarning[] = [];
     const sanitizedProfile = sanitizeProfile(resolveExportProfile(profile, options), { now: profile.updatedAt }, warnings);

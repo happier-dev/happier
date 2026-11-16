@@ -50,6 +50,19 @@ describe('theme profile import/export', () => {
             expect(imported.document.compatibility.status).toBe('partial');
         }
     });
+    it('adds resolved colours to an export without losing a newer document presentation', () => {
+        const raw = { ...profile, schemaVersion: 2, overrides: { light: {}, dark: { 'background.canvas': '#08080A', 'future.ink': '#abcdef' } },
+            style: { radius: 'future-shape', futureGlow: { strength: 0.7 } },
+            futurePresentation: { material: 'ink' } };
+        const read = parseThemeProfileDocument(raw);
+        expect(read.ok).toBe(true);
+        if (!read.ok) return;
+        const exported = JSON.parse(exportThemeProfileToJson(read.document, { mode: 'dark', includeResolvedValues: true }));
+        expect(exported.profile).toMatchObject(raw);
+        expect(exported.profile.overrides.dark['surface.base']).toBeDefined();
+        expect(exported.profile.overrides.dark['text.primary']).toBeDefined();
+        expect(exported.profile.overrides.light).toEqual({});
+    });
     it('exports stable JSON and prunes empty, unknown, deprecated, and invalid overrides', () => {
         const exported = exportThemeProfileToJson(profile);
         const parsed = JSON.parse(exported) as { profile: ThemeProfileV1 };
