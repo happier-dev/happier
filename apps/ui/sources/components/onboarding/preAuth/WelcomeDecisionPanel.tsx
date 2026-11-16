@@ -1,3 +1,4 @@
+import { HAPPIER_BALANCED_TEXT_WRAP } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { usePendingTerminalConnect } from '@/hooks/session/usePendingTerminalConnect';
 import { View } from 'react-native';
@@ -82,7 +83,6 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     // seen flag.
     const isReturningUser = useHasCompletedAuthOnce();
     const lastSignInMethodId = useLastSignInMethod();
-    const returningGreeting = useReturningGreeting();
     // A terminal link hands off to sign-in here: the heading says what signing in is for, for as
     // long as that link can still be approved. The pairing's own expiry decides, not a second clock.
     const pendingTerminal = usePendingTerminalConnect(props.showGreeting !== false);
@@ -181,6 +181,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     const hasLoginDoor = model.actions.some(({ action }) => (
         (action.kind === 'authenticate' || action.kind === 'scan_or_paste_home') && action.labelRole === 'login'
     ));
+    const returningGreeting = useReturningGreeting({ besideLogin: hasLoginDoor });
     // On the build's own Home (nobody chose it), changing Home is 0.2's "Self-hosting? Use your own Relay".
     const selfHostingFooter = hasHome && !requestedHomeTarget;
     // A first run is the Homes doorway on every width (lab K1p; UI refinements 11-13: one first run, wide only has
@@ -426,6 +427,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 44,
         letterSpacing: -1.54,
         color: theme.colors.text.primary,
+        // Two short lines split evenly: no word alone on the last line (web; native has no balance).
+        ...HAPPIER_BALANCED_TEXT_WRAP,
     },
     subtitleTitle: {
         ...Typography.default('semiBold'),
@@ -433,6 +436,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 44,
         letterSpacing: -1.54,
         color: theme.colors.text.secondary,
+        ...HAPPIER_BALANCED_TEXT_WRAP,
     },
     actionStack: {
         gap: theme.space.s12,

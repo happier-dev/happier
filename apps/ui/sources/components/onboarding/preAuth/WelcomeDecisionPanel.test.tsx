@@ -920,6 +920,24 @@ describe('WelcomeDecisionPanel', () => {
             });
         });
 
+        it('never repeats the Login door in the returning greeting', async () => {
+            // Randomness is the greeting pool's boundary: pick the pool's first subtitle.
+            const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+            try {
+                await withHistory({ returning: true, method: 'key_challenge' }, async () => {
+                    const { screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
+                    const screen = await screenPromise;
+                    const text = screen.getTextContent();
+                    expect(text).toContain(t('welcome.welcomeReturningLoginButton'));
+                    expect(text).not.toContain(t('welcome.welcomeReturningSubtitle1'));
+                    expect(text).toContain(t('welcome.welcomeReturningSubtitle3'));
+                    await screen.unmount();
+                });
+            } finally {
+                random.mockRestore();
+            }
+        });
+
         it('returning with nothing recorded: Login is the QR or key door', async () => {
             await withHistory({ returning: true }, async () => {
                 const { callbacks, screenPromise } = renderPanel({ authenticationActions: keyAndEmail });

@@ -48,7 +48,15 @@ export type ReturningGreeting = Readonly<{
     subtitle: string;
 }>;
 
-export function useReturningGreeting(): ReturningGreeting {
+/** "Let's get back to it." is also the returning Login door's own title. */
+const LOGIN_DOOR_ECHO = SUBTITLE_GETTERS[0];
+const BESIDE_LOGIN_SUBTITLE = SUBTITLE_GETTERS[2]!;
+
+/**
+ * `besideLogin`: the Login door ("Login — let's get back to it") is on screen, so the subtitle never
+ * repeats its phrase. Read every render, so a door that appears after loading still swaps it.
+ */
+export function useReturningGreeting(options: Readonly<{ besideLogin?: boolean }> = {}): ReturningGreeting {
     const titleGetterRef = React.useRef<GreetingGetter | null>(null);
     const subtitleGetterRef = React.useRef<GreetingGetter | null>(null);
     if (!titleGetterRef.current) titleGetterRef.current = pickRandom(TITLE_GETTERS);
@@ -57,6 +65,6 @@ export function useReturningGreeting(): ReturningGreeting {
     // panel is mounted still picks up the new translation immediately.
     return {
         title: titleGetterRef.current(),
-        subtitle: subtitleGetterRef.current(),
+        subtitle: (options.besideLogin && subtitleGetterRef.current === LOGIN_DOOR_ECHO ? BESIDE_LOGIN_SUBTITLE : subtitleGetterRef.current)(),
     };
 }

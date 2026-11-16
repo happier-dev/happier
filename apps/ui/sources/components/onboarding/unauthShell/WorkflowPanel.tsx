@@ -135,8 +135,12 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
         ? isFullBleed
             ? styles.contentMobileFullBleedPadding
             : {
-                paddingTop: WORKFLOW_MOBILE_TOP_PADDING + safeAreaInsets.top
-                    + (wordmarkInBackRow ? MOBILE_ROW_WORDMARK_CLEARANCE_PX : 0),
+                // A welcome column taller than a short phone scrolls from below the corner wordmark,
+                // never under it.
+                paddingTop: (showMobileWordmark && !wordmarkInBackRow
+                    ? MOBILE_WORDMARK_INSET_PX + MOBILE_WORDMARK_HEIGHT_PX + MOBILE_ROW_WORDMARK_CLEARANCE_PX
+                    : WORKFLOW_MOBILE_TOP_PADDING + (wordmarkInBackRow ? MOBILE_ROW_WORDMARK_CLEARANCE_PX : 0))
+                    + safeAreaInsets.top,
                 paddingRight: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.right,
                 paddingBottom: WORKFLOW_MOBILE_BOTTOM_PADDING + safeAreaInsets.bottom,
                 paddingLeft: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.left,
