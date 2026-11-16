@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+// Collect the real Session resolver graph before timing individual admission cases.
+import '@/daemon/workflows/invocationRecoveryObserver';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema, resolveRoleSelectionV1, materializeWorkflowAcceptedSnapshotV1, admitAgentStartV1, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, WorkflowActionFailureV1Schema } from '@happier-dev/protocol';
 import { createCredentialedWorkflowMaterializationHostV1, createWorkflowMaterializationHostV1, projectWorkflowConversationRoleSelection, type WorkflowMaterializationHostDeps } from './workflowMaterializationHost';
 import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
@@ -60,6 +63,57 @@ function sessionAdmissionHost(machineId: string, readHostActionContract?: Workfl
 }
 
 describe('exact-machine workflow materialization effects', () => {
+  it('preserves an exact Session read refusal rather than reporting an absent Session', async () => {
+    const { createServer } = await import('node:http');
+    const server = createServer((_request, response) => {
+      response.writeHead(401, { 'Content-Type': 'application/json' }).end('{"error":"not_authenticated"}');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected loopback server');
+    try {
+      const host = createWorkflowMaterializationHostV1({ credentials, serverId: 'workflow-home',
+        serverHttpBaseUrl: `http://127.0.0.1:${address.port}`,
+        readRoleSelection: async () => ({}), readLaunchProfile: async () => null,
+        readWorkflowDefinition: async () => null, callMachineAction: async () => null,
+      });
+      const admission = await host({ machineId: 'run-machine', directory: '/repo' });
+      await expect(admission.effects.resolveSessionTarget?.(sessionId)).rejects.toMatchObject({ code: 'not_authenticated' });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it.each(['roster', 'capabilities', 'action-schema'] as const)(
+    'preserves a failed %s transport observation rather than inventing target absence', async boundary => {
+      const refused = new RpcError('Machine read refused', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
+      const host = createWorkflowMaterializationHostV1({
+        credentials, readRoleSelection: async () => ({}), readLaunchProfile: async () => null,
+        readWorkflowDefinition: async () => null,
+        callMachineAction: async ({ method }) => {
+          if (boundary === 'roster') throw refused;
+          if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
+            protocolVersion: 1, projection: { v: 2, generation: 1, agentsById: {},
+              actionsById: { 'test.action/invoke': { id: 'test.action/invoke', pluginId: 'test.action', occurrenceId: 'test-occurrence',
+                title: 'Invoke', scopes: ['machine'], surfaces: ['cli'], execution: { target: 'daemon' }, dangerLevel: 'safe' } } },
+          };
+          throw refused;
+        },
+      });
+      const admission = await host({ machineId: 'run-machine', directory: '/repo' });
+      if (boundary === 'action-schema' || boundary === 'roster') {
+        await expect(admission.effects.readActionContract?.('test.action/invoke')).rejects.toBe(refused);
+      } else {
+        await expect(admission.effects.resolveTargetAvailability({
+          blockId: 'writer', kind: 'step', selection: {
+            agentTarget: { kind: 'agent', identity: { pluginId: 'test.agent', localId: 'agent' } },
+          }, executionTarget: { kind: 'session' },
+        }, { sessionIds: [] })).rejects.toBe(refused);
+      }
+    },
+  );
+
   it('carries Session baseline selections into same-Machine Workflow leaves through the shared selection owner', () => {
     const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'test.agent', localId: 'agent' } };
     const connectedServices = { v: 2 as const, bindingsByServiceId: {
@@ -557,18 +611,18 @@ describe('exact-machine workflow materialization effects', () => {
       await expect(context.effects.readRoleSelection?.()).rejects.toBe(failure === 'source_retired' ? retired : aborted);
     });
 
-  it('fails unavailable machine observations closed at the leaf boundary', async () => {
+  it('preserves a failed Machine observation at the leaf boundary', async () => {
     const resolve = createWorkflowMaterializationHostV1({
       credentials,
       readRoleSelection: async () => ({}), readLaunchProfile: async () => null, readWorkflowDefinition: async () => null,
       callMachineAction: async () => { throw new Error('machine_offline'); },
     });
     const context = await resolve({ machineId: 'offline-machine', directory: '/repo' });
-    await expect(context.effects.resolveTargetAvailability({ blockId: 'work', selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'test.agent', localId: 'agent' } } }, executionTarget: { kind: 'session' } }, { sessionIds: [] })).resolves.toMatchObject({ reason: 'machine_check_failed' });
+    await expect(context.effects.resolveTargetAvailability({ blockId: 'work', selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'test.agent', localId: 'agent' } } }, executionTarget: { kind: 'session' } }, { sessionIds: [] })).rejects.toThrow('machine_offline');
   });
 
   it.each(['schema_rejected', 'schema_malformed', 'core_rejected', 'schema_aborted', 'core_aborted'])
-    ('returns unavailable for a missing Action contract but preserves cancellation: %s', async (failure) => {
+    ('distinguishes a malformed Action contract from failed or cancelled reads: %s', async (failure) => {
       const controller = new AbortController();
       const aborted = new Error('caller_aborted_action_schema_read');
       const actionId = failure.startsWith('core_') ? 'session.inspect' : 'test.action/check';
@@ -598,6 +652,7 @@ describe('exact-machine workflow materialization effects', () => {
       const context = await resolve({ machineId: 'run-machine', directory: '/repo', signal: controller.signal });
       const result = context.effects.readActionContract!(actionId);
       if (failure.endsWith('aborted')) await expect(result).rejects.toBe(aborted);
-      else await expect(result).resolves.toBeNull();
+      else if (failure === 'schema_malformed') await expect(result).resolves.toBeNull();
+      else await expect(result).rejects.toThrow('action_contract_transport_unavailable');
     });
 });

@@ -386,21 +386,17 @@ export function createCliWorkflowFamily(
           return await resolveWorkflowIngressContext(args.context);
         },
         resolveTargetValidation: async (args) => {
-          try {
-            const { listCurrentAccountMachines } = await import("@/api/machine/resolveCurrentAccountMachineTarget");
-            const machines = await listCurrentAccountMachines({
-              token: params.token,
-              ...(params.serverHttpBaseUrl ? { serverHttpBaseUrl: params.serverHttpBaseUrl } : {}),
-              ...(args.context.signal ? { signal: args.context.signal } : {}),
-            });
-            const target = resolveExplicitSessionSpawnMachineTarget({
-              machineId: args.input.target?.machineId,
-              machines: machines.map((machine) => ({ machineId: machine.id })),
-            });
-            if (target.kind === 'resolved') return { targetValidation: 'checked' as const };
-          } catch {
-            // The canonical inventory owner reported an unavailable observation.
-          }
+          const { listCurrentAccountMachines } = await import("@/api/machine/resolveCurrentAccountMachineTarget");
+          const machines = await listCurrentAccountMachines({
+            token: params.token,
+            ...(params.serverHttpBaseUrl ? { serverHttpBaseUrl: params.serverHttpBaseUrl } : {}),
+            ...(args.context.signal ? { signal: args.context.signal } : {}),
+          });
+          const target = resolveExplicitSessionSpawnMachineTarget({
+            machineId: args.input.target?.machineId,
+            machines: machines.map((machine) => ({ machineId: machine.id })),
+          });
+          if (target.kind === 'resolved') return { targetValidation: 'checked' as const };
           return {
             targetValidation: 'unavailable' as const,
             targetIssues: [{

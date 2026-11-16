@@ -2009,6 +2009,29 @@ describe('createCliActionDeps workflow boundary', () => {
     expect(http.get).not.toHaveBeenCalled();
   });
 
+  it.each(['absent', 'transport_failed'] as const)('distinguishes an absent Workflow validation target from a failed inventory read (%s)', async observation => {
+    http.get.mockImplementation(async (url: string) => {
+      expect(url).toContain('/v1/machines');
+      if (observation === 'absent') return { status: 200, data: [] };
+      throw Object.assign(new Error('inventory transport failed'), { response: { status: 503 } });
+    });
+    const deps = createCliActionDeps({
+      token: 'token', credentials: { token: 'token', encryption: null }, sessionId: 'cli-global',
+      resolveServerFeaturesSnapshot: () => enabledFeatures as never,
+      mode: 'plain', ctx: null,
+    });
+    const result = await deps.workflowAction!({
+      actionId: 'workflow.validate',
+      input: { definition: { version: 1, blocks: [{ kind: 'wait', id: 'review',
+        document: { text: 'Review', references: [], attachments: [] } }] },
+        target: { machineId: 'missing-machine' } },
+      context: { surface: 'cli' },
+    });
+    expect(result).toMatchObject(observation === 'absent'
+      ? { valid: false, issues: [expect.objectContaining({ code: 'target_unavailable' })] }
+      : { ok: false, errorCode: 'storage_unavailable', failureCause: { httpStatus: 503 } });
+  });
+
   it('does not fabricate Session ingress defaults for a non-Session caller', async () => {
     const deps = createCliActionDeps({
       token: 'token', credentials: { token: 'token', encryption: null }, sessionId: 'session-1',

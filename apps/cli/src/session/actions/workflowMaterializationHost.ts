@@ -76,9 +76,9 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
           RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
           { machineId: target.machineId, selection: 'workflowMaterialization' },
         ));
-      } catch {
+      } catch (error) {
         target.signal?.throwIfAborted();
-        return null;
+        throw error;
       }
     };
     let rosterObservation: ReturnType<typeof observeRoster> | undefined;
@@ -100,7 +100,7 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
           detachedBackends: object(detachedFacts?.backends), detachedFeatures: object(detachedFacts?.features) };
       } catch (error) {
         target.signal?.throwIfAborted();
-        return null;
+        throw error;
       }
     };
     let observation: ReturnType<typeof observeMachine> | undefined;
@@ -113,9 +113,9 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
         const read = () => resolveWorkflowAuthorizedSession({ credentials: deps.credentials, sessionId,
           ...(target.signal ? { signal: target.signal } : {}) });
         observation = (deps.serverHttpBaseUrl ? runWithServerHttpBaseUrl(deps.serverHttpBaseUrl, read) : read())
-          .catch(() => {
+          .catch((error) => {
             target.signal?.throwIfAborted();
-            return null;
+            throw error;
           });
         sessions.set(sessionId, observation);
       }
@@ -177,9 +177,9 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
         const schemas = DaemonPluginActionSchemasReadResponseSchema.safeParse(response);
         return schemas.success && schemas.data.ok ? freezeWorkflowActionContractV1({ ...schemas.data,
           inputHints: contributed.inputHints }) : null;
-      } catch {
+      } catch (error) {
         target.signal?.throwIfAborted();
-        return null;
+        throw error;
       }
     };
     const actionContracts = new Map<string, ReturnType<typeof observeActionContract>>();
