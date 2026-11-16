@@ -1,10 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { AutomationEventSourceStatusReportV1Schema, automationEventSourceCatalogScopeKeyV1, type AutomationEventSourceStatusReportV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
-import { type ParsedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 
 import { emitAutomationSourceStatusUpdated } from "@/app/automations/automationChangePublisher";
+import { resolveCurrentPluginDeclarationTx, type CurrentPluginDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
 import { beforeAccountChangePublication, markAccountChanged } from "@/app/changes/markAccountChanged";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { afterTx, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
@@ -14,8 +14,7 @@ import {
     assertCurrentAutomationEventCallerMaterializationTx,
     readCurrentAutomationEventDurablePushEndpointTargetTxV1,
     readCurrentAutomationEventDurablePushWebhookContributionV1,
-    resolveCurrentAutomationEventContributionTx,
-    resolveCurrentAutomationEventManifestTx,
+    resolveCurrentAutomationEventContributionFromManifest,
     sameAutomationEventDurablePushWebhookContributionV1,
     AutomationEventCurrentnessError,
     type AutomationEventCallerV1,
@@ -96,39 +95,20 @@ async function assertCurrentCallerMaterialization(params: Readonly<{
     }
 }
 
-async function resolveCurrentEventManifest(params: Readonly<{
-    tx: Tx;
-    accountId: string;
-    pluginId: string;
-    version: string;
-    machineId: string;
-    machineInstallationId: string;
-}>): Promise<ParsedPluginManifestV2> {
-    try {
-        return await resolveCurrentAutomationEventManifestTx(params);
-    } catch (error) {
-        if (error instanceof AutomationEventCurrentnessError) fail(error.code);
-        throw error;
-    }
-}
-
-async function assertCurrentEventContribution(params: Readonly<{
-    tx: Tx;
-    accountId: string;
-    pluginId: string;
-    version: string;
-    machineId: string;
-    machineInstallationId: string;
+function assertCurrentEventContribution(params: Readonly<{
     eventLocalId: string;
     sourceContractVersion: number;
-}>): Promise<Readonly<{
+    declaration: CurrentPluginDeclarationV1;
+}>): Readonly<{
     supportsCheckpointedPull: boolean;
     supportsSocket: boolean;
     durablePushWebhookContribution: Readonly<{ pluginId: string; localId: string }> | null;
-}>> {
+}> {
+    const { eventLocalId, sourceContractVersion } = params;
+    const manifest = params.declaration.manifest;
     let event;
     try {
-        event = await resolveCurrentAutomationEventContributionTx(params);
+        event = resolveCurrentAutomationEventContributionFromManifest({ manifest, eventLocalId, sourceContractVersion });
     } catch (error) {
         if (error instanceof AutomationEventCurrentnessError) fail(error.code);
         throw error;
@@ -143,46 +123,11 @@ async function assertCurrentEventContribution(params: Readonly<{
     };
 }
 
-async function assertCurrentCheckpointedPullCatalogScope(params: Readonly<{
-    tx: Tx;
-    accountId: string;
-    pluginId: string;
-    version: string;
-    machineId: string;
-    machineInstallationId: string;
-}>): Promise<void> {
-    await assertCurrentCatalogScopeSupports({ ...params, transport: "checkpointedPull" });
-}
-
-async function assertCurrentSocketCatalogScope(params: Readonly<{
-    tx: Tx;
-    accountId: string;
-    pluginId: string;
-    version: string;
-    machineId: string;
-    machineInstallationId: string;
-}>): Promise<void> {
-    await assertCurrentCatalogScopeSupports({ ...params, transport: "socket" });
-}
-
-async function assertCurrentCatalogScopeSupports(params: Readonly<{
-    tx: Tx;
-    accountId: string;
-    pluginId: string;
-    version: string;
-    machineId: string;
-    machineInstallationId: string;
+function assertCurrentCatalogScopeSupports(params: Readonly<{
     transport: "checkpointedPull" | "socket";
-}>): Promise<void> {
-    const manifest = await resolveCurrentEventManifest({
-        tx: params.tx,
-        accountId: params.accountId,
-        pluginId: params.pluginId,
-        version: params.version,
-        machineId: params.machineId,
-        machineInstallationId: params.machineInstallationId,
-    });
-    const supported = manifest.contributes.events.some((event) => (
+    declaration: CurrentPluginDeclarationV1;
+}>): void {
+    const supported = params.declaration.manifest.contributes.events.some((event) => (
         event.kind === "event"
         && event.automation?.eligible === true
         && event.automation.source.supportedObservationTransports.includes(params.transport)
@@ -196,6 +141,7 @@ async function assertCurrentDurablePushCatalogScope(params: Readonly<{
     caller: AutomationEventSourceStatusCallerV1;
     callerVersion: string;
     webhookEndpointId: string;
+    declaration: CurrentPluginDeclarationV1;
 }>): Promise<void> {
     const endpoint = await readCurrentAutomationEventDurablePushEndpointTargetTxV1({
         tx: params.tx,
@@ -207,14 +153,7 @@ async function assertCurrentDurablePushCatalogScope(params: Readonly<{
     });
     if (endpoint === null) fail("observation_target_changed");
 
-    const manifest = await resolveCurrentEventManifest({
-        tx: params.tx,
-        accountId: params.accountId,
-        pluginId: params.caller.pluginId,
-        version: params.callerVersion,
-        machineId: params.caller.machineId,
-        machineInstallationId: params.caller.machineInstallationId,
-    });
+    const manifest = params.declaration.manifest;
     const supported = manifest.contributes.events.some((event) => {
         if (event.kind !== "event") return false;
         const { automation } = event;
@@ -250,6 +189,7 @@ type SourceStatusParams = Readonly<{
     caller: AutomationEventSourceStatusCallerV1;
     callerVersion: string;
     input: Extract<AutomationEventSourceStatusReportV1, { kind: "source" }>;
+    declaration: CurrentPluginDeclarationV1;
 }>;
 
 async function assertCurrentSourceStatusTarget(params: SourceStatusParams): Promise<void> {
@@ -292,15 +232,10 @@ async function assertCurrentSourceStatusTarget(params: SourceStatusParams): Prom
         || params.input.eventRef.pluginId !== params.caller.pluginId
     ) fail("definition_not_current");
 
-    const eventContribution = await assertCurrentEventContribution({
-        tx: params.tx,
-        accountId: params.accountId,
-        pluginId: params.caller.pluginId,
-        version: params.callerVersion,
-        machineId: params.caller.machineId,
-        machineInstallationId: params.caller.machineInstallationId,
+    const eventContribution = assertCurrentEventContribution({
         eventLocalId: params.input.eventRef.localId,
         sourceContractVersion: trigger.sourceContractVersion,
+        declaration: params.declaration,
     });
 
     if (trigger.observationTransport === "durablePush") {
@@ -431,6 +366,7 @@ type CatalogStatusParams = Readonly<{
     caller: AutomationEventSourceStatusCallerV1;
     callerVersion: string;
     input: Extract<AutomationEventSourceStatusReportV1, { kind: "catalogReconciliation" }>;
+    declaration: CurrentPluginDeclarationV1;
 }>;
 
 async function assertCurrentCatalogStatusTarget(params: CatalogStatusParams) {
@@ -438,23 +374,9 @@ async function assertCurrentCatalogStatusTarget(params: CatalogStatusParams) {
     // union; this reporter only proves the scope is current.
     const scopeKey = automationEventSourceCatalogScopeKeyV1(params.input.scope);
     if (params.input.scope.kind === "checkpointedPull") {
-        await assertCurrentCheckpointedPullCatalogScope({
-            tx: params.tx,
-            accountId: params.accountId,
-            pluginId: params.caller.pluginId,
-            version: params.callerVersion,
-            machineId: params.caller.machineId,
-            machineInstallationId: params.caller.machineInstallationId,
-        });
+        assertCurrentCatalogScopeSupports({ declaration: params.declaration, transport: "checkpointedPull" });
     } else if (params.input.scope.kind === "socket") {
-        await assertCurrentSocketCatalogScope({
-            tx: params.tx,
-            accountId: params.accountId,
-            pluginId: params.caller.pluginId,
-            version: params.callerVersion,
-            machineId: params.caller.machineId,
-            machineInstallationId: params.caller.machineInstallationId,
-        });
+        assertCurrentCatalogScopeSupports({ declaration: params.declaration, transport: "socket" });
     } else {
         await assertCurrentDurablePushCatalogScope({
             tx: params.tx,
@@ -462,6 +384,7 @@ async function assertCurrentCatalogStatusTarget(params: CatalogStatusParams) {
             caller: params.caller,
             callerVersion: params.callerVersion,
             webhookEndpointId: params.input.scope.webhookEndpointId,
+            declaration: params.declaration,
         });
     }
     const catalog = await params.tx.automationEventCatalogState.findUnique({
@@ -557,6 +480,11 @@ async function reportCatalogStatus(params: CatalogStatusParams): Promise<void> {
     });
 }
 
+async function readPluginMaterializationRevision(tx: Tx, machineId: string): Promise<bigint | null> {
+    const machine = await tx.machine.findUnique({ where: { id: machineId }, select: { pluginMaterializationRevision: true } });
+    return machine?.pluginMaterializationRevision ?? null;
+}
+
 /** Sole writer for Automation-owned source and watcher-catalog summaries. */
 export async function reportAutomationEventSourceStatusV1(params: Readonly<{
     accountId: string;
@@ -566,20 +494,35 @@ export async function reportAutomationEventSourceStatusV1(params: Readonly<{
     const input = AutomationEventSourceStatusReportV1Schema.parse(params.input);
     const serverIdentityId = await getOrCreateServerIdentityId(process.env);
     await inTx(async (tx) => {
+        // Materialization replacement deletes this reporter's status rows in the same transaction
+        // that advances this revision. Read it before admission so publication can refuse to
+        // recreate a row the replacement already removed.
+        const admittedMaterializationRevision = await readPluginMaterializationRevision(tx, params.caller.machineId);
         const caller = await assertCurrentCallerMaterialization({
             tx,
             accountId: params.accountId,
             serverIdentityId,
             caller: params.caller,
         });
-        // Domain rows are already settled. Recheck currentness after the
-        // existing terminal Account lock, using reads only and no resource locks.
+        const declarationRef = { accountId: params.accountId, pluginId: params.caller.pluginId,
+            version: caller.version, machineId: params.caller.machineId,
+            machineInstallationId: params.caller.machineInstallationId };
+        const declaration = await resolveCurrentPluginDeclarationTx({ tx, ...declarationRef });
+        if (!declaration) fail("event_contribution_not_current");
+        // Recheck mutable selection and target identity under the terminal Account fence.
+        // The declaration owner reuses this attempt's admitted body instead of fetching it again.
         beforeAccountChangePublication(tx, [params.accountId], async currentTx => {
+            if (await readPluginMaterializationRevision(currentTx, params.caller.machineId) !== admittedMaterializationRevision) {
+                throw new TransactionReplayRequiredError("automation-event-source-status-materialization-changed");
+            }
             const currentCaller = await assertCurrentCallerMaterialization({
                 tx: currentTx, accountId: params.accountId, serverIdentityId, caller: params.caller,
             });
+            const currentDeclaration = await resolveCurrentPluginDeclarationTx({ tx: currentTx,
+                ...declarationRef, version: currentCaller.version, admittedDeclaration: declaration });
+            if (!currentDeclaration) fail("event_contribution_not_current");
             const current = { tx: currentTx, accountId: params.accountId, caller: params.caller,
-                callerVersion: currentCaller.version };
+                callerVersion: currentCaller.version, declaration: currentDeclaration };
             if (input.kind === "source") await assertCurrentSourceStatusTarget({ ...current, input });
             else await assertCurrentCatalogStatusTarget({ ...current, input });
         });
@@ -590,6 +533,7 @@ export async function reportAutomationEventSourceStatusV1(params: Readonly<{
                 caller: params.caller,
                 callerVersion: caller.version,
                 input,
+                declaration,
             });
             return;
         }
@@ -599,6 +543,7 @@ export async function reportAutomationEventSourceStatusV1(params: Readonly<{
             caller: params.caller,
             callerVersion: caller.version,
             input,
+            declaration,
         });
     }, {
         // Revision CAS preserves concurrent deltas; terminal currentness reads

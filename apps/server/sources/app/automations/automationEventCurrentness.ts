@@ -100,7 +100,7 @@ export async function isCurrentAutomationEventDurablePushEndpointTargetTxV1(para
     return (await readCurrentAutomationEventDurablePushEndpointTargetTxV1(params)) !== null;
 }
 
-function resolveCurrentAutomationEventContributionFromManifest(params: Readonly<{
+export function resolveCurrentAutomationEventContributionFromManifest(params: Readonly<{
     manifest: ParsedPluginManifestV2;
     eventLocalId: string;
     sourceContractVersion?: number;
