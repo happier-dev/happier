@@ -1,4 +1,5 @@
 import { completeActionResult } from '../resultProjection.js';
+import { listAgentBackendsWithReadinessV1 } from './agentBackendReadiness.js';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '../../../daemon/agentInstallJobs.js';
 import { ScmDiffSummaryModelSelectorSchema } from '../../../scm/diffSummary.js';
 import { resolveActionBackendTargetSelection } from '../../resolveActionBackendTargetSelection.js';
@@ -19,11 +20,11 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
 
         if (actionId === 'agents.backends.list') {
           if (!deps.agentsBackendsList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          const res = await deps.agentsBackendsList({
+          const res = await listAgentBackendsWithReadinessV1(deps, {
             ...(typeof data.includeDisabled === 'boolean' ? { includeDisabled: data.includeDisabled } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
-          });
+          }, ctx);
           return completeActionResult(res);
         }
 
