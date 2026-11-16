@@ -10,14 +10,10 @@ import { getThemeProfileTokenDefinition } from './themeProfileTokenRegistry';
 import { setThemeProfilePathValue } from './themeProfilePathAccess';
 import type { ThemeProfileMode, ThemeProfileV1 } from './themeProfileTypes';
 
-const MAX_EFFECTIVE_THEME_CACHE_ENTRIES = 16;
-
 type ResolveThemeProfileInput = Readonly<{
     mode: ThemeProfileMode;
     profile: Pick<ThemeProfileV1, 'overrides' | 'seeds' | 'assetAppearance' | 'style'> | null;
 }>;
-
-const effectiveThemeCache = new Map<string, Theme>();
 
 const overrideHash = (overrides: ThemeProfileV1['overrides'][ThemeProfileMode]): string => (
     JSON.stringify(Object.entries(overrides).sort(([left], [right]) => left.localeCompare(right)))
@@ -30,31 +26,10 @@ const getCacheKey = (mode: ThemeProfileMode, profile: NonNullable<ResolveThemePr
     JSON.stringify(profile.style),
 ].join('|');
 
-const rememberEffectiveTheme = (key: string, theme: Theme): Theme => {
-    effectiveThemeCache.set(key, theme);
-    if (effectiveThemeCache.size > MAX_EFFECTIVE_THEME_CACHE_ENTRIES) {
-        const oldestKey = effectiveThemeCache.keys().next().value;
-        if (typeof oldestKey === 'string') {
-            effectiveThemeCache.delete(oldestKey);
-        }
-    }
-    return theme;
-};
-
-export const clearEffectiveThemeCache = (): void => {
-    effectiveThemeCache.clear();
-};
-
-export const resolveThemeProfile = ({ mode, profile }: ResolveThemeProfileInput): Theme => {
+const resolveUncachedThemeProfile = ({ mode, profile }: ResolveThemeProfileInput): Theme => {
     const baseTheme = getBaseTheme(mode);
     if (!profile) {
         return baseTheme;
-    }
-
-    const cacheKey = getCacheKey(mode, profile);
-    const cachedTheme = effectiveThemeCache.get(cacheKey);
-    if (cachedTheme) {
-        return cachedTheme;
     }
 
     const seeds = mode === resolveThemeProfileAssetAppearance(profile) ? profile.seeds : undefined;
@@ -73,6 +48,29 @@ export const resolveThemeProfile = ({ mode, profile }: ResolveThemeProfileInput)
 
     const resolved = seeds || explicitOverrides.size > 0
         ? deriveThemeColors({ ...baseTheme, colors: nextColors }, baseTheme, explicitOverrides) : baseTheme;
-    return rememberEffectiveTheme(cacheKey, profile.style
-        ? applyThemeStyleScales(resolved, resolveThemeStyleScales(profile.style)) : resolved);
+    return profile.style ? applyThemeStyleScales(resolved, resolveThemeStyleScales(profile.style)) : resolved;
 };
+
+/** Each consumer retains its current palette per mode; gallery reads cannot evict runtime identity. */
+export function createThemeProfileResolver(): Readonly<{
+    resolve(input: ResolveThemeProfileInput): Theme;
+    clear(): void;
+}> {
+    const current = new Map<ThemeProfileMode, Readonly<{ key: string; theme: Theme }>>();
+    return {
+        resolve(input) {
+            if (!input.profile) return getBaseTheme(input.mode);
+            const key = getCacheKey(input.mode, input.profile);
+            const cached = current.get(input.mode);
+            if (cached?.key === key) return cached.theme;
+            const theme = resolveUncachedThemeProfile(input);
+            current.set(input.mode, { key, theme });
+            return theme;
+        },
+        clear: () => { current.clear(); },
+    };
+}
+
+const effectiveThemeResolver = createThemeProfileResolver();
+export const clearEffectiveThemeCache = effectiveThemeResolver.clear;
+export const resolveThemeProfile = effectiveThemeResolver.resolve;

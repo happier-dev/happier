@@ -10,7 +10,7 @@ import { applyThemeRuntimeSelection, type ThemeRuntimeUnistylesAdapter } from '.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('theme runtime render scope', () => {
-    it('flips the active mode with one themed render and no registered-theme invalidation', async () => {
+    it('batches a mode flip and updates only the visual native theme when its palette changes', async () => {
         const themes: Record<'light' | 'dark', Theme> = { light: lightTheme, dark: darkTheme };
         let active: 'light' | 'dark' = 'light';
         let revision = 0;
@@ -73,6 +73,25 @@ describe('theme runtime render scope', () => {
         expect(themedCommits - before.themedCommits).toBe(1);
         expect(plainRenders - before.plainRenders).toBe(0);
         expect(plainCommits - before.plainCommits).toBe(0);
+
+        const beforeNative = { themedCommits, plainCommits };
+        await act(async () => {
+            applyThemeRuntimeSelection({
+                themePreference: 'light',
+                themeProfiles: { activeProfileIds: { light: 'native', dark: null }, profiles: [{
+                    schemaVersion: 1, id: 'native', name: 'Native', createdAt: '2026-11-16', updatedAt: '2026-11-16',
+                    base: { light: 'light', dark: 'dark' }, overrides: { light: { 'background.canvas': '#f1e2d3' }, dark: {} },
+                }] },
+                systemTheme: 'light', platform: 'ios', unistylesRuntime: runtime,
+                setSystemBackgroundColor: () => {}, recordBreadcrumb: () => {}, style: null,
+            });
+        });
+        // This adapter measures the host React batch. Native JSI delivery remains a device QA check.
+        expect(updateTheme).toHaveBeenCalledTimes(1);
+        expect(themes.light.colors.background.canvas).toBe('#f1e2d3');
+        expect(active).toBe('light');
+        expect(themedCommits - beforeNative.themedCommits).toBe(1);
+        expect(plainCommits - beforeNative.plainCommits).toBe(0);
         await screen.unmount();
         standardCleanup();
     });

@@ -29,7 +29,7 @@ import {
     findActiveThemeProfileForMode,
     setActiveThemeProfileForMode,
 } from './themeProfilePersistence';
-import { resolveThemeProfile } from './resolveThemeProfile';
+import { createThemeProfileResolver } from './resolveThemeProfile';
 import { applyThemeFontFamilyVariables } from '../themeFontFamilyVariables';
 import { applyThemeStylesheet } from '../css/themeStylesheet';
 import { applyThemeStyleScales, resolveThemeStyleScales, themeStyleSelectionFromSurfaceFinish, type ThemeStyleSelection } from '../themeStyleScales';
@@ -141,10 +141,12 @@ const warnThemeRuntimeFallback = (error: unknown): void => {
     }
 };
 
+const runtimeThemeResolver = createThemeProfileResolver();
+
 export const resolveThemeRuntimeThemes = (themeProfiles: ThemeProfilesLocalStateV1): ThemeRuntimeThemes => {
     return {
-        light: resolveThemeProfile({ mode: 'light', profile: findActiveThemeProfileForMode(themeProfiles, 'light') }),
-        dark: resolveThemeProfile({ mode: 'dark', profile: findActiveThemeProfileForMode(themeProfiles, 'dark') }),
+        light: runtimeThemeResolver.resolve({ mode: 'light', profile: findActiveThemeProfileForMode(themeProfiles, 'light') }),
+        dark: runtimeThemeResolver.resolve({ mode: 'dark', profile: findActiveThemeProfileForMode(themeProfiles, 'dark') }),
     };
 };
 
@@ -175,16 +177,28 @@ const resolveCanonicalBaseThemeRuntimeBackground = (
     return canonicalBaseThemes[visualTheme].colors.background.canvas;
 };
 
+/** Profile corners/typeface and device presentation occupy independent slots. */
+const composeRuntimeThemeStyles = (
+    themes: ThemeRuntimeThemes,
+    profiles: ThemeProfilesLocalStateV1,
+    style: ThemeStyleSelection | null,
+): ThemeRuntimeThemes => {
+    const compose = (mode: AppThemeName): Theme => applyThemeStyleScales(themes[mode], resolveThemeStyleScales({
+        ...findActiveThemeProfileForMode(profiles, mode)?.style,
+        ...style,
+    }));
+    return { light: compose('light'), dark: compose('dark') };
+};
+
 export const resolveThemeRuntimeStartupThemes = (
     input: ResolveThemeRuntimeStartupThemesInput,
 ): ThemeRuntimeStartupThemes => {
     const resolveThemes = input.resolveThemes ?? resolveThemeRuntimeThemes;
-    const scales = resolveThemeStyleScales(input.style ?? null);
 
     let themes: ThemeRuntimeThemes;
     try {
         const resolved = resolveThemes(input.themeProfiles);
-        themes = { light: applyThemeStyleScales(resolved.light, scales), dark: applyThemeStyleScales(resolved.dark, scales) };
+        themes = composeRuntimeThemeStyles(resolved, input.themeProfiles, input.style ?? null);
     } catch (error) {
         warnThemeRuntimeFallback(error);
         themes = canonicalBaseThemes;
@@ -285,13 +299,13 @@ const applyThemesToUnistyles = (
     const updateChangedTheme = (name: AppThemeName): void => {
         const next = themes[name];
         const registered = runtime.getTheme(name);
-        if (registered === next || JSON.stringify(registered) === JSON.stringify(next)) return;
+        if (registered === next) return;
         runtime.updateTheme(name, () => next);
     };
 
     recordThemeRuntimeBreadcrumb(input, { phase: 'resolved', platform, systemTheme, visualTheme });
 
-    if (isNativeRuntimePlatform(platform) && input.themePreference !== 'adaptive') {
+    if (isNativeRuntimePlatform(platform)) {
         recordThemeRuntimeBreadcrumb(input, {
             phase: 'update-visual-theme',
             platform,
@@ -334,22 +348,20 @@ const applyThemesToUnistyles = (
 export const applyThemeRuntimeSelection = (input: ApplyThemeRuntimeSelectionInput): ThemeRuntimeThemes => {
     const resolveThemes = input.resolveThemes ?? resolveThemeRuntimeThemes;
 
-    const styleScales = resolveThemeStyleScales(input.style === undefined
-        ? themeStyleSelectionFromSurfaceFinish(defaultLoadLocalSettings()) : input.style);
+    const style = input.style === undefined
+        ? themeStyleSelectionFromSurfaceFinish(defaultLoadLocalSettings()) : input.style;
     let themes: ThemeRuntimeThemes;
     try {
         const profileThemes = resolveThemes(input.themeProfiles);
-        themes = {
-            light: applyThemeStyleScales(profileThemes.light, styleScales),
-            dark: applyThemeStyleScales(profileThemes.dark, styleScales),
-        };
+        themes = composeRuntimeThemeStyles(profileThemes, input.themeProfiles, style);
     } catch (error) {
         warnThemeRuntimeFallback(error);
         themes = canonicalBaseThemes;
     }
 
     if (resolveRuntimePlatform(input) === 'web') {
-        applyThemeFontFamilyVariables(styleScales.typography);
+        const visualTheme = resolveThemeRuntimeVisualTheme(input.themePreference, input.systemTheme ?? readSystemTheme());
+        applyThemeFontFamilyVariables(themes[visualTheme].typography);
     }
 
     try {

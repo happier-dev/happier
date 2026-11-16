@@ -278,7 +278,7 @@ describe('theme profile runtime', () => {
         }));
     });
 
-    it('updates both registered Unistyles themes on native when adaptive mode can switch visual themes later', () => {
+    it('updates only the visual native theme in adaptive mode; the OS observer applies the next mode', () => {
         const updateTheme = vi.fn();
         const setAdaptiveThemes = vi.fn();
         const setTheme = vi.fn();
@@ -300,7 +300,7 @@ describe('theme profile runtime', () => {
         });
 
         expect(updateTheme).toHaveBeenCalledWith('light', expect.any(Function));
-        expect(updateTheme).toHaveBeenCalledWith('dark', expect.any(Function));
+        expect(updateTheme).toHaveBeenCalledTimes(1);
         expect(setAdaptiveThemes).toHaveBeenCalledWith(false);
         expect(setTheme).toHaveBeenCalledWith('light');
         expect(setRootViewBackgroundColor).toHaveBeenCalledWith('#f8f6ef');

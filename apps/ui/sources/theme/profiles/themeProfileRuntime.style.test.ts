@@ -2,10 +2,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { darkTheme, lightTheme, type Theme } from '@/theme';
+import { FontFamilies } from '@/constants/Typography';
 
 import { applyThemeRuntimeSelection, resolveThemeRuntimeStartupThemes } from './themeProfileRuntime';
 import { themeStyleSelectionFromSurfaceFinish } from '../themeStyleScales';
 import type { ThemeProfilesLocalStateV1 } from './themeProfileTypes';
+import { getBuiltInThemeLibraryEntries } from './builtInThemeProfiles';
 
 const noProfiles: ThemeProfilesLocalStateV1 = { activeProfileIds: { light: null, dark: null }, profiles: [] };
 
@@ -53,6 +55,32 @@ describe('theme runtime style selection', () => {
         applyThemeRuntimeSelection({ ...input, themeProfiles: noProfiles });
         expect(sheet).toHaveBeenLastCalledWith(null, 'light');
         sheet.mockRestore();
+    });
+    it('keeps profile corners and typeface alongside device finish and publishes once on native', () => {
+        const runtime = createRegisteredThemes();
+        const themeProfiles: ThemeProfilesLocalStateV1 = { activeProfileIds: { light: 'styled', dark: 'styled' }, profiles: [{
+            schemaVersion: 1, id: 'styled', name: 'Styled', createdAt: '2026-11-16', updatedAt: '2026-11-16',
+            base: { light: 'light', dark: 'dark' },
+            overrides: { light: { 'background.canvas': '#fcfaf8' }, dark: { 'background.canvas': '#171513' } },
+            style: { radius: 'round', fontFamily: FontFamilies.default.regular },
+        }] };
+        const input = { themePreference: 'adaptive' as const, themeProfiles, systemTheme: 'light' as const,
+            platform: 'ios', unistylesRuntime: runtime.adapter, setSystemBackgroundColor: () => {}, recordBreadcrumb: () => {},
+            style: themeStyleSelectionFromSurfaceFinish({ uiSurfaceFinish: 'flat' }),
+        };
+        applyThemeRuntimeSelection(input);
+        expect(runtime.registered.light.borderRadius.xl).toBeGreaterThan(lightTheme.borderRadius.xl);
+        expect(runtime.registered.light.typography.fontFamily).toBe(FontFamilies.default.regular);
+        expect(runtime.registered.light.parts.card.finish).toBe('flat');
+        expect(runtime.updateTheme).toHaveBeenCalledTimes(1);
+        runtime.updateTheme.mockClear();
+        // Opening the library resolves its miniatures through the same canonical palette owner.
+        getBuiltInThemeLibraryEntries();
+        applyThemeRuntimeSelection(input);
+        expect(runtime.updateTheme).not.toHaveBeenCalled();
+        applyThemeRuntimeSelection({ ...input, systemTheme: 'dark' });
+        expect(runtime.registered.dark.borderRadius.xl).toBeGreaterThan(darkTheme.borderRadius.xl);
+        expect(runtime.updateTheme).toHaveBeenCalledTimes(1);
     });
     it('restores device finish at startup and preserves role overrides through both theme modes', () => {
         const startup = resolveThemeRuntimeStartupThemes({

@@ -143,13 +143,18 @@ function readScales(theme: ThemeStyleScales): ThemeStyleScales {
     };
 }
 
+const appliedStyleScales = new WeakMap<object, Readonly<{ key: string; theme: ThemeStyleScales }>>();
+
 /**
  * Returns the theme with these scales; colours and every other field are kept by reference. A theme
  * that already carries equal scales is returned as is, so the full app's themes keep their identity.
  */
 export function applyThemeStyleScales<T extends ThemeStyleScales>(theme: T, scales: ThemeStyleScales): T {
-    if (JSON.stringify(readScales(theme)) === JSON.stringify(readScales(scales))) return theme;
-    return {
+    const key = JSON.stringify(readScales(scales));
+    if (JSON.stringify(readScales(theme)) === key) return theme;
+    const previous = appliedStyleScales.get(theme);
+    if (previous?.key === key) return previous.theme as T;
+    const applied = {
         ...theme,
         borderRadius: scales.borderRadius,
         space: scales.space,
@@ -158,4 +163,6 @@ export function applyThemeStyleScales<T extends ThemeStyleScales>(theme: T, scal
         transcript: scales.transcript,
         typography: scales.typography,
     };
+    appliedStyleScales.set(theme, { key, theme: applied });
+    return applied;
 }
