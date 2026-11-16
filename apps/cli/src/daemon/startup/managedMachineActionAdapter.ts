@@ -388,7 +388,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                     if (!workflowResult.ok) throw ManagedMachineControllerError.fromActionFailure(workflowResult, WORKFLOW_RUN_START_ACTION_ID_V1);
                 } };
             const acquired = await invokeHostReviewedChildV1({
-                parent: { actionId: WORKFLOW_RUN_START_ACTION_ID_V1, input: projectNativeJsonValueForTransport(request.start) },
+                parent: { actionId: WORKFLOW_RUN_START_ACTION_ID_V1, input: projectNativeJsonValueForTransport(request.start) as Record<string, JsonValue> },
                 context: request.context,
                 child: { action: MANAGED_ACQUIRE_ACTION_ID_V1, role: 'acquire-workflow-placement', input: projectNativeJsonValueForTransport(acquisition) },
                 execute: (_input, context) => executeChild(MANAGED_ACQUIRE_ACTION_ID_V1, acquisition, { ...context,

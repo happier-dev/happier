@@ -29,6 +29,7 @@ import { MANAGED_POLICY_PROOF_HEADER, createManagedPolicyProofV1, encodeManagedP
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import type { ManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
+import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { StoredCredentials } from '@/persistence';
 import { retryHomeOperation, isRetryableHomeOperationError, REMOTE_HOME_ENROLLMENT_POLL_INTERVAL_MS, type HomeOperationRetry } from '@/api/client/retryHomeOperation';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -79,7 +80,10 @@ export type ManagedMachineAcquisitionDriverInput = Readonly<{
     credentials: StoredCredentials;
     managedProviderOperationAuthority: ManagedProviderOperationAuthority;
     /** The native controller borrows the canonical Account host for portable roles. */
-    resolveAccountRuntime?: () => Promise<Pick<ManagedMachineAcquisitionDriverInput, 'runtimeRegistry' | 'managedProviderOperationAuthority'>>;
+    resolveAccountRuntime?: () => Promise<Pick<ManagedMachineAcquisitionDriverInput,
+        'runtimeRegistry' | 'managedProviderOperationAuthority' | 'readCredentialConfigurationRevision'>>;
+    /** Current configuration metadata from the existing Account purpose owner. */
+    readCredentialConfigurationRevision?: ConnectedAccountPurposeBindingOwner['readCredentialConfigurationRevision'];
     homeTarget: ResolvedHomeTarget;
     readGuestHomeHostIdentity?: (homeId: string) => Promise<import('@happier-dev/protocol/plugins/contributions/machineProvisioners').MachineProvisionerGuestHomeV1['hostIdentity']>;
     externalActionMachineRequestPrivateKey?: ExternalActionMachineRequestSigningKey;

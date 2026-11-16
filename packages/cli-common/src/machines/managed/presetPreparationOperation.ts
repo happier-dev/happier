@@ -6,7 +6,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import type { MachineProvisionerPreparationBuildInputV1, MachineProvisionerPreparationBuildResultV1,
   MachineProvisionerPreparationInspectInputV1, MachineProvisionerPreparationInspectResultV1,
   MachineProvisionerPreparationDestroyInputV1, MachineProvisionerPreparationDestroyResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
-import { createManagedMachinePresetPreparationBindingV1 } from './presetPreparation.js';
+import { createManagedMachinePresetPreparationBindingV1, readManagedMachinePresetPreparationV1 } from './presetPreparation.js';
 import { createManagedNativeObservationWait } from './nativeObservationWait.js';
 import type { ManagedMachinePresetPreparationBuildCompositionV1 } from './presetPreparationBuildInput.js';
 
@@ -33,10 +33,11 @@ export type ManagedMachinePresetPreparationCustodyV1 =
   | Readonly<{ mode: 'e2ee'; accountId: string; accountKey: Uint8Array; randomBytes: (length: number) => Uint8Array }>;
 export type ManagedMachinePresetPreparationOperationInputV1 = Readonly<{
   operationId: string; expectedRevision: number;
+  credentialConfigurations: ManagedMachinePresetPreparedV1['binding']['credentialConfigurations'];
+  /** Current canonical supplier metadata; permits adoption without composing archives. */
+  cliIdentity?: string;
   /** Only a new build needs CLI assets; recovery uses the retained native facts. */
   composeBuild?: (capturedContent: ManagedMachinePresetContentV1) => Promise<ManagedMachinePresetPreparationBuildCompositionV1>;
-  /** True only after the original host invocation has stopped and retired. */
-  stopIncumbentBuild?: (operationId: string) => Promise<boolean>;
   custody: ManagedMachinePresetPreparationCustodyV1;
   storage: ManagedMachinePresetPreparationStorageV1;
   native: ManagedMachinePresetPreparationNativeV1;
@@ -100,6 +101,13 @@ function result(current: OpenPreset, kind: SettledKind): OperationResult {
   return { kind, revision: current.preset.revision, prepared: current.content.prepared! };
 }
 
+function nativeFailure(outcome: Pick<ManagedMachinePresetPreparedV1, 'code' | 'nativeCause'>,
+  prepared: ManagedMachinePresetPreparedV1) {
+  if (outcome.nativeCause !== undefined) return { code: outcome.code, nativeCause: outcome.nativeCause };
+  return prepared.nativeCause === undefined ? { code: outcome.code }
+    : { code: prepared.code ?? outcome.code, nativeCause: prepared.nativeCause };
+}
+
 function root(current: OpenPreset): ManagedMachinePresetPreparationRootV1 {
   return { presetId: current.preset.id, presetRevision: current.preset.revision,
     operationId: current.content.prepared!.operationId,
@@ -128,7 +136,6 @@ async function advanceOperation(input: OperationInput, current: OpenPreset,
     return { kind: 'conflict', currentRevision: current.preset.revision };
   }
   if (incumbent?.status === 'ready' || incumbent?.status === 'failed' || incumbent?.status === 'cancelled') return result(current, incumbent.status);
-  if (incumbent?.status === 'stale') return { kind: 'conflict', currentRevision: current.preset.revision };
 
   let nativeResult: MachineProvisionerPreparationBuildResultV1 | MachineProvisionerPreparationInspectResultV1;
   if (incumbent) {
@@ -150,27 +157,28 @@ async function advanceOperation(input: OperationInput, current: OpenPreset,
       cliBinaryPath: composition.input.cli.binaryPath,
       ...(composition.bakedSetup === undefined ? {} : { buildSetup: composition.bakedSetup }),
       binding: createManagedMachinePresetPreparationBindingV1({ content: { ...capturedContent, launch: capturedContent.launch },
-        presetRevision: current.preset.revision, cliIdentity: composition.input.cli.identity }) };
+        presetRevision: current.preset.revision, cliIdentity: composition.input.cli.identity,
+        credentialConfigurations: input.credentialConfigurations }) };
     const persisted = await persist(input, current, building, 'pending', input.expectedRevision);
     if (!('prepared' in persisted)) return persisted;
     if (signal?.aborted) return await cancelOperation(input, current);
     nativeResult = await input.native.build({ operationId: input.operationId, input: composition.input }, root(current));
   }
   const prepared = current.content.prepared!;
-  const { code: _oldCode, ...withoutCode } = prepared;
+  const { code: _oldCode, nativeCause: _oldCause, ...withoutCode } = prepared;
   switch (nativeResult.kind) {
     case 'ready': {
       const { buildSetup, bakedSetup: _bakedSetup, ...ready } = withoutCode;
       return await persist(input, current, { ...ready, status: 'ready', artifact: nativeResult.artifact,
         ...(buildSetup === undefined ? {} : { bakedSetup: buildSetup }) }, 'ready');
     }
-    case 'pending': return await persist(input, current, { ...withoutCode, status: 'building', nativeOperationRef: nativeResult.nativeOperationRef }, 'pending');
-    case 'unknown': return await persist(input, current, { ...prepared, status: 'building', code: nativeResult.code,
+    case 'pending': return await persist(input, current, { ...prepared, status: 'building', nativeOperationRef: nativeResult.nativeOperationRef }, 'pending');
+    case 'unknown': return await persist(input, current, { ...prepared, status: 'building', ...nativeFailure(nativeResult, prepared),
       nativeOperationRef: nativeResult.nativeOperationRef }, 'unknown');
-    case 'refused': return await persist(input, current, { ...prepared, status: 'failed', code: nativeResult.code }, 'failed');
-    case 'failed': return await persist(input, current, { ...prepared, status: 'failed', code: nativeResult.code,
+    case 'refused': return await persist(input, current, { ...prepared, status: 'failed', ...nativeFailure(nativeResult, prepared) }, 'failed');
+    case 'failed': return await persist(input, current, { ...prepared, status: 'failed', ...nativeFailure(nativeResult, prepared),
       nativeOperationRef: nativeResult.nativeOperationRef }, 'failed');
-    case 'absent': return await persist(input, current, { ...prepared, status: 'failed', code: 'managed_not_found' }, 'failed');
+    case 'absent': return await persist(input, current, { ...prepared, status: 'failed', ...nativeFailure({ code: 'managed_not_found' }, prepared) }, 'failed');
   }
 }
 
@@ -224,13 +232,13 @@ async function cancelOperation(input: OperationInput, current: OpenPreset, expec
   const nativeResult = await input.native.destroy(references, root(current));
   switch (nativeResult.kind) {
     case 'confirmed': {
-      const { artifact: _artifact, nativeOperationRef: _nativeOperationRef, code: _code, ...settled } = cancelled.prepared;
+      const { artifact: _artifact, nativeOperationRef: _nativeOperationRef, code: _code, nativeCause: _cause, ...settled } = cancelled.prepared;
       return await persist(input, current, settled, 'cancelled');
     }
     case 'pending': return await persist(input, current, { ...cancelled.prepared, nativeOperationRef: nativeResult.nativeOperationRef }, 'pending');
-    case 'unknown': return await persist(input, current, { ...cancelled.prepared, code: nativeResult.code,
+    case 'unknown': return await persist(input, current, { ...cancelled.prepared, ...nativeFailure(nativeResult, cancelled.prepared),
       nativeOperationRef: nativeResult.nativeOperationRef }, 'unknown');
-    case 'refused': return await persist(input, current, { ...cancelled.prepared, code: nativeResult.code }, 'failed');
+    case 'refused': return await persist(input, current, { ...cancelled.prepared, ...nativeFailure(nativeResult, cancelled.prepared) }, 'failed');
   }
 }
 
@@ -295,22 +303,27 @@ export async function settleManagedMachinePresetPreparationOperationV1(
     || incumbent.status === 'cancelled' && !incumbent.artifact && !incumbent.nativeOperationRef) {
     return await follow(input);
   }
-  // Native absence does not establish that the original executor has stopped
-  // before create. Its host Action must stop and join before replacement.
   const capturedContent = initial.content;
   let cleanupRevision = input.expectedRevision;
   if (incumbent.status === 'building') {
-    if (input.expectedRevision !== initial.preset.revision || !input.stopIncumbentBuild
-      || !await input.stopIncumbentBuild(incumbent.operationId)) {
+    if (input.expectedRevision !== initial.preset.revision) {
       return { kind: 'conflict', currentRevision: initial.preset.revision };
     }
-    const retired = await readPreset(input);
-    if ('kind' in retired) return retired;
-    if (retired.content.prepared?.operationId !== incumbent.operationId) {
-      return { kind: 'conflict', currentRevision: retired.preset.revision };
+    // A new admitted Retry inspects the original native identity, never builds
+    // again while its outcome is unknown (O-MACH 2026-11-16 07:18).
+    const recovered = await follow({ ...input, operationId: incumbent.operationId });
+    if (recovered.kind !== 'ready' && recovered.kind !== 'failed') return recovered;
+    if (recovered.kind === 'ready' && input.cliIdentity !== undefined
+      && readManagedMachinePresetPreparationV1({ content: { ...capturedContent, prepared: recovered.prepared },
+        presetRevision: recovered.revision, cliIdentity: input.cliIdentity,
+        credentialConfigurations: input.credentialConfigurations }).kind === 'warm') return recovered;
+    const observed = await readPreset(input);
+    if ('kind' in observed) return observed;
+    if (observed.content.prepared?.operationId !== incumbent.operationId) {
+      return { kind: 'conflict', currentRevision: observed.preset.revision };
     }
-    current = retired;
-    cleanupRevision = retired.preset.revision;
+    current = observed;
+    cleanupRevision = observed.preset.revision;
   }
   if (capturedContent.preparation?.enabled !== true || !capturedContent.launch || !input.composeBuild) {
     return { kind: 'refused', code: 'invalid_request' };

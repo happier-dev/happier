@@ -9,6 +9,8 @@ import axios from 'axios';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { FeaturesResponseSchema, normalizeActionsSettingsV1, createActionExecutor, deriveSessionCreationTagV1, ExternalActionExecutionAuthorizationRequestV1Schema, type ActionExecuteResult, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, AccountApiTokensListActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
@@ -256,13 +258,16 @@ describe('daemon managed Machine Action factory', () => {
         const settings = AccountSettingsSchema.parse({});
         const input = { homeId: 'srv_home', id: `prepare-preset-${outcome}-${randomUUID()}`, expectedRevision: 1, machineId: 'controller' };
         const reconnected = outcome === 'interrupted-reconnected';
-        const account = { service: { pluginId: 'acme.accounts', localId: 'cloud' }, accountId: 'same-native-account' };
         const authorFixture = normalizePluginManifestV2(createMachineProvisionerSpecializedPreparationAuthorFixture().manifest);
+        const account = { service: { pluginId: authorFixture.id, localId: 'cloud' }, accountId: 'same-native-account' };
         const authored = !reconnected ? authorFixture : normalizePluginManifestV2({ ...authorFixture,
             hostAccess: { ...authorFixture.hostAccess, required: [{ id: 'native-connection', capability: 'connectedAccounts',
                 reason: 'Use the selected native Account', scope: { serviceRefs: [account.service],
                     operations: ['use'], materializationKinds: ['environment'] } }] },
-            contributes: { ...authorFixture.contributes, actions: authorFixture.contributes.actions.map(action => ({
+            contributes: { ...authorFixture.contributes, connectedAccountDescriptors: [{ id: 'cloud', title: 'Native Account',
+                authentication: { defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual', outcomeReconciliation: 'none',
+                    fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }] }] } }],
+            actions: authorFixture.contributes.actions.map(action => ({
                 ...action, hostAccess: ['native-connection'],
             })) },
         });
@@ -387,6 +392,13 @@ describe('daemon managed Machine Action factory', () => {
         });
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             const path = new URL(String(url)).pathname;
+            if (reconnected && path === '/v1/plugins/availability/intents/list') {
+                const pluginIds = readRequestedIntentPluginIds(body);
+                return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
+                    pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId, response: {
+                        availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [],
+                    } })) }) };
+            }
             if (path.endsWith('/execution-authorization')) {
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
                 roots.push(path);

@@ -5,6 +5,7 @@ import { openEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnv
 import { computeContentPublicKeyFingerprint } from '../identity/contentPublicKeyFingerprint.js';
 import * as preset from './managedMachinePresetContentV1.js';
 import { MachineProvisionerPreparationBuildResultV1Schema } from '../../plugins/contributions/machineProvisionerPreparationSchemas.js';
+import { ManagedMachinePresetPreparationBindingV1Schema } from './managedMachinePresetPreparationV1.js';
 
 const content = {
   v: 1 as const, name: 'Prepared preset', preparation: { enabled: true },
@@ -18,11 +19,21 @@ const binding = {
   configuration: { launch: { provider: content.launch.provider, schemaVersion: 1, choices: content.launch.choices },
     setup: content.setup },
   cliIdentity: 'home-payload:0.3:abc',
+  credentialConfigurations: [],
 };
 const prepared = { operationId: 'prepare-1', binding, status: 'ready' as const, artifact: reference,
   cliBinaryPath: '/opt/happier/cli/current/happier', bakedSetup: content.setup };
 
 describe('private prepared preset content', () => {
+  it('requires the admitted connected-account configuration revision in the private binding', () => {
+    const credentialConfigurations = [{ account: { service: { pluginId: 'test.service', localId: 'compute' },
+      accountId: 'provider-one' }, revision: 'configuration-1' }];
+    expect(ManagedMachinePresetPreparationBindingV1Schema.parse({ ...binding, credentialConfigurations }))
+      .toEqual({ ...binding, credentialConfigurations });
+    const { credentialConfigurations: _missingBasis, ...missingBasis } = binding;
+    expect(ManagedMachinePresetPreparationBindingV1Schema.safeParse(missingBasis).success).toBe(false);
+  });
+
   it.each(['plain', 'e2ee'] as const)('refuses unreviewed or foreign provider/schema/Account execution through the real %s sealer', mode => {
     const secret = new Uint8Array(32).fill(4);
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(secret).publicKey;
@@ -116,6 +127,8 @@ describe('private prepared preset content', () => {
     const { name: _name, ...launch } = content.launch;
     expect(preset.ManagedMachinePresetContentV1Schema.safeParse({ ...content, prepared: { ...prepared,
       binding: { presetRevision: binding.presetRevision, cliIdentity: binding.cliIdentity,
+        credentialConfigurations: [{ account: { service: { pluginId: 'test.service', localId: 'compute' },
+          accountId: 'provider-account' }, revision: null }],
         configuration: { ...binding.configuration, launch: { ...launch, credentials: [{
           purpose: { consumer: launch.provider, purpose: 'compute' },
           account: { service: { pluginId: 'test.service', localId: 'compute' }, accountId: 'provider-account' },

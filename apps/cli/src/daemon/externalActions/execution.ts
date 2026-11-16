@@ -1019,9 +1019,6 @@ resolveServerFeaturesSnapshot?: () =>
             });
           },
           observeRecordedApprovalExecution,
-          ...(apiMachineForSessions ? { cancelAndWaitForActionOperation:
-            (...args: Parameters<ApiMachineClient['cancelAndWaitForActionOperation']>) =>
-              apiMachineForSessions.cancelAndWaitForActionOperation(...args) } : {}),
           ...(apiMachineForSessions ? { waitForActionOperationCompletion:
             (...args: Parameters<ApiMachineClient['waitForActionOperationCompletion']>) =>
               apiMachineForSessions.waitForActionOperationCompletion(...args) } : {}),

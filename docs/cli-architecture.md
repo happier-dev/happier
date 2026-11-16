@@ -3312,6 +3312,14 @@ reviewed-child issuer. They do not require a managed Machine row or mint another
 Account root. The same Connected Account purpose owner materializes the selected
 provider credentials outside the credential-free image input.
 
+The shared preset owner compares the exact preset revision, authored launch and
+setup, actual supplier CLI identity, and the required captured Connected Account
+configuration revisions. Reconnecting the same Account with a changed endpoint
+therefore makes the preparation stale. Stale preparation, an unsupported variant,
+or native image absence takes the ordinary cold launch path. Preset and CLI
+changes do not start a background rebuild; a new explicit Prepare replaces the
+old owned artifact within its new admission.
+
 Home checks Machine and preset Manage at admission. The original signed binding
 retains `presetPreparationAdmission` with Home, preset, Machine and initial
 revision. An encrypted request exposes only this routing scope; the existing
@@ -3321,9 +3329,9 @@ building write; subsequent status writes use the current preset CAS revision.
 They preserve encryption mode and recipient identities. Stop uses the existing
 operation cancellation owner: it ends new build work while retaining that same
 admission through private cancellation status and owned native cleanup.
-Replacing a building image first stops and joins the original local invocation
-under the same requester Account before inspecting or removing its resource.
-An invocation outside that scope remains a visible conflict until its owner stops it.
+A Retry after interruption uses a new admission to inspect the retained native
+operation with its original launch. It adopts a current artifact or deletes the
+leftover before building the newly admitted target.
 
 In current 0.3 development, the terminal-auth verifier identifies a
 `HOME_AUTHORITY_MISMATCH` with a closed comparison label, verification phase,

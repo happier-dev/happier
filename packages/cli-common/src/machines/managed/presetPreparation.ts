@@ -4,7 +4,8 @@ import type { ManagedMachinePresetPreparationBindingV1 } from '@happier-dev/prot
 import type { ManagedNativeOperationReferenceV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { splitMachineSetupForPreparationV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 
-type PreparationIdentity = Readonly<{ presetRevision: number; cliIdentity: string }>;
+type PreparationIdentity = Readonly<{ presetRevision: number; cliIdentity: string;
+  credentialConfigurations: ManagedMachinePresetPreparationBindingV1['credentialConfigurations'] }>;
 
 export function createManagedMachinePresetPreparationBindingV1(params: PreparationIdentity & Readonly<{
   content: Pick<ManagedMachinePresetContentV1, 'setup'> & {
@@ -14,7 +15,8 @@ export function createManagedMachinePresetPreparationBindingV1(params: Preparati
   const { name: _name, ...launch } = params.content.launch;
   return { presetRevision: params.presetRevision,
     configuration: { launch, ...(params.content.setup === undefined ? {} : { setup: params.content.setup }) },
-    cliIdentity: params.cliIdentity };
+    cliIdentity: params.cliIdentity,
+    credentialConfigurations: params.credentialConfigurations };
 }
 
 export type ManagedMachinePresetPreparationDecisionV1 =

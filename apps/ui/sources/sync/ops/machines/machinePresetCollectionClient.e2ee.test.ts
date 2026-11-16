@@ -315,6 +315,7 @@ describe('machine preset content envelopes', () => {
                     setup,
                 },
                 cliIdentity: 'home-payload:0.3:prepared',
+                credentialConfigurations: [],
             },
             status: 'ready' as const,
             artifact: { contributionRef: launch.provider, schemaVersion: launch.schemaVersion, value: { imageId: 'private-image' } },

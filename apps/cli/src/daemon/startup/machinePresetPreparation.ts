@@ -19,8 +19,8 @@ import { createManagedOpaquePresetReviewedChildPortV1, bindManagedMachineRoleCre
     projectManagedMachineRolePurposeBindingsV1, composeManagedMachinePresetPreparationBuildInputV1,
     settleManagedMachinePresetPreparationOperationV1, type ManagedMachinePresetPreparationRootV1 } from '@happier-dev/cli-common/machines/managed';
 import { captureManagedMachineRoleCredentialConfigurationsV1 } from '@happier-dev/cli-common/machines/managed/reconcile';
-import { prepareManagedGuestCliBuildInput } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
-import { prepareManagedGuestCliLocalBuildPayload } from '@happier-dev/cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller';
+import { prepareManagedGuestCliBuildInput, resolveManagedGuestCliBuildIdentity } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import { prepareManagedGuestCliLocalBuildPayload, readManagedGuestCliLocalBuildPayloadMetadata } from '@happier-dev/cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller';
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createManagedPresetHydrator } from '@/machines/managed/presetHydration';
@@ -155,9 +155,30 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
             readCredentialConfigurationRevision: host.readCredentialConfigurationRevision,
             signal: signal ?? new AbortController().signal,
         });
+        const readGuest = async (launch: ManagedMachinePresetPreparationRootV1['launch']) => {
+            const qualified = qualify(launch);
+            const { provisioner } = qualified;
+            const optionsAction = provisioner.actions.options;
+            const action = optionsAction ? host.registry.contributes.actions.find(candidate =>
+                candidate.pluginId === launch.provider.pluginId && candidate.definition.id === optionsAction) : undefined;
+            if (!optionsAction || !action?.definition.inputSchema) throw new ManagedMachineControllerError('provider_unavailable');
+            const selectors = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(action.definition.inputSchema)).parse(launch.choices);
+            const options = MachineProvisionerOptionsResultV1Schema.parse(await invoke(qualified, 'options', selectors, credentialConfigurations));
+            const projection = projectMachineProvisionerSelectionV1({ options, launchSchema: provisioner.launchSchema,
+                selection: readMachineProvisionerSelectionForLaunchV1(options, launch.choices) });
+            if (projection.kind !== 'ready' || !projection.nativeFacts.preparationGuest) throw new ManagedMachineControllerError('provider_unavailable');
+            return projection.nativeFacts.preparationGuest;
+        };
+        // Recovery needs the current supplier identity, not a newly archived payload.
+        // Reuse this selected guest if the preset owner decides a rebuild is needed.
+        const recoveryGuest = content.prepared?.status === 'building' ? await readGuest(content.launch) : undefined;
+        const cliIdentity = recoveryGuest ? (await resolveManagedGuestCliBuildIdentity({ homeUrl: host.serverBaseUrl,
+            target: recoveryGuest.target, readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata,
+            ...(signal ? { signal } : {}) })).identity : undefined;
         let firstRead = true;
         const result = await settleManagedMachinePresetPreparationOperationV1({ operationId: acceptance.operationId,
-            expectedRevision: input.expectedRevision, custody, credentialConfigurations, ...(signal ? { signal } : {}),
+            expectedRevision: input.expectedRevision, custody, credentialConfigurations,
+            ...(cliIdentity === undefined ? {} : { cliIdentity }), ...(signal ? { signal } : {}),
             storage: { read: async () => { if (firstRead) { firstRead = false; return preset; } return await read(); },
                 compareAndSwap: async update => PresetMutationResultV1Schema.parse(await post('update', {
                     homeId: input.homeId, id: input.id, expectedRevision: update.expectedRevision,
@@ -165,18 +186,8 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
                 })) },
             composeBuild: async capturedContent => {
                 if (!capturedContent.launch) throw new ManagedMachineControllerError('invalid_request');
-                const qualified = qualify(capturedContent.launch);
-                const { launch, provisioner } = qualified;
-                const optionsAction = provisioner.actions.options;
-                const action = optionsAction ? host.registry.contributes.actions.find(candidate =>
-                    candidate.pluginId === launch.provider.pluginId && candidate.definition.id === optionsAction) : undefined;
-                if (!optionsAction || !action?.definition.inputSchema) throw new ManagedMachineControllerError('provider_unavailable');
-                const selectors = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(action.definition.inputSchema)).parse(launch.choices);
-                const options = MachineProvisionerOptionsResultV1Schema.parse(await invoke(qualified, 'options', selectors, credentialConfigurations));
-                const projection = projectMachineProvisionerSelectionV1({ options, launchSchema: provisioner.launchSchema,
-                    selection: readMachineProvisionerSelectionForLaunchV1(options, launch.choices) });
-                if (projection.kind !== 'ready' || !projection.nativeFacts.preparationGuest) throw new ManagedMachineControllerError('provider_unavailable');
-                const guest = projection.nativeFacts.preparationGuest;
+                const launch = capturedContent.launch;
+                const guest = recoveryGuest ?? await readGuest(launch);
                 const cli = await prepareManagedGuestCliBuildInput({ homeUrl: host.serverBaseUrl,
                     target: guest.target, remoteHomeDir: guest.remoteHomeDir, prepareLocalPayload: prepareManagedGuestCliLocalBuildPayload,
                     ...(signal ? { signal } : {}) });

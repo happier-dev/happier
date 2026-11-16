@@ -247,6 +247,7 @@ describe('managed machine preset content envelope', () => {
         configuration: { launch: { provider: source.launch!.provider, schemaVersion: source.launch!.schemaVersion,
           choices: source.launch!.choices }, setup: source.setup },
         cliIdentity: 'home-payload:0.3:promotion',
+        credentialConfigurations: [],
       },
       status: 'building' as const,
     };

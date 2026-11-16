@@ -1,9 +1,11 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
+import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { createValidatedLaunchSnapshotV1Schema } from './managedMachineV1.js';
 import { MachineSetupV1Schema } from './machineSetupV1.js';
-import { ManagedNativeOperationReferenceV1Schema } from './providerFactsV1.js';
+import { MachineProvisionerNativeCauseV1Schema, ManagedNativeOperationReferenceV1Schema } from './providerFactsV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
 
@@ -34,6 +36,10 @@ export const ManagedMachinePresetPreparationBindingV1Schema = lazyZodSchema(() =
   presetRevision: z.number().check(z.int(), z.positive()),
   configuration: ManagedMachinePresetPreparationConfigurationV1Schema,
   cliIdentity: id(),
+  credentialConfigurations: z.array(z.strictObject({
+    account: asProtocolZod(QualifiedConnectedAccountRefSchema),
+    revision: z.nullable(id()),
+  })),
 }));
 export type ManagedMachinePresetPreparationBindingV1 = Readonly<
   z.infer<typeof ManagedMachinePresetPreparationBindingV1Schema>>;
@@ -42,7 +48,7 @@ export type ManagedMachinePresetPreparationBindingV1 = Readonly<
 export const ManagedMachinePresetPreparedV1Schema = lazyZodSchema(() => z.strictObject({
   operationId: id(),
   binding: ManagedMachinePresetPreparationBindingV1Schema,
-  status: z.enum(['building', 'ready', 'failed', 'cancelled', 'stale']),
+  status: z.enum(['building', 'ready', 'failed', 'cancelled']),
   artifact: z.optional(ManagedNativeOperationReferenceV1Schema),
   nativeOperationRef: z.optional(ManagedNativeOperationReferenceV1Schema),
   /** Supplier-selected image install path; it is usable only with a ready artifact. */
@@ -52,6 +58,7 @@ export const ManagedMachinePresetPreparedV1Schema = lazyZodSchema(() => z.strict
   /** Exact credential-free setup completed by this build; omitted for a CLI-only image. */
   bakedSetup: z.optional(MachineSetupV1Schema),
   code: z.optional(id()),
+  nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema),
 }).check(z.refine(value => value.status !== 'ready' || value.artifact !== undefined,
   { message: 'Ready preparation requires a native artifact.' }))
   .check(z.refine(value => [value.artifact, value.nativeOperationRef].every(reference => reference === undefined

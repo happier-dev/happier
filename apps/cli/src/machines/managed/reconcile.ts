@@ -1,5 +1,6 @@
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1, type ManagedNativeChannelIO } from '@happier-dev/cli-common/machines/managed';
+import { captureManagedMachineRoleCredentialConfigurationsV1 } from '@happier-dev/cli-common/machines/managed/reconcile';
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { generateKeyPair, randomBytes, randomUUID } from 'node:crypto';
 import { readManagedGuestHomeWarning, resolveManagedGuestHome } from './homeQualification';
@@ -42,6 +43,7 @@ import { initializeManagedMachineEnrollmentPolicies } from './enrollmentPolicy';
 import { readManagedOpaquePresetReview } from './presetHydration';
 import type { ManagedPresetHydrator } from './presetHydration';
 import { readManagedMachinePresetPreparationV1 } from '@happier-dev/cli-common/machines/managed';
+import type { ManagedMachinePresetPreparationBindingV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
 import { resolveManagedGuestCliBuildIdentity } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { readManagedGuestCliLocalBuildPayloadMetadata } from '@happier-dev/cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller';
 import { readMachineProvisionerPreparedLaunchV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -57,6 +59,7 @@ export type ManagedMachineReconciliationInput = Readonly<{
     includeGuestDiagnostics?: true;
     rebuild?: DevcontainerRebuildIntentV1;
     hydrator?: ManagedPresetHydrator;
+    credentialConfigurations?: ManagedMachinePresetPreparationBindingV1['credentialConfigurations'];
 }>;
 
 /**
@@ -406,7 +409,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                     resolveRequestHeaders: createExternalActionRequesterServerRequestHeaders(params.options.context) } } : {}),
                 isCurrent: () => rowCurrent && !signal.aborted,
                 managedOperation: { role,
-                    credentialConfigurations: readManagedMachineRoleCredentialConfigurationsV1(authorizations),
+                    credentialConfigurations: params.credentialConfigurations ?? readManagedMachineRoleCredentialConfigurationsV1(authorizations),
                     isCurrent: (currentRole) => currentRole === role && rowCurrent },
             };
             const activation = await input.managedProviderOperationAuthority.activate({ ...binding, requestAuthUses: [] });
@@ -601,6 +604,20 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
     const retainedProvisioner = params.input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
         candidate.identity.pluginId === params.machine.launch.provider.pluginId && candidate.identity.localId === params.machine.launch.provider.localId
         && candidate.definition.schemaVersion === params.machine.launch.schemaVersion);
+    let credentialConfigurations = params.credentialConfigurations;
+    if (params.action !== 'machines.managed.inspect' && params.machine.allocation === 'unsubmitted'
+        && params.hydrator?.isOpaque(params.machine) && retainedProvisioner
+        && params.hydrator.readPresetDefinition(params.machine)?.preparation?.enabled) {
+        const descriptor = retainedProvisioner.definition;
+        const roleHost = await resolveManagedRoleRuntime(params.input, params.machine.launch.provider.pluginId, descriptor.actions.acquire);
+        const authorizations = await resolveManagedRoleCredentialAuthorizations(roleHost, params.machine.launch.provider,
+            descriptor.actions.acquire, params.machine.launch.credentials, { descriptor, launch: params.machine.launch.choices });
+        credentialConfigurations = await captureManagedMachineRoleCredentialConfigurationsV1({ authorizations,
+            readCredentialConfigurationRevision: (account, signal) => {
+                if (!roleHost.readCredentialConfigurationRevision) throw new ManagedMachineControllerError('credential_unavailable');
+                return roleHost.readCredentialConfigurationRevision(account, signal);
+            }, signal: params.options.signal ?? new AbortController().signal });
+    }
     let native: ReturnType<typeof createManagedNativeInvocation>;
     const machine = await reconcileManagedMachineShared({ machine: params.machine, action: params.action,
         requestId: params.options.requestId, signal: params.options.signal, home: params.client,
@@ -623,7 +640,9 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                 const cli = await resolveManagedGuestCliBuildIdentity({ homeUrl: params.input.serverUrl, target: guest.target,
                     readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata, signal: params.options.signal,
                     ...(params.input.guestCliFetch ? { fetchImpl: params.input.guestCliFetch } : {}) });
-                const decision = readManagedMachinePresetPreparationV1({ content, presetRevision: machine.preset.revision, cliIdentity: cli.identity });
+                // Unsubmitted preparation captures this same basis before constructing native invocations.
+                const decision = readManagedMachinePresetPreparationV1({ content, presetRevision: machine.preset.revision,
+                    cliIdentity: cli.identity, credentialConfigurations: credentialConfigurations! });
                 if (decision.kind === 'warm') {
                     const preparedLaunch = readMachineProvisionerPreparedLaunchV1({ provisioner: retainedProvisioner.identity,
                         descriptor: retainedProvisioner.definition, artifact: decision.artifact });
@@ -647,7 +666,8 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
             return { machine: hydrator.normalize(hydrator.structural(machine)), presetContent: contentReport };
         },
         createNative: (readMachine, readRevision) => {
-            native = createManagedNativeInvocation(params, readMachine, readRevision);
+            native = createManagedNativeInvocation({ ...params,
+                ...(credentialConfigurations === undefined ? {} : { credentialConfigurations }) }, readMachine, readRevision);
             const { contribution, bootstrapCredentialKind, roleCredentialAuthorization, invoke } = native;
             const optionsAction = contribution.definition.actions.options;
             const optionsInputSchema = optionsAction ? params.input.runtimeRegistry.contributes.actionsById?.get(

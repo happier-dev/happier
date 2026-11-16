@@ -1123,10 +1123,6 @@ export class ApiMachineClient {
         return this.actionOperationRuntime.observeExecution(request);
     }
 
-    cancelAndWaitForActionOperation(...args: Parameters<HostActionOperationRuntime['runner']['cancelAndWait']>) {
-        return this.actionOperationRuntime.runner.cancelAndWait(...args);
-    }
-
     waitForActionOperationCompletion(...args: Parameters<HostActionOperationRuntime['runner']['waitForCompletion']>) {
         return this.actionOperationRuntime.runner.waitForCompletion(...args);
     }

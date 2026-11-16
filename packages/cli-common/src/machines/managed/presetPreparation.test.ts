@@ -11,7 +11,8 @@ const content = { v: 1 as const, name: 'Preset', preparation: { enabled: true },
     selection: { ref: { pluginId: 'test.recipes', recipeId: 'runtime', revision: '1' }, inputs: {} } }],
     scripts: [{ body: 'configure-session-credentials', affects: 'none' as const }] } };
 const bakedSetup = { items: content.setup.items };
-const current = { presetRevision: 3, cliIdentity: 'home:0.3:payload-a' };
+const current = { presetRevision: 3, cliIdentity: 'home:0.3:payload-a',
+  credentialConfigurations: [{ account, revision: 'configuration-1' }] };
 const binaryPath = '/opt/happier/cli/current/happier';
 const artifact = { contributionRef: content.launch.provider, schemaVersion: 1, value: { image: 'owned-image' } };
 
@@ -38,18 +39,20 @@ describe('preset preparation freshness', () => {
       { content: saved, ...current, cliIdentity: 'public:0.3:newer-release' },
       { content: { ...saved, launch: { ...saved.launch,
         credentials: [{ purpose, account: { ...account, accountId: 'provider-two' } }] } }, ...current },
+      { content: saved, ...current, credentialConfigurations: [{ account, revision: 'configuration-2' }] },
       { content: saved, ...current, presetRevision: 4 },
     ]) expect(readManagedMachinePresetPreparationV1(changed)).toEqual({ kind: 'cold', reason: 'stale' });
     const team = ManagedCredentialSelectionV1Schema.parse({ purpose, teamId: 'team',
       selection: { source: 'team_resource', resourceId: 'provider-pool-one', deliveryMode: 'direct', disclosedMember: account } });
+    const teamCurrent = { ...current, credentialConfigurations: [] };
     const teamContent = { ...content, launch: { ...content.launch, credentials: [team] } };
     const teamSaved = { ...teamContent, prepared: { ...prepared,
-      binding: createManagedMachinePresetPreparationBindingV1({ content: teamContent, ...current }) } };
-    expect(readManagedMachinePresetPreparationV1({ content: teamSaved, ...current }).kind).toBe('warm');
+      binding: createManagedMachinePresetPreparationBindingV1({ content: teamContent, ...teamCurrent }) } };
+    expect(readManagedMachinePresetPreparationV1({ content: teamSaved, ...teamCurrent }).kind).toBe('warm');
     const changedTeam = ManagedCredentialSelectionV1Schema.parse({ purpose, teamId: 'team',
       selection: { source: 'team_resource', resourceId: 'provider-pool-two', deliveryMode: 'direct', disclosedMember: account } });
     expect(readManagedMachinePresetPreparationV1({ content: { ...teamSaved,
-      launch: { ...teamSaved.launch, credentials: [changedTeam] } }, ...current }))
+      launch: { ...teamSaved.launch, credentials: [changedTeam] } }, ...teamCurrent }))
       .toEqual({ kind: 'cold', reason: 'stale' });
   });
 
@@ -75,7 +78,7 @@ describe('preset preparation freshness', () => {
   it('keeps disabled, absent and all nonready build outcomes cold while retaining native identities', () => {
     const binding = createManagedMachinePresetPreparationBindingV1({ content, ...current });
     expect(readManagedMachinePresetPreparationV1({ content, ...current })).toEqual({ kind: 'cold', reason: 'unprepared' });
-    for (const status of ['building', 'failed', 'cancelled', 'stale'] as const) {
+    for (const status of ['building', 'failed', 'cancelled'] as const) {
       const saved = { ...content, prepared: { operationId: 'build-1', status, binding,
         artifact, nativeOperationRef: { ...artifact, value: { build: 'owned-build' } } } };
       expect(readManagedMachinePresetPreparationV1({ content: saved, ...current }))

@@ -9,6 +9,7 @@ import { deriveBoxPublicKeyFromSeed, deriveBoxSecretKeyFromSeed } from '@happier
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { readManagedMachinePresetPreparationV1 } from './presetPreparation.js';
 import { advanceManagedMachinePresetPreparationOperationV1, cancelManagedMachinePresetPreparationOperationV1,
   settleManagedMachinePresetPreparationOperationV1,
@@ -20,7 +21,7 @@ const definition: ManagedMachinePresetContentV1 = { v: 1, name: 'Private preset'
     name: 'Guest', choices: { image: 'clean-base' } } };
 const artifact = { contributionRef: definition.launch!.provider, schemaVersion: 1, value: { image: 'owned-image' } };
 const nativeOperationRef = { ...artifact, value: { name: 'build-operation-one' } };
-const identity = { expectedRevision: 1, cliIdentity: `home-payload:${'a'.repeat(64)}` };
+const identity = { credentialConfigurations: [], expectedRevision: 1, cliIdentity: `home-payload:${'a'.repeat(64)}` };
 let buildInput: ManagedMachinePresetPreparationBuildInputV1;
 beforeAll(async () => {
   const cli = await prepareManagedGuestCliBuildInput({ homeUrl: 'https://private-home.example',
@@ -107,6 +108,88 @@ describe('private preset preparation operation', () => {
     else expect(fixture.opened().prepared).toHaveProperty('nativeOperationRef', nativeOperationRef);
   });
 
+  it.each(['plain', 'e2ee'] as const)('retains setup failure through interrupted recovery, replaces a new native cause and clears it on cleanup in %s', async mode => {
+    let nonce = 51;
+    const custody: ManagedMachinePresetPreparationCustodyV1 = mode === 'plain' ? { mode }
+      : { mode, accountId: 'owner', accountKey: deriveBoxSecretKeyFromSeed(new Uint8Array(32).fill(71)),
+        randomBytes: length => new Uint8Array(length).fill(nonce++) };
+    const nativeCause = { localCause: 'native_command_failed' as const, command: 'run' as const,
+      exitCode: 17, stderr: 'setup failed' };
+    const fixture = storageFixture(custody);
+    let inspections = 0;
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), custody,
+      storage: fixture.storage, native: nativeFixture({ build: async () => ({ kind: 'unknown', code: 'setup_failed',
+        nativeCause, nativeOperationRef }), inspect: async () => ++inspections === 1
+          ? { kind: 'pending', nativeOperationRef } : { kind: 'failed', code: 'preparation_interrupted', nativeOperationRef } }) };
+    expect(await advanceManagedMachinePresetPreparationOperationV1(request)).toMatchObject({ kind: 'unknown',
+      prepared: { code: 'setup_failed', nativeCause, nativeOperationRef } });
+    expect(await advanceManagedMachinePresetPreparationOperationV1(request)).toMatchObject({ kind: 'pending',
+      prepared: { code: 'setup_failed', nativeCause, nativeOperationRef } });
+    expect(await advanceManagedMachinePresetPreparationOperationV1(request)).toMatchObject({ kind: 'failed',
+      prepared: { code: 'setup_failed', nativeCause, nativeOperationRef } });
+    expect(fixture.opened().prepared).toMatchObject({ code: 'setup_failed', nativeCause });
+    const deleteCause = { httpStatusClass: '4xx' as const, code: 'forbidden' as const };
+    expect(await cancelManagedMachinePresetPreparationOperationV1({ ...request,
+      native: nativeFixture({ destroy: async () => ({ kind: 'refused', code: 'delete_forbidden', nativeCause: deleteCause }) }) }))
+      .toMatchObject({ kind: 'failed', prepared: { code: 'delete_forbidden', nativeCause: deleteCause, nativeOperationRef } });
+    const cleaned = await cancelManagedMachinePresetPreparationOperationV1(request);
+    expect(cleaned).toMatchObject({ kind: 'cancelled' });
+    expect(fixture.opened().prepared).not.toHaveProperty('nativeCause');
+    expect(fixture.opened().prepared).not.toHaveProperty('code');
+  });
+
+  it.each(['refused', 'unknown', 'failed'] as const)('persists safe native %s cause through the real private writer', async kind => {
+    const fixture = storageFixture();
+    const nativeCause = MachineProvisionerNativeCauseV1Schema.parse({ httpStatusClass: '4xx', code: 'resource_limit_exceeded' });
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }),
+      credentialConfigurations: [], custody: { mode: 'plain' as const }, storage: fixture.storage,
+      native: nativeFixture({ build: async () => kind === 'failed' ? { kind: 'pending', nativeOperationRef }
+        : kind === 'refused' ? { kind, code: 'native_refused', nativeCause }
+          : { kind, code: 'outcome_unknown', nativeOperationRef, nativeCause },
+      inspect: async () => ({ kind: 'failed', code: 'native_failed', nativeOperationRef, nativeCause }) }) };
+    await advanceManagedMachinePresetPreparationOperationV1(request);
+    if (kind === 'failed') await advanceManagedMachinePresetPreparationOperationV1(request);
+    expect(fixture.opened().prepared).toMatchObject({ nativeCause });
+    if (kind === 'unknown') {
+      await advanceManagedMachinePresetPreparationOperationV1({ ...request, native: nativeFixture() });
+      expect(fixture.opened().prepared).not.toHaveProperty('nativeCause');
+      expect(fixture.opened().prepared).not.toHaveProperty('code');
+    }
+  });
+
+  it.each(['refused', 'unknown'] as const)('retains safe destroy %s cause until confirmed cleanup clears it', async kind => {
+    const fixture = storageFixture();
+    const nativeCause = MachineProvisionerNativeCauseV1Schema.parse({ sdkError: 'ResourceExhaustedError' });
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }),
+      credentialConfigurations: [], custody: { mode: 'plain' as const }, storage: fixture.storage, native: nativeFixture() };
+    await advanceManagedMachinePresetPreparationOperationV1(request);
+    await cancelManagedMachinePresetPreparationOperationV1({ ...request, native: nativeFixture({ destroy: async () =>
+      kind === 'refused' ? { kind, code: 'native_refused', nativeCause }
+        : { kind, code: 'outcome_unknown', nativeOperationRef, nativeCause } }) });
+    expect(fixture.opened().prepared).toMatchObject({ status: 'cancelled', artifact, nativeCause });
+    await cancelManagedMachinePresetPreparationOperationV1(request);
+    expect(fixture.opened().prepared).not.toHaveProperty('nativeCause');
+    expect(fixture.opened().prepared).not.toHaveProperty('code');
+  });
+
+  it('retains the classified original cause across generic inspect failure but clears it for a new build', async () => {
+    const fixture = storageFixture();
+    const nativeCause = MachineProvisionerNativeCauseV1Schema.parse({ localCause: 'native_command_failed', command: 'create', exitCode: 1 });
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }),
+      credentialConfigurations: [], custody: { mode: 'plain' as const }, storage: fixture.storage,
+      native: nativeFixture({ build: async () => ({ kind: 'unknown', code: 'outcome_unknown', nativeOperationRef, nativeCause }),
+        inspect: async () => ({ kind: 'failed', code: 'interrupted', nativeOperationRef }) }) };
+    await advanceManagedMachinePresetPreparationOperationV1(request);
+    await advanceManagedMachinePresetPreparationOperationV1(request);
+    expect(fixture.opened().prepared).toMatchObject({ status: 'failed', nativeCause });
+    await settleManagedMachinePresetPreparationOperationV1({ ...request, operationId: 'operation-two',
+      expectedRevision: fixture.row().revision, native: nativeFixture({ build: async () => {
+        expect(fixture.opened().prepared).not.toHaveProperty('nativeCause');
+        return { kind: 'ready', artifact };
+      } }) });
+    expect(fixture.opened().prepared).not.toHaveProperty('nativeCause');
+  });
+
   it.each(['plain', 'e2ee'] as const)('retains the actual supplier CLI path before build and exposes it only after ready in %s', async mode => {
     let nonce = 23;
     const custody: ManagedMachinePresetPreparationCustodyV1 = mode === 'plain' ? { mode }
@@ -135,7 +218,7 @@ describe('private preset preparation operation', () => {
       const fixture = storageFixture();
       let inspections = 0;
       const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
-        composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage,
+        composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
         native: nativeFixture({ build: async () => ({ kind: 'pending', nativeOperationRef }),
           inspect: async () => { inspections++; return { kind: 'ready', artifact }; } }) });
       await vi.advanceTimersByTimeAsync(0);
@@ -156,7 +239,7 @@ describe('private preset preparation operation', () => {
       let destroys = 0;
       let settled = false;
       const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
-        composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage, signal: stop.signal,
+        composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage, signal: stop.signal,
         native: nativeFixture({ build: async () => ({ kind: 'pending', nativeOperationRef }),
           destroy: async input => {
             expect(input).toEqual({ nativeOperation: nativeOperationRef });
@@ -182,7 +265,7 @@ describe('private preset preparation operation', () => {
       let destroys = 0;
       let builds = 0;
       const request = { operationId: 'operation-one', ...identity,
-        composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' as const }, storage: fixture.storage,
+        composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' as const }, storage: fixture.storage,
         native: nativeFixture({ build: async () => {
           builds++;
           return reference === 'artifact' ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
@@ -220,7 +303,7 @@ describe('private preset preparation operation', () => {
       return { kind: 'ready', artifact };
     } });
     const result = await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one',
-      ...identity, composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage, native });
+      ...identity, composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage, native });
     expect(result).toMatchObject({ kind: 'ready', revision: 3, prepared: { operationId: 'operation-one', artifact } });
     expect(fixture.writes.map(row => row.revision)).toEqual([2, 3]);
     expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), presetRevision: fixture.row().revision, ...identity }))
@@ -235,7 +318,7 @@ describe('private preset preparation operation', () => {
         expect(input).toEqual({ nativeOperation: nativeOperationRef });
         return { kind: 'ready', artifact };
       } });
-    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' as const }, storage: fixture.storage, native };
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' as const }, storage: fixture.storage, native };
     expect(await advanceManagedMachinePresetPreparationOperationV1(request)).toMatchObject({ kind: 'unknown',
       prepared: { status: 'building', nativeOperationRef, code: 'outcome_unknown' } });
     expect(await advanceManagedMachinePresetPreparationOperationV1(request)).toMatchObject({ kind: 'ready', prepared: { artifact } });
@@ -268,7 +351,7 @@ describe('private preset preparation operation', () => {
   it('publishes no private revision for unchanged native observations and publishes the eventual ready artifact', async () => {
     const fixture = storageFixture();
     let ready = false;
-    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' as const },
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' as const },
       storage: fixture.storage, native: nativeFixture({ build: async () => ({ kind: 'pending', nativeOperationRef }),
         inspect: async () => ready ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef } }) };
     expect(await advanceManagedMachinePresetPreparationOperationV1(request)).toMatchObject({ kind: 'pending' });
@@ -285,7 +368,7 @@ describe('private preset preparation operation', () => {
   it('keeps cancellation unconfirmed until the same destroy role establishes absence', async () => {
     const fixture = storageFixture();
     const native = nativeFixture({ build: async () => ({ kind: 'pending', nativeOperationRef }) });
-    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' as const }, storage: fixture.storage, native };
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' as const }, storage: fixture.storage, native };
     await advanceManagedMachinePresetPreparationOperationV1(request);
     let destroys = 0;
     const cleanup = nativeFixture({ destroy: async input => {
@@ -326,7 +409,7 @@ describe('private preset preparation operation', () => {
     const fixture = storageFixture();
     let builds = 0;
     const result = await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
-      composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: { ...fixture.storage,
+      composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: { ...fixture.storage,
         compareAndSwap: async () => ({ kind: 'conflict', currentRevision: 2 }) },
       native: nativeFixture({ build: async () => { builds++; return { kind: 'ready', artifact }; } }) });
     expect(result).toEqual({ kind: 'conflict', currentRevision: 2 });
@@ -337,7 +420,7 @@ describe('private preset preparation operation', () => {
   it('uses the original admitted revision for the first effect CAS and current revisions for the incumbent', async () => {
     const fixture = storageFixture();
     let builds = 0;
-    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' as const },
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' as const },
       storage: fixture.storage, native: nativeFixture({ build: async () => { builds++; return { kind: 'pending', nativeOperationRef }; } }) };
     expect(await advanceManagedMachinePresetPreparationOperationV1({ ...request, expectedRevision: 2 }))
       .toEqual({ kind: 'conflict', currentRevision: 1 });
@@ -359,7 +442,7 @@ describe('private preset preparation operation', () => {
     let builds = 0;
     let compositions = 0;
     const request = { operationId: 'operation-one', ...identity,
-      composeBuild: async () => { compositions++; return { input: buildInput }; }, custody: { mode: 'plain' as const },
+      composeBuild: async () => { compositions++; return { input: buildInput }; }, credentialConfigurations: [], custody: { mode: 'plain' as const },
       storage: fixture.storage, native: nativeFixture({ build: async (_input, root) => {
         roots.push(root); builds++; throw new Error('transport lost');
       }, inspect: async (input, root) => {
@@ -395,7 +478,7 @@ describe('private preset preparation operation', () => {
     let compositions = 0;
     const request = { operationId: 'operation-one', ...identity,
       composeBuild: async () => { compositions++; return { input: { ...buildInput, setupScript: 'original-clean-input' } }; },
-      custody: { mode: 'plain' as const },
+      credentialConfigurations: [], custody: { mode: 'plain' as const },
       storage: fixture.storage, native: nativeFixture({ build: async () => { builds++; throw new Error('transport lost'); },
         inspect: async input => {
           expect(input).toEqual({ operationId: 'operation-one', launch: buildInput.launch.choices });
@@ -419,7 +502,7 @@ describe('private preset preparation operation', () => {
       compareAndSwap: async replacement => fixture.writes.length === 0
         ? fixture.storage.compareAndSwap(replacement) : failure };
     const result = await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
-      composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage,
+      composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage,
       native: nativeFixture({ build: async (_input, facts) => {
         expect(facts).toEqual({ presetId: 'preset', presetRevision: 2, operationId: 'operation-one',
           launch: buildInput.launch });
@@ -434,7 +517,7 @@ describe('private preset preparation operation', () => {
     const fixture = storageFixture();
     let builds = 0;
     const native = nativeFixture({ build: async () => { builds++; return { kind: 'ready', artifact }; } });
-    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' as const },
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' as const },
       storage: fixture.storage, native };
     await advanceManagedMachinePresetPreparationOperationV1(request);
     const replacement = { ...request, operationId: 'operation-two' };
@@ -458,7 +541,7 @@ describe('private preset preparation operation', () => {
       }] };
       const fixture = storageFixture(undefined, { ...definition, launch: oldLaunch });
       await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
-        composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage, native: nativeFixture() });
+        composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage, native: nativeFixture() });
       const target = { ...definition, launch: { ...oldLaunch, provider: { pluginId: 'new.compute', localId: 'image' },
         schemaVersion: 2, choices: { image: 'target-before-cleanup' }, credentials: [{ ...oldLaunch.credentials[0]!,
           account: { ...oldLaunch.credentials[0]!.account, accountId: 'new-account' } }] },
@@ -471,7 +554,7 @@ describe('private preset preparation operation', () => {
       let destroys = 0;
       let settled = false;
       const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
-        expectedRevision: fixture.row().revision, custody: { mode: 'plain' }, storage: fixture.storage,
+        expectedRevision: fixture.row().revision, credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
         composeBuild: async (captured: ManagedMachinePresetContentV1) => {
           events.push('compose');
           expect(captured).toMatchObject({ launch: target.launch, setup: target.setup });
@@ -508,7 +591,7 @@ describe('private preset preparation operation', () => {
   it('replacement rejects a stale initial revision before destroying the incumbent', async () => {
     const fixture = storageFixture();
     const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }),
-      custody: { mode: 'plain' as const }, storage: fixture.storage, native: nativeFixture() };
+      credentialConfigurations: [], custody: { mode: 'plain' as const }, storage: fixture.storage, native: nativeFixture() };
     await advanceManagedMachinePresetPreparationOperationV1(request);
     let effects = 0;
     expect(await settleManagedMachinePresetPreparationOperationV1({ ...request, operationId: 'operation-two',
@@ -519,134 +602,79 @@ describe('private preset preparation operation', () => {
     expect(fixture.opened().prepared).toMatchObject({ status: 'ready', artifact });
   });
 
-  it('replacement preserves an active incumbent paused before provider create despite native absence', async () => {
-    const fixture = storageFixture();
-    let releaseCreate!: () => void;
-    let buildStarted!: () => void;
-    const started = new Promise<void>(resolve => { buildStarted = resolve; });
-    const upload = new Promise<void>(resolve => { releaseCreate = resolve; });
-    let created = false;
-    const original = advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
-      composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage,
-      native: nativeFixture({ build: async () => {
-        buildStarted();
-        await upload;
-        created = true;
-        return { kind: 'ready', artifact };
-      } }) });
-    await started;
-    let replacementEffects = 0;
-    const replacementArtifact = { ...artifact, value: { image: 'replacement-owned' } };
-    const replacement = await settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
-      expectedRevision: fixture.row().revision, custody: { mode: 'plain' }, storage: fixture.storage,
-      composeBuild: async () => { replacementEffects++; return { input: buildInput }; },
-      native: nativeFixture({ inspect: async () => {
-        replacementEffects++;
-        expect(created).toBe(false);
-        return { kind: 'absent' };
-      }, build: async () => { replacementEffects++; return { kind: 'ready', artifact: replacementArtifact }; } }) });
-    releaseCreate();
-    const originalOutcome = await original;
-    expect.soft(replacement).toMatchObject({ kind: 'conflict' });
-    expect.soft(originalOutcome).toMatchObject({ kind: 'ready', prepared: { operationId: 'operation-one', artifact } });
-    expect.soft(fixture.opened().prepared).toMatchObject({ operationId: 'operation-one', status: 'ready', artifact });
-    expect.soft(replacementEffects).toBe(0);
-  });
-
-  it.each([false, true])('replacement joins the held original create before cleanup and respects Stop=%s', async stopped => {
-    const fixture = storageFixture();
-    let releaseCreate!: () => void;
-    let buildStarted!: () => void;
-    const started = new Promise<void>(resolve => { buildStarted = resolve; });
-    const upload = new Promise<void>(resolve => { releaseCreate = resolve; });
-    const events: string[] = [];
-    const original = advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
-      composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage,
-      native: nativeFixture({ build: async () => {
-        buildStarted();
-        await upload;
-        events.push('old-create');
-        return { kind: 'ready', artifact };
-      } }) });
-    await started;
-    const target = { ...definition, launch: { ...definition.launch!, choices: { image: 'captured-target' } } };
-    await editAuthor(fixture, target);
-    const stop = new AbortController();
-    const replacement = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
-      expectedRevision: fixture.row().revision, custody: { mode: 'plain' }, storage: fixture.storage, signal: stop.signal,
-      stopIncumbentBuild: async operationId => {
-        expect(operationId).toBe('operation-one');
-        events.push('join');
-        await original;
-        events.push('retired');
-        return true;
-      }, composeBuild: async captured => {
-        events.push('compose');
-        expect(captured.launch).toEqual(target.launch);
-        return { input: { ...buildInput, launch: { ...buildInput.launch, choices: target.launch.choices } } };
-      }, native: nativeFixture({ destroy: async () => { events.push('destroy'); return { kind: 'confirmed' }; },
-        build: async () => { events.push('new-build'); return { kind: 'ready', artifact }; } }) });
-    await editAuthor(fixture, { ...target, launch: { ...target.launch, choices: { image: 'later-edit' } } });
-    expect.soft(events).toEqual(['join']);
-    if (stopped) stop.abort();
-    releaseCreate();
-    await original;
-    expect(await replacement).toMatchObject({ kind: stopped ? 'cancelled' : 'ready',
-      prepared: { operationId: stopped ? 'operation-one' : 'operation-two' } });
-    expect(events).toEqual(stopped ? ['join', 'old-create', 'retired', 'destroy']
-      : ['join', 'old-create', 'retired', 'destroy', 'compose', 'new-build']);
-    expect(fixture.opened().launch?.choices).toEqual({ image: 'later-edit' });
-  });
-
-  it.each([false, true])('building replacement rejects unavailable retirement or stale revision=%s before native work', async stale => {
+  // O-MACH 2026-11-16 07:18: Retry is a new admission inspecting retained
+  // native identity; executor correlation/retirement is not part of this flow.
+  it.each(['matching', 'cli-changed', 'config-changed', 'credential-changed'] as const)('new admission inspects interrupted build before %s recovery', async scenario => {
     const fixture = storageFixture();
     await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
-      composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage,
+      composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
       native: nativeFixture({ build: async () => ({ kind: 'pending', nativeOperationRef }) }) });
-    let stops = 0;
-    let effects = 0;
-    expect(await settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
-      expectedRevision: stale ? 1 : fixture.row().revision, custody: { mode: 'plain' }, storage: fixture.storage,
-      stopIncumbentBuild: async () => { stops++; return false; },
-      composeBuild: async () => { effects++; return { input: buildInput }; },
-      native: nativeFixture({ inspect: async () => { effects++; return { kind: 'absent' }; },
-        destroy: async () => { effects++; return { kind: 'confirmed' }; },
-        build: async () => { effects++; return { kind: 'ready', artifact }; } }) }))
-      .toMatchObject({ kind: 'conflict', currentRevision: fixture.row().revision });
-    expect(stops).toBe(stale ? 0 : 1);
-    expect(effects).toBe(0);
-    expect(fixture.opened().prepared).toMatchObject({ operationId: 'operation-one', status: 'building' });
+    if (scenario === 'config-changed') await editAuthor(fixture, { ...definition,
+      launch: { ...definition.launch!, choices: { image: 'new-target' } } });
+    const events: string[] = [];
+    const cliIdentity = scenario === 'cli-changed' ? 'new-cli-identity' : buildInput.cli.identity;
+    const credentialConfigurations = scenario === 'credential-changed' ? [{
+      account: { service: { pluginId: 'fixture.compute', localId: 'auth' }, accountId: 'account' }, revision: 'new-configuration',
+    }] : [];
+    const outcome = await settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
+      expectedRevision: fixture.row().revision, cliIdentity, credentialConfigurations, custody: { mode: 'plain' }, storage: fixture.storage,
+      composeBuild: async captured => { events.push('compose'); return { input: { ...buildInput,
+        cli: { ...buildInput.cli, identity: cliIdentity }, launch: { ...buildInput.launch, choices: captured.launch!.choices } } }; },
+      native: nativeFixture({ inspect: async (input, root) => {
+        events.push('inspect');
+        expect(input).toEqual({ nativeOperation: nativeOperationRef });
+        expect(root.operationId).toBe('operation-one');
+        return { kind: 'ready', artifact };
+      }, destroy: async () => { events.push('destroy'); return { kind: 'confirmed' }; },
+        build: async () => { events.push('build'); return { kind: 'ready', artifact }; } }) });
+    expect(outcome).toMatchObject({ kind: 'ready', prepared: { operationId: scenario === 'matching' ? 'operation-one' : 'operation-two' } });
+    expect(events).toEqual(scenario === 'matching' ? ['inspect'] : ['inspect', 'destroy', 'compose', 'build']);
+    expect(fixture.opened().prepared?.binding.credentialConfigurations).toEqual(credentialConfigurations);
   });
 
-  it('replacement preserves a newer retired binding installed during incumbent join', async () => {
+  it('interrupted recovery follows unknown inspection without a second build and Stop cleans original identity', async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = storageFixture();
+      const original = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }),
+        credentialConfigurations: [], custody: { mode: 'plain' as const }, storage: fixture.storage, native: nativeFixture({ build: async () => { throw new Error('response lost'); } }) };
+      await expect(advanceManagedMachinePresetPreparationOperationV1(original)).rejects.toThrow('response lost');
+      const stop = new AbortController();
+      const events: string[] = [];
+      const recovering = settleManagedMachinePresetPreparationOperationV1({ ...original, operationId: 'operation-two',
+        expectedRevision: fixture.row().revision, signal: stop.signal, cliIdentity: buildInput.cli.identity,
+        composeBuild: async () => { events.push('compose'); return { input: buildInput }; }, native: nativeFixture({
+          inspect: async input => { events.push('inspect'); expect(input).toEqual({ operationId: 'operation-one', launch: buildInput.launch.choices });
+            return { kind: 'unknown', code: 'outcome_unknown', nativeOperationRef }; },
+          destroy: async (_input, root) => { events.push('destroy'); expect(root.operationId).toBe('operation-one'); return { kind: 'confirmed' }; },
+          build: async () => { events.push('build'); return { kind: 'ready', artifact }; },
+        }) });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(events).toEqual(['inspect']);
+      stop.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await recovering).toMatchObject({ kind: 'cancelled', prepared: { operationId: 'operation-one' } });
+      expect(events).toEqual(['inspect', 'destroy']);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('stale new admission cannot inspect an interrupted original operation', async () => {
     const fixture = storageFixture();
-    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }),
-      custody: { mode: 'plain' as const }, storage: fixture.storage,
-      native: nativeFixture({ build: async () => ({ kind: 'pending' as const, nativeOperationRef }) }) };
-    await advanceManagedMachinePresetPreparationOperationV1(request);
-    let stops = 0;
+    await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
+      composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
+      native: nativeFixture({ build: async () => ({ kind: 'pending', nativeOperationRef }) }) });
     let effects = 0;
-    expect(await settleManagedMachinePresetPreparationOperationV1({ ...request, operationId: 'operation-two',
-      expectedRevision: fixture.row().revision, stopIncumbentBuild: async () => {
-        stops++;
-        await cancelManagedMachinePresetPreparationOperationV1(request);
-        const newer = { ...request, operationId: 'operation-newer', expectedRevision: fixture.row().revision,
-          native: nativeFixture({ build: async () => ({ kind: 'refused', code: 'invalid_request' }) }) };
-        await advanceManagedMachinePresetPreparationOperationV1(newer);
-        await cancelManagedMachinePresetPreparationOperationV1(newer);
-        return true;
-      }, composeBuild: async () => { effects++; return { input: buildInput }; },
-      native: nativeFixture({ destroy: async () => { effects++; return { kind: 'confirmed' }; } }) }))
-      .toMatchObject({ kind: 'conflict', currentRevision: fixture.row().revision });
-    expect(stops).toBe(1);
+    expect(await settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two', expectedRevision: 1,
+      credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage, native: nativeFixture({ inspect: async () => {
+        effects++; return { kind: 'ready', artifact }; } }) })).toMatchObject({ kind: 'conflict' });
     expect(effects).toBe(0);
-    expect(fixture.opened().prepared).toMatchObject({ operationId: 'operation-newer', status: 'cancelled' });
   });
 
   it('replacement conflicts before composition when a newer admitted operation retired its own binding', async () => {
     const fixture = storageFixture();
     const baseRequest = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }),
-      custody: { mode: 'plain' as const }, storage: fixture.storage, native: nativeFixture() };
+      credentialConfigurations: [], custody: { mode: 'plain' as const }, storage: fixture.storage, native: nativeFixture() };
     await advanceManagedMachinePresetPreparationOperationV1(baseRequest);
     const storage: ManagedMachinePresetPreparationStorageV1 = { ...fixture.storage,
       compareAndSwap: async replacement => {
@@ -676,12 +704,12 @@ describe('private preset preparation operation', () => {
     try {
       const fixture = storageFixture();
       await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
-        composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage, native: nativeFixture() });
+        composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage, native: nativeFixture() });
       const stop = new AbortController();
       let destroys = 0;
       let newEffects = 0;
       const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
-        expectedRevision: fixture.row().revision, signal: stop.signal, custody: { mode: 'plain' }, storage: fixture.storage,
+        expectedRevision: fixture.row().revision, signal: stop.signal, credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
         composeBuild: async () => { newEffects++; return { input: buildInput }; }, native: nativeFixture({
           destroy: async () => ++destroys === 1 ? { kind: 'unknown', code: 'outcome_unknown', nativeOperationRef } : { kind: 'confirmed' },
           build: async () => { newEffects++; return { kind: 'ready', artifact }; },
@@ -701,7 +729,7 @@ describe('private preset preparation operation', () => {
   it.each([false, true])('Stop during composition respects newer retired binding=%s ownership', async newerBinding => {
     const fixture = storageFixture();
     await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
-      composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage, native: nativeFixture() });
+      composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage, native: nativeFixture() });
     const stop = new AbortController();
     let releaseComposition!: () => void;
     let compositionStarted!: () => void;
@@ -709,14 +737,14 @@ describe('private preset preparation operation', () => {
     const composition = new Promise<void>(resolve => { releaseComposition = resolve; });
     let builds = 0;
     const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
-      expectedRevision: fixture.row().revision, signal: stop.signal, custody: { mode: 'plain' }, storage: fixture.storage,
+      expectedRevision: fixture.row().revision, signal: stop.signal, credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
       composeBuild: async () => { compositionStarted(); await composition; return { input: buildInput }; },
       native: nativeFixture({ build: async () => { builds++; return { kind: 'ready', artifact }; } }) });
     const outcome = await Promise.race([started.then(() => 'composing'), settling.then(() => 'settled')]);
     expect(outcome).toBe('composing');
     if (newerBinding) {
       const newer = { operationId: 'operation-newer', expectedRevision: fixture.row().revision,
-        composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' as const }, storage: fixture.storage,
+        composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' as const }, storage: fixture.storage,
         native: nativeFixture({ build: async () => ({ kind: 'refused', code: 'invalid_request' }) }) };
       expect(await advanceManagedMachinePresetPreparationOperationV1(newer)).toMatchObject({ kind: 'failed' });
       expect(await cancelManagedMachinePresetPreparationOperationV1(newer)).toMatchObject({ kind: 'cancelled' });
@@ -732,7 +760,7 @@ describe('private preset preparation operation', () => {
   it('allows retry after a definite build refusal without inventing native ownership to destroy', async () => {
     const fixture = storageFixture();
     let destroys = 0;
-    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' as const },
+    const request = { operationId: 'operation-one', ...identity, composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' as const },
       storage: fixture.storage, native: nativeFixture({ build: async () => ({ kind: 'refused', code: 'invalid_request' }),
         destroy: async () => { destroys++; return { kind: 'confirmed' }; } }) };
     expect(await advanceManagedMachinePresetPreparationOperationV1(request)).toMatchObject({ kind: 'failed' });
