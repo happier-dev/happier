@@ -217,6 +217,7 @@ import { createSessionRunnerRestartAdmission, registerSessionProviderInputAdmiss
 import { clearSessionGuardStateOnRunnerStart, type SessionGuardNoticeOwner } from '@/agent/runtime/session/input/sessionGuardNoticeRpc';
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
 import { notifyDaemonSessionActivityChanged } from '@/daemon/controlClient';
+import { publishSessionLiveWorkToDaemon } from '@/agent/runtime/session/input/sessionLiveWorkPublisher';
 import { createSessionProviderInputConsumerSessionAdapter } from '@/agent/runtime/waitForNextPermissionModeMessage';
 import { createHostWorkerUpdatePublication } from '@/agent/runtime/session/contextOnly/hostWorkerUpdatePublication';
 import { resolveInitialHostSessionModelSelection } from '@/agent/runtime/session/loop/resolveInitialModelSelection';
@@ -2646,10 +2647,10 @@ async function runHostedSessionRuntime(
     serviceId: string;
     groupId: string;
   }>) => Promise<void>) | null = null;
-  const unsubscribeLiveWork = inputConsumer.subscribeLiveWork(() => {
-    void notifyDaemonSessionActivityChanged(currentLifecycleSession.sessionId).catch(() => {
-      logger.debug('[HOST RUNTIME] Session activity invalidation could not reach daemon');
-    });
+  const unsubscribeLiveWork = publishSessionLiveWorkToDaemon({
+    consumer: inputConsumer,
+    readSessionId: () => currentLifecycleSession.sessionId,
+    onUnavailable: () => { logger.debug('[HOST RUNTIME] Session live work could not reach daemon'); },
   });
   let unsubscribeProviderInputReadiness: (() => void) | undefined;
   bindProviderInputReadiness = client => {

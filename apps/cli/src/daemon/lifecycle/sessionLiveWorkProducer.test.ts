@@ -13,6 +13,8 @@ import { buildSessionAgentActivityHeadline } from '@happier-dev/protocol/session
 import type { AgentState } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { createDaemonControlApp } from '../controlServer';
+import { publishSessionLiveWorkToDaemon } from '@/agent/runtime/session/input/sessionLiveWorkPublisher';
 
 describe('live Session producer at the host input RPC boundary', () => {
   it.each([
@@ -160,6 +162,103 @@ describe('live Session producer at the host input RPC boundary', () => {
     expect([...reads].sort()).toEqual(['s1', 's2', 's3']);
     inventory.dispose();
     group.dispose();
+  });
+
+  it('applies live work pushed by the runner without rereading it, and reads only on gaps', async () => {
+    const sessions: TrackedSession[] = ['s1', 's2'].map((id, index) => ({ trackingKey: legacyPidSessionTrackingKey(index + 1), pid: index + 1, startedBy: 'daemon', happySessionId: id }));
+    const reads: string[] = [];
+    const settled = { session: 'settled', input: 'settled', agents: 'settled', attention: 'settled', settledAt: 1 } as const;
+    const busy = { ...settled, input: 'active', settledAt: undefined } as const;
+    const source = createSessionLiveWorkProducer({ readSessions: () => sessions, readActivity: async tracked => {
+      reads.push(tracked.happySessionId!);
+      return settled;
+    } });
+    const inventory = createManagedActivityInventory({ producers: [source] });
+    expect((await inventory.readDecision()).kind).toBe('idle');
+    const decisions: string[] = [];
+    inventory.subscribe(decision => decisions.push(decision.kind));
+    reads.length = 0;
+    const settle = async () => { for (let turn = 0; turn < 5; turn += 1) await new Promise(resolve => setTimeout(resolve, 0)); };
+    source.notifySessionChanged('s2', { runnerPid: 2, revision: 1, activity: busy });
+    await settle();
+    expect({ reads, decisions }).toEqual({ reads: [], decisions: ['busy'] });
+    // A delayed older push never replaces a newer one.
+    source.notifySessionChanged('s2', { runnerPid: 2, revision: 3, activity: settled });
+    source.notifySessionChanged('s2', { runnerPid: 2, revision: 2, activity: busy });
+    await settle();
+    expect({ reads, decisions }).toEqual({ reads: [], decisions: ['busy', 'idle'] });
+    // A push from a process the daemon does not track for that Session is a gap: read.
+    source.notifySessionChanged('s1', { runnerPid: 99, revision: 1, activity: busy });
+    await settle();
+    expect(reads).toEqual(['s1']);
+    // Explicit confirmations still read every runner.
+    reads.length = 0;
+    expect((await inventory.readDecision()).kind).toBe('idle');
+    expect([...reads].sort()).toEqual(['s1', 's2']);
+    inventory.dispose();
+  });
+
+  it('applies each runner live-work change pushed through control ingress without reading the runner back', async () => {
+    const queue = new MessageQueue2<string>(() => 'mode');
+    const consumer = createSessionProviderInputConsumer({ messageQueue: queue, session: {
+      waitForMetadataUpdate: () => new Promise<boolean>(() => {}),
+      getMetadataSnapshot: () => ({}), getAgentStateSnapshot: () => ({}),
+      readSubagentLiveWork: () => ({ state: 'settled', activeCount: 0 }),
+      readRuntimeActivitySnapshotTail: () => ({ sequence: 1, custody: null, settlement: {
+        identity: { mutationKey: 'runtime:s1', admissionOrder: 1 }, desiredValue: { state: 'idle', activeCount: 0 },
+        result: 'applied', committedProjection: { state: 'idle', activeCount: 0, observedAt: 1, revision: 1 }, committedRevision: 1,
+      } }),
+      readPendingQueueStateForLiveWork: async () => ({ known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 1 }),
+      getPendingQueueState: () => ({ known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 1 }),
+    } });
+    const handlers = new Map<string, RpcHandler>();
+    registerSessionProviderInputAdmissionRpc({ consumer, rpcHandlerRegistrar: {
+      registerHandler: (method, handler) => { handlers.set(method, handler); },
+    } });
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(7), pid: 7, startedBy: 'daemon', happySessionId: 'session' };
+    let runnerReads = 0;
+    const source = createSessionLiveWorkProducer({ readSessions: () => [tracked], readActivity: async () => {
+      runnerReads += 1;
+      return requestSessionInputLiveWork({ callRpc: async (method, request) => handlers.get(method)!(request) });
+    } });
+    const inventory = createManagedActivityInventory({ producers: [source] });
+    // Real control ingress over loopback; the daemon composition forwards it to the producer.
+    const app = createDaemonControlApp({ getChildren: () => [tracked], machineId: 'machine',
+      stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: 'session' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'token',
+      onSessionActivityChanged: (sessionId, _occurrence, _runId, _ready, liveWork) => source.notifySessionChanged(sessionId, liveWork) });
+    let unpublish = () => {};
+    try {
+      const address = new URL(await app.listen({ host: '127.0.0.1', port: 0 }));
+      expect((await inventory.readDecision()).kind).toBe('idle');
+      const decisions: string[] = [];
+      inventory.subscribe(decision => decisions.push(decision.kind));
+      runnerReads = 0;
+      unpublish = publishSessionLiveWorkToDaemon({ consumer, readSessionId: () => 'session', runnerPid: 7, onUnavailable: () => {},
+        daemon: { target: { pid: process.pid, httpPort: Number(address.port), controlToken: 'token' } } });
+      const until = async (kind: string) => {
+        for (let attempt = 0; attempt < 200 && decisions.at(-1) !== kind; attempt += 1) await new Promise(resolve => setTimeout(resolve, 5));
+      };
+      queue.pushImmediate('fixture input', 'mode');
+      await until('busy');
+      queue.discardMatching(() => true);
+      await until('idle');
+      expect({ decisions, runnerReads }).toEqual({ decisions: ['busy', 'idle'], runnerReads: 0 });
+    } finally { unpublish(); inventory.dispose(); await app.close(); }
+  });
+
+  it('keeps a push that arrives while that runner is being read', async () => {
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'session' };
+    const reply = createDeferred<{ session: 'settled'; input: 'settled'; agents: 'settled'; attention: 'settled' }>();
+    let reads = 0;
+    const source = createSessionLiveWorkProducer({ readSessions: () => [tracked], readActivity: async () => { reads += 1; return reply.promise; } });
+    const pending = source.read();
+    source.notifySessionChanged('session', { runnerPid: 1, revision: 1,
+      activity: { session: 'settled', input: 'active', agents: 'settled', attention: 'settled' } });
+    reply.resolve({ session: 'settled', input: 'settled', agents: 'settled', attention: 'settled' });
+    expect((await pending).items.find(item => item.category === 'input')?.state).toBe('active');
+    expect((await source.read('changed')).items.find(item => item.category === 'input')?.state).toBe('active');
+    expect(reads).toBe(1);
   });
 
   it('keeps unreported startup and failed live transport unknown even when activeTurnId is absent', async () => {

@@ -5,6 +5,9 @@ import type { createSpawnRequestCoalescer } from '../spawn/spawnRequestCoalescer
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import { projectSessionLiveWorkItems } from '@/agent/runtime/session/input/sessionLiveWorkEligibility';
 
+/** A runner's live work carried in its own `/session-activity-changed` push, ordered per runner process. */
+export type PushedSessionLiveWork = Readonly<{ runnerPid: number; revision: number; activity: SessionInputLiveWork }>;
+
 /** Queries the live host rather than deriving idle from a nullable turn marker or process presence. */
 export function createSessionLiveWorkProducer(params: Readonly<{
   readSessions: () => readonly TrackedSession[];
@@ -13,24 +16,34 @@ export function createSessionLiveWorkProducer(params: Readonly<{
   startup?: Pick<ReturnType<typeof createSpawnRequestCoalescer>, 'readInFlightRequests' | 'subscribeChanges'>;
 }>): LiveWorkProducerV1 & Readonly<{
   notifyChanged: LiveWorkListenerV1;
-  notifySessionChanged(sessionId: string | null): void;
+  /**
+   * A runner's change. Its pushed live work applies without a read; a content-free change, or a push
+   * the daemon cannot attribute to the tracked runner process, is a gap that rereads that runner.
+   */
+  notifySessionChanged(sessionId: string | null, pushed?: PushedSessionLiveWork): void;
   subscribe(listener: LiveWorkListenerV1, sessionId?: string): () => void;
 }> {
   const listeners = new Set<Readonly<{ listener: LiveWorkListenerV1; sessionId?: string }>>();
-  // Runners push an invalidation naming their own Session after every live-work change
-  // (`subscribeLiveWork` → `/session-activity-changed`). A passive refresh therefore rereads
-  // only invalidated runners; failed/unknown observations are never retained.
-  const retained = new WeakMap<TrackedSession, Readonly<{ sessionId: string; activity: SessionInputLiveWork }>>();
+  // Runners push their live work after every change (`subscribeLiveWork` →
+  // `/session-activity-changed`), which a passive refresh applies without a read. Content-free
+  // pushes invalidate, and a passive refresh rereads only those runners; failed/unknown
+  // observations are never retained.
+  const retained = new WeakMap<TrackedSession, Readonly<{ sessionId: string; activity: SessionInputLiveWork; pushed?: true }>>();
+  // Not cleared by reads: a delayed older push never replaces a newer one from the same process.
+  const pushedRevisions = new WeakMap<TrackedSession, Readonly<{ runnerPid: number; revision: number }>>();
   const invalidatedSessionIds = new Set<string>();
   let invalidatedAll = true;
-  const invalidate = (sessionId: string | null) => {
-    if (sessionId === null) invalidatedAll = true;
-    else invalidatedSessionIds.add(sessionId);
+  const notifyListeners = (sessionId: string | null) => {
     for (const subscription of listeners) {
       if (sessionId === null || subscription.sessionId === undefined || subscription.sessionId === sessionId) {
         subscription.listener();
       }
     }
+  };
+  const invalidate = (sessionId: string | null) => {
+    if (sessionId === null) invalidatedAll = true;
+    else invalidatedSessionIds.add(sessionId);
+    notifyListeners(sessionId);
   };
   return {
     async read(scope) {
@@ -50,8 +63,14 @@ export function createSessionLiveWorkProducer(params: Readonly<{
           }
           retained.delete(tracked);
           try {
-            activity = await params.readActivity(tracked);
-            retained.set(tracked, { sessionId, activity });
+            const read = await params.readActivity(tracked);
+            // A push that arrived during the read is at least as new as the reply.
+            const pushed = retained.get(tracked);
+            if (pushed?.pushed && pushed.sessionId === sessionId) activity = pushed.activity;
+            else {
+              activity = read;
+              retained.set(tracked, { sessionId, activity });
+            }
           } catch { /* Missing live coverage stays unknown. */ }
         }
         return { tracked, sessionId, activity };
@@ -94,6 +113,18 @@ export function createSessionLiveWorkProducer(params: Readonly<{
       invalidatedAll = true;
       for (const { listener } of listeners) listener(change);
     },
-    notifySessionChanged: invalidate,
+    notifySessionChanged(sessionId, pushed) {
+      const tracked = pushed && sessionId !== null ? params.readSessions().find(candidate =>
+        candidate.happySessionId === sessionId && candidate.pid === pushed.runnerPid) : undefined;
+      if (!pushed || !tracked || sessionId === null) {
+        invalidate(sessionId);
+        return;
+      }
+      const previous = pushedRevisions.get(tracked);
+      if (previous?.runnerPid === pushed.runnerPid && previous.revision >= pushed.revision) return;
+      pushedRevisions.set(tracked, { runnerPid: pushed.runnerPid, revision: pushed.revision });
+      retained.set(tracked, { sessionId, activity: pushed.activity, pushed: true });
+      notifyListeners(sessionId);
+    },
   };
 }

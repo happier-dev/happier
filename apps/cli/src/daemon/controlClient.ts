@@ -7,6 +7,7 @@ import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/contr
 import { isPidPresent, isPidProvablyAbsent, probeProcessLiveness } from '@happier-dev/cli-common/process';
 import type { SessionFollowOccurrenceNotification } from './sessions/sessionActivityChangedContract';
 import { SessionActivityChangedResponseSchema, type SessionActivityChangedResult } from './sessions/sessionActivityChangedContract';
+import type { PushedSessionLiveWork } from './lifecycle/sessionLiveWorkProducer';
 export type { SessionActivityChangedResult } from './sessions/sessionActivityChangedContract';
 import {
   processGenerationMatches,
@@ -823,11 +824,16 @@ export async function notifyDaemonSessionHolder(body: Readonly<{
   return typeof response === 'object' && response !== null && (response as { ok?: unknown }).ok === true;
 }
 
-/** Activity invalidation with the runner transport owner's optional provider-input availability fact. */
+/**
+ * Activity change with the runner transport owner's optional provider-input availability fact.
+ * `liveWork` carries the runner's current live work; without it the daemon rereads that runner.
+ */
 export async function notifyDaemonSessionActivityChanged(sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification,
-  executionRunId?: string, providerInputAdmissionReady?: boolean): Promise<SessionActivityChangedResult> {
+  executionRunId?: string, providerInputAdmissionReady?: boolean, liveWork?: PushedSessionLiveWork,
+  options: DaemonControlRequestOptions = {}): Promise<SessionActivityChangedResult> {
   const response: unknown = await daemonPost('/session-activity-changed', { sessionId, ...(followOccurrence ? { followOccurrence } : {}),
-    ...(executionRunId ? { executionRunId } : {}), ...(providerInputAdmissionReady === undefined ? {} : { providerInputAdmissionReady }) });
+    ...(executionRunId ? { executionRunId } : {}), ...(providerInputAdmissionReady === undefined ? {} : { providerInputAdmissionReady }),
+    ...(liveWork ? { liveWork } : {}) }, options);
   const parsed = SessionActivityChangedResponseSchema.safeParse(response);
   if (!parsed.success || (parsed.data.personalFollow && parsed.data.personalFollow.sourceSessionId !== sessionId)) {
     throw new Error('session_activity_notification_unavailable');
