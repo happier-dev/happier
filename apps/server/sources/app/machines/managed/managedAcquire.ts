@@ -18,12 +18,13 @@ import {
     readManagedAcquisitionDigest,
     readManagedOpaquePresetContent,
     storeOpaquePresetLaunch,
-    inManagedMachinePublicationTx,
+    acquireManagedMachinePublicationAccountsInTx,
+    readManagedProjectionFactsInTx,
 } from "./managedRows";
 import { hasMachinePresetAcquireCapacityInTx, resolveMachinePresetForAcquireInTx, validateManagedLaunchInTx } from "./machinePresetService";
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
-import { inReadSnapshot, type Tx } from "@/storage/inTx";
+import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import type { ExternalActionRetainedWorkflowRootV1 } from '@happier-dev/protocol/actions/externalActionEncryption';
 
 /** Admission evidence comes from the write owner, never an absent-row read. */
@@ -109,7 +110,13 @@ export async function admitManagedAcquire(params: Readonly<{
         // Serialize capacity and cursor publication without excluding ordinary
         // KEY SHARE content admission (including provider-usage record work).
         // Account authority changes still take the conflicting exclusive intent.
-        const execute = () => inManagedMachinePublicationTx({ controllerMachineId: review.controller?.machineId }, async (tx) => {
+        const execute = () => inTx(async (tx) => {
+            const declarationBodies = isManagedPresetAcquireInputV1(request.input) ? undefined
+                : (await readManagedProjectionFactsInTx(tx, [{ homeId: review.homeId,
+                    custodianAccountId: params.custodianAccountId, controller: review.controller,
+                    provider: request.input.selection.launch.provider }])).declarationBodies;
+            await acquireManagedMachinePublicationAccountsInTx(tx, { controllerMachineId: review.controller?.machineId },
+                { intent: 'serializing', additionalAccountIds: [params.requesterAccountId, params.custodianAccountId] });
             await requireManagedControllerInTx(tx, { homeId: review.homeId, custodianAccountId: params.custodianAccountId, controller: review.controller });
             const existing = await existingAdmission(tx);
             if (existing) return existing;
@@ -198,7 +205,7 @@ export async function admitManagedAcquire(params: Readonly<{
             let declaration: ManagedDeclaration;
             launch = request.input.selection.launch;
             const validated = await validateManagedLaunchInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication },
-                { homeId: review.homeId, controller: review.controller, launch }, request.input.reviewedFacts);
+                { homeId: review.homeId, controller: review.controller, launch }, request.input.reviewedFacts, declarationBodies);
             if (!validated.declaration) throw new ManagedMachineError('invalid_request');
             declaration = validated.declaration;
             if (!review.controller && request.input.reviewedFacts?.provisioner?.id !== launch.provider.localId) throw new ManagedMachineError('invalid_request');
@@ -247,8 +254,7 @@ export async function admitManagedAcquire(params: Readonly<{
             await invalidateManagedMachineInTx(tx, row);
             const machine = projectManagedMachineFull(row);
             return { machine, replayed: false };
-        }, { intent: 'serializing', additionalAccountIds: [params.requesterAccountId, params.custodianAccountId],
-            transactionClass: 'managed-machine-acquire' });
+        }, { transactionClass: 'managed-machine-acquire' });
         // Entering this owner can submit a write even if Prisma later rejects its
         // COMMIT acknowledgement. Its rollback attempt may also fail silently.
         transactionStarted = true;

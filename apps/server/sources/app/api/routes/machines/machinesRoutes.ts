@@ -562,8 +562,8 @@ export function machinesRoutes(app: Fastify) {
             let updated: UpdatedMachineRow;
             try {
                 updated = await inTx(async (tx) => {
-                    await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
-                    await requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment });
+                    const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
+                    await requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
                     const current = await tx.machine.findFirst({
                         where: {
                             accountId: userId,
@@ -602,7 +602,7 @@ export function machinesRoutes(app: Fastify) {
                         !currentWantsInstallationUpdate
                         && !currentWantsAutomaticReplacement
                     ) {
-                        if (managedEnrollment) await linkManagedEnrollmentInTx(tx, managedEnrollment, userId, current.id);
+                        if (managedEnrollment) await linkManagedEnrollmentInTx(tx, managedEnrollment, userId, current.id, declarationBodies);
                         return current;
                     }
 
@@ -631,7 +631,7 @@ export function machinesRoutes(app: Fastify) {
                         });
                     }
 
-                    if (managedEnrollment) await linkManagedEnrollmentInTx(tx, managedEnrollment, userId, updatedMachine.id);
+                    if (managedEnrollment) await linkManagedEnrollmentInTx(tx, managedEnrollment, userId, updatedMachine.id, declarationBodies);
                     return updatedMachine;
                 }, {
                     // Exclusive Account admission protects installation and managed lifecycle predicates.
@@ -710,8 +710,8 @@ export function machinesRoutes(app: Fastify) {
             let machineReplacement: MachineRegistrationReplacementResult | null = null;
             try {
                 const created = await inTx(async (tx) => {
-                    await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
-                    await requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment });
+                    const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
+                    await requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
                     const registered = await createMachineWithInstallationIdentityInTx(tx, {
                     accountId: userId,
                     machineId: id,
@@ -722,6 +722,7 @@ export function machinesRoutes(app: Fastify) {
                     contentPublicKeyFingerprint: resolvedContentPublicKeyFingerprint,
                     replacementReason: automaticReplacementReason,
                     managedEnrollment,
+                    declarationBodies,
                     });
                     return registered;
                 }, {
@@ -760,8 +761,8 @@ export function machinesRoutes(app: Fastify) {
                         {
                             try {
                                 rejoinedMachine = await inTx(async tx => {
-                                    await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
-                                    await requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment });
+                                    const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
+                                    await requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
                                     const current = await tx.machine.findUnique({ where: { accountId_id: { accountId: userId, id } } }).then(decodeMachineStoredContent);
                                     if (!current || current.revokedAt) throw new ManagedMachineError("enrollment_retired");
                                     let winningMachine = current;
@@ -771,7 +772,7 @@ export function machinesRoutes(app: Fastify) {
                                         winningMachine = await updateMachineInstallationIdentityInTx(tx, current, identityUpdate.data);
                                         await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: current.id });
                                     }
-                                    if (managedEnrollment) await linkManagedEnrollmentInTx(tx, managedEnrollment, userId, existingSameAccount.id);
+                                    if (managedEnrollment) await linkManagedEnrollmentInTx(tx, managedEnrollment, userId, existingSameAccount.id, declarationBodies);
                                     if (verifiedInstallationIdentity?.replacesMachineId) {
                                         machineReplacement = await applyVerifiedMachineRegistrationReplacement({ tx, accountId: userId,
                                             replacementMachineId: existingSameAccount.id, replacementMachine: winningMachine,

@@ -32,7 +32,7 @@ import {
     ManagedMachineError, requireManagedControllerInTx, requireManagedHomeInTx, resolveManagedDeclarationInTx,
     sameManagedInput, projectManagedControllerAccess, readManagedJsonEqualityOperand,
     readStoredOpaquePresetLaunch, storeOpaquePresetLaunch, invalidateManagedMachineInTx,
-    type ManagedDeclaration, type StoredManagedMachine, readManagedReviewedDeclaration,
+    type ManagedDeclaration, type ManagedDeclarationBodies, type StoredManagedMachine, readManagedReviewedDeclaration,
     readManagedAdmissionState, projectManagedPresetAdmissionForOpaqueStorage,
 } from "./managedRows";
 import { readTeamResourcePublicationAudienceInTx } from '@/app/teams/resourcePublicationAudience';
@@ -324,7 +324,7 @@ async function acquirePresetMutationAccountsInTx(tx: Tx, input: Readonly<{
 
 /** Acquisition consumes current controller authority. Preset content is never opened here. */
 export async function validateManagedLaunchInTx(tx: Tx, context: PresetContext, input: OneOffManagedLaunchValidationInput,
-    reviewedFacts?: unknown): Promise<Readonly<{ declaration: ManagedDeclaration | null; custodianAccountId: string }>> {
+    reviewedFacts?: unknown, declarationBodies?: ManagedDeclarationBodies): Promise<Readonly<{ declaration: ManagedDeclaration | null; custodianAccountId: string }>> {
     if (!input.controller) {
         await requireHomeInTx(tx, input.homeId);
         if ((await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status !== AccountStatus.active) {
@@ -340,7 +340,7 @@ export async function validateManagedLaunchInTx(tx: Tx, context: PresetContext, 
     await requireManagedLaunchManagerInTx(tx, context, input.controller.machineId);
     const authority = await resolvePresetControllerAuthorityInTx(tx, { homeId: input.homeId, controller: input.controller });
     const declaration = await resolveManagedDeclarationInTx(tx, { homeId: input.homeId, custodianAccountId: authority.custodianAccountId,
-        controller: input.controller, provider: input.launch.provider });
+        controller: input.controller, provider: input.launch.provider }, { declarationBodies });
     if (!declaration || declaration.schemaVersion !== input.launch.schemaVersion) throw new ManagedMachineError("provider_unavailable");
     if (!createValidatedLaunchSnapshotV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema))
         .safeParse(input.launch).success) throw new ManagedMachineError('invalid_request');

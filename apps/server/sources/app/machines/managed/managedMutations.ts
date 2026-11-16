@@ -37,7 +37,7 @@ import {
     projectManagedMachineInTx,
     requireManagedControllerInTx,
     readManagedMachineInTx,
-    type StoredManagedMachine,
+    type StoredManagedMachine, type ManagedDeclarationBodies,
     readManagedAdmissionState, readManagedCurrentRequestId, readManagedEnrollmentAccountId, markManagedBootstrapInstalled,
     readManagedJsonEqualityOperand,
     inManagedMachinePublicationTx,
@@ -884,6 +884,7 @@ export async function createManagedBootstrapCredential(input: ManagedBootstrapCr
 /** Ordinary rejoin cannot bypass the proof retained for a rebuilt installation. */
 type ManagedMachineRegistrationInput = Readonly<{
     accountId: string; machineId: string; enrollment?: ManagedEnrollmentCorrelationV1;
+    declarationBodies?: ManagedDeclarationBodies;
 }>;
 export function requireManagedMachineRegistrationInTx(tx: Tx, input: ManagedMachineRegistrationInput & { enrollment: ManagedEnrollmentCorrelationV1 }): Promise<StoredManagedMachine>;
 export function requireManagedMachineRegistrationInTx(tx: Tx, input: ManagedMachineRegistrationInput): Promise<StoredManagedMachine | undefined>;
@@ -905,12 +906,12 @@ export async function requireManagedMachineRegistrationInTx(tx: Tx, input: Manag
             throw new ManagedMachineError('enrollment_retired');
         }
     }
-    if (input.enrollment) return await requireManagedEnrollmentInTx(tx, input.enrollment, input.accountId);
+    if (input.enrollment) return await requireManagedEnrollmentInTx(tx, input.enrollment, input.accountId, input.declarationBodies);
 }
 
 /** Enrollment remains inside ordinary registration's transaction, before any Machine write. */
 export async function requireManagedEnrollmentInTx(tx: Tx, input: ManagedEnrollmentCorrelationV1,
-    authority: string | Readonly<{ controllerCustodianAccountId: string }>) {
+    authority: string | Readonly<{ controllerCustodianAccountId: string }>, declarationBodies?: ManagedDeclarationBodies) {
     const canonical = ManagedEnrollmentCorrelationV1Schema.parse(input);
     const retained = await readManagedMachineInTx(tx, canonical);
     const row = await requireCurrentManagedMachineInTx(tx, canonical, { requestAuthority:
@@ -929,15 +930,16 @@ export async function requireManagedEnrollmentInTx(tx: Tx, input: ManagedEnrollm
         return row;
     }
     if (!('resource' in canonical)) throw new ManagedMachineError('invalid_request');
-    const declaration = await resolveManagedRowDeclarationInTx(tx, row);
+    const declaration = await resolveManagedRowDeclarationInTx(tx, row, declarationBodies);
     if (!declaration || declaration.schemaVersion !== readManagedLaunchSnapshot(row.launch).schemaVersion) throw new ManagedMachineError("provider_unavailable");
     const incoming = createManagedMachineRetainedSchema(declaration.resourceSchema, declaration.reconciliation?.nativeOperationSchema).safeParse({ ...stored, resource: canonical.resource });
     if (!incoming.success || !matchesManagedEnrollmentResource({ presetId: row.presetId, launch: row.launch, resource: stored.resource }, incoming.data.resource)) throw new ManagedMachineError("resource_mismatch");
     return row;
 }
 
-export async function linkManagedEnrollmentInTx(tx: Tx, input: ManagedEnrollmentCorrelationV1, accountId: string, machineId: string): Promise<void> {
-    const row = await requireManagedMachineRegistrationInTx(tx, { accountId, machineId, enrollment: input });
+export async function linkManagedEnrollmentInTx(tx: Tx, input: ManagedEnrollmentCorrelationV1, accountId: string, machineId: string,
+    declarationBodies?: ManagedDeclarationBodies): Promise<void> {
+    const row = await requireManagedMachineRegistrationInTx(tx, { accountId, machineId, enrollment: input, declarationBodies });
     const machine = await tx.machine.findUnique({ where: { id: machineId } }).then(decodeMachineStoredContent);
     if (!machine || machine.accountId !== readManagedEnrollmentAccountId(row) || classifyMachineAvailabilityState(machine) !== "available") throw new ManagedMachineError("enrollment_retired");
     if (machine.id === row.controllerMachineId || machine.installationId === row.controllerInstallationId) throw new ManagedMachineError("resource_mismatch");

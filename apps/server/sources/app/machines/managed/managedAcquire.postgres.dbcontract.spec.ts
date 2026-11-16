@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PluginManifestV2Schema } from '@happier-dev/protocol';
+import { createManagedMachinePresetAcquireOverrideV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema,
     MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema,
@@ -202,8 +203,10 @@ async function characterizeAdmittedReplay(request: Parameters<typeof admitManage
         // Home already committed custody. The controller must recover that same
         // admission before accepting its operation, even during unrelated publication.
         expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true, machine: { id: admitted.machine.id } });
+        // The retained request identity includes custody, just as it includes
+        // the continuation below; mismatched retries keep the owner's conflict.
         await expect(admitManagedAcquire({ ...request, custodianAccountId: randomUUID() }))
-            .rejects.toMatchObject({ code: 'permission_denied' });
+            .rejects.toMatchObject({ code: 'request_conflict' });
         await expect(admitManagedAcquire({ ...request, input: { ...request.input, continuationPresent: true } }))
             .rejects.toMatchObject({ code: 'request_conflict' });
         expect(await db.managedMachine.count({ where: { custodianAccountId: request.custodianAccountId } })).toBe(1);
@@ -257,6 +260,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
 
     it.each([
         { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'admit' },
+        { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'admit', declarationBodyBeforeFence: true },
+        { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'report', registrationBodyBeforeFence: 'new' },
+        { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'report', registrationBodyBeforeFence: 'existing' },
+        { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'report', registrationBodyBeforeFence: 'rejoin' },
         { selectionKind: 'preset', publicationAccount: 'custodian', phase: 'admit' },
         { selectionKind: 'preset', publicationAccount: 'custodian', phase: 'admit', presetMutation: 'create' },
         { selectionKind: 'preset', publicationAccount: 'custodian', phase: 'admit', presetMutation: 'update' },
@@ -290,7 +297,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
         { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'report', publicationRegistration: true },
         { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'report', staleRegistration: 'creation' },
         { selectionKind: 'one-off', publicationAccount: 'custodian', phase: 'report', staleRegistration: 'controller' },
-    ] as const)('$phase $selectionKind survives an unrelated $publicationAccount publication ($beforeFence, transient=$transientContention, zero=$zeroRetries, usage=$usageAdmission, hot=$hotRecipient, replay=$admittedReplay, registration=$foreignRegistration, publicationRegistration=$publicationRegistration, retired=$staleRegistration, presetMutation=$presetMutation, presetWithdrawal=$presetWithdrawal)', async (scenario) => {
+    ] as const)('$phase $selectionKind survives an unrelated $publicationAccount publication ($beforeFence, transient=$transientContention, zero=$zeroRetries, usage=$usageAdmission, hot=$hotRecipient, replay=$admittedReplay, registration=$foreignRegistration, publicationRegistration=$publicationRegistration, retired=$staleRegistration, presetMutation=$presetMutation, presetWithdrawal=$presetWithdrawal, body=$declarationBodyBeforeFence, registrationBody=$registrationBodyBeforeFence)', async (scenario) => {
         const { selectionKind, publicationAccount, phase } = scenario;
         const beforeFence = 'beforeFence' in scenario && scenario.beforeFence;
         const growAudience = 'growAudience' in scenario && scenario.growAudience;
@@ -298,6 +305,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
         const retireController = 'retireController' in scenario && scenario.retireController;
         const transientContention = 'transientContention' in scenario && scenario.transientContention;
         const usageAdmission = 'usageAdmission' in scenario && scenario.usageAdmission;
+        const declarationBodyBeforeFence = 'declarationBodyBeforeFence' in scenario;
+        const registrationBodyBeforeFence = 'registrationBodyBeforeFence' in scenario ? scenario.registrationBodyBeforeFence : undefined;
+        const observeDeclarationBodies = declarationBodyBeforeFence || registrationBodyBeforeFence !== undefined;
         const homeId = `srv_${'a'.repeat(32)}`;
         vi.stubEnv('HAPPIER_SERVER_IDENTITY_ID', homeId);
         vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', '0');
@@ -360,9 +370,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
         if (team && teamOwner) await db.teamMembership.create({ data: { teamId: team.id, accountId: teamOwner.id, role: 'owner' } });
         const membership = team ? await db.teamMembership.create({ data: { teamId: team.id, accountId: account.id, role: 'admin' } }) : null;
         const presetOwner = team ? { kind: 'team' as const, teamId: team.id } : { kind: 'account' as const, accountId: account.id };
+        const presetContent = (id: string, name: string) => sealManagedMachinePresetContentV1({ presetId: id,
+            mode: 'plain', content: { v: 1, name, launch: launchSnapshot } });
         if (selectionKind === 'preset') {
-            expect(await createMachinePreset({ accountId: account.id, input: { id: presetId, homeId, name: 'Contended preset',
-                owner: presetOwner, controller, launch: launchSnapshot,
+            expect(await createMachinePreset({ accountId: account.id, input: { id: presetId, homeId,
+                owner: presetOwner, controller, contentEncryptionMode: 'plain', ...presetContent(presetId, 'Contended preset'),
                 simultaneousLimit: { maximum: 1 } } })).toMatchObject({ kind: 'saved' });
         }
         if ('presetWithdrawal' in scenario && team && teamOwner && membership) {
@@ -392,11 +404,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
             } });
             try {
                 const result = scenario.presetWithdrawal === 'create'
-                    ? await createMachinePreset({ accountId: account.id, input: { id: createId, homeId, name: 'Withdrawn create',
-                        owner: presetOwner, controller, launch: launchSnapshot } })
+                    ? await createMachinePreset({ accountId: account.id, input: { id: createId, homeId,
+                        owner: presetOwner, controller, contentEncryptionMode: 'plain', ...presetContent(createId, 'Withdrawn create') } })
                     : scenario.presetWithdrawal === 'update'
                         ? await updateMachinePreset({ accountId: account.id, input: { id: presetId, homeId, expectedRevision: 0,
-                            patch: { name: 'Withdrawn update' } } })
+                            patch: presetContent(presetId, 'Withdrawn update') } })
                         : await archiveMachinePreset({ accountId: account.id, input: { id: presetId, homeId, expectedRevision: 0 } });
                 expect(withdrawnCursor).toBeDefined();
                 // MACH-CHALLENGE-MECH M3: withdrawal applies at the next admission;
@@ -407,11 +419,12 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
                 expect(result).toMatchObject({ kind: 'saved', preset: { id: savedId, revision: savedRevision } });
                 expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: savedId } }))
                     .toMatchObject({ revision: savedRevision,
-                        name: created ? 'Withdrawn create' : scenario.presetWithdrawal === 'update' ? 'Withdrawn update' : 'Contended preset',
+                        launch: { content: { t: 'plain', v: {
+                            name: created ? 'Withdrawn create' : scenario.presetWithdrawal === 'update' ? 'Withdrawn update' : 'Contended preset' } } },
                         archivedAt: scenario.presetWithdrawal === 'archive' ? expect.any(Date) : null });
                 expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toMatchObject({ seq: withdrawnCursor });
                 expect(await updateMachinePreset({ accountId: account.id, input: { id: savedId, homeId,
-                    expectedRevision: savedRevision, patch: { name: 'After withdrawal' } } }))
+                    expectedRevision: savedRevision, patch: presetContent(savedId, 'After withdrawal') } }))
                     .toMatchObject({ kind: 'refused', code: 'preset_not_found' });
             } finally {
                 db.$transaction = transaction; vi.unstubAllEnvs();
@@ -423,6 +436,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
             return;
         }
         if ('presetMutation' in scenario) {
+            const createId = randomUUID();
             const transaction = db.$transaction;
             const initial = (await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq;
             let peerWrites = 0;
@@ -448,18 +462,19 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
             } });
             try {
                 const result = scenario.presetMutation === 'create'
-                    ? await createMachinePreset({ accountId: account.id, input: { id: randomUUID(), homeId, name: 'Hot preset',
-                        owner: { kind: 'account', accountId: account.id }, controller, launch: launchSnapshot } })
+                    ? await createMachinePreset({ accountId: account.id, input: { id: createId, homeId,
+                        owner: { kind: 'account', accountId: account.id }, controller, contentEncryptionMode: 'plain',
+                        ...presetContent(createId, 'Hot preset') } })
                     : scenario.presetMutation === 'update'
                         ? await updateMachinePreset({ accountId: account.id, input: { id: presetId, homeId, expectedRevision: 0,
-                            patch: { name: 'Hot renamed preset' } } })
+                            patch: presetContent(presetId, 'Hot renamed preset') } })
                         : await archiveMachinePreset({ accountId: account.id, input: { id: presetId, homeId, expectedRevision: 0 } });
                 expect(peerWrites).toBe(1);
                 expect(result).toMatchObject({ kind: 'saved', preset: { revision: scenario.presetMutation === 'create' ? 0 : 1 } });
                 expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toMatchObject({ seq: initial + 2 });
                 if (scenario.presetMutation !== 'create') {
                     const stale = await updateMachinePreset({ accountId: account.id, input: { id: presetId, homeId,
-                        expectedRevision: 0, patch: { name: 'Stale overwrite' } } });
+                        expectedRevision: 0, patch: presetContent(presetId, 'Stale overwrite') } });
                     expect(stale).toMatchObject({ kind: 'conflict', currentRevision: 1 });
                 }
             } finally {
@@ -471,11 +486,17 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
             }
             return;
         }
+        const enrollmentIdentity = { kind: 'guestProcess' as const, role: 'sandbox' as const };
+        const presetContentOverride = selectionKind === 'preset'
+            ? createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'plain',
+                projection: { content: presetContent(presetId, 'Contended preset').content, recipientEnvelope: null }, enrollmentIdentity })
+            : undefined;
+        if (selectionKind === 'preset' && !presetContentOverride) throw new Error('Expected the preset enrollment override');
         const request: Parameters<typeof admitManagedAcquire>[0] = {
             custodianAccountId: account.id, requesterAccountId: account.id, requestEnvelopeDigest: 'contention-test',
             input: { requestId: randomUUID(), continuationPresent: false, input: selectionKind === 'one-off'
-                ? { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'one-off', homeId, controller, launch: launchSnapshot, retention, wakeOnAcceptedMessage: true } }
-                : { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller, retention, wakeOnAcceptedMessage: true } },
+                ? { enrollmentIdentity, selection: { kind: 'one-off', homeId, controller, launch: launchSnapshot, retention, wakeOnAcceptedMessage: true } }
+                : { presetContentOverride: presetContentOverride!, selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller, retention, wakeOnAcceptedMessage: true } },
         };
         const allocated = !hotRecipient && phase !== 'admit' ? await admitManagedAcquire(request) : undefined;
         const correlation = allocated ? { homeId, managedId: allocated.machine.id, controller,
@@ -498,16 +519,20 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
         let writer: Promise<unknown> | undefined;
         let writerOutcome: Promise<PromiseSettledResult<unknown>[]> | undefined;
         let interleaved = false;
+        const declarationBodyLocks: boolean[] = [];
+        let publicationFenceHeld = false;
+        let registrationPeer: (() => Promise<void>) | undefined;
         // Interleave only at the real Prisma transport; all domain owners and SQL remain real.
         db.$transaction = hotRecipient || transientContention || usageAdmission ? originalTransaction : new Proxy(originalTransaction, {
             apply(target, thisArg, args) {
                 const callback: unknown = args[0];
                 if (typeof callback !== 'function') return Reflect.apply(target, thisArg, args);
                 return Reflect.apply(target, thisArg, [async (tx: Tx) => {
+                    let transactionPublicationFenceHeld = false;
                     const machines = new Proxy(tx.managedMachine, {
                         get(owner, property, receiver) {
                             const method: unknown = Reflect.get(owner, property, receiver);
-                            if (beforeFence || property !== (phase === 'admit' ? 'create' : 'updateMany') || typeof method !== 'function') return method;
+                            if (observeDeclarationBodies || beforeFence || property !== (phase === 'admit' ? 'create' : 'updateMany') || typeof method !== 'function') return method;
                             return async (...values: unknown[]) => {
                                 let ready!: (pid: number) => void;
                                 const started = new Promise<number>(resolve => { ready = resolve; });
@@ -533,9 +558,28 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
                     return callback(new Proxy(tx, { get(owner, property, receiver) {
                         if (property === 'managedMachine') return machines;
                         const method: unknown = Reflect.get(owner, property, receiver);
-                        if (property !== '$queryRawUnsafe' || typeof method !== 'function' || !beforeFence) return method;
+                        if (observeDeclarationBodies && property === '$queryRaw' && typeof method === 'function') {
+                            return (...values: unknown[]) => {
+                                const statement = values[0];
+                                const sql = statement && typeof statement === 'object' && 'sql' in statement
+                                    && typeof statement.sql === 'string' ? statement.sql : '';
+                                const query = Reflect.apply(method, owner, values);
+                                if (!sql.includes('AS manifest') || !sql.includes('"AccountPluginIntent"')) return query;
+                                return observeLazyPrismaQuery(query, () => ({
+                                    started() { declarationBodyLocks.push(transactionPublicationFenceHeld); },
+                                    settled() {},
+                                }));
+                            };
+                        }
+                        if (property !== '$queryRawUnsafe' || typeof method !== 'function' || !(beforeFence || observeDeclarationBodies)) return method;
                         return async (...values: unknown[]) => {
-                            if (!interleaved && typeof values[0] === 'string'
+                            if (registrationPeer && typeof values[0] === 'string'
+                                && values[0].startsWith('SELECT "id" FROM "Account"')) {
+                                const createPeer = registrationPeer;
+                                registrationPeer = undefined;
+                                await createPeer();
+                            }
+                            if (beforeFence && !interleaved && typeof values[0] === 'string'
                                 && values[0].startsWith('SELECT "id" FROM "Account"')) {
                                 interleaved = true;
                                 // Commit after audience discovery, before its first lock.
@@ -551,15 +595,31 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
                                 writerOutcome = Promise.allSettled([writer]);
                                 await writer;
                             }
-                            return Reflect.apply(method, owner, values);
+                            const result = await Reflect.apply(method, owner, values);
+                            if (observeDeclarationBodies && typeof values[0] === 'string'
+                                && values[0].startsWith('SELECT "id" FROM "Account"')
+                                && /FOR (?:NO KEY UPDATE|UPDATE)$/.test(values[0])) {
+                                transactionPublicationFenceHeld = true;
+                                publicationFenceHeld = true;
+                            }
+                            return result;
                         };
                     } }));
                 }, args[1]]);
             },
         });
         try {
-            if ('foreignRegistration' in scenario || 'publicationRegistration' in scenario || 'staleRegistration' in scenario) {
-                db.$transaction = originalTransaction;
+            if (declarationBodyBeforeFence) {
+                const admitted = await admitManagedAcquire(request);
+                expect(admitted).toMatchObject({ replayed: false, machine: { allocation: 'unsubmitted' } });
+                expect(publicationFenceHeld, 'exercise the real serializing Account admission').toBe(true);
+                expect(declarationBodyLocks.length, 'exercise the selected provisioner declaration body SQL').toBeGreaterThan(0);
+                expect(declarationBodyLocks, 'read declaration bodies before holding the Account publication fence')
+                    .not.toContain(true);
+                return;
+            }
+            if (registrationBodyBeforeFence || 'foreignRegistration' in scenario || 'publicationRegistration' in scenario || 'staleRegistration' in scenario) {
+                if (!registrationBodyBeforeFence) db.$transaction = originalTransaction;
                 if (!correlation) throw new Error('Registration requires a current managed admission');
                 await reportManagedAcquire({ ...correlation, result: { kind: 'bound', resource } });
                 const guestId = randomUUID();
@@ -570,6 +630,32 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
                     installationId: identity.installationId, installationPublicKey: Buffer.from(keys.publicKey).toString('base64url'),
                     installationProof: signMachineInstallationProof({ payload: identity, privateKey: keys.secretKey }) };
                 const headers = { 'x-test-user-id': account.id, 'x-happier-account-stored-content-protocol': '4' };
+                if (registrationBodyBeforeFence) {
+                    // Raw legacy rows have no retained reviewed declaration. Exercise
+                    // the public persistent registration and all of its write branches.
+                    expect((await db.managedMachine.findUniqueOrThrow({ where: { id: correlation.managedId } })).reviewedFacts).toBeNull();
+                    const createPeer = async () => {
+                        await db.machine.create({ data: { id: guestId, accountId: account.id, metadata: payload.metadata,
+                            dataEncryptionKey: payload.dataEncryptionKey, installationId: identity.installationId,
+                            installationPublicKey: Uint8Array.from(keys.publicKey) } });
+                    };
+                    if (registrationBodyBeforeFence === 'existing') await createPeer();
+                    if (registrationBodyBeforeFence === 'rejoin') registrationPeer = createPeer;
+                    declarationBodyLocks.length = 0;
+                    publicationFenceHeld = false;
+                    await withAuthenticatedTestApp(machinesRoutes, async app => {
+                        const response = await app.inject({ method: 'POST', url: '/v1/machines', headers, payload });
+                        expect(response.statusCode, response.body).toBe(200);
+                    });
+                    expect(registrationPeer, 'exercise the registration creation race').toBeUndefined();
+                    expect(await db.managedMachine.findUniqueOrThrow({ where: { id: correlation.managedId } }))
+                        .toMatchObject({ enrolledMachineId: guestId });
+                    expect(publicationFenceHeld, 'exercise persistent registration Account admission').toBe(true);
+                    expect(declarationBodyLocks.length, 'exercise the legacy declaration fallback').toBeGreaterThan(0);
+                    expect(declarationBodyLocks, 'read legacy declaration bodies before holding the Account publication fence')
+                        .not.toContain(true);
+                    return;
+                }
                 if ('publicationRegistration' in scenario) {
                     let scheduled = false;
                     db.$transaction = new Proxy(originalTransaction, { apply(target, receiver, args: unknown[]) {
@@ -651,10 +737,23 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
                     await withAuthenticatedTestApp(machinesRoutes, async app => {
                         const response = await app.inject({ method: 'POST', url: '/v1/machines', headers, payload });
                         expect(retired).toBe(true);
-                        expect(response.statusCode, response.body).toBe(409);
-                        expect(await db.machine.findUnique({ where: { id: guestId } })).toBeNull();
-                        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: correlation.managedId } }))
-                            .toMatchObject({ enrolledMachineId: null });
+                        if (scenario.staleRegistration === 'creation') {
+                            expect(response.statusCode, response.body).toBe(409);
+                            expect(await db.machine.findUnique({ where: { id: guestId } })).toBeNull();
+                            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: correlation.managedId } }))
+                                .toMatchObject({ enrolledMachineId: null });
+                        } else {
+                            // O-DEPLOY 2026-11-16 11:33: the retained creation
+                            // proof completes enrollment after controller revocation.
+                            expect(response.statusCode, response.body).toBe(200);
+                            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: correlation.managedId } }))
+                                .toMatchObject({ enrolledMachineId: guestId });
+                            // A new admission still requires the live controller.
+                            await expect(admitManagedAcquire({ ...request,
+                                input: { ...request.input, requestId: randomUUID() } }))
+                                .rejects.toMatchObject({ code: 'controller_retired' });
+                            expect(await db.managedMachine.count({ where: { custodianAccountId: account.id } })).toBe(1);
+                        }
                     });
                     return;
                 }

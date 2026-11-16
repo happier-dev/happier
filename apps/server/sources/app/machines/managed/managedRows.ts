@@ -29,7 +29,7 @@ import { readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import { resolveCurrentClaimablePluginMachineMaterializationsTx } from "@/app/plugins/availability/operations";
-import { currentPluginDeclarationKeyV1, resolveCurrentPluginDeclarationsTx } from "@/app/plugins/availability/currentDeclaration";
+import { currentPluginDeclarationKeyV1, resolveCurrentPluginDeclarationsTx, type CurrentPluginDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
 import { afterTx, inTx, TransactionReplayRequiredError, type ResolvedTransactionResult, type Tx } from "@/storage/inTx";
 import { buildUpdateMachineUpdate, eventRouter } from '@/app/events/eventRouter';
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
@@ -299,13 +299,13 @@ export async function resolveManagedDeclarationInTx(tx: Tx, input: Readonly<{
     homeId: string; custodianAccountId: string; controller?: { machineId: string; installationId: string };
     provider: ValidatedLaunchSnapshotV1["provider"];
     reviewedFacts?: unknown;
-}>, options: Readonly<{ retainedInstallation?: boolean }> = {}): Promise<ManagedDeclaration | null> {
+}>, options: Readonly<{ retainedInstallation?: boolean; declarationBodies?: ManagedDeclarationBodies }> = {}): Promise<ManagedDeclaration | null> {
     if (!input.controller) return readManagedReviewedDeclaration(input.reviewedFacts);
     return (await readManagedProjectionFactsInTx(tx, [input], options)).declarationFor(input);
 }
 
 /** An admitted row keeps its reviewed native schema across controller publication changes. */
-export async function resolveManagedRowDeclarationInTx(tx: Tx, row: StoredManagedMachine) {
+export async function resolveManagedRowDeclarationInTx(tx: Tx, row: StoredManagedMachine, declarationBodies?: ManagedDeclarationBodies) {
     // Preset declaration lives in the opaque content envelope. The server
     // retains routing/lifecycle facts only; a keyholding daemon resolves it.
     if (isStoredOpaquePresetMachine(row)) return null;
@@ -315,7 +315,22 @@ export async function resolveManagedRowDeclarationInTx(tx: Tx, row: StoredManage
     // published, also after retirement; admission owns controller lifecycle.
     return resolveManagedDeclarationInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
         controller: readManagedController(row), provider: readManagedLaunchSnapshot(row.launch).provider, reviewedFacts: row.reviewedFacts },
-        { retainedInstallation: true });
+        { retainedInstallation: true, declarationBodies });
+}
+
+/** A strong publication fence reuses these bodies through the declaration owner's identity check. */
+export type ManagedDeclarationBodies = ReadonlyMap<string, CurrentPluginDeclarationV1>;
+
+function managedDeclarationBodyKey(accountId: string, declarationKey: string): string {
+    return JSON.stringify([accountId, declarationKey]);
+}
+
+/** Legacy unreviewed enrollment reads its immutable schema before registration's exclusive fence. */
+export async function readManagedRowDeclarationBodiesInTx(tx: Tx, row: StoredManagedMachine): Promise<ManagedDeclarationBodies> {
+    if (isStoredOpaquePresetMachine(row) || readManagedReviewedDeclaration(row.reviewedFacts)) return new Map();
+    return (await readManagedProjectionFactsInTx(tx, [{ homeId: row.homeId, custodianAccountId: row.custodianAccountId,
+        controller: readManagedController(row), provider: readManagedLaunchSnapshot(row.launch).provider }],
+        { retainedInstallation: true })).declarationBodies;
 }
 
 type ManagedProjectionInput = Readonly<{
@@ -330,12 +345,13 @@ const MANAGED_PROJECTION_CONTROLLER_SELECT = {
 export type ManagedProjectionController = Prisma.MachineGetPayload<{ select: typeof MANAGED_PROJECTION_CONTROLLER_SELECT }>;
 export interface ManagedProjectionFacts {
     controllers: ReadonlyMap<string, ManagedProjectionController>;
+    declarationBodies: ManagedDeclarationBodies;
     declarationFor(input: ManagedProjectionInput): ManagedDeclaration | null;
 }
 
 /** Admitted facts live only for this projection; every new request reads current authority. */
 export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly ManagedProjectionInput[],
-    options: Readonly<{ retainedInstallation?: boolean }> = {}): Promise<ManagedProjectionFacts> {
+    options: Readonly<{ retainedInstallation?: boolean; declarationBodies?: ManagedDeclarationBodies }> = {}): Promise<ManagedProjectionFacts> {
     inputs = inputs.filter((input): input is ManagedProjectionInput & { controller: ManagedControllerV1 } => input.controller !== undefined);
     const controllers = new Map<string, ManagedProjectionController>();
     // Exact controller IDs plus Prisma's nested Account and pagination bindings.
@@ -358,6 +374,7 @@ export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly Ma
         groups.set(key, group);
     }
     const declarations = new Map<string, ManagedDeclaration | null>();
+    const declarationBodies = new Map<string, CurrentPluginDeclarationV1>();
     for (const group of groups.values()) {
         const occurrences = await resolveCurrentClaimablePluginMachineMaterializationsTx({ tx,
             accountId: group.accountId, serverIdentityId: group.homeId, retainedInstallation: options.retainedInstallation,
@@ -365,10 +382,20 @@ export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly Ma
                 machineInstallationId: input.controller!.installationId, pluginId: input.provider.pluginId })),
         });
         const current = await resolveCurrentPluginDeclarationsTx({ tx, accountId: group.accountId,
-            refs: occurrences.map(occurrence => ({ pluginId: occurrence.pluginId, version: occurrence.version,
-                machineId: occurrence.machineId,
-                // Availability admitted these occurrences against the current controller installation above.
-                machineInstallationId: controllers.get(occurrence.machineId)!.installationId! })) });
+            refs: occurrences.flatMap(occurrence => {
+                const ref = { pluginId: occurrence.pluginId, version: occurrence.version,
+                    machineId: occurrence.machineId,
+                    // Availability admitted these occurrences against the current controller installation above.
+                    machineInstallationId: controllers.get(occurrence.machineId)!.installationId! };
+                const admittedDeclaration = options.declarationBodies?.get(managedDeclarationBodyKey(group.accountId,
+                    currentPluginDeclarationKeyV1(ref.pluginId, ref.version, ref.machineId, ref.machineInstallationId)));
+                // A prepared admission never falls back to loading a new body under the fence.
+                if (options.declarationBodies && !admittedDeclaration) return [];
+                return [{ ...ref, ...(admittedDeclaration ? { admittedDeclaration } : {}) }];
+            }) });
+        for (const [key, declaration] of current) {
+            declarationBodies.set(managedDeclarationBodyKey(group.accountId, key), declaration);
+        }
         const byProvider = new Map<string, typeof occurrences[number][]>();
         for (const occurrence of occurrences) {
             const key = JSON.stringify([occurrence.machineId, occurrence.pluginId]);
@@ -396,7 +423,7 @@ export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly Ma
             declarations.set(keyOf(input), admitted);
         }
     }
-    return { controllers, declarationFor: input => input.controller ? declarations.get(keyOf(input)) ?? null : null };
+    return { controllers, declarationBodies, declarationFor: input => input.controller ? declarations.get(keyOf(input)) ?? null : null };
 }
 
 export async function projectManagedMachineInTx(tx: Tx, row: StoredManagedMachine): Promise<ManagedMachineV1> {

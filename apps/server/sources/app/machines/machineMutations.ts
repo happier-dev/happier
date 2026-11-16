@@ -14,7 +14,8 @@ import { afterTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { readMachineAccessKeySessionBindingsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { serializeMachineKeyBasis } from "./machineSerialization";
-import { acquireManagedMachinePublicationAccountsInTx, readMachineDevcontainerChildInTx } from './managed/managedRows';
+import { acquireManagedMachinePublicationAccountsInTx, readMachineDevcontainerChildInTx, readManagedMachineInTx,
+    readManagedRowDeclarationBodiesInTx, type ManagedDeclarationBodies } from './managed/managedRows';
 import { linkManagedEnrollmentInTx } from './managed/managedMutations';
 import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveMachineAccessInTx } from './machineAccess';
@@ -66,14 +67,18 @@ export function recheckMachineStoredContentMutationAdmissionInTx(tx: Tx, input: 
 /** Persistent registration fences its predicates; Runner creation keeps activation's content admission. */
 export async function acquireMachineRegistrationAccountsInTx(tx: Tx, input: Readonly<{
     accountId: string; machineId: string; kind?: MachineKind; managedEnrollment?: ManagedEnrollmentCorrelationV1;
-}>): Promise<void> {
+    declarationBodies?: ManagedDeclarationBodies;
+}>): Promise<ManagedDeclarationBodies | undefined> {
     const intent = isPersistentMachine(input) ? 'exclusive' : 'content';
+    const declarationBodies = input.declarationBodies ?? (intent === 'exclusive' && input.managedEnrollment
+        ? await readManagedRowDeclarationBodiesInTx(tx, await readManagedMachineInTx(tx, input.managedEnrollment)) : undefined);
     if (input.managedEnrollment) {
         await acquireManagedMachinePublicationAccountsInTx(tx, input.managedEnrollment,
             { intent, additionalAccountIds: [input.accountId], additionalMachineIds: [input.machineId] });
     } else {
         await acquireAccountChangePublicationLocksInTx(tx, [input.accountId], { includeSingleAccount: true, intent });
     }
+    return declarationBodies;
 }
 
 export async function createMachineWithInstallationIdentityInTx(
@@ -91,12 +96,13 @@ export async function createMachineWithInstallationIdentityInTx(
         contentPublicKeyFingerprint: string | null;
         replacementReason: string;
         managedEnrollment?: ManagedEnrollmentCorrelationV1;
+        declarationBodies?: ManagedDeclarationBodies;
     }>,
 ): Promise<Readonly<{
     machine: Awaited<ReturnType<Tx["machine"]["create"]>>;
     machineReplacement: MachineRegistrationReplacementResult | null;
 }>> {
-    await acquireMachineRegistrationAccountsInTx(tx, params);
+    const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, params);
     // Persistent registration must recheck Account mode in its creation transaction;
     // Runner content is admitted separately against its signed activation facts.
     if (isPersistentMachine(params)) {
@@ -157,7 +163,7 @@ export async function createMachineWithInstallationIdentityInTx(
         })
         : null;
 
-    if (params.managedEnrollment) await linkManagedEnrollmentInTx(tx, params.managedEnrollment, params.accountId, machine.id);
+    if (params.managedEnrollment) await linkManagedEnrollmentInTx(tx, params.managedEnrollment, params.accountId, machine.id, declarationBodies);
     const [enrolled] = await withManagedWakeAvailabilityInTx(tx, [await tx.machine.findUniqueOrThrow({ where: { id: machine.id }, select: {
         managedResource: true,
     } })]);
