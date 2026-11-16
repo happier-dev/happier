@@ -85,8 +85,7 @@ export function MachineIsolationAddSandboxModal(
     onSelectProvisioner,
   });
   // A kind this Machine can't run, or that nothing here can set up (no install or sign-in step), is shown apart.
-  const runsHere = (card: ManagedProvisionerCard) =>
-    card.action.kind !== 'handoff' && !(card.action.kind === 'choose' && card.action.disabled);
+  const runsHere = (card: ManagedProvisionerCard) => card.canSetUpHere;
   const here = catalog.cards.filter(runsHere);
   const elsewhere = catalog.cards.filter((card) => !runsHere(card));
   // The first kind that can be chosen now is picked to start with, as the lab's sheet opens.
