@@ -253,6 +253,10 @@ async function writeRevisionEntry(target, mode, bytes) {
  */
 export async function applySourceRevision({ captureDir, sourceDir, files, ownerDirs = [], descriptor, env = process.env, signal }) {
   const shipped = await readDeclaredShippedPaths(captureDir, ownerDirs);
+  // Authored untracked paths (the controller's --exclude-standard list) are other lanes' uncommitted
+  // work and never enter a revision capture, even under a package's shipped `files` dirs: only ignored
+  // generated outputs may survive through that rule (untracked vault.json, 2026-11-16).
+  const untracked = new Set(descriptor.untracked ?? []);
   const result = new Set();
   const drift = [];
   for (const path of files) {
@@ -266,7 +270,7 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
     }
     const entry = descriptor.tree[path];
     if (!entry) {
-      if (bytes !== null && isRevisionKeptUntrackedPath(path, shipped)) result.add(path);
+      if (bytes !== null && !untracked.has(path) && isRevisionKeptUntrackedPath(path, shipped)) result.add(path);
       else await rm(target, { force: true, recursive: true });
       continue;
     }
