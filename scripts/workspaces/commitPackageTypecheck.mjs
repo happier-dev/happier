@@ -244,6 +244,13 @@ function treeTypechecker({ repo, state, env, log, compile = compileScope, bootst
     const currentPath = join(state, 'worktree-tree');
     const current = existsSync(currentPath) ? readFileSync(currentPath, 'utf8').trim() : '';
     writeFileSync(currentPath, '');
+    // The caller holds the worktree lock, and only its holder runs git in this worktree, so an index.lock
+    // here was left by a check killed inside git (2026-11-16: every pass exited 2 for hours after one).
+    const indexLock = join(gitAt(worktree)(['rev-parse', '--absolute-git-dir']).trim(), 'index.lock');
+    if (existsSync(indexLock)) {
+      log(`[commit-package-typecheck] removing ${indexLock} left by an interrupted check`);
+      rmSync(indexLock, { force: true });
+    }
     gitAt(worktree)(['read-tree', '--reset', '-u', treeId]);
     writeFileSync(currentPath, treeId);
     timings.push({ side, step: 'move', ms: Date.now() - moveStarted });

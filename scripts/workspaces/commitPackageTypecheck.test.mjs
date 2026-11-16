@@ -204,3 +204,29 @@ test('an app scope keeps a per-file, per-code baseline: only a count increase is
   // The packages scope keeps its own recorded HEAD: the app pass did not advance it.
   assert.equal(existsSync(join(state, 'rolling-head')), false);
 });
+
+test('a git index lock left in the warm worktree by a killed check does not stop later passes', async t => {
+  const { repo } = await workspace(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const state = await mkdtemp(join(tmpdir(), 'happier-rolling-typecheck-lock-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  t.after(() => { try { git('worktree', 'unlock', join(state, 'worktree')); git('worktree', 'remove', '--force', join(state, 'worktree')); } catch {} });
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const step = async (label, path) => {
+    await writeFile(join(repo, path), `export const value = '${label}';\n`);
+    git('add', '-A');
+    git('commit', '--quiet', '-m', label);
+    return git('rev-parse', 'HEAD');
+  };
+  const options = { repo, env, compile: fakeCompiler([]), bootstrap: () => {}, post: () => {}, boardPaths: [], log: () => {} };
+  await step('c0', 'packages/leaf/src/index.ts');
+  await rollingHeadTypecheckPass(options);
+  // 2026-11-16 ~12:59Z: a check killed inside `git read-tree` left the worktree's index.lock behind, and
+  // every later pass exited 2 for hours. Only the worktree-lock holder runs git there, so it is stale.
+  const gitDir = execFileSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: join(state, 'worktree'), encoding: 'utf8' }).trim();
+  await writeFile(join(gitDir, 'index.lock'), '');
+  const c1 = await step('c1', 'packages/leaf/src/index.ts');
+  const next = await rollingHeadTypecheckPass(options);
+  assert.equal(next.head, c1);
+  assert.equal(readFileSync(join(state, 'rolling-head'), 'utf8').trim(), c1);
+});
