@@ -31,7 +31,7 @@ import type { HostExternalSessionsAuthorService } from '@/session/external/priva
 import type { PluginSubagentsHostService } from '@/session/subagents/pluginSubagentsService';
 import { getSessionTranscript } from './getSessionTranscript';
 import { openSessionEventSource } from '@/session/transport/socket/sessionSocketAgentState';
-import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import { readAccountEncryptionCurrentnessForRead } from '@/api/client/accountEncryptionCurrentnessObservation';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import { hasPluginSessionAccess, projectPluginSessionAccessIdentity } from '@happier-dev/protocol/sessions/pluginAccess';
 import type { PluginSessionAccess, PluginSessionAccessScope } from '@happier-dev/protocol';
@@ -374,9 +374,10 @@ export function createPluginSessionsInventory(
   const resolveServerFeaturesSnapshot = params.resolveServerFeaturesSnapshot;
   const readStoragePolicy = params.readStoragePolicy
     ?? (async () => readStoragePolicyFromSnapshot(resolveServerFeaturesSnapshot?.()));
+  // The mode only projects read summaries here, so reads borrow the held, push-updated observation.
   const readAccountEncryptionCurrentness = params.readAccountEncryptionCurrentness
     ?? (async (credentials: StoredCredentials) =>
-      await fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token }));
+      await readAccountEncryptionCurrentnessForRead({ credentials: credentials, token: credentials.token }));
   const messageRetryIntervalMs = Math.max(1, Math.floor(params.messageWatchRetryIntervalMs ?? SESSION_MESSAGE_WATCH_RETRY_INTERVAL_MS));
   const cursors = new Map<string, CursorSnapshot>();
 

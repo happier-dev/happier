@@ -101,8 +101,11 @@ export async function getSessionTranscript(
     || params.limit !== undefined || params.projection !== undefined)) {
     return { ok: false, errorCode: 'invalid_input', errorMessage: 'invalid_input' };
   }
+  // Reading a transcript only opens content, so it borrows the held, push-updated Account
+  // observation (signed requests keep their own fresh read inside the resolver).
   const sessionTarget = await resolveSessionTransportContext({
     reason: 'session-content',
+    usage: 'read',
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
     ...(params.resolveAuthorizationHeaders
