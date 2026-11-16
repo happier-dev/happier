@@ -14,8 +14,9 @@ for (const powerShell of ['powershell.exe', 'pwsh']) {
   }, async () => {
     const source = (await readFile(join(repoRoot, 'scripts/release/installers/install.ps1'), 'utf8')).replaceAll('\r\n', '\n');
     const resolution = source.match(/^\$InstallDir = .*\n\$DaemonServiceStateHomeDir = .*$/m)?.[0];
+    const syncInstallerPath = source.match(/function Sync-InstallerPath\s*\{[\s\S]*?\n\}(?=\n\nfunction )/)?.[0];
     const environmentSetup = source.match(/  if \(\$LegacyBinDir -ne \$BinDir\) \{[\s\S]*?\n  \}\n([\s\S]*?)\n  \$invoker = Resolve-InstalledCliInvoker/)?.[1];
-    assert.ok(resolution && environmentSetup, 'expected installed CLI environment setup');
+    assert.ok(resolution && syncInstallerPath && environmentSetup, 'expected installed CLI environment setup');
     // The Windows user/machine environment is an OS boundary. Keep the real
     // installer resolution and setup, but avoid changing the test user's registry.
     const script = [
@@ -34,6 +35,7 @@ namespace InstallerTest {
   }
 }
 '@`,
+      syncInstallerPath.replaceAll('[Environment]', '[InstallerTest.Environment]'),
       '$env:USERPROFILE = [IO.Path]::GetTempPath().TrimEnd([IO.Path]::DirectorySeparatorChar)',
       'foreach ($case in @("custom-install", "separate-home", "home-only", "default", "no-path-update")) {',
       '  [InstallerTest.Environment]::User.Clear()',
