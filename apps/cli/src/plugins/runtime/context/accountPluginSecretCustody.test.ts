@@ -327,7 +327,7 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         expect(snapshot.savedSecretResources?.length).toBe(2);
         expect(resourceReads, 'retirement withdraws resource-read authority before cleanup starts').not.toHaveBeenCalled();
     });
-    it('binds and materializes a current shared ref, rotates by revision, and fails terminally after revocation', async () => {
+    it('admits a cold shared ref before binding, rotates by revision, and fails terminally after revocation', async () => {
         const resourceId = 'resource-plugin';
         const sharedRef = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
         const resource = (revision: number, value: string) => ({
@@ -350,17 +350,19 @@ describe('createAccountPluginSecretCustodyRouter', () => {
             settingsVersion: 4,
             loadedAtMs: 1,
             settingsSecretsReadKeys: [],
-            savedSecretResources: [resource(1, 'shared-v1')],
-            savedSecretCatalogState: 'ready',
+            savedSecretResources: [],
             scopeKey: 'account:a',
         };
         const router = createAccountPluginSecretCustodyRouter({
             owner: {
                 readSnapshot: () => snapshot,
-                // This case drives the catalog by replacing `snapshot`, which
-                // stands for each fresh Home answer; the production admission
-                // (proven below) is what writes that answer into the snapshot.
-                async admitSharedSecretForOperation() {},
+                // The first Home admission supplies the cold row; subsequent
+                // answers are driven by the rotation/revocation below.
+                async admitSharedSecretForOperation() {
+                    if (snapshot.savedSecretCatalogState === undefined) snapshot = {
+                        ...snapshot, savedSecretResources: [resource(1, 'shared-v1')], savedSecretCatalogState: 'ready',
+                    };
+                },
                 async updateOnce(input: Readonly<{
                     expectedVersion: number;
                     mutate(settings: Readonly<Record<string, unknown>>): Record<string, unknown>;

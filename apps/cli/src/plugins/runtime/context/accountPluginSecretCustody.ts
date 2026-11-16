@@ -756,7 +756,7 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
         expectedRevision?: string;
         assertCurrent?: () => void;
     }>): Promise<Readonly<{ revision: string }>> {
-        const snapshot = requireSnapshot();
+        let snapshot = requireSnapshot();
         const lifetimeToken = owner.readLifetimeToken?.();
         const target = targetFor(input.pluginId, input.secretId);
         const assertCurrent = (): void => {
@@ -774,6 +774,14 @@ export function createAccountPluginSecretCustodyRouter(params: Readonly<{
         };
 
         assertCurrent();
+        if (parseSavedSecretRefV1(input.savedSecretId).kind === 'shared_resource') {
+            if (!owner.admitSharedSecretForOperation) {
+                throw custodyError('plugin_secret_custody_unavailable', 'Saved Secret admission is unavailable');
+            }
+            await owner.admitSharedSecretForOperation({ ref: input.savedSecretId, expectedScopeKey: snapshot.scopeKey ?? '' });
+            assertCurrent();
+            snapshot = requireSnapshot();
+        }
         const current = state(snapshot, target);
         assertExpectedRevision(current, input.expectedRevision);
         const selected = createSavedSecretMaterializerFromSnapshotV1(snapshot)
