@@ -34,6 +34,8 @@ import { FailureInvestigationActions } from '@/components/inbox/detail/FailureIn
 
 export type { DomainCredentialRole, DomainItem } from './deploymentDomainAttention';
 
+type DomainRowItem = DomainItem & Readonly<{ attached: boolean }>;
+
 /** What a page can do to its addresses; absent where it cannot write (the rows stay read-only). */
 export type DeploymentDomainRowActions = Readonly<{
   verify: (item: DomainItem) => void;
@@ -73,7 +75,7 @@ const keyOf = (item: DomainItem) => item.domain.id;
  * the row's end. The Environment's Domains tab and Services → Domains both draw it; the Account-wide view adds its
  * Project bands (`groups`) and an Environment column (`environmentTitle`).
  */
-export function DeploymentDomainsList<Item extends DomainItem>(props: Readonly<{
+export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonly<{
   items: readonly Item[];
   groups?: HappierCollectionGrouping<Item>;
   /** Where each address belongs, for a list that spans Environments; the Environment's own tab names it already. */
@@ -185,7 +187,7 @@ function domainReadKey(serverId: string, accountId: string, machineId: string, o
 }
 
 /** The shared Domain owner's lifecycle and recovery facts for one row; a legacy capture keeps its desired state. */
-function useDomainRowFacts(item: DomainItem, context: DomainRowContext) {
+function useDomainRowFacts(item: DomainRowItem, context: DomainRowContext) {
   const address = item.domain.operationAddress ?? null;
   const serverId = address ? resolveServerProfileScopeIdForIdentifier(address.serverId) : null;
   const record = useActionOperation({ serverId, operationId: address?.operationId ?? '' });
@@ -195,11 +197,11 @@ function useDomainRowFacts(item: DomainItem, context: DomainRowContext) {
   const facts = projectDeploymentDomainFactsV1(item.domain, context.accountId, observation);
   const missing = context.actions?.missingCredentials?.(item) ?? NO_ROLES;
   // One state per row, from the Domain attention owner the live address reads too.
-  return { ...facts, missing, attention: deploymentDomainAttention(item, facts.state, missing) };
+  return { ...facts, missing, attention: deploymentDomainAttention(item, facts.state, item.attached, missing) };
 }
 
 /** State: what needs the person, in its colour; a settled healthy address says it is serving, quietly. */
-function DomainStateCell(props: Readonly<{ item: DomainItem; context: DomainRowContext }>) {
+function DomainStateCell(props: Readonly<{ item: DomainRowItem; context: DomainRowContext }>) {
   const { attention, state } = useDomainRowFacts(props.item, props.context);
   const testID = `project-deployments.environment.domains.${props.item.domain.id}.state`;
   if (attention) return <Status tone={attention.variant} label={attention.label} presentation="inline" testID={testID} />;
@@ -208,7 +210,7 @@ function DomainStateCell(props: Readonly<{ item: DomainItem; context: DomainRowC
     : null;
 }
 
-function DomainRowEnd(props: Readonly<{ item: DomainItem; context: DomainRowContext }>) {
+function DomainRowEnd(props: Readonly<{ item: DomainRowItem; context: DomainRowContext }>) {
   return <View style={styles.rowEnd}>
     <DomainStateCell item={props.item} context={props.context} />
     <DomainRowMenu item={props.item} context={props.context} />
@@ -282,7 +284,7 @@ function DomainByline(props: Readonly<{ item: DomainItem; context: DomainRowCont
 }
 
 /** Check again beside an address that needs the person, then its investigation and a failed change's details. */
-function DomainRowControls(props: Readonly<{ item: DomainItem; context: DomainRowContext }>) {
+function DomainRowControls(props: Readonly<{ item: DomainRowItem; context: DomainRowContext }>) {
   const { item, context } = props;
   const { attention, state, failure } = useDomainRowFacts(item, context);
   const id = `project-deployments.environment.domains.${item.domain.id}`;
@@ -294,7 +296,7 @@ function DomainRowControls(props: Readonly<{ item: DomainItem; context: DomainRo
     <RoundButton testID={`${id}.adopt`} size="small" display="secondary" title={t('projects.deployments.domainAdoptTunnel')}
       disabled={context.disabled} onPress={() => adopt(item, recovery.data)} />
   ) : null;
-  const checkAgain = !adoptTunnel && attention && verify && state !== 'removing' ? (
+  const checkAgain = !adoptTunnel && attention && attention.checkAgain !== false && verify && state !== 'removing' ? (
     <RoundButton testID={`${id}.checkAgain`} size="small" display="secondary" title={t('projects.deployments.domainCheckAgain')}
       disabled={context.disabled} onPress={() => verify(item)} />
   ) : null;
@@ -333,7 +335,7 @@ function DomainRowControls(props: Readonly<{ item: DomainItem; context: DomainRo
 }
 
 /** A row's `⋯`: a missing credential first, then Check again and Add check, then Remove. */
-function DomainRowMenu(props: Readonly<{ item: DomainItem; context: DomainRowContext }>) {
+function DomainRowMenu(props: Readonly<{ item: DomainRowItem; context: DomainRowContext }>) {
   const { theme } = useUnistyles();
   const { item, context } = props;
   const { actions } = context;

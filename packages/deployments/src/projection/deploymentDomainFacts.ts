@@ -11,6 +11,12 @@ export type DeploymentDomainFactsV1 = Readonly<{
     failure: NonNullable<ActionOperationSnapshotV1['error']> | null;
 }>;
 
+/** Retained predecessor Domains remain records, but only the Environment's selected runtime link is attached. */
+export function isDeploymentDomainAttachedV1(domain: Pick<DeploymentDomainHeaderV1, 'targetLinkId'>,
+    environment: Pick<DeploymentEnvironmentHeaderV1, 'runtimeTargetLinkId'>): boolean {
+    return domain.targetLinkId === environment.runtimeTargetLinkId;
+}
+
 /** Desired placements remain persisted until native absence is observed. Only an
  * exact controller read's typed not_found establishes a lost operation; a pending
  * or unavailable read supplies no observation and cannot unlock removal. */

@@ -95,7 +95,7 @@ function domain(
       v: 1 as const,
       id: domainId,
       environmentId: 'environment-staging',
-      targetLinkId: 'target-a',
+      targetLinkId: 'target-link',
       revision: 1,
       state: 'active' as const,
       contentArtifactId: `content-${domainId}`,
@@ -213,6 +213,42 @@ function domainActions(detail: Detail) {
   };
 }
 
+it.each([false, true])('keeps retained Domains visible as unattached after runtime replacement or removal (no current link: %s)', async noCurrentLink => {
+  const base = createDeploymentEnvironmentDetailV1();
+  const detail = { ...base, environment: { ...base.environment,
+    runtimeTargetLinkId: noCurrentLink ? undefined : base.environment.runtimeTargetLinkId } };
+  const known = domain('current-domain', 'current.example.test');
+  const current = { ...known, domain: { ...known.domain, targetLinkId: base.environment.runtimeTargetLinkId! } };
+  const predecessor = { ...domain('predecessor-domain', 'old.example.test'),
+    domain: { ...known.domain, id: 'predecessor-domain', targetLinkId: 'previous-target-link' } };
+  const { screen, controller, settle } = await renderDomains(detail, [predecessor, current], domainActions(detail));
+  try {
+    await settle('project-deployments.environment.domains.current-domain');
+    const { Status } = await import('@happier-dev/plugin-ui');
+    const state = (domainId: string) => screen.findAllByType(Status)
+      .find(node => node.props.testID === `project-deployments.environment.domains.${domainId}.state`)?.props.label;
+    expect(state('predecessor-domain')).toBe('Unattached');
+    expect(state('current-domain')).toBe(noCurrentLink ? 'Unattached' : 'Serving');
+    expect(screen.getTextContent()).toContain('old.example.test');
+  } finally { await screen.unmount(); controller.retire(); }
+});
+
+it('keeps a failed retained Domain recovery available', async () => {
+  const detail = createDeploymentEnvironmentDetailV1();
+  const known = domain('failed-retained', 'old.example.test');
+  const failed = { ...known, domain: { ...known.domain, targetLinkId: 'previous-target-link', state: 'failed' as const } };
+  const { screen, controller, settle } = await renderDomains(detail, [failed], domainActions(detail));
+  try {
+    await settle('project-deployments.environment.domains.failed-retained');
+    const { Status } = await import('@happier-dev/plugin-ui');
+    const { t } = await import('@/text');
+    expect.soft(screen.findAllByType(Status).find(node =>
+      node.props.testID === 'project-deployments.environment.domains.failed-retained.state')?.props.label)
+      .toBe(t('projects.deployments.domainStateFailed'));
+    expect.soft(screen.findByTestId('project-deployments.environment.domains.failed-retained.checkAgain')).not.toBeNull();
+  } finally { await screen.unmount(); controller.retire(); }
+});
+
 function platformDetail(targetKind = 'vercel', content: Record<string, unknown> = {}) {
   return createDeploymentEnvironmentDetailV1({ targetLinks: [{ content,
     targetLink: createDeploymentTargetLinkHeaderV1({ source: { kind: 'plugin',
@@ -259,7 +295,7 @@ describe('Environment → Domains: add form (P6)', () => {
     const setup = screen.findAllByType(NewAccountTriggerPopover)[0]!;
     expect(setup.props.eventSeed).toMatchObject({ sourceInstanceId: expect.stringMatching(/^health:/),
       setupInput: { v: 1, subject: { kind: 'environment', environmentId: detail.environment.id },
-        domain: { domainId: 'public-domain', targetLinkId: 'target-a' } } });
+        domain: { domainId: 'public-domain', targetLinkId: 'target-link' } } });
     expect(setup.props.eventSeed.setupInput).not.toHaveProperty('checks');
     expect(actions.addDomain).not.toHaveBeenCalled();
     await screen.unmount(); controller.retire();

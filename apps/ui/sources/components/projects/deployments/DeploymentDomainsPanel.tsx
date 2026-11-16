@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
-import type { OwnServerDeploymentRuntimeProjectionV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentHeaderV1, OwnServerDeploymentRuntimeProjectionV1 } from '@happier-dev/deployment-protocol/v1';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { DeploymentDomainHealthCheckV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainHealthCheckV1';
 import type { DeploymentDomainCloudflareRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
@@ -40,7 +40,7 @@ import { useDeploymentDomainIngressFields, type DomainIngressInspection } from '
 import { DeploymentTabState } from './DeploymentTabState';
 import { readDeploymentComposeServiceFacts } from './deploymentPreflightWarnings';
 import { useDeploymentEnvironmentDomains, useDeploymentEnvironmentRecord } from './useDeploymentReads';
-import { projectDeploymentDomainDnsReadinessV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
+import { isDeploymentDomainAttachedV1, projectDeploymentDomainDnsReadinessV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
 import { DeploymentDomainsList, type DeploymentDomainRowActions, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
@@ -87,6 +87,7 @@ export function DeploymentDomainsPanel(
   props: Readonly<{
     controller: DeploymentReadControllerV1;
     environmentId: string;
+    environment: Pick<DeploymentEnvironmentHeaderV1, 'runtimeTargetLinkId'>;
     demand: DeploymentReadDemandV1;
     phone?: boolean;
     /** The Machine the Environment's header names; a Domain route that leads only there doesn't repeat it. */
@@ -103,6 +104,8 @@ export function DeploymentDomainsPanel(
     props.demand,
   );
   const { items } = domains.result;
+  const rowItems = React.useMemo(() => items.map(item => ({ ...item,
+    attached: isDeploymentDomainAttachedV1(item.domain, props.environment) })), [items, props.environment]);
   const unavailableDockerDesktop = props.runtimeProjections?.some(projection =>
     presentMachineAuthorityV1({ engine: projection.engineKind }).deployment.domains === 'unavailableDockerDesktop') ?? false;
   const editing = unavailableDockerDesktop ? null : props.editing;
@@ -286,7 +289,7 @@ export function DeploymentDomainsPanel(
       ) : null}
       {items.length > 0 ? <DeploymentDomainsList
         testID="project-deployments.environment.domains.list"
-        items={items}
+        items={rowItems}
         accountId={props.controller.scope.accountId}
         serverId={props.controller.scope.serverId}
         demand={props.demand}

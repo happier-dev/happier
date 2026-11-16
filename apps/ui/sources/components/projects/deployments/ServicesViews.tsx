@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isDeploymentDomainAttachedV1 } from '@happier-dev/deployments';
 import type {
   DeploymentReadControllerV1,
   DeploymentReadDemandV1,
@@ -337,11 +338,13 @@ export function ServicesDomainsView(
   }>,
 ) {
   const read = useDeploymentDomainPage(props.controller, props.demand);
-  const items = read.snapshot.value?.items ?? NO_ITEMS;
+  const domainItems = read.snapshot.value?.items ?? NO_ITEMS;
+  const items = React.useMemo(() => domainItems.map(item => ({ ...item,
+    attached: isDeploymentDomainAttachedV1(item.domain, item.environment) })), [domainItems]);
   // The page head's count line (lab svcDom): how many addresses, then the ones that need the person, by their need.
   const countParts = React.useMemo(() => {
     if (!read.snapshot.value) return null;
-    const needs = items.map(deploymentDomainNeedKind);
+    const needs = items.map(item => deploymentDomainNeedKind(item, item.attached));
     const waiting = needs.filter((need) => need === 'waitingForDns').length;
     const unreachable = needs.filter((need) => need === 'notReachable').length;
     return [
@@ -352,7 +355,7 @@ export function ServicesDomainsView(
   }, [items, read.snapshot.value]);
   // The Domains tab's needs-you count: the addresses its count line says need the person.
   const domainsNeedYou = React.useMemo(() => items.filter((item) => {
-    const need = deploymentDomainNeedKind(item);
+    const need = deploymentDomainNeedKind(item, item.attached);
     return need === 'waitingForDns' || need === 'notReachable';
   }).length, [items]);
   useReportViewCount('domains', countParts, props.onCount, domainsNeedYou);

@@ -533,7 +533,8 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
         contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'account-owner', createdAtMs: 1, updatedAtMs: 1 },
       title: hostname,
       content: { hostname, target: { service: 'web', containerPort: 3000 }, healthCheck: { path: '/', expectStatus: 200 } },
-      environment: createDeploymentEnvironmentHeaderV1({ id: environmentId, projectSourceId }),
+      environment: createDeploymentEnvironmentHeaderV1({ id: environmentId, projectSourceId,
+        runtimeTargetLinkId: id === 'd-old' ? undefined : 'link' }),
       environmentTitle, projectSourceName,
     });
     const { controller } = controllerFor(() => page([]), {
@@ -555,6 +556,11 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
     expect(text).toContain(t('projects.deployments.editors.domainColumnEnvironment'));
     expect(text).toContain('Staging');
     expect(text).toContain('Legacy');
+    const { Status } = await import('@happier-dev/plugin-ui');
+    const state = (id: string) => screen.findAllByType(Status).find(node =>
+      node.props.testID === `project-deployments.environment.domains.${id}.state`)?.props.label;
+    expect(state('d-shop')).toBe(t('projects.deployments.editors.domainServing'));
+    expect(state('d-old')).toBe('Unattached');
     controller.retire();
   });
 });

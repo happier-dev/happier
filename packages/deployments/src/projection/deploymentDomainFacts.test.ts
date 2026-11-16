@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { deploymentDomainProbeVantageV1, projectDeploymentDomainFactsV1, projectDeploymentDomainHealthFactsV1, projectDeploymentDomainDnsReadinessV1 } from './deploymentDomainFacts';
+import { deploymentDomainProbeVantageV1, isDeploymentDomainAttachedV1, projectDeploymentDomainFactsV1, projectDeploymentDomainHealthFactsV1, projectDeploymentDomainDnsReadinessV1 } from './deploymentDomainFacts';
 import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 const domain: DeploymentDomainHeaderV1 = { v: 1, id: 'domain', environmentId: 'environment', targetLinkId: 'link',
@@ -13,6 +13,13 @@ const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'removal
     title: 'Remove Domain', createdAt: 1, startedAt: 2, cancellation: 'supported' };
 
 describe('Domain lifecycle projection', () => {
+    it('attaches only the selected runtime link, without falling back to a retained predecessor or absent pointer', () => {
+        const environment = createDeploymentEnvironmentHeaderV1({ runtimeTargetLinkId: domain.targetLinkId });
+        expect(isDeploymentDomainAttachedV1(domain, environment)).toBe(true);
+        expect(isDeploymentDomainAttachedV1({ ...domain, targetLinkId: 'previous-link' }, environment)).toBe(false);
+        expect(isDeploymentDomainAttachedV1(domain, { ...environment, runtimeTargetLinkId: undefined })).toBe(false);
+    });
+
     it('uses the serving edge for vantage even when the observer is an active runtime member', () => {
         const environment = createDeploymentEnvironmentHeaderV1({ ingress: { kind: 'edgeCaddy', edgeMachineId: 'edge' } });
         const targetLink = createDeploymentTargetLinkHeaderV1({ machines: ['runtime'], members: [

@@ -4295,6 +4295,13 @@ target links. It opens no private content and has no list-page limit. An empty
 result describes that transaction only; an Environment revision does not freeze
 Domain membership across native work.
 
+Target-only teardown retires Domains attached to the selected target link and
+keeps Domains on predecessor links, even when the selected link was the last
+runtime. These retained records preserve custody and remain individually
+removable. They are unattached unless their target link is the Environment's
+current runtime link; an unattached Domain cannot supply a serving or admin
+address. Removing the whole Environment captures Domains on every target link.
+
 The existing Stop and remove confirmation lists the Environment's Domains and
 approves one teardown operation. Receipt admission uses this inventory to capture
 Domain retirement through the existing Domain removal owner, with the same

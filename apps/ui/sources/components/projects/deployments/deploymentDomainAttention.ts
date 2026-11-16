@@ -14,6 +14,8 @@ export type DomainCredentialRole =
 export type DomainAttention = Readonly<{
   variant: StatusPillVariant;
   label: string;
+  /** An informational attachment state does not ask for another health check. */
+  checkAgain?: false;
 }>;
 type DomainLifecycle =
   | DomainItem['domain']['state']
@@ -28,8 +30,12 @@ type DomainLifecycle =
 export function deploymentDomainAttention(
   item: Pick<DomainItem, 'health'> & Readonly<{ domain: Pick<DomainItem['domain'], 'dnsHealth'> }>,
   lifecycle: DomainLifecycle,
+  attached: boolean,
   missing: readonly DomainCredentialRole[] = [],
 ): DomainAttention | null {
+  if (!attached && (lifecycle === 'active' || lifecycle === 'warning')) return {
+    variant: 'neutral', label: t('projects.deployments.editors.domainUnattached'), checkAgain: false,
+  };
   if (lifecycle === 'outcome_unknown')
     return {
       variant: 'attention',
@@ -55,7 +61,9 @@ export function deploymentDomainAttention(
  */
 export function deploymentDomainNeedKind(
   item: Pick<DomainItem, 'health'> & Readonly<{ domain: Pick<DomainItem['domain'], 'dnsHealth'> }>,
+  attached: boolean,
 ): 'waitingForDns' | 'notReachable' | null {
+  if (!attached) return null;
   if (projectDeploymentDomainDnsReadinessV1(item.domain.dnsHealth).state === 'missing') return 'waitingForDns';
   const cause = item.health?.needsYou?.cause;
   return cause !== undefined && cause !== 'certificate' ? 'notReachable' : null;

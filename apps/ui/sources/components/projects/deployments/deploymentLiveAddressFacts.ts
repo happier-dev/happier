@@ -1,4 +1,4 @@
-import type { DeploymentReceiptFactsV1 } from '@happier-dev/deployments';
+import { isDeploymentDomainAttachedV1, type DeploymentReceiptFactsV1 } from '@happier-dev/deployments';
 import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { deploymentDomainAttention, type DomainAttention, type DomainItem } from './deploymentDomainAttention';
 
@@ -56,7 +56,7 @@ export function resolveDeploymentLiveAddress(
   if (!receipt.content.platform && !primaryService) return null;
   const domain = domains.find(
     (item) =>
-      item.domain.targetLinkId === receipt.deployment.targetLinkId &&
+      isDeploymentDomainAttachedV1(item.domain, { runtimeTargetLinkId: receipt.deployment.targetLinkId }) &&
       (item.domain.state === 'active' || item.domain.state === 'warning') &&
       (receipt.content.platform ? item.content.target.kind === 'provider'
         : item.content.target.kind !== 'provider' && item.content.target.service === primaryService),
@@ -64,7 +64,7 @@ export function resolveDeploymentLiveAddress(
   const url = domain ? readDeploymentDomainServingUrlV1(domain.content) : null;
   if (!domain || !url) return null;
   // A Domain that needs a look is still the address, but it is not plainly live: the Domains row's own line travels with it.
-  return { url, attention: deploymentDomainAttention(domain, domain.domain.state),
+  return { url, attention: deploymentDomainAttention(domain, domain.domain.state, true),
     domain: { id: domain.domain.id, revision: domain.domain.revision } };
 }
 

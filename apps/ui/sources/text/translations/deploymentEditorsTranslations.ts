@@ -102,6 +102,7 @@ type DeploymentEditorsTranslations = Readonly<{
   domainColumnCertificate: string;
   domainColumnState: string;
   domainServing: string;
+  domainUnattached: string;
   domainCertificateExpires: (params: { date: string }) => string;
   domainAddRecord: (params: { type: string; name: string; value: string }) => string;
   yourAccessTitle: string;
@@ -180,6 +181,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificate',
     domainColumnState: 'State',
     domainServing: 'Serving',
+    domainUnattached: 'Unattached',
     domainCertificateExpires: ({ date }) => `expires ${date}`,
     domainAddRecord: ({ type, name, value }) => `Add ${type} ${name} → ${value}`,
     yourAccessTitle: 'Your access',
@@ -301,6 +303,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Сертификат',
     domainColumnState: 'Состояние',
     domainServing: 'Работает',
+    domainUnattached: 'Не привязан',
     domainCertificateExpires: ({ date }) => `истекает ${date}`,
     domainAddRecord: ({ type, name, value }) => `Добавьте ${type} ${name} → ${value}`,
     yourAccessTitle: 'Ваш доступ',
@@ -421,6 +424,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certyfikat',
     domainColumnState: 'Stan',
     domainServing: 'Działa',
+    domainUnattached: 'Nieprzypisana',
     domainCertificateExpires: ({ date }) => `wygasa ${date}`,
     domainAddRecord: ({ type, name, value }) => `Dodaj ${type} ${name} → ${value}`,
     yourAccessTitle: 'Twój dostęp',
@@ -542,6 +546,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificado',
     domainColumnState: 'Estado',
     domainServing: 'Sirviendo',
+    domainUnattached: 'Sin vincular',
     domainCertificateExpires: ({ date }) => `caduca el ${date}`,
     domainAddRecord: ({ type, name, value }) => `Añade ${type} ${name} → ${value}`,
     yourAccessTitle: 'Tu acceso',
@@ -663,6 +668,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificat',
     domainColumnState: 'État',
     domainServing: 'En service',
+    domainUnattached: 'Non rattaché',
     domainCertificateExpires: ({ date }) => `expire le ${date}`,
     domainAddRecord: ({ type, name, value }) => `Ajoute ${type} ${name} → ${value}`,
     yourAccessTitle: 'Ton accès',
@@ -784,6 +790,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificato',
     domainColumnState: 'Stato',
     domainServing: 'Attivo',
+    domainUnattached: 'Non collegato',
     domainCertificateExpires: ({ date }) => `scade il ${date}`,
     domainAddRecord: ({ type, name, value }) => `Aggiungi ${type} ${name} → ${value}`,
     yourAccessTitle: 'Il tuo accesso',
@@ -904,6 +911,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificado',
     domainColumnState: 'Estado',
     domainServing: 'Servindo',
+    domainUnattached: 'Não vinculado',
     domainCertificateExpires: ({ date }) => `expira em ${date}`,
     domainAddRecord: ({ type, name, value }) => `Adicione ${type} ${name} → ${value}`,
     yourAccessTitle: 'Seu acesso',
@@ -1025,6 +1033,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificat',
     domainColumnState: 'Estat',
     domainServing: 'En servei',
+    domainUnattached: 'Sense vincular',
     domainCertificateExpires: ({ date }) => `caduca el ${date}`,
     domainAddRecord: ({ type, name, value }) => `Afegeix ${type} ${name} → ${value}`,
     yourAccessTitle: 'El teu accés',
@@ -1145,6 +1154,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Zertifikat',
     domainColumnState: 'Status',
     domainServing: 'Aktiv',
+    domainUnattached: 'Nicht verbunden',
     domainCertificateExpires: ({ date }) => `läuft ab am ${date}`,
     domainAddRecord: ({ type, name, value }) => `${type} ${name} → ${value} hinzufügen`,
     yourAccessTitle: 'Dein Zugriff',
@@ -1265,6 +1275,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: '证书',
     domainColumnState: '状态',
     domainServing: '正在服务',
+    domainUnattached: '未关联',
     domainCertificateExpires: ({ date }) => `${date} 到期`,
     domainAddRecord: ({ type, name, value }) => `添加 ${type} ${name} → ${value}`,
     yourAccessTitle: '你的权限',
@@ -1385,6 +1396,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: '憑證',
     domainColumnState: '狀態',
     domainServing: '服務中',
+    domainUnattached: '未連結',
     domainCertificateExpires: ({ date }) => `${date} 到期`,
     domainAddRecord: ({ type, name, value }) => `新增 ${type} ${name} → ${value}`,
     yourAccessTitle: '你的權限',
@@ -1505,6 +1517,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: '証明書',
     domainColumnState: '状態',
     domainServing: '稼働中',
+    domainUnattached: '未接続',
     domainCertificateExpires: ({ date }) => `${date} に期限切れ`,
     domainAddRecord: ({ type, name, value }) => `${type} ${name} → ${value} を追加`,
     yourAccessTitle: 'あなたの権限',

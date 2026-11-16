@@ -1,7 +1,7 @@
 import { showDeploymentMoveSheet } from './DeploymentMoveSheet';
 import * as React from 'react';
 import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
-import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
+import { isDeploymentDomainAttachedV1, selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { View } from 'react-native';
@@ -484,7 +484,8 @@ export const DeploymentEnvironmentDetail = React.memo(
     const primaryService = detail.content.definition.kind === 'repository'
       ? detail.content.definition.compose?.primaryService : detail.content.definition.primaryService;
     const adminDomain = primaryService ? domains.result.items.find(item =>
-      (item.domain.state === 'active' || item.domain.state === 'warning')
+      isDeploymentDomainAttachedV1(item.domain, detail.environment)
+      && (item.domain.state === 'active' || item.domain.state === 'warning')
       && item.content.target.service === primaryService) : undefined;
     const adminServingUrl = adminDomain ? readDeploymentDomainServingUrlV1(adminDomain.content) : null;
     // Where a name is only a fact or a clause, an unknown Machine drops out instead of reading "a machine".
@@ -1248,6 +1249,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             </>
           ) : tab === 'domains' ? (
             <DeploymentDomainsPanel
+              environment={detail.environment}
               runtimeProjections={active.snapshot.value?.content.ownServer?.approvedInputBasis.runtimeProjections}
               controller={props.controller}
               environmentId={props.environmentId}
