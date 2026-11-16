@@ -88,6 +88,8 @@ export function createHolderWorkspaceSource(input: Readonly<{
       let out = '';
       child.stdout.on('data', (chunk: Buffer) => { out += chunk.toString('utf8'); });
       child.once('error', reject);
+      // A holder that refuses or loses the start fails the queued request writes too; that is this exchange's failure.
+      child.stdin.on('error', reject);
       child.once('close', () => {
         try { resolve(JSON.parse(out.split('\n')[0] ?? '') as TargetResult); }
         catch { reject(errno('io_failed', 'Target helper returned no result')); }
