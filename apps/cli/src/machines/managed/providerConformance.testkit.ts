@@ -325,9 +325,9 @@ export function cloudFixture(leaf: string, contribution: string) {
             else { value = sandbox(); status = targetPresent ? 200 : 404; }
         } else if (leaf === 'machine-upstash-box') {
             // Public REST v2 / official @upstash/box 0.7.10, 170dd8b98821 (2026-11-01).
-            const native = () => ({ id: isForeign ? foreignId : 'box-owned', name: isForeign ? 'foreign' : name, labels: ['happier-managed:' + (isForeign ? 'foreign-managed-id' : MANAGED_ID)],
+            const native = () => ({ id: isForeign ? foreignId : 'box-owned', name: isForeign ? 'foreign' : name, labels: ['happier-managed'],
                 status: power === 'running' ? 'idle' : 'paused', runtime: 'node', size: 'small', keep_alive: false, created_at: 1000, updated_at: 2000 });
-            if (path === '/v2/box' && method === 'GET') value = url.searchParams.get('label') === 'happier-access-check' ? [] : [...(present ? [native()] : []), ...(foreignPresent ? [{ ...native(), id: foreignId, name: 'foreign', labels: ['happier-managed:foreign-managed-id'] }] : [])];
+            if (path === '/v2/box' && method === 'GET') value = url.searchParams.get('label') === 'happier-access-check' ? [] : [...(present ? [native()] : []), ...(foreignPresent ? [{ ...native(), id: foreignId, name: 'foreign', labels: ['happier-managed'] }] : [])];
             else if (path === '/v2/box' && method === 'POST') { allocations++; present = true; owned.add('box'); value = native(); }
             else if (path.endsWith('/exec')) {
                 const command = body(request).command as string[];

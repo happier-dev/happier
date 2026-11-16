@@ -1,8 +1,8 @@
 import { encodeBase64, decodeBase64, defineProtocolArray, defineProtocolObject, defineProtocolString, defineProtocolNumber, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeCauseV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, UpstashBoxLaunchSchema, UpstashBoxOperationSchema, UpstashBoxResourceSchema, ROLE_SCHEMAS, reference, type UpstashBoxLaunch, type UpstashBoxOperation, type UpstashBoxResource } from './schemas.js';
 
-// Public REST v2; official @upstash/box 0.7.10 at 170dd8b98821, checked 2026-11-01.
+// Public REST v2; official @upstash/box 0.8.0, checked 2026-11-16.
 export const UPSTASH_BOX_API = 'https://us-east-1.box.upstash.com/v2/box';
 const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
@@ -12,16 +12,27 @@ const executionSchema = defineProtocolObject({ exit_code: defineProtocolNumber({
 const outputSchema = defineProtocolObject({ exitCode: defineProtocolNumber({ integer: true }), stdoutBase64: defineProtocolString(), stderrBase64: defineProtocolString() }, open);
 type Acquisition = MachineProvisionerAcquireResultV1<UpstashBoxResource, UpstashBoxOperation>;
 type Destruction = MachineProvisionerDestroyResultV1<UpstashBoxOperation>;
-class NativeError extends Error {
-  constructor(readonly code: string, readonly status?: number) { super(code); }
+export class NativeError extends Error {
+  constructor(readonly code: string, readonly status?: number, readonly nativeCause?: MachineProvisionerNativeCauseV1) { super(code); }
 }
 const code = (error: unknown) => error instanceof NativeError ? error.code : 'upstash_box_unavailable';
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-const label = (managedId: string) => 'happier-managed:' + managedId;
+// Native labels are limited to 20 characters. The exact name and retained
+// box id establish identity; this short marker identifies managed resources.
+const MANAGED_LABEL = 'happier-managed';
 const pending = (operation: UpstashBoxOperation): Acquisition => ({ kind: 'pending', nativeOperationRef: reference(operation) });
 
-export function createUpstashBoxNativeClient(request: typeof fetch, signal?: AbortSignal, observedAt = Date.now()) {
-  async function http(url: string, method = 'GET', body?: unknown) {
+export function readUpstashBoxIdentity(value: unknown, expected: { name: string; managedId: string; boxId?: string }): Native {
+  const parsed = dtoSchema.safeParse(value);
+  if (!parsed.success) throw new NativeError('upstash_box_invalid_response');
+  const native = parsed.data;
+  if (native.name !== expected.name || !native.labels.includes(MANAGED_LABEL)
+    || expected.boxId !== undefined && native.id !== expected.boxId) throw new NativeError('upstash_box_identity_mismatch');
+  return native;
+}
+
+export function createUpstashBoxHttpClient(request: typeof fetch, signal?: AbortSignal) {
+  return async function http(url: string, method = 'GET', body?: unknown) {
     signal?.throwIfAborted();
     const response = await request(url, { method, signal, redirect: 'error', headers: { 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -29,18 +40,14 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
     const content = await response.text();
     if (!content) return null;
     try { return JSON.parse(content) as unknown; } catch { throw new NativeError('upstash_box_invalid_response'); }
-  }
-  function identity(value: unknown, expected: { name: string; managedId: string; boxId?: string }): Native {
-    const parsed = dtoSchema.safeParse(value);
-    if (!parsed.success) throw new NativeError('upstash_box_invalid_response');
-    const native = parsed.data;
-    if (native.name !== expected.name || !native.labels.includes(label(expected.managedId))
-      || expected.boxId !== undefined && native.id !== expected.boxId) throw new NativeError('upstash_box_identity_mismatch');
-    return native;
-  }
+  };
+}
+
+export function createUpstashBoxNativeClient(request: typeof fetch, signal?: AbortSignal, observedAt = Date.now()) {
+  const http = createUpstashBoxHttpClient(request, signal);
   const resource = (native: Native, managedId: string): UpstashBoxResource => ({ boxId: native.id, name: native.name, managedId });
   const path = (id: string) => UPSTASH_BOX_API + '/' + encodeURIComponent(id);
-  async function read(value: UpstashBoxResource) { return identity(await http(path(value.boxId)), value); }
+  async function read(value: UpstashBoxResource) { return readUpstashBoxIdentity(await http(path(value.boxId)), value); }
   async function check(): Promise<MachineProvisionerCheckResultV1> {
     try {
       const result = await http(UPSTASH_BOX_API + '?label=happier-access-check');
@@ -51,12 +58,14 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
     const launch = UpstashBoxLaunchSchema.parse(input);
     const operation = { kind: 'acquire', name: 'happier-' + managedId, managedId } as const;
     try {
-      const native = identity(await http(UPSTASH_BOX_API, 'POST', { ...launch, name: operation.name,
-        labels: [label(managedId)], keep_alive: false }), operation);
+      const { snapshotId, ...choices } = launch;
+      const native = readUpstashBoxIdentity(await http(UPSTASH_BOX_API + (snapshotId ? '/from-snapshot' : ''), 'POST', { ...choices,
+        ...(snapshotId ? { snapshot_id: snapshotId } : {}), name: operation.name,
+        labels: [MANAGED_LABEL], keep_alive: false }), operation);
       return { kind: 'bound', resource: { ...reference(resource(native, managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
-      // Create can allocate before the response is lost. Reconcile only the captured label, never POST again.
+      // Create can allocate before the response is lost. Reconcile only the captured name, never POST again.
       return pending(operation);
     }); }
   }
@@ -64,7 +73,7 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
     const operation = UpstashBoxOperationSchema.parse(input);
     if (operation.kind !== 'acquire') return { kind: 'rejected', code: 'invalid_request' };
     try {
-      const native = identity(await http(path(operation.name)), operation);
+      const native = readUpstashBoxIdentity(await http(path(operation.name)), operation);
       return { kind: 'bound', resource: { ...reference(resource(native, operation.managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(operation)); }
   }

@@ -3,7 +3,7 @@ import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliation
 
 const closed = { policy: 'closed' } as const;
 const text = defineProtocolString({ minLength: 1, pattern: '\\S' });
-export const UpstashBoxLaunchSchema = defineProtocolObject({ runtime: defineProtocolLiteral('node'), size: defineProtocolUnion([defineProtocolLiteral('small'), defineProtocolLiteral('medium'), defineProtocolLiteral('large')]) }, closed);
+export const UpstashBoxLaunchSchema = defineProtocolObject({ runtime: defineProtocolLiteral('node'), size: defineProtocolUnion([defineProtocolLiteral('small'), defineProtocolLiteral('medium'), defineProtocolLiteral('large')]), snapshotId: text.optional() }, closed);
 export const UpstashBoxOptionsSchema = defineProtocolObject({}, closed);
 export const UpstashBoxResourceSchema = defineProtocolObject({ boxId: text, name: text, managedId: text }, closed);
 export const UpstashBoxOperationSchema = defineProtocolUnion([

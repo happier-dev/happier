@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, ORIGINS, connectedAccountRuntime, connectedAccountPortableRuntime, nativeFetch } from './account.js';
 import { createUpstashBoxNativeClient } from './machine/nativeClient.js';
+import { createUpstashBoxPreparationClient, UPSTASH_BOX_PREPARATION_HOME, UpstashBoxPreparationInputSchema, UpstashBoxPreparedArtifactSchema, UpstashBoxPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 import { BILLING, CONTRIBUTION, UpstashBoxLaunchSchema, UpstashBoxOptionsSchema, UpstashBoxResourceSchema, UpstashBoxOperationSchema, ROLE_SCHEMAS, RECONCILIATION } from './machine/schemas.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
@@ -19,6 +20,7 @@ const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAc
 const confirmation = { title: 'Manage this Upstash Box sandbox?', body: 'Upstash Box bills active CPU and retained storage. Native idle auto-pause is based on the Upstash plan, not Happier activity. Stopping retains files; deleting permanently removes the live box.' };
 const retention = { supportedIntents: ['start', 'stop', 'resume', 'delete'] } as const;
 const runtime = (context: PluginAccountActionContext | PluginInvocationContext) => createUpstashBoxNativeClient(nativeFetch(context), context.signal, context.invokedAtMs);
+const preparationRuntime = (context: PluginAccountActionContext | PluginInvocationContext) => createUpstashBoxPreparationClient(nativeFetch(context), context.signal);
 
 export const MACHINE_PROVISIONER = {
   title: 'Upstash Box', icon: 'cloud', resourceKind: 'upstash-box-sandbox', schemaVersion: 1,
@@ -29,6 +31,9 @@ export const MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
   reconciliation: { nativeOperationSchema: UpstashBoxOperationSchema.jsonSchema, action: 'reconcile', cleanup: 'observe-cleanup' },
+  preparation: { inputSchema: UpstashBoxPreparationInputSchema.jsonSchema, artifactSchema: UpstashBoxPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: UpstashBoxPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
@@ -62,7 +67,9 @@ export const PLUGIN = definePlugin({
         if (!check.available) return { dimensions: { size: [], image: [], location: [], network: [], duration: [] }, code: 'provider_unavailable' };
         return { base: { launch: { runtime: 'node', size: 'small' }, guestPlatform: 'linux', retention },
           dimensions: { size: ['small', 'medium', 'large'].map(size => ({ id: size, title: size, assignments: [{ path: 'size', value: size }] })),
-            image: [], location: [], network: [], duration: [] } };
+            image: [{ id: 'node', title: 'Node.js', guestPlatform: 'linux', assignments: [], nativeFacts: {
+              preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: UPSTASH_BOX_PREPARATION_HOME },
+            } }], location: [], network: [], duration: [] } };
       } },
     acquire: { ...defaults, title: 'Create Upstash Box sandbox', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.acquireInput, resultSchema: RECONCILIATION.result,
       async run(input, context) { return input.managedId ? runtime(context).acquire(input.launch, input.managedId) : { kind: 'rejected' as const, code: 'invalid_request' as const }; } },
@@ -78,6 +85,20 @@ export const PLUGIN = definePlugin({
       async run(input, context) { return runtime(context).destroy(input); } },
     'observe-cleanup': { ...defaults, title: 'Observe Upstash Box deletion', dangerLevel: 'safe', inputSchema: RECONCILIATION.cleanupInput, resultSchema: RECONCILIATION.cleanupResult,
       async run(input, context) { return runtime(context).cleanup(input.nativeOperation); } },
+    'prepare-build': { ...defaults, title: 'Build Upstash Box prepared snapshot', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this Upstash Box snapshot?', body: 'Build CPU and retained storage charges apply. The paused build box is retained with the snapshot for recovery. Accounts with configured environment variables cannot prepare snapshots.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return preparationRuntime(context).build(input); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect Upstash Box prepared snapshot', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return preparationRuntime(context).inspect('nativeOperation' in input ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...defaults, title: 'Delete Upstash Box prepared snapshot', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Upstash Box snapshot?', body: 'Deleting removes the prepared snapshot and its owned build box permanently.' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return preparationRuntime(context).destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); } },
     exec: { ...defaults, title: 'Run in Upstash Box guest', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) { return runtime(context).exec(input); } },
     'put-file': { ...defaults, title: 'Write Upstash Box guest file', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,

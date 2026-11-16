@@ -11,7 +11,7 @@ function vendor() {
   const home = mkdtempSync(join(tmpdir(), 'upstash-guest-'));
   const calls: { path: string; method: string; body?: unknown }[] = [];
   let present = true, status = 'idle', lost = false, unavailable = false, deleting = false;
-  const dto = () => ({ id: resource.boxId, name: resource.name, labels: ['happier-managed:managed'], status, runtime: 'node', size: 'small', keep_alive: false, created_at: 1000, updated_at: 2000 });
+  const dto = () => ({ id: resource.boxId, name: resource.name, labels: ['happier-managed'], status, runtime: 'node', size: 'small', keep_alive: false, created_at: 1000, updated_at: 2000 });
   const request: typeof fetch = async (input, init) => {
     init?.signal?.throwIfAborted();
     const url = new URL(String(input)), method = init?.method ?? 'GET';
@@ -36,9 +36,31 @@ function vendor() {
   return { home, calls, request, dto, loseCreate() { lost = true; }, deferDelete() { deleting = true; }, deleted() { present = false; }, fail() { unavailable = true; }, cleanup() { rmSync(home, { recursive: true, force: true }); } };
 }
 describe('Upstash Box HTTP qualification', () => {
+  it('creates UUID-named resources within the vendor label length contract', async () => {
+    const managedId = 'd01a3c52-a353-4ed8-9859-b8a2efc4bdcd';
+    const request: typeof fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { name: string; labels: string[] };
+      // @upstash/box 0.8.0 BoxConfig: at most 20 characters per label.
+      if (body.labels.some(value => value.length > 20)) return Response.json({ error: 'label too long' }, { status: 400 });
+      return Response.json({ id: 'box-uuid', name: body.name, labels: body.labels, status: 'idle' });
+    };
+    expect(await createUpstashBoxNativeClient(request).acquire(launch, managedId))
+      .toMatchObject({ kind: 'bound', resource: { value: { name: 'happier-' + managedId, managedId } } });
+  });
+  it('restores prepared artifacts through the native snapshot route with the ordinary managed identity', async () => {
+    const calls: { path: string; body: unknown }[] = [];
+    const request: typeof fetch = async (input, init) => {
+      calls.push({ path: new URL(String(input)).pathname, body: JSON.parse(String(init?.body)) as unknown });
+      return Response.json({ id: resource.boxId, name: resource.name, labels: ['happier-managed'], status: 'idle' });
+    };
+    expect(await createUpstashBoxNativeClient(request).acquire({ ...launch, snapshotId: 'prepared-id' }, 'managed'))
+      .toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(calls).toEqual([{ path: '/v2/box/from-snapshot', body: { ...launch, snapshot_id: 'prepared-id',
+      name: resource.name, labels: ['happier-managed'], keep_alive: false } }]);
+  });
   it('retains a completed allocation body after late cancellation', async () => {
     const abort = new AbortController();
-    const bytes = new TextEncoder().encode(JSON.stringify({ id: resource.boxId, name: resource.name, labels: ['happier-managed:managed'], status: 'idle' }));
+    const bytes = new TextEncoder().encode(JSON.stringify({ id: resource.boxId, name: resource.name, labels: ['happier-managed'], status: 'idle' }));
     const request: typeof fetch = async () => new Response(new ReadableStream({ pull(body) {
       body.enqueue(bytes); body.close(); abort.abort();
     } }));
@@ -102,7 +124,7 @@ describe('Upstash Box HTTP qualification', () => {
       expect(result.kind).toBe('pending');if(result.kind!=='pending')throw new Error('No retained acquisition');
       expect(await client.recover(result.nativeOperationRef.value)).toMatchObject({kind:'bound',resource:{value:resource}});
       expect(v.calls.filter(c=>c.method==='POST'&&c.path==='/v2/box')).toHaveLength(1);
-      expect(v.calls[0]?.body).toMatchObject({keep_alive:false,labels:['happier-managed:managed']});
+      expect(v.calls[0]?.body).toMatchObject({keep_alive:false,labels:['happier-managed']});
     } finally { v.cleanup(); }
   });
   it('settles vendor failures unavailable, redacts details and never converts uncertainty to absence', async()=>{
