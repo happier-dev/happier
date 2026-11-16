@@ -26,6 +26,7 @@ import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines
 import { projectDeploymentNativeAdmissionV1, type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { readAdmittedDeploymentScopeInTx } from './deploymentPreparationAuthorization';
+import { sealDeploymentReadCursor } from './deploymentReadCursor';
 
 const provider = getDbProviderFromEnv(process.env, 'postgres');
 describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine deployment list on native providers', () => {
@@ -104,7 +105,9 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
             metadata: '{}', installationId: randomUUID() } });
         const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: owner.id,
-            headerVersion: 1, bodyVersion: 1, header: new Uint8Array(), body: new Uint8Array(),
+            kind: 'v1:other:deployment-environment.v1', headerVersion: 1, bodyVersion: 1,
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Template previews' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ private: 'unopened-preview-body' })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
         const base = { projectSourceId: source.source.id, createdByAccountId: owner.id, protection: 'nonProduction',
             deployerMode: 'managers', controllerMachineId: machine.id,
@@ -134,8 +137,19 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
             const reads = requests.filter(row => row.model === 'DeploymentEnvironment' && row.action === 'findMany');
             expect(reads).toHaveLength(1);
             expect(reads[0]!.args).toMatchObject({ where: { purpose: 'preview', previewTemplateEnvironmentId: templates[1]!.id }, take: 2 });
-            expect(requests.filter(row => row.model === 'Artifact'
-                || (row.model === 'ProjectSource' || row.model === 'Machine') && row.action === 'findMany')).toEqual([]);
+            expect(requests.filter(row => row.model === 'Artifact' && row.action === 'findMany')).toEqual([
+                expect.objectContaining({ args: expect.objectContaining({
+                    where: expect.objectContaining({ id: { in: [artifact.id] } }),
+                    select: expect.objectContaining({ body: false }),
+                }) }),
+            ]);
+            // PostgreSQL captures Source admission in one raw statement; other
+            // providers use exact-id delegate reads. Neither crawls inventory.
+            for (const read of requests.filter(row => row.model === 'ProjectSource' && row.action === 'findMany')) {
+                expect(read.args).toMatchObject({ where: { id: { in: [source.source.id] } } });
+            }
+            expect(requests.filter(row => row.model === 'Machine' && row.action === 'findMany')).toEqual([]);
+            expect(JSON.stringify(page)).not.toContain('unopened-preview-body');
             const next = await client.$transaction(tx => listDeploymentEnvironmentsInTx(tx, owner.id,
                 { ...input, cursor: page.nextCursor ?? undefined }));
             expect(next).toMatchObject({ ok: true, items: [{ id: children[1]![0] }], nextCursor: null });
@@ -166,7 +180,9 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
             metadata: '{}', installationId: randomUUID() } });
         const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: owner.id,
-            headerVersion: 1, bodyVersion: 1, header: new Uint8Array(), body: new Uint8Array(),
+            kind: 'v1:other:deployment-environment.v1', headerVersion: 1, bodyVersion: 1,
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Large exact selection' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ private: 'unopened-selection-body' })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
         const base = { projectSourceId: source.source.id, createdByAccountId: owner.id, protection: 'nonProduction',
             deployerMode: 'managers', controllerMachineId: machine.id,
@@ -496,7 +512,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         } finally { await app.close(); }
     });
 
-    it('advances an empty partial All page without disclosing unreadable identities or crawling Sources', async () => {
+    it('fills All pages through unreadable rows without disclosing their identities or crawling Sources', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
         const sources = await Promise.all([owner, stranger].map(account => inTx(tx => createProjectSourceInTx(tx, account.id,
@@ -516,7 +532,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
             projectSourceId: index === 0 ? hidden.source.id : visible.source.id, createdByAccountId: owner.id,
             controllerMachineId: machine.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
             contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 })) });
-        let sourceCrawls = 0;
+        const sourceReads: unknown[] = [];
         const read = (cursor: string, actor = owner.id, projectSourceId?: string) => inReadSnapshot(tx =>
             listDeploymentEnvironmentsInTx(new Proxy(tx, { get(target, property, receiver) {
                 const delegate = Reflect.get(target, property, receiver);
@@ -525,23 +541,26 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
                     const method = Reflect.get(model, operation, modelReceiver);
                     if (typeof method !== 'function') return method;
                     return (...args: unknown[]) => {
-                        if (operation === 'findMany') sourceCrawls++;
+                        if (operation === 'findMany') sourceReads.push(args[0]);
                         return Reflect.apply(method, model, args);
                     };
                 } });
             } }), actor, { serverId, cursor, limit: 1, ...(projectSourceId ? { projectSourceId } : {}) }));
         const first = await read(`${prefix}-3`);
-        expect(first).toMatchObject({ ok: true, items: [], coverage: 'partial' });
-        if (!first.ok || !first.nextCursor) throw new Error('Empty partial page must continue');
+        expect(first).toMatchObject({ ok: true, items: [{ id: ids[1] }], coverage: 'complete' });
+        if (!first.ok || !first.nextCursor) throw new Error('Visible page must continue');
         expect(JSON.stringify(first)).not.toContain(ids[0]);
         expect(JSON.stringify(first)).not.toContain(hidden.source.id);
-        expect(await read(first.nextCursor, stranger.id)).toEqual({ ok: false, error: 'deployment_invalid' });
-        expect(await read(first.nextCursor, owner.id, visible.source.id)).toEqual({ ok: false, error: 'deployment_invalid' });
+        const sealedCursor = sealDeploymentReadCursor(owner.id, { serverId }, first.items[0]!.id);
+        expect(await read(sealedCursor, stranger.id)).toEqual({ ok: false, error: 'deployment_invalid' });
+        expect(await read(sealedCursor, owner.id, visible.source.id)).toEqual({ ok: false, error: 'deployment_invalid' });
         const second = await read(first.nextCursor);
-        expect(second).toMatchObject({ ok: true, items: [{ id: ids[1] }], coverage: 'complete' });
-        if (!second.ok || !second.nextCursor) throw new Error('Visible page must continue');
-        expect(await read(second.nextCursor)).toMatchObject({ ok: true, items: [{ id: ids[2] }] });
-        expect(sourceCrawls).toBe(0);
+        expect(second).toMatchObject({ ok: true, items: [{ id: ids[2] }], coverage: 'complete', nextCursor: null });
+        expect(JSON.stringify(second)).not.toContain(ids[0]);
+        expect(JSON.stringify(second)).not.toContain(hidden.source.id);
+        for (const query of sourceReads) {
+            expect(query).toMatchObject({ where: { id: { in: expect.any(Array) } } });
+        }
     });
 
     it('projects only the recorded Environment controller availability on the native provider', async () => {
@@ -811,11 +830,11 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         if (!detail.ok) throw new Error(detail.error);
         expect(detail.targetLinks).toHaveLength(retained.length);
         expect(artifactReads, 'one detail open batches Artifact admission independently of retained custody count').toBe(1);
-        const partial = await inReadSnapshot(tx => listDeploymentEnvironmentsInTx(tx, owner.id, { ...input, limit: 10 }));
-        expect(partial).toMatchObject({ ok: true, coverage: 'partial', items: [{ id: visible.id }], nextCursor: null });
-        expect(JSON.stringify(partial)).not.toContain(hidden.id);
-        expect(JSON.stringify(partial)).not.toContain(hiddenSource.source.id);
-        expect(JSON.stringify(partial)).not.toContain('private-body-must-stay-unopened');
+        const filtered = await inReadSnapshot(tx => listDeploymentEnvironmentsInTx(tx, owner.id, { ...input, limit: 10 }));
+        expect(filtered).toMatchObject({ ok: true, coverage: 'complete', items: [{ id: visible.id }], nextCursor: null });
+        expect(JSON.stringify(filtered)).not.toContain(hidden.id);
+        expect(JSON.stringify(filtered)).not.toContain(hiddenSource.source.id);
+        expect(JSON.stringify(filtered)).not.toContain('private-body-must-stay-unopened');
         const tombstone = await db.deploymentEnvironment.create({ data: { ...common,
             projectSourceId: visibleSource.source.id, controllerMachineId: machine.id, deletedAt: new Date() } });
         const retainedInput = { ...input, projectSourceId: visibleSource.source.id, includeDeleted: true as const };
@@ -857,14 +876,20 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
                 expect(environmentQuery[0]?.query).toMatch(/"id"\s+IN\s*\(/);
                 expect(environmentQuery[0]?.params).toContain(visible.id);
                 expect(environmentQuery[0]?.params).toContain(hidden.id);
-                expect(statements.filter(event => /\bFROM\s+"public"\."(?:Deployment|Artifact)"/.test(event.query))).toEqual([]);
+                expect(statements.filter(event => /\bFROM\s+"public"\."Deployment"/.test(event.query))).toEqual([]);
+                const exactArtifactReads = statements.filter(event => /\bFROM\s+"public"\."Artifact"/.test(event.query));
+                expect(exactArtifactReads).toHaveLength(1);
+                expect(exactArtifactReads[0]?.query).not.toMatch(/"Artifact"\."body"/);
+                expect(exactArtifactReads[0]?.params).toContain(artifact.id);
                 statements.length = 0;
                 await client.$transaction(tx => listDeploymentEnvironmentsInTx(tx, owner.id, retainedInput));
                 const retainedQuery = statements.filter(event => /\bFROM\s+"public"\."DeploymentEnvironment"/.test(event.query));
                 expect(retainedQuery).toHaveLength(1);
                 expect(retainedQuery[0]?.params).toContain(visibleSource.source.id);
-                expect(retainedQuery[0]?.query).not.toMatch(/"deletedAt"\s+IS\s+NULL/);
-                expect(statements.filter(event => /\bFROM\s+"public"\."Artifact"/.test(event.query))).toEqual([]);
+                const retainedArtifactReads = statements.filter(event => /\bFROM\s+"public"\."Artifact"/.test(event.query));
+                expect(retainedArtifactReads).toHaveLength(1);
+                expect(retainedArtifactReads[0]?.query).not.toMatch(/"Artifact"\."body"/);
+                expect(retainedArtifactReads[0]?.params).toContain(artifact.id);
             } finally { await client.$disconnect(); }
         }
     });
