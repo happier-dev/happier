@@ -1345,6 +1345,13 @@ Run; failed or unknown admission is not silently retried by prefetch. Explicit
 Regenerate bypasses that reuse. Summary model and Start share the offered model catalog and
 structured-output capability admission. Unknown/unsupported capability cannot be
 made supported by a default model name; continuation is a separate capability.
+An explicit comparison model may carry `modelSelector.sessionConfigOptionOverrides`
+for this Run, including its selected reasoning effort. Protocol's existing
+`AcpConfigOptionOverridesV1Schema` owns that payload; comparison dispatch forwards
+it to Run admission and the Agent Session configuration without a separate effort
+field. This additive 0.3 development input requires the matching Protocol and CLI
+reload: an older closed input reader rejects it before creating a Run rather
+than silently running at unspecified effort.
 With no selected Machine, the shared model menu says "Choose a machine first to
 see its models." It separately reports loading, failed catalog reads and no
 offered models. That empty-state guidance does not write an Account default or

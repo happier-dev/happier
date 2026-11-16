@@ -10,6 +10,7 @@ import { ExecutionRunTransportErrorCodeSchema } from '../execution/runs/runPrimi
 import { AGENT_START_REFUSAL_CODES_V1 } from '../account/settings/admitAgentStartV1.js';
 import { ProviderBoundModelRefSchema } from '../providers/selection/v1.js';
 import { ConnectedServiceBindingsV2Schema } from '../connect/connectedServiceBindings.js';
+import { AcpConfigOptionOverridesV1Schema } from '../sessions/metadata/metadataOverridesV1.js';
 export * from './comparison.js';
 export * from './reviewedMarks.js';
 
@@ -39,6 +40,8 @@ export const ScmDiffSummaryModelSelectorSchema = lazyZodSchema(() => z.strictObj
     backendTargetKey: z.optional(z.string().check(z.trim(), z.minLength(1))),
     modelSelection: z.optional(ProviderBoundModelRefSchema),
     connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)),
+    /** The runner's Agent config options (effort) for this run. */
+    sessionConfigOptionOverrides: z.optional(AcpConfigOptionOverridesV1Schema),
   }).check(z.refine((value) => Boolean(value.profileId || value.modelId || value.backendTargetKey || value.modelSelection), { message: 'modelSelector requires a profile, model, or Agent target' }),
     z.superRefine((value, context) => {
       if (value.modelSelection && ((value.modelId !== undefined && value.modelId !== value.modelSelection.modelId)
@@ -238,7 +241,9 @@ export const ScmDiffSummaryFailureReasonCodeSchema = lazyZodSchema(() => z.union
   ExecutionRunTransportErrorCodeSchema,
   z.enum(AGENT_START_REFUSAL_CODES_V1),
   z.enum(['generation_cancelled', 'RPC_CLIENT_NOT_AVAILABLE', 'DIFF_UNAVAILABLE', 'MODEL_UNAVAILABLE', 'SUMMARY_FAILED',
-    'action_failed', 'approval_required', 'provider_input_too_large', 'provider_request_rejected', 'agent_context_window_exceeded']),
+    'action_failed', 'approval_required', 'provider_input_too_large', 'provider_request_rejected', 'agent_context_window_exceeded',
+    // Auto found nothing ready on the Session's (or default) Agent.
+    'LLM_TASK_RUNNER_UNAVAILABLE']),
 ]));
 
 function progress<T extends z.ZodMiniType>(value: T) {

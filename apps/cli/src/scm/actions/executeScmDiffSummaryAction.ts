@@ -13,7 +13,9 @@ import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSu
 import { createCliSettingsCatalogServices } from '@/session/actions/settingsCatalogServices';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { resolveScmDiffSummaryModelSelection, resolveScmDiffSummarySettings, SCM_DIFF_SUMMARY_SETTING_KEYS } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
+import { projectLlmTaskRunnerCandidatesFromCatalog, readScmDiffSummaryRunnerCatalogId, readScmDiffSummaryRunnerChoice, resolveScmDiffSummaryModelSelection, resolveScmDiffSummarySettings, SCM_DIFF_SUMMARY_SETTING_KEYS } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
+import { LlmTaskRunnerChoiceV1Schema } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import { readLlmTaskPermissionModeV1, resolveLlmTaskRunnerV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
 import type { StoredCredentials } from '@/persistence';
 import { loadScmPullRequestDraftEvidence } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/loadScmDiffSummaryContext';
 import { logger } from '@/ui/logger';
@@ -81,22 +83,39 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
         try { backendTarget = readBackendTargetRefV2(parseBackendTargetKeyV2(selector.backendTargetKey)); }
         catch { return failure('Diff-summary model target is unavailable', 'MODEL_UNAVAILABLE'); }
     }
+    // No per-run model: the stored runner, or Auto through the task-runner owner. Auto stays on the
+    // cheapest ready model; the Session's own Agent wins a tie; nothing ready is a typed failure.
+    let ownerResolved = false;
     if (!selector?.modelId && !selector?.profileId) {
-        const storedValue = selector?.backendTargetKey ? '' : settings[SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride];
-        const catalog = await createCliSettingsCatalogServices({ signal: params.signal, credentials: params.credentials }).readScmDiffSummaryCatalog?.(settings, storedValue);
-        const profiles = selector?.backendTargetKey
-            ? catalog?.profiles.filter(profile => profile.modelSelector?.backendTargetKey === selector?.backendTargetKey)
-            : catalog?.profiles;
-        const selection = resolveScmDiffSummaryModelSelection({ storedValue, defaultBackendTarget: backendTarget,
-            catalogProfiles: profiles ?? [] });
-        const defaultAvailable = selection.success && catalog?.isCurrent(getActiveAccountSettingsSnapshot()?.settings ?? settings);
-        if (!defaultAvailable && (!sessionId || !backendTarget)) {
-            return failure('Diff-summary model is unavailable', 'MODEL_UNAVAILABLE');
-        }
-        if (defaultAvailable && selection.success) {
+        const stored = selector?.backendTargetKey ? null : readScmDiffSummaryRunnerChoice(settings);
+        const catalog = await createCliSettingsCatalogServices({ signal: params.signal, credentials: params.credentials })
+            .readScmDiffSummaryCatalog?.(settings, readScmDiffSummaryRunnerCatalogId(stored));
+        const current = () => catalog?.isCurrent(getActiveAccountSettingsSnapshot()?.settings ?? settings) === true;
+        if (stored) {
+            const selection = resolveScmDiffSummaryModelSelection({ runner: stored, catalogProfiles: catalog?.profiles ?? [] });
+            if (!selection.success || !current()) return failure('Diff-summary model is unavailable', 'MODEL_UNAVAILABLE');
+            backendTarget = selection.backendTarget;
+            selector = selection.modelSelector;
+        } else {
+            // A per-run Agent without a model is the person's Agent: Auto picks only its models.
+            // Otherwise only a hosting Session names an Agent, for the tie-break.
+            const chosenAgent = selector?.backendTargetKey ?? null;
+            const machine = projectLlmTaskRunnerCandidatesFromCatalog({ profiles: catalog?.profiles ?? [], unavailableTargets: catalog?.unavailableTargets });
+            const storedChoice = LlmTaskRunnerChoiceV1Schema.safeParse(settings[SCM_DIFF_SUMMARY_SETTING_KEYS.runner] ?? null);
+            const resolved = resolveLlmTaskRunnerV1({ task: 'scm_diff_summary',
+                choice: !chosenAgent && storedChoice.success ? storedChoice.data : null,
+                unavailableAgents: machine.unavailableAgents,
+                candidates: chosenAgent ? machine.candidates.filter(candidate => candidate.modelSelection.agentTargetKey === chosenAgent) : machine.candidates,
+                sessionAgentTargetKey: chosenAgent ?? (sessionId && backendTarget ? buildBackendTargetKeyV2(backendTarget) : null) });
+            if (!resolved.ok || resolved.source !== 'auto' || !current()) {
+                return failure('No ready model for the diff summary on this machine', 'MODEL_UNAVAILABLE', 'LLM_TASK_RUNNER_UNAVAILABLE');
+            }
+            const selection = resolveScmDiffSummaryModelSelection({ runner: resolved.runner, catalogProfiles: catalog?.profiles ?? [] });
+            if (!selection.success) return failure('No ready model for the diff summary on this machine', 'MODEL_UNAVAILABLE', 'LLM_TASK_RUNNER_UNAVAILABLE');
             backendTarget = selection.backendTarget;
             selector = selection.modelSelector;
         }
+        ownerResolved = true;
     }
     const key = buildScmDiffSummaryCacheKey({ source: { kind: 'comparison', comparisonId: captured.comparison.id },
         summarySchemaVersion: SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, outputs: requestedOutputs, scopeKey: sessionId,
@@ -147,7 +166,8 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
         if (!backendTarget) return failed('Diff-summary model target is unavailable', 'MODEL_UNAVAILABLE');
         if (!sessionId && !params.machineId) return failed('Diff-summary generation requires an admitted execution target');
         const inputId = randomUUID();
-        const explicitModelChoice = Boolean(params.request.modelSelector?.modelId || params.request.modelSelector?.profileId || selector?.modelSelection);
+        // The owner's pick is as binding as a person's: it names the Agent and model this run uses.
+        const explicitModelChoice = ownerResolved || Boolean(params.request.modelSelector?.modelId || params.request.modelSelector?.profileId || selector?.modelSelection);
         const { cachePolicy: _cachePolicy, ...intentInput } = params.request;
         const startInput = {
             sessionId: sessionId ?? null,
@@ -157,13 +177,14 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
             localInputId: inputId,
             backendTarget: sessionId && !explicitModelChoice
                 ? params.backendTarget ?? backendTarget : backendTarget,
-            permissionMode: 'read_only',
+            permissionMode: readLlmTaskPermissionModeV1('scm_diff_summary'),
             retentionPolicy: 'resumable',
             runClass: 'long_lived',
             ioMode: 'streaming',
             ...(selector?.profileId ? { profileId: selector.profileId } : {}),
             ...(selector?.modelSelection ? { modelSelection: selector.modelSelection } : {}),
             ...(selector?.connectedServices !== undefined ? { connectedServices: selector.connectedServices } : {}),
+            ...(selector?.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: selector.sessionConfigOptionOverrides } : {}),
             // A known attached parent supplies its applied model at the runner
             // admission owner; an unusable parent requires an explicit choice.
             ...(selector?.modelId && (!sessionId || explicitModelChoice) ? { modelId: selector.modelId } : {}),

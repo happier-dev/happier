@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { expect, it, onTestFinished } from 'vitest';
 import { z } from 'zod/mini';
 import {
-  buildConnectedServiceCredentialRecord, ExecutionRunGetResponseSchema, PluginManifestV2Schema, ScmDiffSummaryGenerateOutputSchema,
+  AgentSessionConfigurationSnapshotV1Schema, buildConnectedServiceCredentialRecord, ExecutionRunGetResponseSchema, PluginManifestV2Schema, ScmDiffSummaryGenerateOutputSchema,
   ScmDiffSummaryResultResponseSchema, SessionSpawnNewActionResultV1Schema, SessionSpawnNewInputV2Schema,
   projectSessionSpawnNewActionInputV2,
 } from '@happier-dev/protocol';
@@ -20,6 +20,7 @@ it('generates saved Changes revisions with a selected Connected Account through 
   const cwd = repository.rootPath;
   onTestFinished(() => removeTempDir(cwd));
   const capturePath = join(cwd, '.git', 'native-inputs.jsonl');
+  const configurationPath = join(cwd, '.git', 'native-configuration.jsonl');
   const modelAccountPath = join(cwd, '.git', 'native-model-account.json');
   // The product denies path-only runtime names such as node. Give this external
   // native-provider fixture its own executable, as the ACP fixture does.
@@ -49,6 +50,13 @@ it('generates saved Changes revisions with a selected Connected Account through 
   const agent = createFirstConversationAgentFixture(firstInput, {
     nativeReply: { executableNames: [nativeExecutable], args: ['-e', program, '--'] },
   });
+  // Observe the external Agent's actual Session configuration. Internal
+  // comparison dispatch, Run admission and native Session creation stay real.
+  agent.files['agent.mjs'] = `import { appendFileSync } from 'node:fs';\n${agent.files['agent.mjs']}`;
+  for (const opening of ['async open(request, { services }) {', 'async openConversation(request, { services }) {', 'async open(request, context) {']) {
+    agent.files['agent.mjs'] = agent.files['agent.mjs'].replace(opening, `${opening}
+      appendFileSync(${JSON.stringify(configurationPath)}, JSON.stringify({ configuration: request.configuration }) + '\\n');`);
+  }
   const manifest = PluginManifestV2Schema.parse(agent.manifest);
   const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
   const connectedServices = { v: 2, bindingsByServiceId: {
@@ -78,7 +86,10 @@ it('generates saved Changes revisions with a selected Connected Account through 
       probeModels: context => {
         if (context.nonblankEnvironment.CHANGES_SELECTED_ACCOUNT !== true) throw Object.assign(new Error('Native catalog was not prepared'), { code: 'fixture_native_environment_missing' });
         writeFileSync(${JSON.stringify(modelAccountPath)}, JSON.stringify({ stage: 'probed', accountId: 'changes-account' }));
-        return [{ id: 'default', name: 'Selected account native model', capabilities: { structuredOutput: 'supported' } }];
+        return [{ id: 'default', name: 'Selected account native model',
+          capabilities: { structuredOutput: 'supported', reasoningControls: 'supported' },
+          modelOptions: [{ id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'high',
+            options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] }] }];
       },
     }, sessionRunnerFactory: {`) },
   }] });
@@ -87,6 +98,10 @@ it('generates saved Changes revisions with a selected Connected Account through 
     project: { machineId: fixture.machineId, directory: cwd } } };
   const observations = async () => (await readFile(capturePath, 'utf8')).trim().split('\n')
     .map(line => nativeObservation.parse(JSON.parse(line)));
+  const nativeConfigurations = async () => (await readFile(configurationPath, 'utf8')).trim().split('\n')
+    .map(line => z.object({ configuration: z.optional(AgentSessionConfigurationSnapshotV1Schema) }).parse(JSON.parse(line)).configuration);
+  const sessionConfigOptionOverrides = { v: 1 as const, updatedAt: 1,
+    overrides: { reasoning_effort: { updatedAt: 1, value: 'low' } } };
   try {
     const credential = buildConnectedServiceCredentialRecord({ now: Date.now(), serviceId: 'openai-codex',
       profileId: 'changes-account', kind: 'oauth', expiresAt: null, oauth: { accessToken: 'synthetic-changes-access',
@@ -102,7 +117,7 @@ it('generates saved Changes revisions with a selected Connected Account through 
       // A Changes page can generate without a carrier Session. Its selected
       // Connected Account still belongs to the requester at catalog admission.
       const detachedRequest = { cwd, source: { kind: 'workingTree' },
-        modelSelector: { backendTargetKey: `backend:${target.identity.pluginId}/${target.identity.localId}`, modelId: 'default', connectedServices },
+        modelSelector: { backendTargetKey: `backend:${target.identity.pluginId}/${target.identity.localId}`, modelId: 'default', connectedServices, sessionConfigOptionOverrides },
         outputs: ['summary'], cachePolicy: { mode: 'bypass' } };
       const detachedAction = await owner.execute('scm.diffSummary.generate', detachedRequest, context);
       expect(detachedAction).toMatchObject({ ok: true });
@@ -116,6 +131,7 @@ it('generates saved Changes revisions with a selected Connected Account through 
       const detachedSaved = await owner.execute('scm.diffSummary.result.read', { cwd, resultId: detached.resultId }, context);
       expect(detachedSaved).toMatchObject({ ok: true, result: { success: true,
         result: { output: { outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Generated: Native captured change.' } } } } } } });
+      expect((await nativeConfigurations()).at(-1)?.options.reasoning_effort?.value).toBe('low');
       if (!detachedSaved.ok) throw new Error('Detached saved output refused');
       const beforeRefine = ScmDiffSummaryResultResponseSchema.parse(detachedSaved.result);
       if (!beforeRefine.success) throw new Error('Detached saved result unavailable');
@@ -165,7 +181,7 @@ it('generates saved Changes revisions with a selected Connected Account through 
     const generatedAction = await owner.execute('scm.diffSummary.generate', { cwd, sessionId, source: { kind: 'workingTree' },
       // The installed native fixture uses the supported backend routing ref;
       // canonical external-Agent picker lowering is a separate ingress path.
-      modelSelector: { backendTargetKey: `backend:${target.identity.pluginId}/${target.identity.localId}`, modelId: 'default', connectedServices }, outputs: ['summary'] }, context);
+      modelSelector: { backendTargetKey: `backend:${target.identity.pluginId}/${target.identity.localId}`, modelId: 'default', connectedServices, sessionConfigOptionOverrides }, outputs: ['summary'] }, context);
     expect(generatedAction).toMatchObject({ ok: true });
     if (!generatedAction.ok) throw new Error('Changes Generate Action refused');
     const generated = ScmDiffSummaryGenerateOutputSchema.parse(generatedAction.result);
@@ -197,6 +213,7 @@ it('generates saved Changes revisions with a selected Connected Account through 
     expect(generatedNative.input).toContain('Native captured change');
     expect(generatedNative.input).not.toBe(generatedNative.output);
     expect(generatedNative.pid).not.toBe(process.pid);
+    expect((await nativeConfigurations()).at(-1)?.options.reasoning_effort?.value).toBe('low');
 
     const requestId = randomUUID();
     const refined = await owner.execute('scm.diffSummary.refine', { ...scope, expectedRevision: saved.result.revision,

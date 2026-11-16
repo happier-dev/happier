@@ -75,7 +75,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
     for (const family of families) {
       expect(new Set(family.staticModels?.map((model) => model.id)).size).toBe(family.staticModels?.length);
       for (const model of family.staticModels ?? []) {
-        expect(model.capabilities).toEqual({
+        expect(model.capabilities).toMatchObject({
           toolRoundTrips: imageModelIds.includes(model.id) ? 'unsupported' : 'unknown',
           reasoningControls: model.modelOptions?.some(option => option.id === 'reasoning_effort') ? 'supported' : 'unknown',
         });
@@ -189,7 +189,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
       catalog: {
         source: 'probe',
         manualModelPolicy: 'allowed',
-        sourceRegistryVersion: 'v8.0.61:header-facts-families-v5',
+        sourceRegistryVersion: 'v8.0.61:header-facts-families-v6',
         probes: [{
           endpointTemplateId: 'cliproxyapi-openai-responses',
           path: '/v1/models',

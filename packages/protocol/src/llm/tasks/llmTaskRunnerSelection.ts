@@ -78,6 +78,11 @@ function readPermissionMode(task: LlmTaskDeclarationV1, requested: LlmTaskPermis
   return requested && task.permissionModes.includes(requested) ? requested : task.permissionModes[0];
 }
 
+/** A task's run permission: the requested level when the task allows it, else the task's declared default. */
+export function readLlmTaskPermissionModeV1(task: LlmTaskIdV1, requested?: LlmTaskPermissionMode): LlmTaskPermissionMode {
+  return readPermissionMode(LLM_TASK_DECLARATIONS_V1[task], requested);
+}
+
 /**
  * The one owner of "which Agent + model + connected service + effort + permission
  * level runs this background task". The person's explicit choice always wins
