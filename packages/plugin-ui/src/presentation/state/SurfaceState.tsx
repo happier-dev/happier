@@ -31,6 +31,8 @@ export type HappierSurfaceStateAction = Readonly<{
    * comes from, "Review guard settings"), so it takes the quiet secondary tone. Unset, the kind decides.
    */
   invitation?: boolean;
+  /** A step that opens a panel in place (a recovery line's Details): whether that panel is open, for assistive technology. */
+  expanded?: boolean;
 }>;
 
 /** A present-tense line under the copy ("Reconnecting · next try in 8 s"); `busy` draws a working ring. */
@@ -572,6 +574,7 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
             accessibilityLabel={action.label}
             disabled={action.disabled}
             busy={action.busy}
+            {...(action.expanded === undefined ? {} : { expanded: action.expanded })}
             onPress={action.onPress}
             // Under a block's sentence the recovery keeps its words' height (the shared hit area still reaches the
             // touch target), so the row sits close to the cause.

@@ -163,6 +163,14 @@ describe('SurfaceStateCard', () => {
         await act(async () => { retry?.props.onPress?.(); });
         expect(onRetry).not.toHaveBeenCalled();
     });
+    // A line's second way forward can open a panel (a recovery strip's Details): it says whether that panel is open.
+    it('announces whether a line recovery that opens a panel has it open', async () => {
+        const screen = await renderScreen(<SurfaceStateCard testID="error" size="line" kind="error" title="Couldn’t start"
+            action={{ testID: 'retry', label: 'Retry', onPress: () => {} }}
+            secondaryAction={{ testID: 'details', label: 'Details', onPress: () => {}, expanded: true }} />);
+        expect(screen.findByTestId('details')?.props.accessibilityState).toMatchObject({ expanded: true });
+        expect(screen.findByTestId('retry')?.props.accessibilityState?.expanded).toBeUndefined();
+    });
     beforeEach(() => {
         accessibilityPlatform.os = 'web';
         announceForAccessibilityMock.mockClear();
