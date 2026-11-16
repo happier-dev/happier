@@ -95,7 +95,7 @@ export async function loadPluginsFromState(
     );
     const compiledAccountResourceIds = generatedUiArtifactsManifest
       && resolvedSource.manifest.contributes.resources.some(resource => isDynamicPluginResourceContributionV2(resource) && resource.execution?.target === 'account')
-      ? readGeneratedPluginCompiledAccountResourceIdsSync(resolvedSource.pluginRootPath, pluginId) : null;
+      ? readGeneratedPluginCompiledAccountResourceIdsSync(resolvedSource.pluginRootPath, pluginId, 'installed') : null;
 
     const loadedPlugin: LoadedPlugin = {
       pluginId,

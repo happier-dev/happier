@@ -11,7 +11,7 @@ import { sourcePluginUiBuildOptions, SOURCE_PLUGIN_UI_IMPORT_CONDITIONS } from '
 import { readSourcePluginUiBuildInputs, readSourcePluginUiBuildInputRecord, readSourcePluginUiInstalledIdentity,
   readSourcePluginUiInstalledImports } from '../../stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 import { readBuildInputIdentity } from '../../../scripts/workspaces/buildInputConvergence.mjs';
-import { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '../../../packages/cli-common/packageBuildOutputTargets.mjs';
+import { digestBuildInputRecordManifest, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '../../../packages/cli-common/packageBuildOutputTargets.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../../stack/scripts/utils/fs/json.mjs';
 
 /** Everything shared by all plugins that can change a compiled Plugin UI: the
@@ -33,6 +33,17 @@ export async function readSourcePluginUiCompilerIdentity({ compilerRepo = fileUR
     .resolve('esbuild/package.json'), 'utf8')).version;
   return { compilerInputs, identity: [compilerIdentity, esbuildVersion,
     readSourcePluginUiInstalledIdentity({ repoDir: compilerRepo, installedImports })] };
+}
+
+/**
+ * Validates a bundled build record's manifest once, here, with the runtime's canonical validator,
+ * and returns the digest the runtime compares before skipping its own validation
+ * (`readGeneratedPluginCompiledAccountResourceIdsSync`). An invalid manifest gets no digest, so the
+ * runtime keeps validating it.
+ */
+export async function attestBuildInputRecordManifest(manifest) {
+  const { PluginManifestV2Schema } = await import('@happier-dev/protocol/plugins/manifest/v2');
+  return PluginManifestV2Schema.safeParse(manifest).success ? digestBuildInputRecordManifest(manifest) : undefined;
 }
 
 /** Reuse the universal UI artifact compiler and inventory owner without publishing
@@ -163,10 +174,13 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
     // their admitted manifest even when identical bytes were reused.
     if (input.reusedRoot && resolve(root) === input.reusedRoot && !artifactStoreDir && !artifactOutputDirs[directory]) continue;
     const record = await readJsonIfExists(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD));
+    const manifestDigest = await attestBuildInputRecordManifest(pluginManifests[directory]);
     if (record?.version === 2 && record.fingerprint === input.inputFingerprint && record.manifest && record.packageName
-      && record.sourceInputs?.identity === input.sourceInputs.identity && record.compilerInputs?.identity === compilerInputs.identity) continue;
+      && record.sourceInputs?.identity === input.sourceInputs.identity && record.compilerInputs?.identity === compilerInputs.identity
+      && record.manifestDigest === manifestDigest) continue;
     await writeJsonAtomic(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD), { version: 2, fingerprint: input.inputFingerprint,
-      packageName: `@happier-dev/plugins-${directory}`, manifest: pluginManifests[directory], sourceInputs: input.sourceInputs, compilerInputs });
+      packageName: `@happier-dev/plugins-${directory}`, manifest: pluginManifests[directory], ...(manifestDigest ? { manifestDigest } : {}),
+      sourceInputs: input.sourceInputs, compilerInputs });
   }
   for (const diagnostic of result.diagnostics) {
     const unavailable = result.pluginFailures.some((failure) => failure.pluginId === diagnostic.pluginId);

@@ -1,7 +1,17 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 
 export const WORKSPACE_PACKAGE_BUILD_INPUT_RECORD = '.happier-build-inputs.json';
+
+/**
+ * Digest of a build input record's plugin manifest. The record writer stores it only after the
+ * manifest passed the runtime's canonical validation, so a bundled reader can skip its own pass
+ * while the manifest is unchanged (same JSON text as written).
+ */
+export function digestBuildInputRecordManifest(manifest) {
+  return createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
+}
 
 /** The Plugin UI dist subtree. A package build owns it only when its own `build:ui` records it. */
 export const PLUGIN_UI_DIST_DIRECTORY = 'happier-plugin-ui';

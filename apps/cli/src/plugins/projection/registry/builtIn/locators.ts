@@ -186,7 +186,7 @@ export function loadBundledPluginLocatorResult(
             : null;
         const compiledAccountResourceIds = installedPluginRootPath && generatedUiArtifactsManifest
             && ingestion.manifest.contributes.resources.some(resource => isDynamicPluginResourceContributionV2(resource) && resource.execution?.target === 'account')
-            ? readGeneratedPluginCompiledAccountResourceIdsSync(installedPluginRootPath, locator.pluginId) : null;
+            ? readGeneratedPluginCompiledAccountResourceIdsSync(installedPluginRootPath, locator.pluginId, 'bundled') : null;
 
         loadedPlugins.push(Object.freeze({
             pluginId: locator.pluginId,

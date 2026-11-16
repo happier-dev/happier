@@ -1,8 +1,9 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
-import { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '@happier-dev/cli-common/packageBuildOutputTargets';
+import { afterEach, expect, it, vi } from 'vitest';
+import { digestBuildInputRecordManifest, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '@happier-dev/cli-common/packageBuildOutputTargets';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { PluginProjectedResourceV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
@@ -11,7 +12,7 @@ import { buildResourcesById } from '@/plugins/projection/registry/projection/v2'
 import { readGeneratedPluginCompiledAccountResourceIdsSync } from './generatedArtifacts';
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 it('retains compiled Account Resource facts independently of unrelated Action schema bytes', () => {
     const pluginId = 'acme.account-relay';
@@ -33,7 +34,7 @@ it('retains compiled Account Resource facts independently of unrelated Action sc
                     })),
                 } },
         }));
-        const compiled = readGeneratedPluginCompiledAccountResourceIdsSync(root, pluginId);
+        const compiled = readGeneratedPluginCompiledAccountResourceIdsSync(root, pluginId, 'installed');
         expect(compiled).not.toBeNull();
         return Buffer.byteLength(JSON.stringify(compiled));
     };
@@ -58,7 +59,7 @@ it('projects the adopted compiled Resource declaration instead of borrowing it f
     for (const compiledResources of [[], [declaration], [previousArtifactDeclaration]]) {
         writeFileSync(join(graph, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD), JSON.stringify({ version: 2, packageName: '@acme/relay',
             manifest: { ...source, contributes: { resources: compiledResources } } }));
-        const compiledAccountResourceIds = readGeneratedPluginCompiledAccountResourceIdsSync(root, pluginId);
+        const compiledAccountResourceIds = readGeneratedPluginCompiledAccountResourceIdsSync(root, pluginId, 'installed');
         const registry = createResolvedContributionRegistry({ pluginDeclarations: [{ pluginId, pluginRootPath: root, manifestPath: '',
             daemonEntryPath: null, devDaemonEntryPath: null, sourceSpec: { kind: 'bundled', locator: '@acme/relay', trustPolicy: 'local_trusted', installPolicy: 'link' },
             manifest: normalizePluginManifestV2(source), ...(compiledAccountResourceIds ? { compiledAccountResourceIds } : {}),
@@ -67,5 +68,35 @@ it('projects the adopted compiled Resource declaration instead of borrowing it f
         const projected = buildResourcesById(registry, [])[`${pluginId}/${resource.id}`];
         expect(PluginProjectedResourceV2Schema.parse(projected).accountRuntimeDeclared).toBe(compiledResources.length > 0);
     }
-    expect(readGeneratedPluginCompiledAccountResourceIdsSync(root, 'acme.other')).toBeNull();
+    expect(readGeneratedPluginCompiledAccountResourceIdsSync(root, 'acme.other', 'installed')).toBeNull();
+});
+
+it('validates a bundled build record once at build time and re-validates only a changed or installed one', () => {
+    const pluginId = 'acme.account-relay';
+    const manifest = { schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Relay', runtime: { apiVersion: 1 },
+        contributes: { resources: [{ id: 'target-options', source: 'dynamic', kind: 'config', scope: 'global',
+            execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+            contentType: 'application/json' }] } };
+    const root = mkdtempSync(join(tmpdir(), 'compiled-record-digest-'));
+    roots.push(root);
+    const graph = join(root, 'dist/happier-plugin-ui');
+    mkdirSync(graph, { recursive: true });
+    const write = (recordManifest: unknown, manifestDigest: string) => writeFileSync(join(graph, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD),
+        JSON.stringify({ version: 2, packageName: '@acme/relay', manifest: recordManifest, manifestDigest }));
+    const validations = vi.spyOn(PluginManifestV2Schema, 'safeParse');
+    const read = (origin: 'bundled' | 'installed') => {
+        validations.mockClear();
+        const ids = readGeneratedPluginCompiledAccountResourceIdsSync(root, pluginId, origin);
+        return { ids, validations: validations.mock.calls.length };
+    };
+
+    // The build stored the digest of the manifest it validated: a bundled cold start runs no validator.
+    write(manifest, digestBuildInputRecordManifest(manifest));
+    expect(read('bundled')).toEqual({ ids: ['target-options'], validations: 0 });
+    // Installed and third-party records cross a trust boundary: always validated at load.
+    expect(read('installed')).toEqual({ ids: ['target-options'], validations: 1 });
+    // A manifest that no longer has its build digest is validated, and refused when invalid.
+    const changed = { ...manifest, contributes: { resources: [{ ...manifest.contributes.resources[0], kind: 'not-a-kind' }] } };
+    write(changed, digestBuildInputRecordManifest(manifest));
+    expect(read('bundled')).toEqual({ ids: null, validations: 1 });
 });
