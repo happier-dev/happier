@@ -505,12 +505,14 @@ describe('createCliActionExecutorHarness', () => {
     expect(posts).not.toHaveBeenCalled();
   });
   it.each([
-    { mode: 'allow', retainedRequire: false, currentRequire: false, held: false },
-    { mode: 'require', retainedRequire: false, currentRequire: false, held: true },
-    { mode: 'allow', retainedRequire: true, currentRequire: false, held: true },
+    { mode: 'allow', retainedRequire: false, currentRequire: false, retainedNull: false, held: false },
+    { mode: 'require', retainedRequire: false, currentRequire: false, retainedNull: false, held: true },
+    { mode: 'allow', retainedRequire: true, currentRequire: false, retainedNull: false, held: true },
     // A later Account Require still applies over the invitation's retained waiver.
-    { mode: 'allow', retainedRequire: false, currentRequire: true, held: true },
-  ] as const)('uses current approval profiles while retaining Workflow invitation restrictions ($mode, $retainedRequire, $currentRequire)', async ({ mode, retainedRequire, currentRequire, held }) => {
+    { mode: 'allow', retainedRequire: false, currentRequire: true, retainedNull: false, held: true },
+    { mode: 'allow', retainedRequire: false, currentRequire: false, retainedNull: true, held: false },
+    { mode: 'allow', retainedRequire: false, currentRequire: true, retainedNull: true, held: true },
+  ] as const)('uses current approval profiles while retaining Workflow invitation restrictions ($mode, $retainedRequire, $currentRequire, null=$retainedNull)', async ({ mode, retainedRequire, currentRequire, retainedNull, held }) => {
     let effects = 0;
     let approval: ReturnType<typeof ApprovalRequestV2Schema.parse> | undefined;
     const waived = { 'discussion.invite': ['agent'] };
@@ -532,7 +534,7 @@ describe('createCliActionExecutorHarness', () => {
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } } }, {
       surface: 'agent', authority: 'account_automation', runtimeAccountId: 'owner', serverId: 'home',
       actionRequestId: 'invitation', defaultSessionId: 'origin', approvalProfileId: 'profile:current',
-      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: waived,
+      actionsSettings: retainedNull ? null : normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: waived,
         actions: retainedRequire ? { 'discussion.invite': { approvalRequiredSurfaces: ['agent'] } } : {} }),
       actionCaller: { kind: 'workflowRun', runId: 'run', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
         authenticatedStarterV1: { requestRef: 'start', requester: { serverId: 'home', accountId: 'owner' } },

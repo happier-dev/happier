@@ -126,7 +126,7 @@ export function createCliActionExecutorHarness(
     ?? ctx.actionsSettings ?? actionSettingsProvider.getActionsSettings();
   const hasAcceptedReservationPolicy = (id: string, ctx: ActionExecutorContext) =>
     id === 'discussion.invite' && ctx.actionCaller?.kind === 'workflowRun'
-      && ctx.actionCaller.discussionModelReservation !== undefined && ctx.actionsSettings !== undefined;
+      && ctx.actionCaller.discussionModelReservation !== undefined && ctx.actionsSettings != null;
   const isActionEnabled: NonNullable<ActionExecutorDeps['isActionEnabled']> = (id, ctx) =>
     isActionEnabledWithSessionMemory(id, params.sessionMemoryEnabled)
     && (!hasAcceptedReservationPolicy(id, ctx) || isActionEnabledByActionsSettings(id, ctx.actionsSettings!, {
@@ -152,7 +152,7 @@ export function createCliActionExecutorHarness(
   const readActionsSettings = (ctx: ActionExecutorContext) => {
     const current = readHostActionsSettings(ctx);
     return ctx.actionCaller?.kind === 'workflowRun' && ctx.actionCaller.discussionModelReservation !== undefined
-      && ctx.actionsSettings !== undefined ? tightenActionsSettingsV1(ctx.actionsSettings, current) : current;
+      && ctx.actionsSettings != null ? tightenActionsSettingsV1(ctx.actionsSettings, current) : current;
   };
   // Original CLI finite admission defers Ask to the receiving signed Machine root; projectAction
   // refuses a host-only Ask that the Account cannot preserve before anything is sent.
