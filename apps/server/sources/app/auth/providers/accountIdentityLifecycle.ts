@@ -264,7 +264,42 @@ export async function refreshIdentity(input: { accountId: string; provider: stri
             where: { id: input.identityId, accountId: input.accountId, provider: input.provider }, data: input.data,
         });
         if (count) await publishIdentityChange(tx, input.accountId);
+        // An offboarding verdict revokes sign-in like every other credential revocation: other API
+        // nodes may have admitted this Account from the stored result while this check ran.
+        if (count && input.data.eligibilityStatus === "ineligible") {
+            afterTx(tx, () => eventRouter.disconnectAccountSockets(input.accountId));
+        }
     });
+}
+
+/**
+ * Claims one due provider eligibility check before its refresh token is presented: moves the
+ * identity's next-check time from the value the caller read, only while the stored token is still
+ * the one it read. Exactly one concurrent checker (on any API node) wins, so an issuer that rotates
+ * refresh tokens (RFC 6749 §6) never sees the same token twice; a loser keeps the stored result.
+ */
+export async function claimIdentityEligibilityCheck(input: {
+    accountId: string;
+    provider: string;
+    identityId: string;
+    readNextCheckAt: Date | null;
+    readToken: Uint8Array;
+    nextCheckAt: Date;
+}): Promise<boolean> {
+    const { count } = await inTx(tx => tx.accountIdentity.updateMany({
+        where: {
+            id: input.identityId, accountId: input.accountId, provider: input.provider,
+            eligibilityNextCheckAt: input.readNextCheckAt, token: { equals: input.readToken },
+        },
+        data: { eligibilityNextCheckAt: input.nextCheckAt },
+    }));
+    return count === 1;
+}
+
+/** The stored eligibility verdict of one identity (a lost claim answers from it). */
+export async function readIdentityEligibilityStatus(identityId: string): Promise<string | null> {
+    const row = await db.accountIdentity.findUnique({ where: { id: identityId }, select: { eligibilityStatus: true } });
+    return row?.eligibilityStatus ?? null;
 }
 
 export async function setIdentityVisibilityInTx(tx: Tx, input: { accountId: string; provider: string; showOnProfile: boolean }): Promise<boolean> {

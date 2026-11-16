@@ -9,8 +9,10 @@ import * as privacyKit from "privacy-kit";
 import { db } from "@/storage/db";
 import { connectRoutes } from "@/app/api/routes/connect/connectRoutes";
 import { auth } from "@/app/auth/auth";
-import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
+import { enforceLoginEligibility, invalidateLoginEligibilityPositiveCache } from "@/app/auth/enforceLoginEligibility";
 import { decryptString } from "@/modules/encrypt";
+import { eventRouter } from "@/app/events/eventRouter";
+import type { ClientConnection } from "@/app/events/eventPayloadTypes";
 import { createAppCloseTracker } from "@/app/api/testkit/appLifecycle";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { applyEnvValues } from "@/testkit/env";
@@ -88,6 +90,9 @@ describe("OIDC offboarding refresh (integration)", () => {
     let rotationCounter = 1;
     // Transient UserInfo outage after an otherwise successful (possibly rotating) grant.
     let userInfoServerError = false;
+    let refreshGrantCount = 0;
+    // Holds the next refresh grant at the issuer until the test releases it.
+    let holdNextRefreshGrant: { arrived: () => void; release: Promise<void> } | null = null;
 
     beforeAll(async () => {
         const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -145,6 +150,15 @@ describe("OIDC offboarding refresh (integration)", () => {
                 const body = await readBody(req);
                 const params = new URLSearchParams(body);
                 const grantType = params.get("grant_type") ?? "";
+                if (grantType === "refresh_token") {
+                    refreshGrantCount += 1;
+                    const hold = holdNextRefreshGrant;
+                    holdNextRefreshGrant = null;
+                    if (hold) {
+                        hold.arrived();
+                        await hold.release;
+                    }
+                }
 
                 if (grantType === "refresh_token" && refreshInvalidGrant) {
                     res.statusCode = 400;
@@ -264,6 +278,8 @@ describe("OIDC offboarding refresh (integration)", () => {
         currentRefreshToken = "rt_1";
         rotationCounter = 1;
         userInfoServerError = false;
+        refreshGrantCount = 0;
+        holdNextRefreshGrant = null;
         await db.repeatKey.deleteMany();
         await db.accountIdentity.deleteMany();
         await db.account.deleteMany();
@@ -642,6 +658,104 @@ describe("OIDC offboarding refresh (integration)", () => {
             select: { eligibilityStatus: true, eligibilityReason: true },
         })).resolves.toEqual({ eligibilityStatus: "eligible", eligibilityReason: null });
         await app.close();
+    });
+
+    // Every API node re-decides its connected Accounts on a sign-in policy change (each node has its
+    // own in-flight map; `invalidateLoginEligibilityPositiveCache` stands for the second node). With a
+    // rotating issuer, a second refresh with the token the first grant just revoked returns
+    // invalid_grant, which would offboard a legitimate Account.
+    it("presents a rotating refresh token once when two checks of the same Account overlap", async () => {
+        applyOidcOffboardingEnv([{
+            id: "okta",
+            type: "oidc",
+            displayName: "Acme Okta",
+            issuer: oidcIssuer,
+            clientId: "oidc_client",
+            clientSecret: "oidc_secret",
+            redirectUrl: "https://api.example.test/v1/oauth/okta/callback",
+            storeRefreshToken: true,
+            scopes: "openid profile email offline_access",
+            allow: { groupsAny: ["eng"] },
+        }]);
+        enforceRefreshTokenRotation = true;
+        const { app, accountId } = await authenticateAccount(14);
+        const expireCheck = () => db.accountIdentity.updateMany({
+            where: { accountId, provider: "okta" },
+            data: { eligibilityNextCheckAt: new Date(0) },
+        });
+        const check = () => enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() });
+        const storedEligibility = () => db.accountIdentity.findFirst({
+            where: { accountId, provider: "okta" },
+            select: { eligibilityStatus: true, eligibilityReason: true },
+        });
+
+        // The second check starts while the first one's grant is in flight at the issuer.
+        await expireCheck();
+        refreshGrantCount = 0;
+        let releaseFirst!: () => void;
+        let firstArrived!: () => void;
+        const arrived = new Promise<void>(resolve => { firstArrived = resolve; });
+        holdNextRefreshGrant = { arrived: firstArrived, release: new Promise<void>(resolve => { releaseFirst = resolve; }) };
+        const first = check();
+        await arrived;
+        invalidateLoginEligibilityPositiveCache();
+        const second = await check();
+        releaseFirst();
+        expect([await first, second]).toEqual([{ ok: true }, { ok: true }]);
+        expect(refreshGrantCount).toBe(1);
+        await expect(storedEligibility()).resolves.toEqual({ eligibilityStatus: "eligible", eligibilityReason: null });
+
+        // Both checks read the due identity before either presents the token.
+        await expireCheck();
+        refreshGrantCount = 0;
+        const overlapping = check();
+        invalidateLoginEligibilityPositiveCache();
+        expect(await Promise.all([overlapping, check()])).toEqual([{ ok: true }, { ok: true }]);
+        expect(refreshGrantCount).toBe(1);
+        await expect(storedEligibility()).resolves.toEqual({ eligibilityStatus: "eligible", eligibilityReason: null });
+        await app.close();
+    });
+
+    // The claim loser answers from the stored result while the winner still holds the grant, so a
+    // winner that offboards the Account must withdraw its live sockets everywhere, not only on its node.
+    it("withdraws every live socket of an Account the claim winner offboards", async () => {
+        applyOidcOffboardingEnv([{
+            id: "okta",
+            type: "oidc",
+            displayName: "Acme Okta",
+            issuer: oidcIssuer,
+            clientId: "oidc_client",
+            clientSecret: "oidc_secret",
+            redirectUrl: "https://api.example.test/v1/oauth/okta/callback",
+            storeRefreshToken: true,
+            scopes: "openid profile email offline_access",
+            allow: { groupsAny: ["eng"] },
+        }]);
+        const { app, accountId } = await authenticateAccount(15);
+        const socket = { connected: true, data: { userId: accountId }, disconnect() { socket.connected = false; } };
+        const connection = { connectionType: "user-scoped", socket, userId: accountId } as unknown as ClientConnection;
+        eventRouter.clearIo();
+        eventRouter.addConnection(accountId, connection);
+        try {
+            await db.accountIdentity.updateMany({ where: { accountId, provider: "okta" }, data: { eligibilityNextCheckAt: new Date(0) } });
+            refreshInvalidGrant = true;
+            let releaseFirst!: () => void;
+            let firstArrived!: () => void;
+            const arrived = new Promise<void>(resolve => { firstArrived = resolve; });
+            holdNextRefreshGrant = { arrived: firstArrived, release: new Promise<void>(resolve => { releaseFirst = resolve; }) };
+            const first = enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() });
+            await arrived;
+            invalidateLoginEligibilityPositiveCache();
+            // The other node: the check is claimed, so it keeps the stored (eligible) result.
+            expect(await enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() }))
+                .toEqual({ ok: true });
+            releaseFirst();
+            expect(await first).toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
+            expect(socket.connected).toBe(false);
+        } finally {
+            eventRouter.removeConnection(accountId, connection);
+            await app.close();
+        }
     });
 
     it("fails closed when refresh token grant returns invalid_grant and restrictions are configured", async () => {

@@ -1,4 +1,4 @@
-import { prepareIdentityLink, unlinkIdentity, refreshIdentity } from "../accountIdentityLifecycle";
+import { claimIdentityEligibilityCheck, prepareIdentityLink, readIdentityEligibilityStatus, unlinkIdentity, refreshIdentity } from "../accountIdentityLifecycle";
 import { evaluateOidcIdentityEligibility } from "./oidcEligibility";
 import type { IdentityProvider } from "@/app/auth/providers/identityProviders/types";
 import type { Context } from "@/context";
@@ -205,6 +205,20 @@ export function createOidcIdentityProvider(
                 (!identity.eligibilityNextCheckAt || identity.eligibilityNextCheckAt.getTime() <= now.getTime());
 
             if (!shouldRefresh) return { ok: true };
+            // Every API node re-decides its connected Accounts on a sign-in policy change, and HTTP
+            // checks race across nodes: only the claim winner presents the (possibly rotating) token.
+            if (!await claimIdentityEligibilityCheck({
+                accountId, provider: providerId, identityId: identity.id,
+                readNextCheckAt: identity.eligibilityNextCheckAt,
+                readToken: new Uint8Array(identity.token!),
+                nextCheckAt: new Date(now.getTime() + params.policy.offboarding.intervalSeconds * 1000),
+            })) {
+                // Another checker owns this check; the winner may already have offboarded the Account
+                // (and then withdraws its live sockets cluster-wide, accountIdentityLifecycle).
+                return await readIdentityEligibilityStatus(identity.id) === "ineligible"
+                    ? { ok: false, statusCode: 403, error: "not-eligible" }
+                    : { ok: true };
+            }
 
             let refreshedClaims: NormalizeOidcIdentityClaimsResult | null = null;
             let refreshedTokenBytes = new Uint8Array(identity.token!);
