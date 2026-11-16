@@ -27,6 +27,14 @@ export type AgentInputLocalUiStateV1 = Readonly<{
 
 export type AgentInputLocalUiStatePatch = Readonly<Omit<Partial<AgentInputLocalUiStateV1>, 'v' | 'updatedAt'>>;
 
+/** Whether two reads of the local UI state carry the same values (each read is a fresh projection object). */
+export function areAgentInputLocalUiStatesEqual(left: AgentInputLocalUiStateV1 | null, right: AgentInputLocalUiStateV1 | null): boolean {
+    if (!left || !right) return left === right;
+    return left.v === right.v && left.expanded === right.expanded && left.scrollY === right.scrollY
+        && left.selection?.start === right.selection?.start && left.selection?.end === right.selection?.end
+        && left.textLength === right.textLength && left.fontScale === right.fontScale && left.updatedAt === right.updatedAt;
+}
+
 type CacheEntry = {
     values: Record<string, AgentInputLocalUiStateV1>;
     dirty: boolean;

@@ -4,6 +4,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import {
     agentInputDraftOwnerKey,
+    areAgentInputLocalUiStatesEqual,
     clearAgentInputLocalUiState,
     flushAgentInputLocalUiState,
     isAgentInputLocalUiStateTextBasisApplicable,
@@ -205,6 +206,26 @@ function isScopedComposerPersistenceStateCurrent(
 }
 
 /**
+ * The scoped state to publish: the current one while a re-read carries the same values. A focus gain re-reads
+ * the store, and each read builds new objects; publishing them would re-run the whole composer controller on
+ * every Session switch-back although nothing changed.
+ */
+function keepScopedComposerPersistenceState(
+    current: ScopedComposerPersistenceState,
+    next: ScopedComposerPersistenceState,
+): ScopedComposerPersistenceState {
+    return areOwnersEqual(current.owner, next.owner)
+        && areNullableScopesEqual(current.scope, next.scope)
+        && current.text === next.text
+        && current.textLength === next.textLength
+        && current.fontScale === next.fontScale
+        && current.expanded === next.expanded
+        && areAgentInputLocalUiStatesEqual(current.inputState, next.inputState)
+        ? current
+        : next;
+}
+
+/**
  * Identifies a restore GENERATION: it changes only when the composer adopts a
  * different owner/scope, when the persisted basis becomes applicable to the
  * live text (the draft finishing its async load on session open), or after an
@@ -330,7 +351,8 @@ export function useSessionAgentInputComposerPersistence({
         nextOwner: AgentInputDraftOwner | null,
         nextContext: ScopedComposerPersistenceReadContext,
     ) => {
-        setScopedState(readScopedComposerPersistenceState(nextScope, nextOwner, nextContext));
+        const next = readScopedComposerPersistenceState(nextScope, nextOwner, nextContext);
+        setScopedState((current) => keepScopedComposerPersistenceState(current, next));
     }, []);
 
     const setScopedStateWithExpanded = React.useCallback((nextExpanded: boolean) => {
@@ -339,10 +361,10 @@ export function useSessionAgentInputComposerPersistence({
             const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, liveContext)
                 ? current
                 : readScopedComposerPersistenceState(scope, owner, liveContext);
-            return {
+            return keepScopedComposerPersistenceState(current, {
                 ...base,
                 expanded: nextExpanded,
-            };
+            });
         });
     }, [owner, readLiveTextContext, scope]);
 
@@ -485,11 +507,11 @@ export function useSessionAgentInputComposerPersistence({
                 const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, liveContext)
                     ? current
                     : readScopedComposerPersistenceState(scope, owner, liveContext);
-                return {
+                return keepScopedComposerPersistenceState(current, {
                     ...base,
                     expanded: shouldKeepExpanded,
                     inputState: readInputState(scope, owner, liveContext),
-                };
+                });
             });
         }
     }, [flushPendingUiState, owner, readLiveTextContext, scope, scopeIsCurrent]);
@@ -515,11 +537,11 @@ export function useSessionAgentInputComposerPersistence({
             const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, liveContext)
                 ? current
                 : readScopedComposerPersistenceState(scope, owner, liveContext);
-            return {
+            return keepScopedComposerPersistenceState(current, {
                 ...base,
                 expanded: state.expanded === true,
                 inputState: readInputState(scope, owner, liveContext),
-            };
+            });
         });
         setRestoreEpoch((epoch) => epoch + 1);
     }, [owner, readLiveTextContext, scope, scopeIsCurrent]);

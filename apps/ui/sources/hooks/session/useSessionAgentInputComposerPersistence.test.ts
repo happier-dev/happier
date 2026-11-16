@@ -907,6 +907,52 @@ describe('useSessionAgentInputComposerPersistence', () => {
         });
     });
 
+    it('a focus re-read publishes only a real change: an equal re-read keeps the composer quiet', async () => {
+        const { useSessionAgentInputComposerPersistence } = await importHook();
+        const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+        const localUiStateStore = await importLocalUiStateStore();
+        const scope = activeScopeState.value;
+        if (!scope) throw new Error('expected active account scope');
+        const owner = { kind: 'session' as const, sessionId: 'session-a' };
+        localUiStateStore.patchAgentInputLocalUiState(scope, owner, { scrollY: 40, selection: { start: 1, end: 2 }, textLength: 5, fontScale: 1 });
+        let renderCount = 0;
+        let expanded: boolean | undefined;
+        function Harness() {
+            renderCount += 1;
+            expanded = useSessionAgentInputComposerPersistence({ sessionId: 'session-a', text: 'hello', textLength: 5, fontScale: 1 }).expanded;
+            return null;
+        }
+        const harness = React.createElement(Harness);
+        let setFocused: (focused: boolean) => void = () => {};
+        // A retained Session's destination: a phone switch hides it (focus off) and shows it again (focus on).
+        function Destination() {
+            const [focused, set] = React.useState(true);
+            setFocused = set;
+            const value = React.useMemo(() => ({
+                tabId: 'tab-a', ref: { kind: 'session' as const, params: { id: 'session-a' } }, pathname: '/session/session-a',
+                focused, visible: focused, isFocused: () => focused, stackOwned: true as const,
+            }), [focused]);
+            return React.createElement(DestinationInstanceContext.Provider, { value }, harness);
+        }
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => { tree = renderer.create(React.createElement(Destination)); });
+        const settled = renderCount;
+
+        for (let switchBack = 0; switchBack < 3; switchBack += 1) {
+            await act(async () => { setFocused(false); });
+            await act(async () => { setFocused(true); });
+        }
+        const afterEqualReReads = renderCount - settled;
+
+        // A real change made while the Session was hidden still arrives on the next show.
+        await act(async () => { setFocused(false); });
+        localUiStateStore.patchAgentInputLocalUiState(scope, owner, { expanded: true });
+        await act(async () => { setFocused(true); });
+
+        expect({ afterEqualReReads, expanded }).toEqual({ afterEqualReReads: 0, expanded: true });
+        await act(async () => { tree!.unmount(); });
+    });
+
     it('persists structured mention changes for the session owner', async () => {
         vi.useFakeTimers();
         const { useSessionAgentInputComposerPersistence } = await importHook();
