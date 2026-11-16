@@ -31,6 +31,9 @@ import { readSessionContinuationOnMachine, readSessionContinuationsOnMachine } f
 import { projectAutomationEligibleEventsCatalogV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { readRpcFailureCode } from './rpcFailureCode';
+import { createThemeActionExecute } from './themeActionDeps';
+import { readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
+import { apiSocket } from '@/sync/api/session/apiSocket';
 import { replayLiveCliApproval } from './liveCliApprovalReplay';
 import { createWidgetInputActionDepsV1 } from './widgetInputActionDeps';
 import { createUiProjectWorkerActionV1 } from './projectWorkerAction';
@@ -1986,6 +1989,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         Pick<ActionExecutorDeps, 'botTemplateAction' | 'prepareBotTemplateInstantiation' | 'prepareBotTemplateUpdate' | 'prepareBotTemplateRelease'>;
     })() : {}),
     ...(accountContext ? {
+      themeAction: createThemeActionExecute({
+        withLibrary: (operation, signal) => sync.withThemeProfileLibrary(operation,
+          { expectedScope: accountContext.accountLifetime.scope, signal }),
+        clientId: () => apiSocket.getSocketId(),
+        readSelection: () => readThemeProfileReferenceSelection(storage.getState().localSettings.themeProfileSelection),
+      }),
       profileActionExecute: createUiProfileActionExecuteV1(accountContext, { onRpcDispatched: opts?.onProviderRpcDispatched }),
       mcpServerAction: createUiMcpServerActionExecuteV1(accountContext, connectedServiceAction, {
         ...(promptLibraryStore?.organization ? { registryActionExecute: createUiRegistryActionExecuteV1(accountContext, promptLibraryStore.organization) } : {}),
