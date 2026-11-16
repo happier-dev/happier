@@ -538,6 +538,51 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         vi.useRealTimers();
     });
 
+    it('ends the fast static-fallback retries for every consumer of the catalog, so opening a picker does not probe again', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(4_000_000);
+        capabilityRpc.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        capabilityRpc.mockImplementation(async () => ({
+            ok: true as const,
+            result: { agentId: 'codex', source: 'static', availableModels: [{ id: 'gpt-5.4', name: 'GPT-5.4' }], supportsFreeform: false },
+        }));
+        const params = {
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            selectedMachineId: 'machine-1',
+            capabilityServerId: preflight.serverId,
+            cwd: '/repo',
+        } as const;
+
+        const screen = await renderHook(() => useNewSessionPreflightModelsState(params));
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(capabilityRpc).toHaveBeenCalledTimes(1);
+        });
+        for (let retry = 0; retry < 3; retry++) {
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS + 1);
+            });
+            await flushHookEffects();
+        }
+        // The first read plus the bounded fast retries.
+        expect(capabilityRpc).toHaveBeenCalledTimes(3);
+
+        // A picker that reads the same catalog while the screen is open joins the settled fallback.
+        const picker = await renderHook(() => useNewSessionPreflightModelsState(params));
+        await flushHookEffects();
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS + 1);
+        });
+        await flushHookEffects();
+        expect(capabilityRpc).toHaveBeenCalledTimes(3);
+        expect(picker.getCurrent().modelOptions.some((option) => option.value === 'gpt-5.4')).toBe(true);
+
+        await picker.unmount();
+        await screen.unmount();
+        vi.useRealTimers();
+    });
+
     it('does not turn an unavailable model probe into a placeholder Default catalog', async () => {
         capabilityRpc.mockReset();
         resetDynamicModelProbeCacheForTests();

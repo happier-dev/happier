@@ -14,6 +14,7 @@ import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicMod
 import {
     dynamicModelProbeRetryAt,
     findRetainedDynamicModelName,
+    hasDynamicModelProbeStaticFallbackFastRetry,
     isDynamicModelProbeCacheFresh,
     isDynamicModelProbePending,
     readDynamicModelProbeCache,
@@ -82,7 +83,6 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     const lastHandledRefreshNonceRef = React.useRef(0);
     const preflightModelsRef = React.useRef<PreflightModelList | null>(null);
     const lastCacheKeyRef = React.useRef<string | null>(null);
-    const staticFallbackRetryRef = React.useRef<Readonly<{ scopeKey: string | null; attempts: number }> | null>(null);
 
     const onRefresh = React.useCallback(() => {
         setRefreshNonce((n) => n + 1);
@@ -217,13 +217,10 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             if (!enabled) return;
             const retryAt = dynamicModelProbeRetryAt(entry);
             if (retryAt === null) return;
-            const isStaticFallback = entry?.kind === 'success' && entry.staticFallback;
-            const state = staticFallbackRetryRef.current;
-            const attempts = state?.scopeKey === preflightModelsKey ? state.attempts : 0;
-            // Preserve the existing bounded fast retry lifecycle for failed static fallback.
-            if (isStaticFallback && attempts >= 2) return;
+            // The cache owns the fast-retry budget for every consumer of this catalog;
+            // a spent static fallback waits out the error backoff or an explicit refresh.
+            if (entry?.kind === 'success' && entry.staticFallback && !hasDynamicModelProbeStaticFallbackFastRetry(entry)) return;
             retryTimeout = setTimeout(() => {
-                if (isStaticFallback) staticFallbackRetryRef.current = { scopeKey: preflightModelsKey, attempts: attempts + 1 };
                 setRetryNonce((n) => n + 1);
             }, Math.max(0, retryAt - Date.now()));
         };
@@ -232,7 +229,6 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         const unsubscribe = subscribeDynamicModelProbeCache(preflightModelsKey, () => {
             const entry = readDynamicModelProbeCache(preflightModelsKey, modelSuccessCacheMaxAgeMs);
             applyEntry(entry);
-            if (dynamicModelProbeRetryAt(entry) === null) staticFallbackRetryRef.current = null;
             scheduleRetry(entry);
         }, () => { firstObserver = true; });
         const force = refreshNonce !== lastHandledRefreshNonceRef.current;
@@ -268,7 +264,6 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 if (cancelled) return;
                 applyEntry(entry);
                 setProbePhase('idle');
-                if (dynamicModelProbeRetryAt(entry) === null) staticFallbackRetryRef.current = null;
                 scheduleRetry(entry);
             }).catch(() => {
                 if (!cancelled) setProbePhase('idle');

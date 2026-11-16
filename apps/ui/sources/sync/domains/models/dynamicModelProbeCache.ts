@@ -16,6 +16,8 @@ export type DynamicModelProbeCacheEntry = ProbedResourceFailure & (
         value: PreflightModelList;
         cacheable?: boolean;
         staticFallback?: boolean;
+        /** Failed refreshes recorded on this fallback list; the cache owns the fast-retry budget. */
+        staticFallbackFailures?: number;
         errorUpdatedAt?: number;
         spawnFailure?: SpawnFailureV1;
     }>
@@ -33,6 +35,8 @@ export const DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS = 60_000;
 // When dynamic model probing temporarily falls back to a static list (no per-model options),
 // retry quickly so users don't have to manually hit refresh to see things like Thinking/Speed.
 export const DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS = 2_000;
+// Fast retries after the failed refresh that produced a static fallback; later failures take the error backoff.
+export const DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_FAST_RETRIES = 2;
 export const DYNAMIC_MODEL_PROBE_TRANSIENT_SUCCESS_MAX_AGE_MS = 10 * 60_000;
 
 const PERSIST_KEY = 'dynamic-model-probe-cache-v1';
@@ -90,6 +94,7 @@ const transientSuccessByKey = new Map<string, Readonly<{
     retainUntil: number;
     value: PreflightModelList;
     staticFallback: boolean;
+    staticFallbackFailures: number;
     errorUpdatedAt?: number;
 }>>();
 
@@ -168,6 +173,7 @@ function readTransientSuccess(key: string, nowMs = Date.now(), successMaxAgeMs =
         value: entry.value,
         cacheable: false,
         staticFallback: entry.staticFallback,
+        ...(entry.staticFallback ? { staticFallbackFailures: entry.staticFallbackFailures } : {}),
         ...(entry.errorUpdatedAt !== undefined ? { errorUpdatedAt: entry.errorUpdatedAt } : {}),
     };
 }
@@ -243,6 +249,7 @@ export function writeDynamicModelProbeCacheTransientSuccess(
         expiresAt: nowMs + (staticFallback ? DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS : DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS),
         retainUntil: Date.now() + (staticFallback ? DYNAMIC_MODEL_PROBE_TRANSIENT_SUCCESS_MAX_AGE_MS : DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS),
         staticFallback,
+        staticFallbackFailures: 0,
         value,
     });
     notifyDynamicModelProbeCache(key);
@@ -250,7 +257,8 @@ export function writeDynamicModelProbeCacheTransientSuccess(
 
 export function writeDynamicModelProbeCacheError(key: string, nowMs = Date.now(), spawnFailure?: SpawnFailureV1, failure?: ProbedResourceFailure): void {
     const transient = transientSuccessByKey.get(key);
-    if (transient) transientSuccessByKey.set(key, { ...transient, errorUpdatedAt: nowMs });
+    if (transient) transientSuccessByKey.set(key, { ...transient, errorUpdatedAt: nowMs,
+        staticFallbackFailures: transient.staticFallback ? transient.staticFallbackFailures + 1 : 0 });
     transientUnavailableByKey.delete(key);
     persistedCache.writeError(key, new DynamicModelProbeError(spawnFailure, failure), nowMs);
     notifyDynamicModelProbeCache(key);
@@ -280,13 +288,20 @@ export async function runDynamicModelProbeDedupe<T>(
     return await persistedCache.runDedupe(key, run, signal);
 }
 
+/** A static fallback still inside its fast-retry budget, shared by every consumer of the key. */
+export function hasDynamicModelProbeStaticFallbackFastRetry(entry: DynamicModelProbeCacheEntry | null): boolean {
+    return entry?.kind === 'success' && entry.staticFallback === true
+        && (entry.staticFallbackFailures ?? 0) <= DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_FAST_RETRIES;
+}
+
 /** Retry failures without renewing the timestamp of the last successful observation. */
 export function dynamicModelProbeRetryAt(entry: DynamicModelProbeCacheEntry | null): number | null {
     if (!entry) return null;
     if (entry.reason === 'outcomeUnknown' || entry.retryable === false) return null;
     if (entry.kind === 'error') return entry.expiresAt;
     if (entry.value.unavailable) return entry.expiresAt;
-    if (entry.staticFallback) return (entry.errorUpdatedAt ?? entry.updatedAt) + DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS;
+    if (entry.staticFallback) return (entry.errorUpdatedAt ?? entry.updatedAt) + (hasDynamicModelProbeStaticFallbackFastRetry(entry)
+        ? DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS : DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS);
     return entry.errorUpdatedAt === undefined ? null : entry.errorUpdatedAt + DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS;
 }
 
