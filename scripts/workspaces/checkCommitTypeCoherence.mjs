@@ -37,7 +37,7 @@ import { resolveTypeScriptApiExecutable } from './resolveTypeScriptApiExecutable
 import { diagnosticHunks, diagnosticMessageText, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
 import { uiTypedRoutesDeclaration } from '../../apps/ui/scripts/uiTypedRoutesDeclaration.mjs';
 import { commitProducerClosure } from './commitProducerClosure.mjs';
-import { runCommitPackageTypecheck } from './commitPackageTypecheck.mjs';
+import { kickRollingHeadTypecheck } from './commitPackageTypecheck.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { readStaleServerGeneratedClients, SERVER_GENERATED_CLIENTS } from '../../apps/stack/scripts/build/server_generated_clients.mjs';
 
@@ -49,7 +49,6 @@ export { commitProducerClosure };
 export { commitExtensionBoundaries };
 // The touched packages/* typecheck (owner ruling 2026-11-15) runs in its warm per-host worktree under
 // its own admission; its CLI owns the blocking/warn decision and exits 1 only when it refuses.
-export { runCommitPackageTypecheck };
 
 const require = createRequire(import.meta.url);
 let ts;
@@ -827,16 +826,6 @@ function main(argv) {
       '--compiler-admitted', ...argv], process.env);
   };
   for (const target of targets) {
-    // Before this process takes compiler admission (the re-entered admitted body skips it), so
-    // the package typecheck never nests a second reservation inside the checker's.
-    if (!argv.includes('--compiler-admitted')) {
-      const packageCheck = runCommitPackageTypecheck({ repo, base: target.base, tree: target.tree });
-      process.stdout.write(packageCheck.output);
-      if (packageCheck.status !== 0) {
-        console.error(`Packet refused: package typecheck exit=${packageCheck.status}`);
-        return 1;
-      }
-    }
     const result = checkCommitTypeCoherence({ repo, ...target, beforeCompiler });
     // Blocking producer closure (owner 2026-11-15). TS packets reach it after admission, because
     // the CLI does no work before its queued process image is replaced; zero-TS packets need none.
@@ -871,6 +860,7 @@ function main(argv) {
         return 1;
       }
       console.log(`committed ${finalized.commit}: parent=${finalized.checked.base} reused=${finalized.reusedGroups.join(',')} rechecked=${finalized.recheckedGroups.join(',')}`);
+      console.log(kickRollingHeadTypecheck({ repo }));
     }
   }
   return incoherent ? 1 : 0;

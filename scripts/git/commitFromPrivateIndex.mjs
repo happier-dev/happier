@@ -100,12 +100,6 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
         throw new Error([`Commit refused: the packet adds ${boundary.findings.length} extension import-boundary violation(s):`,
           ...boundary.findings.map(finding => `  ${finding}`)].join('\n'));
       }
-      // Touched packages/* typecheck (owner ruling 2026-11-15), every CAS attempt: the parent moved.
-      // Its CLI owns admission, the warm worktree and the blocking/warn decision.
-      const { runCommitPackageTypecheck } = await import('../workspaces/checkCommitTypeCoherence.mjs');
-      const packageCheck = runCommitPackageTypecheck({ repo: cwd, base: head, tree });
-      if (packageCheck.output.trim()) console.error(packageCheck.output.trimEnd());
-      if (packageCheck.status !== 0) throw new Error(`Commit refused: the package typecheck found new type errors (exit ${packageCheck.status}); see above.`);
       const commit = git('commit-tree', tree, '-p', head, '-F', messageFile);
       try {
         git('update-ref', 'HEAD', commit, head);
@@ -114,6 +108,9 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
         throw error;
       }
       console.error(`Committed ${commit}; synchronizing shared index`);
+      // HEAD moved: the rolling HEAD typecheck (owner ruling 2026-11-15) covers this commit; it never waits.
+      const { kickRollingHeadTypecheck } = await import('../workspaces/commitPackageTypecheck.mjs');
+      console.error(kickRollingHeadTypecheck({ repo: cwd }));
       await syncSharedIndex(cwd, commit, committed);
       return commit;
     }
