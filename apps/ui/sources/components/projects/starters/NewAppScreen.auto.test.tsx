@@ -288,6 +288,89 @@ it('Stop ends the accepted run once and returns to the description, kept (journe
   }
 });
 
+it('a refused Stop keeps the run on screen with the refusal and Retry; it never claims it stopped (journey-deploy F1 Stop)', async () => {
+  let release: (() => void) | null = null;
+  let refuse = true;
+  let stops = 0;
+  suggestionBoundary({
+    // Like the real transport, the wait ends when its caller's signal aborts (Stop asked); the Run itself goes on.
+    executionRunWait: (_sessionId, _args, opts) =>
+      new Promise((resolve, reject) => {
+        release = () => resolve({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) });
+        const signal = (opts as { signal?: AbortSignal } | undefined)?.signal;
+        signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+      }),
+    executionRunStop: async () => {
+      stops++;
+      if (refuse) return { ok: false, errorCode: 'stop_refused', error: 'Stop refused' };
+      release?.();
+      return { ok: true };
+    },
+  });
+  const { fixture, screen } = await openDescribe('auto-stop-refused');
+  try {
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A booking page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(calls('execution.run.start')).toHaveLength(1));
+    await screen.pressByTestIdAsync('newApp.auto.stop');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.stopRefused')).toBeTruthy());
+    expect(stops).toBe(1);
+    expect(screen.findByTestId('newApp.auto.describe'), 'a refused Stop is not a stop').toBeNull();
+    expect(screen.findByTestId('newApp.auto.working')).toBeTruthy();
+    refuse = false;
+    await screen.pressByTestIdAsync('newApp.auto.stopRefused.retry');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.describe')).toBeTruthy());
+    expect(stops).toBe(2);
+    expect(screen.findByTestId('newApp.auto.description')?.props.value).toBe('A booking page');
+    expect(calls('deployments.suggestions.check'), 'nothing is checked after Stop').toHaveLength(0);
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
+it('a catalog-app card continues in this dialog on Where for that app, not in the Store (journey-deploy F4 pure deploy)', async () => {
+  const digest = `sha256:${'a'.repeat(64)}`;
+  const summary = { sourceId: 'app', kind: 'app', itemId: 'plausible', title: 'Plausible', version: digest };
+  const reads: unknown[] = [];
+  suggestionBoundary({
+    registryActionExecute: async ({ actionId, input }) => {
+      if (actionId === 'registries.items.read') {
+        reads.push(input);
+        return { item: { summary, fetchedAt: 1, payload: { kind: 'app', state: 'ready', ref: { kind: 'content', digest },
+          app: { schemaVersion: 1, title: 'Plausible', compose: { document: 'services:\n  web:\n    image: plausible/analytics\n' },
+            variables: [], generatedSecrets: [], domains: [], volumes: [] } } } };
+      }
+      const kind = (input as { kind: string }).kind;
+      return { pages: [{ sourceId: kind, status: { state: 'ok', fetchedAt: 1 }, nextCursor: null, items: kind === 'app' ? [summary] : [] }] };
+    },
+    executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [{
+      source: { kind: 'catalogApp', appId: '["app","plausible"]' }, targetId: 'own', whatToBuild: 'Self-hosted analytics',
+      stack: { framework: 'compose', output: 'container' }, data: { kind: 'none' }, variables: [] }] }) }),
+  });
+  const { fixture, screen, onClose } = await openDescribe('auto-catalog-where');
+  try {
+    routerMock.spies.push.mockClear();
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A self-hosted analytics dashboard'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.useSetup')?.props.disabled).toBe(false));
+    await screen.pressByTestIdAsync('newApp.auto.useSetup');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft')).toBeTruthy());
+    expect(reads).toContainEqual(expect.objectContaining({ kind: 'app', sourceId: 'app', itemId: 'plausible' }));
+    expect(onClose, 'the dialog stays: Where runs inside it').not.toHaveBeenCalled();
+    expect(routerMock.spies.push, 'no detour through the Store listing').not.toHaveBeenCalled();
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('says why no agent can suggest, per Machine, starting no run; Choose a starter myself returns to the source step (journey-deploy F3)', async () => {
   suggestionBoundary({
     agentsModelsList: async () => ({

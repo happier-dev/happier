@@ -631,9 +631,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     (step === 'create' && (create?.kind === 'failed' || create?.kind === 'outcomeUnknown'))
   );
   // The step's quieter ways out, before Back and the primary (lab autoThink: Stop · Close; autoNoAgent: Choose a starter myself).
-  const autoSecondary = step !== 'auto' || addingMachine ? null
+  const autoStop = auto.view.kind === 'working' ? (typeof auto.view.stop === 'object' ? 'refused' : auto.view.stop) : null;
+  const autoSecondary: ReadonlyArray<Readonly<{ title: string; testID: string; onPress: () => void; loading?: boolean }>> | null =
+    step !== 'auto' || addingMachine ? null
     : autoKind === 'working' ? [
-        { title: t('newApp.auto.stop'), testID: 'newApp.auto.stop', onPress: () => auto.stop() },
+        // A refused Stop's Retry lives in its notice; while Stop is asked, the button waits for its answer.
+        ...(autoStop === 'refused' ? [] : [{ title: t('newApp.auto.stop'), testID: 'newApp.auto.stop', onPress: () => auto.stop(),
+          loading: autoStop === 'stopping' }]),
         { title: t('common.close'), testID: 'newApp.auto.close', onPress: () => closeRef.current() },
       ]
     : autoKind === 'noAgent' ? [{ title: t('newApp.auto.chooseStarter'), testID: 'newApp.auto.chooseStarter', onPress: () => backRef.current() }]
@@ -1093,7 +1097,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                 ) : null}
                 {autoSecondary?.map((action) => (
                   <RoundButton key={action.testID} testID={action.testID} size="small" display="inverted"
-                    title={action.title} onPress={action.onPress} />
+                    title={action.title} loading={action.loading ?? false} onPress={action.onPress} />
                 ))}
                 {showBack ? (
                   <RoundButton
@@ -1127,6 +1131,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       primary?.title,
       step,
       autoKind,
+      autoStop,
       showBack,
       addingMachine,
       stepIndex,
@@ -1160,7 +1165,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             ) : null}
             {autoSecondary?.map((action) => (
               <RoundButton key={action.testID} testID={action.testID} size="normal" display="inverted"
-                title={action.title} onPress={action.onPress} />
+                title={action.title} loading={action.loading ?? false} onPress={action.onPress} />
             ))}
             {primary ? (
               <RoundButton

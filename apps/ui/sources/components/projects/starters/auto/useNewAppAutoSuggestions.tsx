@@ -28,6 +28,7 @@ import type {
 } from './NewAppAutoStep';
 
 type Runner = Extract<DeploySuggestionProgress, { kind: 'runner' }>;
+type RunStop = Extract<DeploySuggestionProgress, { kind: 'run' }>['stop'];
 type Phase =
   | Readonly<{ kind: 'describe' }>
   | Readonly<{
@@ -37,6 +38,7 @@ type Phase =
         | null;
       runner: Runner | null;
       running: boolean;
+      stop: 'idle' | 'stopping' | Readonly<{ refused: string }>;
     }>
   | Readonly<{
       kind: 'settled';
@@ -64,11 +66,33 @@ export function useNewAppAutoSuggestions(
   const [phase, setPhase] = React.useState<Phase>({ kind: 'describe' });
   const [chosenCardId, setChosenCardId] = React.useState<string | null>(null);
   const abort = React.useRef<AbortController | null>(null);
+  // The accepted Run's own Stop, for a Retry after its target refused the first one.
+  const runStop = React.useRef<RunStop | null>(null);
 
+  // Stop is a request: the step stays on the Run until its target confirms the stop, and a refusal stays on screen.
   const stop = React.useCallback(() => {
-    abort.current?.abort();
-    abort.current = null;
-    setPhase({ kind: 'describe' });
+    const controller = abort.current;
+    if (!controller) {
+      setPhase((current) => (current.kind === 'describe' ? current : { kind: 'describe' }));
+      return;
+    }
+    setPhase((current) => (current.kind === 'working' ? { ...current, stop: 'stopping' } : current));
+    if (!controller.signal.aborted) {
+      controller.abort();
+      return;
+    }
+    const retry = runStop.current;
+    if (!retry) return;
+    void retry().then((result) => {
+      if (abort.current !== controller) return;
+      if (result.ok) {
+        abort.current = null;
+        runStop.current = null;
+        setPhase({ kind: 'describe' });
+        return;
+      }
+      setPhase((current) => (current.kind === 'working' ? { ...current, stop: { refused: result.errorCode } } : current));
+    });
   }, []);
   // Leaving the step or closing the dialog stops the run (request_response, ephemeral).
   React.useEffect(() => {
@@ -82,7 +106,8 @@ export function useNewAppAutoSuggestions(
     const controller = new AbortController();
     abort.current = controller;
     setChosenCardId(null);
-    setPhase({ kind: 'working', counts: null, runner: null, running: false });
+    runStop.current = null;
+    setPhase({ kind: 'working', counts: null, runner: null, running: false, stop: 'idle' });
     let runner: Runner | null = null;
     void suggestDeploySetup({
       serverId: params.serverId,
@@ -90,6 +115,7 @@ export function useNewAppAutoSuggestions(
       choice: runnerChoice ?? null,
       signal: controller.signal,
       onProgress: (progress) => {
+        if (progress.kind === 'run') runStop.current = progress.stop;
         if (controller.signal.aborted) return;
         if (progress.kind === 'runner') runner = progress;
         setPhase((current) =>
@@ -104,7 +130,13 @@ export function useNewAppAutoSuggestions(
       },
     }).then((outcome) => {
       if (abort.current !== controller) return;
+      if (controller.signal.aborted && outcome.kind === 'failed') {
+        // Stop was asked and refused: the Run may still be going. Keep it on screen with the refusal.
+        setPhase((current) => (current.kind === 'working' ? { ...current, stop: { refused: outcome.code } } : current));
+        return;
+      }
       abort.current = null;
+      runStop.current = null;
       if (outcome.kind === 'stopped') {
         setPhase({ kind: 'describe' });
         return;
@@ -140,6 +172,9 @@ export function useNewAppAutoSuggestions(
         kind: 'working',
         steps: workingSteps(phase),
         runsOn: phase.runner ? runsOnLine(phase.runner) : null,
+        stop: typeof phase.stop === 'object'
+          ? { refused: phase.stop.refused, machine: phase.runner?.label ?? null, onRetry: stop }
+          : phase.stop,
       };
     const outcome = phase.outcome;
     if (outcome.kind === 'recommendations') {
@@ -173,7 +208,7 @@ export function useNewAppAutoSuggestions(
     // Questions render in the step with U2's extracted question form; until then they read as no setup yet.
     if (outcome.kind === 'failed') return { kind: 'failed' };
     return { kind: 'nothing' };
-  }, [openMachineSetup, phase, theme.colors.text.secondary]);
+  }, [openMachineSetup, phase, stop, theme.colors.text.secondary]);
 
   const settled = phase.kind === 'settled' ? phase.outcome : null;
   const chosen = React.useMemo((): NewAppAutoChosen | null => {

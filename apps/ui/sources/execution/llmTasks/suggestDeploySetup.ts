@@ -18,14 +18,17 @@ import type { InteractionTransientQuestionAnswerV1, InteractionTransientQuestion
 
 import { projectCheckoutParentPath } from '@/components/projects/activation/projectOpenChoices';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { resolveWorkspaceLlmTaskRunner, runLlmTaskInWorkspace, type LlmTaskHostV1 } from './runLlmTaskInWorkspace';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolveWorkspaceLlmTaskRunner, runLlmTaskInWorkspace, stopLlmTaskRun, type LlmTaskHostV1 } from './runLlmTaskInWorkspace';
 
 const executeAction = createFrontDoorActionExecute();
 
 export type DeploySuggestionProgress =
     | Readonly<{ kind: 'catalog'; counts: Readonly<Record<'starters' | 'apps' | 'targets' | 'machines' | 'stores', number>> }>
     | Readonly<{ kind: 'runner'; machineId: string; label: string; agentTargetKey: string; agentTitle?: string }>
-    | Readonly<{ kind: 'run'; machineId: string; label: string; agentTargetKey: string; agentTitle?: string; runId: string }>;
+    /** `stop` asks this accepted Run's own target to stop it again (after a refused Stop); it settles with the Action's result. */
+    | Readonly<{ kind: 'run'; machineId: string; label: string; agentTargetKey: string; agentTitle?: string; runId: string;
+        stop: () => Promise<ActionExecuteResult> }>;
 
 export type DeploySuggestionUnavailableMachine = Readonly<{
     machineId: string;
@@ -103,7 +106,7 @@ export async function suggestDeploySetup(params: Readonly<{
                 task: 'deploy_suggestion', intent: 'task', instructions: DEPLOY_SUGGESTION_INSTRUCTIONS_V1,
                 intentInput: { input: input.data, resultSchema: zodSchemaToJsonSchemaObject(DeploySuggestionV1Schema, { target: 'draft-7' }) },
                 ...(params.signal ? { signal: params.signal } : {}),
-                onStarted: runId => params.onProgress?.({ kind: 'run', ...runner, runId }),
+                onStarted: runId => params.onProgress?.({ kind: 'run', ...runner, runId, stop: () => stopLlmTaskRun({ host, runId }) }),
             });
             if (!run.ok) return params.signal?.aborted && run.errorCode === 'cancelled'
                 ? { kind: 'stopped' } : { kind: 'failed', code: run.errorCode ?? 'execution_run_failed' };

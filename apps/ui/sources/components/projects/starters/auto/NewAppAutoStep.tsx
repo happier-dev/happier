@@ -57,6 +57,11 @@ export type NewAppAutoView =
       kind: 'working';
       steps: readonly SetupStep[];
       runsOn: string | null;
+      /**
+       * Where Stop stands: asked and not yet confirmed, or refused by the Run's target (the Run may still be going;
+       * the step says so and offers Retry, never Describe).
+       */
+      stop: 'idle' | 'stopping' | Readonly<{ refused: string; machine: string | null; onRetry: () => void }>;
     }>
   | Readonly<{
       kind: 'recommendations';
@@ -185,6 +190,17 @@ export function NewAppAutoStep(
             />
           </View>
         </ItemGroup>
+      ) : null}
+      {view.kind === 'working' && typeof view.stop === 'object' ? (
+        <AttentionBanner
+          testID="newApp.auto.stopRefused"
+          tone="danger"
+          announce="alert"
+          title={t('newApp.auto.stopRefusedTitle')}
+          description={view.stop.machine ? t('newApp.auto.stopRefusedBody', { machine: view.stop.machine }) : undefined}
+          details={[view.stop.refused]}
+          action={{ label: t('common.retry'), onPress: view.stop.onRetry, testID: 'newApp.auto.stopRefused.retry' }}
+        />
       ) : null}
       {view.kind === 'working' && view.runsOn ? (
         <Text
