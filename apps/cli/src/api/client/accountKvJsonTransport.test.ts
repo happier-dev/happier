@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createCliAccountKvJsonTransport, resolveCliAccountStorageContext } from './accountKvJsonTransport';
+import { createCliAccountKvJsonCollectionTransport, createCliAccountKvJsonTransport, resolveCliAccountStorageContext } from './accountKvJsonTransport';
+import { ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { deriveAccountMachineKeyFromRecoverySecret, createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { legacyAccountKvVectors } from '../../../../../packages/protocol/src/crypto/fixtures/accountKvLegacyV0';
@@ -11,6 +12,33 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 afterEach(() => vi.restoreAllMocks());
+it('writes, reads and lists keyless plain rows through protocol-admitted Account KV HTTP', async () => {
+    const key = 'todo.plain-protocol';
+    const value = { title: 'Plain Account Task', notes: 'private to this Account' };
+    let stored: { key: string; value: string; version: number } | undefined;
+    // The HTTP boundary requires the same declaration as Home before accepting current envelopes.
+    const admitted = (headers: unknown) => typeof headers === 'object' && headers !== null
+        && Number(Reflect.get(headers, ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER)) >= CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION;
+    vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+        if (url.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        if (!admitted(config?.headers)) return { status: 426, data: { error: 'client-upgrade-required' } };
+        return url.includes('?') ? { status: 200, data: { items: stored ? [stored] : [] } }
+            : stored ? { status: 200, data: stored } : { status: 404 };
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (_url, body, config) => {
+        if (!admitted(config?.headers)) return { status: 426, data: { error: 'client-upgrade-required' } };
+        const mutation = (body as { mutations: { key: string; value: string; version: number }[] }).mutations[0]!;
+        stored = { key: mutation.key, value: mutation.value, version: mutation.version + 1 };
+        return { status: 200, data: { success: true, results: [{ key: stored.key, version: stored.version }] } };
+    });
+    const transport = createCliAccountKvJsonCollectionTransport({ credentials: { token: 'plain-token', encryption: null },
+        serverBaseUrl: 'https://plain-home.test', resolveAuthorizationHeaders: () => ({ Authorization: 'Bearer plain-token' }) });
+    await expect(transport.mutate([{ key, value, version: -1 }])).resolves.toEqual({ success: true, results: [{ key, version: 0 }] });
+    expect(JSON.parse(Buffer.from(stored!.value, 'base64').toString())).toEqual({ t: 'plain', v: value });
+    await expect(transport.read(key)).resolves.toEqual({ value, version: 0 });
+    await expect(transport.list('todo.')).resolves.toEqual([{ key, value, version: 0 }]);
+});
 it.each(['fresh-authority', 'identity'] as const)('admits %s storage using in-hand requester custody rather than same-token disk keys', async usage => {
     const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_API_TOKEN', 'HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE']);
     try {

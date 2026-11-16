@@ -10,6 +10,7 @@ import { decodeBase64, encodeBase64, decryptResult, encrypt } from '@/api/encryp
 import { readRequesterAccountEncryptionCurrentness } from './accountEncryptionCurrentnessObservation';
 import { fetchAccountEncryptionCurrentness } from './accountEncryptionCurrentness';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 
 export type AccountKvAuthorizationRequest = Readonly<{ method: 'GET' | 'POST'; path: string; body?: unknown }>;
 export type CliAccountKvJsonTransportParams = Readonly<{
@@ -86,7 +87,7 @@ export function createCliAccountKvJsonCollectionTransport(params: Omit<CliAccoun
   const headers = (request: AccountKvAuthorizationRequest) => {
     check(); const value = params.resolveAuthorizationHeaders(request);
     if (!value) throw new AccountKvJsonTransportError('not_authenticated', 'Account authorization is unavailable');
-    return value;
+    return { ...value, ...buildCurrentAccountStoredContentCompatibilityHttpHeaders() };
   };
   const context = async (usage: 'identity' | 'fresh-authority') => {
     return resolveCliAccountStorageContext({ credentials: params.credentials, serverBaseUrl: base,

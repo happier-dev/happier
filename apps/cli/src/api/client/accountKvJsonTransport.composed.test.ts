@@ -10,7 +10,7 @@ import { legacyAccountKvVectors } from '../../../../../packages/protocol/src/cry
 import { createAccountKvHttpFixture } from '../../../../ui/sources/dev/testkit/fixtures/accountKvHttpFixture';
 import { Encryption } from '../../../../ui/sources/sync/encryption/encryption';
 import { createAccountKvJsonTransport } from '../../../../ui/sources/sync/ops/account/accountKvJsonTransport';
-import { encodeBase64, encrypt, decodeBase64 } from '@/api/encryption';
+import { encodeBase64, encrypt } from '@/api/encryption';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { acquireRequesterAccountEncryptionCurrentness } from './accountEncryptionCurrentnessObservation';
@@ -120,17 +120,12 @@ it.each(['mode', 'key', 'epoch'] as const)('freshly admits a KV write after a co
         fixture.change(change);
         const value = { title: 'Freshly admitted write' };
         const write = fixture.transport('todo.write').compareAndSet(value, -1);
-        if (change === 'mode') {
-            await expect(write).resolves.toEqual({ success: true, version: 0 });
-            expect(JSON.parse(new TextDecoder().decode(decodeBase64(fixture.storage.read('todo.write')!.value))))
-                .toEqual({ t: 'plain', v: value });
-        } else {
-            await expect(write).rejects.toMatchObject({
-                code: change === 'epoch' ? 'account_encryption_currentness_unavailable' : 'account_storage_currentness_unavailable',
-            });
-            expect(fixture.storage.read('todo.write')).toBeUndefined();
-            expect(fixture.storage.readRequests().filter(request => request.method === 'POST')).toHaveLength(0);
-        }
+        await expect(write).rejects.toMatchObject({
+            code: change === 'mode' ? 'account_mode_downgrade_unverified'
+                : change === 'epoch' ? 'account_encryption_currentness_unavailable' : 'account_storage_currentness_unavailable',
+        });
+        expect(fixture.storage.read('todo.write')).toBeUndefined();
+        expect(fixture.storage.readRequests().filter(request => request.method === 'POST')).toHaveLength(0);
         expect(fixture.currentnessReads()).toBe(2);
     } finally { await fixture.close(); }
 });
@@ -144,7 +139,8 @@ it.each(['mode', 'key', 'epoch'] as const)('refuses legacy lazy re-sealing after
         fixture.holdRead();
         const read = fixture.transport(row.key).read();
         const refused = expect(read).rejects.toMatchObject({
-            code: change === 'epoch' ? 'account_encryption_currentness_unavailable' : 'account_storage_currentness_unavailable',
+            code: change === 'mode' ? 'account_mode_downgrade_unverified'
+                : change === 'epoch' ? 'account_encryption_currentness_unavailable' : 'account_storage_currentness_unavailable',
         });
         await fixture.rowRequested.promise;
         fixture.change(change);
@@ -169,7 +165,11 @@ it('UI legacy read re-seals real HTTP rows consumed by the paired CLI tasks.inte
             if (request.url === '/v1/account/encryption/currentness') {
                 response.setHeader('Content-Type', 'application/json');
                 response.end(JSON.stringify({ mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing-current', contentKeyFingerprint: fingerprint, updatedAt: 1 }));
-            } else if (!await storage.handle(request, response)) { response.statusCode = 404; response.end(); }
+            } else if (!await storage.handle(request, response)) {
+                response.statusCode = 404;
+                response.setHeader('Content-Type', 'application/json');
+                response.end(JSON.stringify({ statusCode: 404, error: 'Not Found', message: `Route ${request.method}:${request.url} not found` }));
+            }
         } catch { response.statusCode = 500; response.end(); }
     });
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
