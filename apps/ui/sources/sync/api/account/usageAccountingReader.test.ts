@@ -11,7 +11,7 @@ import { summarizeUsageWork } from '@/components/settings/usage/widgets/usageWor
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { readUsageContributionProjection } from '@happier-dev/protocol/usage/usageCost';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 1000 }, includeSeries: false });
@@ -22,6 +22,92 @@ function reader(transport: CapturedServerReadTransport) {
     return createUsageAccountingReader({ credentials: { token: 'test' }, readTransport: transport,
         request: async () => { throw new Error('Unexpected scalar read'); } }, new AbortController().signal);
 }
+
+it.each([true, false])('keeps invocation authority while selecting aggregate delivery, compact=%s', async compact => {
+    const serverId = `invocation-usage-${compact}`;
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready',
+        features: createRootLayoutFeaturesResponse({ features: { usage: { compactBatch: { enabled: compact } } } }) } });
+    const contributions = Array.from({ length: 5_744 }, (_, index) => ({
+        id: `event-${index}`, observedAtMs: 500, sessionId: 'session', turnId: `turn-${index}`,
+        agentId: 'agent', modelId: null, machineId: null, projectKey: null, workspaceId: null, source: 'runtime',
+        tokens: value.totals.tokens, cost: value.totals.cost,
+    }));
+    const rich = { ...value, contributions, totals: { ...value.totals, eventCount: contributions.length,
+        tokens: { ...value.totals.tokens, input: contributions.length, total: contributions.length } } };
+    const controller = new AbortController();
+    const observed: { actor: string; path: string; rows: number }[] = [];
+    const makeReader = (actor: string) => createUsageAccountingReader({ credentials: { token: actor },
+        accountLifetime: { scope: { serverId, accountId: actor } },
+        // The real invocation request owns proof preparation; this HTTP boundary
+        // rejects another invocation's bearer and records the delivered population.
+        request: async (path, init) => {
+            expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${actor}`);
+            expect(init?.signal?.aborted).toBe(false);
+            if (path === '/v2/usage/query') {
+                observed.push({ actor, path, rows: contributions.length });
+                return Response.json(rich);
+            }
+            expect(path).toBe('/v2/usage/query-batch');
+            const body = UsageAnalyticsQueryBatchRequestSchema.parse(JSON.parse(String(init?.body)));
+            expect(body.contributionQueries).toEqual(compact ? expect.any(Array) : undefined);
+            const delivered = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery(
+                { v: 1, results: [{ query, value: rich }] }, body, true));
+            observed.push({ actor, path, rows: delivered.results.reduce((sum, result) => sum
+                + ('value' in result ? result.value.contributions?.length ?? 0 : 0), 0)
+                + (delivered.contributionPages ?? []).reduce((sum, page) => sum + page.rows.length, 0) });
+            return Response.json(delivered);
+        },
+    }, controller.signal);
+    try {
+        const first = makeReader('first-token');
+        const second = makeReader('second-token');
+        const results = await Promise.all([first.read(query, undefined, false), second.read(query, undefined, false)]);
+        expect(observed).toEqual(['first-token', 'second-token'].map(actor => ({ actor,
+            path: '/v2/usage/query-batch', rows: compact ? 0 : contributions.length })));
+        for (const result of results) {
+            expect(result.totals.eventCount).toBe(contributions.length);
+            expect(result.totals.tokens.total).toBe(contributions.length);
+            expect(result.contributions?.length ?? 0).toBe(compact ? 0 : contributions.length);
+        }
+        const detail = await first.read(query, undefined, true);
+        expect(detail.contributions?.map(row => row.id)).toEqual(contributions.map(row => row.id));
+        expect(observed[2]).toEqual({ actor: 'first-token', path: '/v2/usage/query-batch', rows: contributions.length });
+    } finally { controller.abort(); resetServerFeaturesClientForTests(); }
+});
+
+it('cancels an invocation accounting read while consuming its response body', async () => {
+    const serverId = 'cancel-invocation-usage';
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready',
+        features: createRootLayoutFeaturesResponse({ features: { usage: { compactBatch: { enabled: true } } } }) } });
+    const caller = new AbortController();
+    let started!: () => void;
+    const bodyStarted = new Promise<void>(resolve => { started = resolve; });
+    let issued = 0;
+    const accounting = createUsageAccountingReader({ credentials: { token: 'invocation-token' },
+        accountLifetime: { scope: { serverId, accountId: 'account' } },
+        // Fetch owns aborting its open body. Keep that real transport contract
+        // beneath the adapter rather than mocking the accounting/parser owners.
+        request: async (path, init, options) => {
+            expect(path).toBe('/v2/usage/query-batch');
+            options?.onIssued?.();
+            const signal = init?.signal;
+            if (!signal) throw new Error('Missing invocation signal');
+            return new Response(new ReadableStream({ pull(controller) {
+                signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+                started();
+            } }), { headers: { 'Content-Type': 'application/x-ndjson' } });
+        },
+    }, new AbortController().signal);
+    try {
+        const result = accounting.read(query, caller.signal, false, false, false, () => { issued++; });
+        const settled = result.then(() => undefined, (error: unknown) => error);
+        await bodyStarted;
+        const reason = new Error('Invocation cancelled');
+        caller.abort(reason);
+        await expect(settled).resolves.toBe(reason);
+        expect(issued).toBe(1);
+    } finally { caller.abort(); resetServerFeaturesClientForTests(); }
+});
 
 it('requests compact Work rows and preserves allocation, money modes and local repricing', async () => {
     const home = await upsertServerProfile({ serverUrl: 'https://compact-work.test', name: 'Compact Work' });

@@ -9,10 +9,10 @@ import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeature
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { UsageContributionProjection } from '@happier-dev/protocol/usage/usageCost';
 
-/** Accounting batches use the same captured Home transport and finite read lifetime. */
+/** Accounting batches retain their caller's Home transport and finite read lifetime. */
 export async function queryUsageAnalyticsBatch(credentials: AuthCredentials,
     input: UsageAnalyticsQueryBatchRequest & Readonly<{ contributionProjection?: UsageContributionProjection }>,
-    options: Readonly<{ readTransport: CapturedServerReadTransport; signal: AbortSignal;
+    options: Readonly<{ readTransport: Pick<CapturedServerReadTransport, 'serverId' | 'read'>; signal: AbortSignal;
         onIssued?: () => void;
         onChunk: (value: UsageAnalyticsQueryBatchResponse) => void }>): Promise<void> {
     const features = options.readTransport.serverId

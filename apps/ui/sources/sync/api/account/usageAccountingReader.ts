@@ -2,10 +2,10 @@ import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest, type
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ServerFetch } from '@/sync/http/client';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createScopedBatchResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { HappyError } from '@/utils/errors/errors';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
-import { queryUsageAnalytics } from './apiUsage';
 import { queryUsageAnalyticsBatch } from './apiUsageBatch';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { admitUsageAnalyticsServerPrices } from '@happier-dev/protocol/usage/usageCostFacts';
@@ -20,6 +20,7 @@ export function getUsageAccountingReadKey(request: UsageAnalyticsQueryRequest, i
 /** The existing Account-owned pending reader batches transport; it retains no settled responses. */
 export function createUsageAccountingReader(context: Readonly<{
     credentials: AuthCredentials; request: ServerFetch; readTransport?: CapturedServerReadTransport;
+    accountLifetime?: Pick<ServerAccountScopeLifetime, 'scope'>;
 }>, ownerSignal: AbortSignal) {
     // Share only while a borrower needs the read. Keeping physical work alive
     // for the entire Account made Retry leave its superseded body downloading.
@@ -27,6 +28,12 @@ export function createUsageAccountingReader(context: Readonly<{
     // This typed Account owner invalidates accounting explicitly. Unrelated
     // Home traffic must not split an admitted read when viewport demand changes.
     const captured = context.readTransport ? { transport: context.readTransport, binding: context.readTransport.key } : null;
+    const transport: Pick<CapturedServerReadTransport, 'serverId' | 'read'> = context.readTransport ?? {
+        serverId: context.accountLifetime?.scope.serverId,
+        async read(path, init, options, consumeResponse) {
+            return consumeResponse(await context.request(path, init, options));
+        },
+    };
     return {
         invalidate(affected?: (request: UsageAnalyticsQueryRequest) => boolean) {
             if (!affected || !captured) pending.reset();
@@ -38,14 +45,8 @@ export function createUsageAccountingReader(context: Readonly<{
         async read(request: UsageAnalyticsQueryRequest, signal?: AbortSignal, includeContributions = true, includeSessionIds = false, workOnly = false,
             onIssued?: () => void): Promise<UsageAnalyticsQueryResponse> {
             const cancellation = mergeAbortSignals([signal, ownerSignal]);
-            // An opaque invocation closure cannot prove neutral cancellation or
-            // cross-invocation borrowing. Signed/legacy callers keep their exact transport.
-            if (!captured) return queryUsageAnalytics(context.credentials, request, { request: (path, init, options) =>
-                context.request(path, init, { ...options, onIssued }), signal: cancellation.signal })
-                .finally(cancellation.dispose);
-            const { transport, binding } = captured;
             const key = getUsageAccountingReadKey(request, includeContributions, includeSessionIds, workOnly);
-            const values = await pending.run(binding, [key], async (keys, physicalSignal, publish, issued) => {
+            const read: Parameters<typeof pending.run>[2] = async (keys, physicalSignal, publish, issued) => {
                 // Keys are this reader's own canonical serialization of admitted
                 // requests, not external strings or another input grammar.
                 const selected = new Map<string, { query: UsageAnalyticsQueryRequest; detail: boolean; sessions: boolean; fullDetail: boolean; keys: string[] }>();
@@ -122,7 +123,12 @@ export function createUsageAccountingReader(context: Readonly<{
                     } });
                 if (wanted.size) throw invalid('incomplete_batch', [pages.size ? 'contributionPages' : 'results']);
                 return resolved;
-            }, { scope: transport.scope ?? binding, signal: cancellation.signal, onIssued }).finally(cancellation.dispose);
+            };
+            // Opaque invocation closures retain their exact proof/cancellation
+            // owner. Only captured neutral bindings may borrow pending work.
+            const values = await (captured ? pending.run(captured.binding, [key], read, {
+                scope: captured.transport.scope ?? captured.binding, signal: cancellation.signal, onIssued,
+            }) : read([key], cancellation.signal, () => {}, () => onIssued?.())).finally(cancellation.dispose);
             const result = values.get(key)!;
             if ('error' in result) throw new HappyError('Usage slice unavailable', false,
                 result.error === 'not_found' ? { status: 404, code: 'denied' } : { code: 'usage_query_failed' });
