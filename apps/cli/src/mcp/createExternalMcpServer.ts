@@ -171,7 +171,7 @@ export function createExternalMcpServer(params: Readonly<{
           sessionId: 'cli-global',
           ...(projectWorkerAccountAction ? { projectWorkerAccountAction } : {}),
         };
-        const { executor: baseExecutor, deps } = createCliActionExecutorHarness(
+        const { executor: baseExecutor, deps, resolveContext } = createCliActionExecutorHarness(
           host,
           {
             invokeContributedAction: async (request) => pluginExecutor.invokeContributedAction(request),
@@ -217,7 +217,7 @@ export function createExternalMcpServer(params: Readonly<{
         const pluginExecutor = createDaemonPluginActionExecutor({
           base: pinnedBaseExecutor,
           executeInCurrentProcess: (actionId, input, context) => executeAccountPluginAction({
-            host, deps, actionId, input, ...(context ? { context } : {}),
+            host, deps, resolveContext, actionId, input, ...(context ? { context } : {}),
           }),
           ...(requestPluginActionExecution ? { requestPluginActionExecution } : {}),
         });

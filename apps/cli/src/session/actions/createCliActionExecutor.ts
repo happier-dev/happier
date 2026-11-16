@@ -274,6 +274,7 @@ export function createCliActionExecutor(
         if (request.actionId === 'action.invoke') {
           const { executeAccountPluginAction } = await import('./executeAccountPluginAction');
           const account = await executeAccountPluginAction({ host: params, deps: harness.deps,
+            resolveContext: harness.resolveContext,
             actionId: request.actionId, input: request.input, context: request.context });
           if (account.matched) return account.result;
           // Only a positively declared Machine child reaches its invoker;
@@ -368,6 +369,7 @@ export function createCliActionExecutor(
       }
       const { executeAccountPluginAction } = await import('./executeAccountPluginAction');
       return await executeAccountPluginAction({ host: params, deps: harness.deps,
+        resolveContext: harness.resolveContext,
         actionId, input, ...(context ? { context } : {}) });
     };
   // Options inherit the consuming Action's placement, even when a receiving

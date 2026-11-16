@@ -28,6 +28,7 @@ export async function executeAccountPluginAction(params: Readonly<{
     | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'>
       & Pick<AccountExecutionRuntimeInput, 'executeTeamCredentialBrokerAction'> & CliActionExactHomeTarget;
   deps: ActionExecutorDeps;
+  resolveContext?: ReturnType<typeof createCliActionExecutorHarness>['resolveContext'];
   actionId: string;
   input: unknown;
   context?: ActionExecutorContext;
@@ -190,6 +191,7 @@ async function executeInAccountRuntime(params: Parameters<typeof executeAccountP
   // Generic Action tools pass qualified plugin ids; the shared executor
   // admits contributed calls through its canonical action.invoke wrapper.
   const action = parseQualifiedPluginActionId(params.actionId);
+  const context = params.resolveContext ? params.resolveContext(params.context, params.actionId) : params.context;
   return { matched: true, result: await executor.execute(action ? 'action.invoke' : params.actionId as ActionId,
-    action ? { action, input: params.input } : params.input, params.context) };
+    action ? { action, input: params.input } : params.input, context) };
 }

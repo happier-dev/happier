@@ -89,6 +89,8 @@ export function createCliActionExecutorHarness(
   overrides?: Partial<ActionExecutorDeps>,
 ): Readonly<{
   deps: ActionExecutorDeps;
+  /** Current-process Account Actions consume the same host context as built-in Actions. */
+  resolveContext(context?: ActionExecutorContext, actionId?: string): ActionExecutorContext;
   executor: Omit<ReturnType<typeof createActionExecutor>, 'executeAdmittedClientAction'>;
   observeRecordedApprovalExecution(args: RecordedApprovalExecutionObservationArgs): Promise<ActionExecuteResult>;
 }> {
@@ -450,6 +452,7 @@ export function createCliActionExecutorHarness(
 
   return {
     deps,
+    resolveContext,
     observeRecordedApprovalExecution: async args => {
       const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
       if (!params.credentials || !args.authorizationHeaders

@@ -624,15 +624,19 @@ export function createHappierMcpServer(
     },
   };
   const executeInCurrentProcess: NonNullable<Parameters<typeof createDaemonPluginActionExecutor>[0]['executeInCurrentProcess']> =
-    async (actionId, input, context) => credentials
-      ? await executeAccountPluginAction({
+    async (actionId, input, context) => {
+      if (!credentials) return { matched: false };
+      const admission = resolveInitiatingActionCaller();
+      if (!admission.ok) return { matched: true, result: admission.result };
+      return await executeAccountPluginAction({
           host: { ...cryptoContext, credentials,
             serverId, serverHttpBaseUrl, isCredentialCurrent },
-          deps: harness.deps, actionId, input, ...(context ? { context } : {}),
+          deps: harness.deps, resolveContext: harness.resolveContext, actionId, input,
+          context: { ...context, actionCaller: admission.caller },
           ...(scopedPluginRuntimeRegistryLease?.accountRuntime
             ? { accountRuntime: scopedPluginRuntimeRegistryLease.accountRuntime } : {}),
-        })
-      : { matched: false };
+        });
+    };
   const localExecutor = scopedPluginRuntimeRegistryLease
     ? createPluginActionExecutor({
         base: sessionActionExecutor,
