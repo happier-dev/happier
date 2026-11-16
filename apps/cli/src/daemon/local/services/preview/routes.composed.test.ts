@@ -437,10 +437,17 @@ describe('createLocalServicePreviewRoutes lifecycle', () => {
             expect(result).toMatchObject({ status: 'created', preview: { resource: {
                 serviceTarget, owner: { kind: 'user', id: 'account-1' }, target: { scheme: 'http', host: '127.0.0.1', port: 4312 },
             }, accessUrl: expect.stringContaining('previewToken=admission-') } });
+            // Both selectors resolve to the same retained Service. Optional request
+            // qualifiers must not change its server registration binding.
+            const unqualifiedServiceTarget = { kind: 'managed_service' as const, machineId: MACHINE_ID,
+                managedServiceId: handle.instanceId, declaration, cwd: workspace.rootPath };
+            expect.soft(await open({ machineId: MACHINE_ID, serviceTarget: unqualifiedServiceTarget }))
+                .toMatchObject({ status: 'existing', preview: { resource: { serviceTarget } } });
             expect((await routes.getSnapshot()).resources).toHaveLength(1);
             const revoke = handlers.get(RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_REVOKE);
             if (!revoke) throw new Error('Expected preview Revoke RPC registration');
-            for (const mismatchedTarget of [undefined, { ...serviceTarget, cwd: `${workspace.rootPath}/other` }]) {
+            for (const mismatchedTarget of [undefined, { ...serviceTarget, cwd: `${workspace.rootPath}/other` },
+                { ...serviceTarget, workspaceId: 'another-checkout' }]) {
                 expect(await revoke({ machineId: MACHINE_ID, previewId: handle.instanceId,
                     ...(mismatchedTarget ? { serviceTarget: mismatchedTarget } : {}) }))
                     .toMatchObject({ ok: false, errorCode: 'preview_service_mismatch' });
@@ -466,6 +473,10 @@ describe('createLocalServicePreviewRoutes lifecycle', () => {
             await expect(open({ machineId: MACHINE_ID, serviceTarget })).resolves.toMatchObject({
                 ok: false, errorCode: 'unknown_managed_service',
             });
+            // Withdrawal consumes the retained binding even after its live handle
+            // has retired; an omitted optional qualifier still selects that Service.
+            expect(await revoke({ machineId: MACHINE_ID, previewId: handle.instanceId, serviceTarget: unqualifiedServiceTarget }))
+                .toMatchObject({ previewId: handle.instanceId, revoked: true, snapshot: { resources: [], previews: [] } });
         } finally { finishStop(); await handle.stop(); await owner.dispose(); }
     });
 

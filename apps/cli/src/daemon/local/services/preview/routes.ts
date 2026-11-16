@@ -29,6 +29,7 @@ import { startLocalServicePreviewNativeAdapter } from './nativeAdapter';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { admitLocalServicePreviewRequest } from './requester';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { matchesProjectManagedServiceTarget } from '@/plugins/runtime/invocation/services/projectServiceResolution';
 import { readProjectManagedServicePreviewEndpoint } from './projectEndpoint';
 import { formatLocalServiceLauncherTitle } from '../launch/suggestions';
 import { readProcessCensus } from '@/processes/census/processCensus';
@@ -213,19 +214,22 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             }
 
             if (request.serviceTarget) {
-                const serviceTarget = request.serviceTarget;
-                if (!await admission.canAccess(serviceTarget)) return { ok: false, reasonCode: 'unknown_managed_service' };
+                const requestedServiceTarget = request.serviceTarget;
+                if (!await admission.canAccess(requestedServiceTarget)) return { ok: false, reasonCode: 'unknown_managed_service' };
                 if (request.sessionId !== undefined) return { ok: false, reasonCode: 'preview_target_unresolved' };
-                const resolved = input.projectManagedServices?.resolveProjectService(serviceTarget);
+                const resolved = input.projectManagedServices?.resolveProjectService(requestedServiceTarget);
                 if (resolved?.status === 'unknown') return { ok: false, reasonCode: 'unknown_managed_service' };
                 if (resolved?.status !== 'found') return { ok: false, reasonCode: 'preview_target_unresolved' };
                 const handle = resolved.handle;
                 if (handle.kind !== 'workspace') return { ok: false, reasonCode: 'preview_target_unresolved' };
                 const endpoint = readProjectManagedServicePreviewEndpoint(handle);
                 if (!endpoint) return { ok: false, reasonCode: 'preview_target_unresolved' };
+                const serviceTarget = { kind: 'managed_service' as const, managedServiceId: handle.instanceId,
+                    machineId: handle.workspace.machineId, workspaceId: handle.workspace.id,
+                    cwd: handle.cwd, declaration: handle.declaration };
                 const existing = listLocalServicePreviewResources(input.registry).find(resource =>
                     resource.machineId === input.machineId && resource.previewId === handle.instanceId
-                    && isDeepStrictEqual(resource.serviceTarget, serviceTarget));
+                    && resource.serviceTarget && matchesProjectManagedServiceTarget(resource.serviceTarget, serviceTarget));
                 const current = () => {
                     const latest = input.projectManagedServices?.resolveProjectService(serviceTarget);
                     return latest?.status === 'found' && latest.handle === handle
@@ -234,7 +238,8 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                 const selection = handle.declaration.selection;
                 const registration = registerLocalServicePreview(input.registry, {
                     previewId: existing?.previewId ?? handle.instanceId,
-                    machineId: input.machineId, serviceTarget,
+                    // Existing server registrations retain their original immutable binding.
+                    machineId: input.machineId, serviceTarget: existing?.serviceTarget ?? serviceTarget,
                     owner: { kind: 'user', id: handle.requester.accountId }, target: endpoint,
                     initialPath: request.initialPath ?? existing?.initialPath ?? { pathname: '/', search: '' },
                     display: existing?.display ?? { title: formatLocalServiceLauncherTitle(selection.kind === 'manifest' ? selection.name : selection.source.target),
@@ -381,7 +386,9 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             }
             const resource = input.registry.previewsById.get(request.previewId)?.resource;
             if (!await admission.canAccess(resource?.serviceTarget)) return { ok: false, reasonCode: 'unknown_managed_service' };
-            if (resource && !isDeepStrictEqual(resource.serviceTarget, request.serviceTarget)) {
+            if (resource && (resource.serviceTarget
+                ? !request.serviceTarget || !matchesProjectManagedServiceTarget(request.serviceTarget, resource.serviceTarget)
+                : request.serviceTarget !== undefined)) {
                 return { ok: false, reasonCode: 'preview_service_mismatch' };
             }
             if (resource) {
