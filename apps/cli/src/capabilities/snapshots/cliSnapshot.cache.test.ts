@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -18,7 +18,7 @@ import { detectCliSnapshotOnDaemonPath as detect, invalidateCliSnapshots as inva
 
 const ENV_KEYS = [
   'HOME', 'USERPROFILE', 'PATH', 'HAPPIER_HOME_DIR', 'HAPPIER_OPENCODE_PATH', 'HAPPIER_CODEX_PATH',
-  'HAPPIER_CLAUDE_PATH', 'HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON', 'HAPPIER_JS_RUNTIME_PATH',
+  'HAPPIER_CLAUDE_PATH', 'CLAUDE_CONFIG_DIR', 'HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON', 'HAPPIER_JS_RUNTIME_PATH',
   'HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS', 'HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS',
   'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY',
 ] as const;
@@ -219,6 +219,27 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
       expect((await detect({ requestedCliNames: ['claude', 'codex'] })).clis.claude.version).toBe('2.1.292');
     }
     expect(await invocations()).toBe(afterFirst);
+  }, 20_000);
+
+  it('checks a signed-out Agent once until its sign-in state changes on disk', async () => {
+    await cli('claude', [
+      'if (process.argv.includes("--version")) process.stdout.write("2.1.292\\n");',
+      'else { process.stdout.write(JSON.stringify({ loggedIn: false, authMethod: "none", apiProvider: "firstParty" })); process.exitCode = 1; }',
+    ].join('\n'));
+    nativeRuntime ??= await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController });
+    const configDir = join(fixture.dir, 'claude-config');
+    await mkdir(configDir, { recursive: true });
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+    onTestFinished(() => { delete process.env.CLAUDE_CONFIG_DIR; });
+    expect((await detect(request('claude', true))).clis.claude.isLoggedIn).toBe(false);
+    const afterFirst = await invocations();
+    for (let open = 0; open < 3; open++) expect((await detect(request('claude', true))).clis.claude.isLoggedIn).toBe(false);
+    expect(await invocations()).toBe(afterFirst);
+    // A terminal sign-in writes its credential file: exactly one more check.
+    await writeFile(join(configDir, '.credentials.json'), '{}');
+    await detect(request('claude', true));
+    await detect(request('claude', true));
+    expect(await invocations()).toBe(afterFirst + 1);
   }, 20_000);
 
   it('probes an updated script CLI exactly once', async () => {

@@ -525,7 +525,7 @@ process.exit(auth.tokens.access_token === 'fixture-access' ? 0 : 1); } catch { p
     }
   });
 
-  it('holds the signed-in Agent fact per binary identity and config dir instead of probing every spawn', async () => {
+  it('holds the Agent sign-in fact per binary identity and sign-in state instead of probing every spawn', async () => {
     const home = await createTempDir('happier-spawn-held-auth-', tmpdir());
     try {
       if (process.platform === 'win32') return;
@@ -534,7 +534,10 @@ process.exit(auth.tokens.access_token === 'fixture-access' ? 0 : 1); } catch { p
       const writeCli = (exitCode: number) => writeExecutableShimSync({ dir: home, fileName: 'codex',
         contents: `#!/bin/sh\n${exitCode === 0 ? '' : '# signed out\n'}echo "$*" >> '${log}'\nexit ${exitCode}\n` });
       const cli = writeCli(0);
+      // The Agent's config dir is its sign-in state; the process log lives outside it.
+      const codexHome = join(home, 'codex-home');
       const otherHome = join(home, 'other-codex-home');
+      await mkdir(codexHome, { recursive: true });
       await mkdir(otherHome, { recursive: true });
       // The real activated Codex plugin supplies its auth probe and native-home declaration.
       const fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
@@ -551,16 +554,20 @@ process.exit(auth.tokens.access_token === 'fixture-access' ? 0 : 1); } catch { p
       const authProbes = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n')
         .filter((line) => line.includes('login status')).length;
 
-      for (let index = 0; index < 3; index += 1) expect(await spawn(home)).toMatchObject({ ok: true });
+      for (let index = 0; index < 3; index += 1) expect(await spawn(codexHome)).toMatchObject({ ok: true });
       expect(await authProbes()).toBe(1);
       expect(await spawn(otherHome)).toMatchObject({ ok: true });
       expect(await authProbes()).toBe(2);
       // A replaced binary changes its stat identity and is observed again.
       writeCli(1);
-      expect(await spawn(home)).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
+      expect(await spawn(codexHome)).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
       expect(await authProbes()).toBe(3);
-      // A signed-out observation is never held: signing in is seen on the next spawn.
-      expect(await spawn(home)).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
+      // A signed-out answer is held until the sign-in state changes on disk...
+      expect(await spawn(codexHome)).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
+      expect(await authProbes()).toBe(3);
+      // ...and a terminal sign-in writes into the config dir, so the next spawn checks again.
+      await writeFile(join(codexHome, 'auth.json'), '{}');
+      expect(await spawn(codexHome)).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
       expect(await authProbes()).toBe(4);
     } finally {
       await removeTempDir(home);

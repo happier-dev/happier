@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, utimes, writeFile } from 'node:fs/promises';
 
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { readHeldNativeAgentCliAuthStatus } from './heldNativeAgentCliAuthStatus';
@@ -29,6 +29,61 @@ describe('held native Agent sign-in fact', () => {
       expect(held?.state).toBe('logged_in');
       expect(JSON.stringify(held)).not.toContain('person@example.com');
       expect(held).not.toHaveProperty('accountLabel');
+    } finally {
+      await removeTempDir(dir);
+    }
+  });
+
+  it('remembers a signed-out answer until the Agent\'s declared sign-in state changes on disk', async () => {
+    const dir = await createTempDir('happier-held-auth-', tmpdir());
+    try {
+      const cli = join(dir, 'agent-cli');
+      await writeFile(cli, '#!/bin/sh\n');
+      await mkdir(join(dir, '.agent'), { recursive: true });
+      let probes = 0;
+      let signedIn = false;
+      const authSpec: CliAuthSpec = { binaryNames: ['agent-cli'], isSafeForBackgroundChecks: true,
+        detectAuthStatus: async () => {
+          probes += 1;
+          return signedIn ? { state: 'logged_in', source: 'command' } : { state: 'logged_out', reason: 'missing_credentials' };
+        } };
+      const read = async (fresh = false) => await readHeldNativeAgentCliAuthStatus({ agentId: 'held-auth-signed-out', resolvedPath: cli,
+        authSpec, processEnv: { HOME: dir }, authEnvironmentVariables: [], credentialPaths: ['~/.agent/credentials.json'], fresh });
+
+      for (let open = 0; open < 3; open++) expect((await read())?.state).toBe('logged_out');
+      expect(probes).toBe(1);
+      // A terminal sign-in writes the declared credential file: exactly one more check.
+      signedIn = true;
+      await writeFile(join(dir, '.agent', 'credentials.json'), '{}');
+      expect((await read())?.state).toBe('logged_in');
+      expect((await read())?.state).toBe('logged_in');
+      expect(probes).toBe(2);
+      // A sign-out that rewrites it is observed at once too.
+      signedIn = false;
+      const later = new Date(Date.now() + 60_000);
+      await utimes(join(dir, '.agent', 'credentials.json'), later, later);
+      expect((await read())?.state).toBe('logged_out');
+      expect(probes).toBe(3);
+      // An explicit refresh always checks.
+      await read(true);
+      expect(probes).toBe(4);
+    } finally {
+      await removeTempDir(dir);
+    }
+  });
+
+  it('keeps checking a signed-out Agent whose sign-in writes nothing it declares on disk', async () => {
+    const dir = await createTempDir('happier-held-auth-', tmpdir());
+    try {
+      const cli = join(dir, 'agent-cli');
+      await writeFile(cli, '#!/bin/sh\n');
+      let probes = 0;
+      const authSpec: CliAuthSpec = { binaryNames: ['agent-cli'], isSafeForBackgroundChecks: true,
+        detectAuthStatus: async () => { probes += 1; return { state: 'logged_out' }; } };
+      const read = async () => await readHeldNativeAgentCliAuthStatus({ agentId: 'held-auth-keychain', resolvedPath: cli,
+        authSpec, processEnv: { HOME: dir }, authEnvironmentVariables: [] });
+      await read(); await read();
+      expect(probes).toBe(2);
     } finally {
       await removeTempDir(dir);
     }

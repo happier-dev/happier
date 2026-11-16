@@ -873,6 +873,8 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         processEnv: effectiveAgentEnvironment,
         ...(nativeHome ? { nativeHome } : {}),
         authEnvironmentVariables: selectedAgentCredentialEnvironmentVariables,
+        credentialPaths: params.pluginRuntimeRegistry?.contributes.agentDefinitionsById
+          .get(resolvedAgentId)?.cliMetadata?.auth.credentialPaths ?? [],
         ...(params.pluginRuntimeRegistry ? { authSpec: await authCatalogEntry?.getCliAuthSpec?.() ?? null } : {}),
       });
     if (auth?.state === 'logged_out') {
@@ -906,6 +908,9 @@ async function resolveSpawnChildEnvironmentImpl(params: {
   }
   if (params.options.sessionConfigOptionOverrides) {
     extraEnvForChild.HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON = JSON.stringify(params.options.sessionConfigOptionOverrides);
+  }
+  if (!params.options.existingSessionId && params.options.nativeSandbox !== undefined) {
+    extraEnvForChild.HAPPIER_SESSION_NATIVE_SANDBOX = params.options.nativeSandbox;
   }
   if (!params.options.existingSessionId && params.options.identity !== undefined) {
     extraEnvForChild.HAPPIER_SESSION_INITIAL_IDENTITY_JSON = JSON.stringify(
