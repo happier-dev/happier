@@ -912,7 +912,7 @@ async function readArtifactCreateStateInTx(tx: Tx, params: CreateArtifactTxParam
         return {
             ok: true,
             didWrite: false,
-            legacySocketPublication: getArtifactContentDeliveryPolicyV1(decodeArtifactKindV1(existing.kind).kindHint).legacySocketPublication,
+            legacySocketPublication: false,
             artifact: {
                 ...artifact,
                 header: opened.header,
