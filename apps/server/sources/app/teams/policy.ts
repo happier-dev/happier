@@ -118,10 +118,13 @@ type TeamPolicyPatch = Pick<SetTeamPolicyInput,
     | "managedGroupDefaults"
 >;
 
-async function managedDefaultsAreMemberUsableInTx(tx: Tx, teamId: string, defaults: ManagedDefaultsV1): ReturnType<typeof managedPlacementAudienceInTx> {
-    const team = await managedPlacementAudienceInTx(tx, { kind: "team", teamId }, defaults.team.placement);
-    if (!team.ok) return team;
+async function managedDefaultsAreMemberUsableInTx(tx: Tx, teamId: string, defaults: ManagedDefaultsV1, previous: ManagedDefaultsV1 | null): ReturnType<typeof managedPlacementAudienceInTx> {
+    if (!sameStrictJsonValue(previous?.team.placement, defaults.team.placement)) {
+        const team = await managedPlacementAudienceInTx(tx, { kind: "team", teamId }, defaults.team.placement);
+        if (!team.ok) return team;
+    }
     for (const [groupId, groupDefaults] of Object.entries(defaults.groups)) {
+        if (sameStrictJsonValue(previous?.groups[groupId]?.placement, groupDefaults.placement)) continue;
         const group = await managedPlacementAudienceInTx(tx, { kind: "group", groupId }, groupDefaults.placement);
         if (!group.ok) return group;
     }
@@ -206,19 +209,21 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
     if (!qualification.ok) return qualification;
 
     let managedDefaults = input.managedDefaults;
+    const stored = input.managedGroupDefaults !== undefined || managedDefaults != null
+        ? readManagedDefaultsV1(viewer.team.managedDefaults ?? null)
+        : null;
     if (input.managedGroupDefaults !== undefined) {
         const error = await authorizeTeamGroupDefaultsInTx(tx, {
             context: context!, teamGroupId: input.managedGroupDefaults.teamGroupId,
         });
         if (error) return { ok: false, error };
-        const stored = readManagedDefaultsV1(viewer.team.managedDefaults ?? null);
         // A scoped Group edit cannot discard malformed Team or sibling data.
         // A settings administrator repairs the complete document explicitly.
-        if (stored.status === "repair_required") return { ok: false, error: "invalid_team_input" };
-        const groups = { ...stored.defaults?.groups };
+        if (stored?.status === "repair_required") return { ok: false, error: "invalid_team_input" };
+        const groups = { ...stored?.defaults?.groups };
         if (input.managedGroupDefaults.defaults === null) delete groups[input.managedGroupDefaults.teamGroupId];
         else groups[input.managedGroupDefaults.teamGroupId] = input.managedGroupDefaults.defaults;
-        managedDefaults = { team: stored.defaults?.team ?? {}, groups };
+        managedDefaults = { team: stored?.defaults?.team ?? {}, groups };
     } else if (managedDefaults !== undefined && managedDefaults !== null) {
         const groupIds = Object.keys(managedDefaults.groups);
         const groups = (await Promise.all(portableQueryChunks({ values: groupIds, bindingsPerValue: 1, fixedBindings: 2 })
@@ -226,17 +231,16 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
                 where: { id: { in: [...ids] }, teamId: input.teamId }, select: { id: true, archivedAt: true },
             })))).flat();
         if (groups.length !== groupIds.length) return { ok: false, error: "group_not_found" };
-        const stored = readManagedDefaultsV1(viewer.team.managedDefaults ?? null);
         for (const group of groups) {
             // A full Team save may carry a retained preference for restoration;
             // an archived Group still cannot receive a changed preference.
             if (group.archivedAt !== null && !sameStrictJsonValue(
-                stored.defaults?.groups[group.id], managedDefaults.groups[group.id],
+                stored?.defaults?.groups[group.id], managedDefaults.groups[group.id],
             )) return { ok: false, error: "group_archived" };
         }
     }
     if (managedDefaults !== undefined && managedDefaults !== null) {
-        const audience = await managedDefaultsAreMemberUsableInTx(tx, input.teamId, managedDefaults);
+        const audience = await managedDefaultsAreMemberUsableInTx(tx, input.teamId, managedDefaults, stored?.defaults ?? null);
         if (!audience.ok) return audience;
     }
 

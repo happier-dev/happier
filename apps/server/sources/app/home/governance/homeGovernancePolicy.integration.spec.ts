@@ -127,6 +127,26 @@ describe("Home governance policy singleton", () => {
         }))).resolves.toEqual({ status: "forbidden" });
     });
 
+    it("allows a different Home default to change after the unchanged Machine loses member access", async () => {
+        const owner = await createAccount("owner");
+        const member = await createAccount("member");
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner, metadata: "{}" } });
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: member,
+            accessLevel: "view", createdByAccountId: owner } });
+        const placement = { kind: "machine" as const, target: { serverId: "home", machineId: machine.id } };
+        const write = (expectedRevision: number, sessionDefaults: { placement: typeof placement; permissionModeByAgentTargetKey?: Record<string, "read-only"> }) =>
+            inTx(tx => setHomeGovernancePolicyInTx(tx, { emailDeliveryReady: false, actorAccountId: owner, env: POLICY_ENV,
+                patch: { expectedRevision, sessionDefaults } }));
+        expect(await write(0, { placement })).toMatchObject({ status: "applied" });
+        await db.machineGrant.deleteMany({ where: { machineId: machine.id, accountId: member } });
+        const updated = { placement, permissionModeByAgentTargetKey: { "agent:example.agent/example": "read-only" as const } };
+        expect(await write(1, updated)).toMatchObject({ status: "applied", policy: { sessionDefaults: updated } });
+        const other = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner, metadata: "{}" } });
+        expect(await write(2, { placement: { ...placement, target: { ...placement.target, machineId: other.id } } }))
+            .toEqual({ status: "refused", code: "managed_default_machine_not_member_usable" });
+        expect(await readHomeGovernancePolicy()).toMatchObject({ revision: 2, sessionDefaults: updated });
+    });
+
     it("refuses a Home Machine default until every active Account has shared Use access", async () => {
         const owner = await createAccount("owner");
         const member = await createAccount("member");

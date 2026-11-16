@@ -1,6 +1,7 @@
 import { HOME_TEAM_CREATION_POLICY_DEFAULT_V1, HOME_TEAMS_VISIBLE_TO_MEMBERS_DEFAULT_V1, readHomeAuthenticationPolicyV1, readHomeIdentityNetworkPolicyV1, readHomeTeamProviderPolicyV1, readTeamCreationPolicyV1, type HomeAuthenticationPolicyReadV1, type HomeAuthenticationPolicyV1, type HomeGovernancePolicySetInputV1, type HomeIdentityNetworkPolicyReadV1, type HomeTeamProviderPolicyReadV1, type ManagedIdentityProviderKindV1, type TeamCreationPolicyV1 } from '@happier-dev/protocol/home/governance';
 import { ManagedSessionDefaultsV1Schema, readManagedDefaultsV1, type ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams';
 import { type HomeSignInServicePolicyV1 } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { HomeGovernancePolicyFieldV1Schema, type HomeGovernanceErrorCodeV1 } from "@happier-dev/protocol/home/governance";
 import { managedPlacementAudienceInTx } from "@/app/teams/managedPlacementAudience";
@@ -423,7 +424,9 @@ export async function setHomeGovernancePolicyInTx(
             policy: input.patch.identityNetworkPolicy,
         }).status === "invalid") return { status: "invalid_policy" };
 
-    if (input.patch.sessionDefaults != null) {
+    if (input.patch.sessionDefaults != null && !sameStrictJsonValue(
+        projectPolicyRow(current).sessionDefaults?.placement, input.patch.sessionDefaults.placement,
+    )) {
         const audience = await managedPlacementAudienceInTx(tx, { kind: "home" }, input.patch.sessionDefaults.placement);
         if (!audience.ok) return { status: "refused", code: audience.error };
     }

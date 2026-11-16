@@ -98,6 +98,30 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         if (directoryGroup.ok) expect(directoryGroup.value.capabilities.updateMetadata).toBe(false);
     });
 
+    it("clears a Group default after an unchanged Team Machine loses member access", async () => {
+        const { owner, teamId } = await ownedTeam();
+        const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        const membership = await db.teamMembership.create({ data: { teamId, accountId: member.id, role: "member" } });
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: "{}" } });
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: machine.id, teamId, accessLevel: "view", createdByAccountId: owner.id } });
+        const first = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("First") } });
+        await db.teamGroupMembership.create({ data: { teamId, teamGroupId: first.id, teamMembershipId: membership.id,
+            nativeContribution: true, sessionAccessStartsAt: new Date() } });
+        const sibling = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("Sibling") } });
+        const placement = { kind: "machine" as const, target: { serverId: "server-a", machineId: machine.id } };
+        const defaults = { team: { placement }, groups: { [first.id]: {}, [sibling.id]: {} } };
+        expect((await inTx(tx => setTeamPolicyInTx(tx, { actorAccountId: owner.id, teamId, managedDefaults: defaults }))).ok).toBe(true);
+        await db.machineGrant.deleteMany({ where: { machineId: machine.id, teamId } });
+        const clear = await inTx(tx => setTeamPolicyInTx(tx, { actorAccountId: owner.id, teamId,
+            managedGroupDefaults: { teamGroupId: first.id, defaults: null } }));
+        expect(clear.ok).toBe(true);
+        expect((await db.team.findUniqueOrThrow({ where: { id: teamId } })).managedDefaults)
+            .toEqual({ team: { placement }, groups: { [sibling.id]: {} } });
+        const changed = await inTx(tx => setTeamPolicyInTx(tx, { actorAccountId: owner.id, teamId,
+            managedGroupDefaults: { teamGroupId: first.id, defaults: { placement } } }));
+        expect(changed).toEqual({ ok: false, error: "managed_default_machine_not_member_usable" });
+    });
+
     it.each(["team", "group"] as const)("refuses a %s Machine default shared only with the admin", async layer => {
         const { owner, teamId } = await ownedTeam();
         const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
