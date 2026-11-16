@@ -3,9 +3,14 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { areExecutionRunBackendTargetsEqual, resolveExecutionRunRuntimeBackendTarget } from './backendTargets';
 
+// The fixture's publication policy imports fs. Load it before replacing that
+// boundary, as in ExecutionRunHostBridge.registry.test.ts.
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () => (
+  import('@/plugins/projection/registry/builtIn/locators.testkit')
+));
+
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
   return createBundledPluginPublicationFsFixture(actual);
 });
 
