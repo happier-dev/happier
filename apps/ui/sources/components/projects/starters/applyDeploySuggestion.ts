@@ -10,7 +10,7 @@ import { readStarterCreateOutcome, type StarterCreateOutcome } from './newAppDra
 const executeAction = createFrontDoorActionExecute();
 
 export type DeploySuggestionCreateOperands = Readonly<{
-    input: Omit<ProjectStarterCreateInputV1, 'serverId' | 'starterId' | 'starterSourceId' | 'description'>;
+    input: Omit<ProjectStarterCreateInputV1, 'serverId' | 'source' | 'starterId' | 'starterSourceId' | 'description'>;
     lifetime: ServerAccountScopeLifetime;
     sessionName?: string;
 }>;
@@ -35,16 +35,20 @@ export async function applyDeploySuggestion(params: Readonly<{
         if (!app?.sourceId || !app.itemId) return { kind: 'failed', code: 'catalog_app_unavailable' };
         return { kind: 'where', app: { sourceId: app.sourceId, itemId: app.itemId }, targetId: params.suggestion.targetId };
     }
-    // Scratch is admitted by the source union; its create vertical is U5's extension of the same Action.
-    if (source.kind === 'scratch') return { kind: 'failed', code: 'unsupported_source' };
     const create = params.create;
     if (!create) return { kind: 'needsCreateInput' };
-    const starter = params.catalog.starters.find(item => item.id === source.starterId);
-    if (!starter?.sourceId || !starter.itemId) return { kind: 'failed', code: 'starter_unavailable' };
+    let creationSource: NonNullable<ProjectStarterCreateInputV1['source']>;
+    if (source.kind === 'starter') {
+        const starter = params.catalog.starters.find(item => item.id === source.starterId);
+        if (!starter?.sourceId || !starter.itemId) return { kind: 'failed', code: 'starter_unavailable' };
+        creationSource = { kind: 'starter', starterId: starter.itemId, sourceId: starter.sourceId };
+    } else {
+        creationSource = { kind: 'scratch' };
+    }
 
     const input: ProjectStarterCreateInputV1 = { ...create.input, serverId: params.serverId,
-        starterId: starter.itemId, starterSourceId: starter.sourceId,
-        description: renderDeployPlanBriefV1(params.description, params.suggestion) };
+        source: creationSource,
+        description: renderDeployPlanBriefV1(params.description, params.suggestion, create.input.repository) };
     const result = await executeAction.confirmed(PROJECT_STARTER_CREATE_ACTION_ID_V1, input, { surface: 'ui', authority: 'present_user',
         actionCaller: { kind: 'host' }, serverId: params.serverId, expectedAccountId: create.lifetime.scope.accountId });
     if (!result.ok) return { kind: 'failed', code: result.errorCode };

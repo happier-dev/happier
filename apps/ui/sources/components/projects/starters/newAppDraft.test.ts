@@ -19,6 +19,7 @@ const facts = {
   homeDir: '/home/alice',
   owner: 'alice',
   requestKey: 'k1',
+  providerKind: 'github' as const,
 };
 
 describe('New app draft (projects.starters.create operands)', () => {
@@ -54,6 +55,16 @@ describe('New app draft (projects.starters.create operands)', () => {
       buildStarterCreateInput(draft, { ...facts, owner: null }),
     ).toBeNull();
     expect(buildStarterCreateInput({ ...draft, name: '!!' }, facts)).toBeNull();
+  });
+
+  it('publishes on the chosen forge, and a scratch setup creates with no starter', () => {
+    expect(buildStarterCreateInput(draft, { ...facts, providerKind: 'bitbucket',
+      provider: { id: 'happier.scm.forge.bitbucket/bitbucket', baseUrl: 'https://bitbucket.org' } })?.repository).toMatchObject({
+      providerKind: 'bitbucket', providerId: 'happier.scm.forge.bitbucket/bitbucket', providerBaseUrl: 'https://bitbucket.org' });
+    const scratch = buildStarterCreateInput({ ...draft, starterId: null, scratch: true }, facts);
+    expect(scratch?.source).toEqual({ kind: 'scratch' });
+    expect(scratch?.starterId).toBeUndefined();
+    expect(buildStarterCreateInput({ ...draft, starterId: null }, facts)).toBeNull();
   });
 
   it('reads the Action result into one state with its one next step', () => {

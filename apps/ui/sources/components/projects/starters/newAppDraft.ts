@@ -36,6 +36,7 @@ export type StarterCreateOutcome =
 
 export type NewAppDraft = Readonly<{
   starterId: string | null;
+  scratch?: boolean;
   description: string;
   name: string;
   machineId: string | null;
@@ -58,13 +59,15 @@ export function buildStarterCreateInput(
     serverId: string;
     homeDir: string | null;
     owner: string | null;
+    providerKind?: StarterCreateInput['repository']['providerKind'] | null;
+    provider?: Readonly<{ id: string; baseUrl?: string }> | null;
     requestKey: string;
   }>,
 ): StarterCreateInput | null {
   const description = draft.description.trim();
   const name = deriveRepositoryName(draft.name);
   if (
-    !draft.starterId ||
+    (!draft.starterId && !draft.scratch) ||
     !description ||
     !name ||
     !draft.machineId ||
@@ -76,11 +79,15 @@ export function buildStarterCreateInput(
     serverId: facts.serverId,
     machineId: draft.machineId,
     requestKey: facts.requestKey,
-    starterId: draft.starterId,
+    ...(draft.scratch ? { source: { kind: 'scratch' as const } } : { starterId: draft.starterId! }),
     description,
     destinationParentPath: projectCheckoutParentPath(facts.homeDir),
     destinationDirectoryName: name,
-    repository: { providerKind: DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1, owner: facts.owner, name, visibility: 'private' },
+    repository: {
+      providerKind: facts.providerKind ?? DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1,
+      ...(facts.provider ? { providerId: facts.provider.id, providerBaseUrl: facts.provider.baseUrl } : {}),
+      owner: facts.owner, name, visibility: 'private',
+    },
   };
 }
 
