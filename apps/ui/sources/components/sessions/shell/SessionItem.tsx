@@ -291,7 +291,6 @@ type SessionItemContentProps = Omit<SessionItemBaseProps, 'subtitleOverride'> & 
     /** Last meaningful activity, rendered by the age leaf on the shared clock. */
     activityAt: number | null;
     /** Whether that leaf follows the clock (false while the surface is frozen). */
-    activityClockLive: boolean;
     /** The guard's word replaces the activity time: "Stops in 4:52" (amber, a decision is open) or a quiet "Stopped". */
     guardState?: SessionListGuardState | null;
     hasUnreadMessages: boolean;
@@ -731,7 +730,6 @@ const SessionItemContent = React.memo(
         sessionSubtitle,
         isSessionIdentityLoading,
         activityAt,
-        activityClockLive,
         guardState,
         hasUnreadMessages,
         attentionStanding,
@@ -2009,7 +2007,7 @@ const SessionItemContent = React.memo(
                                     {showTrailingGuardWord && guardState ? (
                                         <SessionRowGuardWord guardState={guardState} />
                                     ) : activityAt !== null ? (
-                                        <SessionRowActivityTime activityAt={activityAt} live={activityClockLive} style={styles.activityTime} />
+                                        <SessionRowActivityTime activityAt={activityAt} style={styles.activityTime} />
                                     ) : null}
                                 </WordCrossFade>
                             ) : null}
@@ -2237,7 +2235,6 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             selected={rowViewModel.selected}
             secondaryLineMode={itemProps.secondaryLineMode ?? rowViewModel.secondaryLineMode}
             activityAt={rowViewModel.activityAt}
-            activityClockLive={rowViewModel.clockLive}
             guardState={rowViewModel.guardState}
             sessionStatus={sessionStatus}
             botActivity={managedWakeFacts ? readBotActivity(session, Date.now(), sessionStatus) : itemProps.botActivity}

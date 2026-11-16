@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { useActiveGatedExternalStore, type ActiveSignal } from '@/utils/react/activeGatedExternalStore';
+
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     getExistingSessionDraftProjection,
@@ -21,8 +23,8 @@ export type SessionListRowDraft = Readonly<{
 
 /** The row's draft preview text, observed by the leaf that renders it. */
 export type SessionListRowDraftPreviewSource = Readonly<{
-    /** Whether the row follows the draft live (an inactive surface keeps what its leaf last showed). */
-    live: boolean;
+    /** The list surface's data demand: while off, the leaf keeps the preview it last showed. */
+    gate: ActiveSignal;
     subscribe: (listener: () => void) => () => void;
     getPreview: () => string;
 }>;
@@ -58,44 +60,35 @@ export function useSessionListRowExistingDraft(input: Readonly<{
     activeScope: ServerAccountScope | null;
     serverId: string | null | undefined;
     sessionId: string;
-    dataActive: boolean;
+    /** The list surface's data demand; while off the row keeps the draft it last showed. */
+    gate: ActiveSignal;
 }>): Readonly<{ draft: SessionListRowDraft | null; preview: SessionListRowDraftPreviewSource }> {
-    const { activeScope, dataActive, serverId, sessionId } = input;
+    const { activeScope, gate, serverId, sessionId } = input;
     // Drafts are kept for the active Account; rows of another Home have none here.
     const scope = activeScope && (!serverId || serverId === activeScope.serverId) ? activeScope : null;
     const subscribe = React.useMemo(() => {
-        if (!dataActive || !scope) return subscribeToNothing;
+        if (!scope) return subscribeToNothing;
         const address = { kind: 'session' as const, sessionId };
         return (listener: () => void) => subscribeSessionDraft(scope, address, listener);
-    }, [dataActive, scope, sessionId]);
-    const getSnapshot = React.useMemo(() => {
-        if (!dataActive || !scope) return readNoDraft;
+    }, [scope, sessionId]);
+    const read = React.useMemo(() => {
+        if (!scope) return readNoDraft;
         let last: SessionListRowDraft | null = null;
         return () => {
             last = retainRowDraft(last, readListedRowDraft(scope, sessionId));
             return last;
         };
-    }, [dataActive, scope, sessionId]);
-    const liveDraft = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-    // `undefined` means "never observed", which differs from "observed no draft".
-    const frozenDraftRef = React.useRef<SessionListRowDraft | null | undefined>(undefined);
-    if (dataActive) {
-        frozenDraftRef.current = liveDraft;
-    } else if (frozenDraftRef.current === undefined) {
-        frozenDraftRef.current = scope ? readListedRowDraft(scope, sessionId) : null;
-    }
+    }, [scope, sessionId]);
+    const draft = useActiveGatedExternalStore(gate, subscribe, read);
     const preview = React.useMemo<SessionListRowDraftPreviewSource>(() => ({
-        live: dataActive && scope !== null,
+        gate,
         subscribe,
         getPreview: () => (scope ? readListedDraft(scope, sessionId)?.preview ?? '' : ''),
-    }), [dataActive, scope, sessionId, subscribe]);
-    return { draft: dataActive ? liveDraft : frozenDraftRef.current ?? null, preview };
+    }), [gate, scope, sessionId, subscribe]);
+    return { draft, preview };
 }
 
 /** The preview text of a row's draft; the only part of the row that renders on a key. */
 export function useSessionListRowDraftPreview(source: SessionListRowDraftPreviewSource): string {
-    const current = React.useSyncExternalStore(source.subscribe, source.getPreview, source.getPreview);
-    const shownRef = React.useRef<string | undefined>(undefined);
-    if (source.live || shownRef.current === undefined) shownRef.current = current;
-    return shownRef.current;
+    return useActiveGatedExternalStore(source.gate, source.subscribe, source.getPreview);
 }

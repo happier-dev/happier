@@ -106,7 +106,6 @@ export type SessionListRowViewModel = Readonly<{
     /** Last meaningful activity; the age label is a leaf on the shared clock, so a minute turning never rebuilds the row. */
     activityAt: number | null;
     /** Whether the row's clock-driven leaves follow the shared clock (false on frozen, inactive surfaces). */
-    clockLive: boolean;
     identityDisplay: 'avatar' | 'agentLogo' | 'none';
     activeColorMode: 'activityAndAttention' | 'attentionOnly' | 'allActive';
     hideInactiveSessions: boolean;
@@ -242,7 +241,6 @@ export type BuildSessionListRowViewModelInput = Readonly<{
     homeObservations?: SessionListHomeObservationByServerId;
     relativeNowMs?: number;
     runtimeNowMs?: number;
-    clockLive?: boolean;
     identityDisplay?: SessionListIdentityDisplay;
     activeColorMode?: 'activityAndAttention' | 'attentionOnly' | 'allActive';
     hideInactiveSessions?: boolean;
@@ -433,7 +431,6 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
         ),
         hasUnreadMessages: session?.hasUnreadMessages === true,
         activityAt: typeof activityAt === 'number' && activityAt > 0 ? activityAt : null,
-        clockLive: input.clockLive !== false,
         identityDisplay: input.identityDisplay === 'agentLogo' || input.identityDisplay === 'none' ? input.identityDisplay : 'avatar',
         activeColorMode: normalizeActiveColorMode(input.activeColorMode),
         hideInactiveSessions: input.hideInactiveSessions === true,
@@ -595,7 +592,6 @@ function buildRowViewModelSignature(viewModel: SessionListRowViewModel): string 
         viewModel.nextRuntimeFreshnessAtMs ?? '',
         viewModel.hasUnreadMessages ? '1' : '0',
         viewModel.activityAt ?? '',
-        viewModel.clockLive ? '1' : '0',
         viewModel.identityDisplay,
         viewModel.activeColorMode,
         viewModel.hideInactiveSessions ? '1' : '0',

@@ -5,6 +5,7 @@ import {
     type SessionAddress,
 } from '@/sync/domains/session/sessionAddress';
 import * as React from 'react';
+import { useSessionListSurfaceDataActiveSignal } from './surface/sessionListSurfaceDataActive';
 import { useSessionMruOrder } from '@/sync/domains/session/navigation/recentSessions';
 import { normalizeSessionListActiveColorMode } from './row/sessionRowTitleColorRole';
 import { buildSessionListCollapseContextKey, buildSessionListCollapseKey, readSessionListCollapsedGroups } from '@/sync/domains/session/listing/sessionListCollapseState';
@@ -2168,7 +2169,6 @@ export function useSessionListViewStateFromPaneState(
                 item={item}
                 unscopedSelectionIsUnique={selectedSessionId === item.sessionId && unscopedSelectionIsUnique}
                 rowHeight={densityViewState.rowHeight}
-                dataActive={surfaceOwnership.dataActive}
                 dragEnabled={rowDragPolicy.canDrag}
                 treeRowId={treeRowIdForItem}
                 onDragStart={rowInteractions.handleDragStart}
@@ -2267,7 +2267,6 @@ export function useSessionListViewStateFromPaneState(
         shellFlags.canReorderSessions,
         shellFlags.showPinnedServerBadge,
         shellFlags.showServerBadge,
-        surfaceOwnership.dataActive,
         getRowMoveActionHandlers,
         rowLabelByTreeRowId,
         unscopedSelectionIsUnique,
@@ -2277,13 +2276,13 @@ export function useSessionListViewStateFromPaneState(
     const runsAmongSessions = filterController.displayFilters.show !== 'runs';
     const renderWorkflowRunItem = React.useCallback((item: Extract<SessionListIndexItem, { type: 'workflow_run' }>) => (
         <SessionListViewportWorkflowRunItem rowViewport={rowViewport} nodeId={buildSessionListIndexNodeId(item)}
-            surfaceDataActive={surfaceOwnership.dataActive} runId={item.runId} serverId={item.serverId}
+            runId={item.runId} serverId={item.serverId}
             density={densityViewState.compact ? densityViewState.compactMinimal ? 'minimal' : 'compact' : 'default'}
             selected={effectivePathname === `/workflows/runs/${encodeURIComponent(item.runId)}`}
             reportsDepth={item.reportsDepth} statusWords={sessionListStatusWords === true}
             activeColorMode={normalizeSessionListActiveColorMode(sessionListActiveColorMode)}
             kindMark={runsAmongSessions} />
-    ), [densityViewState.compact, densityViewState.compactMinimal, effectivePathname, rowViewport, runsAmongSessions, sessionListActiveColorMode, sessionListStatusWords, surfaceOwnership.dataActive]);
+    ), [densityViewState.compact, densityViewState.compactMinimal, effectivePathname, rowViewport, runsAmongSessions, sessionListActiveColorMode, sessionListStatusWords]);
 
     const virtualizedNodeCacheRef = React.useRef(new Map<string, Readonly<{
         item: SessionListIndexItem;
@@ -2452,7 +2451,6 @@ export function useSessionListViewStateFromPaneState(
         sessionListIdentityDisplay: sessionListIdentityDisplay === 'agentLogo' || sessionListIdentityDisplay === 'none'
             ? sessionListIdentityDisplay
             : 'avatar',
-        sessionListSurfaceDataActive: surfaceOwnership.dataActive,
         // Mounted Section headers read these facts, so a member's move redraws the count with its row.
         sectionFactsByGroupKey,
         // Row-context choices (P5 U5): mounted cells redraw only when extraData changes, so every
@@ -2491,7 +2489,6 @@ export function useSessionListViewStateFromPaneState(
         sessionListActiveColorMode,
         sessionListIdentityDisplay,
         sessionFoldersSignature,
-        surfaceOwnership.dataActive,
         sessionTagsEnabled,
         sessionTagsSignature,
         shellFlags.canDragSessionRows,
@@ -2644,7 +2641,7 @@ export const SessionListViewportDemandPublisher = React.memo(function SessionLis
             })
             : EMPTY_VIEWABLE_SESSION_ROW_KEYS
     ), [props.dataActive, props.priorityRowKeys, props.totalRows, visibleRowKeys]));
-    useSessionListRowViewportSubscriptions(props.viewportOwner, rowSubscriptionKeys);
+    useSessionListRowViewportSubscriptions(props.viewportOwner, rowSubscriptionKeys, props.dataActive);
     const visibilityResetVersion = React.useSyncExternalStore(
         subscribeSessionSurfaceVisibilityReset,
         getSessionSurfaceVisibilityResetVersion,
@@ -2709,13 +2706,17 @@ export const SessionListViewportDemandPublisher = React.memo(function SessionLis
     return null;
 });
 
-/** A Run row reads its own viewability, so scrolling redraws only the rows that entered or left. */
+/**
+ * A Run row reads its own viewability and the surface's data demand, so scrolling, a cover or a Back
+ * redraws only the Run rows, never every mounted row through `extraData`.
+ */
 function SessionListViewportWorkflowRunItem(props: Omit<WorkflowRunItemProps, 'kind' | 'dataActive'> & Readonly<{
     rowViewport: SessionListRowViewport;
     nodeId: string;
-    surfaceDataActive: boolean;
 }>) {
-    const { rowViewport, nodeId, surfaceDataActive, ...itemProps } = props;
+    const { rowViewport, nodeId, ...itemProps } = props;
     const viewable = useSessionListRowViewportFact(rowViewport, 'viewable', nodeId);
+    const surface = useSessionListSurfaceDataActiveSignal();
+    const surfaceDataActive = React.useSyncExternalStore(surface.subscribe, surface.get, surface.get);
     return <SessionItem kind="workflow_run" {...itemProps} dataActive={surfaceDataActive && viewable} />;
 }

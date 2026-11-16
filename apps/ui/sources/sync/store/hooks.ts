@@ -28,6 +28,7 @@ import { readSavedSecretCatalog } from '@/sync/api/account/apiSavedSecretCatalog
 import type { SessionMessagesTailBoundary } from '@/sync/runtime/sessionMessagesTailDiscontinuity';
 import { isPendingMessageForRecipient } from '@/sync/domains/pending/pendingMessageRecipient';
 import { useShallow } from 'zustand/react/shallow';
+import { ALWAYS_ACTIVE, useActiveGatedExternalStore, type ActiveSignal } from '@/utils/react/activeGatedExternalStore';
 import type { ReturnedAnswerEntry } from './sessionReturnedAnswers';
 import { EMPTY_SESSION_USER_MESSAGE_HISTORY, EMPTY_USER_MESSAGE_HISTORY, type SessionUserMessageHistory } from './sessionUserMessageHistory';
 import { hasExecutionRunSignals } from '../domains/session/participants/deriveExecutionRunPollingRefreshKey';
@@ -1150,6 +1151,8 @@ const emptySessionListRowRenderablesByKey =
 
 export function useSessionListRowRenderablesForItems(
   items: ReadonlyArray<SessionListIndexItem> | null | undefined,
+  /** A list surface's data demand: while off, the rows keep the renderables they last showed. */
+  gate: ActiveSignal = ALWAYS_ACTIVE,
 ): ReadonlyMap<string, SessionListRenderableSession> {
   useServerProfilesGeneration();
   const resolveScopeId = captureServerProfileScopeResolver();
@@ -1181,7 +1184,8 @@ export function useSessionListRowRenderablesForItems(
     return next;
   }, [itemKeys]);
 
-  return getStorage()(useShallow((state) => {
+  const store = getStorage();
+  const select = useShallow((state: StorageState) => {
     if (itemKeys.length === 0) return emptySessionListRowRenderablesByKey;
     const next = new Map<string, SessionListRenderableSession>();
     for (const itemKey of itemKeys) {
@@ -1198,7 +1202,8 @@ export function useSessionListRowRenderablesForItems(
     }
 
     return next.size === 0 ? emptySessionListRowRenderablesByKey : next;
-  }));
+  });
+  return useActiveGatedExternalStore(gate, store.subscribe, () => select(store.getState()));
 }
 
 const EMPTY_SESSION_LIST_INDEX_BY_SERVER_ID: Readonly<Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined>> = {};

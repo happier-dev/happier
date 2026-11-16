@@ -1,4 +1,5 @@
 import React from 'react';
+import type { ActiveSignal } from '@/utils/react/activeGatedExternalStore';
 
 /**
  * Single shared runtime clock for the session-list surface.
@@ -185,11 +186,14 @@ export function useSessionListRuntimeNowMs(
  * refresh the instant immediately; deadlines still use the single clock/timer. */
 export function useSessionListRuntimeDeadlineNowMs(
     readNextRefreshAtMs: (nowMs: number) => number | null,
-    enabled = true,
+    /** A boolean, or a surface's data demand: while it is off the reader keeps its instant and holds no wake. */
+    enabled: boolean | ActiveSignal = true,
     clock: SessionListRuntimeClock = sessionListRuntimeClock,
     subscribeDeadlineChanges?: (listener: () => void) => () => void,
 ): number {
     const token = useWakeToken();
+    const gate = typeof enabled === 'boolean' ? null : enabled;
+    const subscribed = gate !== null || enabled === true;
     const snapshot = React.useMemo(() => {
         let nowMs = Math.max(clock.getNowMs(), Date.now());
         let nextRefreshAtMs = readNextRefreshAtMs(nowMs);
@@ -202,20 +206,42 @@ export function useSessionListRuntimeDeadlineNowMs(
             nextRefresh: () => nextRefreshAtMs,
             reconcile: () => { nextRefreshAtMs = readNextRefreshAtMs(Date.now()); },
         };
-    }, [clock, enabled, readNextRefreshAtMs]);
+    }, [clock, subscribed, readNextRefreshAtMs]);
     const subscribe = React.useCallback((listener: () => void) => {
-        if (!enabled) return noopSubscribe();
-        const stopClock = clock.subscribeWake(token, () => { snapshot.advance(); listener(); });
-        const stopChanges = subscribeDeadlineChanges?.(() => {
-            snapshot.reconcile();
-            const deadline = snapshot.nextRefresh();
-            if (deadline === null) clock.clearWake(token);
-            else clock.requestWake(token, deadline);
-        });
-        return () => { stopClock(); stopChanges?.(); };
-    }, [clock, enabled, snapshot, token, subscribeDeadlineChanges]);
+        if (!subscribed) return noopSubscribe();
+        const start = () => {
+            const stopClock = clock.subscribeWake(token, () => { snapshot.advance(); listener(); });
+            const stopChanges = subscribeDeadlineChanges?.(() => {
+                snapshot.reconcile();
+                const deadline = snapshot.nextRefresh();
+                if (deadline === null) clock.clearWake(token);
+                else clock.requestWake(token, deadline);
+            });
+            return () => { stopClock(); stopChanges?.(); };
+        };
+        if (!gate) return start();
+        // Opening the gate re-arms the deadline as of now: an instant that passed while the surface was
+        // away wakes this reader once; an unchanged one renders nothing.
+        let stop: (() => void) | null = null;
+        const sync = () => {
+            if (gate.get()) {
+                if (stop) return;
+                stop = start();
+                snapshot.reconcile();
+                const deadline = snapshot.nextRefresh();
+                if (deadline !== null) clock.requestWake(token, deadline);
+            } else if (stop) {
+                stop();
+                stop = null;
+                clock.clearWake(token);
+            }
+        };
+        sync();
+        const stopGate = gate.subscribe(sync);
+        return () => { stopGate(); stop?.(); };
+    }, [clock, gate, subscribed, snapshot, token, subscribeDeadlineChanges]);
     const nowMs = React.useSyncExternalStore(subscribe, snapshot.get, snapshot.get);
-    useClockWake(snapshot.nextRefresh(), enabled, clock, token);
+    useClockWake(snapshot.nextRefresh(), gate ? gate.get() : subscribed, clock, token);
     return nowMs;
 }
 

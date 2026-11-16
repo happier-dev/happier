@@ -817,7 +817,7 @@ describe('visible session-list retained attention through real state', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('keeps every populated phone row mounted while a page covers the list and after Back', async () => {
+    it('keeps every populated phone row mounted, and unchanged rows unrendered, while a page covers the list and after Back', async () => {
         const { SessionsListPaneContent } = await import('@/components/sessions/shell/SessionsListPaneContent');
         const { buildSessionListIndexNodeId } = await import('@/sync/domains/sessionList/sessionListIndexIdentity');
         const sessions = Array.from({ length: 6 }, (_, index) => createSessionFixture({
@@ -857,7 +857,9 @@ describe('visible session-list retained attention through real state', () => {
                 await flushHookEffects();
             }
             const mounts = [...mountedRowCost.mounts.values()].reduce((sum, count) => sum + count, 0) - settledMounts;
-            expect(mounts).toBe(0);
+            // Nothing changed in any row while it was covered: a cover and a Back render none of them.
+            const rowRenders = [...mountedRowCost.counters.values()].reduce((sum, counter) => sum + counter.read().renders, 0);
+            expect({ mounts, rowRenders }).toEqual({ mounts: 0, rowRenders: 0 });
             expect(screen.root.findAll(node => typeof node.type === 'string' && rowIds.includes(String(node.props.testID ?? '')))
                 .map(node => String(node.props.testID)).sort()).toEqual([...rowIds].sort());
         } finally { await screen.unmount(); }

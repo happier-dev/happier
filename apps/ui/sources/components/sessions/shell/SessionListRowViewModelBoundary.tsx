@@ -1,6 +1,7 @@
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionAudiencePresentation } from '@/sync/domains/session/presentation/sessionContextPresentation';
-import { useSessionListRowViewportFact, type SessionListRowViewport } from './sessionListRowViewport';
+import type { SessionListRowViewport } from './sessionListRowViewport';
+import { useActiveGatedExternalStore } from '@/utils/react/activeGatedExternalStore';
 import { resolveSessionListRowStoreScopeKey } from './row/sessionListVisibleRowStoreScopes';
 import type { SessionListHomeObservation } from '@/sync/domains/session/listing/sessionListHomeObservation';
 import * as React from 'react';
@@ -10,7 +11,6 @@ import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionLis
 import {
     useSessionListRowRenderablesForItems,
 } from '@/sync/domains/state/storage';
-import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import { sessionTagKey } from './sessionTagUtils';
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
@@ -18,7 +18,7 @@ import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/organization/attentionStanding';
 
 import { SessionListSessionItem } from './sessionListSessionItem';
-import { shouldReadLiveRowRenderables } from './sessionListRowRenderableFreeze';
+import { useSessionListSurfaceDataActiveSignal } from './surface/sessionListSurfaceDataActive';
 import {
     buildSessionListRowViewModel,
     readSessionListRowRefreshAtMs,
@@ -51,7 +51,6 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useEffectiveSessionAppearanceColor } from '@/hooks/session/useSessionAppearance';
 import { readSessionAppearanceWorkspaceKey } from '@/sync/domains/session/organization/appearanceWorkspaceKey';
 
-const EMPTY_ROW_RENDERABLES = new Map<string, SessionListRenderableSession>() as ReadonlyMap<string, SessionListRenderableSession>;
 export type SessionListRowViewModelBoundaryProps = Readonly<{
     audience?: SessionAudiencePresentation | null;
     /** This row's exact-Home list currentness, from the canonical per-Home observation owner. */
@@ -63,7 +62,6 @@ export type SessionListRowViewModelBoundaryProps = Readonly<{
     compact: boolean;
     compactMinimal: boolean;
     currentUserId: string | null;
-    dataActive: boolean;
     dragEnabled: boolean;
     draggingSessionKey: string | null;
     draggingTreeRowId?: string | null;
@@ -116,31 +114,19 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         props.item.groupKind === 'attention' ? STAGE_SPOTLIGHT_TARGET_IDS.attentionGroup : null,
     );
     const rowItems = React.useMemo(() => [props.item], [props.item]);
-    const rowAttentionAnimationEnabled = useSessionListRowViewportFact(
-        props.rowViewport, 'subscribed', resolveSessionListRowStoreScopeKey(props.item));
-    const frozenRowRenderableByKeyRef = React.useRef<ReadonlyMap<string, SessionListRenderableSession>>(EMPTY_ROW_RENDERABLES);
-    // A row can FIRST render while the surface is inactive - the list keeps rendering behind a
-    // pushed screen - and such a row has no frozen snapshot to fall back to. Presenting its starting
-    // EMPTY map would blank it until the surface returns, so "never frozen anything" reads live
-    // once. See `shouldReadLiveRowRenderables`.
-    const readLiveRowRenderables = shouldReadLiveRowRenderables({
-        dataActive: props.dataActive,
-        hasFrozenRenderables: frozenRowRenderableByKeyRef.current !== EMPTY_ROW_RENDERABLES,
-    });
-    const liveRowRenderableByKey = useSessionListRowRenderablesForItems(readLiveRowRenderables ? rowItems : null);
-    if (readLiveRowRenderables) {
-        frozenRowRenderableByKeyRef.current = liveRowRenderableByKey;
-    }
-    const rowRenderableByKey = props.dataActive
-        ? liveRowRenderableByKey
-        : frozenRowRenderableByKeyRef.current;
+    // The surface's data demand reaches each source, not the row: a cover or a Back renders a row only
+    // when what it shows changed. A row first rendered behind a cover reads its sources once.
+    const surfaceDataActive = useSessionListSurfaceDataActiveSignal();
+    // Its viewport membership too: a covered list withdraws every row's store subscription, which is
+    // demand, not a change to show; the row keeps its animation state until the surface returns.
+    const rowStoreScopeKey = resolveSessionListRowStoreScopeKey(props.item);
+    const rowAttentionAnimationEnabled = useActiveGatedExternalStore(surfaceDataActive, props.rowViewport.subscribe,
+        () => props.rowViewport.isSubscribed(rowStoreScopeKey));
+    const rowRenderableByKey = useSessionListRowRenderablesForItems(rowItems, surfaceDataActive);
 
     const rowKey = buildSessionListServerScopedRowKey(props.item.serverId, props.item.sessionId);
-    const liveAppearanceColor = useEffectiveSessionAppearanceColor(props.item.serverId, props.item.sessionId,
-        readSessionAppearanceWorkspaceKey(props.item), { enabled: readLiveRowRenderables });
-    const retainedAppearanceColor = React.useRef(liveAppearanceColor);
-    if (readLiveRowRenderables) retainedAppearanceColor.current = liveAppearanceColor;
-    const appearanceColor = props.dataActive ? liveAppearanceColor : retainedAppearanceColor.current;
+    const appearanceColor = useEffectiveSessionAppearanceColor(props.item.serverId, props.item.sessionId,
+        readSessionAppearanceWorkspaceKey(props.item), surfaceDataActive);
     const session = rowKey ? rowRenderableByKey.get(rowKey) ?? null : null;
     const standing = props.item.serverId
         ? props.attentionStandingPolicy.overridesBySessionKey[sessionTagKey(props.item.serverId, props.item.sessionId)]
@@ -149,7 +135,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
     const readNextRefreshAtMs = React.useCallback((nowMs: number) => (
         readSessionListRowRefreshAtMs({ session, reminderAtMs, homeObservation: props.homeObservation }, nowMs)
     ), [session, reminderAtMs, props.homeObservation]);
-    const runtimeNowMs = useSessionListRuntimeDeadlineNowMs(readNextRefreshAtMs, props.dataActive);
+    const runtimeNowMs = useSessionListRuntimeDeadlineNowMs(readNextRefreshAtMs, surfaceDataActive);
     const relativeNowMs = runtimeNowMs;
     const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching', {
         scopeKind: 'spawn',
@@ -159,7 +145,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         activeScope: props.draftScope,
         serverId: props.item.serverId,
         sessionId: props.item.sessionId,
-        dataActive: props.dataActive,
+        gate: surfaceDataActive,
     });
     const draftScope = props.draftScope;
     const sessionId = props.item.sessionId;
@@ -183,7 +169,6 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         rowRenderableByKey,
         relativeNowMs,
         runtimeNowMs,
-        clockLive: props.dataActive,
         identityDisplay: props.identityDisplay === 'agentLogo' || props.identityDisplay === 'none' ? props.identityDisplay : 'avatar',
         activeColorMode: props.activeColorMode === 'attentionOnly' || props.activeColorMode === 'allActive'
             ? props.activeColorMode
@@ -213,7 +198,6 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         },
     }), [
         appearanceColor,
-        props.dataActive,
         props.rowContextEnabled,
         props.rowContextIdentityDisplay,
         props.rowContextGroupServerId,

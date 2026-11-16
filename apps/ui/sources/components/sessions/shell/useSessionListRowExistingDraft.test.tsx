@@ -12,7 +12,17 @@ import {
 import { useSessionListRowDraftPreview, useSessionListRowExistingDraft } from './useSessionListRowExistingDraft';
 
 const activeScope = { serverId: 'server-row-drafts', accountId: 'account-row-drafts' };
-type RowProps = Readonly<{ dataActive: boolean; serverId?: string }>;
+type RowProps = Readonly<{ serverId?: string }>;
+
+/** The list surface's data demand, switched the way a covering page and Back switch it. */
+function createSurfaceGate(initial: boolean) {
+    let active = initial;
+    const listeners = new Set<() => void>();
+    return {
+        signal: { get: () => active, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } },
+        set: (next: boolean) => { active = next; for (const listener of [...listeners]) listener(); },
+    };
+}
 
 function type(text: string): void {
     writeExistingSessionDraft({ scope: activeScope, sessionId: 'session-row', patch: { text }, materializationIntent: 'userEdit' });
@@ -24,15 +34,18 @@ describe('useSessionListRowExistingDraft', () => {
     });
 
     it('follows the row draft live, drops it when unlisted, and freezes while the surface is inactive', async () => {
+        const surface = createSurfaceGate(true);
+        let renders = 0;
         const hook = await renderHook<{ draft: ReturnType<typeof useSessionListRowExistingDraft>['draft']; preview: string }, RowProps>((props) => {
             const row = useSessionListRowExistingDraft({
                 activeScope,
                 serverId: props.serverId ?? activeScope.serverId,
                 sessionId: 'session-row',
-                dataActive: props.dataActive,
+                gate: surface.signal,
             });
+            renders += 1;
             return { draft: row.draft, preview: useSessionListRowDraftPreview(row.preview) };
-        }, { initialProps: { dataActive: true } });
+        }, { initialProps: {} });
 
         expect(hook.getCurrent().draft).toBeNull();
         await act(async () => { type('hello'); });
@@ -44,17 +57,23 @@ describe('useSessionListRowExistingDraft', () => {
         // A key changes the preview text, not the row's structure: the row's draft facts keep their identity.
         expect(hook.getCurrent().draft).toBe(draft);
 
-        await hook.rerender({ dataActive: false });
+        // A cover and a Back with nothing changed meanwhile render nothing.
+        const rendersBefore = renders;
+        await act(async () => { surface.set(false); });
+        await act(async () => { surface.set(true); });
+        expect(renders - rendersBefore).toBe(0);
+
+        await act(async () => { surface.set(false); });
         await act(async () => { type('typed behind a pushed screen'); });
         expect(hook.getCurrent().preview).toBe('hello there');
-        await hook.rerender({ dataActive: true });
+        await act(async () => { surface.set(true); });
         expect(hook.getCurrent().preview).toBe('typed behind a pushed screen');
 
         await act(async () => { type(''); });
         expect(hook.getCurrent().draft).toBeNull();
 
         await act(async () => { type('another Home'); });
-        await hook.rerender({ dataActive: true, serverId: 'server-elsewhere' });
+        await hook.rerender({ serverId: 'server-elsewhere' });
         expect(hook.getCurrent().draft).toBeNull();
         await hook.unmount();
     });
@@ -63,10 +82,11 @@ describe('useSessionListRowExistingDraft', () => {
         configureSessionDraftRepository({ syncEnabled: false });
         type('hello');
         let renders = 0;
+        const live = createSurfaceGate(true).signal;
         const hook = await renderHook(() => {
             renders += 1;
             return useSessionListRowExistingDraft({
-                activeScope, serverId: activeScope.serverId, sessionId: 'session-row', dataActive: true,
+                activeScope, serverId: activeScope.serverId, sessionId: 'session-row', gate: live,
             }).draft;
         }, { initialProps: {} });
         const draft = hook.getCurrent();
@@ -84,12 +104,13 @@ describe('useSessionListRowExistingDraft', () => {
 
     it('reads the current draft once for a row whose first render is inactive', async () => {
         type('drafted before the row mounted');
+        const inactive = createSurfaceGate(false).signal;
         const hook = await renderHook(() => {
             const row = useSessionListRowExistingDraft({
                 activeScope,
                 serverId: activeScope.serverId,
                 sessionId: 'session-row',
-                dataActive: false,
+                gate: inactive,
             });
             return { draft: row.draft, preview: useSessionListRowDraftPreview(row.preview) };
         }, { initialProps: {} });

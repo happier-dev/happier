@@ -71,7 +71,6 @@ export function createSessionItemRowViewModel(
         nextRuntimeFreshnessAtMs: null,
         hasUnreadMessages: false,
         activityAt: null,
-        clockLive: true,
         identityDisplay: 'avatar',
         activeColorMode: 'activityAndAttention',
         hideInactiveSessions: false,

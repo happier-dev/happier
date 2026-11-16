@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { ALWAYS_ACTIVE, useActiveGatedExternalStore, type ActiveSignal } from '@/utils/react/activeGatedExternalStore';
 import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import { createCustomSessionAppearanceColorsSelector, selectSessionAppearanceColor, selectEffectiveSessionAppearanceColor, selectSessionAppearancesSupported, type SessionAppearanceSelectorState } from '@/sync/store/selectors/sessionAppearance';
 
@@ -19,9 +20,11 @@ export function useSessionOwnAppearanceColor(serverId: string | null | undefined
     return useEnabledStorageSelection(options?.enabled !== false, select, null);
 }
 
-export function useEffectiveSessionAppearanceColor(serverId: string | null | undefined, sessionId: string, workspaceKey?: string | null, options?: SessionAppearanceHookOptions): SessionAppearanceColor | null {
-    const select = React.useCallback((state: SessionAppearanceSelectorState) => serverId ? selectEffectiveSessionAppearanceColor(state, { serverId, sessionId, workspaceKey }) : null, [serverId, sessionId, workspaceKey]);
-    return useEnabledStorageSelection(options?.enabled !== false, select, null);
+/** A list row's colour: while its surface's data demand is off it keeps the colour it last showed. */
+export function useEffectiveSessionAppearanceColor(serverId: string | null | undefined, sessionId: string, workspaceKey?: string | null, gate: ActiveSignal = ALWAYS_ACTIVE): SessionAppearanceColor | null {
+    const store = getStorage();
+    return useActiveGatedExternalStore(gate, store.subscribe,
+        () => serverId ? selectEffectiveSessionAppearanceColor(store.getState(), { serverId, sessionId, workspaceKey }) : null);
 }
 
 export function useCustomSessionAppearanceColors(serverId?: string | null, options?: SessionAppearanceHookOptions): readonly `#${string}`[] {

@@ -54,13 +54,18 @@ export function useSessionListRowViewport(): SessionListRowViewportOwner {
     return owner;
 }
 
-/** Rows rendered in this pass read the current subscriptions; mounted rows hear about them after commit. */
+/**
+ * Rows rendered in this pass read the current subscriptions; mounted rows hear about them after commit.
+ * A surface without data demand withdraws every subscription without telling its rows: they keep what
+ * they show until the surface returns, and only then compare.
+ */
 export function useSessionListRowViewportSubscriptions(
     owner: SessionListRowViewportOwner,
     subscribedKeys: ReadonlySet<string> | null,
+    surfaceDataActive = true,
 ): void {
     owner.assignSubscribedKeys(subscribedKeys);
-    React.useLayoutEffect(owner.notify, [owner, subscribedKeys]);
+    React.useLayoutEffect(() => { if (surfaceDataActive) owner.notify(); }, [owner, subscribedKeys, surfaceDataActive]);
 }
 
 /** A reader's derivation of the viewport. `select` must return the same value for an unchanged answer. */

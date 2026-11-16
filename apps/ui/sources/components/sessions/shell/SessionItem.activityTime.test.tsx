@@ -1166,7 +1166,6 @@ describe('SessionItem activity time', () => {
                     nextRuntimeFreshnessAtMs: null,
                     hasUnreadMessages: true,
                     activityAt: Date.now() - 7 * 60_000,
-                    clockLive: true,
                     identityDisplay: 'avatar',
                     activeColorMode: 'attentionOnly',
                     hideInactiveSessions: true,

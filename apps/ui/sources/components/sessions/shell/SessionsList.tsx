@@ -57,6 +57,7 @@ import {
     setRetainedSessionListPaneReferenceCorpusActive,
 } from './sessionListPaneRetention';
 import { SessionListRowFactsProvider } from './sessionListRowFacts';
+import { SessionListSurfaceDataActiveProvider } from './surface/sessionListSurfaceDataActive';
 import type { SessionListViewContext } from './search/sessionListViewFilters';
 import type { SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import {
@@ -601,6 +602,7 @@ function VisibleSessionsListViewContent(
                     >{null}</HomeReachabilityGate>
                 ) : null}
                 {props.emptyBody != null ? null : (
+                <SessionListSurfaceDataActiveProvider dataActive={surfaceOwnership.dataActive}>
                 <SessionListRowFactsProvider value={viewState.rowFacts}>
                 <SyncPerformanceReactProfiler id="sessions.list.virtualized">
                     <SessionListVirtualizedContent
@@ -636,6 +638,7 @@ function VisibleSessionsListViewContent(
                     />
                 </SyncPerformanceReactProfiler>
                 </SessionListRowFactsProvider>
+                </SessionListSurfaceDataActiveProvider>
                 )}
                 <SessionListDropOverlay
                     active={viewState.dropOverlayActive}
