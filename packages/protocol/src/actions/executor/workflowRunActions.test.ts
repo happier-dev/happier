@@ -3329,6 +3329,7 @@ describe('shared Account workflow run owner', () => {
     { activity: 'not_active', lifecycle: 'failed', same: false, fresh: false, reattach: false, continuation: true, stale: true },
     { activity: 'not_active', lifecycle: 'failed', same: false, fresh: false, reattach: false, continuation: false, workspace: true, restore: true },
     { activity: 'unknown', lifecycle: 'needs_attention', same: false, fresh: false, reattach: false, continuation: false, workspace: true, restore: false },
+    { activity: 'unknown', lifecycle: 'needs_attention', same: false, fresh: false, reattach: false, continuation: false, workspace: true, restore: true, noExecution: true },
   ] as const)('uses exact observation for offered and enforced recovery: $activity/$lifecycle', async (scenario) => {
     const recordId = '33333333-3333-4333-8333-333333333333';
     const snapshot = runSnapshot();
@@ -3363,6 +3364,8 @@ describe('shared Account workflow run owner', () => {
     }));
     let reattachments = 0;
     let replacements = 0;
+    let observations = 0;
+    let restorations = 0;
     const owner = createWorkflowAccountRunActionOwner({
       ...ownerDeps({ execute: async (operation) => {
         if (operation.operation === 'get') return snapshot;
@@ -3374,9 +3377,10 @@ describe('shared Account workflow run owner', () => {
         throw new Error('unexpected_replacement');
       } }),
       ...(scenario.activity === 'unobserved' ? {} : {
-        observeRecovery: async () => ({ activity: scenario.activity, canReattach: scenario.reattach, canContinueConversation: scenario.continuation }),
+        observeRecovery: async () => { observations++; return { activity: scenario.activity, canReattach: scenario.reattach, canContinueConversation: scenario.continuation }; },
       }),
       reattachInvocation: async () => { reattachments += 1; },
+      restoreWorkspace: async () => { restorations++; return { ok: false, code: 'workflow_workspace_restore_failed' }; },
     });
     const detail = await owner.execute({ actionId: 'workflow.run.invocations.get', input: { runId, invocationId: recordId }, context: {} });
     expect(detail).toMatchObject({ invocation: { recoveryAvailability: {
@@ -3386,6 +3390,18 @@ describe('shared Account workflow run owner', () => {
       retry: { kind: scenario.fresh ? 'available' : 'unavailable' },
       ...('restore' in scenario ? { restoreWorkspace: { kind: scenario.restore ? 'available' : 'unavailable' } } : {}),
     } } });
+    if ('workspace' in scenario && scenario.restore) {
+      // The SCM boundary remains unavailable; reaching it proves admission
+      // agrees with the offer without manufacturing an unavailable choice.
+      await expect(owner.execute({ actionId: 'workflow.run.resume', input: { mode: 'recover', runId, expectedRevision: 2,
+        invocations: [{ kind: 'restore_workspace', invocation: { recordId }, conversation: 'fresh_agent', input: { kind: 'original' } }] },
+        context: { authority: 'present_user', callerPermissionMode: 'safe-yolo',
+          externalActionTarget: { kind: 'machine', machineId: 'machine-a' } } })).rejects.toMatchObject({
+        code: 'noExecution' in scenario ? 'workflow_workspace_restore_failed' : 'workflow_outcome_unresolved',
+      });
+      expect(restorations).toBe('noExecution' in scenario ? 1 : 0);
+      if ('noExecution' in scenario) expect(observations).toBe(0);
+    }
     if (!scenario.same) {
       await expect(owner.execute({ actionId: 'workflow.run.resume', input: { mode: 'recover', runId, expectedRevision: 2,
         invocations: [{ kind: 'continue', invocation: { recordId }, conversation: 'same_conversation', input: { document: { text: 'new', references: [], attachments: [] }, input: [] } }] },

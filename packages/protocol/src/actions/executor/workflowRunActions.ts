@@ -122,6 +122,17 @@ function isStructuralRecoveryFrame(kind: WorkflowProgressEnvelopeV1['blockKind']
   return exhaustive;
 }
 
+function isPreExecutionWorkspaceFailure(progress: WorkflowProgressEnvelopeV1): boolean {
+  return progress.reason?.code === 'workspace_unavailable' && progress.execution === undefined;
+}
+
+function isRetryableInvocationState(index: WorkflowRunInvocationIndexV1, progress: WorkflowProgressEnvelopeV1): boolean {
+  return EXACT_RECOVERY_RETRY_LIFECYCLES.has(index.lifecycle)
+    || (index.lifecycle === 'needs_attention'
+      && (isStructuralRecoveryFrame(progress.blockKind) || isPreExecutionWorkspaceFailure(progress)
+        || progress.uncertainPriorEffects?.activity === 'stopped'));
+}
+
 function deriveExactInvocationRecoveryAvailability(params: Readonly<{
   run: WorkflowRunSummaryV1;
   index: WorkflowRunInvocationIndexV1;
@@ -151,9 +162,7 @@ function deriveExactInvocationRecoveryAvailability(params: Readonly<{
       : EXACT_RECOVERY_ACTIVE_LIFECYCLES.has(params.index.lifecycle) && params.evidence.canReattach
         ? available
         : unavailable(stopPending ? 'stop_pending' : 'invocation_not_recoverable');
-  const retryable = (EXACT_RECOVERY_RETRY_LIFECYCLES.has(params.index.lifecycle)
-    || (params.index.lifecycle === 'needs_attention'
-      && (isStructuralRecoveryFrame(params.progress.blockKind) || params.progress.uncertainPriorEffects?.activity === 'stopped')))
+  const retryable = isRetryableInvocationState(params.index, params.progress)
     && params.evidence.activity === 'not_active';
   const retry = workspaceUnavailable
     ? unavailable('workspace_unavailable')
@@ -1794,9 +1803,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const rows = [...selected].map((id) => graph.get(id));
     if (rows.some((row) => !row)) return unavailable('causal_set_requires_batch_review');
     if (rows.some((row) => row!.index.lifecycle === 'cancel_requested')) return unavailable('stop_pending');
-    if (rows.some((row) => !EXACT_RECOVERY_RETRY_LIFECYCLES.has(row!.index.lifecycle)
-      && !(row!.index.lifecycle === 'needs_attention'
-        && (isStructuralRecoveryFrame(row!.progress.blockKind) || row!.progress.uncertainPriorEffects?.activity === 'stopped')))) {
+    if (rows.some((row) => !isRetryableInvocationState(row!.index, row!.progress))) {
       return unavailable('causal_set_requires_batch_review');
     }
     for (const row of rows) {
@@ -1831,7 +1838,11 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
   const recoveryEvidence = async (run: WorkflowRunSummaryV1, prior: Awaited<ReturnType<typeof readPriorProgress>>, signal?: AbortSignal) => {
     // Structural frames do not own an executable input. Their replacement
     // eligibility is derived from the exact causal leaves below.
-    if (isStructuralRecoveryFrame(prior.progress.blockKind)) return { activity: 'not_active' as const, canReattach: false, canContinueConversation: false };
+    // The workspace owner refuses before execution admission. Its retained
+    // typed failure proves inactivity; absence of execution by itself does not.
+    if (isStructuralRecoveryFrame(prior.progress.blockKind) || isPreExecutionWorkspaceFailure(prior.progress)) {
+      return { activity: 'not_active' as const, canReattach: false, canContinueConversation: false };
+    }
     deps.assertCurrent?.();
     const evidence = await deps.observeRecovery?.({ run, index: prior.index, progress: prior.progress, ...(signal ? { signal } : {}) })
       // Missing correspondence does not prove that admission never happened.
