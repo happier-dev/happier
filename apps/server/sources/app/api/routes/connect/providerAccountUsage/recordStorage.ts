@@ -18,7 +18,7 @@ import type {
 } from "./types";
 import { ProviderAccountUsagePayloadInvariantError } from "./types";
 import { appendProviderAccountUsagePendingDay } from './daySummaryPendingStorage';
-import { usageSqlName as name, usageSqlTimestamp } from './storageSql';
+import { usageSqlName as name, usageSqlTimestamp, usageObservedAtMs } from './storageSql';
 
 type ProviderAccountUsageRecordClient = Pick<typeof db, "providerAccountUsageRecord">
     | Pick<TransactionClient, "providerAccountUsageRecord">;
@@ -329,10 +329,10 @@ export async function upsertProviderAccountUsageRecord(
         update: buildProviderAccountUsageRecordUpdateData(parsed),
     });
 
-    const stored = await readProviderAccountUsageRecord({
+    const stored = (await readProviderAccountUsageRecordWithCurrentGuard({
         accountId: parsed.accountId,
         recordId: parsed.recordId,
-    }, client);
+    }, client))?.record;
     if (!stored) {
         throw new Error("Provider account usage record disappeared after upsert");
     }
@@ -406,8 +406,46 @@ export async function writeProviderAccountUsageRecord(
 export async function readProviderAccountUsageRecord(params: Readonly<{
     accountId: string;
     recordId: string;
-}>, client: ProviderAccountUsageRecordClient = db): Promise<StoredProviderAccountUsageRecord | null> {
-    return (await readProviderAccountUsageRecordWithCurrentGuard(params, client))?.record ?? null;
+}>, client: Pick<TransactionClient, '$queryRaw'> = db): Promise<StoredProviderAccountUsageRecord | null> {
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const metadata = name('metadata');
+    // Current records and admission need supplemental metadata, but never the
+    // retained history document. Remove it in SQL before any driver transfer.
+    const currentMetadata = provider === 'sqlite' ? prismaRuntime.sql`json_remove(${metadata}, '$.pageProjection')`
+        : provider === 'mysql' ? prismaRuntime.sql`JSON_REMOVE(${metadata}, '$.pageProjection')`
+            : prismaRuntime.sql`CASE WHEN jsonb_typeof(${metadata}) = 'object' THEN ${metadata} - 'pageProjection' ELSE ${metadata} END`;
+    // A JSON scalar string and a driver-serialized object must stay distinct.
+    // Normalize every engine to JSON text, then decode exactly once below.
+    const jsonText = (value: Prisma.Sql) => provider === 'mysql'
+        ? prismaRuntime.sql`CAST(${value} AS CHAR)` : prismaRuntime.sql`CAST(${value} AS TEXT)`;
+    type Row = Omit<Parameters<typeof parseStoredProviderAccountUsageRecord>[0], 'fetchedAt' | 'refreshRequestedAt' | 'staleAfterMs'> & {
+        fetchedAt: number | bigint | null;
+        refreshRequestedAt: number | bigint | null;
+        staleAfterMs: number | bigint | null;
+    };
+    const rows = await client.$queryRaw<Row[]>(prismaRuntime.sql`SELECT
+        ${name('accountId')}, ${name('recordId')}, ${name('payloadMode')}, ${name('status')}, ${name('staleAfterMs')},
+        ${jsonText(name('recordKeyJson'))} AS ${name('recordKeyJson')},
+        ${jsonText(name('snapshot'))} AS ${name('snapshot')},
+        ${jsonText(name('sealedPayload'))} AS ${name('sealedPayload')},
+        ${usageObservedAtMs(name('fetchedAt'))} AS ${name('fetchedAt')},
+        ${usageObservedAtMs(name('refreshRequestedAt'))} AS ${name('refreshRequestedAt')},
+        ${jsonText(currentMetadata)} AS ${metadata}
+        FROM ${name('ProviderAccountUsageRecord')}
+        WHERE ${name('accountId')} = ${params.accountId} AND ${name('recordId')} = ${params.recordId}`);
+    const row = rows[0];
+    if (!row) return null;
+    const json = (value: unknown): unknown => typeof value === 'string' ? JSON.parse(value) : value;
+    return parseStoredProviderAccountUsageRecord({
+        ...row,
+        recordKeyJson: json(row.recordKeyJson),
+        snapshot: json(row.snapshot),
+        sealedPayload: json(row.sealedPayload),
+        metadata: json(row.metadata),
+        fetchedAt: row.fetchedAt === null ? null : new Date(Number(row.fetchedAt)),
+        refreshRequestedAt: row.refreshRequestedAt === null ? null : new Date(Number(row.refreshRequestedAt)),
+        staleAfterMs: row.staleAfterMs === null ? null : Number(row.staleAfterMs),
+    });
 }
 
 /** Keep raw persisted JSON in the CAS: legacy projections and unknown retained fields need not reserialize identically. */

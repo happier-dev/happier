@@ -385,8 +385,10 @@ describe("qualified Connected Account usage stored identity", () => {
         await withSqliteReadSnapshot(async reader => {
             const originalExecute = reader.$executeRawUnsafe;
             const originalFind = reader.providerAccountUsageRecord.findUnique;
+            const originalHistoryFind = reader.providerAccountUsageHistory.findMany;
             const execute = originalExecute.bind(reader);
             const find = originalFind.bind(reader.providerAccountUsageRecord);
+            const findHistory = originalHistoryFind.bind(reader.providerAccountUsageHistory);
             reader.$executeRawUnsafe = (async (query: string, ...values: unknown[]) => {
                 const result = await execute(query, ...values);
                 if (query === 'BEGIN DEFERRED;') leased = true;
@@ -395,23 +397,30 @@ describe("qualified Connected Account usage stored identity", () => {
             }) as typeof reader.$executeRawUnsafe;
             // This boundary observer returns real awaited rows; Prisma's
             // generated delegate additionally advertises PrismaPromise methods.
+            const observePayload = (entry: { payload: unknown }) => {
+                const payload: unknown = entry.payload;
+                Object.defineProperty(entry, 'payload', { get() {
+                    parsed++;
+                    expect(leased, 'history parsing must not hold a transaction connection').toBe(false);
+                    return payload;
+                } });
+            };
+            reader.providerAccountUsageHistory.findMany = (async (args: Parameters<typeof findHistory>[0]) => {
+                const rows = await findHistory(args);
+                rows.forEach(observePayload);
+                return rows;
+            }) as unknown as typeof reader.providerAccountUsageHistory.findMany;
             reader.providerAccountUsageRecord.findUnique = (async (args: Parameters<typeof find>[0]) => {
                 const row = await find(args);
                 if (row && 'history' in row && Array.isArray(row.history)) {
-                    for (const entry of row.history) {
-                        const payload: unknown = entry.payload;
-                        Object.defineProperty(entry, 'payload', { get() {
-                            parsed++;
-                            expect(leased, 'history parsing must not hold a transaction connection').toBe(false);
-                            return payload;
-                        } });
-                    }
+                    row.history.forEach(observePayload);
                 }
                 return row;
             }) as unknown as typeof reader.providerAccountUsageRecord.findUnique;
             restore = () => {
                 reader.$executeRawUnsafe = originalExecute;
                 reader.providerAccountUsageRecord.findUnique = originalFind;
+                reader.providerAccountUsageHistory.findMany = originalHistoryFind;
             };
         });
         try {

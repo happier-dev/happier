@@ -28,6 +28,7 @@ import {
 import {
     createProviderAccountUsageRecord,
     readProviderAccountUsageRecord,
+    readProviderAccountUsageRecordWithCurrentGuard,
     readProviderAccountUsageHistory,
     readProviderAccountUsageHistoryWitness,
     hasProviderAccountUsageHistory,
@@ -123,11 +124,11 @@ describe("provider account usage record storage (integration)", () => {
         await db.providerAccountUsageRecord.update({ where: { accountId_recordId: { accountId: account.id, recordId: first.recordId } },
             data: { metadata: { pageProjection, futureReadExtension: { value: true } } } });
         const readParams = { accountId: account.id, recordId: first.recordId };
-        expect((await readProviderAccountUsageRecord(readParams))?.metadata?.pageProjection).toEqual(pageProjection);
+        expect((await readProviderAccountUsageRecordWithCurrentGuard(readParams, db))?.record.metadata?.pageProjection).toEqual(pageProjection);
         expect(await readProviderAccountUsagePageProjection({ ...readParams, projection: pageProjection.demand }, db))
             .toEqual({ projection: pageProjection, complete: true });
         await write({ ...first, fetchedAtMs: first.fetchedAtMs + 500, observedAtMs: first.observedAtMs + 500 });
-        expect((await readProviderAccountUsageRecord(readParams))?.metadata?.pageProjection).toEqual(pageProjection);
+        expect((await readProviderAccountUsageRecordWithCurrentGuard(readParams, db))?.record.metadata?.pageProjection).toEqual(pageProjection);
         expect(await readProviderAccountUsageHistory({ ...readParams, history: { range, pageSize: 100 } })).toEqual(history);
         expect(await writeProviderAccountUsagePageProjection({ accountId: account.id, value: pageProjection }, db)).toEqual(pageProjection);
         expect(await readProviderAccountUsageHistory({ ...readParams, history: { range, pageSize: 100 } })).toEqual(history);
@@ -140,6 +141,51 @@ describe("provider account usage record storage (integration)", () => {
         expect(accepted.entries[1]!.record.metadata).not.toHaveProperty('pageProjection');
         expect(await readProviderAccountUsageHistoryWitness({ accountId: account.id, recordId: first.recordId,
             witness: pageProjection.frontier })).toEqual(witness);
+    });
+
+    it('keeps current-record database results independent of retained page-projection size', async () => {
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
+        const snapshot = createUsageSnapshot({ fetchedAt: Date.now() - 3000 });
+        const key = { accountId: account.id, recordId: snapshot.recordId };
+        const subscription = { status: 'subscribed' as const, renewal: 'off' as const,
+            observedAtMs: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs };
+        await upsertProviderAccountUsageRecord({ ...key, recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1',
+            status: 'ok', snapshot, fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs,
+            refreshRequestedAt: snapshot.fetchedAtMs + 1, metadata: { subscription, materialFingerprint: 'retained' } });
+        const returnedBytes: number[] = [];
+        const capture = (value: unknown) => {
+            returnedBytes.push(Buffer.byteLength(JSON.stringify(value, (_key, leaf) => typeof leaf === 'bigint' ? Number(leaf) : leaf)));
+            return value;
+        };
+        // Observe actual driver results before parsing; stripping metadata in JS
+        // would still transfer the entire retained projection and fail this test.
+        const storage = new Proxy(db, {
+            get(target, property, receiver) {
+                if (property === '$queryRaw') return async (...args: Parameters<typeof db.$queryRaw>) => capture(await target.$queryRaw(...args));
+                if (property === 'providerAccountUsageRecord') return new Proxy(target.providerAccountUsageRecord, {
+                    get(delegate, method, delegateReceiver) {
+                        if (method === 'findUnique') return async (...args: Parameters<typeof delegate.findUnique>) => capture(await delegate.findUnique(...args));
+                        return Reflect.get(delegate, method, delegateReceiver);
+                    },
+                });
+                return Reflect.get(target, property, receiver);
+            },
+        });
+        for (const repetitions of [1, 4096]) {
+            const pageProjection = { recordId: snapshot.recordId, encoding: PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING,
+                demand: { range: { startAtMs: 0, endAtMs: snapshot.fetchedAtMs + 1 }, resolution: 'accepted_observations' as const },
+                frontier: null, observationCount: 0, content: { t: 'encrypted' as const, c: 'projection-only'.repeat(repetitions) } };
+            await db.providerAccountUsageRecord.update({ where: { accountId_recordId: key },
+                data: { metadata: { subscription, materialFingerprint: 'retained', pageProjection } } });
+            const record = await readProviderAccountUsageRecord(key, storage);
+            expect(record).toMatchObject({ snapshot: { ...snapshot, subscription }, fetchedAt: snapshot.fetchedAtMs,
+                refreshRequestedAt: snapshot.fetchedAtMs + 1, metadata: { subscription, materialFingerprint: 'retained' } });
+            expect(record?.metadata).toEqual({ subscription, materialFingerprint: 'retained' });
+            expect((await readProviderAccountUsageRecordWithCurrentGuard(key, db))?.rawMetadata).toMatchObject({ pageProjection });
+        }
+        expect(returnedBytes).toHaveLength(2);
+        expect(returnedBytes[1], 'projection growth transfers zero additional current-record bytes').toBe(returnedBytes[0]);
+        await expect(readProviderAccountUsageRecord({ ...key, accountId: `${account.id}-other` }, storage)).resolves.toBeNull();
     });
 
     it('keeps an interior Pending reset witness after material changes and unchanged refreshes', async () => {

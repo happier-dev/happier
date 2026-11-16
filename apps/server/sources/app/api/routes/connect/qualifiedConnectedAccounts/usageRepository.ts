@@ -24,6 +24,7 @@ import {
     deleteProviderAccountUsageRecord,
     deleteProviderAccountUsageRecordsForAccount,
     readProviderAccountUsageRecord,
+    readProviderAccountUsageRecordWithCurrentGuard,
     readProviderAccountUsageHistoryWitness,
     readProviderAccountUsageHistoryPageRows,
     readProviderAccountUsageHistoryWitnessRow,
@@ -64,6 +65,7 @@ type QualifiedUsageStorage = Pick<
     | "connectedServiceUsageSource"
     | "providerAccountUsageRecord"
     | "serviceAccountQuotaSnapshot"
+    | "$queryRaw"
 >;
 
 export class QualifiedConnectedAccountUsageBasisError extends Error {
@@ -911,10 +913,10 @@ async function writeQualifiedProviderAccountUsageRecordInTx(
             throw error;
         }
     }
-    const record = await readProviderAccountUsageRecord({
+    const record = (await readProviderAccountUsageRecordWithCurrentGuard({
         accountId: params.accountId,
         recordId: params.recordId,
-    }, tx);
+    }, tx))?.record;
     if (!record) {
         throw new Error(
             "Provider usage record disappeared during qualified write",
@@ -1385,9 +1387,15 @@ export async function readQualifiedProviderAccountUsageHistory(params: Readonly<
         }
         if (admitted.status !== 'resolved') return admitted;
         if ('projection' in params) {
-            const stored = admitted.record.metadata?.pageProjection;
-            if (stored && !projectionMatchesMode(stored, admitted.record)) return { status: 'storage_mode_mismatch' as const };
-            try { return { status: 'resolved' as const, ...await readProviderAccountUsagePageProjection(params, tx, admitted.record) }; }
+            try {
+                // Only explicit projection consumers read the complete document.
+                // Reuse its validated metadata before range/prefix admission so
+                // incompatible stored content keeps the same refusal semantics.
+                const captured = await readProviderAccountUsageRecordWithCurrentGuard(params, tx);
+                const stored = captured?.record.metadata?.pageProjection;
+                if (stored && !projectionMatchesMode(stored, admitted.record)) return { status: 'storage_mode_mismatch' as const };
+                return { status: 'resolved' as const, ...await readProviderAccountUsagePageProjection(params, tx, { metadata: captured?.record.metadata }) };
+            }
             catch (error) {
                 if (error instanceof ProviderAccountUsagePayloadInvariantError) return { status: 'storage_mode_mismatch' as const };
                 throw error;
