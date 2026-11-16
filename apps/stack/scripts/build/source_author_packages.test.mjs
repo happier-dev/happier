@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import childProcess from 'node:child_process';
-import { syncBuiltinESMExports } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { build } from 'esbuild';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { installSourcePreparationInputs } from '../testkit/core/source_runtime_fixture.mjs';
@@ -57,7 +57,10 @@ test('source author runtime emits the 18-package closure without native declarat
     }
   }
   captureRuntimeDependencies({
-    imports: [{ path: '@typescript/native', resolveFrom: fileURLToPath(new URL('../../../../package.json', import.meta.url)) }],
+    imports: [
+      { path: '@typescript/native', resolveFrom: fileURLToPath(new URL('../../../../package.json', import.meta.url)) },
+      { path: 'esbuild', resolveFrom: fileURLToPath(new URL('../../../cli/package.json', import.meta.url)) },
+    ],
     outputDir: repoDir, sourceRepoDir: fileURLToPath(new URL('../../../../', import.meta.url)),
   });
   await installSourcePreparationInputs(repoDir, 'daemon');
@@ -109,6 +112,12 @@ test('source author runtime emits the 18-package closure without native declarat
   await rm(join(repoDir, 'packages'), { recursive: true, force: true });
   // A transferred runtime must resolve its deferred compiler without the checkout.
   captureRuntimeDependencies({ imports: result.runtimeImports ?? [], outputDir: runtimeDir, sourceRepoDir: repoDir });
+  const runtimeRequire = createRequire(join(runtimeDir, 'package.json'));
+  const authorBundler = runtimeRequire('esbuild');
+  const bundled = await authorBundler.build({ stdin: { contents: 'export const plugin = "captured-author";' },
+    bundle: true, platform: 'node', format: 'esm', write: false });
+  assert.match(bundled.outputFiles[0].text, /captured-author/,
+    'a transferred author runtime can execute its physical bundler without the checkout');
   const compiler = resolveInstalledRuntimePackage({ packageName: '@typescript/native',
     resolveFromPackageJsonPath: join(runtimeDir, 'package.json') });
   const compilerManifest = JSON.parse(await readFile(compiler.packageJsonPath, 'utf8'));
