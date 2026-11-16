@@ -63,7 +63,17 @@ export function createLoopbackTunnelSupervisor<
      * owner stays live for its documented retry.
      */
     let admissionClosed = false;
-    const pending = new Map<string, { promise: Promise<Lease>; referenceCount: number }>();
+    /**
+     * One shared acquisition per key. Callers that join before the acquisition counts its references
+     * are retained by it; a caller that joins after (the already-verified path counts synchronously)
+     * takes its own reference once the lease is stored, so every holder's release is matched.
+     */
+    type AcquisitionReferences = { count: number; counted: boolean };
+    const pending = new Map<string, { promise: Promise<Lease>; references: AcquisitionReferences }>();
+    const countReferences = (references: AcquisitionReferences): number => {
+        references.counted = true;
+        return references.count;
+    };
     const nativeSubscriptions = new Map<string, () => void>();
     const listeners = new Set<(event: LoopbackTunnelLifecycleEvent<Lease>) => void>();
     const probeTimeoutMs = input.probeTimeoutMs ?? 15_000;
@@ -204,13 +214,18 @@ export function createLoopbackTunnelSupervisor<
             if (admissionClosed) throw new Error(failureCodes.disposed);
             if (store.isSuspended()) throw new Error(failureCodes.suspended);
             const key = input.buildKey(request);
-            const inFlight = pending.get(key);
-            if (inFlight) {
-                inFlight.referenceCount += 1;
-                return await inFlight.promise;
+            for (let inFlight = pending.get(key); inFlight; inFlight = pending.get(key)) {
+                if (!inFlight.references.counted) {
+                    inFlight.references.count += 1;
+                    return await inFlight.promise;
+                }
+                const lease = await inFlight.promise;
+                if (store.retain(key)) return lease;
+                // Every other holder released it meanwhile: acquire it afresh below.
             }
 
             const generation = input.getGeneration?.();
+            const references: AcquisitionReferences = { count: 1, counted: false };
             const startPromise = (async () => {
                 const existing = store.getByKey(key);
                 let retainedReferenceCount = 0;
@@ -228,7 +243,7 @@ export function createLoopbackTunnelSupervisor<
                         // expired token after suspend/resume.
                         store.put(key, { ...existing, request });
                         let retained = store.getByKey(key) ?? existing;
-                        const referencesToRetain = pending.get(key)?.referenceCount ?? 1;
+                        const referencesToRetain = countReferences(references);
                         for (let index = 0; index < referencesToRetain; index += 1) {
                             retained = store.retain(key) ?? retained;
                         }
@@ -281,7 +296,7 @@ export function createLoopbackTunnelSupervisor<
                     store.put(key, {
                         lease: failedLease,
                         nativeTunnelId: started.nativeTunnelId,
-                        referenceCount: retainedReferenceCount + (pending.get(key)?.referenceCount ?? 1),
+                        referenceCount: retainedReferenceCount + countReferences(references),
                         request,
                     });
                     try {
@@ -312,18 +327,19 @@ export function createLoopbackTunnelSupervisor<
                 store.put(key, {
                     lease,
                     nativeTunnelId: started.nativeTunnelId,
-                    referenceCount: retainedReferenceCount + (pending.get(key)?.referenceCount ?? 1),
+                    referenceCount: retainedReferenceCount + countReferences(references),
                     request,
                 });
                 subscribeToNativeEvents(key, started.nativeTunnelId);
                 return lease;
             })();
 
-            pending.set(key, { promise: startPromise, referenceCount: 1 });
+            const acquisition = { promise: startPromise, references };
+            pending.set(key, acquisition);
             try {
                 return await startPromise;
             } finally {
-                pending.delete(key);
+                if (pending.get(key) === acquisition) pending.delete(key);
             }
         },
         listTunnels: () => store.snapshot(),
