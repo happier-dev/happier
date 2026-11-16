@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { PluginSettingsContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/settings';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -59,7 +58,7 @@ describe('UI plugin Settings Action owner', () => {
     it.each(['account', 'daemon'] as const)('preserves quiet secret declines and sole executor confirmation for %s custody', async custody => {
         const { projectPluginSettingsContributionV2 } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
         const { mapV2EditableSettingsGroup } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
-        for (const scenario of ['reject', 'canceled', 'default', 'waived'] as const) {
+        for (const scenario of ['reject', 'canceled', 'approve', 'default', 'waived'] as const) {
             let accountSnapshot = { revision: 5, settings: {} };
             let daemonState: 'configured' | 'missing' = 'configured';
             let confirmations = 0;
@@ -95,13 +94,14 @@ describe('UI plugin Settings Action owner', () => {
                 ? { approvalWaivedSurfaces: { 'plugins.settings.secret.delete': ['ui'] } }
                 : scenario === 'default' ? {} : { actions: { 'plugins.settings.secret.delete': { approvalRequiredSurfaces: ['ui'] } } }) });
             const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-                isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+                readActionsSettings: () => settings,
                 hostActionApprovalLifetime: { actionId: 'plugins.settings.secret.delete', signal: new AbortController().signal, surface: 'ui' },
-                presentUserActionConfirmation: async () => { confirmations += 1; return true; },
+                presentUserActionConfirmation: async () => {
+                    confirmations += 1;
+                    return scenario !== 'reject' && scenario !== 'canceled';
+                },
                 isApprovalExecutionOriginCurrent: async () => true,
                 approvalsCreate: async () => { approvalRequests += 1; return { artifactId: 'secret-approval' }; },
-                approvalsUpdate: async () => ({ ok: true }),
-                approvalsWaitForDecision: async ({ request }) => ({ decision: scenario === 'reject' ? 'reject' : 'canceled', request }),
                 pluginSettingsAdministrationAction: settingsStoragePort({ target, groups, adapter, secretAdapter, assertCurrent() {} }),
             }));
             let executionSummary: unknown;
@@ -119,8 +119,8 @@ describe('UI plugin Settings Action owner', () => {
                 : await actionAdapter.daemonSecret!.write({ pluginId: 'acme.settings', target: daemonTarget, secretId: 'token',
                     expectedRevision: 'secret-r1', mutation: { kind: 'delete' } });
             const declined = scenario === 'reject' || scenario === 'canceled';
-            expect(confirmations).toBe(scenario === 'default' ? 1 : 0);
-            expect(approvalRequests).toBe(declined ? 1 : 0);
+            expect(confirmations).toBe(scenario === 'waived' ? 0 : 1);
+            expect(approvalRequests).toBe(0);
             expect(result, JSON.stringify({ scenario, executionSummary })).toMatchObject({ status: declined ? 'declined' : custody === 'account' ? 'applied' : 'ready' });
             const configured = custody === 'account'
                 ? Boolean(resolveAccountSettingsPluginSecretBinding(accountSnapshot.settings, { pluginId: 'acme.settings', localId: 'token' }))
@@ -148,11 +148,8 @@ describe('UI plugin Settings Action owner', () => {
             daemonGet: unexpected, daemonSet: unexpected });
         let ask = true;
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-            isActionApprovalRequired: () => ask,
-            isApprovalExecutionOriginCurrent: async () => true,
-            approvalsCreate: async () => ({ artifactId: 'approval-1' }),
-            approvalsUpdate: async () => ({ ok: true }),
-            approvalsWaitForDecision: async ({ request }) => ({ decision, request }),
+            readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'plugins.settings.set': { approvalRequiredSurfaces: ask ? ['ui'] : [] } } }),
+            presentUserActionConfirmation: async () => false,
             pluginSettingsAdministrationAction: settingsStoragePort({ target, groups, adapter, secretAdapter: adapter, assertCurrent() {} }),
         }));
         const accountLifetime = { scope: { serverId: 'home-a', accountId: `quiet-${decision}` }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
@@ -222,7 +219,7 @@ describe('UI plugin Settings Action owner', () => {
                 'plugins.settings.secret.bind': ['agent'], 'plugins.settings.secret.delete': ['agent'],
             } });
             const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-                isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+                readActionsSettings: () => settings,
                 pluginSettingsAdministrationAction: settingsStoragePort({ target, groups, adapter, secretAdapter, assertCurrent() {} }),
             }));
             const input = { pluginId: 'acme.settings', localId: 'token' };
@@ -260,7 +257,7 @@ describe('UI plugin Settings Action owner', () => {
                 daemonGet: unexpected, daemonSet: unexpected });
             const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'plugins.settings.set': [surface] } });
             const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-                isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+                readActionsSettings: () => settings,
                 pluginSettingsAdministrationAction: settingsStoragePort({ target, groups, adapter, secretAdapter: adapter, assertCurrent() {} }),
             }));
             const input = { pluginId: 'acme.settings', scope: { kind: 'account' }, target: { kind: 'account' },
@@ -311,17 +308,15 @@ describe('UI plugin Settings Action owner', () => {
             const decided = createDeferred<void>();
             const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'plugins.settings.set': { approvalRequiredSurfaces: ['ui'] } } });
             const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-                isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
-                isApprovalExecutionOriginCurrent: async () => true,
-                approvalsCreate: async ({ request }) => { expect(request.approval?.flow).toBe('blocking'); return { artifactId: 'approval-1' }; },
-                approvalsUpdate: async () => ({ ok: true }),
-                approvalsWaitForDecision: async ({ request }) => { entered.resolve(); await decided.promise;
-                    return { decision: 'approve', request: { ...request, status: 'approved', decision: { kind: 'approve', decidedAtMs: 2 } } }; },
+                readActionsSettings: () => settings,
+                presentUserActionConfirmation: async () => { entered.resolve(); await decided.promise; return true; },
+                approvalsCreate: async () => { throw new Error('Own UI Ask unexpectedly created an approval Artifact'); },
                 pluginSettingsAdministrationAction: settingsStoragePort({ target, groups, adapter, secretAdapter: adapter, assertCurrent() {} }),
             }));
             const actionAdapter = createScopedPluginSettingsActionAdapter({ adapter,
                 accountLifetime: { scope: { serverId: 'home-a', accountId: 'alice' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
-                execute: (id, input, context) => executor.execute(id, input, { ...context, actionRequestId: 'captured-field-attempt' }) });
+                execute: (id, input, context) => executor.execute(id, input, { ...context,
+                    authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: 'captured-field-attempt' }) });
             const writeInput = { pluginId: 'acme.settings', scope: { kind: 'account' as const }, target,
                 fields: [{ key: 'enabled', redacted: false }], fieldId: 'enabled', mutation: { kind: 'set' as const, value: true },
                 expectedRevision: { kind: 'account' as const, value: 7 }, isCurrent: () => current };
@@ -329,6 +324,7 @@ describe('UI plugin Settings Action owner', () => {
             const observed = await Promise.race([entered.promise.then(() => 'waiting'), pending.then(() => 'returned')]);
             expect(observed).toBe('waiting');
             expect(values).toEqual({ enabled: false });
+            expect(revision).toBe(7);
             if (changeIntent) current = false;
             decided.resolve();
             expect(await pending).toMatchObject({ status: changeIntent ? 'unavailable' : 'applied' });
@@ -524,7 +520,7 @@ describe('UI plugin Settings Action owner', () => {
         const settings = ActionsSettingsV1Schema.parse({ v: 1,
             actions: { 'plugins.settings.set': { approvalRequiredSurfaces: ['ui'] } } });
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+            readActionsSettings: () => settings,
             pluginSettingsAdministrationAction: settingsStoragePort({
                 target, groups, adapter, secretAdapter: adapter, assertCurrent: () => { if (!current) throw new Error('retired'); } }),
         }));
@@ -539,7 +535,7 @@ describe('UI plugin Settings Action owner', () => {
             expectedRevision: { kind: 'account' as const, value: 7 } };
         expect(await actionAdapter.write(writeInput)).toMatchObject({ status: 'unavailable' });
         expect(writes).toBe(0);
-        expect(await executor.execute('plugins.settings.set', input, context)).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        expect(await executor.execute('plugins.settings.set', input, context)).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
         expect(writes).toBe(0);
         expect(await executor.execute('plugins.settings.set', input, { ...context, bypassApprovals: true }))
             .toMatchObject({ ok: true, result: { ok: true, data: { revision: '8' } } });

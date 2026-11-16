@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -633,7 +634,7 @@ describe('Follow exact Home Action transport', () => {
             ) },
         });
         executor = createActionExecutor({ settingsDeclarationAction, sessionFollowAction,
-            isActionApprovalRequired: id => requireApproval && id === 'follow.preferences.set',
+            readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'follow.preferences.set': { approvalRequiredSurfaces: requireApproval ? ['ui', 'cli'] : [] } } }),
             executionRunStart: unused, executionRunList: unused, executionRunGet: unused, detachedExecutionRunSend: unused,
             executionRunStop: unused, executionRunAction: unused, executionRunWait: unused, sessionOpen: unused,
             sessionFork: unused, sessionRollback: unused, sessionSpawnNew: unused, pathsListRecent: unused,

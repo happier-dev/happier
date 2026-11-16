@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor as createExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -109,7 +108,7 @@ describe('capture delivery disclosure', () => {
         const settings = ActionsSettingsV1Schema.parse({ v: 1,
             approvalWaivedSurfaces: { 'screenCapture.addToDraft': ['agent', 'mcp'] } });
         const executor = createActionExecutor({
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+            readActionsSettings: () => settings,
             screenCaptureAction: createScreenCaptureAction({
             readDelivery: async () => ({ ...record, inUse: true, image: { kind: 'prepared', name: 'Prepared.png',
                 readBytes: async () => { pixelReads += 1; return prepared; } } }),
@@ -135,7 +134,7 @@ describe('capture delivery disclosure', () => {
         const settings = ActionsSettingsV1Schema.parse({ v: 1,
             approvalWaivedSurfaces: { 'screenCapture.addToDraft': [surface] } });
         const executor = createActionExecutor({
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+            readActionsSettings: () => settings,
             screenCaptureAction: createNativeScreenCaptureAction(),
         });
         expect(await executor.execute('screenCapture.addToDraft', { captureRef: 'capture',
@@ -176,7 +175,7 @@ describe('capture delivery disclosure', () => {
         try {
             storage.setState({ localSettings: { ...before, screenCaptureIncludeWindowText: true } });
             const executor = createActionExecutor({ screenCaptureAction: createNativeScreenCaptureAction(),
-                isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
+                readActionsSettings: () => settings });
             expect(await executor.execute('screenCapture.start', { mode: 'screenshot', target: { kind: 'frontmost' }, targetSession: {
                 serverId: 'server', accountId: 'account', sessionId: 'session' } }, {
                 surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
@@ -389,7 +388,7 @@ describe('recording document Actions through the native authoring slot', () => {
         } });
         const executor = createActionExecutor({
             screenCaptureAction: createNativeScreenCaptureAction(), mediaAnnotation: executeMediaAnnotationAction,
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, recordingSettings, context),
+            readActionsSettings: () => recordingSettings,
             isApprovalExecutionOriginCurrent: async () => true,
             approvalsCreate: async () => { approvalRequests += 1; return { artifactId: 'recording-read-approval' }; },
             approvalsUpdate: async () => ({ ok: true }),

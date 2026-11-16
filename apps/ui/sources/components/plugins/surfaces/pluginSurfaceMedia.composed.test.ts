@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
 import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings} from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import { normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
 import {
     type ApprovalRequest} from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -127,7 +127,7 @@ it('uses the public UI client of installed external plugins for per-view consent
                 approvalsUpdate: async () => ({ ok: true }),
                 approvalsWaitForDecision: async ({ request }) => ({ decision, request }),
                 isApprovalExecutionOriginCurrent: async () => true,
-                isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({ v: 1 }), context),
+                readActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }),
             }));
             const lifetime = new AbortController();
             const admissions: unknown[] = [];

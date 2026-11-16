@@ -10,7 +10,6 @@ import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/appr
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createServedHomeAccountToken, serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -74,13 +73,13 @@ describe('Machine share approval across device Home profiles (real SQLite)', () 
         const policy = ActionsSettingsV1Schema.parse({ v: 1 });
         let produced: ApprovalRequest | undefined;
         const producerDeps = {
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, policy, context),
+            readActionsSettings: () => policy,
             approvalsCreate: async ({ request }) => {
                 produced = ApprovalRequestSchema.parse(request);
                 const artifactId = await account.createArtifact(buildApprovalRequestArtifactHeaderV1(request), JSON.stringify(request));
                 return { artifactId };
             },
-        } satisfies Pick<ActionExecutorDeps, 'isActionApprovalRequired' | 'approvalsCreate'>;
+        } satisfies Pick<ActionExecutorDeps, 'readActionsSettings' | 'approvalsCreate'>;
         const producer = createActionExecutor(producerDeps as unknown as ActionExecutorDeps);
         try {
             const proposed = await producer.execute('machines.access.grant.set', input, { surface: 'cli',
@@ -91,7 +90,7 @@ describe('Machine share approval across device Home profiles (real SQLite)', () 
                 || typeof proposed.result.artifactId !== 'string') throw new Error('Approval was not created');
             expect(produced).toMatchObject({ v: 2, actionArgs: input,
                 executionOriginV1: { serverId: creatorProfile, serverIdentityId: originIdentity } });
-            expect(await db.machineAccountGrant.count({ where: { machineId: machine.id } })).toBe(0);
+            expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: machine.id } })).toBe(0);
             const original = ApprovalRequestSchema.parse(produced);
             if (original.v !== 2) throw new Error('Approval origin missing');
             const decidingAccount = await captureLazyActionAccountContext(home.id);
@@ -117,13 +116,13 @@ describe('Machine share approval across device Home profiles (real SQLite)', () 
                     expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false,
                         errorCode: 'server_target_mismatch' } } });
                 }
-                expect(await db.machineAccountGrant.count({ where: { machineId: machine.id } })).toBe(0);
+                expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: machine.id } })).toBe(0);
                 expect(await db.machineKeyEnvelope.count({ where: { machineId: machine.id } })).toBe(0);
                 expect(homes.requests.some(request => request.path.endsWith('/access'))).toBe(false);
                 return;
             }
             expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
-            expect(await db.machineAccountGrant.findUniqueOrThrow({ where: { machineId_accountId: { machineId: machine.id, accountId: recipient.id } } }))
+            expect(await db.machineGrant.findUniqueOrThrow({ where: { principalKind: 'account', machineId_accountId: { machineId: machine.id, accountId: recipient.id } } }))
                 .toMatchObject({ accessLevel: 'view', createdByAccountId: owner.id });
             const retained = await db.machine.findUniqueOrThrow({ where: { id: machine.id } });
             const delivered = await db.machineKeyEnvelope.findFirstOrThrow({ where: { machineId: machine.id, recipientAccountId: recipient.id } });

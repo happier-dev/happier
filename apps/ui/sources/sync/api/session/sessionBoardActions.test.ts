@@ -221,7 +221,7 @@ describe('Session Board Action adapter', () => {
         const adapter = createSessionBoardActionAdapter({ scope, session, request, contentContext: { mode: 'plain' },
             capabilities: { readTranscript: true, editSessionRecords: true } });
         // The real executor's strict result correspondence is the deciding consumer.
-        const executor = createActionExecutor({ sessionBoardAction: adapter, isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+        const executor = createActionExecutor({ sessionBoardAction: adapter } as unknown as ActionExecutorDeps);
         const input = { sessionId: session.sessionId, itemId: 'note', expectedItemRevision: revision, item,
             placement: { tabId: 'second', width: 'wide' as const } };
         const result = await executor.execute('session.board.item.upsert', input, {
@@ -448,7 +448,6 @@ describe('Session Board Action adapter', () => {
         });
         const executor = createActionExecutor({
             sessionBoardAction: adapter,
-            isActionApprovalRequired: () => false,
             // The Account settings read is a persistence boundary; admission and policy normalization stay real.
             readAgentHtmlNetworkPolicy: async () => 'off',
             widgetAccountScope: () => scope,

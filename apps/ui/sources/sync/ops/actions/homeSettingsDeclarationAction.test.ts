@@ -1,3 +1,5 @@
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -59,7 +61,11 @@ async function harness(requireHomeApproval = false, approvalsCreate?: ActionExec
     const unused = async () => { throw new Error('unexpected unrelated effect'); };
     executor = createActionExecutor({ settingsDeclarationAction: action,
         homeDomainAction: createHomeDomainActionExecutorForScope(scope),
-        isActionApprovalRequired: id => requireHomeApproval && id === 'home.settings.set',
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1,
+            // This CLI adapter fixture explicitly waives unrelated effects, as its former false policy did.
+            approvalWaivedSurfaces: Object.fromEntries(ActionIdSchema.options.map(id => [id, ['cli']])),
+            actions: { 'home.settings.set': { approvalRequiredSurfaces: requireHomeApproval ? ['cli'] : [] } },
+        }),
         ...(approvalsCreate ? { approvalsCreate } : {}),
         executionRunStart: unused, executionRunList: unused, executionRunGet: unused, detachedExecutionRunSend: unused,
         executionRunStop: unused, executionRunAction: unused, executionRunWait: unused, sessionOpen: unused,

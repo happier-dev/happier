@@ -9,7 +9,7 @@ import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openPr
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -220,7 +220,7 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
         const policy = ActionsSettingsV1Schema.parse({ v: 1 });
         const producer = createActionExecutor({
             ...cliDeps,
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, policy, context),
+            readActionsSettings: () => policy,
             approvalsCreate: async ({ request: approval }) => ({ artifactId: await account.createArtifact(
                 buildApprovalRequestArtifactHeaderV1(approval), JSON.stringify(ApprovalRequestSchema.parse(approval))) }),
             approvalsGet: async ({ artifactId }) => {

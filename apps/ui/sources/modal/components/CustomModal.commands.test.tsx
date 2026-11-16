@@ -27,7 +27,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { normalizeActionsSettingsV1, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import type { UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }));
@@ -198,7 +198,7 @@ describe('CustomModal shared dismissal commands', () => {
                 if (id === 'usage.sources.root.set') actors.push(context);
                 return isActionEnabledByActionsSettings(id, settings, context);
             },
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+            readActionsSettings: () => settings,
         } satisfies Partial<ActionExecutorDeps>;
         // This fixture configures only the Source Action slice and its genuine Machine boundary.
         const sourceExecutor = createActionExecutor(deps as ActionExecutorDeps);

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import {
   getUsageQueryKey,
   normalizeUsageQuery,
@@ -171,8 +171,7 @@ function harness(options: Readonly<{ approve?: boolean; agentDigestDisabled?: bo
       };
     },
     isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, settings, context),
-    isActionApprovalRequired: (id, context) =>
-      isApprovalRequiredByActionsSettings(id, settings, context),
+    readActionsSettings: () => settings,
   } satisfies Partial<ActionExecutorDeps>;
   const executor = createActionExecutor(createActionExecutorBoundaryFixture(deps));
   const controller = createUsageCoachController({

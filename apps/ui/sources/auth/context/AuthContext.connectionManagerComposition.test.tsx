@@ -441,8 +441,8 @@ describe('AuthContext with the production connection manager', () => {
         const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
         const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
         const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
-        const { isApprovalRequiredByActionsSettings } = await import('@happier-dev/protocol/actions/actionApprovalPolicy');
-        const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+
+
         const { Modal } = await import('@/modal/ModalManager');
         type Presentation = Parameters<Parameters<typeof Modal.registerProvider>[0]['showModal']>[0];
         const presentations: { id: string; config: Presentation }[] = [];
@@ -456,6 +456,7 @@ describe('AuthContext with the production connection manager', () => {
             hideModal: () => {}, hideAllModals: () => {}, updateCustomModalProps: () => {},
         }) : undefined;
         let request: import('@happier-dev/protocol/approvals/approvalRequestV1').ApprovalRequestV2 | null = null;
+        const confirmations: { resolve: (confirmed: boolean) => void }[] = [];
         const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'account.signOut': { approvalRequiredSurfaces: ['ui'] } },
             ...(entrypoint === 'delete-waived' ? { approvalWaivedSurfaces: { 'account.delete': ['agent'] } } : {}) });
         let credentialReplacedDuringGuard = false;
@@ -473,22 +474,17 @@ describe('AuthContext with the production connection manager', () => {
             accountLifecycleAction: createUiAccountLifecycleAction(account, async () => {
                 if (entrypoint === 'forget-navigation') throw new Error('Navigation unavailable');
             }),
-            isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id, settings, context, getActionSpec(id).safety, undefined, input),
+            readActionsSettings: () => settings,
+            presentUserActionConfirmation: () => new Promise<boolean>(resolve => { confirmations.push({ resolve }); }),
             isApprovalExecutionOriginCurrent: async () => account.accountLifetime.isCurrent(),
             approvalsCreate: async input => {
                 request = ApprovalRequestV2Schema.parse(input.request);
                 return { artifactId: 'logout' };
             },
-            approvalsGet: async () => request,
-            approvalsUpdate: async input => {
-                // The real captured request owner refuses this external write after logout.
-                await account.request('/test/approval', { method: 'POST', body: '{}' });
-                request = ApprovalRequestV2Schema.parse(input.request);
-                return { ok: true };
-            },
         }));
         const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
             serverId: home.id, expectedAccountId: 'account-a', runtimeAccountId: 'account-a', actionRequestId: 'leave-home' };
+        let pendingOwnAction: ReturnType<typeof executor.execute> | undefined;
         try {
             if (mounted) {
                 await flushHookEffects({ cycles: 10 });
@@ -577,9 +573,10 @@ describe('AuthContext with the production connection manager', () => {
                 }
                 return;
             }
-            const leaving = await executor.execute(actionId, { serverId: home.id, accountId: 'account-a',
+            pendingOwnAction = executor.execute(actionId, { serverId: home.id, accountId: 'account-a',
                 ...(forgetting ? { scope: 'all-credentials' } : {}) }, context);
-            expect(leaving).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'logout' } });
+            await vi.waitFor(() => expect(confirmations).toHaveLength(1));
+            expect(request).toBeNull();
             expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toEqual(credentials);
             if (deleting) {
                 expect(presentations).toEqual([]);
@@ -587,8 +584,7 @@ describe('AuthContext with the production connection manager', () => {
                 if (entrypoint === 'delete-stale') {
                     await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, replacement);
                 }
-                const decision = executor.execute('approval.request.decide', { artifactId: 'logout',
-                    decision: entrypoint === 'delete-reject' ? 'reject' : 'approve' }, context);
+                confirmations[0]!.resolve(entrypoint !== 'delete-reject');
                 if (entrypoint === 'delete' || entrypoint === 'delete-resource-cancel') {
                     const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
                     for (const [index, resource] of retainedResources.entries()) {
@@ -604,7 +600,8 @@ describe('AuthContext with the production connection manager', () => {
                         if (entrypoint === 'delete-resource-cancel') break;
                     }
                 }
-                const settled = await decision;
+                const settled = await pendingOwnAction;
+                expect(request).toBeNull();
                 expect(await TokenStorage.getCredentialsForServerUrl(otherHome.serverUrl, { serverId: otherHome.id })).toEqual(other);
                 if (entrypoint === 'delete') {
                     expect(erasureRequests).toEqual([{ confirmation: ACCOUNT_ERASURE_CONFIRMATION_V1 },
@@ -615,16 +612,18 @@ describe('AuthContext with the production connection manager', () => {
                                 expectedRecovery: resource.recovery, responsibility: 'manual' }],
                         }))]);
                     expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toBeNull();
-                    expect(settled).toMatchObject({ ok: true, result: { status: 'executed' } });
+                    expect(settled).toMatchObject({ ok: true, result: { status: 'deleted' } });
                 } else {
                     expect(erasureRequests).toHaveLength(entrypoint === 'delete-resource-cancel' ? 1 : 0);
                     expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id }))
                         .toEqual(entrypoint === 'delete-stale' ? replacement : credentials);
-                    if (entrypoint === 'delete-reject') expect(settled).toMatchObject({ ok: true, result: { status: 'rejected' } });
+                    if (entrypoint === 'delete-reject') expect(settled).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
                 }
                 return;
             }
-            const approved = await executor.execute('approval.request.decide', { artifactId: 'logout', decision: 'approve' }, context);
+            confirmations[0]!.resolve(true);
+            const approved = await pendingOwnAction;
+            expect(request).toBeNull();
             if (entrypoint === 'stale-forget') {
                 expect(credentialReplacedDuringGuard).toBe(true);
                 expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toEqual(replacement);
@@ -637,19 +636,20 @@ describe('AuthContext with the production connection manager', () => {
                 // left keeps every credential and reports the failure.
                 expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toEqual(credentials);
                 expect(await TokenStorage.getCredentialsForServerUrl(otherHome.serverUrl, { serverId: otherHome.id })).toEqual(other);
-                expect(approved).toMatchObject({ ok: true, result: { status: 'failed',
-                    execution: { ok: false, errorCode: 'action_failed', error: 'Navigation unavailable' } } });
+                expect(approved).toMatchObject({ ok: false, errorCode: 'action_failed', error: 'Navigation unavailable' });
                 return;
             }
             expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toBeNull();
             expect(await TokenStorage.getCredentialsForServerUrl(otherHome.serverUrl, { serverId: otherHome.id })).toEqual(forgetting ? null : other);
-            expect(approved).toMatchObject({ ok: true, result: { status: 'executed' } });
+            expect(approved).toMatchObject({ ok: true, result: { status: forgetting ? 'forgotten' : 'signed_out' } });
         } finally {
+            for (const confirmation of confirmations) confirmation.resolve(false);
             for (const presentation of presentations) {
                 if (presentation.config.type === 'prompt') Modal.resolvePrompt(presentation.id, null);
                 else if (presentation.config.type === 'confirm') Modal.resolveConfirm(presentation.id, false);
                 else if (presentation.config.type === 'alert') Modal.resolveAlert(presentation.id);
             }
+            await pendingOwnAction;
             releasePresentation?.(); account.dispose(); await screen.unmount();
         }
     });

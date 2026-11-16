@@ -12,7 +12,6 @@ import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/se
 import { SessionPendingMessageComposerAdmissionPrepareResponseV1Schema, type SessionPendingMessageComposerAdmissionPrepareResponseV1 } from '@happier-dev/protocol/sessions/userMessageRpc';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
@@ -64,6 +63,7 @@ installDisconnectedServerSocketBoundary(socket => {
 });
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
+const { Modal } = await import('@/modal');
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 const { executePendingMessageEditWithActionApproval } = await import('@/components/sessions/composer/pendingMessageEditAction');
 const { createPendingMessageComposerDocumentOwner } = await import('@/components/sessions/composer/pendingMessageComposerDocumentOwner');
@@ -80,6 +80,7 @@ beforeEach(async () => {
     storage.getState().activateProfileScope(scope);
     await storage.getState().activateSettingsScope(scope);
     storage.getState().activateSessionLocalStateScope(scope);
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
     prepareGate = undefined;
     prepareStarted = createDeferred<void>();
     preparedLocalId = '';
@@ -133,31 +134,38 @@ describe('Pending content edit Action composition', () => {
         expect(settlement).toEqual(['queued-input']);
     });
 
-    it.each([false, true])('retains the original editor across real Ask approval (retired=%s)', async retired => {
+    it.each([
+        { retired: false, confirmed: true },
+        { retired: true, confirmed: true },
+        { retired: false, confirmed: false },
+    ])('retains the original editor across in-place Ask confirmation (retired=$retired, confirmed=$confirmed)', async ({ retired, confirmed }) => {
         await homes.setActionPolicy(serverId, 'session.pending.edit', 'ui', 'ask');
-        const registered = createDeferred<ActionApprovalContinuation>();
+        const entered = createDeferred<void>();
+        const answer = createDeferred<boolean>();
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => { entered.resolve(); return answer.promise; });
         const cancellation = new AbortController();
         let editorCurrent = true;
         const pending = executePendingMessageEditWithActionApproval({
             input: { sessionId: 'pending-edit-session', localId: 'queued-input', text: 'Approved content', structuredInput: { v: 1 } },
             context: { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: 'pending-owner' },
             scope: { serverId, accountId: 'pending-owner' }, isCurrent: () => editorCurrent,
-            registerApproval: registration => registered.resolve(registration), signal: cancellation.signal,
+            registerApproval: () => { throw new Error('Own UI Ask unexpectedly created an approval Artifact'); }, signal: cancellation.signal,
         });
         try {
-            const registration = await registered.promise;
-            expect(homes.artifacts(serverId).list()).toHaveLength(1);
+            const observed = await Promise.race([entered.promise.then(() => 'waiting'), pending.then(() => 'returned')]);
+            expect(observed).toBe('waiting');
+            expect(homes.artifacts(serverId).list()).toHaveLength(0);
             expect(homes.requestsFor(path)).toEqual([]);
             expect(preparedLocalId).toBe('');
+            expect(storage.getState().sessionPending['pending-edit-session']?.messages[0]?.text).toBe('Before');
             if (retired) editorCurrent = false;
-            const decision = await createDefaultActionExecutor().execute('approval.request.decide', {
-                artifactId: registration.artifactId, decision: 'approve',
-            }, { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: 'pending-owner' });
-            expect(decision.ok).toBe(true);
-            expect(await pending).toMatchObject({ status: retired ? 'rejected' : 'accepted' });
-            expect(homes.requestsFor(path)).toHaveLength(retired ? 0 : 1);
-            expect(storage.getState().sessionPending['pending-edit-session']?.messages[0]?.text).toBe(retired ? 'Before' : 'Approved content');
-        } finally { cancellation.abort(); await pending; }
+            answer.resolve(confirmed);
+            const accepted = confirmed && !retired;
+            expect(await pending).toMatchObject({ status: accepted ? 'accepted' : 'rejected' });
+            expect(homes.requestsFor(path)).toHaveLength(accepted ? 1 : 0);
+            expect(storage.getState().sessionPending['pending-edit-session']?.messages[0]?.text).toBe(accepted ? 'Approved content' : 'Before');
+            expect(homes.artifacts(serverId).list()).toHaveLength(0);
+        } finally { answer.resolve(false); cancellation.abort(); await pending; }
     });
     it.each(['ui', 'mcp'] as const)('edits through %s admission, the existing Pending writer, and post-accept settlement', async surface => {
         const actionId = ActionIdSchema.parse('session.pending.edit');
@@ -189,7 +197,7 @@ describe('Pending content edit Action composition', () => {
         const result = surface === 'ui' ? { ok: true as const, result: await executePendingMessageEditWithActionApproval({
             input, context, scope: { serverId, accountId: 'pending-owner' }, isCurrent: () => true,
             registerApproval: () => { throw new Error('Direct editing unexpectedly requested approval'); }, signal: new AbortController().signal,
-        }) } : await createActionExecutor({ clientActionExecute: reverse, isActionApprovalRequired: () => false }).execute(actionId, input, context);
+        }) } : await createActionExecutor({ clientActionExecute: reverse, }).execute(actionId, input, context);
         if (!result.ok) throw new Error(result.errorCode);
         expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'replacement-input',
             structuredInput: { v: 1, composerAttachments: [attachment] }, settlement: 'complete' } });
@@ -306,12 +314,13 @@ describe('Pending content edit Action composition', () => {
         homes.answer(serverId, '/v2/account/settings', { body: AccountSettingsV2GetResponseSchema.parse({
             content: { t: 'plain', v: { actionsSettingsV1 } }, version: 1,
         }) });
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
         const result = await createDefaultActionExecutor().execute(actionId, {
             sessionId: 'pending-edit-session', localId: 'queued-input', text: 'After', structuredInput: { v: 1 },
-        }, { surface: 'ui', authority: 'present_user', serverId });
-        expect(result).toMatchObject(policy === 'off' ? { ok: false, errorCode: 'action_disabled' }
-            : { ok: true, result: { kind: 'approval_request_created', actionId } });
-        expect(homes.artifacts(serverId).list()).toHaveLength(policy === 'ask' ? 1 : 0);
+        }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId });
+        expect(result).toMatchObject({ ok: false, errorCode: policy === 'off' ? 'action_disabled' : 'approval_canceled' });
+        expect(Modal.confirm).toHaveBeenCalledTimes(policy === 'ask' ? 1 : 0);
+        expect(homes.artifacts(serverId).list()).toHaveLength(0);
         expect(preparedLocalId).toBe('');
         expect(homes.requestsFor(path)).toEqual([]);
     });

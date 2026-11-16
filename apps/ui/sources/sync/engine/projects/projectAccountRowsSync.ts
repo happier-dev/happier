@@ -72,7 +72,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
                 const recent = readRecency?.(payload.value);
                 workspaceRefs.push(recent === undefined ? payload.value : { ...payload.value, lastOpenedAtMs: recent });
             } else if (payload.key.kind === 'relationship-graph' && 'relationships' in payload.value) relationships.push(...payload.value.relationships);
-            else if (payload.key.kind === 'project-organization' && !('id' in payload.value) && !('relationships' in payload.value)) {
+            else if (payload.key.kind === 'project-organization' && !('id' in payload.value) && !('relationships' in payload.value) && !('pinnedEnvironmentIds' in payload.value)) {
                 organizations.push({ key: payload.key, revision: row.revision, value: payload.value });
             } else if (payload.key.kind === 'services-organization' && 'pinnedEnvironmentIds' in payload.value) {
                 // The opened payload is reused while its content is unchanged, so the pins keep their identity.
@@ -241,7 +241,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
         const observed = previous?.row.revision ?? 'absent';
         if (input.expectedRevision !== undefined && observed !== input.expectedRevision) return { status: 'conflict' as const, revision: observed === 'absent' ? -1 : observed };
         const payload = previous?.payload;
-        const before = payload && !('id' in payload.value) && !('relationships' in payload.value) ? payload.value : {};
+        const before = payload && !('id' in payload.value) && !('relationships' in payload.value) && !('pinnedEnvironmentIds' in payload.value) ? payload.value : {};
         const value = ProjectAccountOrganizationV1Schema.parse(input.mutate(before));
         assertCurrent(); input.signal?.throwIfAborted();
         if (previous?.payload && areAccountSettingsJsonValuesEqual(before, value)) {
@@ -274,7 +274,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
             const key = { kind: 'workspace-ref' as const, serverId: ref.serverId, id: ref.id };
             const organizationKey = { kind: 'project-organization' as const, serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id };
             const previous = rowFor(organizationKey)?.payload;
-            const organization = previous && !('id' in previous.value) && !('relationships' in previous.value) ? previous.value : {};
+            const organization = previous && !('id' in previous.value) && !('relationships' in previous.value) && !('pinnedEnvironmentIds' in previous.value) ? previous.value : {};
             // The person's grouping (owner 11-08): the one owner decides the explicit key; nothing else is rewritten.
             const grouping = input.projectKey === undefined ? null
                 : resolveWorkspaceGroupingV1(before.workspaceRefs, ref, input.projectKey, workspaceRefResolutionContextV1());

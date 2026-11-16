@@ -61,7 +61,7 @@ import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } 
 import { readRegisteredBrowserContextAnnotationAdapter } from '@/sync/domains/browser/context/runtimeAnnotationRegistry';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import { isAgentInitiatedApprovalRequiredByDefault, isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { isAgentInitiatedApprovalRequiredByDefault } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { createBrowserAnnotationCaptureProvider } from '@/sync/domains/browser/context';
 import { setBrowserAnnotationDraftComment, startBrowserAnnotationDraft } from '@/sync/domains/browser/context/annotationDraft';
@@ -777,7 +777,7 @@ describe('BrowserShell', () => {
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
       runtimeActionExecute,
       isActionEnabled: (actionId, context) => isActionEnabledByActionsSettings(actionId, settings, context),
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      readActionsSettings: () => settings,
     }));
     const admittedExecute = createFrontDoorRuntimeActionExecutor(surface === 'ui' ? createDefaultActionExecutor({
       isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, settings, context),
@@ -846,7 +846,7 @@ describe('BrowserShell', () => {
       const approvalsCreate = vi.fn(async () => ({ artifactId: 'browser-approval' }));
       const approvalDeps = createActionExecutorBoundaryFixture({
         runtimeActionExecute,
-        isActionApprovalRequired: () => true,
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(operations.map(({ actionId }) => [actionId, { approvalRequiredSurfaces: ['agent', 'ui'] }])) }),
         isApprovalExecutionOriginCurrent: async () => true,
         approvalsCreate,
         approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request: {

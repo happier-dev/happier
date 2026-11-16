@@ -159,7 +159,6 @@ describe('Session creation pending settlement', () => {
         });
         const asked: string[] = [];
         const required: string[] = [];
-        const { isActionApprovalRequiredByAccountSettings } = await import('@/sync/domains/settings/actionsSettings');
         // Protocol admission and the UI's Account-settings policy stay real; only the person's answer is observed.
         const executor = createActionExecutor({ ...createActionExecutorBoundaryFixture({
             sessionSpawnNew: async () => await sessionSpawnNewAction.dispatchSessionSpawnNewToMachine({ payload: input }),
@@ -168,12 +167,7 @@ describe('Session creation pending settlement', () => {
                 const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
                 return await executeActionOperationActionV1({ actionId, input, signal, transport: machineRpcWithServerScope });
             },
-        }), isActionApprovalRequired: (actionId, ctx, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety) => {
-            const value = isActionApprovalRequiredByAccountSettings(actionId, null, ctx as never,
-                { defaultSafety, defaultUiConfirmation, input, approvedOperation, approvalScope });
-            if (value) required.push(actionId);
-            return value;
-        }, presentUserActionConfirmation: async ({ actionId }) => { asked.push(actionId); return true; } });
+        }), approvalsCreate: async ({ request }) => { required.push(request.actionId); return { artifactId: 'unexpected-spawn-approval' }; }, presentUserActionConfirmation: async ({ actionId }) => { asked.push(actionId); return true; } });
         try {
             await expect(sessionSpawnNewAction.executeSessionSpawnNewAction(input, { surface: 'ui', authority: 'present_user',
                 actionRequestId: 'attempt-1', serverId: home.id, expectedAccountId: 'spawn-account', runtimeAccountId: 'spawn-account' }, executor))

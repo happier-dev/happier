@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isDeepStrictEqual } from 'node:util';
 import { createBrowserWorkspaceOpeningFixture } from '@/dev/testkit/fixtures/browserWorkspaceOpening';
 import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import { clearBrowserRuntimeControlRegistryForTests } from '@/sync/domains/browser/actions/runtimeControlRegistry';
 import { createBrowserRuntimeActionExecutor } from '@/sync/domains/browser/actions/runtimeActionExecutor';
 import { createLocalServicesRuntimeActionExecutor } from '@/sync/domains/local/services/actions/runtimeActionExecutor';
@@ -74,8 +74,6 @@ const enabledBrowserDecision = {
 
 const disabledOpeningSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'browser.workspace.open': { enabled: false } } });
 const confirmOpeningSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'browser.workspace.open': { approvalRequiredSurfaces: ['ui'] } } });
-const requiresOpeningApproval = (id: Parameters<typeof isApprovalRequiredByActionsSettings>[0], context: Parameters<typeof isApprovalRequiredByActionsSettings>[2]) =>
-    isApprovalRequiredByActionsSettings(id, confirmOpeningSettings, context);
 
 const sessionBrowserProfile = {
     profileId: 'profile_session_1',
@@ -191,7 +189,7 @@ describe('openBrowserTargetInWorkspace', () => {
             let stored: ApprovalRequest | null = null;
             const { executor, context, dispose } = createBrowserWorkspaceOpeningFixture({ openDetailsTab, scope: 'sessionDetails',
                 platform, browserFeatureDecision: enabledBrowserDecision, desktopWebViewAvailability: unembeddableDesktopWebView }, {
-                isActionApprovalRequired: requiresOpeningApproval,
+                readActionsSettings: () => confirmOpeningSettings,
                 // Account-private approval Artifact storage is a system boundary. Its lifecycle,
                 // transition and replay remain the real Action executor's responsibility.
                 approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'approval_1' }; },
@@ -342,7 +340,7 @@ describe('openBrowserTargetInWorkspace', () => {
                 browserFeatureDecision: enabledBrowserDecision, desktopWebViewAvailability: unembeddableDesktopWebView };
             const { executor, context, retire, dispose } = createBrowserWorkspaceOpeningFixture({ ...facts, openDetailsTab,
                 readOpenFacts: () => ({ ...facts, allowExternalUrlBrowsing }) }, {
-                isActionApprovalRequired: requiresOpeningApproval,
+                readActionsSettings: () => confirmOpeningSettings,
                 // Account-private storage only; deferred decision/replay stays real.
                 approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'approval_1' }; },
                 approvalsGet: async () => stored,

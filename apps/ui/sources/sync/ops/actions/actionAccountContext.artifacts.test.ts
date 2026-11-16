@@ -7,7 +7,6 @@ import { ArtifactActionOutputSchemasV1} from '@happier-dev/protocol/artifacts/ar
 import { withArtifactExcerptV1} from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import {
     ActionsSettingsV1Schema, normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings} from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { type ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createUsageQueryBatchHttpBoundary } from '@/dev/testkit/harness/usageQueryBatchHttpBoundary';
@@ -520,8 +519,7 @@ describe('scoped Account workflow Artifact operations', () => {
         try {
             const executor = createActionExecutor(createActionExecutorBoundaryFixture({
                 usageActions: createUiUsageActionPorts(account), mcpServerAction: createUiMcpServerActionExecuteV1(account),
-                isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id,
-                    context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context, undefined, undefined, input),
+                readActionsSettings: (context) => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
             }));
             const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, actionsSettings } as const;
             const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, session: 'coach-session', timeZoneOffsetMinutes: 0 });
@@ -819,8 +817,7 @@ describe('scoped Account workflow Artifact operations', () => {
                 settingsDeclarationAction: args => action({ actionId: args.actionId, input: args.input, context: args.context }),
                 usageActions: createUiUsageActionPorts(account),
                 // This authenticated Account explicitly permits these effects. Its real parsed policy owns every nested decision.
-                isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(actionId,
-                    actionsSettings, context, undefined, undefined, input),
+                readActionsSettings: () => actionsSettings,
             }));
             const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, actionsSettings } as const;
             if (scenario === 'coachPreferences') {
@@ -1340,8 +1337,7 @@ describe('scoped Account workflow Artifact operations', () => {
                 approvalWaivedSurfaces: { 'artifact.update': ['ui'], 'artifact.delete': ['ui'] } });
             const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({
                 artifactAction: createUiArtifactAction(context),
-                isActionApprovalRequired: (id, actionContext, input) => isApprovalRequiredByActionsSettings(id,
-                    actionContext.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), actionContext, undefined, undefined, input),
+                readActionsSettings: (actionContext) => actionContext.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
             })));
             const caller = { surface: 'ui' as const, authority: 'present_user' as const,
                 actionCaller: { kind: 'host' as const }, actionsSettings };
@@ -1404,9 +1400,7 @@ describe('scoped Account workflow Artifact operations', () => {
             } });
             const publication = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({ artifactAction: createUiArtifactAction(context, {
                 workspaceDownload: download,
-            }), isActionApprovalRequired: (actionId, actionContext, input) => isApprovalRequiredByActionsSettings(
-                actionId, publicationSettings, actionContext, undefined, undefined, input,
-            ) })));
+            }), readActionsSettings: () => publicationSettings })));
             const publicationCaller = { kind: 'session', sessionId: 'publication-session', starterDepth: 0, turnDepth: 0 } satisfies NonNullable<ActionExecutorContext['actionCaller']>;
             const sessionCaller = { ...caller, serverId: home.id, runtimeAccountId: 'artifact-account',
                 defaultSessionId: 'publication-session', actionCaller: publicationCaller };

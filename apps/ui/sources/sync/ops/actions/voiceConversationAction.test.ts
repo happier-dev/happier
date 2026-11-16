@@ -1115,7 +1115,6 @@ describe('generated OpenAI conversation Action admission and turn controls', () 
             voiceSettingsV1: { ...state.settings.voiceSettingsV1, ui: { ...state.settings.voiceSettingsV1.ui, scopeDefault: 'session' } } } }));
         // This fixture omits unrelated host ports: any accidental non-Voice dispatch fails loudly.
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-            isActionApprovalRequired: () => false,
             voiceConversationAction: async ({ actionId, input }) => actionId === 'ui.voice_global.conversations.list'
                 ? (await import('@/voice/history/voiceHistoryActions')).executeVoiceConversationHistoryListAction(input, () => true)
                 : executeVoiceConversationAction(actionId, input, { navigate() {} }),

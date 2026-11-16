@@ -204,7 +204,7 @@ describe('SCM diff summary operations', () => {
         });
         const scope = { serverId: 'native-home', accountId: 'native-account' };
         // Only external Machine RPC is substituted; Action and transport selection stay real.
-        const actionExecutor = createFrontDoorActionExecute(createActionExecutor({ isActionApprovalRequired: () => false,
+        const actionExecutor = createFrontDoorActionExecute(createActionExecutor({
             ...createUiExecutionRunActionDeps(scope),
         } satisfies Partial<ActionExecutorDeps> as unknown as ActionExecutorDeps));
         const ops = createScmDiffSummaryOperations({ actionExecutor });

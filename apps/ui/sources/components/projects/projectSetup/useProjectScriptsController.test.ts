@@ -15,8 +15,8 @@ import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSess
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { ManagedMachineV1, ManagedMachinePublicFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+
+
 import { createDeferred } from '@/dev/testkit';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createDelegatedManagedPresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
@@ -111,7 +111,7 @@ describe('Project Scripts Setup controls', () => {
         };
         const requests: unknown[] = [];
         const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
-            isActionApprovalRequired: () => false,
+
             projectAction: async ({ actionId: id, input }) => {
                 requests.push({ id, input });
                 return { operation: requests.length === 1 ? held : { ...held, revision: 2, setupReview: undefined } };
@@ -173,7 +173,7 @@ describe('Project Scripts Setup controls', () => {
         const admissions: string[] = [];
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'projects.script.run': ['ui'] } });
         const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context, getActionSpec(id).safety),
+            readActionsSettings: () => settings,
             projectAction: async request => {
                 const input = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].parse(request.input);
                 const name = input.selection.kind === 'named' ? input.selection.name : '';
@@ -227,12 +227,12 @@ describe('Project Scripts Setup controls', () => {
         const admissions: unknown[] = [];
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['ui'], 'projects.script.run': ['ui'] } });
         const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context, getActionSpec(id).safety),
+            readActionsSettings: () => settings,
             managedMachineAction: async request => {
                 if (request.actionId === 'machines.managed.list') return { machines };
                 if (request.actionId === 'machines.managed.get') {
                     const input = ManagedMachineActionInputSchemasV1['machines.managed.get'].parse(request.input);
-                    return machines.find(machine => machine.id === input.managedId);
+                    return 'managedId' in input ? machines.find(machine => machine.id === input.managedId) : undefined;
                 }
                 if (request.actionId === 'machines.managed.acquire') {
                     const input = ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse(request.input);
@@ -342,7 +342,7 @@ describe('Project Scripts Setup controls', () => {
             'projects.script.run': ['ui'], 'machines.managed.bootstrap.respond': ['ui'],
         } });
         const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context, getActionSpec(id).safety),
+            readActionsSettings: () => settings,
             // Actual controller/Account and guest Action transports; all admission and continuation logic stays real.
             machinePresetAction: async () => ({ kind: 'found', preset }),
             machineManagedInstallationRespond: createManagedMachineInstallationRespond(),

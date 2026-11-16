@@ -7,7 +7,6 @@ import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from 
 import { ManagedResourceDependencyV1Schema } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionsSettingsV1Schema, normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readFriendMutationProfile } from '@/sync/ops/friends';
 
@@ -131,7 +130,7 @@ describe('createHomeDomainActionExecutorForScope', () => {
         runtimeFetchMock.mockImplementation(async () => jsonResponse({ user }, 200));
         const executor = createActionExecutor({
             homeDomainAction: createHomeDomainActionExecutorForScope(scope),
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1(context.actionsSettings), context),
+            readActionsSettings: (context) => normalizeActionsSettingsV1(context.actionsSettings),
         } as ActionExecutorDeps);
         for (const surface of ['ui', 'agent', 'mcp'] as const) {
             const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
@@ -159,13 +158,15 @@ describe('createHomeDomainActionExecutorForScope', () => {
     it.each(['friends.add', 'friends.remove'] as const)('keeps Off and Ask admission ahead of %s, without disabling the profile neighbour', async (actionId) => {
         const { scope, serverId } = await scopeForNewHome('https://friends-policy.example');
         runtimeFetchMock.mockResolvedValue(jsonResponse({ user: null }, 200));
-        let storedApproval: unknown;
+        let accepted = false;
+        let confirmations = 0;
         const executor = createActionExecutor({
             homeDomainAction: createHomeDomainActionExecutorForScope(scope),
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1(context.actionsSettings), context),
-            approvalsCreate: async ({ request }) => {
-                storedApproval = ApprovalRequestV2Schema.parse(request);
-                return { artifactId: 'friends-approval' };
+            readActionsSettings: (context) => normalizeActionsSettingsV1(context.actionsSettings),
+            presentUserActionConfirmation: async () => {
+                confirmations += 1;
+                expect(runtimeFetchMock).not.toHaveBeenCalled();
+                return accepted;
             },
         } as ActionExecutorDeps);
         const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId,
@@ -175,9 +176,13 @@ describe('createHomeDomainActionExecutorForScope', () => {
             .toMatchObject({ ok: false, errorCode: 'action_disabled' });
         const ask = ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } });
         expect(await executor.execute(actionId, { uid: 'friend-1' }, { ...context, actionsSettings: ask }))
-            .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'friends-approval' } });
-        expect(storedApproval).toMatchObject({ actionId, actionArgs: { uid: 'friend-1' } });
+            .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
         expect(runtimeFetchMock).not.toHaveBeenCalled();
+        accepted = true;
+        expect(await executor.execute(actionId, { uid: 'friend-1' }, { ...context, actionsSettings: ask }))
+            .toEqual({ ok: true, result: { user: null } });
+        expect(confirmations).toBe(2);
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
         // The profile read remains available under a Friends-only policy override.
         expect(getActionSpec('account.profile.get').surfaces.ui).toBe(true);
         expect(await executor.prepare('account.profile.get', {}, { ...context, actionsSettings: off }))

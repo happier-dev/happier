@@ -116,7 +116,7 @@ async function installSourceMachineActionReceiver() {
     if (!serverIdentityId) throw new Error('Expected the source Home identity');
     const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
         // The receiving Account allows linking; only a destination consequence requires review.
-        isActionApprovalRequired: () => false,
+
         sessionHandoffTargetReplacementApprovalPreflight: ({ targetMachineId, targetPath, workspaceAction, activatesExactMirror,
             destinationIntent, replaceRelationshipId, serverId, operationId, signal }) => preflightWorkspaceDestinationReplacement({
             targetMachineId, targetPath: targetPath ?? '', serverId: serverId ?? '', operationId,

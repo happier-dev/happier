@@ -5,7 +5,6 @@ import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
 import { computeHomeQrBindingProofV2} from '@happier-dev/protocol/crypto/qrProvisioningV2';
 import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -52,9 +51,7 @@ const { createMachineConnectionActionDeps } = await import('./machineConnectionA
 const makeExecutor = (runner?: ReturnType<typeof createManualSystemTaskRunner>['runner']) => createActionExecutor({
     ...createMachineConnectionActionDeps({ runner }),
     // The terminal adapter does not own policy; compose the real host policy port.
-    isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(
-        actionId, normalizeActionsSettingsV1(context.actionsSettings), context, undefined, undefined, input,
-    ),
+    readActionsSettings: (context) => normalizeActionsSettingsV1(context.actionsSettings),
 } satisfies Partial<ActionExecutorDeps> as unknown as ActionExecutorDeps);
 
 async function activateSshAccount(serverId: string, accountId: string) {

@@ -2,6 +2,7 @@
 // a cold owner-first import can observe the catalog mid-initialization.
 import '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { createDeferred } from '@/dev/testkit';
 import 'fake-indexeddb/auto';
 // Vite does not apply Metro's .web selection. Use the real IndexedDB device adapter for this web owner.
 vi.mock('@/components/atmosphere/pictureStore', async () => import('@/components/atmosphere/pictureStore.web'));
@@ -54,7 +55,7 @@ import { settingsDefaults, applySettings, settingsParse, type Settings } from '@
 import { localSettingsDefaults, applyLocalSettings } from '@/sync/domains/settings/localSettings';
 import { collapsedGroupsState, replaceCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
 import * as desktopHostBoundary from '@/utils/platform/desktopHost';
-import { createSettingsDeclarationAction, resolveSettingsDeclarationOperationApprovalPolicy } from './settingsDeclarationAction';
+import { createSettingsDeclarationAction, readSettingsDeclarationOperation, resolveSettingsDeclarationOperationApprovalPolicy } from './settingsDeclarationAction';
 import { UI_FONT_SCALE_PRESETS } from '@/components/ui/text/uiFontScale';
 import { readSettingsPageGate } from '@/components/settings/catalog/pageCatalog';
 import { ActionsSettingsV1Schema, type ActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
@@ -760,16 +761,9 @@ const { prepareSpeechEndpointSettingChange } = await import('@/voice/settings/pa
 
 function throughActionExecutor(settingsDeclarationAction: ReturnType<typeof createSettingsDeclarationAction>,
     readActionsSettings?: () => ActionsSettingsV1,
-    approvalTransport?: Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate' | 'approvalsWaitForDecision' | 'isApprovalExecutionOriginCurrent' | 'machinePageAction'>) {
-    const approvalPolicy: Pick<Parameters<typeof createActionExecutor>[0], 'isActionApprovalRequired'> = readActionsSettings
-        ? { isActionApprovalRequired: (actionId, context, input) => {
-            const anchor = input && typeof input === 'object' && 'anchor' in input && typeof input.anchor === 'string' ? input.anchor : '';
-            const operationPolicy = actionId === 'settings.invoke'
-                ? resolveSettingsDeclarationOperationApprovalPolicy(anchor, settingsDefaults, input) : undefined;
-            const safety = operationPolicy ? operationPolicy.requiresApproval ? 'danger' : 'safe' : undefined;
-            return isApprovalRequiredByActionsSettings(actionId, readActionsSettings(), context, safety, undefined, input,
-                operationPolicy?.uiConfirmationRequired);
-        } }
+    approvalTransport?: Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate' | 'approvalsWaitForDecision' | 'isApprovalExecutionOriginCurrent' | 'machinePageAction' | 'presentUserActionConfirmation'>) {
+    const approvalPolicy: Pick<Parameters<typeof createActionExecutor>[0], 'readActionsSettings' | 'readSettingsDeclarationOperation'> = readActionsSettings
+        ? { readActionsSettings, readSettingsDeclarationOperation: anchor => readSettingsDeclarationOperation(anchor, settingsDefaults) }
         : {};
     // These unrelated outward ports must remain unused; Protocol admission and the declaration owner stay real.
     const unusedTransport = async () => { throw new Error('unexpected_unrelated_transport'); };
@@ -909,21 +903,22 @@ describe('Collection space settings declarations', () => {
             expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { value: true } });
         });
 
-    it('honors Off, Ask and Allowed for deletion, restores its default approval and keeps reset safe', async () => {
+    it('honors Off, Ask and Allowed for deletion through in-place confirmation and keeps reset safe', async () => {
         const space = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'saved', name: 'Saved' };
         const owner = createOwner(undefined, false, true, applySettings(settingsDefaults, {
             collectionSpacesV1: CollectionSpacesV1Schema.parse({ v: 1, spaces: [space] }),
         }), undefined, undefined, undefined, undefined, undefined, {});
-        const requests = new Map<string, ApprovalRequest>();
+        let confirmation = createDeferred<boolean>();
+        let entered = createDeferred<void>();
+        let confirmations = 0;
+        const requests: ApprovalRequest[] = [];
         const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1, {
-            approvalsCreate: async ({ request }) => {
-                const artifactId = `space-${requests.size}`;
-                requests.set(artifactId, request);
-                return { artifactId };
+            approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'unexpected-space-approval' }; },
+            presentUserActionConfirmation: async () => {
+                confirmations += 1;
+                entered.resolve();
+                return confirmation.promise;
             },
-            approvalsGet: async ({ artifactId }) => requests.get(artifactId) ?? null,
-            approvalsUpdate: async ({ artifactId, request }) => { requests.set(artifactId, request); return { ok: true }; },
-            isApprovalExecutionOriginCurrent: async () => true,
         });
         const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home-a', runtimeAccountId: 'account-a' } as const;
         const target = { actionId: 'settings.invoke', audience: 'ui' } as const;
@@ -931,40 +926,43 @@ describe('Collection space settings declarations', () => {
             kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'delete', spaceId: space.id },
         } };
         for (const mode of ['default', 'off', 'ask_first', 'allowed', 'default'] as const) {
-            // Recreate through the storage fixture between independent admission scenarios.
-            if (mode === 'default' && owner.account().collectionSpacesV1.spaces.length === 0) await owner.action({ actionId: 'settings.invoke', input: {
+            if (owner.account().collectionSpacesV1.spaces.length === 0) await owner.action({ actionId: 'settings.invoke', input: {
                 anchor: 'session.list.spaces', input: { kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'create', space } },
             } });
             expect(await executor.execute(mode === 'default' ? 'actions.policy.reset' : 'actions.policy.set',
                 mode === 'default' ? target : { ...target, mode }, context)).toMatchObject({ ok: true });
-            const before = requests.size;
-            const result = await executor.execute('settings.invoke', deletion, { ...context, actionRequestId: `collection-${mode}-${before}`,
-                actionsSettings: owner.account().actionsSettingsV1 });
+            const invoke = () => executor.execute('settings.invoke', deletion, { ...context,
+                actionRequestId: 'collection-' + mode, actionsSettings: owner.account().actionsSettingsV1 });
+            const beforeConfirmations = confirmations;
             if (mode === 'off') {
-                expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled' });
-                expect(requests.size).toBe(before);
+                expect(await invoke()).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+                expect(owner.account().collectionSpacesV1.spaces).toEqual([space]);
+                expect(confirmations).toBe(beforeConfirmations);
             } else if (mode === 'allowed') {
-                expect(result).toMatchObject({ ok: true, result: { status: 'completed' } });
-                expect(requests.size).toBe(before);
+                expect(await invoke()).toMatchObject({ ok: true, result: { status: 'completed' } });
+                expect(owner.account().collectionSpacesV1.spaces).toEqual([]);
+                expect(confirmations).toBe(beforeConfirmations);
             } else {
-                expect(result, result.ok ? undefined : result.errorCode).toMatchObject({ ok: true, result: { artifactId: `space-${before}` } });
-                expect(requests.get(`space-${before}`)).toMatchObject({ status: 'open', actionId: 'settings.invoke' });
-                if (before === 0) {
-                    expect(await executor.execute('approval.request.decide', { artifactId: 'space-0', decision: 'reject' }, context))
-                        .toMatchObject({ ok: true });
-                    expect(requests.get('space-0')?.status).toBe('rejected');
+                for (const accepted of [false, true]) {
+                    entered = createDeferred<void>();
+                    confirmation = createDeferred<boolean>();
+                    const pending = invoke();
+                    await entered.promise;
+                    expect(owner.account().collectionSpacesV1.spaces).toEqual([space]);
+                    expect(requests).toEqual([]);
+                    confirmation.resolve(accepted);
+                    expect(await pending).toMatchObject(accepted ? { ok: true, result: { status: 'completed' } }
+                        : { ok: false, errorCode: 'approval_canceled' });
+                    expect(owner.account().collectionSpacesV1.spaces).toEqual(accepted ? [] : [space]);
                 }
+                expect(confirmations).toBe(beforeConfirmations + 2);
             }
-            expect(owner.account().collectionSpacesV1.spaces).toEqual(mode === 'allowed' ? [] : [space]);
+            expect(requests).toEqual([]);
         }
-        expect(await executor.execute('approval.request.decide', { artifactId: 'space-2', decision: 'approve' }, context))
-            .toMatchObject({ ok: true });
-        expect(owner.account().collectionSpacesV1.spaces).toEqual([]);
-        expect(requests.get('space-2')?.status).toBe('executed');
         expect(await executor.execute('settings.invoke', { anchor: 'session.list.spaces', input: {
             kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'resetDefault' },
         } }, context)).toMatchObject({ ok: true, result: { status: 'completed' } });
-        expect(requests.size).toBe(3);
+        expect(requests).toEqual([]);
     });
 
     it('does not advertise Account-scoped device selection before the answering Account is bound', async () => {

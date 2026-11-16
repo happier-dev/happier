@@ -2,7 +2,7 @@ import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/appr
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings} from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import { normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
 import {
     type ActionExecutorDeps} from '@happier-dev/protocol/actions/executor/types';
@@ -30,7 +30,7 @@ function owner(decision: 'approve' | 'reject' = 'reject', pendingDecision?: Prom
         approvalsUpdate: async (input) => { approval = input.request; return { ok: true as const }; },
         approvalsWaitForDecision: async () => ({ decision: pendingDecision ? await pendingDecision : decision, request: approval! }),
         isApprovalExecutionOriginCurrent: async () => true,
-        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({ v: 1 }), context),
+        readActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }),
     } satisfies Partial<ActionExecutorDeps>;
     // Boundary fixture supplies only approval storage/decision ports; unrelated Session ports are not exercised.
     const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);

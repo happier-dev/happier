@@ -5,7 +5,7 @@ import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { USAGE_SOURCE_ACTION_IDS } from '@happier-dev/protocol/usage/usageSourcesActionIdsV1';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import type { UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createDeferred, renderHook } from '@/dev/testkit';
@@ -58,7 +58,7 @@ function harness(rpc: Parameters<typeof createUsageSourceActionPort>[0]['rpc'], 
             }, rpc, ...(options.dismiss ? { dismiss: options.dismiss } : {}),
         }),
         isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, settings, context),
-        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+        readActionsSettings: () => settings,
     } satisfies Partial<ActionExecutorDeps>;
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     const controller = createUsageSourcesController({ machineId: 'machine', lifetime: scope.lifetime, executor });

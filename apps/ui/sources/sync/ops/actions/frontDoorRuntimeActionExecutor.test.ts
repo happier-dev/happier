@@ -14,13 +14,11 @@ import { createPlainV2SessionRecordFixture } from '@/dev/testkit/fixtures/sessio
 import { LocalServiceInventorySnapshotV1Schema, DaemonLocalServiceInventorySnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { act, renderHook, renderWithAppProviders } from '@/dev/testkit';
 import type { IModal } from '@/modal/types';
 import { LocalServicePublicPreviewSnapshotV1Schema } from '@happier-dev/protocol/local/services/public/v1';
-import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { ScmChangeDiscardResponseSchema } from '@happier-dev/protocol/scm';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { AccountSettingsV2UpdateRequestSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
@@ -225,8 +223,7 @@ describe('composed UI Action front-door adapters', () => {
         const settings = ActionsSettingsV1Schema.parse({ v: 1 });
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             pluginWebhookAction: transport,
-            isActionApprovalRequired: (actionId, context, input) =>
-                isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input),
+            readActionsSettings: () => settings,
             presentUserActionConfirmation: async () => false,
         }));
         const host = { execute: ((actionId, input, context) => executor.execute(actionId, input, {
@@ -292,7 +289,7 @@ describe('composed UI Action front-door adapters', () => {
         } finally { controller.abort(); await agent; }
     });
 
-    it('retains mounted operands through lazy admission and the same pending approval after the caller mutates its draft', async () => {
+    it.each([true, false])('retains mounted operands through lazy admission and in-place Ask after draft mutation (confirm=%s)', async (confirm) => {
         const serverId = await homes.addHome({ name: 'Mounted custody', serverUrl: 'https://mounted-custody.test',
             serverIdentityId: 'mounted-custody', accountId: 'alice' });
         await homes.requireUiApproval(serverId, ['mcp.servers.delete']);
@@ -302,11 +299,21 @@ describe('composed UI Action front-door adapters', () => {
         const catalog = { v: 1, servers: [{ id: 'throwaway', name: 'throwaway', transport: 'stdio',
             stdio: { command: 'mcp-tool', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }], bindings: [] };
         homes.answer(serverId, 'GET /v1/account/entity-rows/mcp', { body: { status: 'present', revision: 3, content: { t: 'plain', v: catalog } } });
-        homes.answer(serverId, 'POST /v1/account/entity-rows/mcp', { body: { status: 'updated', revision: 4, cursor: 4 } });
+        homes.answer(serverId, 'POST /v1/account/entity-rows/mcp', { select: value => {
+            expect(McpServerCatalogRowMutationV1Schema.parse(value)).toMatchObject({ expectedRevision: 3,
+                content: { t: 'plain', v: { servers: [], bindings: [] } } });
+            return { body: { status: 'updated', revision: 4, cursor: 4 } };
+        } });
         const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
+        // Coordination 2026-11-15 23:05: the own-UI Ask retains the original
+        // operation in its native presenter, without an approval Artifact.
+        let answer: ((confirmed: boolean) => void) | undefined;
+        const presentUserActionConfirmation = vi.fn<NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>>(async () =>
+            new Promise<boolean>(resolve => { answer = resolve; }));
+        const executorOptions = { presentUserActionConfirmation };
         const hook = await renderHook(() => useMountedActionExecution({
             serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice',
-        }));
+        }, { executorOptions }));
         const input = { serverId: 'throwaway', removeBindings: true, expectedRevision: 3 };
         let operation: ReturnType<ReturnType<typeof hook.getCurrent>['execute']> | undefined;
         await act(async () => {
@@ -314,17 +321,22 @@ describe('composed UI Action front-door adapters', () => {
             input.expectedRevision = 99;
         });
         try {
-            await waitForHomeGovernance(() => expect(homes.artifacts(serverId).list()).toHaveLength(1));
-            const artifact = homes.artifacts(serverId).list()[0]!;
-            expect(StoredApprovalRequestSchema.parse(JSON.parse(homes.artifacts(serverId).readPlainBody(artifact.id)!)))
-                .toMatchObject({ actionId: 'mcp.servers.delete', actionArgs: { expectedRevision: 3 } });
-            await waitForHomeGovernance(() => expect(hook.getCurrent().approval.approvalId).toBe(artifact.id));
+            await vi.waitFor(() => expect(presentUserActionConfirmation).toHaveBeenCalledTimes(1));
+            expect(presentUserActionConfirmation).toHaveBeenCalledWith(expect.objectContaining({
+                actionId: 'mcp.servers.delete', input: expect.objectContaining({ expectedRevision: 3 }),
+            }));
+            expect(homes.artifacts(serverId).list()).toHaveLength(0);
+            expect(hook.getCurrent().approval.approvalId).toBeNull();
+            expect(homes.requestsFor('/v1/account/entity-rows/mcp').filter(request => request.method === 'POST')).toHaveLength(0);
             input.expectedRevision = 100;
-            await expect(decideApprovalAsInbox(serverId, artifact.id, 'approve')).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
-            expect(await operation!).toMatchObject({ ok: true, result: { status: 'updated', revision: 4 } });
-            expect(homes.artifacts(serverId).list()).toHaveLength(1);
-            expect(homes.requestsFor('/v1/account/entity-rows/mcp').filter(request => request.method === 'POST')).toHaveLength(1);
+            await act(async () => { answer!(confirm); await operation!; });
+            expect(await operation!).toMatchObject(confirm
+                ? { ok: true, result: { status: 'updated', revision: 4 } }
+                : { ok: false, errorCode: 'approval_canceled' });
+            expect(homes.artifacts(serverId).list()).toHaveLength(0);
+            expect(homes.requestsFor('/v1/account/entity-rows/mcp').filter(request => request.method === 'POST')).toHaveLength(confirm ? 1 : 0);
         } finally {
+            answer?.(false);
             hook.getCurrent().cancel();
             await hook.unmount();
             await operation!;
@@ -347,6 +359,7 @@ describe('composed UI Action front-door adapters', () => {
         { operation: 'create', explicitAsk: false, waived: false, accepted: true },
         { operation: 'revoke', explicitAsk: false, waived: false, accepted: true },
         { operation: 'revoke', explicitAsk: true, waived: false, accepted: true },
+        { operation: 'revoke', explicitAsk: true, waived: false, accepted: false },
         { operation: 'revoke', explicitAsk: false, waived: false, accepted: false },
         { operation: 'revoke', explicitAsk: false, waived: true, accepted: false },
     ] as const)('consumes the public-link $operation confirmation once (Ask: $explicitAsk, waived: $waived, accepted: $accepted)', async ({ operation, explicitAsk, waived, accepted }) => {
@@ -400,10 +413,7 @@ describe('composed UI Action front-door adapters', () => {
                 rendered.tree.root.findAll(node => node.props.testID === testID && typeof node.props.onPress === 'function')[0]!.props.onPress();
                 await vi.waitFor(() => expect(outcomes).toHaveLength(1));
             });
-            if (explicitAsk) {
-                expect(outcomes[0]).toMatchObject({ kind: 'approval_request_created', actionId: 'localServices.publicPreview.revoke' });
-                expect(daemonRpc).not.toHaveBeenCalled();
-            } else if (!accepted && !waived) {
+            if (!accepted && !waived) {
                 expect(outcomes[0]).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
                 expect(daemonRpc).not.toHaveBeenCalled();
             } else {
@@ -413,12 +423,12 @@ describe('composed UI Action front-door adapters', () => {
                     ? RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_CREATE : RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_REVOKE);
             }
             expect(publicLinkModal.show).toHaveBeenCalledTimes(operation === 'create' ? 1 : 0);
-            expect(publicLinkModal.confirm).toHaveBeenCalledTimes(operation === 'revoke' && !explicitAsk && !waived ? 1 : 0);
-            if (operation === 'revoke' && !explicitAsk && !waived) {
+            expect(publicLinkModal.confirm).toHaveBeenCalledTimes(operation === 'revoke' && !waived ? 1 : 0);
+            if (operation === 'revoke' && !waived) {
                 expect(publicLinkModal.confirm.mock.calls[0]?.[1]).toContain('https://preview.test/');
                 expect(publicLinkModal.confirm.mock.calls[0]?.[1]).not.toContain(exposure.exposureId);
             }
-            expect(homes.artifacts(serverId).list()).toHaveLength(explicitAsk ? 1 : 0);
+            expect(homes.artifacts(serverId).list()).toHaveLength(0);
         } finally { await rendered.unmount(); }
     });
 

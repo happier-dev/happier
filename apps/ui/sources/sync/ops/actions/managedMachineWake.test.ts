@@ -64,7 +64,6 @@ describe('managed explicit execution readiness', () => {
         const account = await captureLazyActionAccountContext(homes.homes.a!.id);
         let spawns = 0;
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-            isActionApprovalRequired: () => false,
             prepareHostReviewedChildren: request => prepareUiManagedMachineWake(request, account),
             // The daemon spawn is the external boundary; census loading and Action admission stay real.
             sessionSpawnNew: async () => {
@@ -129,7 +128,6 @@ describe('managed explicit execution readiness', () => {
         const account = await captureLazyActionAccountContext(homes.homes.a!.id);
         let spawns = 0;
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-            isActionApprovalRequired: () => false,
             prepareHostReviewedChildren: request => prepareUiManagedMachineWake(request, account),
             // The daemon transport is the boundary; real Action admission and wake preparation stay in the path.
             sessionSpawnNew: async () => {
@@ -165,7 +163,6 @@ describe('managed explicit execution readiness', () => {
         const account = await captureLazyActionAccountContext(homes.homes.a!.id);
         let spawns = 0;
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-            isActionApprovalRequired: () => false,
             prepareHostReviewedChildren: request => prepareUiManagedMachineWake(request, account),
             sessionSpawnNew: async () => {
                 spawns++;

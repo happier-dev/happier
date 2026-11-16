@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/dev/testkit';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
@@ -70,8 +70,7 @@ describe('plugin webhook Account administration HTTP client', () => {
         const settings = ActionsSettingsV1Schema.parse({ v: 1 });
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             pluginWebhookAction: ({ actionId, input }) => transport(actionId as Parameters<typeof transport>[0], input),
-            isActionApprovalRequired: (actionId, context, input) =>
-                isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input),
+            readActionsSettings: () => settings,
             isApprovalExecutionOriginCurrent: async () => true,
             approvalsCreate: async ({ request: approval }) => {
                 storedApprovals.set('delivery-approval', approval);
@@ -88,7 +87,7 @@ describe('plugin webhook Account administration HTTP client', () => {
             // The production host supplies the invocation identity; the pure
             // Protocol executor deliberately cannot mint caller provenance.
             execute: ((actionId, input, context) => executor.execute(actionId, input, {
-                ...context, actionRequestId: 'delivery-request', authority: 'present_user',
+                ...context, actionRequestId: 'delivery-request', authority: 'present_user', actionCaller: { kind: 'host' },
             })) satisfies typeof executor.execute,
         };
         const executeAction = createFrontDoorUiActionExecutor(hostExecutor, { serverId: 'webhook-home' });
@@ -98,31 +97,24 @@ describe('plugin webhook Account administration HTTP client', () => {
         };
     }
 
-    it.each(deliveryOperations)('requires approval for $method and records the accepted delivery receipt once', async operation => {
-        const { client, request, storedApprovals, executor } = deliveryFixture();
-        // Pending approval is not a successful delivery receipt; the retained
-        // dead-letter membership must only settle after the actual effect.
-        await expect(client[operation.method]({ deliveryId: 'delivery-1', expectedRevision: 3 })).rejects.toThrow();
+    it.each(deliveryOperations)('confirms $method in place before recording the accepted receipt once', async operation => {
+        const entered = createDeferred<void>();
+        const decision = createDeferred<boolean>();
+        const { client, request, storedApprovals } = deliveryFixture({ presentUserActionConfirmation: async () => {
+            entered.resolve();
+            return decision.promise;
+        } });
+        const pending = client[operation.method]({ deliveryId: 'delivery-1', expectedRevision: 3 });
+        await entered.promise;
         expect(request).not.toHaveBeenCalled();
-        expect(storedApprovals.get('delivery-approval')).toMatchObject({
-            status: 'open', actionId: operation.actionId,
-            actionArgs: { deliveryId: 'delivery-1', expectedRevision: 3 },
-        });
-
-        await expect(executor.execute('approval.request.decide', {
-            artifactId: 'delivery-approval', decision: 'approve',
-        }, { surface: 'ui', serverId: 'webhook-home', authority: 'present_user' })).resolves.toMatchObject({
-            ok: true, result: { status: 'executed' },
-        });
-        expect(storedApprovals.get('delivery-approval')).toMatchObject({
-            status: 'executed', execution: { ok: true, result: { kind: operation.kind, revision: 4 } },
-        });
+        expect(storedApprovals.size).toBe(0);
+        decision.resolve(true);
+        await expect(pending).resolves.toEqual({ kind: operation.kind, revision: 4 });
         expect(request).toHaveBeenCalledWith(operation.path, expect.objectContaining({
             method: 'POST', body: JSON.stringify({ deliveryId: 'delivery-1', expectedRevision: 3 }),
         }), { includeAuth: true });
-        await executor.execute('approval.request.decide', { artifactId: 'delivery-approval', decision: 'approve' },
-            { surface: 'ui', serverId: 'webhook-home', authority: 'present_user' });
         expect(request).toHaveBeenCalledTimes(1);
+        expect(storedApprovals.size).toBe(0);
     });
 
     it.each(deliveryOperations)('refuses $method at the shared policy boundary without a transport effect', async operation => {
@@ -132,13 +124,10 @@ describe('plugin webhook Account administration HTTP client', () => {
         expect(request).not.toHaveBeenCalled();
     });
 
-    it.each(deliveryOperations)('keeps $method unexecuted when the present user rejects approval', async operation => {
-        const { client, request, storedApprovals, executor } = deliveryFixture();
+    it.each(deliveryOperations)('keeps $method unexecuted when the present user cancels confirmation', async operation => {
+        const { client, request, storedApprovals } = deliveryFixture({ presentUserActionConfirmation: async () => false });
         await expect(client[operation.method]({ deliveryId: 'delivery-1', expectedRevision: 3 })).rejects.toThrow();
-        await expect(executor.execute('approval.request.decide', {
-            artifactId: 'delivery-approval', decision: 'reject',
-        }, { surface: 'ui', serverId: 'webhook-home', authority: 'present_user' })).resolves.toMatchObject({ ok: true });
-        expect(storedApprovals.get('delivery-approval')).toMatchObject({ status: 'rejected' });
+        expect(storedApprovals.size).toBe(0);
         expect(request).not.toHaveBeenCalled();
     });
 
@@ -146,8 +135,7 @@ describe('plugin webhook Account administration HTTP client', () => {
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
             [operation.actionId]: ['ui'],
         } });
-        const { client, request } = deliveryFixture({ isActionApprovalRequired: (actionId, context, input) =>
-            isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input) });
+        const { client, request } = deliveryFixture({ readActionsSettings: () => settings });
         await expect(client[operation.method]({ deliveryId: 'delivery-1', expectedRevision: 3 }))
             .resolves.toEqual({ kind: operation.kind, revision: 4 });
         expect(request).toHaveBeenCalledTimes(1);
@@ -157,8 +145,7 @@ describe('plugin webhook Account administration HTTP client', () => {
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
             [operation.actionId]: ['ui'],
         } });
-        const { client, request } = deliveryFixture({ isActionApprovalRequired: (actionId, context, input) =>
-            isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input) });
+        const { client, request } = deliveryFixture({ readActionsSettings: () => settings });
         let deliveryChanged = false;
         request.mockImplementationOnce(async () => {
             deliveryChanged = true;

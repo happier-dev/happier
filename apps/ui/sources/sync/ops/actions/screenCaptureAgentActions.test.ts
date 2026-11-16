@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createNativeScreenCaptureAction } from './screenCaptureActions';
 import type { NativeCaptureResult } from '@/desktop/capture/nativeCapture';
@@ -28,7 +27,7 @@ describe('agent capture settlement through native state and the existing window 
     const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'screenCapture.start': ['agent'] } });
     // Boundary fixture supplies only the native/approval effects this real executor invokes.
     const executor = () => createActionExecutor({ screenCaptureAction: createNativeScreenCaptureAction(),
-        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) } as ActionExecutorDeps);
+        readActionsSettings: () => settings } as ActionExecutorDeps);
     let starts: Array<Record<string, unknown> | undefined>;
     let holdStart: Promise<unknown> | undefined;
     beforeEach(() => {
@@ -103,7 +102,7 @@ describe('agent capture settlement through native state and the existing window 
         const defaults = ActionsSettingsV1Schema.parse({ v: 1 });
         const deps: Partial<ActionExecutorDeps> = {
             screenCaptureAction: createNativeScreenCaptureAction(),
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, defaults, context),
+            readActionsSettings: () => defaults,
             isApprovalExecutionOriginCurrent: async () => true,
             approvalsCreate: async () => { approvals += 1; return { artifactId: 'capture-approval' }; },
             approvalsUpdate: async () => ({ ok: true as const }),

@@ -37,10 +37,10 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOrigin
     const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
     const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
     const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
-    const { isApprovalRequiredByActionsSettings } = await import('@happier-dev/protocol/actions/actionApprovalPolicy');
+
     const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'workflow.trigger.run_now': ['ui'] } });
     return { ...original, createFrontDoorActionExecute: () => original.createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({
-        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+        readActionsSettings: () => settings,
         workflowAction: async (args) => runAutomationNowMock('automationId' in args.input ? args.input.automationId : null),
     }))) };
 });

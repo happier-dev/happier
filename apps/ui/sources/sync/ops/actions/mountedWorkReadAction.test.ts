@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
-import { createActionExecutor, ActionsSettingsV1Schema, isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions';
+import { createActionExecutor, ActionsSettingsV1Schema } from '@happier-dev/protocol/actions';
 import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { projectWork } from '@/components/sessions/work/workProjection';
@@ -166,8 +166,7 @@ describe('mounted canonical Work reads', () => {
             const settings = ActionsSettingsV1Schema.parse({ v: 1,
                 actions: { 'session.work.get': { approvalRequiredSurfaces: ['voice'] } } });
             const approved = createActionExecutor(createActionExecutorBoundaryFixture({
-                appShellAction: invokeMountedWorkRead, isActionApprovalRequired: (id, context) =>
-                    isApprovalRequiredByActionsSettings(id, settings, context),
+                appShellAction: invokeMountedWorkRead, readActionsSettings: () => settings,
             }));
             const beforeApproval = reads;
             const voiceContext = { surface: 'voice' as const, authority: 'account_automation' as const,

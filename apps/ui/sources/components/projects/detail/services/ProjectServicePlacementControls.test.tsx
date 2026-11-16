@@ -659,7 +659,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       let operation: ActionOperationSnapshotV1;
       const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
       const execute = createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
-        isActionApprovalRequired: () => false, runtimeActionExecute: createDefaultRuntimeActionExecutor(),
+         runtimeActionExecute: createDefaultRuntimeActionExecutor(),
       })));
       const h = await setup({ running: false, serviceState: nativeState, liveFeeds: true, sharedObservation: true, serviceRuntime: execute,
         onCommit: () => captureFrame(),
@@ -894,7 +894,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     const reply = createDeferred<void>();
     const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
     const execute = createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
-      isActionApprovalRequired: () => false, runtimeActionExecute: createDefaultRuntimeActionExecutor(),
+       runtimeActionExecute: createDefaultRuntimeActionExecutor(),
     })));
     const h = await setup({ running: false, sharedObservation: true, withRow: true, collapsedRow: true, waitEnabled: false,
       serviceRuntime: execute, waiveStartApproval: true,
@@ -919,9 +919,9 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     const reply = createDeferred<void>();
     const entered = createDeferred<void>();
     const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
-    const { isActionApprovalRequiredInState } = await import('@/sync/domains/settings/actionsSettings');
+    const { resolveExecutorActionsSettingsV1 } = await import('@/sync/domains/settings/actionsSettings');
     const execute = createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
-      isActionApprovalRequired: (actionId, context) => isActionApprovalRequiredInState(storage.getState(), actionId, context),
+      readActionsSettings: () => resolveExecutorActionsSettingsV1(storage.getState().settings),
       runtimeActionExecute: createDefaultRuntimeActionExecutor(),
     })));
     const h = await setup({ running: false, sharedObservation: true, withRow: true,
@@ -1089,7 +1089,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
     const execute = createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
-      isActionApprovalRequired: () => false,
+
       runtimeActionExecute: createDefaultRuntimeActionExecutor(),
     })));
     const observationRead = createDeferred<void>();
@@ -1128,7 +1128,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     const starts: Readonly<{ machineId: string; params: unknown }>[] = [];
     const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
     const execute = createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
-      isActionApprovalRequired: () => false,
+
       runtimeActionExecute: createDefaultRuntimeActionExecutor(),
     })));
     const choice = destination === 'primary' ? { kind: 'primary' as const }
@@ -1311,7 +1311,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     let admitted: typeof request;
     const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
     const execute = createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
-      isActionApprovalRequired: () => false,
+
       runtimeActionExecute: createDefaultRuntimeActionExecutor({}, undefined, async value => {
         request = value;
         return { kind: 'approval_request_created', actionId: value.actionId, artifactId: 'move-approval' };
@@ -1415,7 +1415,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     let identities: Readonly<{ input: unknown; context: unknown }> | undefined;
     const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
     const execute = createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
-      isActionApprovalRequired: () => false,
+
       // The daemon transport echoes the request identity selected by the host operation owner.
       runtimeActionExecute: createDefaultRuntimeActionExecutor({}, undefined, async request => {
         identities = { input: request.input, context: request.context?.actionRequestId };
@@ -1464,7 +1464,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     const requests: unknown[] = [];
     const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
     const execute = createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
-      isActionApprovalRequired: () => false,
+
       runtimeActionExecute: createDefaultRuntimeActionExecutor({}, undefined, async request => {
         requests.push(request);
         return { status: 'refused', reasonCode: 'native_boundary_observed' };
@@ -1520,7 +1520,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     let inventoryReads = 0;
     const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
     const frontDoor = createFrontDoorRuntimeActionExecutor(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
-      isActionApprovalRequired: () => false,
+
       // Preset reads are the Home transport boundary; the real creation owner
       // qualifies its current result before it can request an acquisition.
       machinePresetAction: async request => {

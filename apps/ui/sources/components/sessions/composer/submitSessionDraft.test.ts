@@ -137,7 +137,7 @@ describe('submitSessionDraft', () => {
     ])('starts frontmost through shared delivery with fresh=$fresh and included text=$includeWindowText', async ({ fresh, includeWindowText }) => {
         const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
         const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
-        const { isApprovalRequiredByActionsSettings } = await import('@happier-dev/protocol/actions/actionApprovalPolicy');
+
         const { createNativeScreenCaptureAction } = await import('@/sync/ops/actions/screenCaptureActions');
         const { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } = await import(
             '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption');
@@ -219,7 +219,7 @@ describe('submitSessionDraft', () => {
             const result = await createActionExecutor(createActionExecutorBoundaryFixture({ screenCaptureAction: async args => {
                 try { return await captureAction(args); } catch (error) { executionError = error; throw error; }
             },
-                isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) }))
+                readActionsSettings: () => settings }))
                 .execute('screenCapture.start', { mode: 'screenshot', target: { kind: 'frontmost' } }, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
                     serverId, runtimeAccountId: 'alice', defaultSessionId: sessionId, defaultSessionMachineId: 'machine_1' });
             expect(executionError).toBeUndefined();

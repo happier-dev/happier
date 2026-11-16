@@ -14,9 +14,7 @@ import {
     createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
 import {
     DEFAULT_ACTIONS_SETTINGS_V1} from '@happier-dev/protocol/account/settings/accountSettings';
-import {
-    isApprovalRequiredByActionsSettings,
-} from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 
 const observations = vi.hoisted(() => ({ frames: [] as Record<string, unknown>[] }));
 // Physical browser frame only; the real caller adapter and shared bridge remain exercised.
@@ -141,9 +139,7 @@ it('replays the stored executable while each guest Action still requires the vie
         sessionBoardAction,
         approvalsCreate,
         isApprovalExecutionOriginCurrent: async () => true,
-        isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(
-            actionId, DEFAULT_ACTIONS_SETTINGS_V1, context,
-        ),
+        readActionsSettings: () => DEFAULT_ACTIONS_SETTINGS_V1,
     }));
     const runtime: CallerHostedHtmlRuntime = {
         serverIdentityId: 'viewer-home', accountId: 'viewer-account', accountEncryptionMode: 'plain', hostOrigin: 'https://app.example.com',

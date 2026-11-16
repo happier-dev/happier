@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import { SessionBoardLayoutV1Schema, SessionBoardMutationV1Schema, type SessionBoardLayoutV1 } from '@happier-dev/protocol/sessions/board';
 import { SessionSystemRecordStoredReadResponseSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 
@@ -67,7 +67,7 @@ describe('missing-reference recovery through the real Board Actions', () => {
             'session.board.layout.update': ['ui'], 'session.board.item.upsert': ['ui'],
         } });
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({ sessionBoardAction: adapter, sessionBoardPrepareItem: prepareSessionBoardItemForUi,
-            isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input),
+            readActionsSettings: () => settings,
         }));
         const actions = createSessionBoardActionsPort({ ...session,
             execute: async (actionId, input, context) => {
@@ -124,8 +124,8 @@ describe('missing-reference recovery through the real Board Actions', () => {
         } });
         const executorDeps = {
             sessionBoardAction: adapter,
-            isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input),
-        } satisfies Pick<ActionExecutorDeps, 'sessionBoardAction' | 'isActionApprovalRequired'>;
+            readActionsSettings: () => settings,
+        } satisfies Pick<ActionExecutorDeps, 'sessionBoardAction' | 'readActionsSettings'>;
         const executor = createActionExecutor(createActionExecutorBoundaryFixture(executorDeps));
         let actionResult: Awaited<ReturnType<typeof executor.execute>> | undefined;
         const actions = createSessionBoardActionsPort({ ...session,

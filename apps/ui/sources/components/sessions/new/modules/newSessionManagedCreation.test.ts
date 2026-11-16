@@ -3,8 +3,8 @@ import { createActionExecutor, createHostReviewedChildPortV1 } from '@happier-de
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import { createWorkflowAccountRunActionOwner } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
+
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
 import { createDeferred, createRootLayoutFeaturesResponse } from '@/dev/testkit';
@@ -433,7 +433,7 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
         resolveAgentStartContext: async () => ({ caller: { kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 },
             baseline: { machineId: 'parent-machine', directory: '/work' }, roles: {}, ledSubtreeSessionIds: [],
             workDepthLimit: 4, callerPermissionCeiling: 'yolo' }),
-        isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context, getActionSpec(actionId).safety),
+        readActionsSettings: () => settings,
         // The generic confirmation presenter is a UI boundary. A completed
         // in-page decision must never reach it; real policy stays active.
         presentUserActionConfirmation: async ({ actionId }) => {

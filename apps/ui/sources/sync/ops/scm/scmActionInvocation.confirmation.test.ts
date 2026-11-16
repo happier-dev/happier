@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createDeferred } from '@/dev/testkit';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import {
   normalizeActionsSettingsV1,
   type ActionsSettingsV1,
@@ -33,15 +33,7 @@ function fixture(
   const settings = options.settings ?? normalizeActionsSettingsV1({ v: 1 });
   const record = { confirmations: 0, dispatches: 0, approvals: [] as string[] };
   const executor = createActionExecutor({
-    isActionApprovalRequired: (actionId, context, input) =>
-      isApprovalRequiredByActionsSettings(
-        actionId,
-        settings,
-        context,
-        undefined,
-        undefined,
-        input,
-      ),
+    readActionsSettings: () => settings,
     presentUserActionConfirmation: async ({ context }) => {
       record.confirmations += 1;
       return await (options.confirm?.(context) ?? Promise.resolve(true));
@@ -77,22 +69,22 @@ describe('invokeUiScmAction approval custody', () => {
     expect(record).toEqual({ confirmations: 1, dispatches: 1, approvals: [] });
   });
 
-  it('explicit_ask_first_forces_an_approval_artifact_without_confirmation_or_dispatch', async () => {
+  it.each([true, false])('explicit Ask waits for the person before dispatch (accepted=%s)', async accepted => {
     const settings = normalizeActionsSettingsV1({
-      v: 1,
-      actions: { [ACTION]: { approvalRequiredSurfaces: ['ui'] } },
+      v: 1, actions: { [ACTION]: { approvalRequiredSurfaces: ['ui'] } },
     });
-    const { executor, record } = fixture({ settings });
-    expect(await invoke(executor)).toMatchObject({
-      success: false,
-      errorCode: 'approval_required',
-      approvalArtifactId: 'approval-1',
-    });
-    expect(record).toEqual({
-      confirmations: 0,
-      dispatches: 0,
-      approvals: [ACTION],
-    });
+    const entered = createDeferred<void>();
+    const decision = createDeferred<boolean>();
+    const { executor, record } = fixture({ settings, confirm: async () => {
+      entered.resolve();
+      return decision.promise;
+    } });
+    const pending = invoke(executor);
+    await entered.promise;
+    expect(record).toEqual({ confirmations: 1, dispatches: 0, approvals: [] });
+    decision.resolve(accepted);
+    expect(await pending).toMatchObject(accepted ? { success: true } : { success: false, errorCode: 'approval_canceled' });
+    expect(record).toEqual({ confirmations: 1, dispatches: accepted ? 1 : 0, approvals: [] });
   });
 
   it('declined_confirmation_returns_approval_canceled_and_does_not_dispatch', async () => {
@@ -221,15 +213,22 @@ describe.each([
     expect(record).toEqual({ confirmations: 0, dispatches: 0, approvals: [actionId] });
   });
 
-  it('still asks for an Artifact under explicit Ask-first', async () => {
+  it.each([true, false])('confirms explicit Ask in place before any effect (accepted=%s)', async accepted => {
     const settings = normalizeActionsSettingsV1({
       v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } },
     });
-    const { executor, record } = fixture({ settings });
-    const result = await executor.execute(actionId, input, {
-      ...HOST, actionRequestId: 'request-1', surface: 'ui', authority: 'present_user',
+    const entered = createDeferred<void>();
+    const decision = createDeferred<boolean>();
+    const { executor, record } = fixture({ settings, confirm: async () => {
+      entered.resolve();
+      return decision.promise;
+    } });
+    const pending = executor.execute(actionId, input, {
+      ...HOST, actionRequestId: 'request-1', surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
     });
-    expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    expect(record).toEqual({ confirmations: 0, dispatches: 0, approvals: [actionId] });
-  });
-});
+    await entered.promise;
+    expect(record).toEqual({ confirmations: 1, dispatches: 0, approvals: [] });
+    decision.resolve(accepted);
+    expect(await pending).toMatchObject({ ok: accepted });
+    expect(record).toEqual({ confirmations: 1, dispatches: accepted ? 1 : 0, approvals: [] });
+  });});

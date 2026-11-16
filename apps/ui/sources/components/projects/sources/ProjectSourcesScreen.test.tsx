@@ -96,7 +96,7 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
     throw new Error(`Unexpected Source host request: ${actionId}`);
   };
   const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-    isActionApprovalRequired: () => false,
+
     projectSourcesList: async input => schemas.ProjectSourcesListOutputV1Schema.parse(await respond('projects.sources.list', input)),
     projectSourcesRead: async input => schemas.ProjectSourcesReadOutputV1Schema.parse(await respond('projects.sources.read', input)),
     projectSourcesCreate: async input => {

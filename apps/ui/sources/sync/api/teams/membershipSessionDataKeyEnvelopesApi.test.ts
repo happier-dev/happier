@@ -10,9 +10,6 @@ import { isHomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomain
 import { TeamMembershipHistoryPreparationResultV1Schema } from '@happier-dev/protocol/teams/membershipHistoryPreparationV1';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { createUiClientActionReverseHandler } from '@/sync/ops/actions/clientActionReverseDispatch';
 
 import { membershipHistoryPreparationScopeKey } from './membershipSessionDataKeyEnvelopesApi';
@@ -147,8 +144,7 @@ describe('membership history public Actions', () => {
         const settings = ActionsSettingsV1Schema.parse({ v: 1,
             approvalWaivedSurfaces: waived ? { 'teams.members.history.prepare': ['agent'] } : {} });
         const executor = createActionExecutor({
-            isActionApprovalRequired: (actionId: ActionId, context: ActionExecutorContext) =>
-                isApprovalRequiredByActionsSettings(actionId, settings, context, getActionSpec(actionId).safety),
+            readActionsSettings: () => settings,
             approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
                 stored = request;
                 return { artifactId: 'membership-history-approval' };

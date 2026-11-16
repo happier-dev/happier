@@ -5,7 +5,7 @@ import { USAGE_SOURCE_CONSENT_DISCLOSURE } from '@happier-dev/protocol/usage/usa
 import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import {
   type UsageSourceV1,
 } from '@happier-dev/protocol/usage/usageSources';
@@ -158,8 +158,7 @@ function machineBoundary(initial: UsageSourceV1 = found, initialDiscovery?: read
       },
       dismiss: async () => ({ status: 'dismissed' }),
     }),
-    isActionApprovalRequired: (id, context) =>
-      isApprovalRequiredByActionsSettings(id, settings, context),
+    readActionsSettings: () => settings,
   } as Partial<ActionExecutorDeps> as ActionExecutorDeps);
   return { calls, executor, setDiscovery: (sources: readonly UsageSourceV1[]) => { discovery = sources; },
     failDiscovery: (fails = true) => { discoveryFails = fails; },

@@ -257,8 +257,7 @@ describe('AgentInput (attachments drag overlay)', () => {
             await act(async () => {
                 if (entry === 'attach') container.querySelector<HTMLButtonElement>('[data-testid="pick-attachments"]')!.click();
                 else {
-                    const executor = createActionExecutor({ composerIngress: executeComposerIngressAction,
-                        isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+                    const executor = createActionExecutor({ composerIngress: executeComposerIngressAction } as unknown as ActionExecutorDeps);
                     expect(await executor.execute('composer.attachments.pick', { scope: pickerScope, ref: pickerComposerRef }, {
                         surface: 'agent', authority: 'account_automation', serverId: pickerScope.serverId, runtimeAccountId: pickerScope.accountId,
                     })).toMatchObject({ ok: true, result: { status: 'opened' } });

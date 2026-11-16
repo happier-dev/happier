@@ -74,7 +74,6 @@ export function createScmDiffSummaryResultOperationsWithTransport(
 ) {
     const { rpc, ...captured } = params;
     const actionExecutor = captured.actionExecutor ?? (rpc ? createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({
-        isActionApprovalRequired: () => false,
         scmActionExecute: ({ actionId, input, context }) => {
             const method = getActionSpec(actionId).bindings?.rpcMethod;
             if (!method) throw new Error(`Missing SCM transport for ${actionId}`);
@@ -94,7 +93,6 @@ export function createScmDiffSummaryOperationsWithTransport(
 ) {
     const { generateSummary, draftPullRequest, captureComparison, ...captured } = params;
     const actionExecutor = captured.actionExecutor ?? ((generateSummary || draftPullRequest || captureComparison) ? createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({
-        isActionApprovalRequired: () => false,
         scmActionExecute: ({ actionId, input, context }) => {
             const accountId = context.runtimeAccountId ?? context.expectedAccountId;
             const options = { ...(accountId && context.serverId ? { scope: { serverId: context.serverId, accountId } }

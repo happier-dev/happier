@@ -124,7 +124,7 @@ it('keeps the native catalog failure visible after retirement and remounts a cat
         if (!message?.tool?.permission?.mcpTool) throw new Error('Missing canonical MCP permission identity');
         return message.tool.permission;
     };
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
         sessionStatusGet: async () => ({ pendingRequests: pending ? [{ requestId: 'native-mcp', kind: 'permission', tool: 'McpTool',
             nativeChoices }] : [] }),
         sessionPermissionRespond: async () => { answers++; pending = false;

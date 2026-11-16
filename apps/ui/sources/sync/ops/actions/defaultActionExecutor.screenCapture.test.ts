@@ -10,7 +10,6 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import type { NativeCaptureDisclosure, NativeCaptureResult, NativeCaptureWindowText } from '@/desktop/capture/nativeCapture';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { dispatchDesktopCaptureWindowAction } from '@/utils/platform/desktopWindowActionDispatch';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
@@ -298,7 +297,7 @@ describe('screen capture through the default executor and native adapter', () =>
         }) } }));
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'screenCapture.start': ['agent'] } });
         const agent = createActionExecutor({ screenCaptureAction: createNativeScreenCaptureAction(),
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
+            readActionsSettings: () => settings });
         const outcome = ingress === 'draft'
             ? await createDefaultActionExecutor({ screenCaptureWindowPress: true }).execute('screenCapture.addToDraft', {
                 captureRef: captured.captureRef, session: target,
@@ -430,7 +429,7 @@ describe('screen capture through the default executor and native adapter', () =>
     it('settles the admitted agent start from the real default discard receipt after its UI hold', async () => {
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'screenCapture.start': ['agent'] } });
         const agent = createActionExecutor({ screenCaptureAction: createNativeScreenCaptureAction(),
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
+            readActionsSettings: () => settings });
         const controller = new AbortController();
         const pending = agent.execute('screenCapture.start', { mode: 'screenshot', targetSession: target }, {
             surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' }, serverId: target.serverId,

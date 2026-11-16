@@ -47,7 +47,7 @@ describe('Board frame styles through the real Board Actions', () => {
         // Unrelated host delivery ports are genuine boundaries; fail if this Board journey reaches one.
         const unexpectedHostPort = async (): Promise<never> => { throw new Error('Unexpected host port in Board journey'); };
         const deps: ActionExecutorDeps = {
-            sessionBoardAction: adapter, isActionApprovalRequired: () => false,
+            sessionBoardAction: adapter,
             executionRunStart: unexpectedHostPort, executionRunList: unexpectedHostPort,
             executionRunGet: unexpectedHostPort, detachedExecutionRunSend: unexpectedHostPort,
             executionRunStop: unexpectedHostPort, executionRunAction: unexpectedHostPort, executionRunWait: unexpectedHostPort,

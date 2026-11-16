@@ -1,5 +1,6 @@
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { describe, expect, it } from 'vitest';
-import { ScmDiffSummaryResultResponseSchema, type ScmDiffSummaryResultResponse } from '@happier-dev/protocol/scm';
+import { ScmDiffSummaryResultResponseSchema } from '@happier-dev/protocol/scm';
 import { SessionDraftRecipientValueV1Schema } from '@happier-dev/protocol/drafts/sessionDrafts';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createScmDiffSummaryResultOperationsWithTransport as createScmDiffSummaryResultOperations } from '@/dev/testkit/harness/scmActionTransport';
@@ -88,7 +89,7 @@ describe('saved SCM result client operations', () => {
   });
   it('retains approval admission for saved edits instead of sending a raw mutation', async () => {
     const calls: string[] = [];
-    const executor = createActionExecutor({ isActionApprovalRequired: () => true,
+    const executor = createActionExecutor({ readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'scm.diffSummary.result.edit': { approvalRequiredSurfaces: ['ui'] } } }),
       scmActionExecute: async () => { calls.push('action-transport'); return result; },
     // Only the owning-machine transport boundary is supplied by this fixture.
     } as unknown as ActionExecutorDeps);
@@ -98,9 +99,9 @@ describe('saved SCM result client operations', () => {
       edit: { kind: 'renameWalkthrough', title: 'Edited' } })).toMatchObject({ success: false, errorCode: 'approvals_not_supported' });
     expect(calls).toEqual([]);
   });
-  it('admits workspace effects on the actual Machine without using a Project as a Session', async () => {
+  it('refuses consequential workspace effects without approval support while retaining exact Machine reads', async () => {
     const admitted: unknown[] = [];
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       scmActionExecute: async ({ context }: Parameters<NonNullable<ActionExecutorDeps['scmActionExecute']>>[0]) => {
         admitted.push({ target: context.externalActionTarget, sessionId: context.defaultSessionId });
         return result;
@@ -110,13 +111,16 @@ describe('saved SCM result client operations', () => {
     const ops = createScmDiffSummaryResultOperations({ machineId: 'machine', serverId: 'home', accountId: 'account',
       shouldContinue: () => true, actionExecutor: createFrontDoorActionExecute(executor) });
     expect(await ops.includeCommitPlanHookChanges({ cwd: '/repo', resultId: 'saved', expectedRevision: 0,
-      groupId: 'one', beforeTreeOid: 'a'.repeat(40), afterTreeOid: 'b'.repeat(40) })).toEqual(result);
+      groupId: 'one', beforeTreeOid: 'a'.repeat(40), afterTreeOid: 'b'.repeat(40) }))
+      .toMatchObject({ success: false, errorCode: 'approvals_not_supported' });
+    expect(admitted).toEqual([]);
+    expect(await ops.read({ cwd: '/repo', resultId: 'saved' })).toEqual(result);
     expect(admitted).toEqual([{ target: { kind: 'machine', machineId: 'machine' }, sessionId: undefined }]);
   });
   it('admits acceptance through real Action policy and never falls back to direct mutation RPC', async () => {
     const calls: string[] = [];
     // The RPC is the only exercised system boundary; Action admission and schemas are real.
-    const executor = createActionExecutor({ isActionApprovalRequired: () => true,
+    const executor = createActionExecutor({ readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'scm.diffSummary.commitPlan.accept': { approvalRequiredSurfaces: ['ui'] } } }),
       scmActionExecute: async () => { calls.push('writer'); return result; },
     // This fixture supplies only the exercised RPC boundary; unrelated transports are never invoked.
     } as unknown as ActionExecutorDeps);
@@ -139,24 +143,22 @@ describe('saved SCM result client operations', () => {
     expect(await ops.read({ cwd: '/repo', resultId: 'saved' })).toEqual(applicationResult);
     expect(calls).toEqual(['scm.diffSummary.commitPlan.stop', 'scm.diffSummary.commitPlan.cancel', 'scm.diffSummary.commitPlan.recover', 'scm.diffSummary.result.read']);
   });
-  it('uses exact displayed hook trees through the real Action owner and suppresses a retired admission', async () => {
+  it('refuses unapproved displayed hook tree writes and suppresses a retired entry', async () => {
     const admitted: unknown[] = [];
-    let writerResult: ScmDiffSummaryResultResponse = result;
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
-      scmActionExecute: async ({ input, context }: Parameters<NonNullable<ActionExecutorDeps['scmActionExecute']>>[0]) => { admitted.push({ input, target: context.externalActionTarget }); return writerResult; },
+    const executor = createActionExecutor({
+      scmActionExecute: async ({ input, context }: Parameters<NonNullable<ActionExecutorDeps['scmActionExecute']>>[0]) => { admitted.push({ input, target: context.externalActionTarget }); return result; },
     // This fixture supplies only the exercised RPC boundary; unrelated transports are never invoked.
     } as unknown as ActionExecutorDeps);
     let current = true;
     const ops = createScmDiffSummaryResultOperations({ sessionId: 'session', serverId: 'home', accountId: 'account',
       shouldContinue: () => current, actionExecutor: createFrontDoorActionExecute(executor), rpc: async () => { throw new Error('Unsafe mutation RPC'); } });
     const input = { cwd: '/repo', resultId: 'saved', expectedRevision: 0, groupId: 'one', beforeTreeOid: 'a'.repeat(40), afterTreeOid: 'b'.repeat(40) };
-    expect(await ops.includeCommitPlanHookChanges(input)).toEqual(result);
-    expect(admitted).toEqual([{ input, target: { kind: 'session', sessionId: 'session' } }]);
-    writerResult = ScmDiffSummaryResultResponseSchema.parse({ success: false, errorCode: 'source_changed', error: 'The displayed hook trees changed.', latestRevision: 1 });
-    expect(await ops.includeCommitPlanHookChanges(input)).toEqual(writerResult);
+    expect(await ops.includeCommitPlanHookChanges(input))
+      .toMatchObject({ success: false, errorCode: 'approvals_not_supported' });
+    expect(admitted).toEqual([]);
     current = false;
     expect(await ops.includeCommitPlanHookChanges(input)).toMatchObject({ success: false, errorCode: 'result_unavailable' });
-    expect(admitted).toHaveLength(2);
+    expect(admitted).toEqual([]);
   });
   it('preserves a revision conflict and caller draft instead of resubmitting stale edits', async () => {
     const draft = { cwd: '/repo', resultId: 'saved', expectedRevision: 0, edit: { kind: 'renameWalkthrough' as const, title: 'My draft' } };
@@ -185,16 +187,13 @@ describe('saved SCM result client operations', () => {
     expect(observations).toEqual([]);
     expect(await ops.read({ cwd: '/repo', resultId: 'saved' })).toMatchObject({ success: false, errorCode: 'result_unavailable' });
   });
-  it('preserves the owning machine deletion and revision-conflict outcomes', async () => {
-    let deleted = false;
+  it('refuses saved-result deletion without approval support before any owning-machine RPC', async () => {
+    const calls: string[] = [];
     const ops = createScmDiffSummaryResultOperations({ sessionId: 'session', shouldContinue: () => true,
-      rpc: async () => deleted ? { success: true, resultId: 'saved', comparisonId: 'comparison' }
-        : { success: false, errorCode: 'revision_conflict', error: 'Changed', latestRevision: 1 } });
-    expect(await ops.delete({ cwd: '/repo', resultId: 'saved', expectedRevision: 0 })).toEqual({ success: false,
-      errorCode: 'revision_conflict', error: 'Changed', latestRevision: 1 });
-    deleted = true;
-    expect(await ops.delete({ cwd: '/repo', resultId: 'saved', expectedRevision: 1 })).toEqual({ success: true,
-      resultId: 'saved', comparisonId: 'comparison' });
+      rpc: async method => { calls.push(method); return { success: true, resultId: 'saved', comparisonId: 'comparison' }; } });
+    expect(await ops.delete({ cwd: '/repo', resultId: 'saved', expectedRevision: 0 }))
+      .toMatchObject({ success: false, errorCode: 'approvals_not_supported' });
+    expect(calls).toEqual([]);
   });
   it('says a walkthrough message or edit with an unknown outcome could not be confirmed, never the raw code', async () => {
     // The owning-machine transport reports a dispatched write whose reply was lost (its real envelope).

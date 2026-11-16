@@ -17,7 +17,7 @@ it('retains the applied native answer after retirement and retries only its fail
     let pending = true; let answers = 0; let saves = 0;
     let catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{ id: 'docs', name: 'docs', transport: 'stdio',
         stdio: { command: 'docs-mcp', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }] };
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
         sessionStatusGet: async () => ({ pendingRequests: pending ? [{ requestId: 'request', kind: 'permission', tool: 'McpTool',
             nativeChoices: { requirementId: 'occurrence', source: 'test-agent', choices: [{ id: 'remember', label: 'Remember',
                 decision: 'approved', scope: 'session', response: { approved: true }, followUp }] } }] : [] }),

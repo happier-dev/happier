@@ -349,8 +349,7 @@ describe('composer presentation targets', () => {
         cleanups.push(registerComposerPresentationTarget(ref, { ...document, readScope: () => scope,
             readReferenceWorkspace: () => workspace,
             readSnapshot: () => ({ ...document.readCurrent(), state: { ...document.readCurrent().state, editable } }) }));
-        const executor = createActionExecutor({ composerIngress: executeComposerIngressAction,
-            isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+        const executor = createActionExecutor({ composerIngress: executeComposerIngressAction } as unknown as ActionExecutorDeps);
         const execute = (input: unknown) => executor.execute('composer.transaction.apply', input,
             { surface: 'ui', serverId: scope.serverId, runtimeAccountId: scope.accountId });
         const recent = () => buildComposerRecentReferenceSuggestions({ inserted: readRecentComposerReferenceInsertions(scope),
@@ -395,8 +394,7 @@ describe('composer presentation targets', () => {
         }] });
         const target = createDocumentTarget(initial);
         cleanups.push(registerComposerPresentationTarget(ref, { ...target, readScope: () => scope }));
-        const executor = createActionExecutor({ composerIngress: executeComposerIngressAction,
-            isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+        const executor = createActionExecutor({ composerIngress: executeComposerIngressAction } as unknown as ActionExecutorDeps);
         const execute = (operations: ComposerTransactionV1['operations']) => executor.execute('composer.transaction.apply', {
             scope, ref, transaction: { expectedRevision: target.readCurrent().revision, operations },
         }, { surface: 'agent', authority: 'account_automation', serverId: scope.serverId, runtimeAccountId: scope.accountId });
@@ -470,11 +468,9 @@ describe('composer presentation targets', () => {
                 actions: { 'composer.transaction.apply': { approvalRequiredSurfaces: [surface] } },
             }), { surface })).toBe(true);
         }
-        const isActionApprovalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, context, input) => (
-            isApprovalRequiredByActionsSettings(id, context.actionsSettings ?? settings, context, undefined, undefined, input)
-        );
+        const readActionsSettings: NonNullable<ActionExecutorDeps['readActionsSettings']> = context => context.actionsSettings ?? settings;
         const executor = createActionExecutor({ composerIngress: executeComposerIngressAction,
-            isActionApprovalRequired,
+            readActionsSettings,
         } as unknown as ActionExecutorDeps);
         const result = await executor.execute('composer.transaction.apply', { scope, ref, transaction: {
             expectedRevision: 1, operations: [{ kind: 'reviewComment.add', comment }],
@@ -709,8 +705,7 @@ describe('composer presentation targets', () => {
         expect(pickerOpened).toBe(true);
         expect(document.readCurrent().text).toBe('draft');
         // The mounted UI is the host boundary; Protocol admission and the incumbent document executor remain real.
-        const executor = createActionExecutor({ composerIngress: executeComposerIngressAction,
-            isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+        const executor = createActionExecutor({ composerIngress: executeComposerIngressAction } as unknown as ActionExecutorDeps);
         expect(await executor.execute('composer.transaction.apply', request, {
             surface: 'agent', authority: 'account_automation', serverId: scope.serverId, runtimeAccountId: scope.accountId,
         }))

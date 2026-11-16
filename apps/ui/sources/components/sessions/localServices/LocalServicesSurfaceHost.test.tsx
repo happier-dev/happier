@@ -56,7 +56,7 @@ const { LocalServicesSurfaceHost } = await import('./LocalServicesSurfaceHost');
 /** The Home Project and daemon runtime transports share this fixture; admission stays real. */
 function createRuntimeBoundary(transport: RuntimeActionExecute) {
   return createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
-    isActionApprovalRequired: () => false,
+
     projectAction: ({ actionId, input, context }) => transport({ actionId, input, context }),
     runtimeActionExecute: transport,
   })));

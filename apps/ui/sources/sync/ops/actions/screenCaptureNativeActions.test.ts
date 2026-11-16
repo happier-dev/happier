@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createNativeScreenCaptureAction } from './screenCaptureActions';
 import type { NativeCapturePermissions, NativeCaptureResult } from '@/desktop/capture/nativeCapture';
@@ -78,7 +77,7 @@ describe('native capture Actions through real admission and desktop IPC', () => 
             'screenCapture.start': ['agent'],
         } });
         const executor = createNativeExecutor({ screenCaptureAction: createNativeScreenCaptureAction(),
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
+            readActionsSettings: () => settings });
         for (const input of [{ mode: 'screenshot' }, { mode: 'recording' }, { mode: 'screenshot', target: { kind: 'frontmost' } }]) {
             expect(await executor.execute('screenCapture.start', input, {
                 surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' }, serverId: 'home',
@@ -115,7 +114,7 @@ describe('native capture Actions through real admission and desktop IPC', () => 
         freshCapture = true;
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'screenCapture.start': ['agent'] } });
         const executor = createNativeExecutor({ screenCaptureAction: createNativeScreenCaptureAction(),
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
+            readActionsSettings: () => settings });
         expect(await executor.execute('screenCapture.start', { mode: 'screenshot', target: { kind: 'frontmost' }, targetSession: {
             serverId: 'home', accountId: 'account', sessionId: 'requester',
         } }, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' }, serverId: 'home',
@@ -198,7 +197,7 @@ describe('native capture Actions through real admission and desktop IPC', () => 
     it.each(['agent', 'mcp'] as const)('rejects %s capture before native acquisition and honors an explicit disclosure waiver', async surface => {
         let settings = ActionsSettingsV1Schema.parse({ v: 1 });
         const deps = {
-            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+            readActionsSettings: () => settings,
             isApprovalExecutionOriginCurrent: async () => true,
             approvalsCreate: async () => ({ artifactId: 'native-capture-decision' }),
             approvalsUpdate: async () => ({ ok: true as const }),

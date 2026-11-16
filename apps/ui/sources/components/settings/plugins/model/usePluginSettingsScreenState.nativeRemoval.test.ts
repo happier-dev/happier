@@ -24,7 +24,7 @@ import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/prompt
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL } from '@happier-dev/protocol/marketplace';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
@@ -116,6 +116,8 @@ async function renderRemovalOwner(
     boundary.alert.mockReset();
     boundary.push.mockReset();
     const { Modal } = await import('@/modal');
+    // Each scenario owns a fresh native presentation surface as well as its Home.
+    Modal.hideAll();
     vi.mocked(Modal.confirm).mockImplementation(boundary.confirm);
     vi.mocked(Modal.alert).mockImplementation(boundary.alert);
     // Each scenario supplies a different daemon census. Give it its own Home so the real
@@ -161,8 +163,7 @@ async function renderRemovalOwner(
     // This is the receiving daemon behind the HTTP boundary. Policy, approval
     // creation/CAS, decision and mounted observation all use their real owners.
     const nativeExecutor = createActionExecutor(createActionExecutorBoundaryFixture({
-        isActionApprovalRequired: (actionId, context) =>
-            isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1 }), context),
+        readActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }),
         buildApprovalPreview: async ({ defaultPreview, input }) => options.unevaluatedMachineIds?.includes(
             input && typeof input === 'object' && 'machineId' in input ? String(input.machineId) : 'controller-1')
             ? defaultPreview : ({ ...defaultPreview, pluginInstall: {
@@ -438,6 +439,28 @@ async function renderRemovalOwner(
         nativeInstallCommitCount: () => nativeInstallCommits };
 }
 
+type CarriedReview = Parameters<IModal['show']>[0];
+
+async function waitForCarriedReviews(count: number): Promise<CarriedReview[]> {
+    const { Modal } = await import('@/modal');
+    const read = () => vi.mocked(Modal.show).mock.calls.map(([config]) => config)
+        .filter(config => config.chrome?.testID === 'actions.confirmation-review.modal');
+    await vi.waitFor(() => expect(read()).toHaveLength(count));
+    return read();
+}
+
+async function answerCarriedReview(review: CarriedReview, confirmed: boolean): Promise<void> {
+    const answer = review.props?.onAnswer;
+    if (typeof answer !== 'function') throw new Error('Expected the carried review decision');
+    const { Modal } = await import('@/modal');
+    const index = vi.mocked(Modal.show).mock.calls.findIndex(([config]) => config === review);
+    const modalId = vi.mocked(Modal.show).mock.results[index]?.value;
+    await act(async () => {
+        answer(confirmed);
+        if (typeof modalId === 'string') Modal.hide(modalId);
+    });
+}
+
 describe('Plugin install/update originating approval state', () => {
     it('keeps Browse search editable alongside catalog installs without a contribution projection', async () => {
         const { censusReads } = await renderRemovalOwner('disable', [], {
@@ -476,57 +499,67 @@ describe('Plugin install/update originating approval state', () => {
         expect(censusReads).toHaveLength(0);
     });
 
-    it('collects the exact per-Machine pending approvals without installing or lending confirmation to another target', async () => {
-        const { hook, catalog, artifacts, nativeInstallCommitCount, actionRequests, scope } =
+    // Coordination 2026-11-15 23:05: this person's own UI Ask confirms in place.
+    it('confirms each exact Machine in place without installing before its answer or lending confirmation to another target', async () => {
+        const { hook, catalog, artifacts, nativeInstallCommitCount, actionRequests, scope, nativeInvocations } =
             await renderRemovalOwner('disable', [], { catalog: true, browse: true, noTarget: true, deferredInstall: true });
         await act(async () => hook.getCurrent().openDiscoverListing({ sourceId: catalog.source.id, pluginId: 'example.compute',
             itemId: 'example.compute', version: '1.2.3' }));
         await vi.waitFor(() => expect(hook.getCurrent().discoverEntries.some(entry => entry.id === 'example.compute')).toBe(true));
-        expect(hook.getCurrent().pluginInstallReview).toBeNull();
-        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(0);
-        expect(hook.getCurrent().runCatalogInstallOnMachines).toBeTypeOf('function');
         const expectedTargets = ['controller-1', 'controller-2'].map(machineId => ({ serverIdentityId: scope.serverId, machineId }));
         const targets = expectedTargets.map(target => ({ ...target }));
+        let pending!: Promise<void>;
         await act(async () => {
-            const pending = hook.getCurrent().runCatalogInstallOnMachines({ pluginId: 'example.compute', sourceId: catalog.source.id }, targets);
+            pending = hook.getCurrent().runCatalogInstallOnMachines({ pluginId: 'example.compute', sourceId: catalog.source.id }, targets);
             targets[0]!.machineId = 'different-machine';
-            await pending;
         });
-        const review = hook.getCurrent().pluginInstallReview;
-        expect(review).toMatchObject({ pluginId: 'example.compute', rows: expectedTargets.map(target => ({ kind: 'approval', target })) });
-        expect(artifacts.list()).toHaveLength(2);
+        const reviews = await waitForCarriedReviews(2);
+        expect(reviews.map(review => review.props?.actionArgs)).toEqual(expectedTargets.map(target => expect.objectContaining({ machineId: target.machineId })));
         expect(nativeInstallCommitCount()).toBe(0);
-        for (const row of review!.rows) {
-            if (row.kind !== 'approval') throw new Error('Expected an exact daemon approval');
-            const request = ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(row.artifactId)!));
-            expect(request.status).toBe('open');
-            expect(request.actionArgs).toMatchObject({ machineId: row.target.machineId });
-            expect(request.executionOriginV1.target).toEqual({ kind: 'machine', machineId: row.target.machineId });
-            expect(request.preview).toMatchObject({ pluginInstall: { pendingReview: { pendingChangeId: expect.any(String) } } });
-        }
+        expect(artifacts.list()).toHaveLength(0);
+        await answerCarriedReview(reviews[0]!, true);
+        await vi.waitFor(() => expect(nativeInstallCommitCount()).toBe(1));
+        expect(nativeInvocations.filter(invocation => invocation?.presentUserConfirmation).map(invocation => invocation!.presentUserConfirmation!.target))
+            .toEqual([{ kind: 'machine', machineId: 'controller-1' }]);
+        await answerCarriedReview(reviews[1]!, false);
+        await act(async () => { await pending; });
+        expect(hook.getCurrent().pluginInstallReview).toMatchObject({ pluginId: 'example.compute', rows: [
+            { kind: 'settled', target: expectedTargets[0], result: { ok: true } },
+            { kind: 'settled', target: expectedTargets[1], result: { ok: false, errorCode: 'approval_canceled' } },
+        ] });
+        expect(nativeInstallCommitCount()).toBe(1);
+        expect(artifacts.list()).toHaveLength(0);
         expect(actionRequests.filter(request => request.actionId === 'plugins.install').map(request => request.envelope.target))
-            .toEqual(expectedTargets.map(target => ({ kind: 'machine', machineId: target.machineId })));
+            .toEqual([expectedTargets[0], expectedTargets[1], expectedTargets[0]].map(target => ({ kind: 'machine', machineId: target!.machineId })));
         expect(hook.getCurrent().pluginActionApproval.approvalId).toBeNull();
     });
 
-    it('keeps one Machine refusal beside the other exact pending approval without retrying either install', async () => {
+    it('keeps one Machine refusal beside the other in-place confirmation without retrying the refused install', async () => {
         const { hook, catalog, artifacts, nativeInstallCommitCount, actionRequests, scope } =
             await renderRemovalOwner('disable', [], { catalog: true, browse: true, noTarget: true, deferredInstall: true,
                 installErrorsByMachine: { 'controller-2': 'plugin_change_daemon_unavailable' } });
         await act(async () => hook.getCurrent().openDiscoverListing({ sourceId: catalog.source.id, pluginId: 'example.compute',
             itemId: 'example.compute', version: '1.2.3' }));
         await vi.waitFor(() => expect(hook.getCurrent().discoverEntries.some(entry => entry.id === 'example.compute')).toBe(true));
+        let pending!: Promise<void>;
         await act(async () => {
-            await hook.getCurrent().runCatalogInstallOnMachines({ pluginId: 'example.compute', sourceId: catalog.source.id },
+            pending = hook.getCurrent().runCatalogInstallOnMachines({ pluginId: 'example.compute', sourceId: catalog.source.id },
                 ['controller-1', 'controller-2'].map(machineId => ({ serverIdentityId: scope.serverId, machineId })));
         });
+        const reviews = await waitForCarriedReviews(1);
+        expect(reviews[0]!.props?.actionArgs).toMatchObject({ machineId: 'controller-1' });
+        expect(nativeInstallCommitCount()).toBe(0);
+        expect(artifacts.list()).toHaveLength(0);
+        await answerCarriedReview(reviews[0]!, true);
+        await act(async () => { await pending; });
         expect(hook.getCurrent().pluginInstallReview).toMatchObject({ rows: [
-            { kind: 'approval', target: { machineId: 'controller-1' } },
+            { kind: 'settled', target: { machineId: 'controller-1' }, result: { ok: true } },
             { kind: 'settled', target: { machineId: 'controller-2' }, result: { ok: false, errorCode: 'plugin_change_daemon_unavailable' } },
         ] });
-        expect(artifacts.list()).toHaveLength(1);
-        expect(nativeInstallCommitCount()).toBe(0);
-        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(2);
+        expect(artifacts.list()).toHaveLength(0);
+        expect(nativeInstallCommitCount()).toBe(1);
+        expect(actionRequests.filter(request => request.actionId === 'plugins.install' && request.envelope.target?.kind === 'machine'
+            && request.envelope.target.machineId === 'controller-2')).toHaveLength(1);
     });
 
     it('does not dispatch a retained batch install callback after its catalog Account retires', async () => {
@@ -596,92 +629,70 @@ describe('Plugin install/update originating approval state', () => {
         }
     });
 
-    it('presents the created review where Install was pressed, reopens it after a close and withdraws it on the decision', async () => {
-        const { catalog, artifacts, decideInstall, actionRequests } = await renderRemovalOwner('disable', [], { catalog: true, deferredInstall: true });
+    it('presents Install confirmation on its listing and cancels on close without creating a self-approval Artifact', async () => {
+        const { catalog, artifacts, actionRequests, nativeInstallCommitCount } =
+            await renderRemovalOwner('disable', [], { catalog: true, deferredInstall: true });
         const { Modal, ModalProvider } = await import('@/modal');
         const { PluginListingPane } = await import('../listing/PluginListingScreen');
         const screen = await renderSettingsView(React.createElement(ModalProvider, null, React.createElement(PluginListingPane, {
             sourceId: catalog.source.id, pluginId: 'example.compute', itemId: 'example.compute', version: '1.2.3' })));
         await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.listing.install')?.props.disabled).toBe(false));
         await act(async () => { screen.pressByTestId('settings.plugins.listing.install'); });
-        await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
-        // The evaluated review and its one decision open in place, without a trip to the Inbox.
-        await waitForControl(screen, 'approvals.in-place');
-        expect(screen.findByTestId('approvals.reject')).not.toBeNull();
+        await waitForControl(screen, 'actions.confirmation-review.decision-approve');
+        const [review] = await waitForCarriedReviews(1);
+        expect(review!.props?.actionArgs).toMatchObject({ machineId: 'controller-1' });
+        expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull();
         expect(boundary.push).not.toHaveBeenCalled();
-        const presented = vi.mocked(Modal.show).mock.calls.filter(([config]) => config.chrome?.testID === 'approvals.in-place.modal');
-        expect(presented).toHaveLength(1);
-        // Closing it without an answer keeps the request open and offers it again where it was asked.
+        expect(nativeInstallCommitCount()).toBe(0);
+        expect(artifacts.list()).toHaveLength(0);
         await act(async () => {
-            presented[0]![0].onRequestClose?.();
+            review!.onRequestClose?.();
             Modal.hide(vi.mocked(Modal.show).mock.results.at(-1)!.value as string);
         });
-        expect(screen.findByTestId('approvals.in-place')).toBeNull();
-        await waitForControl(screen, 'settings.plugins.listing.approvalWaiting.open');
-        await act(async () => { screen.pressByTestId('settings.plugins.listing.approvalWaiting.open'); });
-        await waitForControl(screen, 'approvals.in-place');
-        // The person's decision settles the request: the review withdraws and the outcome stays on the listing.
-        await act(async () => { expect(await decideInstall(artifacts.list()[0]!.id, 'reject')).toMatchObject({ ok: true }); });
-        await vi.waitFor(() => expect(screen.findByTestId('approvals.in-place')).toBeNull());
         await waitForControl(screen, 'settings.plugins.discover.operationSettlement');
+        expect(screen.findByTestId('actions.confirmation-review')).toBeNull();
         expect(screen.findByTestId('settings.plugins.listing.approvalWaiting')).toBeNull();
+        expect(nativeInstallCommitCount()).toBe(0);
+        expect(artifacts.list()).toHaveLength(0);
         expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(1);
     });
 
-    it('confirms several Machines once by deciding each shown open approval through its own review, and nothing else', async () => {
-        const { catalog, artifacts, decideInstall, actionRequests, nativeInstallCommitCount, scope, storage } =
-            await renderRemovalOwner('disable', [], { catalog: true, deferredInstall: true, secondMachine: true });
-        // The Home answers (this harness stubs its socket): a decision needs a reachable Home, as in the app.
-        storage.setState({ socketStatus: 'connected', endpointStatus: 'online', syncError: null });
+    it('settles each selected Machine through its own in-place answer without an Artifact decision or an extra install press', async () => {
+        const { screen, reviews, artifacts, nativeInstallCommitCount, actionRequests, decisions } = await openCombinedConfirmationReview({});
+        expect(nativeInstallCommitCount()).toBe(0);
+        expect(artifacts.list()).toHaveLength(0);
+        await answerCarriedReview(reviews[0]!, true);
+        await vi.waitFor(() => expect(nativeInstallCommitCount()).toBe(1));
+        await answerCarriedReview(reviews[1]!, false);
+        await waitForControl(screen, 'settings.plugins.installOnMachines.outcome.controller-1');
+        await waitForControl(screen, 'settings.plugins.installOnMachines.outcome.controller-2');
+        await waitForControl(screen, 'settings.plugins.installOnMachines.close');
+        expect(screen.findByTestId('settings.plugins.installOnMachines.install')).toBeNull();
+        expect(decisions()).toEqual([]);
+        expect(artifacts.list()).toHaveLength(0);
+        expect(nativeInstallCommitCount()).toBe(1);
+        expect(actionRequests.filter(request => request.actionId === 'plugins.install').map(request => request.envelope.target))
+            .toEqual(['controller-1', 'controller-2', 'controller-1'].map(machineId => ({ kind: 'machine', machineId })));
+    });
+
+    async function openCombinedConfirmationReview(options: Parameters<typeof renderRemovalOwner>[2]) {
+        const owner = await renderRemovalOwner('disable', [], { catalog: true, deferredInstall: true, secondMachine: true, ...options });
         const { ModalProvider } = await import('@/modal');
         const { PluginListingPane } = await import('../listing/PluginListingScreen');
         const screen = await renderSettingsView(React.createElement(ModalProvider, null, React.createElement(PluginListingPane, {
-            sourceId: catalog.source.id, pluginId: 'example.compute', itemId: 'example.compute', version: '1.2.3' })));
+            sourceId: owner.catalog.source.id, pluginId: 'example.compute', itemId: 'example.compute', version: '1.2.3' })));
         await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.listing.installOnMachines')?.props.disabled).toBe(false));
-        // An approval this operation did not create (an Inbox request) is never part of the press.
-        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
-        await act(async () => { await createFrontDoorActionExecute()('plugins.install', { machineId: 'controller-1', source: {
-            kind: 'marketplace', sourceId: catalog.source.id, pluginId: 'example.compute', version: '1.2.3' } }, {
-            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: scope.serverId,
-            executionRunTargetMachineId: 'controller-1', externalActionTarget: { kind: 'machine', machineId: 'controller-1' } }); });
-        await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
-        const inboxApprovalId = artifacts.list()[0]!.id;
-
         await act(async () => { screen.pressByTestId('settings.plugins.listing.installOnMachines'); });
         await waitForControl(screen, 'settings.plugins.installOnMachines.target.controller-2');
         await act(async () => { screen.findByTestId('settings.plugins.installOnMachines.target.controller-2.switch')!
             .props.onValueChange(true); });
         await act(async () => { screen.pressByTestId('settings.plugins.installOnMachines.continue'); });
-        await vi.waitFor(() => expect(artifacts.list()).toHaveLength(3));
-        await waitForControl(screen, 'settings.plugins.installOnMachines.machine.controller-1');
-        await waitForControl(screen, 'settings.plugins.installOnMachines.machine.controller-2');
-        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.installOnMachines.install')?.props.disabled).toBe(false));
-        const operationIds = artifacts.list().map(artifact => artifact.id).filter(id => id !== inboxApprovalId);
-        const statusOf = (artifactId: string) => ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!)).status;
-        const machineOf = (artifactId: string) => ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!))
-            .executionOriginV1.target;
-        const [first, second] = ['controller-1', 'controller-2'].map(machineId =>
-            operationIds.find(id => JSON.stringify(machineOf(id)) === JSON.stringify({ kind: 'machine', machineId }))!);
-        // Declined elsewhere before the press: that row is no longer open and leaves the set.
-        await act(async () => { expect(await decideInstall(second!, 'reject')).toMatchObject({ ok: true }); });
-        await waitForControl(screen, 'settings.plugins.installOnMachines.outcome.controller-2');
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('settingsPlugins.installDeclined'));
-
-        await act(async () => { screen.pressByTestId('settings.plugins.installOnMachines.install'); });
-        await vi.waitFor(() => expect(statusOf(first!)).not.toBe('open'));
-        // One decision, for the one shown open row, through that row's own review (its exact-daemon replay);
-        // the declined row and the Inbox request are left alone. This harness has no daemon replay behind the
-        // Machine RPC boundary, so the install's own outcome is the live recipe's to show.
-        const decisions = boundary.rpc.mock.calls.map(([request]) => request).filter(request =>
+        const reviews = await waitForCarriedReviews(2);
+        expect(reviews.map(review => review.props?.actionArgs)).toEqual(['controller-1', 'controller-2'].map(machineId => expect.objectContaining({ machineId })));
+        const decisions = () => boundary.rpc.mock.calls.map(([request]) => request).filter(request =>
             request.method === RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED || request.method === RPC_METHODS.APPROVAL_REQUEST_DECIDE);
-        expect(decisions.map(request => (request.payload as { artifactId?: string }).artifactId)).toEqual([first]);
-        expect(statusOf(second!)).toBe('rejected');
-        expect(statusOf(inboxApprovalId)).toBe('open');
-        expect(nativeInstallCommitCount()).toBe(0);
-        // The install itself is never re-run or confirmed.
-        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(3);
-        expect(actionRequests.some(request => request.actionId.endsWith('.confirmed'))).toBe(false);
-    });
+        return { ...owner, screen, reviews, decisions };
+    }
 
     async function openCombinedReview(options: Parameters<typeof renderRemovalOwner>[2]) {
         const owner = await renderRemovalOwner('disable', [], { catalog: true, deferredInstall: true, secondMachine: true, ...options });

@@ -6,8 +6,7 @@ import {
     createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
 import {
     DEFAULT_ACTIONS_SETTINGS_V1} from '@happier-dev/protocol/account/settings/accountSettings';
-import {
-    isApprovalRequiredByActionsSettings} from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import {
     normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
 import {
@@ -159,8 +158,7 @@ describe('Session caller-hosted HTML request controller', () => {
         const sessionStop = vi.fn(async () => ({ stopped: true }));
         const approvalsCreate = vi.fn(async () => ({ artifactId: 'unexpected-approval' }));
         const executor = createActionExecutor({ sessionSendMessage, sessionStop, approvalsCreate,
-            isActionApprovalRequired: (actionId: ActionId, context: ActionExecutorContext) =>
-                isApprovalRequiredByActionsSettings(actionId, DEFAULT_ACTIONS_SETTINGS_V1, context),
+            readActionsSettings: () => DEFAULT_ACTIONS_SETTINGS_V1,
         } as unknown as ActionExecutorDeps);
         const options = {
             sessionId: 'session-1', serverId: 'home-1', serverIdentityId: 'identity-1', accountId: 'viewer',
@@ -295,8 +293,7 @@ describe('Session caller-hosted HTML request controller', () => {
             sessionBoardAction,
             approvalsCreate,
             isApprovalExecutionOriginCurrent: async () => true,
-            isActionApprovalRequired: (actionId: ActionId, context: ActionExecutorContext) =>
-                isApprovalRequiredByActionsSettings(actionId, DEFAULT_ACTIONS_SETTINGS_V1, context),
+            readActionsSettings: () => DEFAULT_ACTIONS_SETTINGS_V1,
         } as unknown as ActionExecutorDeps);
         // Production's default UI executor fills an omitted authority as
         // present_user. Preserve that real front-door behavior here so this
@@ -416,8 +413,7 @@ describe('Session caller-hosted HTML request controller', () => {
             sessionSendMessage,
             approvalsCreate,
             isApprovalExecutionOriginCurrent: async () => true,
-            isActionApprovalRequired: (actionId: ActionId, context: ActionExecutorContext) =>
-                isApprovalRequiredByActionsSettings(actionId, settings, context),
+            readActionsSettings: () => settings,
         } as unknown as ActionExecutorDeps);
         const controller = createSessionCallerHostedHtmlRequestController({
             sessionId: 'session-1',

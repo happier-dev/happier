@@ -1692,8 +1692,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const { buildWorkflowDefinitionCandidate } = await import('@/sync/domains/workflows/workflowAuthoring');
         const { serializeWorkflowDocumentJsonV1, parseWorkflowDocumentJsonV1 } = await import('@happier-dev/protocol/workflows/workflowDocumentV1');
         const { formatInlineReferenceTokenV1 } = await import('@happier-dev/protocol/runtime/input/inlineReferenceTokenV1');
-        const executor = createActionExecutor({ workflowAuthoringAction: invokeWorkflowAuthoringAction,
-            isActionApprovalRequired: () => false } as unknown as import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps);
+        const executor = createActionExecutor({ workflowAuthoringAction: invokeWorkflowAuthoringAction } as unknown as import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps);
         const context = { surface: 'agent' as const, authority: 'account_automation' as const,
             serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
         await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
@@ -1733,8 +1732,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const boundary = await serveMountedDraftActionHome();
         const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
         const owners = await import('@/sync/ops/actions/workflowAuthoringAction');
-        const executor = createActionExecutor({ workflowAuthoringAction: owners.invokeWorkflowAuthoringAction,
-            isActionApprovalRequired: () => false } as unknown as import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps);
+        const executor = createActionExecutor({ workflowAuthoringAction: owners.invokeWorkflowAuthoringAction } as unknown as import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps);
         const context = { surface: 'agent' as const, authority: 'account_automation' as const,
             serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
         await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
