@@ -1150,7 +1150,7 @@ export async function startStackDevTargets(
         const selectPort = async (service, options) => {
           const result = await runProcess({ label: `remote:${target.name}`, command: 'ssh', args: [
             ...openSsh.sshArgs, '-o', 'BatchMode=yes', target.ssh,
-            buildRemoteServicePortSelectionCommand(target, options),
+            buildRemoteServicePortSelectionCommand(target, { stackName, runtimeMode, service, ...options }),
           ], env: infraEnv });
           requireSuccessful(result, `${target.name} ${service} port selection`);
           const allocation = JSON.parse(result.out ?? '');

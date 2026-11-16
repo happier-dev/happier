@@ -1,3 +1,6 @@
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { coercePort } from '../server/port.mjs';
 import { isTcpPortFree, observeTcpPortAvailability, pickNextFreeTcpPort } from '../net/ports.mjs';
 
@@ -59,4 +62,47 @@ export async function selectStackServicePort({
     reservedPorts.add(selectedPort);
   }
   throw new Error(`[stack] unable to allocate a free server port after a bounded retry (last candidate ${selectedPort ?? 'unknown'})`);
+}
+
+/**
+ * One execution host serves many Stacks, and a Stack binds its selected port
+ * only after source preparation (minutes later). A per-port file created with
+ * O_EXCL makes the selection its Stack's own until that Stack selects the same
+ * service again, so two Stacks starting together never share a port
+ * (2026-11-16, nl3:3018). A server selection also claims the Stack's canonical
+ * loopback port (`startPort`, its controller port), so no other Stack's server
+ * takes the port its reverse forward needs. A deleted Stack's reservations only
+ * make other Stacks skip those ports.
+ */
+export async function selectStackServicePortOnHost({ reservationDir, stackName, service = 'server', startPort,
+  reservedPorts = new Set(), ...selection } = {}) {
+  if (!reservationDir || !stackName) throw new Error('[stack] host port reservation requires its directory and Stack');
+  await mkdir(reservationDir, { recursive: true });
+  const owner = `${stackName} ${service}`;
+  const fileFor = port => join(reservationDir, `${port}.stack`);
+  const ownerOf = async port => (await readFile(fileFor(port), 'utf8').catch(() => '')).trim();
+  const ownedByStack = value => value.split(' ')[0] === stackName;
+  const claim = async (port, token = owner) => {
+    try { await writeFile(fileFor(port), `${token}\n`, { flag: 'wx' }); return true; }
+    catch (error) { if (error?.code !== 'EEXIST') throw error; return ownedByStack(await ownerOf(port)); }
+  };
+  const foreign = new Set(reservedPorts);
+  const previous = [];
+  for (const name of await readdir(reservationDir)) {
+    const port = name.endsWith('.stack') ? coercePort(name.slice(0, -'.stack'.length)) : null;
+    if (!port) continue;
+    const value = await ownerOf(port);
+    if (!ownedByStack(value)) foreign.add(port);
+    else if (value === owner) previous.push(port);
+  }
+  const canonical = service === 'server' ? coercePort(startPort) : null;
+  if (canonical && (foreign.has(canonical) || !await claim(canonical, `${stackName} canonical`))) foreign.add(canonical);
+  let selected;
+  for (;;) {
+    selected = await selectStackServicePort({ ...selection, startPort, reservedPorts: new Set(foreign) });
+    if (await claim(selected)) break;
+    foreign.add(selected);
+  }
+  for (const port of previous) if (port !== selected) await unlink(fileFor(port)).catch(() => {});
+  return selected;
 }
