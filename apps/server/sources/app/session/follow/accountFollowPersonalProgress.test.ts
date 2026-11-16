@@ -12,7 +12,7 @@ import { encodeAccountScopedKvJson } from '@/app/kv/accountScopedKv';
 import { buildSessionFollowRulePhysicalKeyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 
 const boundary = createDbMocks({ account: ['findUnique', 'findMany', 'update'], session: ['findUnique', 'findMany'], machine: ['findUnique', 'findMany'],
-    sessionGrant: ['findMany'],  
+    sessionGrant: ['findMany'], teamMembership: ['findFirst'],
     accessKey: ['findUnique'], userKVStore: ['findUnique'], sessionMessage: ['findUnique'],
     accountSessionFollow: ['findUnique', 'updateMany', 'upsert'], accountChange: ['upsert'], accountPushToken: ['findMany'] });
 const transactions = createDbTransactionMock(() => ({ ...boundary.db,

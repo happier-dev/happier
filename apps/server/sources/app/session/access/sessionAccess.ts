@@ -79,6 +79,24 @@ export interface SessionAccessProjectionContext {
     readonly mode?: "effective_access_v1" | "legacy_owner_or_direct";
     /** Membership facts captured by the access owner in this same read snapshot. */
     readonly collectiveAccessSnapshot?: SessionCollectiveAccessSnapshot;
+    /** No requested Account holds a Team membership in this same read (`readSessionAccessProjectionContextInTx`). */
+    readonly withoutTeamMemberships?: boolean;
+}
+
+/**
+ * Request-shape context for one projection read in the caller's transaction. An
+ * Account without any Team membership row can match no Team or Group grant, so one
+ * indexed existence read lets its projection leave their relation filters out: the
+ * engine compiles each of them against the wide Team, Membership and Account types,
+ * which costs more CPU than the read itself (P03-SERVER-CPU-2).
+ */
+export async function readSessionAccessProjectionContextInTx(
+    reader: Pick<Tx, "teamMembership">,
+    accountIds: readonly string[],
+): Promise<SessionAccessProjectionContext> {
+    if (accountIds.length === 0 || !isSessionCollaborationEnabled()) return {};
+    const membership = await reader.teamMembership.findFirst({ where: { accountId: { in: [...accountIds] } }, select: { id: true } });
+    return membership ? {} : { withoutTeamMemberships: true };
 }
 
 export function buildSessionAccessProjectionSelectForAccounts(accountIds: readonly string[], context: SessionAccessProjectionContext = {}) {
@@ -89,7 +107,7 @@ export function buildSessionAccessProjectionSelectForAccounts(accountIds: readon
     const membershipIdentity = snapshot ? { id: { in: snapshot.memberships.map(membership => membership.id) } } : {};
     const teamMembership = { ...buildSessionAccessMembershipWhere(accountIds, false), ...membershipIdentity };
     const groupMembership = { teamMembership: { ...buildSessionAccessMembershipWhere(accountIds, true), ...membershipIdentity } };
-    const collectiveEnabled = context.mode !== "legacy_owner_or_direct" && isSessionCollaborationEnabled();
+    const collectiveEnabled = context.mode !== "legacy_owner_or_direct" && !context.withoutTeamMemberships && isSessionCollaborationEnabled();
     const teamIds = !collectiveEnabled ? [] : snapshot
         ? [...new Set(snapshot.memberships.filter(membership => isTeamPrincipalRoleV1(membership.role)).map(membership => membership.teamId))]
         : undefined;
@@ -102,13 +120,15 @@ export function buildSessionAccessProjectionSelectForAccounts(accountIds: readon
         ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
         account: { select: { status: true } },
         grants: {
+            // A known-empty principal set matches no grant: its branch, and the relation
+            // filters the engine would compile for it, stay out of the request.
             where: { OR: [
                 { principalKind: 'account', accountId: { in: [...accountIds] }, account: { status: 'active' } },
-                { principalKind: 'team', ...(teamIds ? { teamId: { in: teamIds } } : {}), team: { archivedAt: null,
-                    ...(snapshot || !collectiveEnabled ? {} : { memberships: { some: teamMembership } }) } },
-                { principalKind: 'group', ...(groupIds ? { teamGroupId: { in: groupIds } } : {}),
+                ...(teamIds?.length === 0 ? [] : [{ principalKind: 'team', ...(teamIds ? { teamId: { in: teamIds } } : {}), team: { archivedAt: null,
+                    ...(snapshot || !collectiveEnabled ? {} : { memberships: { some: teamMembership } }) } }]),
+                ...(groupIds?.length === 0 ? [] : [{ principalKind: 'group', ...(groupIds ? { teamGroupId: { in: groupIds } } : {}),
                     teamGroup: { archivedAt: null, team: { archivedAt: null },
-                        ...(snapshot || !collectiveEnabled ? {} : { memberships: { some: groupMembership } }) } },
+                        ...(snapshot || !collectiveEnabled ? {} : { memberships: { some: groupMembership } }) } }]),
             ] },
             select: {
                 id: true, principalKind: true, accountId: true, teamId: true, teamGroupId: true,
@@ -476,10 +496,11 @@ export async function resolveSessionAccessDecisionsForSessionsInTx(
     const result = new Map<string, SessionAccessOperationDecision>();
     const sessionIds = [...new Set(requestedSessionIds)];
     // This chunks database parameters, never the authorized result set.
+    const projectionContext = sessionIds.length === 0 ? {} : await readSessionAccessProjectionContextInTx(reader, [operation.accountId]);
     for (let offset = 0; offset < sessionIds.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
         const rows = await reader.session.findMany({
             where: { id: { in: sessionIds.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE) } },
-            select: withSessionContentSelect(buildSessionAccessProjectionSelect(operation.accountId)),
+            select: withSessionContentSelect(buildSessionAccessProjectionSelect(operation.accountId, projectionContext)),
         }).then(decodeSessionStoredContent);
         for (const [id, decision] of await resolveSessionAccessForRowsInTx(reader, operation, rows)) result.set(id, decision);
     }
@@ -584,7 +605,8 @@ export async function resolveSessionAccessForAccountsInTx(tx: Tx, input: Readonl
         const batch = accountIds.slice(offset, offset + 100);
         const row = await tx.session.findUnique({
             where: { id: input.sessionId },
-            select: withSessionContentSelect(buildSessionAccessProjectionSelectForAccounts(batch)),
+            select: withSessionContentSelect(buildSessionAccessProjectionSelectForAccounts(batch,
+                await readSessionAccessProjectionContextInTx(tx, batch))),
         }).then(decodeSessionStoredContent);
         if (!row || row.id !== input.sessionId) continue;
         const qualifiedTeamIds = await resolveQualifiedSessionTeamIdsInTx(tx, {
@@ -620,11 +642,12 @@ export async function resolveSessionAccessForSessionsInTx(tx: Tx, input: Readonl
     }
     for (let accountOffset = 0; accountOffset < accountIds.length; accountOffset += 100) {
         const accountBatch = accountIds.slice(accountOffset, accountOffset + 100);
+        const projectionContext = await readSessionAccessProjectionContextInTx(tx, accountBatch);
         for (let sessionOffset = 0; sessionOffset < sessionIds.length; sessionOffset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
             const sessionBatch = sessionIds.slice(sessionOffset, sessionOffset + SESSION_ACCESS_SESSION_BATCH_SIZE);
             const rows = await tx.session.findMany({
                 where: { id: { in: sessionBatch } },
-                select: withSessionContentSelect(buildSessionAccessProjectionSelectForAccounts(accountBatch)),
+                select: withSessionContentSelect(buildSessionAccessProjectionSelectForAccounts(accountBatch, projectionContext)),
             }).then(decodeSessionStoredContent);
             const teams = rows.flatMap(sessionGrantTeams);
             const qualifiedTeamIds = await resolveQualifiedSessionTeamIdsInTx(tx, {

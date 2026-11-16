@@ -61,6 +61,8 @@ function runtimeFixture(policy: FollowPolicyV1 = { preset: 'quiet' }, sourceCoun
             findMany: vi.fn(async () => audience.filter(account => account.id !== destination.accountId)
                 .map(account => ({ sessionId: destination.id, principalKind: 'account', accountId: account.id, teamId: null, teamGroupId: null, effectiveAt: null }))),
         },
+        // No Account in this fixture holds a Team membership.
+        teamMembership: { findFirst: vi.fn(async () => null) },
         
         
         sessionMessage: {

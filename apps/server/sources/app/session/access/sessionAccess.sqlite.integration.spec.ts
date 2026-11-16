@@ -1122,6 +1122,32 @@ describe("Session access owner/direct authority (SQLite)", () => {
         }))).resolves.toMatchObject({ status: "allowed", access: { level: "edit", sources: [{ kind: "group", teamId: independentTeam.id, groupId: group.id }] } });
     });
 
+    it("leaves Team and Group relation filters out of batch access reads for an Account without Team memberships", async () => {
+        const { actor, session } = await fixture("view");
+        const team = await db.team.create({ data: { name: crypto.randomUUID() } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Projection") } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "admin", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, accessLevel: "admin", effectiveAt: new Date() } });
+        // The engine compiles every relation filter of a read against the wide Team/Membership/Account
+        // types (P03-SERVER-CPU-2: ~1.4 ms engine CPU of a ~4 ms access read); an Account with no
+        // membership row can match no Team or Group grant, so its reads carry none of them.
+        const collectiveBranches: number[] = [];
+        const stop = observeSqliteRequests({ before: request => {
+            const select = (request.args as { select?: { grants?: { where?: { OR?: { principalKind?: string }[] } } } } | undefined)?.select;
+            const branches = select?.grants?.where?.OR;
+            if (request.model === 'Session' && branches) collectiveBranches.push(branches.filter(branch => branch.principalKind !== 'account').length);
+        } });
+        try {
+            const read = () => inTx(tx => resolveEffectiveSessionAccessForSessionsInTx(tx, { accountId: actor.id, sessionIds: [session.id], authentication }));
+            expect((await read()).get(session.id)).toMatchObject({ level: "view", sources: [{ kind: "direct" }] });
+            expect(collectiveBranches).toEqual([0]);
+            collectiveBranches.length = 0;
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "member" } });
+            expect((await read()).get(session.id)).not.toBeUndefined();
+            expect(collectiveBranches).toEqual([2]);
+        } finally { stop(); }
+    });
+
     it("keeps direct access available while disabled Session sharing cannot expand recipients", async () => {
         const { owner, actor, session, share } = await fixture("view");
         const team = await db.team.create({ data: { name: crypto.randomUUID() } });
