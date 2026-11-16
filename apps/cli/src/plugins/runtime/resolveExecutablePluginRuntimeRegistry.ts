@@ -3760,6 +3760,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         notifications: {
             categories: authoritativeContributes.notifications ?? Object.freeze([]),
             channels: authoritativeContributes.notificationChannels ?? Object.freeze([]),
+            readFailedActivationPluginIds: () => activatedRegistry.failedActivationPluginIds,
             readAttentionPolicy: () => scopedActionRuntime ? undefined : getActiveAccountSettingsSnapshot()?.settings.attentionDeliveryPolicyV1,
             ...(!scopedActionRuntime && sessionCredentials ? {
                 sendNative: createPluginNativeNotificationDelivery({ credentials: sessionCredentials,

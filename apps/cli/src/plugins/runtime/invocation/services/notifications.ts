@@ -61,6 +61,7 @@ export type PluginNativeNotificationRequest = Readonly<{
 export type StablePluginNotificationsHost = Readonly<{
     categories: readonly NotificationCategoryDeclaration[];
     channels: readonly ResolvedNotificationChannelContribution[];
+    readFailedActivationPluginIds?(): ReadonlySet<string>;
     activateChannel(ref: PluginContributionRef): Promise<void>;
     readChannel(ref: PluginContributionRef, seed?: PluginInvocationServicesSeed): PluginNotificationSenderBinding | null;
     readAttentionPolicy?(): unknown;
@@ -448,6 +449,7 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
 
     return Object.freeze({
         async availableHostChannels() {
+            const failedActivationPluginIds = host.readFailedActivationPluginIds?.();
             const items: Readonly<{
                 value: string;
                 label: string;
@@ -456,7 +458,7 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
             }>[] = [];
             for (const channel of host.channels) {
                 const ref = hostChannelRef(channel);
-                if (!ref) continue;
+                if (!ref || failedActivationPluginIds?.has(ref.pluginId)) continue;
                 const binding = host.readChannel(ref);
                 if (binding && !await isSenderBindingCurrent(binding)) continue;
                 const destinationSetup = PluginContributionIdentityV1Schema.safeParse(channel.definition.metadata?.destinationSetup);
