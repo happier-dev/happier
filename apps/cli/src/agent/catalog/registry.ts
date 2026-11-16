@@ -5,6 +5,7 @@ import type {
 import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol';
 import { resolveAgentIdFromSessionMetadata, type AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { readAgentCatalogSnapshot } from './snapshot';
+import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 /** Reads only the selected current declaration, including its absence of coverage. */
 export function resolveCatalogAgentRequestCoverageOptions(input: Readonly<{
@@ -12,9 +13,15 @@ export function resolveCatalogAgentRequestCoverageOptions(input: Readonly<{
   metadata?: unknown;
 }>): AgentStateRequestCoverageOptions | undefined {
   const agentId = input.agentId ?? resolveAgentIdFromSessionMetadata(input.metadata);
-  return agentId
-    ? readAgentCatalogSnapshot().agentDefinitionsById.get(agentId)?.richDefinition?.definition.requestCoverage
-    : undefined;
+  if (!agentId) return undefined;
+  // A hosted Session's own Agent is the daemon-admitted declaration bound to its scope: the
+  // same definition the catalog projects as `richDefinition.definition`. Reading it there
+  // keeps the session host from building the full built-in registry for one field.
+  const admitted = readHostedSessionScope()?.runnerBootstrap?.bootstrap.descriptor;
+  if (admitted?.agentDeclaration && admitted.agentId === agentId) {
+    return admitted.agentDeclaration.definition.requestCoverage;
+  }
+  return readAgentCatalogSnapshot().agentDefinitionsById.get(agentId)?.richDefinition?.definition.requestCoverage;
 }
 
 /**
