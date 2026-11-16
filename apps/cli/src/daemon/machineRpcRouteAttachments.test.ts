@@ -14,11 +14,34 @@ import { createProcessOwnershipRuntime } from './processes/ownership/processOwne
 import { createLeftBehindPass } from './processes/leftBehind/leftBehindPass';
 import { DaemonComputerActionExecuteResponseV1Schema } from '@happier-dev/protocol/computer/v1';
 import { ApiMachineClient } from '@/api/apiMachine';
+import { createMachineAdminAccessObserver } from '@/machines/adminAccess/observeMachineAdminAccess';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createComputerRoutes } from './computer/routes';
 import { createMachineLiveStreamCaptureRegistry } from './peer/mediation/stream/captureRegistry';
 
 describe('daemon machine RPC route attachments', () => {
+  it('keeps installed Setup receivers through prepare, attachment and transport replacement', async () => {
+    const { createDaemonMachineRpcRouteAttachmentCache } = await import('./machineRpcRouteAttachments');
+    const cache = createDaemonMachineRpcRouteAttachmentCache({ getApiMachineForSessions: () => null });
+    cache.attachMachineReachabilityRoutes({ target: () => null,
+      agentIsolation: { read: () => undefined },
+      adminAccess: { observer: createMachineAdminAccessObserver({ onChanged: async () => {} }) },
+      getMachineClient: () => null });
+    const clients: ApiMachineClient[] = [];
+    try {
+      for (const id of ['initial', 'replacement']) {
+        const client = new ApiMachineClient('test-token', { id, encryptionMode: 'plain',
+          metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+        clients.push(client);
+        cache.prepareApiMachineForSessions(client);
+        cache.attachApiMachineForSessions(client);
+        cache.attachApiMachineForSessions(client);
+        const manager: unknown = Reflect.get(client, 'rpcHandlerManager');
+        if (!(manager instanceof RpcHandlerManager)) throw new Error('Missing machine RPC owner');
+        expect(manager.hasHandler('machines.reachability.inspect')).toBe(true);
+      }
+    } finally { for (const client of clients) client.shutdown(); }
+  });
   it('dispatches Computer RPC after delayed machine attachment and transport replacement, including unavailable owners', async () => {
     const { createDaemonMachineRpcRouteAttachmentCache } = await import('./machineRpcRouteAttachments');
     let active: ApiMachineClient | null = null;

@@ -3274,7 +3274,10 @@ export class ApiMachineClient {
                 return target?.machineId === this.machine.id && target.serverId === this.machineRuntimeServerId ? target : null;
             },
         };
+        const installed = this.machineReachabilityRoutes !== null;
         this.machineReachabilityRoutes = routes;
+        // Preparation and attachment share this receiver; execution reads the current routes above.
+        if (installed) return;
         registerDaemonMachineReachabilityRpcHandlers(this.rpcHandlerManager, { ...routes,
             captureMetadataPort: () => this.captureMachineMetadataFieldPort(),
             observeExecution: this.actionOperationRuntime.observeExecution,
