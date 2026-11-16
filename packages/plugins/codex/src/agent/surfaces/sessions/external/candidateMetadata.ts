@@ -19,7 +19,7 @@ export function readCodexNativeCandidateTitle(thread: unknown): string | undefin
   if (typeof thread.preview !== 'string' || !thread.preview.trim()) return undefined;
   // A preview is the first prompt: its title is the person's words, without Happier's delivery frame.
   const title = projectExternalSessionCandidateTitle(
-    readSessionInputPromptUserTextV1(thread.preview).replace(/\s+/g, ' ').trim(), { source: 'prompt' });
+    readSessionInputPromptUserTextV1(thread.preview), { source: 'prompt' });
   return title || undefined;
 }
 

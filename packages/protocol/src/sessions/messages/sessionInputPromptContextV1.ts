@@ -30,20 +30,22 @@ const MAX_CONTEXT_VALUE_CODE_POINTS = 128;
 const INPUT_CONTEXT_OPEN = '<happier_input_context v="1">';
 const INPUT_CONTEXT_CLOSE = '</happier_input_context>';
 
-/** Summaries omit complete leading delivery frames; transcript readers retain their evidence. */
+/** Summaries omit delivery frames, including truncated native previews; transcripts retain their evidence. */
 export function readSessionInputPromptTitleTextV1(text: string): string {
   let remaining = text.trim();
   while (remaining) {
     const afterPlan = readLeadingCodingPromptPlanV1(remaining, () => true);
-    if (afterPlan) {
+    if (afterPlan !== null) {
       remaining = afterPlan;
       continue;
     }
+    if (remaining.startsWith('<happier_coding_prompt ')) return '';
     if (!remaining.startsWith(INPUT_CONTEXT_OPEN)) break;
     const end = remaining.indexOf(INPUT_CONTEXT_CLOSE, INPUT_CONTEXT_OPEN.length);
-    if (end === -1) break;
+    if (end === -1) return '';
     const suffix = remaining.slice(end + INPUT_CONTEXT_CLOSE.length);
-    if (!/^\s/u.test(suffix) || !suffix.trim()) break;
+    if (!suffix.trim()) return '';
+    if (!/^\s/u.test(suffix)) break;
     remaining = suffix.trimStart();
   }
   return remaining.replace(/\s+/gu, ' ').trim();

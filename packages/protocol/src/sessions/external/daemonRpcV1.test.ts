@@ -36,10 +36,23 @@ it('projects complete native prompt frames into candidate titles without changin
   expect(daemonRpcV1.projectExternalSessionCandidateTitle(input, { source: 'prompt' })).toBe('Find the missing allowance');
   expect(daemonRpcV1.projectExternalSessionCandidateTitle(input)).toBe(input);
   expect(readSessionInputPromptUserTextV1(input)).toBe(input);
-  for (const title of ['An explicit title', 'Explain <happier_input_context v="1"> as an example',
-    '<happier_input_context v="1">\nunfinished', '<happier_coding_prompt length="100">\nunfinished']) {
+  for (const title of ['An explicit title', 'Explain <happier_input_context v="1"> as an example']) {
     expect(daemonRpcV1.projectExternalSessionCandidateTitle(title)).toBe(title);
     expect(daemonRpcV1.projectExternalSessionCandidateTitle(title, { source: 'prompt' })).toBe(title.replace(/\s+/gu, ' '));
+  }
+});
+
+it('omits delivery-only and truncated prompt previews from titles while preserving explicit names and transcripts', () => {
+  const plan = renderSessionInputPromptPlanV1(buildPromptPlanV1({ modality: 'coding', blocks: [
+    { id: 'resource', scope: 'session', text: 'Dynamic resource context' },
+  ] }));
+  const context = renderSessionInputContextPromptV1({ inputProvenance: { v: 1, kind: 'host', producer: 'sessionAction' },
+    transformedUserText: 'Visible request' });
+  for (const preview of [plan, plan.slice(0, -5), context.slice(0, context.indexOf('</happier_input_context>')),
+    context.slice(0, context.indexOf('</happier_input_context>') + '</happier_input_context>'.length)]) {
+    expect(daemonRpcV1.projectExternalSessionCandidateTitle(preview, { source: 'prompt' })).toBe('');
+    expect(daemonRpcV1.projectExternalSessionCandidateTitle(preview)).toBe(preview);
+    expect(readSessionInputPromptUserTextV1(preview)).toBe(preview);
   }
 });
 

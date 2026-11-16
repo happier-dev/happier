@@ -6,12 +6,12 @@ import { gunzipSync } from 'node:zlib';
 import { createServer } from 'node:http';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
-import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import type { AgentExternalSessionsResult } from '@happier-dev/plugin-sdk/sessions/external';
 import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/plugin-sdk/sessions/external';
 import * as credentialBoundary from '@/persistence';
 import * as accountHttpBoundary from '@/api/client/connectedServiceCredentialApi';
 import * as sessionHttpBoundary from '@/session/transport/http/sessionsHttp';
+import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -75,16 +75,8 @@ it('discovers, links and pages native history through all six admitted callbacks
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      const absentIntent = { availabilityCursor: 1, hostingCapability: { enabled: false },
-        intent: null, release: null, uiArtifacts: [], packageAssets: [] };
-      if (request.method === 'POST' && request.url === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
-        const ids = PluginAvailabilityIntentsListActionInputV1Schema.parse(body).knownPluginIds ?? [];
-        return send(200, { availabilityCursor: 1, pluginIds: ids, failedPluginIds: [],
-          intentReads: ids.map(pluginId => ({ pluginId, response: absentIntent })) });
-      }
-      if (request.method === 'POST' && request.url === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) {
-        return send(200, absentIntent);
-      }
+      const availability = absentAccountPluginAvailabilityHttpResponse(`http://fixture${request.url}`, body);
+      if (availability) return send(availability.status, availability.data);
       return send(404, {});
     } catch { return send(500, { error: 'fixture_boundary_refused' }); }
   });
@@ -122,10 +114,24 @@ it('discovers, links and pages native history through all six admitted callbacks
     const source = value(await callbacks.resolveSource({ ...invocation, source: { kind: 'museNative' }, includeAccountingSource: false })).source;
     expect(source).toEqual({ kind: 'museNative', museHome: join(scratch, 'data/muse') });
 
-    await phase(reopened, [3]);
+    // Native session/list truncates firstUserPrompt inside the delivery frame.
+    // Preserve explicit names, but never present this truncated frame as a title.
+    const previews = structuredClone(reopened);
+    const listRow = readMuseRecord(previews[4]);
+    const listMessage = readMuseRecord(listRow.message);
+    const listResult = readMuseRecord(listMessage.result);
+    const nativeSession = readMuseRecord((listResult.sessions as unknown[])[0]);
+    const preview = '<happier_coding_prompt length="6277">\nDynamic resource context';
+    previews[4] = { ...listRow, message: { ...listMessage, result: { ...listResult, sessions: [
+      { ...nativeSession, firstUserPrompt: preview, title: preview },
+      { ...nativeSession, sessionId: 'named-session', name: 'A deliberate name', firstUserPrompt: preview },
+    ] } } };
+    await phase(previews, [3]);
     const listed = value(await callbacks.listCandidates({ ...invocation, source, maxItems: 7 }));
     expect(listed.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ remoteSessionId: id })]));
     expect(listed.nextCursor).toBeNull();
+    expect(listed.candidates[0]).not.toHaveProperty('title');
+    expect(listed.candidates[1]?.title).toBe('A deliberate name');
 
     await phase(reopened, [9]);
     const linked = value(await callbacks.resolveLinkIdentity({ ...invocation, source, remoteSessionId: id }));

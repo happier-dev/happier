@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildPromptPlanV1, renderSessionInputPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
 
 import { readCodexExternalSessionTitleCandidate } from '../../../rollout/discovery/rolloutTitle.js';
 import { readCodexNativeCandidateTitle } from './candidateMetadata.js';
@@ -17,5 +18,15 @@ describe('Codex external session titles', () => {
 
   it('keeps a native thread name as the person wrote it', () => {
     expect(readCodexNativeCandidateTitle({ name: 'Release notes', preview: FRAMED })).toBe('Release notes');
+  });
+
+  it('reads length-framed coding prompts before title whitespace normalization', () => {
+    const prompt = `${renderSessionInputPromptPlanV1(buildPromptPlanV1({ modality: 'coding', blocks: [
+      { id: 'resource', scope: 'session', text: 'Dynamic resource context\nwith repeated   spaces' },
+    ] }))}\n\n${FRAMED}`;
+    expect(readCodexNativeCandidateTitle({ preview: prompt })).toBe('Fix the login redirect');
+    expect(readCodexExternalSessionTitleCandidate(prompt, { source: 'prompt' })).toBe('Fix the login redirect');
+    expect(readCodexNativeCandidateTitle({ preview: prompt.slice(0, 80) })).toBeUndefined();
+    expect(readCodexExternalSessionTitleCandidate(prompt.slice(0, 80), { source: 'prompt' })).toBeNull();
   });
 });

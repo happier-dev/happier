@@ -35,13 +35,13 @@ export function readCodexExternalSessionTitleCandidate(
   options?: Readonly<{ source: 'prompt' }>,
 ): string | null {
   if (typeof value !== 'string') return null;
-  const normalized = readSessionInputPromptUserTextV1(value).replace(/\s+/g, ' ').trim();
+  const normalized = projectExternalSessionCandidateTitle(readSessionInputPromptUserTextV1(value), options).replace(/\s+/g, ' ').trim();
   if (!normalized) return null;
   const lowerTitle = normalized.toLowerCase();
   if (CODEX_TITLE_BOILERPLATE_PATTERNS.some((pattern) => lowerTitle.includes(pattern))) {
     return null;
   }
-  return projectExternalSessionCandidateTitle(normalized, options) || null;
+  return normalized || null;
 }
 
 function readTitleFromCodexTitleToolInput(input: unknown): string | null {
