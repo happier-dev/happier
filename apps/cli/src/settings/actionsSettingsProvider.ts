@@ -1,4 +1,5 @@
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { applySessionApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import type { AccountSettings, ActionsSettingsV1 } from '@happier-dev/protocol';
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 
@@ -89,4 +90,25 @@ export function createActionSettingsProvider(params: Readonly<{
       return override ?? accountSettings?.actionsSettingsV1 ?? normalizeActionsSettingsV1(undefined);
     },
   };
+}
+
+/**
+ * A bound Session's advertisement view: the Account settings with that Session's approval
+ * profile applied, so a profile's Off hides the tool. Approval routing keeps the Account
+ * settings plus the profile reference and applies the same overlay itself.
+ */
+export function createSessionActionSettingsView(provider: RuntimeActionSettingsProvider,
+  readSessionMetadata: () => Readonly<{ approvalProfileId?: unknown; machineId?: unknown }> | null | undefined,
+): RuntimeActionSettingsProvider {
+  let last: Readonly<{ settings: ActionsSettingsV1; profileId: unknown; machineId: unknown; effective: ActionsSettingsV1 }> | undefined;
+  return { ...provider, getActionsSettings: () => {
+    const settings = provider.getActionsSettings();
+    const metadata = readSessionMetadata();
+    // Enablement runs once per tool per listing; rebuild only when a fact changed.
+    if (last?.settings === settings && last.profileId === metadata?.approvalProfileId
+      && last.machineId === metadata?.machineId) return last.effective;
+    last = { settings, profileId: metadata?.approvalProfileId, machineId: metadata?.machineId,
+      effective: applySessionApprovalProfileV1(settings, metadata) };
+    return last.effective;
+  } };
 }

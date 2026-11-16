@@ -39,6 +39,7 @@ import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol
 import { createCliActionDeps, type SessionActionRpcTransport } from './createCliActionDeps';
 import { resolveCliAgentStartContextV1 } from './resolveCliAgentStartContextV1';
 import { admitActionAgentStartV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import tweetnacl from 'tweetnacl';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ExternalActionMachineRpcExecutionV1Schema, verifyExternalActionMachineRequestV1,
@@ -163,9 +164,13 @@ describe('daemon Account Action Session caller context', () => {
       expect(await executor.execute('session.approval_profile.set', { ...input, expectedMetadataRevision: 5, approvalProfileId: null }, context))
         .toMatchObject({ ok: true, result: { approvalProfileId: null, version: 6 } });
       expect(await deps.readActionApprovalProfileId?.(caller)).toBeNull();
+      // Without its own choice the Session follows the person's default for its Machine.
+      const machineDefaults = normalizeActionsSettingsV1({ v: 1, machineApprovalProfiles: { [fixture.metadata.machineId]: 'careful' } });
+      expect(await deps.readActionApprovalProfileId?.({ ...caller, actionsSettings: machineDefaults })).toBe('careful');
       expect(await deps.readActionApprovalProfileId?.(context)).toBeUndefined();
       fixture.get.mockRejectedValueOnce(new Error('Session read unavailable'));
-      expect(await deps.readActionApprovalProfileId?.(caller)).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+      expect(await deps.readActionApprovalProfileId?.(caller))
+        .toEqual({ ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' });
     } finally { patch.mockRestore(); fixture.cleanup(); }
   });
   it.each(['bound', 'remote'] as const)('releases an admitted Workflow Role mutation without original-principal reads (%s)', async route => {

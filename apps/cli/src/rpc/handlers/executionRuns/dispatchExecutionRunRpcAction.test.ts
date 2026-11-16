@@ -17,6 +17,7 @@ import { createBrowserDaemonControlRoutes } from '@/daemon/browser/control/route
 import { createBrowserAutomationReverseDispatcher } from '@/daemon/browser/automation/reverseDispatch';
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { createScopedRuntimeActionSettingsProvider } from '@/settings/scopedRuntimeActionSettingsProvider';
 import { markExecutionRunStartPreparationFailure } from '@/agent/runtime/bridges/executionRun/errors';
 import { sendBackendLongLivedRun } from '@/agent/runtime/bridges/executionRun/send/backendLongLivedPrompt';
@@ -2140,7 +2141,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
     expect(diagnostics.dispatch).not.toHaveBeenCalled();
   });
 
-  it.each(['builtin:read-propose', null])('binds child Action approval to retained Run selection (%s)', async approvalProfileId => {
+  it.each(['ask-diagnostics', null])('binds child Action approval to retained Run selection (%s)', async approvalProfileId => {
     const original = createExecutionRunBridgeWithRun();
     const run = original.get('run_1')!;
     const diagnostics = { dispatch: vi.fn(async () => ({ v: 1 as const, machineId: 'machine_1',
@@ -2152,7 +2153,10 @@ describe('createExecutionRunRpcActionExecutor', () => {
       policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
         reviewBoundedTimeoutMs: null, maxTurns: null } }),
       isExecutionRunsEnabled: () => true,
-      actionsSettingsProvider: createActionSettingsProvider({ allowEnvironmentOverride: false }),
+      actionsSettingsProvider: createActionSettingsProvider({ allowEnvironmentOverride: false,
+        accountSettings: accountSettingsParse({ actionsSettingsV1: { v: 1, approvalProfiles: [{ id: 'ask-diagnostics',
+          name: 'Ask before diagnostics', actions: { 'browser.diagnostics.snapshot': {
+            approvalRequiredSurfaces: ['agent', 'mcp', 'cli', 'rpc', 'api', 'plugin'] } } }] } }) }),
       approvalDeps: {
         approvalsCreate: async () => ({ artifactId: 'approval_profile_child' }),
         approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request: {
@@ -2164,7 +2168,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
     const result = await deps.executionRunAction?.('sess_1', { runId: run.runId,
       actionId: 'browser.diagnostics.snapshot', input: { browserSessionId: 'sess_1', viewId: 'view_1' },
     }, { authority: 'account_automation', runtimeAccountId: 'account-1', serverId: 'server-1',
-      actionRequestId: 'profile-child', approvalProfileId: 'builtin:full-trust' });
+      actionRequestId: 'profile-child', approvalProfileId: 'unrelated-caller-profile' });
     expect(result).toMatchObject(approvalProfileId
       ? { ok: true, result: { kind: 'approval_request_created', artifactId: 'approval_profile_child' } }
       : { ok: true });

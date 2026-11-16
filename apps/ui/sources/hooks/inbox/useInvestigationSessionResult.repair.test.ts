@@ -228,7 +228,7 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
                 actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
             expect(commandProposal).toMatchObject({ ok: true,
                     result: { kind: 'approval_request_created', artifactId: 'approval',
-                        approvalProfile: { effectiveId: 'builtin:read-propose' } } });
+                        approvalProfile: { status: 'missing', requestedId: 'builtin:read-propose' } } });
         });
         expect(ApprovalRequestSchema.parse(stored)).toMatchObject({ status: 'open', actionId: 'projects.compute.exec',
             executionOriginV1: { approvalProfileId: 'builtin:read-propose' } });

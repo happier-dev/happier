@@ -261,7 +261,8 @@ describe('ActionsSettingsView', () => {
       renderedProps(Item).every((item) =>
         String(item.testID).startsWith('settings-actions:action:')
         || String(item.testID).startsWith('settings-actions:related:')
-        || String(item.testID).startsWith('settings-actions:approval-profile:'),
+        || String(item.testID).startsWith('settings-actions:approval-profile:')
+        || item.testID === 'settings-actions:approval-profiles:empty',
       ),
     ).toBe(true);
   });

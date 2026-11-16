@@ -182,7 +182,7 @@ describe('Run a workflow trigger inputs', () => {
         expect(readBack).toBeTruthy();
         for (const fact of ['workflows.triggers.kind.pluginEvent', '/outcome', 'failed', 'Application checkout', 'Production',
             'Controller studio', 'machines.widgets.body.common.offline',
-            'workflows.triggers.guided.profile.applySafeName', '300000']) expect(text).toContain(fact);
+            'workflows.triggers.guided.profile.machineDefault', '300000']) expect(text).toContain(fact);
         for (const id of ['source-checkout', 'production-environment', 'controller-review', 'source-failure'])
             expect(text).not.toContain(id);
         expect(text).toContain('workflows.triggers.guided.tellInbox');

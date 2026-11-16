@@ -6,6 +6,7 @@ import { t } from '@/text';
 
 import type { ActionApprovalLooseningNoticeData } from './resolveActionSettingsControlState';
 import { useActionPolicyWriter } from './useActionPolicyWriter';
+import type { ActionSettingsTarget } from './actionSettingsTarget';
 
 /**
  * The one warning shown when a permission-changing Action is Allowed on a surface or scope: agents
@@ -27,9 +28,11 @@ export const ActionApprovalLooseningNotice = React.memo(
       disabled?: boolean;
       /** Injected by `ItemGroup`, which owns the section's row dividers. */
       showDivider?: boolean;
+      /** A profile page reverts the profile's own row, not the Account's. */
+      target?: ActionSettingsTarget;
     }>,
   ) {
-    const writePolicy = useActionPolicyWriter();
+    const writePolicy = useActionPolicyWriter(props.target);
     const [reverting, setReverting] = React.useState(false);
     const { keepAskFirst } = props.notice;
     const handleKeepAskFirst = React.useCallback(() => {

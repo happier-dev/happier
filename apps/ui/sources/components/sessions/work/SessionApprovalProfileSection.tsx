@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { ApprovalProfileSelect } from '@/components/approvals/ApprovalProfileSelect';
-import { presentApprovalProfile } from '@/components/approvals/approvalProfilePresentation';
+import { ApprovalProfileSelect, approvalProfileChoiceTitle } from '@/components/approvals/ApprovalProfileSelect';
 import { isStaleSessionIntent, SessionIntentConflictLine } from '@/components/sessions/work/SessionIntentConflictLine';
 import { resolveSessionInstructionsAccess } from '@/components/sessions/work/instructions/SessionInstructionsSection';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
+import { Icon } from '@/components/ui/icons/Icon';
+import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
@@ -18,8 +18,12 @@ export function SessionApprovalProfileSection(props: Readonly<{ session: Session
 }
 
 function SessionApprovalProfileBody({ session, serverId }: Readonly<{ session: Session; serverId: string }>) {
-    const value = readSessionOwnerMetadataView(session)?.approvalProfileId ?? null;
+    const metadata = readSessionOwnerMetadataView(session);
+    const value = metadata?.approvalProfileId ?? null;
     const source = useApprovalProfiles(value, serverId);
+    const machineId = metadata?.machineId ?? null;
+    const machineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(source, machineId),
+        [source.profiles, source.machineApprovalProfiles, machineId]); // eslint-disable-line react-hooks/exhaustive-deps
     const [pending, setPending] = React.useState<Readonly<{ value: string | null }> | null>(null);
     const [held, setHeld] = React.useState<Readonly<{ value: string | null }> | null>(null);
     const [refused, setRefused] = React.useState(false);
@@ -43,12 +47,13 @@ function SessionApprovalProfileBody({ session, serverId }: Readonly<{ session: S
         })(), { tag: 'SessionApprovalProfile.set' });
     };
     return <View>
+        {/* One value row like Role, Instructions and Memory beside it (owner 11-15 C4). */}
         <ApprovalProfileSelect mode="session" testID="session-approval-profile" value={pending ? pending.value : value}
-            source={source} onChange={change} disabled={pending !== null} />
+            source={source} machineDefault={machineDefault} onChange={change} disabled={pending !== null}
+            presentation="row" icon={<Icon name="shield-check" />} />
         {held ? <SessionIntentConflictLine testID="session-approval-profile-conflict"
             subject={t('workflows.triggers.guided.profile.title')}
-            current={source.selection ? presentApprovalProfile(source.selection.profile).title
-                : t('workflows.triggers.guided.profile.noExplicitSessionProfile')}
+            current={approvalProfileChoiceTitle('session', value, source.profiles, machineDefault)}
             onApply={() => change(held.value)} onKeep={() => setHeld(null)} /> : refused
             ? <SurfaceFreshnessLine testID="session-approval-profile-refused" tone="warning"
                 reason={t('workflows.triggers.guided.profile.saveFailed')} /> : null}

@@ -1794,7 +1794,7 @@ describe('session.spawn_new canonical execution', () => {
         kind: 'approval_request_created',
         artifactId: 'approval-directory-1',
         actionId: 'session.spawn_new',
-        approvalProfile: { status: 'available', requestedId: 'builtin:apply-safe', effectiveId: 'builtin:apply-safe' },
+        approvalProfile: { status: 'missing', requestedId: 'builtin:apply-safe' },
       },
     });
 

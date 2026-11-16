@@ -31,10 +31,11 @@ const changed = lazyZodSchema(() => z.union([
   }) }),
 ]));
 const profileChange = lazyZodSchema(() => z.strictObject({ profileChange: z.union([
-  z.strictObject({ kind: z.literal('upsert'), profile: ApprovalProfileV1Schema.check(z.refine(
-    profile => !profile.id.startsWith('builtin:'))) }),
-  z.strictObject({ kind: z.literal('delete'), id: ApprovalProfileIdV1Schema.check(z.refine(
-    id => !id.startsWith('builtin:'))) }),
+  z.strictObject({ kind: z.literal('upsert'), profile: ApprovalProfileV1Schema }),
+  z.strictObject({ kind: z.literal('delete'), id: ApprovalProfileIdV1Schema }),
+  /** The person's profile for their own Sessions on one Machine; null follows Account settings. */
+  z.strictObject({ kind: z.literal('machine_default'), machineId: z.string().check(z.trim(), z.minLength(1)),
+    id: z.nullable(ApprovalProfileIdV1Schema) }),
 ]) }));
 export const ActionPolicyInputSchemas = {
   'actions.policy.get': lazyZodSchema(() => z.union([selectedTarget, z.strictObject({ profiles: z.literal(true) })])),

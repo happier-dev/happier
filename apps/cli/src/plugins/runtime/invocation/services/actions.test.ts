@@ -147,9 +147,15 @@ function createContributedActionServiceForTest(params: Omit<Parameters<typeof cr
         actionExecutor: createContributedActionExecutorForTest(params.invokeContributedAction, params.seed) });
 }
 
+/** The CLI host stamps its Account Actions settings on each execution, as the real harness does. */
+function withHostActionsSettings(executor: ReturnType<typeof createActionExecutor>,
+    actionsSettings: ReturnType<typeof normalizeActionsSettingsV1>): ReturnType<typeof createActionExecutor> {
+    return { ...executor, execute: (actionId, input, context) => executor.execute(actionId, input, { ...context, actionsSettings }) };
+}
+
 describe('plugin invocation ActionsService', () => {
     it('uses the current Run attachment once per new Action and detaches without inheriting the Session profile', async () => {
-        let approvalProfileId: string | null = 'builtin:read-propose';
+        let approvalProfileId: string | null = 'ask-backends';
         let reads = 0;
         let sessionReads = 0;
         let effects = 0;
@@ -162,16 +168,17 @@ describe('plugin invocation ActionsService', () => {
                 session: { id: 'run-session' },
                 sourceCustody: { kind: 'development', registeredRootId: 'run-agent-root' },
                 resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
-                approvalContext: { serverId: 'home', runtimeAccountId: 'alice', approvalProfileId: 'builtin:full-trust' },
+                approvalContext: { serverId: 'home', runtimeAccountId: 'alice', approvalProfileId: 'unrelated-caller-profile' },
                 readApprovalProfileId: () => { reads++; return approvalProfileId; },
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
             },
-            actionExecutor: createActionExecutor({
+            actionExecutor: withHostActionsSettings(createActionExecutor({
                 ...createUnavailableActionTransportDeps(),
-                readActionApprovalProfileId: async () => { sessionReads++; return 'builtin:read-propose'; },
+                readActionApprovalProfileId: async () => { sessionReads++; return 'ask-backends'; },
                 approvalsCreate: async () => ({ artifactId: 'run-profile-approval' }),
                 agentsBackendsList: async () => { effects++; return { items: [] }; },
-            }),
+            }), normalizeActionsSettingsV1({ v: 1, approvalProfiles: [{ id: 'ask-backends', name: 'Ask before listing',
+                actions: { 'agents.backends.list': { approvalRequiredSurfaces: ['agent', 'plugin'] } } }] })),
             invokeContributedAction: async () => { throw new Error('Unexpected contributed Action'); },
         });
         // This host boundary has no approval execution origin; a required review must refuse before effect.

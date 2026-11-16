@@ -8,6 +8,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { ModalProvider } from '@/modal';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { t } from '@/text';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -60,9 +61,14 @@ describe('Session setup approval profile', () => {
             const screen = await renderScreen(element(stale));
             try {
                 await vi.waitFor(() => expect(screen.tree.root.findAllByProps({ testID: 'session-approval-profile-missing' }).length).toBeGreaterThan(0));
+                // Owner 11-15 C4: a collapsed value row like Role (glyph, label, current choice), not an open field.
+                expect(screen.getTextContent()).toContain(t('workflows.triggers.guided.profile.deletedName'));
+                expect(screen.tree.root.findAllByProps({ testID: 'session-approval-profile-row' }).length).toBeGreaterThan(0);
                 const picker = screen.tree.root.findAllByType(DropdownMenu).find(row => row.props.testID === 'session-approval-profile');
                 if (!picker) throw new Error('Session approval profile picker missing');
-                await act(async () => picker.props.onSelect('__none__'));
+                expect(picker.props.open).toBe(false);
+                // "Machine default" clears the Session's own choice (null): it follows its Machine, then the Account.
+                await act(async () => picker.props.onSelect('machine_default'));
                 await vi.waitFor(() => expect(screen.tree.root.findAllByProps({ testID: 'session-approval-profile-conflict' }).length).toBeGreaterThan(0));
                 // The boundary counts attempted PATCHes, including independent projection
                 // maintenance. The owner's persisted profile must retain the refused intent.

@@ -102,7 +102,7 @@ describe('guided automation (four questions)', () => {
     expect(readBack).toMatchObject({
       wake: receipt, deploymentEnvironment: facts.deploymentEnvironment, controller: facts.controller,
       pendingObservation: { periodMs: null },
-      approval: { resolution: { status: 'missing', requestedId: 'deleted-profile', effectiveId: 'builtin:read-propose' } },
+      approval: { profile: null, resolution: { status: 'missing', requestedId: 'deleted-profile' } },
       disclosure: { inbox: true, channelIds: [] },
     });
     const withoutAgent = { ...configured, selection: undefined };
@@ -127,7 +127,7 @@ describe('guided automation (four questions)', () => {
       approval: null, pendingObservation: null, controller: null,
     });
   });
-  it('writes one ordinary trigger: When, a fresh Session with the answers as its prompt, and the mode as its approval profile', () => {
+  it('writes one ordinary trigger: When, a fresh Session with the answers as its prompt, following the Machine default', () => {
     const request = buildGuidedAutomationRequest(draft(), {
       subjectName: 'eadc',
       project,
@@ -139,14 +139,16 @@ describe('guided automation (four questions)', () => {
       project,
       trigger: { kind: 'schedule' },
       executionTarget: { kind: 'session' },
-      approvalProfileId: 'builtin:read-propose',
+      approvalProfileId: null,
     });
     expect(blocksOf(request)).toHaveLength(1);
     // Its rows and Library entry name it by what it does, not "Send a prompt".
     expect(blocksOf(request)[0]).toMatchObject({ kind: 'step', name: 'workflows.triggers.guided.mode.investigate' });
   });
 
-  it('maps each Then to the approval profile that enforces it, never a copy of its rules', () => {
+  // OWNER Q5 (2026-11-15): a Then says what the agent does in words; until a profile is chosen the automation's
+  // Session follows its Machine's default, then the Account settings. No Then picks a profile of its own.
+  it('follows the Machine default for every Then until a profile is chosen', () => {
     const profile = (mode: GuidedAutomationDraft['mode']) =>
       buildGuidedAutomationRequest(draft({ mode }), {
         subjectName: 'eadc',
@@ -157,12 +159,7 @@ describe('guided automation (four questions)', () => {
       profile('propose'),
       profile('apply'),
       profile('chain'),
-    ]).toEqual([
-      'builtin:read-propose',
-      'builtin:read-propose',
-      'builtin:apply-safe',
-      'builtin:apply-safe',
-    ]);
+    ]).toEqual([null, null, null, null]);
   });
 
   it('chains investigator, fixer and reviewer as three steps, and adds a Notify me step only for channels beyond the Inbox', () => {
@@ -235,10 +232,10 @@ describe('guided automation (four questions)', () => {
     });
   });
 
-  it('attaches the chosen approval profile, and the Then\'s own profile until one is chosen', () => {
+  it('attaches the chosen approval profile, and the Machine default until one is chosen', () => {
     expect(buildGuidedAutomationRequest(draft({ mode: 'apply' }), { subjectName: 'eadc', project })?.approvalProfileId)
-      .toBe('builtin:apply-safe');
-    expect(guidedApprovalProfileId(draft({ mode: 'apply' }))).toBe('builtin:apply-safe');
+      .toBeNull();
+    expect(guidedApprovalProfileId(draft({ mode: 'apply' }))).toBeNull();
     const chosen = draft({ mode: 'apply', approvalProfileId: 'custom:night-ops' });
     expect(buildGuidedAutomationRequest(chosen, { subjectName: 'eadc', project })?.approvalProfileId).toBe('custom:night-ops');
     expect(guidedApprovalProfileId(chosen)).toBe('custom:night-ops');

@@ -18,9 +18,8 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { Text } from '@/components/ui/text/Text';
-import { presentApprovalProfile } from '@/components/approvals/approvalProfilePresentation';
-import { ApprovalProfileSelect } from '@/components/approvals/ApprovalProfileSelect';
-import { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
+import { ApprovalProfileSelect, approvalProfileChoiceTitle } from '@/components/approvals/ApprovalProfileSelect';
+import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { addWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
 import { sync } from '@/sync/sync';
@@ -91,6 +90,9 @@ export function GuidedAutomationSetup(
   const [failure, setFailure] = React.useState<string | null>(null);
   const channelOptions = useNotifyMeChannelOptions();
   const approvalProfiles = useApprovalProfiles(guidedApprovalProfileId(draft), props.deploymentEnvironment?.serverId);
+  // The automation's Session runs on the project's Machine, so "Machine default" is that Machine's profile (OWNER Q5).
+  const approvalMachineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(approvalProfiles, project.machineId),
+    [approvalProfiles.profiles, approvalProfiles.machineApprovalProfiles, project.machineId]); // eslint-disable-line react-hooks/exhaustive-deps
   const controllerMachineId = resolvePluginEventEditorProjectionMachineId({
     observation: draft.when.kind === 'pluginEvent' ? draft.when.value?.observationTransport ?? null : null,
     authoringMachineId: props.controllerMachineId ?? props.initialProject.machineId,
@@ -135,7 +137,8 @@ export function GuidedAutomationSetup(
     (value) =>
       channelOptions.find((option) => option.value === value)?.label ?? value,
   );
-  const profile = readBack?.approval ? presentApprovalProfile(readBack.approval.profile) : null;
+  const profileTitle = approvalProfiles.ready
+    ? approvalProfileChoiceTitle('session', guidedApprovalProfileId(draft), approvalProfiles.profiles, approvalMachineDefault) : null;
   const readBackLines = readBack ? [
     t(`workflows.triggers.guided.readBack.${draft.mode}`, { when: formatTriggerSummary(readBack.wake.kind === 'pluginEvent'
       ? { ...readBack.wake, displayLabel: undefined } : readBack.wake, {
@@ -148,9 +151,8 @@ export function GuidedAutomationSetup(
     readBack.deploymentEnvironment ? props.deploymentSourceName ?? t('common.loading') : null,
     `${getMachineDisplayName(controllerMachine) ?? t('common.unavailable')} · ${readBack.controller?.online == null
       ? t('common.unavailable') : readBack.controller?.online ? t('systemStatus.machine.online') : t('machines.widgets.body.common.offline')}`,
-    profile ? [profile.title, profile.subtitle].filter(Boolean).join(' · ') : t('common.loading'),
-    readBack.approval?.resolution.status === 'missing'
-      ? `${t('common.unavailable')} → ${profile?.title}` : null,
+    profileTitle ?? t('common.loading'),
+    readBack.approval?.resolution.status === 'missing' ? t('workflows.triggers.guided.profile.missing') : null,
     readBack.pendingObservation ? JSON.stringify({ pendingObservation: readBack.pendingObservation }) : null,
     channelLabels.length ? t('workflows.triggers.guided.readBack.tellChannels', { channels: channelLabels.join(', ') })
       : t('workflows.triggers.guided.tellInbox'),
@@ -320,7 +322,7 @@ export function GuidedAutomationSetup(
                           onPress={() => change({ mode })}
                         />
                       ))}
-                      <ApprovalProfileSelect mode="required" source={approvalProfiles}
+                      <ApprovalProfileSelect mode="session" source={approvalProfiles} machineDefault={approvalMachineDefault}
                         testID={`${testID}-profile`}
                         value={guidedApprovalProfileId(draft)}
                         onChange={(approvalProfileId) => change({ approvalProfileId })}

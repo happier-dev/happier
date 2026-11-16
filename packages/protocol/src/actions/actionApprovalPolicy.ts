@@ -1,5 +1,5 @@
 import { ACTION_IDS } from './actionIds.js';
-import { readApprovalProfileV1, type ApprovalProfileResolutionV1 } from './approvalProfiles.js';
+import { resolveProfiledActionsSettingsV1, type ApprovalProfileResolutionV1 } from './approvalProfiles.js';
 import { isAutomationApprovalRequestSurface, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './actionExecutor.js';
@@ -351,9 +351,15 @@ function resolveUnwiredApprovalDefault(
 export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingArgs): ActionApprovalRoutingDecision {
   const policy = args.spec.approvalPolicy;
   const policyActionId = args.profileActionId ?? args.actionId;
+  // The caller's approval profile replaces the Account rows of the Actions it names. Everything
+  // below decides once on the merged settings, with the same floors and person-class defaults.
+  const profiled = args.settings ? resolveProfiledActionsSettingsV1(args.settings, args.context?.approvalProfileId) : undefined;
+  const settings = profiled?.settings ?? args.settings;
+  const profile = profiled?.profile ?? (args.context?.approvalProfileId
+    ? { status: 'missing' as const, requestedId: args.context.approvalProfileId } : undefined);
   const ownUiInvocation = isOwnUiInvocation(args.actionId, args.context);
-  const explicitPreference = ownUiInvocation && args.settings ? readExplicitActionApprovalPreferenceV1(
-    policyActionId, args.settings, args.context, args.approvalScope) : undefined;
+  const explicitPreference = ownUiInvocation && settings ? readExplicitActionApprovalPreferenceV1(
+    policyActionId, settings, args.context, args.approvalScope) : undefined;
   // Changing the carrier must not escape its selected profile through a broad
   // child-start/Run-control waiver. All carriers share the existing profile
   // control's preference and surface defaults, at this one routing owner.
@@ -364,10 +370,13 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const reference = referenceInput.approvalProfileId;
   const differsFromInherited = (value: unknown) => (value === null || typeof value === 'string')
     && value !== (args.context?.approvalProfileId ?? null);
+  // Editing a profile's rows or a Machine default changes what a running Session's profile means.
   const changesProfile = args.context?.approvalProfileChange === true || runProfileControl
+    || (args.actionId === 'actions.policy.set' && input.profileChange !== undefined)
     || differsFromInherited(reference)
     || (args.actionId === 'session.spawn_new' && Array.isArray(input.initialTriggers)
       && input.initialTriggers.some(trigger => differsFromInherited(readRecord(trigger).approvalProfileId)));
+  // Account settings decide who may change profiles, never the profile being escaped.
   const profileControlRequired = !args.reviewAdmitted && changesProfile
     && isApprovalRequiredByActionsSettings('session.approval_profile.set', args.settings ?? { v: 1, actions: {} },
       args.context, undefined, undefined, args.input, undefined, undefined, undefined, args.approvalScope);
@@ -387,9 +396,9 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const computerAction = args.spec.approvalPolicy?.computerConsent === true;
   const computerConsent = computerAction && args.computerConsentGranted === true
     && args.context?.authority !== 'present_user' && args.context?.bypassApprovals !== true;
-  const explicitComputerApproval = args.settings?.actions?.[args.actionId]?.approvalRequiredSurfaces
+  const explicitComputerApproval = settings?.actions?.[args.actionId]?.approvalRequiredSurfaces
     .some(surface => surface === args.context?.surface) === true;
-  const hasPolicyContext = Boolean(args.settings || args.approvedOperation || args.context?.externalActionCredential);
+  const hasPolicyContext = Boolean(settings || args.approvedOperation || args.context?.externalActionCredential);
   // The person's exact completed review answers Ask, including a saved preference.
   // The executor withholds this admission when a new child consequence needs review.
   const requiredByPolicy = args.reviewAdmitted === true || ownUiInvocation
@@ -397,33 +406,22 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     : args.requiredByPolicy === true ? true : computerConsent
     ? explicitComputerApproval
     : args.defaultConfirmation === true
-    ? hasPolicyContext ? isApprovalRequiredByActionsSettings(policyActionId, args.settings ?? { v: 1, actions: {} }, args.context,
+    ? hasPolicyContext ? isApprovalRequiredByActionsSettings(policyActionId, settings ?? { v: 1, actions: {} }, args.context,
       args.defaultSafety, args.defaultConfirmation, args.input, args.defaultUiConfirmation, true, args.approvedOperation, args.approvalScope) : true
     : typeof args.requiredByPolicy === 'boolean'
     ? args.requiredByPolicy
     : args.approvalOwner === 'receiver'
     ? false
     : hasPolicyContext
-      ? isApprovalRequiredByActionsSettings(policyActionId, args.settings ?? { v: 1, actions: {} }, args.context, args.defaultSafety, args.defaultConfirmation, args.input, args.defaultUiConfirmation, undefined, args.approvedOperation, args.approvalScope)
+      ? isApprovalRequiredByActionsSettings(policyActionId, settings ?? { v: 1, actions: {} }, args.context, args.defaultSafety, args.defaultConfirmation, args.input, args.defaultUiConfirmation, undefined, args.approvedOperation, args.approvalScope)
       : presentUserRequest || (args.defaultSafety !== undefined || args.defaultUiConfirmation !== undefined
         ? requiresDefaultApprovalFloor(args.actionId, args.context, args.defaultSafety, args.input)
         : resolveUnwiredApprovalDefault(args.actionId, args.context, args.input));
-  const selectedProfile = args.context?.approvalProfileId
-    ? readApprovalProfileV1(args.settings, args.context.approvalProfileId) : undefined;
-  const profileActionId = policyActionId;
-  const profileMode = selectedProfile && (selectedProfile.profile.actions?.[profileActionId]
-    ?? selectedProfile.profile.categories?.[args.defaultSafety ?? args.spec.safetyForInput?.(args.input) ?? args.spec.safety]
-    ?? selectedProfile.profile.defaultMode);
-  // Allow inherits existing policy, including egress/authority and person Ask.
-  // Ask is a user-waivable default; Require tightens requests made for the person.
-  // Their own UI admission or exact completed review answers the profile too.
-  const profileRequired = !args.reviewAdmitted && !ownUiInvocation && (profileMode === 'require' || (profileMode === 'ask'
-    && !(args.settings && readExplicitActionApprovalPreferenceV1(profileActionId, args.settings, args.context, args.approvalScope) === false)));
   // Approval replay answers the admitted operation once; a profile is never a new authority.
   const required = !isApprovalAction(args.actionId)
     && (args.inputRequired || !ownUiInvocation && preparedReviewRequired || (args.context?.bypassApprovals === true
       ? false
-      : requiredByPolicy || (!ownUiInvocation && profileControlRequired) || profileRequired));
+      : requiredByPolicy || (!ownUiInvocation && profileControlRequired)));
 
   // The public Action API reports a created approval artifact to its caller;
   // it cannot retain an HTTP or server-relay request as the blocking waiter.
@@ -474,6 +472,6 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     ...(args.inputRequired ? { inputRequired: true as const } : {}),
     flow,
     result: args.inputRequired || preparedReviewRequired ? 'required' : args.spec.approval.result,
-    ...(selectedProfile ? { profile: selectedProfile.resolution } : {}),
+    ...(profile ? { profile } : {}),
   };
 }

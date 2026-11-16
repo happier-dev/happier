@@ -499,13 +499,8 @@ export type LocalServicesActionsActionResultById = {
                     artifactId: string;
                     actionId: string;
                     approvalProfile?: undefined | {
-                        status: 'available';
+                        status: 'available' | 'missing';
                         requestedId: string;
-                        effectiveId: string;
-                    } | {
-                        status: 'missing';
-                        requestedId: string;
-                        effectiveId: 'builtin:read-propose';
                     };
                 };
             };

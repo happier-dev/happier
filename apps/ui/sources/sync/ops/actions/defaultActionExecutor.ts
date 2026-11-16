@@ -10,7 +10,7 @@ import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCreden
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import { readLocalServiceControlActionRequest, resolveLocalServiceDomainActionRpcBinding } from '@happier-dev/protocol/actions/specs/localServices';
 import { LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION } from '@happier-dev/protocol/local/services/actionIdsV1';
-import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
+import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { resolveApprovalReplayRoute } from './approvalReplayRoute';
 import { confirmOwnUiRefusal, executeMachineActionAtDaemon } from './executeMachineActionAtDaemon';
 import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
@@ -2255,7 +2255,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         .then(read => read.session, error => { if (error instanceof SessionSnapshotReadError) return null; throw error; });
       const metadata = session ? readSessionOwnerMetadataView(session) : null;
       if (!metadata) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
-      return readSessionStateFieldFromMetadata(metadata, 'intent.approvalProfileId') ?? null;
+      return resolveSessionApprovalProfileReferenceV1(metadata, context.actionsSettings);
     },
     // Host facts for the shared approval router: the person's settings (with the Source Control
     // preference) and installed Settings declarations' operations, classified like the built-ins.

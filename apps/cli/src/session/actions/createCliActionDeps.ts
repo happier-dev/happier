@@ -1,4 +1,5 @@
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
+import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { createActionRefusalDetailsV1, isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -1066,9 +1067,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
         context.signal?.throwIfAborted();
         return null;
       });
-      if (!caller?.metadata) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-      const { readSessionStateFieldFromMetadata } = await import('@happier-dev/agents');
-      return readSessionStateFieldFromMetadata(caller.metadata, 'intent.approvalProfileId') ?? null;
+      if (!caller?.metadata) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+      return resolveSessionApprovalProfileReferenceV1(caller.metadata, context.actionsSettings);
     },
     resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope ?? deploymentStorageDeps.resolveEnvironmentApprovalScope,
     ...(params.prepareDeploymentAction ? { prepareDeploymentAction: params.prepareDeploymentAction } : {}),

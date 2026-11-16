@@ -327,7 +327,7 @@ it.each([
         expect(screen.findByTestId('guided-automation-read-back')).toBeTruthy();
         const readBack = screen.getTextContent();
         for (const fact of [event.event.title, 'Production', 'Application checkout', 'Controller studio',
-            'workflows.triggers.guided.profile.applySafeName', 'workflows.triggers.guided.tellInbox']) expect(readBack).toContain(fact);
+            'workflows.triggers.guided.profile.machineDefault', 'workflows.triggers.guided.tellInbox']) expect(readBack).toContain(fact);
         for (const id of [setupInput.environmentId, connection.serverId, machineId, 'source-checkout',
             'deployment-production-failed']) expect(readBack).not.toContain(id);
     } finally {

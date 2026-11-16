@@ -169,7 +169,9 @@ describe('Workflow approved operation private custody', () => {
         return { operationId: 'rollout', runId: 'native-updates' };
       } });
     const result = await executor.execute(actionId, input, { ...h.context, serverId: 'home', surface: 'agent',
-      authority: 'account_automation', approvalProfileId: requireApproval ? 'builtin:read-propose' : 'builtin:full-trust' });
+      authority: 'account_automation', approvalProfileId: requireApproval ? 'ask-rollout' : 'account-only',
+      actionsSettings: normalizeActionsSettingsV1({ ...(h.context.actionsSettings ?? { v: 1, actions: {} }),
+        approvalProfiles: [{ id: 'ask-rollout', name: 'Ask before rollout', actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } }] }) });
     expect(starts).toBe(requireApproval ? 0 : 1);
     expect(result.ok, JSON.stringify(result)).toBe(!requireApproval);
     if (requireApproval) expect(result).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });

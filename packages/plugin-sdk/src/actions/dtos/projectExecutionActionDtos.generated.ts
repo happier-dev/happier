@@ -235,13 +235,8 @@ export type ProjectExecutionActionResultById = {
                     artifactId: string;
                     actionId: string;
                     approvalProfile?: undefined | {
-                        status: 'available';
+                        status: 'available' | 'missing';
                         requestedId: string;
-                        effectiveId: string;
-                    } | {
-                        status: 'missing';
-                        requestedId: string;
-                        effectiveId: 'builtin:read-propose';
                     };
                 };
             };
@@ -2334,13 +2329,8 @@ export type ProjectExecutionActionResultById = {
                     artifactId: string;
                     actionId: string;
                     approvalProfile?: undefined | {
-                        status: 'available';
+                        status: 'available' | 'missing';
                         requestedId: string;
-                        effectiveId: string;
-                    } | {
-                        status: 'missing';
-                        requestedId: string;
-                        effectiveId: 'builtin:read-propose';
                     };
                 };
             };
@@ -4433,13 +4423,8 @@ export type ProjectExecutionActionResultById = {
                     artifactId: string;
                     actionId: string;
                     approvalProfile?: undefined | {
-                        status: 'available';
+                        status: 'available' | 'missing';
                         requestedId: string;
-                        effectiveId: string;
-                    } | {
-                        status: 'missing';
-                        requestedId: string;
-                        effectiveId: 'builtin:read-propose';
                     };
                 };
             };

@@ -48,14 +48,6 @@ export const GUIDED_THEN_MODES = [
 ] as const;
 export type GuidedThenMode = (typeof GUIDED_THEN_MODES)[number];
 
-/** The approval profile that enforces each Then at admission (D4); the prompt only says it in words. */
-const GUIDED_APPROVAL_PROFILE: Readonly<Record<GuidedThenMode, string>> = {
-  investigate: 'builtin:read-propose',
-  propose: 'builtin:read-propose',
-  apply: 'builtin:apply-safe',
-  chain: 'builtin:apply-safe',
-};
-
 export type GuidedAutomationDraft = Readonly<{
   when: TriggerWhenValue;
   lookAt: readonly GuidedLookAt[];
@@ -63,13 +55,13 @@ export type GuidedAutomationDraft = Readonly<{
   selection: WorkflowSessionAuthoringSelection | undefined;
   /** Notify me channels beyond the Inbox, which every Session result reaches anyway. */
   channels: readonly string[];
-  /** A profile the person chose; until then the Then's own profile applies. */
-  approvalProfileId?: string;
+  /** A profile the person chose; until then the automation's Session follows its Machine's default (OWNER Q5). */
+  approvalProfileId?: string | null;
 }>;
 
-/** The approval profile the automation runs under (D4): the chosen one, else the Then's own. */
-export function guidedApprovalProfileId(draft: GuidedAutomationDraft): string {
-  return draft.approvalProfileId ?? GUIDED_APPROVAL_PROFILE[draft.mode];
+/** The approval profile the automation runs under: the chosen one, else null (its Machine's default, then the Account). */
+export function guidedApprovalProfileId(draft: GuidedAutomationDraft): string | null {
+  return draft.approvalProfileId ?? null;
 }
 
 export type GuidedStarter = 'healthFailed' | 'deploymentFailed' | 'nightly';
@@ -153,7 +145,7 @@ type GuidedAddRequest = z.input<typeof WorkflowTriggerAddRequestV1Schema> &
   Readonly<{
     target: TriggerTargetV1;
     project: WorkflowProjectTargetV1;
-    approvalProfileId: string;
+    approvalProfileId: string | null;
   }>;
 
 function lookAtList(lookAt: readonly GuidedLookAt[]): string {

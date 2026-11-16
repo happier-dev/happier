@@ -4,6 +4,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import type { ApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -28,7 +29,6 @@ import {
 } from './buildActionSettingsEntries';
 import { groupActionSettingsEntriesByFamily } from './groupActionSettingsEntriesByFamily';
 import { useActionPolicyWriter } from './useActionPolicyWriter';
-import { normalizeActionsSettings } from './normalizeActionsSettings';
 import {
     listActionSettingsEntryStatusParts,
     resolveActionSettingsEntryStatusSummary,
@@ -36,6 +36,9 @@ import {
 import { Icon } from '@/components/ui/icons/Icon';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { ApprovalProfilesSection } from './ApprovalProfilesSection';
+import { ApprovalProfilePageHeader } from './ApprovalProfilePageHeader';
+import { ACCOUNT_ACTION_SETTINGS_TARGET, approvalProfileSetsAction, useActionSettingsForTarget,
+    type ActionSettingsTarget } from './actionSettingsTarget';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -112,18 +115,21 @@ const stylesheet = StyleSheet.create((theme) => ({
 function ActionSettingsRowAccessory(props: Readonly<{
     entry: ActionSettingsEntry;
     testIDPrefix: string;
-    onEnabledChange: (enabled: boolean) => void;
+    /** Absent in a profile: profiles turn surfaces off one by one, never the whole Action. */
+    onEnabledChange: ((enabled: boolean) => void) | null;
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     return (
         <View style={styles.actionRightAccessory}>
-            <Switch
-                testID={`${props.testIDPrefix}:enabled`}
-                accessibilityLabel={props.entry.title}
-                value={props.entry.enabled}
-                onValueChange={props.onEnabledChange}
-            />
+            {props.onEnabledChange ? (
+                <Switch
+                    testID={`${props.testIDPrefix}:enabled`}
+                    accessibilityLabel={props.entry.title}
+                    value={props.entry.enabled}
+                    onValueChange={props.onEnabledChange}
+                />
+            ) : null}
             <View
                 testID={`${props.testIDPrefix}:configure`}
                 style={styles.actionConfigureIcon}
@@ -134,6 +140,21 @@ function ActionSettingsRowAccessory(props: Readonly<{
             </View>
         </View>
     );
+}
+
+const EMPTY_PROFILES: readonly ApprovalProfileV1[] = Object.freeze([]);
+const EMPTY_SEGMENTS: readonly ActionSettingsVirtualizedSegment[] = Object.freeze([]);
+
+/** In a profile, each row says whose answer it shows: the Account's until this profile changes it. */
+function presentTargetStatus(statusText: string, target: ActionSettingsTarget, profile: ApprovalProfileV1 | null,
+    actionId: ActionSettingsActionId): string {
+    if (target.kind === 'account') return statusText;
+    if (approvalProfileSetsAction(profile, actionId)) {
+        return statusText ? t('workflows.triggers.guided.profile.profileValue', { value: statusText })
+            : t('workflows.triggers.guided.profile.thisProfile');
+    }
+    return statusText ? t('workflows.triggers.guided.profile.accountValue', { value: statusText })
+        : t('workflows.triggers.guided.profile.followsAccount');
 }
 
 function getActionSettingsEntryStatusText(
@@ -158,13 +179,19 @@ function getActionSettingsEntryStatusText(
     );
 }
 
-export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
+/**
+ * Settings → Actions. With a profile `target` the same list edits that profile: rows read the Account's answer until
+ * the profile changes them, and Account-only controls (placements, tool exposure, per-Machine choices) stay out.
+ */
+export const ActionsSettingsView = React.memo(function ActionsSettingsView(props: Readonly<{ target?: ActionSettingsTarget }>) {
+    const target = props.target ?? ACCOUNT_ACTION_SETTINGS_TARGET;
     const router = useRouter();
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const [searchQuery, setSearchQuery] = React.useState('');
-    const rawSettings = useSetting('actionsSettingsV1');
-    const writePolicy = useActionPolicyWriter();
+    const targetSettings = useActionSettingsForTarget(target);
+    const profile = targetSettings.profile;
+    const writePolicy = useActionPolicyWriter(target);
     const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
     const voice = useSetting('voice') as Readonly<{ privacy?: { shareDeviceInventory?: boolean } }> | null;
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
@@ -199,7 +226,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
             : []
     ), [daemonMergedProjection.inputs, executionTarget]);
 
-    const settings = React.useMemo(() => normalizeActionsSettings(rawSettings), [rawSettings]);
+    const settings = targetSettings.settings;
     const availability = React.useMemo(() => ({
         executionRunsEnabled,
         memorySearchEnabled,
@@ -237,12 +264,15 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
     }, [writePolicy]);
 
     const openActionDetails = React.useCallback((actionId: ActionSettingsActionId) => {
-        router.push(`/settings/actions/${encodeURIComponent(actionId)}`);
-    }, [router]);
+        router.push(target.kind === 'profile'
+            ? `/settings/actions/profiles/${encodeURIComponent(target.id)}/${encodeURIComponent(actionId)}`
+            : `/settings/actions/${encodeURIComponent(actionId)}`);
+    }, [router, target]);
 
     const renderEntryRow = React.useCallback((entry: ActionSettingsEntry) => {
         const actionTestIdPrefix = `settings-actions:action:${entry.actionId}`;
-        const statusText = getActionSettingsEntryStatusText(entry, settings, scmRemoteConfirmPolicy);
+        const statusText = presentTargetStatus(getActionSettingsEntryStatusText(entry, settings, scmRemoteConfirmPolicy),
+            target, profile, entry.actionId);
 
         return (
             <Item
@@ -262,7 +292,8 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                     <ActionSettingsRowAccessory
                         entry={entry}
                         testIDPrefix={actionTestIdPrefix}
-                        onEnabledChange={(nextValue) => handleActionEnabledChange(entry.actionId, nextValue)}
+                        onEnabledChange={target.kind === 'profile' ? null
+                            : (nextValue) => handleActionEnabledChange(entry.actionId, nextValue)}
                     />
                 )}
                 showChevron={false}
@@ -270,7 +301,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                 onPress={() => openActionDetails(entry.actionId)}
             />
         );
-    }, [handleActionEnabledChange, openActionDetails, scmRemoteConfirmPolicy, settings, styles.actionStatusSubtitle]);
+    }, [handleActionEnabledChange, openActionDetails, profile, scmRemoteConfirmPolicy, settings, styles.actionStatusSubtitle, target]);
 
     const renderSegment = React.useCallback(({ item: segment }: Readonly<{ item: ActionSettingsVirtualizedSegment }>) => {
         const pluginId = segment.first && segment.items[0]?.entry.kind !== 'host'
@@ -305,31 +336,54 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
     return (
         <VirtualizedItemList
             testID="settings-actions:virtualized-list"
-            data={virtualizedSegments}
+            data={target.kind === 'profile' && !profile ? EMPTY_SEGMENTS : virtualizedSegments}
             keyExtractor={(segment) => segment.key}
             renderItem={renderSegment}
             ListHeaderComponent={(
                 <>
-                    <SettingsPageHeader
-                        description={t('settings.actionsSubtitle')}
-                        actions={(
-                            <MachineAdministrationTargetSelector
-                                selection={administrationTargetSelection}
-                                testIDPrefix="settings.actions.administration.target"
-                                presentation="chip"
+                    {target.kind === 'profile' ? (
+                        <ApprovalProfilePageHeader
+                            profile={profile}
+                            machineApprovalProfiles={targetSettings.account.machineApprovalProfiles}
+                            write={writePolicy}
+                            machineChip={(
+                                <MachineAdministrationTargetSelector
+                                    selection={administrationTargetSelection}
+                                    testIDPrefix="settings.actions.administration.target"
+                                    presentation="chip"
+                                />
+                            )}
+                        />
+                    ) : (
+                        <>
+                            <SettingsPageHeader
+                                description={t('settings.actionsSubtitle')}
+                                actions={(
+                                    <MachineAdministrationTargetSelector
+                                        selection={administrationTargetSelection}
+                                        testIDPrefix="settings.actions.administration.target"
+                                        presentation="chip"
+                                    />
+                                )}
                             />
-                        )}
-                    />
-                    <ApprovalProfilesSection />
-                    <CompactSearchField
-                        // The search belongs to the actions below, so it opens a new section after the profiles.
-                        style={styles.searchAfterProfiles}
-                        placement="page"
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                        placeholder={t('settingsActions.searchPlaceholder')}
-                    />
-                    {virtualizedSegments.length === 0 ? (
+                            <ApprovalProfilesSection
+                                profiles={targetSettings.account.approvalProfiles ?? EMPTY_PROFILES}
+                                machineApprovalProfiles={targetSettings.account.machineApprovalProfiles}
+                                write={writePolicy}
+                            />
+                        </>
+                    )}
+                    {target.kind === 'profile' && !profile ? null : (
+                        <CompactSearchField
+                            // The search belongs to the actions below, so it opens a new section after the profiles.
+                            style={styles.searchAfterProfiles}
+                            placement="page"
+                            value={searchQuery}
+                            onChangeText={setSearchQuery}
+                            placeholder={t('settingsActions.searchPlaceholder')}
+                        />
+                    )}
+                    {virtualizedSegments.length === 0 && (target.kind === 'account' || profile) ? (
                         <ItemGroup>
                             <Item
                                 testID="settings-actions:no-results"

@@ -1,110 +1,95 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import type { ApprovalProfileV1 } from '@happier-dev/protocol/actions';
 
-import { presentApprovalProfile } from '@/components/approvals/approvalProfilePresentation';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
-import { Modal } from '@/modal';
 import { t } from '@/text';
 
-import { ApprovalProfileEditor } from './ApprovalProfileEditor';
+import { createApprovalProfileFromStart, type ApprovalProfileWriter } from './approvalProfileWrites';
+import { useApprovalProfileMachineNames } from './useApprovalProfileMachineNames';
+
+const BLANK_START_ID = 'blank';
+
+/** One line under a profile's name: how much it changes, then where it is the default. */
+function describeProfile(profile: ApprovalProfileV1, defaultOn: readonly string[]): string {
+    const changed = Object.keys({ ...profile.actions, ...profile.approvalWaivedSurfaces }).length;
+    const parts = [changed === 0
+        ? t('workflows.triggers.guided.profile.followsAccount')
+        : t('workflows.triggers.guided.profile.actionsChanged', { count: changed })];
+    if (defaultOn.length > 0) parts.push(t('workflows.triggers.guided.profile.defaultOnList', { machines: defaultOn.join(', ') }));
+    return parts.join(' · ');
+}
 
 /**
- * Settings → Actions "Approval profiles" (OPS-AUTOMATIONS-1102 D4): the Account's profiles, built-ins
- * first. A custom profile opens its editor; New profile opens an empty one. Writes go through the
- * profile Action only.
+ * Settings → Actions "Approval profiles": the Account's saved profiles. A profile opens the Actions list in its own
+ * context; New profile starts Blank or as a copy of one already saved.
  */
-export const ApprovalProfilesSection = React.memo(
-  function ApprovalProfilesSection() {
-    const { profiles, ready, upsertProfile, deleteProfile } =
-      useApprovalProfiles();
-    const anchor = React.useRef<View>(null);
-    const [editing, setEditing] = React.useState<Readonly<{
-      profile: ApprovalProfileV1 | null;
-    }> | null>(null);
-    const close = React.useCallback(() => setEditing(null), []);
-    const save = async (profile: ApprovalProfileV1) =>
-      (await upsertProfile(profile)).ok;
-    const confirmDelete = (id: string) => {
-      void Modal.alert(
-        t('workflows.triggers.guided.profile.deleteTitle'),
-        t('workflows.triggers.guided.profile.deleteMessage'),
-        [
-          { text: t('common.cancel'), style: 'cancel' },
-          {
-            text: t('common.delete'),
-            style: 'destructive',
-            onPress: async () => {
-              const result = await deleteProfile(id);
-              if (result.ok) close();
-              else
-                void Modal.alert(
-                  t('common.error'),
-                  t('workflows.triggers.section.saveFailed'),
-                );
-            },
-          },
-        ],
-      );
+export const ApprovalProfilesSection = React.memo(function ApprovalProfilesSection(props: Readonly<{
+    profiles: readonly ApprovalProfileV1[];
+    machineApprovalProfiles: Readonly<Record<string, string>> | undefined;
+    write: ApprovalProfileWriter;
+}>) {
+    const router = useRouter();
+    const [open, setOpen] = React.useState(false);
+    const machineNames = useApprovalProfileMachineNames(props.machineApprovalProfiles);
+    const starts = React.useMemo<DropdownMenuItem[]>(() => [
+        { id: BLANK_START_ID, testID: 'settings-actions:approval-profile-add:blank', title: t('workflows.triggers.guided.profile.startBlank') },
+        ...props.profiles.map(profile => ({ id: profile.id, testID: `settings-actions:approval-profile-add:copy:${profile.id}`,
+            title: t('workflows.triggers.guided.profile.startCopyOf', { name: profile.name }) })),
+    ], [props.profiles]);
+    const start = async (startId: string) => {
+        setOpen(false);
+        const source = startId === BLANK_START_ID ? null : props.profiles.find(profile => profile.id === startId) ?? null;
+        const created = await createApprovalProfileFromStart(props.write, source);
+        if (created) router.push(`/settings/actions/profiles/${encodeURIComponent(created.id)}`);
     };
-    const editingProfile = editing?.profile ?? null;
     return (
-      <ItemGroup
-        testID="settings-actions:approval-profiles"
-        title={t('workflows.triggers.guided.profile.sectionTitle')}
-        // What profiles are for, then the boundary they are not: Agent isolation.
-      description={`${t('workflows.triggers.guided.profile.sectionDescription')} ${t('workflows.triggers.guided.profile.isolationNotice')}`}
-        action={
-          <View ref={anchor} collapsable={false}>
-            <RoundButton
-              testID="settings-actions:approval-profile-add"
-              size="small"
-              display="inverted"
-              title={t('workflows.triggers.guided.profile.add')}
-              disabled={!ready}
-              onPress={() => setEditing({ profile: null })}
-            />
-          </View>
-        }
-      >
-        {(ready
-          ? profiles
-          : profiles.filter((profile) => profile.id.startsWith('builtin:'))
-        ).map((profile) => {
-          const presented = presentApprovalProfile(profile);
-          return (
-            <Item
-              key={profile.id}
-              testID={`settings-actions:approval-profile:${profile.id}`}
-              title={presented.title}
-              {...(presented.subtitle ? { subtitle: presented.subtitle } : {})}
-              subtitleLines={0}
-              {...(presented.builtIn
-                ? {
-                    detail: t('workflows.triggers.guided.profile.builtIn'),
-                    showChevron: false,
-                  }
-                : { onPress: () => setEditing({ profile }) })}
-            />
-          );
-        })}
-        {editing ? (
-          <ApprovalProfileEditor
-            key={editingProfile?.id ?? 'new'}
-            anchorRef={anchor}
-            profile={editingProfile}
-            onSave={save}
-            {...(editingProfile
-              ? { onDelete: () => confirmDelete(editingProfile.id) }
-              : {})}
-            onRequestClose={close}
-          />
-        ) : null}
-      </ItemGroup>
+        <ItemGroup
+            testID="settings-actions:approval-profiles"
+            title={t('workflows.triggers.guided.profile.sectionTitle')}
+            description={t('workflows.triggers.guided.profile.sectionDescription')}
+            action={(
+                <DropdownMenu
+                    testID="settings-actions:approval-profile-add-menu"
+                    open={open}
+                    onOpenChange={setOpen}
+                    items={starts}
+                    allowEmptySelection
+                    onSelect={(id) => { void start(id); }}
+                    placement="bottom"
+                    popoverAnchorAlign="end"
+                    variant="slim"
+                    matchTriggerWidth={false}
+                    trigger={({ toggle }) => (
+                        <RoundButton
+                            testID="settings-actions:approval-profile-add"
+                            size="small"
+                            display="inverted"
+                            title={t('workflows.triggers.guided.profile.add')}
+                            onPress={toggle}
+                        />
+                    )}
+                />
+            )}
+        >
+            {props.profiles.length === 0 ? (
+                <Item testID="settings-actions:approval-profiles:empty" title={t('workflows.triggers.guided.profile.empty')}
+                    mode="info" showChevron={false} />
+            ) : props.profiles.map(profile => (
+                <Item
+                    key={profile.id}
+                    testID={`settings-actions:approval-profile:${profile.id}`}
+                    title={profile.name}
+                    subtitle={describeProfile(profile, machineNames.defaultOn(profile.id))}
+                    icon={<Icon name="list-checks" />}
+                    onPress={() => router.push(`/settings/actions/profiles/${encodeURIComponent(profile.id)}`)}
+                />
+            ))}
+        </ItemGroup>
     );
-  },
-);
+});
 

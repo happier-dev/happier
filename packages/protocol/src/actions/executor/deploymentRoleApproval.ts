@@ -6,7 +6,8 @@ import { formatQualifiedPluginActionId } from '../../plugins/actions/qualifiedAc
 import { readExplicitActionApprovalPreferenceV1, resolveActionApprovalRouting, type ActionApprovalPolicyScopeV1 } from '../actionApprovalPolicy.js';
 import { resolveApprovalSurface } from '../actionApprovalSurface.js';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from '../actionIds.js';
-import { getActionSpec, type ActionSpec } from '../actionSpecs.js';
+import { getActionSpec } from '../actionSpecs.js';
+import { resolveProfiledActionsSettingsV1 } from '../approvalProfiles.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { readActionApprovalScopeAdmissionV1, type ActionApprovalScopeAdmissionV1 } from './approvalScope.js';
 import type { ActionHomeEquivalence, PreparedCoreAdmission } from './coreInvocation.js';
@@ -24,11 +25,12 @@ export function readHostReviewedChildrenPlanV1(value: unknown): HostReviewedChil
 /** Resolve demanded child policy once at the parent's natural preparation boundary. */
 export function prepareHostReviewedChildPolicyV1(child: HostReviewedChildrenPlanV1['children'][number],
   context: ActionExecutorContext, approvalScope?: ActionApprovalPolicyScopeV1, reviewAdmitted = false,
-  defaultSafety?: ActionSpec['safety']): (HostReviewedChildPolicyV1 & Readonly<{ requiredActionIds: readonly string[] }>) | null {
+): (HostReviewedChildPolicyV1 & Readonly<{ requiredActionIds: readonly string[] }>) | null {
   const settings = context.actionsSettings;
   const surface = resolveApprovalSurface(context);
   if (!settings || surface.kind === 'ambiguous') return null;
-  if (typeof child.action !== 'string' && context.approvalProfileId && defaultSafety === undefined) return null;
+  // Explicit child preferences are read on the same profiled settings the router decides on.
+  const profiled = resolveProfiledActionsSettingsV1(settings, context.approvalProfileId).settings;
   const candidateIds: readonly ActionSettingsActionId[] = typeof child.action === 'string'
     ? [child.action] : ['action.invoke', formatQualifiedPluginActionId(child.action)];
   return { action: child.action, role: child.role, surface: surface.surface,
@@ -37,16 +39,15 @@ export function prepareHostReviewedChildPolicyV1(child: HostReviewedChildrenPlan
       ? resolveActionApprovalRouting({ actionId: child.action, spec: getActionSpec(child.action),
         input: child.input === undefined ? child.scopeInput : child.input,
         context: { ...context, bypassApprovals: false }, settings, reviewAdmitted,
-        // The admitted parent answers defaults; explicit child preferences and
-        // the selected approval profile still belong to this parent review.
+        // Fresh preparation reads child preferences. An admitted parent
+        // already answers that policy through the same review owner.
         ...(context.bypassApprovals === true ? { defaultUiConfirmation: false,
-          requiredByPolicy: readExplicitActionApprovalPreferenceV1(id, settings, context, approvalScope) === true } : {}),
+          requiredByPolicy: readExplicitActionApprovalPreferenceV1(id, profiled, context, approvalScope) === true } : {}),
         ...(approvalScope ? { approvalScope } : {}) })
       : resolveActionApprovalRouting({ actionId: 'action.invoke', profileActionId: id, spec: getActionSpec('action.invoke'),
-        ...(defaultSafety ? { defaultSafety } : {}),
         input: child.input === undefined ? child.scopeInput : child.input,
         context: { ...context, bypassApprovals: false }, settings, reviewAdmitted,
-        requiredByPolicy: readExplicitActionApprovalPreferenceV1(id, settings, context, approvalScope) === true,
+        requiredByPolicy: readExplicitActionApprovalPreferenceV1(id, profiled, context, approvalScope) === true,
         ...(approvalScope ? { approvalScope } : {}) });
       return routing.required || routing.uiConfirmationRequired === true;
     }) };
@@ -57,7 +58,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   actionId: ActionId; input: unknown; context: ActionExecutorContext; deps: ActionExecutorDeps;
   prepared?: HostReviewedChildrenPreparationV1;
   declaredChildren?: HostReviewedChildrenPlanV1['children'];
-  /** The root's exact native confirmation answers demanded defaults, never explicit Require. */
+  /** The root's exact confirmation answers its internal child policy once. */
   reviewAdmitted?: boolean;
   approvalScopeAdmission?: ActionApprovalScopeAdmissionV1;
   existing?: PreparedCoreAdmission; approvalReplay: boolean; isSameHome: ActionHomeEquivalence;
@@ -150,7 +151,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   const policies: HostReviewedChildPolicyV1[] = [];
   for (const child of plan?.children ?? []) {
     const qualifiedId = typeof child.action === 'string' ? null : formatQualifiedPluginActionId(child.action);
-    const definition = qualifiedId && (context.approvalProfileId || isDeploymentDomainDnsVerifyActionIdV1(actionId))
+    const definition = qualifiedId && isDeploymentDomainDnsVerifyActionIdV1(actionId)
       ? deps.listContributedActionDefinitions?.({ id: qualifiedId }).find(candidate => candidate.id === qualifiedId)
       : undefined;
     // The read root cannot acquire credentials for a selected writer. Author-declared
@@ -173,8 +174,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
       : await readActionApprovalScopeAdmissionV1({ actionId: childId, spec: getActionSpec(childId), input,
       context, deps, phase: params.approvalReplay ? 'replay' : 'prepare', isSameHome: params.isSameHome });
     if ('ok' in scope) return scope;
-    const defaultSafety = context.approvalProfileId ? definition?.safety : undefined;
-    const policy = prepareHostReviewedChildPolicyV1(child, context, scope.approvalScope, params.reviewAdmitted, defaultSafety);
+    const policy = prepareHostReviewedChildPolicyV1(child, context, scope.approvalScope, params.reviewAdmitted);
     if (!policy) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     policies.push(child.input !== undefined ? retainHostReviewedChildCredentialScopeAdmissionV1(policy, context) : policy);
   }

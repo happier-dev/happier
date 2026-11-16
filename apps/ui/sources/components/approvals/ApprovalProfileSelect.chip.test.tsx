@@ -14,7 +14,6 @@ afterEach(standardCleanup);
 
 const source = {
   profiles: [],
-  selection: null,
   ready: true,
   unavailable: false,
 } as const;
@@ -27,7 +26,7 @@ it.each([undefined, null])(
   async (value) => {
     const screen = await renderScreen(
       <ApprovalProfileSelect
-        mode="authoring"
+        mode="session"
         presentation="chips"
         testID="profile"
         value={value}
@@ -40,7 +39,7 @@ it.each([undefined, null])(
       /workflows\.triggers\.guided\.profile\.title|Approval profile/,
     );
     expect(text).not.toMatch(
-      /inheritSessionProfile|noExplicitSessionProfile|Inherit the Session profile|No explicit Session profile/,
+      /machineDefault|Machine default/,
     );
   },
 );
@@ -48,28 +47,22 @@ it.each([undefined, null])(
 it('shows the chosen profile on the composer chip', async () => {
   const screen = await renderScreen(
     <ApprovalProfileSelect
-      mode="authoring"
+      mode="session"
       presentation="chips"
       testID="profile"
-      value="builtin:apply-safe"
+      value="custom:careful"
       source={{
         ...source,
-        profiles: [
-          {
-            id: 'builtin:apply-safe',
-            name: 'Apply safe actions',
-            defaultMode: 'allow',
-          },
-        ] as never,
+        profiles: [{ id: 'custom:careful', name: 'Careful agent' }],
       }}
       onChange={() => {}}
     />,
   );
-  expect(screen.getTextContent()).toMatch(/Apply safe actions|applySafeName/);
+  expect(screen.getTextContent()).toMatch(/Careful agent/);
 });
 
 it('announces a chip that names its own field once, not "Approval profile: Approval profile"', async () => {
-  const screen = await renderScreen(<ApprovalProfileSelect mode="authoring" presentation="chips" testID="profile"
+  const screen = await renderScreen(<ApprovalProfileSelect mode="session" presentation="chips" testID="profile"
     value={undefined} source={source} onChange={() => {}} />);
   const label = screen.findByTestId('profile-chip')?.props.accessibilityLabel ?? screen.findByTestId('profile-chip')?.props['aria-label'];
   expect(label).toMatch(/^(workflows\.triggers\.guided\.profile\.title|Approval profile)$/);

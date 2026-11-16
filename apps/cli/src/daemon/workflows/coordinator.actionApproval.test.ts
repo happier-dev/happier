@@ -66,9 +66,9 @@ describe('workflow built-in Action approval holds', () => {
   });
   it.each([
     { defaultProfile: undefined, stepProfile: undefined, held: true },
-    { defaultProfile: 'builtin:full-trust', stepProfile: undefined, held: false },
-    { defaultProfile: 'builtin:full-trust', stepProfile: 'builtin:read-propose', held: true },
-    { defaultProfile: 'builtin:read-propose', stepProfile: null, held: false },
+    { defaultProfile: 'blank', stepProfile: undefined, held: false },
+    { defaultProfile: 'blank', stepProfile: 'ask-list', held: true },
+    { defaultProfile: 'ask-list', stepProfile: null, held: false },
   ])('routes a child Action through its frozen step/default/origin profile ($defaultProfile, $stepProfile)', async ({ defaultProfile, stepProfile, held }) => {
     let effects = 0;
     let approval: ApprovalRequestV2 | undefined;
@@ -83,7 +83,9 @@ describe('workflow built-in Action approval holds', () => {
       executeStep: async () => { throw new Error('Action has no Agent step'); },
       resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async input => ({ ...buildWorkflowActionContext(input),
-        serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account', defaultSessionId: 'origin' }),
+        serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account', defaultSessionId: 'origin',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalProfiles: [{ id: 'blank', name: 'Blank' },
+          { id: 'ask-list', name: 'Ask before listing', actions: { 'machines.list': { approvalRequiredSurfaces: ['agent'] } } }] }) }),
         observeRun: async () => { throw new Error('Listing has no execution Run'); } },
     });
     const result = await coordinator.run({ runId: 'profile-run',
@@ -93,7 +95,7 @@ describe('workflow built-in Action approval holds', () => {
       inputs: {}, executionTarget: { kind: 'session' }, originSessionId: 'origin',
       origin: { kind: 'direct', originSessionId: 'origin', authenticatedStarterV1: {
         requestRef: 'start-request', requester: { serverId: 'home', accountId: 'account' } },
-        actionPolicy: { authority: 'account_automation', approvalProfileId: 'builtin:read-propose' } },
+        actionPolicy: { authority: 'account_automation', approvalProfileId: 'ask-list' } },
       authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
     });
     expect(result).toMatchObject(held ? { state: 'paused', reason: 'approval_required' } : { state: 'succeeded' });

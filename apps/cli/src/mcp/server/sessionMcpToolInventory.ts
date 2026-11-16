@@ -5,7 +5,7 @@ import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/conte
 import { createHappierToolInventory } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
-import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { createSessionActionSettingsView, type RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createMcpActionEnablementWithServerFeatureAvailability } from './createMcpActionEnablement';
 import { prepareHappierMcpToolInventory } from './registerHappierMcpBuiltInTools';
 import { readCliFeatureBuildPolicyInputs } from '@/features/featureBuildPolicy';
@@ -115,10 +115,12 @@ export function createSessionMcpToolInventory(params: Readonly<{
         if (!catalog) throw new DaemonPluginToolCatalogUnavailableError();
         return catalog.tools;
     };
+    const sessionActionSettings = createSessionActionSettingsView(params.actionSettingsProvider,
+        () => params.client.getMetadataSnapshot?.());
     const readInputs = (pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[]) => {
         const location = params.client.getCurrentSessionLocation?.();
         return {
-            actionsSettings: params.actionSettingsProvider.getActionsSettings(),
+            actionsSettings: sessionActionSettings.getActionsSettings(),
             serverFeatures: params.client.getServerFeaturesSnapshot?.(),
             sessionMemoryEnabled: readSessionMemoryEnabledV1(params.client.getMetadataSnapshot?.()),
             happierToolsEnabled: params.happierToolsEnabled ?? isSessionHappierToolsEnabled(params.client.getMetadataSnapshot?.()),

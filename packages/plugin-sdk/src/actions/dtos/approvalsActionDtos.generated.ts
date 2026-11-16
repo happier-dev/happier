@@ -507,13 +507,8 @@ export type ApprovalsActionResultById = {
             approval?: undefined | {
                 result: 'none' | 'optional' | 'required';
                 profile?: undefined | {
-                    status: 'available';
+                    status: 'available' | 'missing';
                     requestedId: string;
-                    effectiveId: string;
-                } | {
-                    status: 'missing';
-                    requestedId: string;
-                    effectiveId: 'builtin:read-propose';
                 };
                 flow?: 'blocking' | 'deferred' | undefined;
             };
@@ -592,13 +587,8 @@ export type ApprovalsActionResultById = {
             approval?: undefined | {
                 result: 'none' | 'optional' | 'required';
                 profile?: undefined | {
-                    status: 'available';
+                    status: 'available' | 'missing';
                     requestedId: string;
-                    effectiveId: string;
-                } | {
-                    status: 'missing';
-                    requestedId: string;
-                    effectiveId: 'builtin:read-propose';
                 };
                 flow?: 'blocking' | 'deferred' | undefined;
             };
@@ -1052,13 +1042,8 @@ export type ApprovalsActionResultById = {
             approval?: undefined | {
                 result: 'none' | 'optional' | 'required';
                 profile?: undefined | {
-                    status: 'available';
+                    status: 'available' | 'missing';
                     requestedId: string;
-                    effectiveId: string;
-                } | {
-                    status: 'missing';
-                    requestedId: string;
-                    effectiveId: 'builtin:read-propose';
                 };
                 flow?: 'blocking' | 'deferred' | undefined;
             };

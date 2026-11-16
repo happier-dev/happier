@@ -182,10 +182,11 @@ const modes = (agentId: string, currentModeId: string, ids: readonly string[]) =
 });
 const context = () => ({ surface: 'ui' as const, authority: 'present_user' as const, serverId });
 
-function installActionSettings(actions: unknown, voiceCanApproveRequests?: boolean, approvalWaivedSurfaces?: unknown) {
+function installActionSettings(actions: unknown, voiceCanApproveRequests?: boolean, approvalWaivedSurfaces?: unknown,
+  profiles?: Readonly<{ approvalProfiles?: unknown; machineApprovalProfiles?: unknown }>) {
   const current = storage.getState().settings;
   const settings = settingsParse({ ...current, actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions,
-    ...(approvalWaivedSurfaces === undefined ? {} : { approvalWaivedSurfaces }) }),
+    ...(approvalWaivedSurfaces === undefined ? {} : { approvalWaivedSurfaces }), ...profiles }),
     ...(voiceCanApproveRequests === undefined ? {} : normalizeVoiceSettingsLocalDelta({
       voice: { ...current.voice, canApproveRequests: voiceCanApproveRequests },
     }, current)) });
@@ -256,7 +257,11 @@ describe('default Action executor mode and catalog contracts', () => {
 
   it('uses the calling Session approval profile while a present user can change a target Session profile', async () => {
     const sessionId = 'approval-profile-session';
-    const read = installSession(sessionId, { machineId: 'machine-a', flavor: 'claude', approvalProfileId: 'builtin:read-propose' });
+    // No own choice: the caller Session follows the person's default for its Machine.
+    await installActionSettings({}, undefined, undefined, { machineApprovalProfiles: { 'machine-a': 'careful' },
+      approvalProfiles: [{ id: 'careful', name: 'Careful agent',
+        actions: { 'session.status.set_reason': { approvalRequiredSurfaces: ['agent'] } } }] });
+    const read = installSession(sessionId, { machineId: 'machine-a', flavor: 'claude' });
     const executor = createDefaultActionExecutor();
     const called = await executor.execute('session.status.set_reason', { reason: 'Investigating' }, {
       ...context(), surface: 'agent', authority: 'account_automation', defaultSessionId: sessionId,

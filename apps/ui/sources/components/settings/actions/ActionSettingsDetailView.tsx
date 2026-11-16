@@ -46,11 +46,13 @@ import {
     type ActionSettingsEntry,
     type ActionSettingsTargetEntry,
 } from './buildActionSettingsEntries';
-import { normalizeActionsSettings } from './normalizeActionsSettings';
 import { listActionSettingsFacts, listActionSettingsTargetDefinitions } from './actionSettingsTargetDefinitions';
 import { useActionSettingsNarrowLayout } from './useActionSettingsNarrowLayout';
 import { SessionAgentSpawnPolicyControls } from './SessionAgentSpawnPolicyControls';
 import { useActionPolicyWriter } from './useActionPolicyWriter';
+import { ACCOUNT_ACTION_SETTINGS_TARGET, approvalProfileSetsAction, buildApprovalProfileActionResetChange,
+    useActionSettingsForTarget, type ActionSettingsTarget } from './actionSettingsTarget';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
 const categoryOrder: readonly ActionSettingsTargetCategory[] = ['app', 'voice', 'integrations'];
 
@@ -132,7 +134,13 @@ function orderTargetsByCategory(targets: readonly ActionSettingsTargetEntry[]) {
 
 type ActionSettingsDetailContentProps = Readonly<{
     actionId: ActionSettingsActionId;
+    target?: ActionSettingsTarget;
 }>;
+
+/** In a profile the page edits only what a profile carries: per-surface use and approval, not placements or HTML callers. */
+function isProfileTargetRow(target: ActionSettingsTargetEntry): boolean {
+    return target.definition.kind === 'surface' && target.definition.surface !== 'foreign_session_html';
+}
 
 const ActionSettingsMachineChip = React.memo(function ActionSettingsMachineChip() {
     const selection = useMachineAdministrationTargetSelection(
@@ -149,14 +157,18 @@ const ActionSettingsMachineChip = React.memo(function ActionSettingsMachineChip(
 
 export const ActionSettingsDetailContent = React.memo(function ActionSettingsDetailContent(props: ActionSettingsDetailContentProps) {
     const styles = stylesheet;
+    const target = props.target ?? ACCOUNT_ACTION_SETTINGS_TARGET;
+    const inProfile = target.kind === 'profile';
     const compactLayout = useActionSettingsNarrowLayout();
     const [searchQuery, setSearchQuery] = React.useState('');
-    const rawSettings = useSetting('actionsSettingsV1');
-    const writePolicy = useActionPolicyWriter();
+    const targetSettings = useActionSettingsForTarget(target);
+    const profile = targetSettings.profile;
+    const profileSetsAction = approvalProfileSetsAction(profile, props.actionId);
+    const writePolicy = useActionPolicyWriter(target);
     const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
     const rawSpawnPolicy = useSetting('sessionAgentSpawnPolicyV1');
     const rawAllowLists = useSetting('sessionAgentStartAllowListsV1');
-    const settings = React.useMemo(() => normalizeActionsSettings(rawSettings), [rawSettings]);
+    const settings = targetSettings.settings;
     const voiceSettings = useSetting('voice') as Readonly<{ privacy?: { shareDeviceInventory?: boolean } }> | null;
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const memorySearchEnabled = useFeatureEnabled('memory.search');
@@ -189,12 +201,12 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
             : []
     ), [daemonMergedProjection.inputs, executionTarget]);
     const captureViewingPlugins = React.useMemo(() => (
-        props.actionId === 'capture.view' && executionTarget && daemonMergedProjection.inputs
+        !inProfile && props.actionId === 'capture.view' && executionTarget && daemonMergedProjection.inputs
             ? Object.values(daemonMergedProjection.inputs.pluginProjectionById)
                 .filter((plugin) => plugin.title.toLowerCase().includes(searchQuery.trim().toLowerCase()))
                 .sort((left, right) => left.title.localeCompare(right.title))
             : []
-    ), [daemonMergedProjection.inputs, executionTarget, props.actionId, searchQuery]);
+    ), [daemonMergedProjection.inputs, executionTarget, inProfile, props.actionId, searchQuery]);
     const voiceShareDeviceInventory = voiceSettings?.privacy?.shareDeviceInventory !== false;
     const availability = React.useMemo(() => ({
         executionRunsEnabled,
@@ -220,16 +232,16 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
         return entries.find((candidate) => candidate.actionId === props.actionId) ?? null;
     }, [availability, contributedActions, props.actionId, settings]);
     const filteredTargets = React.useMemo(() => (
-        entry?.targets.filter((target) => targetMatchesSearch(target, searchQuery)) ?? []
-    ), [entry?.targets, searchQuery]);
+        entry?.targets.filter((row) => targetMatchesSearch(row, searchQuery) && (!inProfile || isProfileTargetRow(row))) ?? []
+    ), [entry?.targets, inProfile, searchQuery]);
     const orderedTargets = React.useMemo(() => orderTargetsByCategory(filteredTargets), [filteredTargets]);
     // Only Actions whose spec declares Machine approval scope offer per-Machine preferences.
     const machineScoped = React.useMemo(() => {
+        if (inProfile) return null;
         const hostId = ActionIdSchema.safeParse(props.actionId);
         return hostId.success && getActionSpec(hostId.data).approvalScope === 'machine' ? hostId.data : null;
-    }, [props.actionId]);
-    const toolExposureTargets = React.useMemo(() => (
-        filteredTargets
+    }, [inProfile, props.actionId]);
+    const toolExposureTargets = React.useMemo(() => (inProfile ? [] : filteredTargets
             .map((target) => {
                 const available = target.state !== 'unavailable';
                 const exposureState = entry?.kind === 'host'
@@ -244,8 +256,8 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                     ? { target, available, exposureState }
                     : null;
             })
-            .filter((target): target is NonNullable<typeof target> => target !== null)
-    ), [entry, filteredTargets, settings]);
+            .filter((row): row is NonNullable<typeof row> => row !== null)
+    ), [entry, filteredTargets, inProfile, settings]);
     const facts = React.useMemo(() => listActionSettingsFacts(props.actionId), [props.actionId]);
 
     const handleActionEnabledChange = React.useCallback((enabled: boolean) => {
@@ -301,7 +313,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                 actions={(
                     <View style={styles.headerActions}>
                         {machineChip}
-                        <View testID={`settings-actions:action:${entry.actionId}:summary`}>
+                        {inProfile ? null : <View testID={`settings-actions:action:${entry.actionId}:summary`}>
                             <PageHeaderStateSwitch
                                 testID={`settings-actions:action:${entry.actionId}:enabled`}
                                 label={t('common.enabled')}
@@ -309,7 +321,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                                 value={entry.enabled}
                                 onValueChange={handleActionEnabledChange}
                             />
-                        </View>
+                        </View>}
                     </View>
                 )}
             />
@@ -361,8 +373,21 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                 return (
                     <ItemGroup
                         title={t('settingsActions.sections.whoMayUseIt')}
-                        // How "Ask first" and "Allowed" differ, said once above the surfaces.
-                        description={parseQualifiedPluginResourcePolicyId(entry.actionId) ? undefined : t('settingsActions.approvalHelpBody')}
+                        // How "Ask first" and "Allowed" differ, said once above the surfaces. In a profile the
+                        // section first says whose answer the rows show, and offers the way back to the Account's.
+                        description={inProfile
+                            ? t(profileSetsAction ? 'workflows.triggers.guided.profile.actionSetByProfile'
+                                : 'workflows.triggers.guided.profile.actionFollowsAccount')
+                            : parseQualifiedPluginResourcePolicyId(entry.actionId) ? undefined : t('settingsActions.approvalHelpBody')}
+                        action={inProfile && profile && profileSetsAction ? (
+                            <RoundButton
+                                testID={`settings-actions:action:${entry.actionId}:use-account-setting`}
+                                size="small"
+                                display="inverted"
+                                title={t('workflows.triggers.guided.profile.useAccountSetting')}
+                                onPress={() => { void writePolicy(buildApprovalProfileActionResetChange(profile, entry.actionId as ActionSettingsActionId)); }}
+                            />
+                        ) : undefined}
                     >
                         {/* The loosening warning leads the section holding the Allowed choice, one per exact
                             key, so Keep Ask first restores only that surface. */}
@@ -370,6 +395,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                             controlState.kind === 'approval' && controlState.approvalLooseningNotice ? (
                                 <ActionApprovalLooseningNotice
                                     key={`${target.id}:loosening`}
+                                    target={props.target}
                                     testID={`${testIDPrefix}:loosening`}
                                     notice={controlState.approvalLooseningNotice}
                                     disabled={!entry.enabled}
@@ -491,7 +517,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                 </ItemGroup>
             ) : null}
 
-            {entry.kind === 'host' && entry.actionId === 'session.spawn_new' ? (
+            {!inProfile && entry.kind === 'host' && entry.actionId === 'session.spawn_new' ? (
                 <SessionAgentSpawnPolicyControls
                     rawPolicy={rawSpawnPolicy}
                     rawAllowLists={rawAllowLists}
@@ -502,7 +528,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
     );
 });
 
-export const ActionSettingsDetailView = React.memo(function ActionSettingsDetailView() {
+export const ActionSettingsDetailView = React.memo(function ActionSettingsDetailView(props: Readonly<{ target?: ActionSettingsTarget }>) {
     const params = useLocalSearchParams<{ actionId?: string | string[] }>();
     const actionId = decodeActionIdParam(params.actionId);
     const actionTitle = actionId
@@ -536,7 +562,7 @@ export const ActionSettingsDetailView = React.memo(function ActionSettingsDetail
     return (
         <>
             <Stack.Screen options={actionScreenOptions} />
-            <ActionSettingsDetailContent actionId={actionId} />
+            <ActionSettingsDetailContent actionId={actionId} target={props.target} />
         </>
     );
 });

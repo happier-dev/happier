@@ -51,8 +51,7 @@ function createProfiledRunStartFixture(surface: 'agent' | 'mcp', overrides: Part
     actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
       'execution.run.start': ['agent', 'mcp'], 'subagents.delegate.start': ['agent', 'mcp'],
       'deployments.deploy': ['agent', 'mcp'],
-    }, approvalProfiles: [{ id: profileId, name: 'Review dangerous work', defaultMode: 'allow',
-      actions: { 'deployments.deploy': 'require' } }] }),
+    }, approvalProfiles: [{ id: profileId, name: 'Review dangerous work', actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent', 'mcp'] } } }] }),
     agentStartContext: {
       caller: { kind: 'session', sessionId: 'parent-session', starterDepth: 0, turnDepth: 0 },
       baseline: { machineId: 'guest', directory: '/workspace' }, ledSubtreeSessionIds: [],
@@ -122,7 +121,9 @@ it.each(profileStartCases)('retains the admitted profile through deferred approv
     const parent: ActionExecutorContext = { ...fixture.parent, serverIdentityId: 'home-identity',
       defaultSessionMachineId: 'guest', interactivePresentation: undefined,
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalProfiles: [{ id: fixture.profileId,
-        name: 'Review all work', defaultMode: 'require' }] }),
+        name: 'Review all work', actions: {
+        'execution.run.start': { approvalRequiredSurfaces: ['agent', 'mcp'] },
+        'subagents.delegate.start': { approvalRequiredSurfaces: ['agent', 'mcp'] } } }] }),
     };
     expect(await fixture.executor.execute(actionId, fixture.inputFor(actionId), parent)).toMatchObject({
       ok: true, result: { kind: 'approval_request_created', artifactId: 'run-start-approval' },
@@ -303,8 +304,7 @@ it.each([
 ])('inherits $profileId at Session birth so the child still asks before a danger Action', async ({ profileId, waiveDanger }) => {
   const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1,
     approvalWaivedSurfaces: waiveDanger ? { 'deployments.deploy': ['agent'] } : {},
-    approvalProfiles: [{ id: 'danger-requires-review', name: 'Review dangerous work', defaultMode: 'allow',
-      actions: { 'deployments.deploy': 'require' } }],
+    approvalProfiles: [{ id: 'danger-requires-review', name: 'Review dangerous work', actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent', 'mcp'] } } }],
   });
   const profiles = new Map<string, string | null>([['parent-session', profileId]]);
   let effects = 0;
@@ -394,7 +394,7 @@ it.each([
     ...(surface === 'rpc' ? { approvalProfileId: profileId } : {}),
     interactivePresentation: 'unavailable', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
       approvalWaivedSurfaces: { [actionId]: [surface], 'deployments.deploy': ['agent'] },
-      approvalProfiles: [{ id: profileId, name: 'Review dangerous work', defaultMode: 'allow', actions: { 'deployments.deploy': 'require' } }],
+      approvalProfiles: [{ id: profileId, name: 'Review dangerous work', actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent', 'mcp'] } } }],
     }),
   };
   expect(await executor.execute(actionId, input, parent)).toEqual({ ok: true, result: actionId === 'session.fork'

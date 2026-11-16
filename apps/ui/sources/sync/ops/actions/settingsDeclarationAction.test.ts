@@ -844,18 +844,17 @@ describe('scoped policy mutation results', () => {
     it('lists reusable approval profiles and updates one without replacing sibling Account policy', async () => {
         const policy = ActionsSettingsV1Schema.parse({ v: 1, actions: {
             'session.stop': { approvalRequiredSurfaces: ['agent'] },
-        }, approvalProfiles: [{ id: 'custom:retained', name: 'Retained', defaultMode: 'ask' }] });
+        }, approvalProfiles: [{ id: 'custom:retained', name: 'Retained' }] });
         const owner = createOwner(undefined, true, true, { ...settingsDefaults, actionsSettingsV1: policy });
         const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
         const context = { surface: 'ui', authority: 'present_user' } as const;
-        const profile = { id: 'custom:deploy', name: 'Deploy safely', defaultMode: 'allow', categories: { danger: 'ask' } } as const;
+        const profile = { id: 'custom:deploy', name: 'Deploy safely', actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent'] } } };
         expect(await executor.execute('actions.policy.set', { profileChange: { kind: 'upsert', profile } }, context))
             .toMatchObject({ ok: true });
         const listed = await executor.execute('actions.policy.get', { profiles: true }, context);
-        expect(listed).toMatchObject({ ok: true, result: { profiles: expect.arrayContaining([
-            expect.objectContaining({ id: 'builtin:read-propose' }), profile,
-            expect.objectContaining({ id: 'custom:retained' }),
-        ]) } });
+        expect(listed).toMatchObject({ ok: true, result: { profiles: [
+            expect.objectContaining({ id: 'custom:retained' }), profile,
+        ] } });
         expect(owner.account().actionsSettingsV1.actions).toEqual(policy.actions);
         expect(await executor.execute('actions.policy.set', { profileChange: { kind: 'delete', id: profile.id } }, context))
             .toMatchObject({ ok: true });

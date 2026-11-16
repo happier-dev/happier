@@ -758,16 +758,20 @@ export type SettingsDeclarationsActionInputById = {
             kind: 'delete';
             id: string;
         } | {
+            kind: 'machine_default';
+            machineId: string;
+            id: null | string;
+        } | {
             kind: 'upsert';
             profile: {
                 id: string;
                 name: string;
-                defaultMode: 'allow' | 'ask' | 'require';
-                actions?: Record<string, 'allow' | 'ask' | 'require'> | undefined;
-                categories?: undefined | {
-                    safe?: 'allow' | 'ask' | 'require' | undefined;
-                    danger?: 'allow' | 'ask' | 'require' | undefined;
-                };
+                actions?: Record<string, {
+                    enabled?: boolean | undefined;
+                    disabledSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
+                    approvalRequiredSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
+                }> | undefined;
+                approvalWaivedSurfaces?: Record<string, ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[]> | undefined;
             };
         };
     };
@@ -934,12 +938,12 @@ export type SettingsDeclarationsActionResultById = {
         profiles: {
             id: string;
             name: string;
-            defaultMode: 'allow' | 'ask' | 'require';
-            actions?: Record<string, 'allow' | 'ask' | 'require'> | undefined;
-            categories?: undefined | {
-                safe?: 'allow' | 'ask' | 'require' | undefined;
-                danger?: 'allow' | 'ask' | 'require' | undefined;
-            };
+            actions?: Record<string, {
+                enabled?: boolean | undefined;
+                disabledSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
+                approvalRequiredSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
+            }> | undefined;
+            approvalWaivedSurfaces?: Record<string, ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[]> | undefined;
         }[];
     };
     readonly "actions.policy.set": {
@@ -1001,16 +1005,20 @@ export type SettingsDeclarationsActionResultById = {
             kind: 'delete';
             id: string;
         } | {
+            kind: 'machine_default';
+            machineId: string;
+            id: null | string;
+        } | {
             kind: 'upsert';
             profile: {
                 id: string;
                 name: string;
-                defaultMode: 'allow' | 'ask' | 'require';
-                actions?: Record<string, 'allow' | 'ask' | 'require'> | undefined;
-                categories?: undefined | {
-                    safe?: 'allow' | 'ask' | 'require' | undefined;
-                    danger?: 'allow' | 'ask' | 'require' | undefined;
-                };
+                actions?: Record<string, {
+                    enabled?: boolean | undefined;
+                    disabledSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
+                    approvalRequiredSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
+                }> | undefined;
+                approvalWaivedSurfaces?: Record<string, ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[]> | undefined;
             };
         };
     };

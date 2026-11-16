@@ -5,6 +5,7 @@ import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, setAction
   setScopedActionApprovalPreference, removeScopedActionApprovalPreference, actionPolicyAudienceContextV1, type ActionPolicyAudienceV1, type ActionApprovalScopeV1,
   type ActionsSettingsV1, type ActionSettingsActionId, type ActionSettingsOverride, type ActionSurfaceKey } from './actionSettings.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
+import { applyApprovalProfileOverlayV1, type ApprovalProfileV1 } from './approvalProfiles.js';
 import type { ActionAudiencePolicyMode, ActionAudiencePolicyResult, ActionPolicySetInput, ActionPolicySetResult } from './actionPolicyActionFamily.js';
 
 /** One audience preference; global enablement and every neighbouring preference remain intact. */
@@ -45,6 +46,34 @@ function setActionPlacementEnabled(settings: ActionsSettingsV1, actionId: Action
   return { ...normalized, actions: { ...normalized.actions, [actionId]: next } };
 }
 
+/**
+ * One profile row edit in the Approval-settings vocabulary. A profile without a row for the
+ * Action starts from the Account row, so the other surfaces keep their current answers.
+ */
+export function setApprovalProfileActionPolicyV1(account: ActionsSettingsV1, profile: ApprovalProfileV1,
+  actionId: ActionSettingsActionId, audience: ActionSurfaceKey, mode: ActionAudiencePolicyMode): ApprovalProfileV1 {
+  const next = setActionAudiencePolicy(applyApprovalProfileOverlayV1(normalizeActionsSettingsV1(account), profile),
+    actionId, audience, mode);
+  const row = next.actions[actionId];
+  const waived = next.approvalWaivedSurfaces?.[actionId];
+  const { [actionId]: _priorWaiver, ...otherWaivers } = profile.approvalWaivedSurfaces ?? {};
+  const approvalWaivedSurfaces = waived?.length ? { ...otherWaivers, [actionId]: waived } : otherWaivers;
+  const { approvalWaivedSurfaces: _prior, ...rest } = profile;
+  return { ...rest, actions: { ...profile.actions, [actionId]: {
+    ...(row?.enabled === undefined ? {} : { enabled: row.enabled }),
+    disabledSurfaces: row?.disabledSurfaces ?? [], approvalRequiredSurfaces: row?.approvalRequiredSurfaces ?? [],
+  } }, ...(Object.keys(approvalWaivedSurfaces).length > 0 ? { approvalWaivedSurfaces } : {}) };
+}
+
+/** "Use Account setting": the profile stops naming this Action. */
+export function resetApprovalProfileActionV1(profile: ApprovalProfileV1, actionId: ActionSettingsActionId): ApprovalProfileV1 {
+  const { [actionId]: _row, ...actions } = profile.actions ?? {};
+  const { [actionId]: _waiver, ...approvalWaivedSurfaces } = profile.approvalWaivedSurfaces ?? {};
+  const { actions: _actions, approvalWaivedSurfaces: _waivers, ...rest } = profile;
+  return { ...rest, ...(Object.keys(actions).length > 0 ? { actions } : {}),
+    ...(Object.keys(approvalWaivedSurfaces).length > 0 ? { approvalWaivedSurfaces } : {}) };
+}
+
 /** One admitted semantic policy edit, rebased by the Account CAS owner. */
 export function applyActionPolicyMutation(settings: ActionsSettingsV1, input: ActionPolicySetInput): Readonly<{
   settings: ActionsSettingsV1;
@@ -53,10 +82,20 @@ export function applyActionPolicyMutation(settings: ActionsSettingsV1, input: Ac
   if ('profileChange' in input) {
     const normalized = normalizeActionsSettingsV1(settings);
     const change = input.profileChange;
+    if (change.kind === 'machine_default') {
+      const { [change.machineId]: _prior, ...others } = normalized.machineApprovalProfiles ?? {};
+      return { settings: { ...normalized, machineApprovalProfiles: change.id === null ? others
+        : { ...others, [change.machineId]: change.id } }, result: input };
+    }
     const id = change.kind === 'upsert' ? change.profile.id : change.id;
     const remaining = normalized.approvalProfiles?.filter(profile => profile.id !== id) ?? [];
+    // A deleted profile stops being any Machine's default; its Sessions settle visibly as missing.
+    const machineApprovalProfiles = change.kind === 'delete' && normalized.machineApprovalProfiles
+      ? Object.fromEntries(Object.entries(normalized.machineApprovalProfiles).filter(([, profileId]) => profileId !== id))
+      : normalized.machineApprovalProfiles;
     return { settings: { ...normalized, approvalProfiles: change.kind === 'upsert'
-      ? [...remaining, change.profile] : remaining }, result: input };
+      ? [...remaining, change.profile] : remaining,
+      ...(machineApprovalProfiles ? { machineApprovalProfiles } : {}) }, result: input };
   }
   if (!('change' in input)) {
     const scope = 'scope' in input ? input.scope : undefined;

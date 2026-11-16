@@ -513,7 +513,8 @@ describe('createCliActionExecutorHarness', () => {
     const waived = { 'discussion.invite': ['agent'] };
     const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: currentRequire ? {} : waived,
       ...(currentRequire ? { actions: { 'discussion.invite': { approvalRequiredSurfaces: ['agent'] } } } : {}),
-      approvalProfiles: [{ id: 'profile:current', name: 'Current', defaultMode: mode }] });
+      approvalProfiles: [{ id: 'profile:current', name: 'Current',
+        ...(mode === 'require' ? { actions: { 'discussion.invite': { approvalRequiredSurfaces: ['agent'] } } } : {}) }] });
     const { executor } = createCliActionExecutorHarness({ token: 'token', mode: 'plain', ctx: null,
       sessionId: 'origin', serverId: 'home', serverHttpBaseUrl: 'https://workflow-home.example.invalid',
       actionsSettingsProvider: { getActionsSettings: () => settings, getAccountSettings: () => null },

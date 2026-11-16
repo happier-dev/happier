@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { normalizeStoredApprovalProfilesV1, type ApprovalProfileV1 } from './approvalProfiles.js';
+import { ApprovalProfileIdV1Schema, normalizeStoredApprovalProfilesV1, type ApprovalProfileV1 } from './approvalProfiles.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import { ActionIdSchema, normalizeLegacyActionId, type ActionId } from './actionIds.js';
@@ -20,6 +20,7 @@ import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 
 const ActionSurfaceKeySchema = lazyZodSchema(() => z.keyof(ActionSurfaceSchema));
+const MachineApprovalProfilesV1Schema = lazyZodSchema(() => z.record(z.string().check(z.minLength(1)), ApprovalProfileIdV1Schema));
 export type ActionSurfaceKey = z.infer<typeof ActionSurfaceKeySchema>;
 /** Host-stamped caller class; it is not a new transport or plugin invocation surface. */
 export const ActionCallerSurfaceV1Schema = lazyZodSchema(() => z.literal('foreign_session_html'));
@@ -206,6 +207,8 @@ export const ActionsSettingsV1Schema = lazyZodSchema(() => z.pipe(z.looseObject(
     pluginHostCaptureApprovalWaived: z.catch(z.optional(z.array(z.string().check(z.minLength(1)))), undefined),
     scopedApprovalPreferences: z.optional(z.array(ActionScopedApprovalPreferenceV1Schema)),
     approvalProfiles: z.optional(z.pipe(z.unknown(), z.transform(normalizeStoredApprovalProfilesV1))),
+    /** The person's approval profile for their Sessions on each Machine (Account preference). */
+    machineApprovalProfiles: z.catch(z.optional(MachineApprovalProfilesV1Schema), undefined),
     // Root-only: predecessor Action rows are strict and must retain their Off/Require policy.
     callerSurfacePolicies: z.catch(z.optional(CallerSurfacePoliciesV1Schema), undefined),
   }), z.transform((value) => ({
@@ -215,6 +218,7 @@ export const ActionsSettingsV1Schema = lazyZodSchema(() => z.pipe(z.looseObject(
     ...(value.pluginHostCaptureApprovalWaived ? { pluginHostCaptureApprovalWaived: value.pluginHostCaptureApprovalWaived } : {}),
     ...(value.scopedApprovalPreferences ? { scopedApprovalPreferences: normalizeScopedApprovalRows(value.scopedApprovalPreferences) } : {}),
     ...(value.approvalProfiles ? { approvalProfiles: value.approvalProfiles } : {}),
+    ...(value.machineApprovalProfiles ? { machineApprovalProfiles: value.machineApprovalProfiles } : {}),
     ...(value.callerSurfacePolicies ? { callerSurfacePolicies: value.callerSurfacePolicies } : {}),
   }))));
 
@@ -225,6 +229,7 @@ export type ActionsSettingsV1 = Readonly<{
   pluginHostCaptureApprovalWaived?: string[];
   scopedApprovalPreferences?: ActionScopedApprovalPreferenceV1[];
   approvalProfiles?: ApprovalProfileV1[];
+  machineApprovalProfiles?: Record<string, string>;
   callerSurfacePolicies?: z.infer<typeof CallerSurfacePoliciesV1Schema>;
 }>;
 
@@ -248,6 +253,7 @@ function isActionsSettingsV1Document(value: unknown): value is Readonly<{
   pluginHostCaptureApprovalWaived?: unknown;
   scopedApprovalPreferences?: unknown;
   approvalProfiles?: unknown;
+  machineApprovalProfiles?: unknown;
   callerSurfacePolicies?: unknown;
 }> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -282,6 +288,7 @@ export function tryNormalizeActionsSettingsV1(value: unknown): ActionsSettingsV1
     pluginHostCaptureApprovalWaived: value.pluginHostCaptureApprovalWaived,
   }).pluginHostCaptureApprovalWaived;
   const callerSurfacePolicies = ActionsSettingsV1Schema.parse({ v: 1, callerSurfacePolicies: value.callerSurfacePolicies }).callerSurfacePolicies;
+  const machineApprovalProfiles = ActionsSettingsV1Schema.parse({ v: 1, machineApprovalProfiles: value.machineApprovalProfiles }).machineApprovalProfiles;
   const scopedRows: ActionScopedApprovalPreferenceV1[] = [];
   if (Array.isArray(value.scopedApprovalPreferences)) {
     for (const raw of value.scopedApprovalPreferences) {
@@ -299,6 +306,7 @@ export function tryNormalizeActionsSettingsV1(value: unknown): ActionsSettingsV1
     ...(value.approvalProfiles === undefined ? {} : { approvalProfiles: normalizeStoredApprovalProfilesV1(value.approvalProfiles) }),
     ...(pluginWaivers ? { pluginHostCaptureApprovalWaived: pluginWaivers } : {}),
     ...(callerSurfacePolicies ? { callerSurfacePolicies } : {}),
+    ...(machineApprovalProfiles ? { machineApprovalProfiles } : {}),
     ...(Array.isArray(value.scopedApprovalPreferences) ? { scopedApprovalPreferences: normalizeScopedApprovalRows(scopedRows) } : {}) };
 }
 

@@ -45,6 +45,7 @@ import { isMemorySessionSearchHitV1, negotiateMemorySearchV1 } from '@happier-de
 import { MemoryWindowV1Schema } from '@happier-dev/protocol/memory/memoryWindow';
 import type { MemorySearchResultV1, MemoryWindowV1, SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
 import { createSessionStateSyncEngine } from '@happier-dev/agents';
+import { createSessionActionSettingsView } from '@/settings/actionsSettingsProvider';
 import {
   createMcpActionEnablementWithServerFeatureAvailability,
   createMcpActionSettingsProvider,
@@ -203,7 +204,7 @@ export function createHappierMcpServer(
     return policy.sessionAgentSpawnPolicyV1;
   };
   const isActionEnabled = createMcpActionEnablementWithServerFeatureAvailability({
-    actionSettingsProvider,
+    actionSettingsProvider: createSessionActionSettingsView(actionSettingsProvider, () => client.getMetadataSnapshot?.()),
     surface: toolSurface,
     hasAuthenticatedRuntime: sessionCredentials !== null,
     authorityScope: opts?.authorityScope,

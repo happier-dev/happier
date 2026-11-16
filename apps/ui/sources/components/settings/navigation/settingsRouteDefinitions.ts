@@ -25,6 +25,8 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'acp', titleKey: 'settings.acpCatalog' },
     { name: 'actions', titleKey: 'common.actions' },
     { name: 'actions/[actionId]', titleKey: 'common.actions' },
+    { name: 'actions/profiles/[profileId]/index', titleKey: 'workflows.triggers.guided.profile.title' },
+    { name: 'actions/profiles/[profileId]/[actionId]', titleKey: 'common.actions' },
     { name: 'add-phone', titleKey: 'settings.addYourPhone' },
     { name: 'appearance', titleKey: 'settings.appearance' },
     { name: 'appearance/glass', titleKey: 'settingsAppearance.glassControls.sectionTitle' },

@@ -42,7 +42,9 @@ const deploymentInput = { serverId: 'home', environmentId: 'staging', expectedRe
   expectedTargetLinkRevision: 1, contentArtifactId: 'content', contentHeaderVersion: 1,
   contentBodyVersion: 1, requestKey: 'agent-deploy' };
 const deploymentSettings = normalizeActionsSettingsV1({ v: 1,
-  approvalWaivedSurfaces: { 'deployments.deploy': ['agent', 'cli'] } });
+  approvalWaivedSurfaces: { 'deployments.deploy': ['agent', 'cli'] },
+  approvalProfiles: [{ id: 'reviewed-deploys', name: 'Reviewed deploys',
+    actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent', 'mcp'] } } }] });
 const actionSessionId = 'cmvbeu0ig0040m203zcysq5v8';
 const diagnosticFailure = { ok: false, errorCode: 'action_failed', error: 'Action failed',
   requestId: 'diagnostic-action', effectAttempted: false, details: { expectedRevision: 3 },
@@ -55,7 +57,7 @@ async function createDeploymentAdmissionFixture() {
   // Profile and Artifact persistence are storage boundaries; admission, profile
   // resolution, approval production and deployment dispatch remain real.
   const readActionApprovalProfileId = vi.fn(async (context: ActionExecutorContext) =>
-    context.actionCaller?.kind === 'session' ? 'builtin:read-propose' : undefined);
+    context.actionCaller?.kind === 'session' ? 'reviewed-deploys' : undefined);
   const deploymentAction = vi.fn(async () => ({ ok: true as const, environmentId: 'staging', revision: 2,
     deploymentId: 'deployment', deploymentRevision: 1, state: 'succeeded' as const }));
   const executor = createActionExecutor({

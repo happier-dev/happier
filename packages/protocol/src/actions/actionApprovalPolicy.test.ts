@@ -122,7 +122,8 @@ it.each(['ui', 'cli'] as const)(
     expect(resolveActionApprovalRouting(profileRequired).required).toBe(surface !== 'ui');
     expect(resolveActionApprovalRouting({ ...profileRequired, reviewAdmitted: true })).toMatchObject({
       required: false,
-      profile: { status: 'available', effectiveId: 'builtin:read-propose' },
+      // A retired built-in id is a missing profile: Account settings decide, visibly.
+      profile: { status: 'missing', requestedId: 'builtin:read-propose' },
     });
   },
 );
