@@ -11,7 +11,7 @@ export function optionPickerOptionKey<TValue>(
     getValueKey: (value: TValue) => string,
 ): string {
     return option.value === null && (option.disabled || option.onActivate)
-        ? JSON.stringify(['section-status', sectionId])
+        ? JSON.stringify(['section-status', option.key ?? sectionId])
         : getValueKey(option.value);
 }
 

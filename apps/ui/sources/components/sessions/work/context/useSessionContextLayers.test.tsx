@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { sessionInfoDisclosuresState } from '@/sync/domains/state/disclosureUiState';
 import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import { getBuiltInBackendProfile } from '@happier-dev/protocol/profiles/builtInBackendProfiles';
@@ -42,31 +42,22 @@ afterEach(async () => {
 });
 
 describe('Work admitted Profile context', () => {
-    it('pins Skills from Info through the same placement owner as the Session rail', async () => {
-        fixture = await createPlainArtifactHomeFixture('https://info-skills-pin.example');
+    it('opens Skills in place in Info, with no pin of its own (owner 11-15 C5)', async () => {
+        fixture = await createPlainArtifactHomeFixture('https://info-skills-inline.example');
         const scope = { serverId: fixture.home.id, accountId: 'artifact-account' };
         storage.getState().applySettingsForScope(scope, settingsDefaults, 1);
         const { SessionSetupSections } = await import('../SessionSetupSections');
-        const { RightSidebarActionRail } = await import('@/components/appShell/rightSidebar/RightSidebarActionRail');
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const session = createSessionFixture({ id: 'skills-info', serverId: scope.serverId });
-        let opens = 0;
-        function Setup() { return <>
-            <SessionSetupSections session={session} serverId={scope.serverId} onOpenSkills={() => { opens++; }} />
-            <RightSidebarActionRail surfaceId="sessionRail" testIDPrefix="skills-test-rail" actions={[{
-                id: 'skills', label: 'Skills', icon: 'lightbulb', active: false, defaultPlacement: 'overflow', onPress: () => {},
-            }]} />
-        </>; }
+        function Setup() { return <SessionSetupSections session={session} serverId={scope.serverId} />; }
         const screen = await renderScreen(await createRealAppRouteElement(Setup,
             await TokenStorage.getCredentialsForServerUrl(fixture.home.serverUrl, { serverId: scope.serverId })));
-        expect(screen.findByTestId('skills-test-rail:skills')).toBeNull();
-        await screen.pressByTestIdAsync('session-setup-skills.pin');
-        await waitForHomeGovernance(() => expect(screen.findByTestId('skills-test-rail:skills')).not.toBeNull());
-        expect(opens).toBe(0);
-        await screen.pressByTestIdAsync('session-setup-skills');
-        expect(opens).toBe(1);
-        await screen.pressByTestIdAsync('session-setup-skills.pin');
-        await waitForHomeGovernance(() => expect(screen.findByTestId('skills-test-rail:skills')).toBeNull());
+        // The rail owns pinning; the Info row is a Setup disclosure, closed until pressed.
+        expect(screen.findByTestId('session-setup-skills.pin')).toBeNull();
+        expect(screen.findByTestId('session-setup-skills-loading')).toBeNull();
+        await screen.pressByTestIdAsync('session-setup-skills:row');
+        // The body is the rail panel's own Skills component, loaded through the same lazy pane loader.
+        await vi.waitFor(() => expect(screen.findByTestId('session-setup-skills-loading') ?? screen.findByTestId('session-skills')).not.toBeNull());
     });
     it('projects admitted personal Project rows without a new census and retains them during refresh', async () => {
         let censusRequests = 0;

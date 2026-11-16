@@ -161,6 +161,7 @@ export function buildTeamCredentialModelPickerSections(
             const recovery = recoveryPresentation === null ? null : teamCredentialRecoveryLabel(recoveryPresentation);
             options.push({
                 value: null,
+                key: `team-resource:${resource.teamId}:${resource.id}`,
                 label: displayName,
                 description: [unavailableReason, recovery]
                     .filter((value): value is string => Boolean(value)).join(' · '),

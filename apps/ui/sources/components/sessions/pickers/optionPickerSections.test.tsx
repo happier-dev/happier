@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import { useOptionPickerSections } from './optionPickerSections';
+import { foldUnavailableRows } from './foldUnavailableRows';
 import { OptionPickerSelectedControlsContext } from './optionPickerSelectedControlsState';
 
 const getValueKey = (value: string) => value;
@@ -46,5 +47,33 @@ describe('Option picker descriptor publication', () => {
         expect(screen.tree.root.findByType('output').props.value).toBe('low');
         expect(sections).toBe(baseline);
         expect(unrelatedLabelReads).toBe(0);
+    });
+
+    it('lists every unavailable source in the folded group, each with its own status row (owner 11-15 C6)', async () => {
+        // Two Team credential sources whose broker is down: each publishes one status row (no model value).
+        type Value = string | null;
+        const status = (key: string, label: string) => ({ value: null as Value, key, label, description: 'Broker offline',
+            disabled: true, availability: 'unavailable' as const });
+        const folded = foldUnavailableRows({
+            sections: [
+                { id: 'native', options: [{ value: 'model-a' as Value, label: 'Model A', availability: 'available' as const }] },
+                { id: 'team-resource:t1:muse', options: [status('team-resource:t1:muse', 'Muse')] },
+                { id: 'team-resource:t1:sonnet', options: [status('team-resource:t1:sonnet', 'Sonnet pool')] },
+            ],
+            isUnavailable: option => option.availability === 'unavailable',
+            group: (options, title) => ({ id: 'unavailable', title, options }),
+            title: 'Unavailable',
+        });
+        let sections: readonly SelectionListSectionDescriptor[] = [];
+        function Picker() {
+            sections = useOptionPickerSections<Value>({ sourceSections: folded, getValueKey: value => String(value),
+                optionTestIDPrefix: 'model', selectedControlsExpandedContent: undefined, renderVisuals, onPressIn });
+            return null;
+        }
+        await renderScreen(<Picker />);
+        const unavailable = sections.find(section => section.id === 'unavailable');
+        if (unavailable?.kind !== 'static') throw new Error('Expected the folded Unavailable group');
+        expect(unavailable.title).toBe('Unavailable (2)');
+        expect(unavailable.options.map(option => option.label)).toEqual(['Muse', 'Sonnet pool']);
     });
 });

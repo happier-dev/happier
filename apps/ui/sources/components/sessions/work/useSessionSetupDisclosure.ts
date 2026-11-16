@@ -14,8 +14,9 @@ export function useSessionSetupDisclosure(): WorkSectionSetupDisclosure {
     const roles = useSessionInfoSectionExpanded('roles');
     const notes = useSessionInfoSectionExpanded('notes');
     const about = useSessionInfoSectionExpanded('about');
+    const skills = useSessionInfoSectionExpanded('skills');
     return React.useMemo(() => {
-        const remembered: Readonly<Record<string, boolean | undefined>> = { instructions, memory, context, voice, roles, notes, about };
+        const remembered: Readonly<Record<string, boolean | undefined>> = { instructions, memory, context, voice, roles, notes, about, skills };
         return {
             isExpanded: (key: string, sectionDefault?: boolean) =>
                 remembered[key] ?? sectionDefault ?? key === 'instructions',
@@ -23,5 +24,5 @@ export function useSessionSetupDisclosure(): WorkSectionSetupDisclosure {
                 sessionInfoDisclosuresState.set(key, expanded);
             },
         };
-    }, [instructions, memory, context, voice, roles, notes, about]);
+    }, [instructions, memory, context, voice, roles, notes, about, skills]);
 }

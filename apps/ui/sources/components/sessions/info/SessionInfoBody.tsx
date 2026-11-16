@@ -1333,7 +1333,7 @@ function SessionInfoContent({
 
       {/* Setup: how the agent works here. Habits: what starts from it and what writes into it. */}
       {!contentUnavailable ? (
-        <SessionSetupSections session={session} serverId={sessionServerId} onOpenSkills={openSessionSkills} />
+        <SessionSetupSections session={session} serverId={sessionServerId} />
       ) : null}
       {!contentUnavailable ? (
         // Folded, the section stays mounted (its read is what proves it empty) but draws nothing.

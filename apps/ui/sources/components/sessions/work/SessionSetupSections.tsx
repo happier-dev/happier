@@ -13,10 +13,6 @@ import {
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { NavigationPlacementPinButton } from '@/components/ui/navigation/NavigationPlacementPinButton';
-import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
-import { RIGHT_SIDEBAR_BUILTIN_TABS } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
-import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
 import { SessionTriggerHistoryScope } from '@/components/workflows/triggers/SessionTriggerHistoryScope';
 import { SessionTriggersSection, type SessionTriggersSectionActions } from '@/components/workflows/triggers/SessionTriggersSection';
 import { SessionWritesHereSection } from '@/components/workflows/triggers/SessionWritesHereSection';
@@ -38,23 +34,30 @@ import { SessionNotesSection } from './roles/SessionNotesSection';
 import { SessionRolesSection } from './roles/SessionRolesSection';
 import { SessionVoiceSection } from './voice/SessionVoiceSection';
 import {
+  WorkSection,
   WorkSectionPlacementProvider,
   WorkSectionSetupDisclosureProvider,
 } from './WorkSection';
+import { SessionPaneLazyLoader } from '@/components/sessions/panes/SessionPaneLazyLoader';
 import { useSessionSetupDisclosure } from './useSessionSetupDisclosure';
 import { useSessionSkillCount } from '@/sync/domains/capabilities/session/useSessionCapabilities';
 
-const skillsNavigationItems = RIGHT_SIDEBAR_BUILTIN_TABS.filter(tab => tab.id === 'skills');
+const loadSessionSkillsPane = async () => (await import('@/components/sessions/capabilities/SessionSkillsPane')).SessionSkillsPane;
 
-function SessionSkillsRow(props: Readonly<{ sessionId: string; serverId: string; onPress?: () => void }>) {
+/**
+ * Skills open in place like every Setup row (owner 11-15 C5), on the same Skills component the rail's Skills
+ * panel hosts (one component, two hosts). The rail owns pinning, so the row carries no pin.
+ */
+function SessionSkillsRow(props: Readonly<{ sessionId: string; serverId: string }>) {
   const count = useSessionSkillCount(props.sessionId, props.serverId);
-  const { preferences } = useNavigationSurfacePlacement('sessionRail');
-  const pinned = resolveNavigationPlacements(skillsNavigationItems, preferences).effectivePlacements.skills === 'pinned';
-  return <Item testID="session-setup-skills" title={t('capabilities.skills.title')}
-    detail={count === null ? '—' : String(count)} icon={<Icon name="lightbulb" />} onPress={props.onPress}
-    rightElementOutsidePressable keepChevronWithRightElement
-    rightElement={<NavigationPlacementPinButton surfaceId="sessionRail" entryId="skills" pinned={pinned}
-      label={t(pinned ? 'bots.unpin' : 'bots.pin')} preferences={preferences} testID="session-setup-skills.pin" />} />;
+  return (
+    <WorkSection testID="session-setup-skills" nativeID="skills" anatomy="page" icon="lightbulb"
+      title={t('capabilities.skills.title')} count={count ?? 0} summary={count === null ? '—' : String(count)}
+      setupDefaultExpanded={false}>
+      <SessionPaneLazyLoader load={loadSessionSkillsPane} props={{ sessionId: props.sessionId, serverId: props.serverId }}
+        testID="session-setup-skills-loading" />
+    </WorkSection>
+  );
 }
 
 /** Where `/session/[id]/triggers` brings the person: the Triggers section of the Session's Info page. */
@@ -73,7 +76,6 @@ export const SessionSetupSections = React.memo(function SessionSetupSections(
   props: Readonly<{
     session: Session;
     serverId: string;
-    onOpenSkills?: () => void;
   }>,
 ) {
   const { session, serverId } = props;
@@ -119,7 +121,7 @@ export const SessionSetupSections = React.memo(function SessionSetupSections(
           <WorkSectionSetupDisclosureProvider value={disclosure}>
             <SessionInstructionsSection session={session} serverId={serverId} />
             <SessionMemorySection session={session} serverId={serverId} />
-            <SessionSkillsRow sessionId={session.id} serverId={serverId} onPress={props.onOpenSkills} />
+            <SessionSkillsRow sessionId={session.id} serverId={serverId} />
             {isBot ? null : context}
             <SessionVoiceSection session={session} serverId={serverId} />
             {isBot ? context : null}

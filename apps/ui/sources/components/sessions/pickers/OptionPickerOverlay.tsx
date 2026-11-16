@@ -106,6 +106,11 @@ const ENGINE_PANE_COLUMNS: SelectionListColumnsLayout = {
 
 export type OptionPickerOption<TValue = string> = Readonly<{
     value: TValue;
+    /**
+     * A status row's own identity (it has no value): the source it speaks for, so several sources' rows can
+     * share one section (the folded "Unavailable (n)" group) without collapsing into one.
+     */
+    key?: string;
     label: string;
     /** Quiet text after the label ("· via DeepSeek") that tells apart rows with the same name; searchable. */
     labelSuffix?: string;

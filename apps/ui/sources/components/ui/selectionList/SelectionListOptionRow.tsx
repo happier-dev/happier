@@ -122,6 +122,9 @@ const cardStyles = StyleSheet.create((theme) => ({
     paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX,
     paddingVertical: SELECTION_LIST_CARD_CONTENT_INSET_PX,
   },
+  selectedRowFill: {
+    backgroundColor: 'transparent',
+  },
 }));
 
 /**
@@ -687,6 +690,9 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
         }}
         onPress={handlePress}
         selected={isSelected}
+        // A selected card owns the fill over its row AND its expanded controls; the row's own selected fill on top
+        // stacked a darker band over the title (owner 11-15 C6), so inside a selected card the row paints none.
+        {...(isCard && isSelected ? { pressableStyle: cardStyles.selectedRowFill } : {})}
         focused={paintsFocus}
         // The list has one highlight and the pointer moves it; a hover fill of its own would show a second row selected.
         hoverFill={false}
