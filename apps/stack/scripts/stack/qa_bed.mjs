@@ -206,11 +206,26 @@ async function seedAndSignIn({ rootDir, stackName, profile }) {
   return { summary, keyFile };
 }
 
-async function startBed({ rootDir, stackName, step }) {
+export async function startQaBedStack({ rootDir, stackName, step }, { runStackImpl = runStack } = {}) {
   // Always the reload route: it selects the producer's latest built revision
   // (`--rev` default) and adopts it. A plain first start captures the checkout
   // instead and is gated on the producer's load sentinel.
-  requireOk(await runStack({ rootDir, args: ['start', stackName, '--background', '--runtime=source', '--no-browser', '--restart'] }), step);
+  const started = await runStackImpl({ rootDir, args: ['start', stackName, '--background', '--runtime=source', '--no-browser', '--restart'] });
+  if (started?.ok === true) return started;
+  // A start that failed part way can leave a remote runtime, its forwards or the
+  // runner up, and a retry then cannot bind them. The Stack's own stop retires
+  // everything it recorded; this bed is ours (create/reset checked the marker).
+  const stopped = await runStackImpl({ rootDir, args: ['stop', stackName] });
+  const exit = (result) => result?.exitCode ?? result?.code ?? 'unknown';
+  const cleanup = stopped?.ok === true ? 'stopped' : 'stop_failed';
+  throw Object.assign(new Error(`[qa-bed] ${step} failed (exit ${exit(started)}); ${cleanup === 'stopped'
+    ? 'the bed was stopped, so a retry starts clean'
+    : `stop also failed (exit ${exit(stopped)}); run \`hstack stack stop ${stackName}\` before retrying`}; rerun the step by hand for its output`),
+  { code: `qa_bed_${step}_failed`, cleanup });
+}
+
+async function startBed(input) {
+  await startQaBedStack(input);
 }
 
 export async function createQaBed({ rootDir, stackName, profile, repoDir }) {
@@ -272,7 +287,8 @@ export async function runQaBedCommand({ rootDir, argv }) {
     else if (action === 'reset') result = await resetQaBed({ rootDir, stackName, profile: profileArg });
     else result = await checkQaBed({ rootDir, stackName });
   } catch (error) {
-    result = { status: 'NOT_READY', check: action, code: error?.code ?? null, message: error instanceof Error ? error.message : String(error) };
+    result = { status: 'NOT_READY', check: action, code: error?.code ?? null, ...(error?.cleanup ? { cleanup: error.cleanup } : {}),
+      message: error instanceof Error ? error.message : String(error) };
   }
   process.stdout.write(`${JSON.stringify({ kind: 'qa_bed', action, ...result })}\n`);
   if (result.status !== 'READY') process.exitCode = 1;

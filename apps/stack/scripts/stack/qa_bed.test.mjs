@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { projectQaBedReadiness, resolveQaBedDaemonHost } from './qa_bed.mjs';
+import { projectQaBedReadiness, resolveQaBedDaemonHost, startQaBedStack } from './qa_bed.mjs';
 
 const targets = [
   { name: 'nl3', repoDir: '/home/happier/happier-dev/', platform: 'posix' },
@@ -34,4 +34,27 @@ test('readiness names the first failing check and is READY only when every check
   );
   assert.equal(projectQaBedReadiness({ ...ok, agentTurn: { ok: false, phase: 'history' } }).check, 'agent_turn');
   assert.equal(projectQaBedReadiness({ ...ok, auth: { authenticated: false }, seeded: null, agentTurn: null }).check, 'cli_auth');
+});
+
+test('a failed bed start stops what it started through the Stack lifecycle, so a retry starts clean', async () => {
+  // P03-INFRA-RESPONDER-2 attempt 1 died at server readiness and left nl3 serving
+  // on the bed's port; the retry's forward could not bind until `stack stop` ran.
+  const calls = [];
+  const runStackImpl = async ({ args }) => {
+    calls.push(args);
+    return args[0] === 'start' ? { ok: false, exitCode: 1 } : { ok: true, exitCode: 0 };
+  };
+  await assert.rejects(startQaBedStack({ rootDir: '/r', stackName: 'agent-qa-x-bed', step: 'start' }, { runStackImpl }),
+    (error) => error.code === 'qa_bed_start_failed' && error.cleanup === 'stopped');
+  assert.deepEqual(calls.map((args) => args.slice(0, 2)), [['start', 'agent-qa-x-bed'], ['stop', 'agent-qa-x-bed']]);
+
+  // A stop that cannot finish is reported, never hidden behind the start failure.
+  const failedStop = async ({ args }) => ({ ok: false, exitCode: args[0] === 'start' ? 1 : 3 });
+  await assert.rejects(startQaBedStack({ rootDir: '/r', stackName: 'agent-qa-x-bed', step: 'restart' }, { runStackImpl: failedStop }),
+    (error) => error.code === 'qa_bed_restart_failed' && error.cleanup === 'stop_failed' && /stop also failed \(exit 3\)/.test(error.message));
+
+  // A start that succeeded is left running.
+  calls.length = 0;
+  await startQaBedStack({ rootDir: '/r', stackName: 'agent-qa-x-bed', step: 'start' }, { runStackImpl: async ({ args }) => { calls.push(args); return { ok: true }; } });
+  assert.deepEqual(calls.map((args) => args[0]), ['start']);
 });
