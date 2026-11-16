@@ -1,3 +1,4 @@
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import { normalizeWorkflowIngress } from '@happier-dev/protocol/workflows/workflowValidationV1';
 import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { SessionInitialTriggerDefinitionV1Schema, type WorkflowTriggerSetV1, type SessionInitialTriggerDefinitionV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -35,7 +36,7 @@ export type PluginEventTriggerInput = Extract<AutomationTriggerDefinitionInput, 
 export type TriggerWhenValue =
     | AutomationRunLifecycleTrigger
     | Readonly<{ kind: 'pluginEvent'; value: PluginEventTriggerInput | null; eventRef?: Readonly<{ pluginId: string; localId: string }>;
-        observationOnly?: Readonly<{ kind: 'observationOnly' }> }>
+        observationOnly?: Readonly<{ kind: 'observationOnly' }>; payloadSchema?: PluginJsonSchemaV2 | null }>
     | Readonly<{
         kind: 'turnEnds';
         sourceSessionId?: string;

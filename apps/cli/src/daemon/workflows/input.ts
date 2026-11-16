@@ -1,6 +1,7 @@
 import { MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { readWorkflowValuePathV1 } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import type { WorkflowTriggerEventValueV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { WorkflowSessionContextV1Schema } from '@happier-dev/protocol/workflows/workflowSessionContextV1';
 import type { WorkflowSessionContextV1, WorkflowAuthoredInputV1, WorkflowAuthoredProducerRef, WorkflowCondition, WorkflowDefinitionV1, WorkflowStepComposerDocument, WorkflowValueReference } from '@happier-dev/protocol/workflows';
 import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
@@ -118,6 +119,7 @@ export function bindAutomationWorkflowInputs(params: Readonly<{
 
 export type WorkflowValueResolutionRuntime = Readonly<{
   inputs: Readonly<Record<string, WorkflowJsonValue>>;
+  triggerEventValues?: readonly WorkflowTriggerEventValueV1[];
   item?: Readonly<{ value: WorkflowJsonValue; index: number; position: number; count: number }>;
   iteration?: Readonly<{
     index: number;
@@ -187,13 +189,17 @@ export async function resolveWorkflowActionFieldBinding(
     reference.kind === 'origin_session_id' ? originSessionId ?? null : await resolveWorkflowValueReference(reference, runtime);
   if (binding.kind === 'text') {
     if (textEncoding === undefined) throw new WorkflowInputResolutionError('invalid_input');
-    const values = new Map<number, WorkflowJsonValue>();
+    const values = new Map<number, WorkflowJsonValue | undefined>();
     for (const index of listWorkflowActionTextInputIndexesV1(binding.document)) {
       const reference = binding.input[index];
       if (reference === undefined) throw new WorkflowInputResolutionError('missing_reference');
-      values.set(index, await resolve(reference));
+      try {
+        values.set(index, await resolve(reference));
+      } catch (error) {
+        if (reference.kind !== 'trigger_event' || !(error instanceof WorkflowInputResolutionError) || error.code !== 'missing_reference') throw error;
+      }
     }
-    const rendered = renderWorkflowActionTextV1(binding.document, textEncoding, index => values.get(index)!);
+    const rendered = renderWorkflowActionTextV1(binding.document, textEncoding, index => values.get(index));
     if (!rendered.ok) throw new WorkflowInputResolutionError('invalid_input');
     return rendered.value;
   }
@@ -227,6 +233,12 @@ export async function resolveWorkflowValueReference(
         throw new WorkflowInputResolutionError('missing_reference');
       }
       return selectWorkflowResultPath(runtime.inputs[reference.name]!, reference.path ?? [], 'missing_reference');
+    }
+    case 'trigger_event': {
+      const sealed = runtime.triggerEventValues?.find(value => sameStrictJsonValue(value.event, reference.event)
+        && sameStrictJsonValue(value.path, reference.path));
+      if (!sealed) throw new WorkflowInputResolutionError('missing_reference');
+      return sealed.value;
     }
     case 'result': {
       if (runtime.resolveResultPath) return await runtime.resolveResultPath(reference.producer, reference.path);
@@ -282,7 +294,8 @@ async function resolveConditionValue(
   try {
     return await resolveWorkflowValueReference(reference, runtime);
   } catch (error) {
-    if (reference.kind === 'session_context_field' && error instanceof WorkflowInputResolutionError && error.code === 'missing_reference') return undefined;
+    if ((reference.kind === 'session_context_field' || reference.kind === 'trigger_event')
+      && error instanceof WorkflowInputResolutionError && error.code === 'missing_reference') return undefined;
     if (error instanceof WorkflowInputResolutionError && (error.code === 'workflow_session_context_unavailable'
       || error.code === 'workflow_discussion_context_unavailable')) throw error;
     if (error instanceof WorkflowInputResolutionError) {
@@ -443,7 +456,7 @@ export async function materializeWorkflowStepInput(params: Readonly<{
       const token = tokens.get(index);
       resolvedInputs.push({ ...(token === undefined ? {} : { token }), reference, value });
     } catch (error) {
-      if (reference.kind === 'result' && reference.optional === true
+      if ((reference.kind === 'trigger_event' || (reference.kind === 'result' && reference.optional === true))
         && error instanceof WorkflowInputResolutionError && error.code === 'missing_reference') continue;
       throw error;
     }

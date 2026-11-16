@@ -133,6 +133,10 @@ export function createCliWorkflowFamily(
 
   const workflowDefinitions: ReturnType<typeof createWorkflowDefinitionActions> | null = params.credentials
     ? createWorkflowDefinitionActions({ artifactStore: roleArtifactStore!,
+      readWorkflowTriggerEvents: (input) => {
+        if (!workflowTriggers) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+        return workflowTriggers.readWorkflowTriggerEvents(input);
+      },
       readWorkflowTriggerSummaries: (definitionIds) => {
         if (!workflowTriggers) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
         return workflowTriggers.readWorkflowSummaries(definitionIds);

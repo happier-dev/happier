@@ -1,4 +1,6 @@
 import axios from '@/api/client/credentialAxios';
+import { AutomationTriggerEventDeclarationsRequestSchema, AutomationTriggerEventDeclarationsResponseSchema,
+  type AutomationTriggerEventDeclarationsRequest } from '@happier-dev/protocol/automations/automationApiV3';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { WorkflowHttpErrorDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -100,6 +102,19 @@ export async function listAutomationDefinitions(params: Readonly<Partial<Automat
 }
 
 /** Trigger-set readers consume admitted detail pages instead of hydrating summaries one by one. */
+export async function readAutomationTriggerEventDeclarations(params: Readonly<{
+  token: string; input: AutomationTriggerEventDeclarationsRequest; signal?: AbortSignal;
+}>) {
+  const response = await axios.post(`${resolveServerHttpBaseUrl()}/v3/automations/query`,
+    AutomationTriggerEventDeclarationsRequestSchema.parse(params.input), {
+      headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.token}` },
+      ...(params.signal === undefined ? {} : { signal: params.signal }),
+      timeout: AUTOMATION_HTTP_TIMEOUT_MS, validateStatus: () => true,
+    });
+  if (response.status < 200 || response.status >= 300) throw automationHttpError(response.status, response.data);
+  return AutomationTriggerEventDeclarationsResponseSchema.parse(response.data);
+}
+
 export async function listAutomationDefinitionDetails(params: Readonly<Partial<AutomationDefinitionListRequest> & {
   token: string;
   signal?: AbortSignal;

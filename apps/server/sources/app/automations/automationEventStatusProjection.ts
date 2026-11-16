@@ -8,7 +8,11 @@ import { db } from "@/storage/db";
 import { portableQueryChunks as automationPortableQueryChunks } from "@/storage/portableQueryChunks";
 import type { AutomationListItem, AutomationTriggerItem } from "./automationTypes";
 
+import { loadAutomationEventPayloadSchemas } from './automationEventPayloadSchemaProjection';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
+
 export type AutomationEventStatusProjection = Readonly<{
+    payloadSchema?: PluginJsonSchemaV2 | null;
     sourceStatus: AutomationEventSourceStatusV1 | null;
     sourceCatalogStatus: AutomationEventSourceCatalogStatus | null;
     durablePushEndpointMaterializationRef: PluginMachineMaterializationRefV1 | null;
@@ -148,6 +152,7 @@ function assignedWatcherCatalogLookup(accountId: string, trigger: PluginEventTri
  */
 export async function loadAutomationEventStatusProjections(params: Readonly<{
     automations: readonly AutomationListItem[];
+    includePayloadSchemas?: true;
 }>): Promise<ReadonlyMap<string, AutomationEventStatusProjection>> {
     const projections = new Map<string, AutomationEventStatusProjection>();
     const eventEntries = params.automations.flatMap((automation) => automation.triggers.flatMap((trigger) => {
@@ -286,6 +291,15 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
         registerCatalogLookup(durablePush);
     }
 
+    const payloadSchemas = params.includePayloadSchemas ? await loadAutomationEventPayloadSchemas(eventEntries.flatMap(({ automation, trigger }) => {
+        const reporter = currentReporterByTriggerId.get(trigger.id);
+        if (!reporter || trigger.eventPluginId === null || trigger.eventLocalId === null || trigger.sourceContractVersion === null) return [];
+        return [{ triggerId: trigger.id, accountId: automation.accountId, pluginId: trigger.eventPluginId,
+            eventLocalId: trigger.eventLocalId, sourceContractVersion: trigger.sourceContractVersion,
+            machineId: reporter.reporterMachineId, machineInstallationId: reporter.reporterMachineInstallationId,
+            materializationId: reporter.reporterMaterializationId }];
+    })) : null;
+
     // The retained summary row keeps whichever reporter wrote it last. The
     // status writer only accepts the Automation's current watcher or current
     // durable-push endpoint target, so a row whose reporter no longer matches
@@ -362,6 +376,7 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
         if (current === undefined) continue;
         const catalogLookupKey = catalogLookupKeysByTriggerId.get(trigger.id);
         projections.set(trigger.id, {
+            ...(payloadSchemas ? { payloadSchema: payloadSchemas.get(trigger.id) ?? null } : {}),
             sourceStatus: sourceStatusByTriggerId.get(trigger.id) ?? null,
             sourceCatalogStatus: catalogLookupKey === undefined
                 ? null

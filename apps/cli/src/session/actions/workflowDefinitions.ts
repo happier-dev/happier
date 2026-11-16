@@ -11,6 +11,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
   resolveMaterializer?: ReturnType<typeof createWorkflowMaterializationHostV1>;
   readPluginWorkflows?: WorkflowPluginSourceReaderV1;
   readWorkflowTriggerSummaries?: Parameters<typeof createSharedWorkflowDefinitionActions>[0]['readWorkflowTriggerSummaries'];
+  readWorkflowTriggerEvents?: Parameters<typeof createSharedWorkflowDefinitionActions>[0]['readWorkflowTriggerEvents'];
 }>) {
   return createSharedWorkflowDefinitionActions({
     artifactStore: params.artifactStore,
@@ -23,6 +24,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       return readPluginWorkflowSources(readCurrentContributionRegistry());
     }),
     ...(params.readWorkflowTriggerSummaries ? { readWorkflowTriggerSummaries: params.readWorkflowTriggerSummaries } : {}),
+    ...(params.readWorkflowTriggerEvents ? { readWorkflowTriggerEvents: params.readWorkflowTriggerEvents } : {}),
     ...(params.removeWorkflowTriggers ? { removeWorkflowTriggers: params.removeWorkflowTriggers } : {}),
     ...(params.resolveMaterializer ? { resolveMaterializer: params.resolveMaterializer } : {}),
   });

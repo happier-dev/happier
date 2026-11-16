@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -15,7 +15,8 @@ vi.mock('@/modal', async () => {
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 installDisconnectedServerSocketBoundary();
-beforeAll(loadSyncSingletonForTests);
+// Resolve the real runtime graph during collection, outside behavioral hook timeouts.
+await loadSyncSingletonForTests();
 const { createWorkflowDefinition, getWorkflowDefinition, listWorkflowDefinitions,
     updateWorkflowDefinition, deleteWorkflowDefinition, exportSavedWorkflowDocument, isWorkflowDefinitionConflictError } = await import('./workflowDefinitionActions');
 const { storage } = await import('@/sync/domains/state/storageStore');
@@ -44,6 +45,30 @@ beforeEach(async () => {
 afterEach(async () => { await home.reset(); storage.setState(previous); publishAppliedActiveServerSnapshot(applied, available); });
 
 describe('workflow definition Action client through Account Artifact storage', () => {
+    it('saves the first Event reference with its intended trigger, rejects an invalid leaf, and copies without triggers', async () => {
+        const event = { pluginId: 'com.acme.events', localId: 'pull-request' };
+        const intendedTriggers = [{ kind: 'pluginEvent' as const, eventRef: event, observationTransport: {
+            kind: 'checkpointedPull' as const, watcherMaterializationRef: {
+                machineId: 'machine', pluginId: event.pluginId, materializationId: 'materialization',
+            },
+        } }];
+        const eventDefinition = (path: readonly string[]) => ({ ...definition, blocks: [{
+            kind: 'step', id: 'review', document: { text: 'Review Event', references: [], attachments: [] },
+            input: [{ kind: 'trigger_event', event, path }], result: { kind: 'text' },
+        }] });
+        home.answer(serverId, 'POST /v3/automations/query', { body: { triggerEvents: [{ event,
+            payloadSchema: { type: 'object', properties: { number: { type: 'number' }, repository: { type: 'object' } } },
+        }] } });
+        const created = await createWorkflowDefinition({ definitionId, definition: eventDefinition(['number']), metadata, intendedTriggers });
+        expect(created.definition.blocks[0]).toMatchObject({ input: [{ kind: 'trigger_event', event, path: ['number'] }] });
+        await expect(updateWorkflowDefinition({ definitionId, expectedRevision: created.revision,
+            definition: eventDefinition(['repository']), metadata, intendedTriggers })).rejects.toMatchObject({ code: 'invalid_input' });
+        expect((await getWorkflowDefinition({ definitionId })).definition).toEqual(created.definition);
+        const copyId = '00000000-0000-4000-8000-000000000002';
+        const copied = await createWorkflowDefinition({ definitionId: copyId, definition: created.definition, metadata, intendedTriggers: [] });
+        expect((await getWorkflowDefinition({ definitionId: copyId })).definition).toEqual(copied.definition);
+    });
+
     it('reads the library page with a continuation bound to the requested page size', async () => {
         await createWorkflowDefinition({ definitionId, definition, metadata });
         await createWorkflowDefinition({ definitionId: '00000000-0000-4000-8000-000000000002', definition, metadata: { title: 'Second' } });

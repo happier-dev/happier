@@ -127,6 +127,7 @@ function triggerProjection(
         observation,
         sourceStatus: status?.sourceStatus ?? null,
         sourceCatalogStatus: status?.sourceCatalogStatus ?? null,
+        ...(includeDefinition ? { payloadSchema: status?.payloadSchema ?? null } : {}),
         ...(includeDefinition || includeObservationDisplayCarrier
             ? { triggerDefinitionEnvelope: required(trigger.definitionEnvelope, "definitionEnvelope") }
             : {}),

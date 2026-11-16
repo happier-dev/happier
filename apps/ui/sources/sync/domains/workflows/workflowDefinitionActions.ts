@@ -1,5 +1,6 @@
 import { WorkflowDefinitionCreateRequestV1Schema, WorkflowDefinitionCreateResultV1Schema, WorkflowDefinitionDeleteRequestV1Schema, WorkflowDefinitionDeleteResultV1Schema, WorkflowDefinitionGetRequestV1Schema, WorkflowDefinitionGetResultV1Schema, WorkflowDefinitionListRequestV1Schema, WorkflowDefinitionListResultV1Schema, WorkflowDefinitionUpdateRequestV1Schema, WorkflowDefinitionUpdateResultV1Schema, type WorkflowDefinitionCreateResultV1, type WorkflowDefinitionDeleteResultV1, type WorkflowDefinitionGetResultV1, type WorkflowDefinitionListResultV1, type WorkflowDefinitionUpdateResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { WorkflowArtifactRevisionV1, WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
@@ -133,6 +134,7 @@ export async function createWorkflowDefinition(params: Readonly<{
     definitionId: string;
     definition: unknown;
     metadata: WorkflowDefinitionMetadataV1;
+    intendedTriggers?: readonly WorkflowIntendedTriggerV1[];
     signal?: AbortSignal;
     context?: WorkflowActionCallerContext;
     accountLifetime?: ServerAccountScopeLifetime | null;
@@ -141,6 +143,7 @@ export async function createWorkflowDefinition(params: Readonly<{
         definitionId: params.definitionId,
         definition: params.definition,
         metadata: params.metadata,
+        ...(params.intendedTriggers === undefined ? {} : { intendedTriggers: params.intendedTriggers }),
     });
     return callDefinitionAction({
         actionId: 'workflow.definition.create',
@@ -164,6 +167,7 @@ export async function updateWorkflowDefinition(params: Readonly<{
     expectedRevision: WorkflowArtifactRevisionV1;
     definition: unknown;
     metadata: WorkflowDefinitionMetadataV1;
+    intendedTriggers?: readonly WorkflowIntendedTriggerV1[];
     signal?: AbortSignal;
     context?: WorkflowActionCallerContext;
     accountLifetime?: ServerAccountScopeLifetime | null;
@@ -173,6 +177,7 @@ export async function updateWorkflowDefinition(params: Readonly<{
         expectedRevision: params.expectedRevision,
         definition: params.definition,
         metadata: params.metadata,
+        ...(params.intendedTriggers === undefined ? {} : { intendedTriggers: params.intendedTriggers }),
     });
     return callDefinitionAction({
         actionId: 'workflow.definition.update',

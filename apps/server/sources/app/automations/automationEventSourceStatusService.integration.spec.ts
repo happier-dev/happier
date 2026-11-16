@@ -23,6 +23,9 @@ import {
 import { getAutomation, listAutomations } from "./automationCrudService";
 import { toAutomationDefinitionListItemApiDto } from "./automationApiProjection";
 import { loadAutomationEventStatusProjections } from "./automationEventStatusProjection";
+import { createRouteTestBuilder } from '@/app/api/testkit/routeTestBuilder';
+import { registerAutomationV3Routes } from '@/app/api/routes/automations/registerAutomationV3Routes';
+import type { Fastify } from '@/app/api/types';
 
 const ACCOUNT_ID = "account-automation-source-status";
 const MACHINE_ID = "machine-automation-source-status";
@@ -402,6 +405,54 @@ describe("Automation Event source status", () => {
             admittedCount: 1,
             skippedCount: 1,
         });
+    });
+
+    it('reads declared Event payload schemas for disabled editor triggers without widening summary reads', async () => {
+        await seed();
+        await db.automation.update({ where: { id: AUTOMATION_ID }, data: { enabled: false } });
+        await db.automationTrigger.update({ where: { id: TRIGGER_ID }, data: { enabled: false } });
+        const automations = await listAutomations({ accountId: ACCOUNT_ID });
+        const summary = await loadAutomationEventStatusProjections({ automations });
+        expect(summary.get(TRIGGER_ID)).not.toHaveProperty('payloadSchema');
+        const editor = await loadAutomationEventStatusProjections({ automations, includePayloadSchemas: true });
+        expect(editor.get(TRIGGER_ID)).toMatchObject({ payloadSchema: { type: 'object', additionalProperties: false } });
+        const automation = automations[0]!;
+        const original = automation.triggers[0]!;
+        const mixed = await loadAutomationEventStatusProjections({ includePayloadSchemas: true, automations: [{ ...automation,
+            triggers: [original, { ...original, id: 'old-installation', watcherMachineInstallationId: 'old-installation' }] }] });
+        expect(mixed.get(TRIGGER_ID)).toHaveProperty('payloadSchema', { type: 'object', additionalProperties: false });
+        expect(mixed.get('old-installation')).toHaveProperty('payloadSchema', null);
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID } },
+            data: { enabled: false } });
+        const retired = await loadAutomationEventStatusProjections({ automations, includePayloadSchemas: true });
+        expect(retired.get(TRIGGER_ID)).toHaveProperty('payloadSchema', null);
+    });
+
+    it('reads declared Event payload schemas for intended triggers through the Account query without saving', async () => {
+        await seed({ supportedObservationTransports: ['checkpointedPull', 'durablePush'] });
+        const route = createRouteTestBuilder({ method: 'POST', path: '/v3/automations/query',
+            registerRoutes: app => registerAutomationV3Routes(app as unknown as Fastify) });
+        const input = { triggerEventDeclarations: [{ kind: 'pluginEvent',
+            eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                machineId: MACHINE_ID, materializationId: MATERIALIZATION_ID, pluginId: PLUGIN_ID,
+            } } }] };
+        const own = await route.invoke({ userId: ACCOUNT_ID, body: input });
+        expect(own.response).toEqual({ triggerEvents: [{ event: input.triggerEventDeclarations[0]!.eventRef,
+            payloadSchema: { type: 'object', additionalProperties: false } }] });
+        await seedCurrentDurablePushEndpoint();
+        const endpointInput = { triggerEventDeclarations: [{ kind: 'pluginEvent',
+            eventRef: input.triggerEventDeclarations[0]!.eventRef,
+            observationTransport: { kind: 'durablePush', webhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
+                endpointMaterializationRef: { machineId: 'authored-placement', pluginId: PLUGIN_ID, materializationId: 'authored-placement' },
+                webhookRoutingSourceInstanceId: 'repository-source-status', setup: { kind: 'accountEndpointV1', credential: 'serverGenerated' } } }] };
+        const endpoint = await route.invoke({ userId: ACCOUNT_ID, body: endpointInput });
+        expect(endpoint.response).toEqual(own.response);
+        await db.pluginWebhookEndpoint.update({ where: { id: DURABLE_PUSH_ENDPOINT_ID }, data: { targetMaterializationId: 'retargeted' } });
+        const moved = await route.invoke({ userId: ACCOUNT_ID, body: endpointInput });
+        expect(moved.response).toEqual({ triggerEvents: [{ event: input.triggerEventDeclarations[0]!.eventRef, payloadSchema: null }] });
+        const other = await route.invoke({ userId: 'another-account', body: input });
+        expect(other.response).toEqual({ triggerEvents: [{ event: input.triggerEventDeclarations[0]!.eventRef, payloadSchema: null }] });
     });
 
     it.each(["admissionUnavailable", "service_unavailable", "historyGap"] as const)("explains %s through the saved source list and detail projection", async (failureCode) => {

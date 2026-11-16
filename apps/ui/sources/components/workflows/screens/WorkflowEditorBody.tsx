@@ -298,6 +298,7 @@ const WORKFLOW_HOW_WHERE_CARD_ID = 'card:howWhere';
 type WorkflowFirstCardId = typeof WORKFLOW_WHEN_CARD_ID | typeof WORKFLOW_HOW_WHERE_CARD_ID;
 
 export type WorkflowEditorBodyProps = Readonly<{
+    triggerEvents?: NonNullable<Parameters<typeof validateWorkflowEditorDraft>[1]>['triggerEvents'];
     accountLifetime?: import('@/sync/domains/scope/serverAccountScope').ServerAccountScopeLifetime | null;
     /**
      * The draft, read by slice: each part of the page subscribes to what it shows, so a keystroke
@@ -513,6 +514,7 @@ type ReadWorkflowEditorValidation = (draft: WorkflowEditorDraft) => WorkflowDraf
 function validateWorkflowEditorPage(draft: WorkflowEditorDraft, input: Readonly<{
     stagedAttachments: ReturnType<ReturnType<typeof useWorkflowEditorComposerCustody>['readStagedAttachments']>;
     authoringFacts: SessionAuthoringControlFacts | undefined;
+    triggerEvents?: NonNullable<Parameters<typeof validateWorkflowEditorDraft>[1]>['triggerEvents'];
 }>): WorkflowDraftValidation {
     const targetIssues: WorkflowValidationIssue[] = [];
     // Device-local staged bytes cannot reach a stored definition, and the
@@ -554,6 +556,7 @@ function validateWorkflowEditorPage(draft: WorkflowEditorDraft, input: Readonly<
         });
     }
     return validateWorkflowEditorDraft(draft, {
+        triggerEvents: input.triggerEvents,
         targetValidation: input.authoringFacts === undefined ? 'unavailable' : 'checked',
         targetIssues,
     });
@@ -945,12 +948,13 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             if (last?.draft === draft) return last.validation;
             const validation = validateWorkflowEditorPage(draft, {
                 stagedAttachments: composerCustody.readStagedAttachments(), authoringFacts: props.authoringFacts,
+                triggerEvents: props.triggerEvents,
             });
             last = { draft, validation };
             return validation;
         };
         // The staged key is the custody's change signal for `readStagedAttachments`.
-    }, [composerCustody, props.authoringFacts, stagedAttachmentKey]);
+    }, [composerCustody, props.authoringFacts, props.triggerEvents, stagedAttachmentKey]);
     const resolveBlockLabel = React.useCallback((blockId: string): string => {
         const block = findWorkflowBlock(readDraft(), blockId);
         return block === null ? blockId : workflowBlockReferenceLabel(block);

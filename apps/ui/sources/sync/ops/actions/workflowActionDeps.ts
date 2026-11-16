@@ -54,6 +54,7 @@ import {
     getAutomationDefinition,
     listAutomationDefinitions,
     listAutomationDefinitionDetails,
+    readAutomationTriggerEventDeclarations,
     reconcileAutomationDefinition,
     runAutomationDefinitionNow,
 } from '@/sync/api/automations/apiAutomations';
@@ -215,6 +216,7 @@ export function createUiWorkflowAction(params: Readonly<{
     const automations: WorkflowTriggerAutomationOperations = {
         list: (input) => current(() => listAutomationDefinitions(account.credentials, input, account)),
         listDetails: (input) => current(() => listAutomationDefinitionDetails(account.credentials, input, account)),
+        readTriggerEventDeclarations: (input) => current(() => readAutomationTriggerEventDeclarations(account.credentials, input, account)),
         get: (automationId) => current(async () => {
             try {
                 return await getAutomationDefinition(account.credentials, automationId, account);
@@ -231,6 +233,7 @@ export function createUiWorkflowAction(params: Readonly<{
     const definitions = createWorkflowDefinitionActions({
         artifactStore: account.workflowArtifacts,
         readWorkflowTriggerSummaries: (definitionIds) => triggers.readWorkflowSummaries(definitionIds),
+        readWorkflowTriggerEvents: (input) => triggers.readWorkflowTriggerEvents(input),
         encodeListCursor: account.encodeArtifactListCursor,
         readPluginWorkflows: async () => {
             account.assertCurrent();

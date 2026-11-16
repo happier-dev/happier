@@ -13,8 +13,37 @@ import {
     type AutomationDefinitionDetail,
     type AutomationDefinitionListResponse,
     type AutomationDefinitionDetailsResponse,
+    type AutomationTriggerCreateRequest,
 } from '@happier-dev/protocol/automations/automationApiV3';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { createAutomationPluginEventTriggerDefinitionV1, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+
+/** The HTTP owner seals plain Event configuration and projects its public observation separately. */
+function createdTriggerDetail(automationId: string, row: AutomationTriggerCreateRequest) {
+    const trigger = row.trigger;
+    if (trigger.kind !== 'pluginEvent') return AutomationTriggerDetailSchema.parse({ ...trigger, id: row.triggerId,
+        revision: 1, createdAt: 1, updatedAt: 1, nextRunAt: null, triggerDefinitionEnvelope: null });
+    const transport = trigger.observationTransport;
+    const sourceSelectorId = 'sourceSelectorId' in trigger ? trigger.sourceSelectorId
+        : AutomationSourceSelectorIdV1Schema.parse('00000000-0000-4000-8000-000000000001');
+    const envelope = 'triggerDefinitionEnvelope' in trigger ? trigger.triggerDefinitionEnvelope
+        : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding: {
+            v: 1, automationId, triggerId: row.triggerId, triggerRevision: 0, triggerKind: 'pluginEvent',
+            eventRef: trigger.eventRef, sourceSelectorId,
+        }, definition: createAutomationPluginEventTriggerDefinitionV1(trigger) });
+    return AutomationTriggerDetailSchema.parse({ kind: trigger.kind, id: row.triggerId, enabled: trigger.enabled,
+        revision: 0, createdAt: 1, updatedAt: 1, eventRef: trigger.eventRef,
+        sourceSelectorId, sourceContractVersion: 1,
+        observation: transport.kind === 'durablePush'
+            ? { kind: 'durablePush', webhookEndpointId: transport.webhookEndpointId,
+                endpointMaterializationRef: null, observationStartsAt: transport.observationStartsAt }
+            : { kind: transport.kind, watcher: transport.watcherMaterializationRef
+                ? { ...transport.watcherMaterializationRef, machineInstallationId: 'fixture-installation' } : null },
+        sourceStatus: null, sourceCatalogStatus: null,
+        triggerDefinitionEnvelope: JSON.stringify(envelope),
+    });
+}
 
 /** Indexed selection stays at the HTTP boundary, beneath the real trigger read owner. */
 export function selectWorkflowAutomationListFixture(rows: readonly AutomationDefinitionDetail[], raw: unknown): AutomationDefinitionListResponse {
@@ -140,8 +169,7 @@ export function createWorkflowAutomationHttpBoundary(): {
                     ...(created.executionRecipe.v === 2 && created.executionRecipe.managedTarget !== undefined
                         ? { managedTarget: created.executionRecipe.managedTarget } : {}),
                     assignments: (created.assignments ?? []).map(row => ({ ...row, enabled: row.enabled ?? true, priority: row.priority ?? 0, updatedAt: 1 })),
-                    triggers: created.triggers.map(row => AutomationTriggerDetailSchema.parse({ ...row.trigger, id: row.triggerId,
-                        revision: 1, createdAt: 1, updatedAt: 1, nextRunAt: null, triggerDefinitionEnvelope: null })),
+                    triggers: created.triggers.map(row => createdTriggerDetail(created.automationId, row)),
                 });
                 rows.set(detail.id, detail);
                 return Response.json(detail);
@@ -163,8 +191,7 @@ export function createWorkflowAutomationHttpBoundary(): {
                     assignments: input.assignments.map(row => ({ ...row, enabled: row.enabled ?? true, priority: row.priority ?? 0, updatedAt: 1 })),
                     triggers: input.triggers.map(row => {
                         const saved = current.triggers.find(trigger => trigger.id === row.triggerId);
-                        if (row.kind === 'new') return AutomationTriggerDetailSchema.parse({ ...row.trigger, id: row.triggerId,
-                            revision: 1, createdAt: 1, updatedAt: 1, nextRunAt: null, triggerDefinitionEnvelope: null });
+                        if (row.kind === 'new') return createdTriggerDetail(id, row);
                         if (!saved) throw new Error('Automation fixture missing retained trigger');
                         return AutomationTriggerDetailSchema.parse({ ...saved, ...(row.trigger ?? {}),
                             ...(row.enabled === undefined ? {} : { enabled: row.enabled }),

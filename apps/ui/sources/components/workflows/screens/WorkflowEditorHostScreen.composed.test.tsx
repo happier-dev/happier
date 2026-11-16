@@ -96,6 +96,7 @@ import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/e
 import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { WorkflowDefinitionArtifactHeaderV1Schema, WorkflowDefinitionArtifactBodyV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { z } from 'zod/mini';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 
 type WorkflowEditorBodyProps = React.ComponentProps<
     typeof import('./WorkflowEditorBody').WorkflowEditorBody
@@ -868,7 +869,8 @@ it('opens a saved definition entered before Account readiness without a library 
 /** Account HTTP boundary; Workflow admission, codecs and Artifact CAS stay real. */
 async function serveMountedDraftActionHome(definition = createWorkflowDefinitionFixture({ defaults: {
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-} }), includeSavedArtifact = true, serverIdentityId?: string, settings?: Readonly<Record<string, unknown>>, accountMode: 'plain' | 'e2ee' = 'plain') {
+} }), includeSavedArtifact = true, serverIdentityId?: string, settings?: Readonly<Record<string, unknown>>, accountMode: 'plain' | 'e2ee' = 'plain',
+    triggerEvents: readonly Readonly<{ event: { pluginId: string; localId: string }; payloadSchema: PluginJsonSchemaV2 }>[] = []) {
     // The memory writer has a prepared HTTP boundary as well as the Home's
     // ordinary transport. Both consume this fixture's same explicit policy.
     if (settings) preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 });
@@ -950,6 +952,10 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         const grantsArtifactId = /^\/v1\/artifacts\/([^/]+)\/access\/grants$/.exec(request.path)?.[1];
         if (grantsArtifactId && (grantsArtifactId === artifact.id || creates.some(row => row.id === grantsArtifactId))) {
             return Response.json({ artifactId: grantsArtifactId, ownerAccountId: artifact.ownerAccountId, access: artifact.access, grants: [] });
+        }
+        if (request.path === '/v3/automations/query' && request.method === 'POST'
+            && request.body !== null && typeof request.body === 'object' && 'triggerEventDeclarations' in request.body) {
+            return Response.json({ triggerEvents });
         }
         const automationResponse = await automationBoundary.handle(request.url, { method: request.method,
             ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
@@ -1045,6 +1051,55 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 }
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it.each(['plain', 'e2ee'] as const)('validates a pending Event leaf offline and saves its first definition before enrolling the trigger (%s)', async accountMode => {
+        const event = { pluginId: 'com.acme.events', localId: 'pull-request' };
+        const payloadSchema: PluginJsonSchemaV2 = { type: 'object', properties: {
+            number: { type: 'number' }, repository: { type: 'object', properties: { name: { type: 'string' } } },
+        } };
+        const definition = createWorkflowDefinitionFixture({ defaults: {
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        } });
+        // The Event declaration can change after its editor projection was loaded.
+        const currentEvent: { event: typeof event; payloadSchema: PluginJsonSchemaV2 } = {
+            event, payloadSchema: { type: 'object', properties: { number: { type: 'object' } } },
+        };
+        const boundary = await serveMountedDraftActionHome(definition, false, undefined, undefined, accountMode, [currentEvent]);
+        const seed = storeWorkflowDefinitionDraftSeed({ name: 'Review Event', definition });
+        await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: seed }} />);
+        const section = readBodyProps()!.triggersSection;
+        if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(section)) throw new Error('Missing trigger editor');
+        await act(async () => {
+            readBodyProps()!.onChangeProjectTarget!({ machineId: 'machine-a', directory: '/repo' });
+            section.props.onChangeDraft(editWorkflowTriggerDraft(section.props.draft, { kind: 'add', clientId: 'pending-event', payloadSchema,
+                trigger: { kind: 'pluginEvent', enabled: true, eventRef: event, sourceInstanceId: 'pull-request', sourceContractVersion: 1,
+                    sourceConfig: {}, displayLabel: 'Pull request', filter: null, maximumObservationAgeMs: null,
+                    observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                        machineId: 'machine-a', pluginId: event.pluginId, materializationId: 'materialization',
+                    } } },
+            }));
+        });
+        const changePath = async (path: readonly string[]) => act(async () => {
+            const draft = readBodyProps()!.draftStore.get()!;
+            readBodyProps()!.onChange({ ...draft, blocks: draft.blocks.map(block => block.kind === 'step'
+                ? { ...block, input: [{ kind: 'trigger_event', event, path: [...path] }] } : block) });
+        });
+        await changePath(['repository']);
+        let result: unknown;
+        await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
+        expect(result).toMatchObject({ status: 'refused', reason: 'invalid_workflow' });
+        expect(boundary.creates).toHaveLength(0);
+        expect(boundary.automationCreates).toHaveLength(0);
+        await changePath(['number']);
+        await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
+        expect(result).toMatchObject({ status: 'refused', reason: 'invalid_input' });
+        expect(boundary.creates).toHaveLength(0);
+        currentEvent.payloadSchema = payloadSchema;
+        await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
+        expect(result, JSON.stringify(result)).toMatchObject({ status: 'applied' });
+        expect(boundary.creates).toHaveLength(1);
+        expect(boundary.automationCreates).toHaveLength(1);
+    });
+
     it.each([false, true])('retained saved editor suspends reads while hidden and catches up on presentation (dirty=%s)', async dirty => {
         const boundary = await serveMountedDraftActionHome();
         const renderDestination = (visible: boolean) => <DestinationInstanceHost tabId="retained-saved-editor"

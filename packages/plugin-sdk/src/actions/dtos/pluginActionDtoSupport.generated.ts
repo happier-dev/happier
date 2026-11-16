@@ -4907,6 +4907,13 @@ export type PluginActionWorkflowValueReferenceV1<Input extends boolean = false> 
 }> | Readonly<{
     kind: "session_context_field";
     field: "goal.tokenBudget" | "usage.tokensUsed";
+}> | Readonly<{
+    kind: "trigger_event";
+    event: {
+        pluginId: string;
+        localId: string;
+    };
+    path: (number | string)[];
 }> | {
     kind: "loop_trailing_count";
     producer: {
@@ -4977,6 +4984,13 @@ export type PluginActionWorkflowValueReferenceV1<Input extends boolean = false> 
 }> | Readonly<{
     kind: "session_context_field";
     field: "goal.tokenBudget" | "usage.tokensUsed";
+}> | Readonly<{
+    kind: "trigger_event";
+    event: {
+        pluginId: string;
+        localId: string;
+    };
+    path: (number | string)[];
 }> | {
     kind: "loop_trailing_count";
     producer: {

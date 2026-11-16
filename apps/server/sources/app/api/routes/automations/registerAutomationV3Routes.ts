@@ -1,3 +1,5 @@
+import { AutomationTriggerEventDeclarationsRequestSchema, AutomationTriggerEventDeclarationsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { readAutomationTriggerEventDeclarations } from '@/app/automations/automationEventPayloadSchemaProjection';
 import { z } from "zod/mini";
 import { AutomationSchedulePreviewRequestSchema } from '@happier-dev/protocol/automations/automationSchedule';
 import { previewAutomationSchedule } from '@/app/automations/automationSchedulePreview';
@@ -123,7 +125,7 @@ async function toAutomationDefinitionDetailWithCurrentEventStatus(
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
 ) {
     const [eventProjections, lifecycleProjections, lastRunAt, scheduleOccurrences] = await Promise.all([
-        loadAutomationEventStatusProjections({ automations: [automation] }),
+        loadAutomationEventStatusProjections({ automations: [automation], includePayloadSchemas: true }),
         loadAutomationSessionLifecycleStatusProjections({ automations: [automation] }),
         loadAutomationLastRunAtProjections(automation.accountId, [automation.id]),
         loadAutomationScheduleOccurrences(automation.accountId, [automation.id]),
@@ -167,6 +169,7 @@ const AutomationRunNowHeadersSchema = z.looseObject({
 
 const AutomationDefinitionQueryRequestSchema = z.union([
     AutomationDefinitionListRequestSchema, AutomationDefinitionDetailsRequestSchema, AutomationSchedulePreviewRequestSchema,
+    AutomationTriggerEventDeclarationsRequestSchema,
 ]);
 
 export function registerAutomationV3Routes(
@@ -177,6 +180,8 @@ export function registerAutomationV3Routes(
         try {
             const query = AutomationDefinitionQueryRequestSchema.parse(input);
             if ('proposedSchedule' in query) return previewAutomationSchedule(query.proposedSchedule);
+            if ('triggerEventDeclarations' in query) return AutomationTriggerEventDeclarationsResponseSchema.parse(
+                await readAutomationTriggerEventDeclarations(accountId, query));
             const page = await listAutomationDefinitionsPage({
                 accountId,
                 limit: query.limit,
@@ -192,7 +197,7 @@ export function registerAutomationV3Routes(
             });
             const rows = page.automations;
             const [eventProjections, lifecycleProjections, lastRunAt, scheduleOccurrences] = await Promise.all([
-                loadAutomationEventStatusProjections({ automations: rows }),
+                loadAutomationEventStatusProjections({ automations: rows, ...('details' in query ? { includePayloadSchemas: true as const } : {}) }),
                 loadAutomationSessionLifecycleStatusProjections({ automations: rows }),
                 loadAutomationLastRunAtProjections(accountId, rows.map(row => row.id)),
                 'details' in query ? loadAutomationScheduleOccurrences(accountId, rows.map(row => row.id)) : undefined,

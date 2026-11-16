@@ -92,6 +92,34 @@ function admissionHarness(prepareWorkspace: typeof prepareWorkflowAcceptedWorksp
 afterEach(() => vi.restoreAllMocks());
 
 describe('scoped workflow claim admission', () => {
+  it.each([true, false])('seals payload leaves only for the matching admitted plugin Event (%s)', async matching => {
+    const occurrence = normalizeGithubWebhookDelivery({ rawBody: new TextEncoder().encode(JSON.stringify({
+      ref: 'refs/heads/main', before: 'a'.repeat(40), after: 'b'.repeat(40), repository: { id: 77, full_name: 'acme/widgets' },
+    })), eventType: 'push', providerDeliveryId: 'event-value-1', receivedAtMs: 1 }).automationEvent!;
+    const base = { v: 1 as const, kind: 'pluginEvent' as const, eventRef: occurrence.eventRef,
+      sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('9d5af559-2c82-4c22-b6a0-ecabce38a631'),
+      occurrenceId: occurrence.occurrenceId, occurredAt: occurrence.occurredAtMs,
+      payload: PluginJsonValueV2Schema.parse(occurrence.payload) };
+    const evidence = AutomationRunPluginEventTriggerEvidenceV1Schema.parse({ ...base,
+      sourceInstanceId: occurrence.sourceInstanceId, sourceContractVersion: 1, observationReceivedAt: 1,
+      filter: { version: null, result: 'matched' } });
+    const triggerId = AutomationTriggerIdSchema.parse('event-values');
+    const source: WorkflowDefinitionV1 = { ...definition, blocks: [{ kind: 'step', id: 'work',
+      document: { text: 'Review this repository', references: [], attachments: [] }, result: { kind: 'text' },
+      input: [{ kind: 'trigger_event', event: occurrence.eventRef, path: ['repository', 'nameWithOwner'] }] }] };
+    const harness = admissionHarness();
+    await expect(harness.coordinate({ ...claim(source), automationEvidenceEnvelope: JSON.stringify({ t: 'plain', v: evidence }),
+      automationCause: { kind: 'trigger', triggerKind: 'pluginEvent', triggerId, triggerRevision: 1,
+        occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: base }), occurredAt: 1,
+        evidence: { eventRef: matching ? occurrence.eventRef : { ...occurrence.eventRef, localId: 'another-event' },
+          sourceSelectorId: base.sourceSelectorId } },
+    })).rejects.toBe(captured);
+    expect(harness.snapshots[0]).toMatchObject(matching ? { triggerEventValues: [
+      { event: occurrence.eventRef, path: ['repository', 'nameWithOwner'], value: 'acme/widgets' },
+    ] } : {});
+    if (!matching) expect(harness.snapshots[0]).toMatchObject({ triggerEventValues: [] });
+  });
+
   it('resolves the saved preview source before materializing the stored placeholder', async () => {
     const template = createDeploymentEnvironmentDetailV1();
     const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/widgets' };

@@ -195,6 +195,7 @@ function eventAutomation() {
 
 function eventStatusProjection() {
     return {
+        payloadSchema: { type: "object", properties: { title: { type: "string", title: "Title" } } },
         durablePushEndpointMaterializationRef: {
             machineId: "observation-machine-1",
             materializationId: "observation-materialization-1",
@@ -474,6 +475,7 @@ describe("Automation API projections", () => {
                 id: "trigger-event",
                 kind: "pluginEvent",
                 eventRef: { pluginId: "com.example.github", localId: "issue-opened" },
+                payloadSchema: eventStatusProjection().payloadSchema,
                 sourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
                 triggerDefinitionEnvelope: event.triggers[0].definitionEnvelope,
                 observation: {
@@ -518,6 +520,7 @@ describe("Automation API projections", () => {
             }],
         });
         expect(listItem.triggers[0]).not.toHaveProperty("triggerDefinitionEnvelope");
+        expect(listItem.triggers[0]).not.toHaveProperty("payloadSchema");
         expect(listItem).not.toHaveProperty("templateCiphertext");
     });
 

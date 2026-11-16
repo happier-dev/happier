@@ -1,3 +1,4 @@
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -31,7 +32,7 @@ type PluginEventDefinitionInput = Extract<
     Readonly<{ kind: 'pluginEvent'; sourceInstanceId: string }>
 >;
 
-export type PluginEventAutomationEditorIntent = Readonly<{ observationOnly: Readonly<{ kind: 'observationOnly' }> }>;
+export type PluginEventAutomationEditorIntent = Readonly<{ observationOnly?: Readonly<{ kind: 'observationOnly' }>; payloadSchema?: PluginJsonSchemaV2 | null }>;
 type PluginEventEditorCompletion = (definition: PluginEventDefinitionInput, intent?: PluginEventAutomationEditorIntent) => void;
 
 type PluginEventEditorObservationPlacement = Readonly<{
@@ -90,8 +91,8 @@ export async function completePluginEventAutomationEditor(
     const trigger = resolvePluginEventAutomationEditorCompletion(model);
     if (trigger) {
         const observationOnly = model.createDraft?.draft.source.observationOnly;
-        if (observationOnly) onComplete(trigger, { observationOnly });
-        else onComplete(trigger);
+        onComplete(trigger, { ...(observationOnly ? { observationOnly } : {}), payloadSchema: model.eligibleEvents.find(candidate => candidate.event.identity.pluginId === trigger.eventRef.pluginId
+            && candidate.event.identity.localId === trigger.eventRef.localId)?.event.payloadSchema ?? null });
         return;
     }
     model.invalidateConfiguredSource();

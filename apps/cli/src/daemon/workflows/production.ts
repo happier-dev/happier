@@ -9,6 +9,7 @@ import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/prot
 import { AutomationStoredContentEnvelopeV1ReadSchema } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { AutomationStoredWorkflowDefinitionV2ReadSchema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { AutomationRunExecutionInputV1Schema, toAutomationRunExecutionInputV1Origin } from '@happier-dev/protocol/automations/automationApiV3';
+import { AutomationRunPluginEventTriggerEvidenceV1Schema, matchesCauseEvidence } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { openAutomationTemplateStoredV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
 import { convertLegacyAutomationRecipeToInlineWorkflowV1 } from '@happier-dev/protocol/automations/automationLegacyWorkflowV1';
 import { WorkflowAcceptedSnapshotV1Schema, WorkflowResolvedInputsV1Schema, type WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -1653,12 +1654,17 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const runMetadata = (source.kind === 'inline' ? undefined : source.metadata)
         ?? (automationTitle ? { title: automationTitle } : undefined);
       let created: Awaited<ReturnType<typeof materializeWorkflowAcceptedSnapshotV1>>;
+      const pluginEvent = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'pluginEvent'
+        ? AutomationRunPluginEventTriggerEvidenceV1Schema.safeParse(evidenceContent) : undefined;
+      const eventOccurrence = pluginEvent?.success && matchesCauseEvidence(claim.automationCause, pluginEvent.data)
+        ? { event: pluginEvent.data.eventRef, payload: pluginEvent.data.payload } : undefined;
       try {
         created = await materializeWorkflowAcceptedSnapshotV1({
           definition: source.definition,
           ...host,
           roleOverrides: storedDefinition.data.roleOverrides,
-          admission: { kind: 'trigger', workDepth: claim.causeWorkDepth, admitLeaf: host.admitLeaf },
+          admission: { kind: 'trigger', workDepth: claim.causeWorkDepth, admitLeaf: host.admitLeaf,
+            ...(eventOccurrence ? { eventOccurrence } : {}) },
           context: {
             actionCaller: { kind: 'automationRun', runId: claim.runId, automationId: claim.automationId, cause: claim.automationCause },
             inputs, machineId: params.machineId,
@@ -2226,6 +2232,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const releaseActivity = claim.registerLiveWorkProducer?.(coordinator.liveWorkProducer);
       try {
         return await coordinator.run({ runId: claim.runId, definition: accepted.definition, inputs,
+          ...(accepted.triggerEventValues ? { triggerEventValues: accepted.triggerEventValues } : {}),
           authoredDefinition: accepted.authoredDefinition,
           executionTarget: accepted.executionTarget,
           materializedLeaves: accepted.materializedLeaves,

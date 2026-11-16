@@ -1,4 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { AutomationTriggerEventDeclarationsRequestSchema, AutomationTriggerEventDeclarationsResponseSchema,
+    type AutomationTriggerEventDeclarationsRequest } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationSchedulePreviewResultSchema } from '@happier-dev/protocol/automations/automationSchedule';
 import { serverFetch } from '@/sync/http/client';
 import { automationOccurrenceRequest, type AutomationOccurrenceActionId, type AutomationOccurrenceInput } from '@happier-dev/protocol/automations/occurrenceActions';
@@ -119,6 +121,15 @@ export async function listAutomationDefinitions(
 }
 
 /** One demanded private definition page, with the same selection and cursor owner as summaries. */
+export async function readAutomationTriggerEventDeclarations(credentials: AuthCredentials,
+    input: AutomationTriggerEventDeclarationsRequest, context?: AutomationRequestContext) {
+    const raw = await readAutomationApiJson('/v3/automations/query', {
+        method: 'POST', headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
+        body: JSON.stringify(AutomationTriggerEventDeclarationsRequestSchema.parse(input)),
+    }, { includeAuth: false }, context, context?.request ?? serverFetch, credentials);
+    return AutomationTriggerEventDeclarationsResponseSchema.parse(raw);
+}
+
 export async function listAutomationDefinitionDetails(
     credentials: AuthCredentials,
     params: Readonly<Partial<AutomationDefinitionListRequest>> = {},

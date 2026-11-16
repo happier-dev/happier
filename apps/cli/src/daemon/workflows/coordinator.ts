@@ -325,7 +325,8 @@ export type WorkflowCoordinatorResult = Readonly<{
 type Frame = WorkflowScopeFrame & {
   scopeRunId: string;
   conversationOwnerKey: string;
-  resultContext: Readonly<{ definition: WorkflowDefinitionV1; frozenChildren: Readonly<Record<string, WorkflowDefinitionV1>> }>;
+  resultContext: Readonly<{ definition: WorkflowDefinitionV1; frozenChildren: Readonly<Record<string, WorkflowDefinitionV1>>;
+    triggerEventValues?: readonly WorkflowTriggerEventValueV1[] }>;
   parent?: Frame;
   collectedFailures: boolean;
   item?: Readonly<{ value: WorkflowJsonValue; index: number; position: number; count: number }>;
@@ -545,6 +546,7 @@ function createResolutionRuntime(
   const resultOf = async (record: WorkflowCoordinatorInvocation | undefined) => await readInvocationResult(record, store, frame, sessionContext);
   return captureWorkflowDiscussionContext({
     inputs,
+    triggerEventValues: frame.resultContext.triggerEventValues,
     ...sessionContext,
     ...(frame.item ? { item: frame.item } : {}),
     ...(frame.iteration ? { iteration: frame.iteration } : {}),
@@ -909,6 +911,7 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
     definition: WorkflowDefinitionV1;
     authoredDefinition: WorkflowDefinitionV1;
     inputs: Readonly<Record<string, WorkflowJsonValue>>;
+    triggerEventValues?: readonly WorkflowTriggerEventValueV1[];
     executionTarget: WorkflowRunExecutionTargetV1;
     materializedLeaves: readonly WorkflowMaterializedLeafV1[];
     frozenChildren: Readonly<Record<string, WorkflowDefinitionV1>>;
@@ -935,11 +938,11 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
   return {
     liveWorkProducer,
     refreshReviewHolds: async () => { await activeHolds?.refresh(); },
-    run: async ({ runId, definition, authoredDefinition, inputs, executionTarget, materializedLeaves, frozenChildren, workDepth, authorization, originSessionId, origin, automationCause, signal }) => {
+    run: async ({ runId, definition, authoredDefinition, inputs, triggerEventValues, executionTarget, materializedLeaves, frozenChildren, workDepth, authorization, originSessionId, origin, automationCause, signal }) => {
       const root: Frame = {
         scopeRunId: runId,
         conversationOwnerKey: deps.rootInvocationRecordId ?? workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }),
-        resultContext: { definition, frozenChildren },
+        resultContext: { definition, frozenChildren, triggerEventValues },
         blocks: definition.blocks,
         scope: [],
         collectedFailures: false,
@@ -1898,8 +1901,14 @@ async function executeActionBlock(
     let input: Record<string, WorkflowJsonValue> = { ...(heldInput ?? frozen.actionInput) };
     const schema = frozen.actionContract.inputSchema;
     for (const [field, binding] of Object.entries(heldInput ? {} : leaf.input)) {
-      input[field] = await resolveWorkflowActionFieldBinding(binding, runtime, context.originSessionId,
-        binding.kind === 'text' ? readWorkflowActionFieldTextEncodingV1(schema, field) : undefined);
+      try {
+        input[field] = await resolveWorkflowActionFieldBinding(binding, runtime, context.originSessionId,
+          binding.kind === 'text' ? readWorkflowActionFieldTextEncodingV1(schema, field) : undefined);
+      } catch (error) {
+        if (binding.kind !== 'trigger_event' || !(error instanceof WorkflowInputResolutionError) || error.code !== 'missing_reference') throw error;
+        // An absent whole value is an omitted field; the frozen Action schema owns requiredness.
+        delete input[field];
+      }
     }
     if (!isWorkflowJsonObject(schema)) return await fail('invalid_input', 'failed', true);
     const validation = validateExecutionRunProfileResult(input, { kind: 'json', schema });

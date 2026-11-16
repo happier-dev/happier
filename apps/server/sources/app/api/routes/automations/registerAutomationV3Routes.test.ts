@@ -855,6 +855,7 @@ describe("registerAutomationV3Routes", () => {
         });
         expect(loadAutomationEventStatusProjections).toHaveBeenNthCalledWith(2, {
             automations: [eventAutomation],
+            includePayloadSchemas: true,
         });
     });
 

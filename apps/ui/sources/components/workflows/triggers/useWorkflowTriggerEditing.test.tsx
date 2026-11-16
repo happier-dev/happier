@@ -53,6 +53,7 @@ const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, p
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { useWorkflowTriggerEditing } = await import('./useWorkflowTriggerEditing');
 const { editWorkflowTriggerDraft } = await import('./workflowTriggerDraft');
+const { commitWorkflowTriggerWhen } = await import('./workflowTriggerStarts');
 const { useWorkflowTriggerSets } = await import('./useWorkflowTriggerSets');
 const { SessionTriggersSection: SessionTriggersContent } = await import('./SessionTriggersSection');
 const { useSessionTriggers } = await import('./useSessionTriggers');
@@ -273,6 +274,58 @@ afterEach(async () => {
 });
 
 describe('workflow trigger editing lifetime', () => {
+    it('keeps intended Event membership unknown until a saved workflow read settles', async () => {
+        const held = createDeferred<void>();
+        home.answer(serverId, 'POST /v3/automations/query', { select: async input => {
+            await held.promise;
+            return { body: selectWorkflowAutomationDetailsFixture(rows, input) };
+        } });
+        const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'pending-event-membership', projectTarget }));
+        try {
+            expect(hook.getCurrent().status).toBe('loading');
+            expect(hook.getCurrent().triggerEvents).toBeUndefined();
+            expect(hook.getCurrent().intendedTriggers).toBeUndefined();
+            await act(async () => { held.resolve(); });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+            expect(hook.getCurrent().triggerEvents).toEqual([]);
+            expect(hook.getCurrent().intendedTriggers).toEqual([]);
+        } finally {
+            held.resolve();
+            await hook.unmount();
+        }
+    });
+
+    it('projects declared Event fields once per editor read and follows unsaved trigger membership through history', async () => {
+        const payloadSchema = { type: 'object', properties: { title: { type: 'string', title: 'Title' } }, additionalProperties: false } as const;
+        const savedId = AutomationTriggerIdSchema.parse('declared-event');
+        seed(WorkflowTriggerSetV1Schema.parse({ ...set, triggers: [{ ...persistedTrigger(savedId, { ...privateEvent, enabled: false }), payloadSchema }] }));
+        const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'declared-events', projectTarget }));
+        await flushHookEffects();
+        expect(hook.getCurrent().triggerEvents).toEqual([{ event: privateEvent.eventRef, payloadSchema }]);
+        expect(hook.getCurrent().intendedTriggers).toMatchObject([{ kind: 'pluginEvent', automationId: set.automationId,
+            triggerId: savedId, eventRef: privateEvent.eventRef }]);
+        const reads = listRequests().length;
+        const before = hook.getCurrent().captureSnapshot();
+        await act(async () => hook.getCurrent().setDraft(editWorkflowTriggerDraft(hook.getCurrent().draft, { kind: 'remove', triggerId: savedId })));
+        expect(hook.getCurrent().triggerEvents).toEqual([]);
+        await act(async () => hook.getCurrent().restoreSnapshot(before));
+        expect(hook.getCurrent().triggerEvents).toEqual([{ event: privateEvent.eventRef, payloadSchema }]);
+        const newEvent = { ...privateEvent, eventRef: { ...privateEvent.eventRef, localId: 'created' } };
+        await act(async () => {
+            const next = commitWorkflowTriggerWhen({ draft: hook.getCurrent().draft, row: { kind: 'new', clientId: 'created' },
+                when: { kind: 'pluginEvent', value: newEvent, payloadSchema }, enabled: true });
+            if (!next) throw new Error('Expected the completed Event to join the draft');
+            hook.getCurrent().setDraft(next);
+        });
+        const added = hook.getCurrent().captureSnapshot();
+        await act(async () => hook.getCurrent().setDraft(editWorkflowTriggerDraft(hook.getCurrent().draft, { kind: 'discardAdd', clientId: 'created' })));
+        await act(async () => hook.getCurrent().restoreSnapshot(WorkflowDraftTriggerSnapshotV1Schema.parse(added)));
+        expect(hook.getCurrent().triggerEvents).toEqual([{ event: privateEvent.eventRef, payloadSchema }, { event: newEvent.eventRef, payloadSchema }]);
+        expect(hook.getCurrent().intendedTriggers).toMatchObject([{ kind: 'pluginEvent', triggerId: savedId },
+            { kind: 'pluginEvent', eventRef: newEvent.eventRef, observationTransport: newEvent.observationTransport }]);
+        expect(listRequests()).toHaveLength(reads);
+    });
+
     it('restores a demand-loaded private Event value through Undo and Redo before and after Save', async () => {
         const original = { ...privateEvent, maximumObservationAgeMs: 120_000 };
         const savedId = AutomationTriggerIdSchema.parse('saved-private-event');

@@ -1,3 +1,5 @@
+import type { WorkflowTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
+import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import * as React from 'react';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
@@ -21,6 +23,7 @@ import {
     captureWorkflowTriggerSnapshot,
     isWorkflowTriggerDraftDirty,
     projectWorkflowTriggerRows,
+    projectWorkflowTriggerEvents,
     restoreWorkflowTriggerSnapshot,
     saveWorkflowTriggerDraft,
     type WorkflowTriggerKnownDefinitions,
@@ -36,6 +39,8 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 export type WorkflowTriggerEditing = Readonly<{
     set: WorkflowTriggerSetV1 | null;
     draft: WorkflowTriggerDraft;
+    triggerEvents: readonly WorkflowTriggerEventDeclarationV1[] | undefined;
+    intendedTriggers: readonly WorkflowIntendedTriggerV1[] | undefined;
     setDraft: (next: WorkflowTriggerDraft) => void;
     captureSnapshot: (draftOverride?: WorkflowTriggerDraft, loadedDefinition?: Readonly<{
         triggerId: AutomationTriggerId;
@@ -83,6 +88,8 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     const pendingSave = React.useRef<Readonly<{ identity: object; draft: WorkflowTriggerDraft }> | null>(null);
     const [state, setState] = React.useState(() => ({ identity, draft: EMPTY_WORKFLOW_TRIGGER_DRAFT }));
     const draft = state.identity === identity ? state.draft : EMPTY_WORKFLOW_TRIGGER_DRAFT;
+    const eventProjection = React.useMemo(() => params.definitionId !== null && status !== 'ready'
+        ? undefined : projectWorkflowTriggerEvents(set, draft), [params.definitionId, status, set, draft]);
     const mounted = React.useRef(true);
     React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
     const setDraft = React.useCallback((next: WorkflowTriggerDraft) => {
@@ -206,5 +213,5 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         },
         [draft, set, status],
     );
-    return { set, draft, setDraft, captureSnapshot, restoreSnapshot, status, retry, dirty: isWorkflowTriggerDraftDirty(draft), summary, save };
+    return { set, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry, dirty: isWorkflowTriggerDraftDirty(draft), summary, save };
 }

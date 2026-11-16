@@ -41,6 +41,32 @@ const runtime: WorkflowValueResolutionRuntime = {
 const contextGoal = { id: 'goal', kind: 'goal' as const, origin: 'happier' as const, status: 'active' as const,
   title: 'Finish', updatedAt: 1, tokenBudget: 100 };
 
+describe('sealed trigger Event values', () => {
+  const event = { pluginId: 'example.pull-requests', localId: 'opened' };
+  const reference = { kind: 'trigger_event', event, path: ['number'] } as const;
+  it('resolves the exact Event and path without disclosing other sealed leaves', async () => {
+    const sealed = { ...runtime, triggerEventValues: [{ event, path: ['number'], value: 42 }] };
+    await expect(resolveWorkflowValueReference({ ...reference, path: [...reference.path] }, sealed)).resolves.toBe(42);
+    await expect(resolveWorkflowValueReference({ ...reference, path: ['title'] }, sealed)).rejects.toMatchObject({ code: 'missing_reference' });
+    await expect(resolveWorkflowValueReference({ ...reference, event: { ...event, localId: 'closed' }, path: ['number'] }, sealed))
+      .rejects.toMatchObject({ code: 'missing_reference' });
+  });
+  it('treats an absent Event leaf as an unset optional condition value', async () => {
+    const value = { ...reference, path: [...reference.path] };
+    await expect(evaluateWorkflowCondition({ kind: 'exists', value }, runtime)).resolves.toBe(false);
+    await expect(evaluateWorkflowCondition({ kind: 'compare', operator: 'eq', left: value,
+      right: { kind: 'literal', value: 42 } }, runtime)).resolves.toBe(false);
+    await expect(evaluateWorkflowCondition({ kind: 'compare', operator: 'neq', left: value,
+      right: { kind: 'literal', value: 42 } }, runtime)).resolves.toBe(false);
+  });
+  it('omits an absent Event leaf from Agent prompt context', async () => {
+    const input = await materializeWorkflowStepInput({ document: { text: 'Review the pull request', references: [], attachments: [] },
+      references: [{ ...reference, path: [...reference.path] }], runtime });
+    expect(input.text).toBe('Review the pull request');
+    expect(input.values).toEqual([]);
+  });
+});
+
 function promptValues(text: string): Record<string, unknown>[] {
   const entries = text.split('<happier_discussion_context>\n')[1]!.split('\n</happier_discussion_context>')[0]!
     .split('\n').slice(1).map(line => JSON.parse(line.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&')));

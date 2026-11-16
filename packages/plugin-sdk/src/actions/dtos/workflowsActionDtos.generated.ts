@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
-import type { ActionFailureCauseV1, PluginActionWorkflowBlockV1, WorkflowSelectionEdit } from './pluginActionDtoSupport.generated.js';
+import type { ActionFailureCauseV1, PluginActionWorkflowBlockV1, PluginJsonSchemaV2, WorkflowSelectionEdit } from './pluginActionDtoSupport.generated.js';
 
 export type WorkflowsActionInputById = {
     readonly "workflow.validate": {
@@ -526,6 +526,100 @@ export type WorkflowsActionInputById = {
                 };
             };
         };
+        intendedTriggers?: ({
+            kind: 'ciFailed';
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        } | {
+            kind: 'pluginEvent';
+            eventRef: {
+                pluginId: string;
+                localId: string;
+            };
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        } | {
+            kind: 'pluginEvent';
+            eventRef: {
+                pluginId: string;
+                localId: string;
+            };
+            observationTransport: {
+                kind: 'checkpointedPull';
+                watcherMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+            } | {
+                kind: 'durablePush';
+                webhookEndpointId: string;
+                endpointMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+                webhookRoutingSourceInstanceId: string;
+                setup: {
+                    kind: 'accountEndpointV1';
+                    credential: 'serverGenerated';
+                } | {
+                    kind: 'capabilityUrlV1';
+                    checkId: string;
+                } | {
+                    kind: 'githubSharedInstallationV1';
+                    installationId: string;
+                    installationAuthorizationRef: string;
+                };
+            } | {
+                kind: 'socket';
+                watcherMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+            };
+        } | {
+            kind: 'prComment';
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        } | {
+            kind: 'runLifecycle';
+            condition: 'needs_attention' | 'terminal';
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        } | {
+            kind: 'schedule';
+            schedule: {
+                kind: 'cron';
+                scheduleExpr: string;
+                everyMs: null;
+                timezone: null | string;
+            } | {
+                kind: 'interval';
+                scheduleExpr: null;
+                everyMs: number;
+                timezone: null | string;
+            } | {
+                kind: 'once';
+                scheduledAt: number;
+            };
+            nextRunAt?: null | number | undefined;
+            remainingOccurrences?: null | number | undefined;
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        } | {
+            kind: 'sessionLifecycle';
+            events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        })[] | undefined;
     };
     readonly "workflow.definition.update": {
         definitionId: string;
@@ -572,6 +666,100 @@ export type WorkflowsActionInputById = {
                 };
             };
         };
+        intendedTriggers?: ({
+            kind: 'ciFailed';
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        } | {
+            kind: 'pluginEvent';
+            eventRef: {
+                pluginId: string;
+                localId: string;
+            };
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        } | {
+            kind: 'pluginEvent';
+            eventRef: {
+                pluginId: string;
+                localId: string;
+            };
+            observationTransport: {
+                kind: 'checkpointedPull';
+                watcherMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+            } | {
+                kind: 'durablePush';
+                webhookEndpointId: string;
+                endpointMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+                webhookRoutingSourceInstanceId: string;
+                setup: {
+                    kind: 'accountEndpointV1';
+                    credential: 'serverGenerated';
+                } | {
+                    kind: 'capabilityUrlV1';
+                    checkId: string;
+                } | {
+                    kind: 'githubSharedInstallationV1';
+                    installationId: string;
+                    installationAuthorizationRef: string;
+                };
+            } | {
+                kind: 'socket';
+                watcherMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+            };
+        } | {
+            kind: 'prComment';
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        } | {
+            kind: 'runLifecycle';
+            condition: 'needs_attention' | 'terminal';
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        } | {
+            kind: 'schedule';
+            schedule: {
+                kind: 'cron';
+                scheduleExpr: string;
+                everyMs: null;
+                timezone: null | string;
+            } | {
+                kind: 'interval';
+                scheduleExpr: null;
+                everyMs: number;
+                timezone: null | string;
+            } | {
+                kind: 'once';
+                scheduledAt: number;
+            };
+            nextRunAt?: null | number | undefined;
+            remainingOccurrences?: null | number | undefined;
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        } | {
+            kind: 'sessionLifecycle';
+            events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+        })[] | undefined;
     };
     readonly "workflow.definition.edit": {
         definitionId: string;
@@ -14116,6 +14304,7 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                payloadSchema?: PluginJsonSchemaV2 | null | undefined;
                 subject?: undefined | {
                     kind: 'environment';
                     environmentId: string;
@@ -15062,6 +15251,7 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                payloadSchema?: PluginJsonSchemaV2 | null | undefined;
                 subject?: undefined | {
                     kind: 'environment';
                     environmentId: string;
@@ -15865,6 +16055,7 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                payloadSchema?: PluginJsonSchemaV2 | null | undefined;
                 subject?: undefined | {
                     kind: 'environment';
                     environmentId: string;
@@ -16672,6 +16863,7 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                payloadSchema?: PluginJsonSchemaV2 | null | undefined;
                 subject?: undefined | {
                     kind: 'environment';
                     environmentId: string;
@@ -17637,6 +17829,7 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                payloadSchema?: PluginJsonSchemaV2 | null | undefined;
                 subject?: undefined | {
                     kind: 'environment';
                     environmentId: string;
@@ -18598,6 +18791,7 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                payloadSchema?: PluginJsonSchemaV2 | null | undefined;
                 subject?: undefined | {
                     kind: 'environment';
                     environmentId: string;
@@ -19401,6 +19595,7 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                payloadSchema?: PluginJsonSchemaV2 | null | undefined;
                 subject?: undefined | {
                     kind: 'environment';
                     environmentId: string;
@@ -20204,6 +20399,7 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                payloadSchema?: PluginJsonSchemaV2 | null | undefined;
                 subject?: undefined | {
                     kind: 'environment';
                     environmentId: string;

@@ -3,6 +3,7 @@ import { SessionDraftHydrationBoundary } from '@/components/sessions/drafts/Sess
 // Load the canonical read projection before a cold editor publishes a delete acknowledgement.
 import { affectsSelectedWorkflowDefinition } from '../library/workflowLibraryReads';
 import * as React from 'react';
+import { readWorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { Platform, ScrollView, View } from 'react-native';
@@ -211,7 +212,7 @@ export type WorkflowEditorSource =
 
 type SavedRevision = Readonly<{ definitionId: string; revision: WorkflowArtifactRevisionV1 }>;
 type PendingDefinitionCreate = Readonly<{
-    input: Pick<Parameters<typeof createWorkflowDefinition>[0], 'definitionId' | 'definition' | 'metadata'>;
+    input: Pick<Parameters<typeof createWorkflowDefinition>[0], 'definitionId' | 'definition' | 'metadata' | 'intendedTriggers'>;
     draft: WorkflowEditorDraft;
     description: string;
 }>;
@@ -824,7 +825,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         const draft = draftStore.get();
         if (contextualAgentTarget === null || draft === null || !draftIsPristine) return;
         if (draft !== initialDraftBaselineRef.current) return;
-        if (draft.defaults.engine !== undefined || draft.defaults.agentTarget) return;
+        if (readWorkflowEngineChoiceV1(draft.defaults) !== undefined || draft.defaults.agentTarget) return;
         seededContextualAgentRef.current = true;
         const seeded = setWorkflowDefaultField(draft, 'agentTarget', contextualAgentTarget);
         initialDraftBaselineRef.current = seeded;
@@ -1113,7 +1114,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         history.commit();
         const definitionChanged = canEditDefinition && (copying || saved === null
             || definitionHasChanges(draft) || description !== savedDescriptionRef.current);
-        const validation = validateWorkflowEditorDraft(draft);
+        const validation = validateWorkflowEditorDraft(draft, { triggerEvents: triggers.triggerEvents });
         if (definitionChanged && (!validation.valid || validation.normalizedDefinition === undefined)) return { status: 'refused', reason: 'invalid_workflow' };
         const lifetime = accountLifetime;
         if (!lifetime?.isCurrent()) return { status: 'unavailable' };
@@ -1147,7 +1148,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                     const pendingCreate = pendingDefinitionCreatesRef.current[createIntent];
                     if (copying || persisted === null || pendingCreate !== null) {
                         const retained = pendingCreate ?? {
-                            input: { definitionId: randomUUID(), definition: validation.normalizedDefinition, metadata },
+                            input: { definitionId: randomUUID(), definition: validation.normalizedDefinition, metadata,
+                                ...(triggers.intendedTriggers === undefined ? {} : { intendedTriggers: triggers.intendedTriggers }) },
                             draft, description,
                         };
                         pendingDefinitionCreatesRef.current[createIntent] = retained;
@@ -1187,6 +1189,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                             expectedRevision: persisted.revision,
                             definition: validation.normalizedDefinition,
                             metadata, accountLifetime,
+                            ...(triggers.intendedTriggers === undefined ? {} : { intendedTriggers: triggers.intendedTriggers }),
                             ...(caller === undefined ? {} : { context: caller, signal: caller.signal }),
                         });
                         if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
@@ -1719,7 +1722,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             const current = snapshotRef.current;
             const scope = authoringHost.sessionBindingScope;
             if (!current || !scope) return null;
-            const validation = validateWorkflowEditorDraft(current.draft);
+            const validation = validateWorkflowEditorDraft(current.draft, { triggerEvents: triggers.triggerEvents });
             return WorkflowMountedDraftV1Schema.parse({ scope, draftId: current.draft.draftId, name: current.draft.name,
                 definition: projectNativeJsonValueForTransport(buildWorkflowDefinitionCandidate(current.draft)),
                 blockLabels: walkWorkflowBlocks(current.draft.blocks).map(block => ({ id: block.id, label: workflowBlockReferenceLabel(block) })),
@@ -1943,6 +1946,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 the pinned command surface that must stay on screen while the
                 authored document scrolls beneath it. */}
             <WorkflowEditorBody
+                triggerEvents={triggers.triggerEvents}
                 accountLifetime={props.accountLifetime}
                 draftStore={bodyDraftStore}
                 onBack={draftNavigation.requestBack}

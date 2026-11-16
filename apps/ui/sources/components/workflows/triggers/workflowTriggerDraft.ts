@@ -1,8 +1,10 @@
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
+import type { WorkflowTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { AutomationTriggerIdSchema, type AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { AutomationTriggerDefinition, AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
-import type { WorkflowTriggerAddRequestV1, WorkflowTriggerRemoveRequestV1, WorkflowTriggerSetV1, WorkflowTriggerUpdateRequestV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { WorkflowIntendedTriggerV1, WorkflowTriggerAddRequestV1, WorkflowTriggerRemoveRequestV1, WorkflowTriggerSetV1, WorkflowTriggerUpdateRequestV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import type { WorkflowTriggerWriteResult } from '@/sync/domains/workflows/workflowTriggerActions';
 import type { WorkflowDraftTriggerSnapshotV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
@@ -14,8 +16,8 @@ import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1
  * delta through `workflow.trigger.remove | update | add`, each reporting its own result. A write
  * that fails leaves exactly the edits it did not apply, so **Try again** resumes from there.
  */
-export type WorkflowTriggerDraftAdd = Readonly<{ clientId: string; trigger: AutomationTriggerDefinitionInput }>;
-export type WorkflowTriggerDraftUpdate = Readonly<{ trigger?: AutomationTriggerDefinition; enabled?: boolean }>;
+export type WorkflowTriggerDraftAdd = Readonly<{ clientId: string; trigger: AutomationTriggerDefinitionInput; payloadSchema?: PluginJsonSchemaV2 | null }>;
+export type WorkflowTriggerDraftUpdate = Readonly<{ trigger?: AutomationTriggerDefinition; enabled?: boolean; payloadSchema?: PluginJsonSchemaV2 | null }>;
 
 /**
  * The trigger set's own context, the same for every trigger of this workflow (04 §5.4): its Runs on
@@ -88,9 +90,13 @@ export function captureWorkflowTriggerSnapshot(
         const update = draft.updates[saved.id];
         const enabled = update?.enabled ?? saved.enabled;
         const trigger = update?.trigger ? { ...update.trigger, enabled } : readSavedTriggerDefinition(saved, acknowledged);
-        rows.push({ identity: identify(`saved:${saved.id}`, saved.id), trigger: trigger ? { ...trigger, enabled } : null, enabled });
+        rows.push({ identity: identify(`saved:${saved.id}`, saved.id), trigger: trigger ? { ...trigger, enabled } : null, enabled,
+            ...(update?.payloadSchema !== undefined ? { payloadSchema: update.payloadSchema }
+                : saved.kind === 'pluginEvent' && (!update?.trigger || update.trigger.kind === 'pluginEvent'
+                    && sameStrictJsonValue(update.trigger.eventRef, saved.eventRef)) ? { payloadSchema: saved.payloadSchema ?? null } : {}) });
     }
-    for (const add of draft.adds) rows.push({ identity: identify(add.clientId), trigger: add.trigger, enabled: add.trigger.enabled });
+    for (const add of draft.adds) rows.push({ identity: identify(add.clientId), trigger: add.trigger, enabled: add.trigger.enabled,
+        ...(add.payloadSchema === undefined ? {} : { payloadSchema: add.payloadSchema }) });
     // Before a set exists, Where remains the editor's default; history must not turn it into an override.
     const roleOverrides = draft.context?.roleOverrides ?? set?.context?.roleOverrides;
     const visibleTeamId = draft.context?.visibleTeamId === undefined ? set?.context?.visibleTeamId : draft.context.visibleTeamId;
@@ -109,11 +115,12 @@ export function restoreWorkflowTriggerSnapshot(set: WorkflowTriggerSetV1 | null,
         const saved = set?.triggers.find((candidate) => candidate.id === row.identity.triggerId);
         if (!saved) {
             if (!row.trigger) throw new WorkflowTriggerSnapshotRestoreError();
-            adds.push({ clientId: row.identity.clientId, trigger: row.trigger });
+            adds.push({ clientId: row.identity.clientId, trigger: row.trigger,
+                ...(row.payloadSchema === undefined ? {} : { payloadSchema: row.payloadSchema }) });
             continue;
         }
         retained.add(saved.id);
-        const update: { trigger?: AutomationTriggerDefinition; enabled?: boolean } = {};
+        const update: { trigger?: AutomationTriggerDefinition; enabled?: boolean; payloadSchema?: PluginJsonSchemaV2 | null } = {};
         if (row.enabled !== saved.enabled) update.enabled = row.enabled;
         if (row.trigger) {
             const { enabled: _enabled, ...trigger } = row.trigger;
@@ -121,6 +128,7 @@ export function restoreWorkflowTriggerSnapshot(set: WorkflowTriggerSetV1 | null,
             const { enabled: _savedEnabled, ...savedDefinition } = savedInput ?? { enabled: saved.enabled };
             if (!sameStrictJsonValue(trigger, savedDefinition)) update.trigger = trigger;
         }
+        if (update.trigger?.kind === 'pluginEvent' && row.payloadSchema !== undefined) update.payloadSchema = row.payloadSchema;
         if (Object.keys(update).length) updates[saved.id] = update;
     }
     const context: { project?: WorkflowProjectTargetV1; inputs?: Readonly<Record<string, JsonValue>>;
@@ -139,8 +147,8 @@ export function isWorkflowTriggerDraftDirty(draft: WorkflowTriggerDraft): boolea
 }
 
 export type WorkflowTriggerDraftEdit =
-    | Readonly<{ kind: 'add'; clientId: string; trigger: AutomationTriggerDefinitionInput }>
-    | Readonly<{ kind: 'update'; triggerId: AutomationTriggerId; trigger?: AutomationTriggerDefinition; enabled?: boolean }>
+    | Readonly<{ kind: 'add'; clientId: string; trigger: AutomationTriggerDefinitionInput; payloadSchema?: PluginJsonSchemaV2 | null }>
+    | Readonly<{ kind: 'update'; triggerId: AutomationTriggerId; trigger?: AutomationTriggerDefinition; enabled?: boolean; payloadSchema?: PluginJsonSchemaV2 | null }>
     | Readonly<{ kind: 'remove'; triggerId: AutomationTriggerId }>
     | Readonly<{ kind: 'discardAdd'; clientId: string }>
     | Readonly<{ kind: 'setContext'; context: WorkflowTriggerSetContextDraft }>;
@@ -148,12 +156,17 @@ export type WorkflowTriggerDraftEdit =
 export function editWorkflowTriggerDraft(draft: WorkflowTriggerDraft, edit: WorkflowTriggerDraftEdit): WorkflowTriggerDraft {
     switch (edit.kind) {
         case 'add': {
-            const exists = draft.adds.some((add) => add.clientId === edit.clientId);
+            const previous = draft.adds.find((add) => add.clientId === edit.clientId);
+            const payloadSchema = edit.payloadSchema !== undefined ? edit.payloadSchema
+                : previous?.trigger.kind === 'pluginEvent' && edit.trigger.kind === 'pluginEvent'
+                    && sameStrictJsonValue(previous.trigger.eventRef, edit.trigger.eventRef) ? previous.payloadSchema : undefined;
+            const next = { clientId: edit.clientId, trigger: edit.trigger,
+                ...(payloadSchema === undefined ? {} : { payloadSchema }) };
             return {
                 ...draft,
-                adds: exists
-                    ? draft.adds.map((add) => (add.clientId === edit.clientId ? { clientId: edit.clientId, trigger: edit.trigger } : add))
-                    : [...draft.adds, { clientId: edit.clientId, trigger: edit.trigger }],
+                adds: previous
+                    ? draft.adds.map((add) => (add.clientId === edit.clientId ? next : add))
+                    : [...draft.adds, next],
             };
         }
         case 'discardAdd':
@@ -162,12 +175,17 @@ export function editWorkflowTriggerDraft(draft: WorkflowTriggerDraft, edit: Work
             return { ...draft, context: { ...draft.context, ...edit.context } };
         case 'update': {
             const previous = draft.updates[edit.triggerId] ?? {};
+            const { payloadSchema: previousSchema, ...previousDefinition } = previous;
+            const payloadSchema = edit.payloadSchema !== undefined ? edit.payloadSchema
+                : edit.trigger === undefined || previous.trigger?.kind === 'pluginEvent' && edit.trigger.kind === 'pluginEvent'
+                    && sameStrictJsonValue(previous.trigger.eventRef, edit.trigger.eventRef) ? previousSchema : undefined;
             return {
                 ...draft,
                 updates: {
                     ...draft.updates,
                     [edit.triggerId]: {
-                        ...previous,
+                        ...previousDefinition,
+                        ...(payloadSchema === undefined ? {} : { payloadSchema }),
                         ...(edit.trigger === undefined ? {} : { trigger: edit.trigger }),
                         ...(edit.enabled === undefined ? {} : { enabled: edit.enabled }),
                     },
@@ -229,6 +247,31 @@ export function projectWorkflowTriggerRows(set: WorkflowTriggerSetV1 | null, dra
         });
     }
     return rows;
+}
+
+/** One draft membership projection supplies both editor validation and save intent. */
+export function projectWorkflowTriggerEvents(set: WorkflowTriggerSetV1 | null, draft: WorkflowTriggerDraft): Readonly<{
+    triggerEvents: readonly WorkflowTriggerEventDeclarationV1[];
+    intendedTriggers: readonly WorkflowIntendedTriggerV1[];
+}> {
+    const triggerEvents: WorkflowTriggerEventDeclarationV1[] = [];
+    const intendedTriggers: WorkflowIntendedTriggerV1[] = [];
+    const savedById = new Map(set?.triggers.map(trigger => [trigger.id, trigger]));
+    const addedById = new Map(draft.adds.map(add => [add.clientId, add]));
+    for (const row of projectWorkflowTriggerRows(set, draft)) {
+        const trigger = row.trigger;
+        if (trigger.kind !== 'pluginEvent') continue;
+        const edit = row.kind === 'saved' ? draft.updates[row.triggerId] : addedById.get(row.clientId);
+        const saved = row.kind === 'saved' ? savedById.get(row.triggerId) : undefined;
+        triggerEvents.push({ event: trigger.eventRef, payloadSchema: edit?.payloadSchema !== undefined ? edit.payloadSchema
+            : saved?.kind === 'pluginEvent' && sameStrictJsonValue(saved.eventRef, trigger.eventRef) ? saved.payloadSchema ?? null : null });
+        if ('observationTransport' in trigger) {
+            intendedTriggers.push({ kind: 'pluginEvent', eventRef: trigger.eventRef, observationTransport: trigger.observationTransport });
+        } else if (row.kind === 'saved' && set) {
+            intendedTriggers.push({ kind: 'pluginEvent', automationId: set.automationId, triggerId: row.triggerId, eventRef: trigger.eventRef });
+        }
+    }
+    return { triggerEvents, intendedTriggers };
 }
 
 export type WorkflowTriggerWriter = Readonly<{

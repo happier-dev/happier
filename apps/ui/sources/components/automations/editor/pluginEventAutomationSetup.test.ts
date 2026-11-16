@@ -501,7 +501,7 @@ describe('Plugin Event Automation setup orchestration', () => {
         await completePluginEventAutomationEditor({ eligibleEvents: [event], createDraft: result.draft,
             invalidateConfiguredSource() { throw new Error('Current source was invalidated'); } }, completed);
         expect(completed).toHaveBeenCalledWith(expect.objectContaining({ kind: 'pluginEvent' }),
-            { observationOnly: { kind: 'observationOnly' } });
+            expect.objectContaining({ observationOnly: { kind: 'observationOnly' }, payloadSchema: event.event.payloadSchema }));
     });
     it.each(['new', 'seeded'] as const)('uses the Event declaration for %s observation-only authoring without a setup-result marker', async (mode) => {
         const baseEvent = eligibleEvent();
@@ -522,7 +522,7 @@ describe('Plugin Event Automation setup orchestration', () => {
         await completePluginEventAutomationEditor({ eligibleEvents: [event], createDraft: result.draft,
             invalidateConfiguredSource() { throw new Error('Current source was invalidated'); } }, completed);
         expect(completed).toHaveBeenCalledWith(expect.objectContaining({ kind: 'pluginEvent' }),
-            { observationOnly: { kind: 'observationOnly' } });
+            expect.objectContaining({ observationOnly: { kind: 'observationOnly' }, payloadSchema: event.event.payloadSchema }));
     });
     it.each(['automatic', 'required'] as const)('persists the ensured endpoint through the existing durable-push arm for %s delivery', async (webhookDelivery) => {
         const event = durablePushEligibleEvent();
