@@ -8,9 +8,9 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 /**
- * The few pieces every "Already use Happier?" pane is made of (lab `.hi-cxr`): a title with its
- * lead sentence, a small field label, help under a control, and the identity row of the service or
- * Home a pane is about. Local to the journeys: they are this panel's anatomy, not a new primitive.
+ * The pieces only the "Already use Happier?" panes have (lab `.hi-cxr`): a title with its lead
+ * sentence and the identity row of the service or Home a pane is about. A field's label, the line
+ * under it and the "or" between two ways are every signed-out form's (`StepFormParts`).
  */
 /**
  * `step`: the panes stand as a step of a signed-out page (the Welcome wizard), so a pane's title is
@@ -26,23 +26,6 @@ export function PaneHeader(props: Readonly<{ title: string; lead: string; testID
             <Text accessibilityRole="header" style={styles.title}>{props.title}</Text>
             <Text style={styles.lead}>{props.lead}</Text>
         </View>
-    );
-}
-
-export function PaneLabel(props: Readonly<{ children: string; nativeID?: string }>) {
-    return <Text nativeID={props.nativeID} style={styles.label}>{props.children}</Text>;
-}
-
-export function PaneHelp(props: Readonly<{ children: React.ReactNode; tone?: 'help' | 'error'; testID?: string }>) {
-    return (
-        <Text
-            testID={props.testID}
-            style={props.tone === 'error' ? styles.error : styles.help}
-            accessibilityRole={props.tone === 'error' ? 'alert' : undefined}
-            accessibilityLiveRegion={props.tone === 'error' ? 'polite' : undefined}
-        >
-            {props.children}
-        </Text>
     );
 }
 
@@ -96,17 +79,6 @@ export function PaneConfirmed(props: Readonly<{ label: string; dotOnly?: boolean
     );
 }
 
-/** A thin rule with "or" in the middle, between two ways to do the same thing. */
-export function PaneOrDivider(props: Readonly<{ label: string }>) {
-    return (
-        <View style={styles.or} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            <View style={styles.orRule} />
-            <Text style={styles.orText}>{props.label}</Text>
-            <View style={styles.orRule} />
-        </View>
-    );
-}
-
 const styles = StyleSheet.create((theme) => ({
     header: {
         gap: theme.space.s6,
@@ -119,18 +91,6 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.variant('body'),
         color: theme.colors.text.secondary,
         maxWidth: 520,
-    },
-    label: {
-        ...Typography.variant('meta', 'semiBold'),
-        color: theme.colors.text.secondary,
-    },
-    help: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
-    },
-    error: {
-        ...Typography.variant('meta'),
-        color: theme.colors.state.danger.foreground,
     },
     link: {
         ...Typography.variant('meta', 'medium'),
@@ -169,18 +129,4 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     confirmedDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.colors.state.success.foreground },
-    or: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s10,
-    },
-    orRule: {
-        flex: 1,
-        height: StyleSheet.hairlineWidth,
-        backgroundColor: theme.colors.border.default,
-    },
-    orText: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.tertiary,
-    },
 }));

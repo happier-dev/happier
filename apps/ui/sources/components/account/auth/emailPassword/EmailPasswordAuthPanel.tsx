@@ -18,8 +18,13 @@ import {
     type WelcomeActionAdmission,
 } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { ActiveRelaySummary } from '@/components/onboarding/ui/ActiveRelaySummary';
+import { UnauthenticatedStepHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
+import { StepFieldGroup, StepFieldHelp, StepFieldLabel, stepFieldLabelStyle } from '@/components/onboarding/unauthShell/StepFormParts';
 import { Typography } from '@/constants/Typography';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { Text } from '@/components/ui/text/Text';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import {
     rememberNativeEmailVerificationContinuation,
@@ -61,6 +66,11 @@ export type EmailPasswordAuthPanelProps = Readonly<{
     /** The Home's recommended protection for a new Account, when it states one. */
     recommendedProvisionMode?: 'plain' | 'e2ee';
     homeLabel?: string;
+    /**
+     * `step`: the panel is a step of the signed-out Welcome, so its title is the step's heading. Elsewhere
+     * (a Team or mail landing) it stands under its host's own heading.
+     */
+    presentation?: 'step' | 'inline';
     /** A validated bounded admission bearer, when creation came from an invitation. */
     admission?: NativeAccountAdmissionV1;
     invitationEmailVerificationRequired?: boolean;
@@ -348,31 +358,24 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
         autoComplete: 'email' | 'username',
         onSubmitEditing?: () => void,
     ) => (
-        <FieldItem label={t('settingsAccount.nativePassword.email')} labelStyle={styles.fieldLabel}>
-            <TextInput
+        <StepFieldGroup>
+            <StepFieldLabel nativeID={EMAIL_LABEL_ID}>{t('settingsAccount.nativePassword.email')}</StepFieldLabel>
+            <FieldTextInput
                 ref={emailRef as never}
                 testID="email-password-email"
                 accessibilityLabel={t('settingsAccount.nativePassword.email')}
-                aria-invalid={problem?.field === 'email'}
+                accessibilityLabelledBy={EMAIL_LABEL_ID}
                 // The refusal is the field's own, exactly as PasswordField
                 // already associates its error, so assistive technology reads it
                 // with the input rather than as a detached line.
-                aria-describedby={emailInvalid ? emailErrorId : undefined}
-                style={[styles.input, {
-                    color: theme.colors.text.primary,
-                    backgroundColor: theme.colors.surface.base,
-                    borderColor: problem?.field === 'email' ? theme.colors.status.error : theme.colors.border.default,
-                }]}
+                accessibilityDescribedBy={emailInvalid ? emailErrorId : undefined}
+                invalid={problem?.field === 'email'}
                 value={draft.email}
                 onChangeText={(email) => setDraft((current) => ({ ...current, email }))}
                 placeholder={t('settingsAccount.nativePassword.emailPlaceholder')}
-                placeholderTextColor={theme.colors.text.secondary}
                 autoCapitalize="none"
-                autoCorrect={false}
-                spellCheck={false}
                 keyboardType="email-address"
                 inputMode="email"
-                importantForAutofill="yes"
                 autoComplete={autoComplete}
                 textContentType="username"
                 editable={!busy}
@@ -380,18 +383,28 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
                 onSubmitEditing={onSubmitEditing ?? (() => passwordRef.current?.focus())}
             />
             {emailInvalid ? (
-                <Text
-                    testID={emailErrorId}
-                    nativeID={emailErrorId}
-                    accessibilityRole="alert"
-                    accessibilityLiveRegion="polite"
-                    style={[styles.formError, { color: theme.colors.status.error }]}
-                >
-                    {problemMessage}
-                </Text>
+                <StepFieldHelp testID={emailErrorId} nativeID={emailErrorId} tone="error">{problemMessage}</StepFieldHelp>
             ) : null}
-        </FieldItem>
+        </StepFieldGroup>
     );
+
+    // The Home this sign-in acts on, as the same chip Restore shows above its heading.
+    const homeChip = (
+        <ActiveRelaySummary
+            idPrefix="email-password-home"
+            relayUrl={props.target.canonicalServerUrl}
+            status="active"
+            presentation="line"
+        />
+    );
+    const heading = (title: string) => props.presentation === 'step'
+        ? <UnauthenticatedStepHeading title={title} context={homeChip} />
+        : (
+            <View style={styles.inlineHeading}>
+                {homeChip}
+                <Text accessibilityRole="header" style={styles.title}>{title}</Text>
+            </View>
+        );
 
     const formProblem = problem?.field === 'form' && problemMessage ? (
         <Text
@@ -426,7 +439,7 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
         return (
             <WelcomeActionAdmissionContext.Provider value={actionAdmission}>
             <View style={styles.root}>
-                <Text style={styles.title}>{t('settingsAccount.nativePassword.checkYourEmail')}</Text>
+                {heading(t('settingsAccount.nativePassword.checkYourEmail'))}
                 <Text testID="email-password-sent-detail" style={styles.hint}>
                     {sent.kind === 'verification_sent'
                         ? t('settingsAccount.nativePassword.verificationSent', { email: sent.email })
@@ -446,14 +459,14 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
                 {progressNotice}
                 <WelcomeActionCard
                     testID="email-password-resend"
+                    presentation="button"
                     title={t('settingsAccount.nativePassword.resend')}
-                    iconName="paper-plane"
                     onPress={() => (sent.kind === 'verification_sent' ? submitProvision() : submitResetRequest())}
                 />
                 <WelcomeActionCard
                     testID="email-password-change-email"
+                    presentation="button"
                     title={t('settingsAccount.nativePassword.useDifferentEmail')}
-                    iconName="pencil"
                     onPress={() => setView({ kind: sent.kind === 'verification_sent' ? 'provision' : 'forgot' })}
                 />
                 {backAction}
@@ -469,14 +482,14 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
         return (
             <WelcomeActionAdmissionContext.Provider value={actionAdmission}>
             <View style={styles.root}>
-                <Text style={styles.title}>{t('settingsAccount.nativePassword.connectTitle')}</Text>
+                {heading(t('settingsAccount.nativePassword.connectTitle'))}
                 <Text testID="email-password-connect-detail" style={styles.hint}>
                     {t('settingsAccount.nativePassword.connectFromSecurity')}
                 </Text>
                 <WelcomeActionCard
                     testID="email-password-connect-sign-in"
+                    presentation="button"
                     title={t('settingsAccount.nativePassword.signInFirst')}
-                    iconName="sign-in"
                     onPress={() => setView({ kind: 'login' })}
                 />
                 {backAction}
@@ -489,7 +502,7 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
         return (
             <WelcomeActionAdmissionContext.Provider value={actionAdmission}>
             <View style={styles.root}>
-                <Text style={styles.title}>{t('settingsAccount.nativePassword.forgotTitle')}</Text>
+                {heading(t('settingsAccount.nativePassword.forgotTitle'))}
                 {props.passwordReset === 'email' ? (
                     <>
                         <Text style={styles.hint}>{t('settingsAccount.nativePassword.forgotExplanation')}</Text>
@@ -498,16 +511,16 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
                         {progressNotice}
                         <WelcomeActionCard
                             testID="email-password-request-reset"
+                    presentation="button"
                             title={t('settingsAccount.nativePassword.emailResetInstructions')}
-                            iconName="envelope"
                             onPress={submitResetRequest}
                         />
                     </>
                 ) : null}
                 <WelcomeActionCard
                     testID="email-password-use-recovery-key"
+                    presentation="button"
                     title={t('settingsAccount.nativePassword.useRecoveryKey')}
-                    iconName="key"
                     onPress={() => {
                         // Leave the current auth surface so a modal cannot cover recovery.
                         props.onBack?.();
@@ -539,22 +552,18 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
     return (
         <WelcomeActionAdmissionContext.Provider value={actionAdmission}>
         <View style={styles.root}>
-            <Text style={styles.title}>
-                {provisioning ? t('settingsAccount.nativePassword.createTitle') : t('settingsAccount.nativePassword.title')}
-            </Text>
-            {props.homeLabel ? (
-                <Text testID="email-password-home-label" style={styles.hint}>{props.homeLabel}</Text>
-            ) : null}
+            {heading(provisioning ? t('settingsAccount.nativePassword.createTitle') : t('settingsAccount.nativePassword.title'))}
             {emailField(
                 provisioning ? 'email' : 'username',
                 collectsCredentials ? undefined : submitProvision,
             )}
             {collectsCredentials ? (
+            <ListPresentationProvider value="page">
             <PasswordField
                 testID="email-password-password"
                 inputRef={passwordRef}
                 label={t('settingsAccount.nativePassword.password')}
-                labelStyle={styles.fieldLabel}
+                labelStyle={stepFieldLabelStyle()}
                 value={draft.password}
                 onChangeText={(password) => setDraft((current) => ({ ...current, password }))}
                 autoComplete={provisioning ? 'new-password' : 'current-password'}
@@ -564,17 +573,19 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
                 returnKeyType={provisioning ? 'next' : 'go'}
                 onSubmitEditing={provisioning ? () => confirmRef.current?.focus() : submitLogin}
             />
+            </ListPresentationProvider>
             ) : (
                 <Text testID="email-password-verify-first" style={styles.hint}>
                     {t('settingsAccount.nativePassword.verifyReturnToCreate')}
                 </Text>
             )}
             {provisioning && collectsCredentials ? (
+                <ListPresentationProvider value="page">
                 <PasswordField
                     testID="email-password-confirm"
                     inputRef={confirmRef}
                     label={t('settingsAccount.nativePassword.confirmPassword')}
-                    labelStyle={styles.fieldLabel}
+                    labelStyle={stepFieldLabelStyle()}
                     value={draft.confirmPassword}
                     onChangeText={(confirmPassword) => setDraft((current) => ({ ...current, confirmPassword }))}
                     autoComplete="new-password"
@@ -583,11 +594,12 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
                     returnKeyType="go"
                     onSubmitEditing={submitProvision}
                 />
+                </ListPresentationProvider>
             ) : null}
             {provisioning && collectsCredentials && permittedModes.length > 1 ? (
                 <FieldItem
                     label={t('settingsAccount.nativePassword.accountProtection')}
-                    labelStyle={styles.fieldLabel}
+                    labelStyle={stepFieldLabelStyle()}
                     supportingText={accountMode === 'e2ee'
                         ? tLoose('settingsAccount.nativePassword.protectionE2eeDetail')
                         : t('settingsAccount.nativePassword.protectionPlainDetail')}
@@ -631,12 +643,12 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
             {progressNotice}
             <WelcomeActionCard
                 testID={provisioning ? 'email-password-create' : 'email-password-submit'}
+                presentation="button"
                 title={provisioning
                     ? collectsCredentials
                         ? t('settingsAccount.nativePassword.createAccount')
                         : t('settingsAccount.nativePassword.sendVerification')
                     : t('settingsAccount.nativePassword.signIn')}
-                iconName="sign-in"
                 primary
                 onPress={provisioning ? submitProvision : submitLogin}
             />
@@ -655,18 +667,14 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
     );
 });
 
+const EMAIL_LABEL_ID = 'email-password-email-label';
+
 const styles = StyleSheet.create((theme) => ({
-    root: { width: '100%', gap: theme.space.s12 },
-    fieldLabel: {  ...Typography.variant('body', 'medium'),   marginBottom: theme.space.s8 },
-    title: { ...Typography.variant('title'),  color: theme.colors.text.primary },
-    hint: { fontSize: 13, color: theme.colors.text.secondary },
-    formError: { fontSize: 13 },
+    // Groups stand a section apart; a field's own label, box and line sit close (StepFieldGroup).
+    root: { width: '100%', gap: theme.space.s16 },
+    inlineHeading: { gap: theme.space.s4 },
+    title: { ...Typography.variant('title'), color: theme.colors.text.primary },
+    hint: { ...Typography.variant('body'), color: theme.colors.text.secondary },
+    formError: { ...Typography.variant('body') },
     choices: { gap: theme.space.s8 },
-    input: {
-        borderWidth: 1,
-        borderRadius: 12,
-        paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s10,
-        minHeight: 44,
-    },
 }));

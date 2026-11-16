@@ -54,6 +54,7 @@ export const EmailPasswordAuthStep = React.memo(function EmailPasswordAuthStep(p
     return (
         <EmailPasswordAuthPanel
             {...panelProps}
+            presentation="step"
             onAuthenticated={async (outcome) => {
                 const completion = await onAuthenticated(outcome);
                 if (completion === 'retired') return;

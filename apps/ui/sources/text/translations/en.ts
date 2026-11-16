@@ -3371,6 +3371,10 @@ const enConnect = {
   pairingLinkSecurityWarning:
     'Anyone with this temporary link can add a device before it expires. Share it only with your own device.',
   pairingLinkFieldLabel: 'Pairing link',
+  signInPairingLinkHelp: "On a device that's already signed in, open Settings → Add your phone and copy its pairing link. It works once and expires after a few minutes.",
+  signInShowQr: "Show a QR code here for that device to scan",
+  signInSecretKeyHelp: "The secret key you saved when you created your account. It signs you in without another device.",
+  signInSecretKeyAction: "Enter key",
   pairingLinkRequired: 'Paste the pairing link shown on the other device.',
   pairingQrTooLargeTitle: 'Too large for a QR code',
   pairingQrTooLargeBody:
@@ -18994,7 +18998,7 @@ const enSetupOnboarding = {
   relayCustomUrlTitle: 'Existing Home',
   relayCustomUrlSubtitle: 'Use a Home address you already have',
   authRestoreTitle: 'Restore or add this device',
-  authRestoreSubtitle: 'Use a QR code or a link to connect this device',
+  authRestoreSubtitle: "Sign in with a device you already use, or with your recovery key.",
   addHomeTitle: 'Add another Home',
   addHomeSubtitle:
     'Scan a QR code to add a Home without leaving your current one',

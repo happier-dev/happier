@@ -13,7 +13,7 @@ import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/S
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { t } from '@/text';
 
-import { PaneHelp } from '../journeys/alreadyUse/journeyPaneKit';
+import { StepFieldHelp } from '@/components/onboarding/unauthShell/StepFormParts';
 
 type Where = 'thisComputer' | 'ssh';
 
@@ -59,9 +59,9 @@ export function ServerHomePane(props: Readonly<{
                         role="radiogroup"
                     />
                 ) : <OrganizationPolicyFieldNotice field="personalHome" />}
-                <PaneHelp>
+                <StepFieldHelp>
                     {where === 'thisComputer' ? t('setupOnboarding.personalHomeOfferSubtitle') : t('homesJourneys.addServerHomeSubtitle')}
-                </PaneHelp>
+                </StepFieldHelp>
                 {where === 'thisComputer' ? (
                     <RelayHostLocalChecklistStep
                         testID={`${props.testID}.thisComputer`}

@@ -180,7 +180,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s16,
     },
     textBlock: { flex: 1, gap: 0 },
-    button: { minHeight: 50, justifyContent: 'center', gap: theme.space.s8 },
+    // A button stands as the one button of the app (RoundButton `large`): the `md` radius, sized by its words
+    // and padding, so a sign-in form's action reads like Restore's (owner review 11-16).
+    button: {
+        minHeight: 0,
+        justifyContent: 'center',
+        gap: theme.space.s8,
+        borderRadius: theme.borderRadius.md,
+        paddingVertical: theme.space.s10,
+    },
     link: { paddingHorizontal: 0, paddingVertical: theme.space.s8, borderWidth: 0 },
     buttonText: { gap: 0, alignItems: 'center', flexShrink: 1 },
     row: { minHeight: HAPPIER_PAGE_METRICS.compactRowMinHeightPx, paddingVertical: theme.space.s4 },

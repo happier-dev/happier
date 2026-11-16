@@ -19,7 +19,8 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 
-import { PaneHeader, PaneHelp, PaneLabel, PaneOrDivider } from './journeyPaneKit';
+import { StepFieldGroup, StepFieldHelp, StepFieldLabel, StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
+import { PaneHeader } from './journeyPaneKit';
 import {
     confirmCanonicalHomeUrl,
     confirmInsecureHomeHttp,
@@ -142,9 +143,8 @@ export function DirectHomePathPane(props: Readonly<{
     return (
         <View style={styles.pane} testID="already-use-happier.pane.direct">
             <PaneHeader title={t('homesJourneys.pathDirectTitle')} lead={t('homesJourneys.directLead')} />
-            <View style={styles.group}>
-                <PaneLabel nativeID={LINK_LABEL_ID}>{t('homesJourneys.fromDeviceLabel')}</PaneLabel>
-                <PaneHelp>{t(phone ? 'homesJourneys.phone.fromDeviceHelp' : 'homesJourneys.fromDeviceHelp')}</PaneHelp>
+            <StepFieldGroup>
+                <StepFieldLabel nativeID={LINK_LABEL_ID}>{t('homesJourneys.fromDeviceLabel')}</StepFieldLabel>
                 <View style={styles.fieldRow}>
                     <FieldTextInput
                         testID="already-use-happier.home-link"
@@ -166,7 +166,7 @@ export function DirectHomePathPane(props: Readonly<{
                     {hasLink ? (
                         <RoundButton
                             testID="already-use-happier.home-link-open"
-                            size="small"
+                            size="normal"
                             display="secondary"
                             title={t('homesJourneys.openLink')}
                             onPress={openLink}
@@ -174,7 +174,7 @@ export function DirectHomePathPane(props: Readonly<{
                     ) : (
                         <RoundButton
                             testID="already-use-happier.use-camera"
-                            size="small"
+                            size="normal"
                             display="secondary"
                             title={t(phone ? 'homesJourneys.phone.scan' : 'homesJourneys.useCamera')}
                             leading={<Icon name="camera" size={14} color={theme.colors.text.secondary} />}
@@ -182,10 +182,13 @@ export function DirectHomePathPane(props: Readonly<{
                         />
                     )}
                 </View>
-            </View>
-            <PaneOrDivider label={t('common.or')} />
-            <View style={styles.group}>
-                <PaneLabel nativeID={ADDRESS_LABEL_ID}>{t('homesJourneys.byAddressLabel')}</PaneLabel>
+                {linkError ? null : (
+                    <StepFieldHelp>{t(phone ? 'homesJourneys.phone.fromDeviceHelp' : 'homesJourneys.fromDeviceHelp')}</StepFieldHelp>
+                )}
+            </StepFieldGroup>
+            <StepOrDivider label={t('common.or')} />
+            <StepFieldGroup>
+                <StepFieldLabel nativeID={ADDRESS_LABEL_ID}>{t('homesJourneys.byAddressLabel')}</StepFieldLabel>
                 <View style={styles.fieldRow}>
                     <FieldTextInput
                         testID="already-use-happier.home-address"
@@ -206,16 +209,16 @@ export function DirectHomePathPane(props: Readonly<{
                     />
                     <RoundButton
                         testID="already-use-happier.home-connect"
-                        size="small"
+                        size="normal"
                         title={t('homesJourneys.connect')}
                         loading={addressState.kind === 'connecting'}
                         onPress={() => { void connect(); }}
                     />
                 </View>
                 {addressState.kind === 'failed' ? (
-                    <PaneHelp tone="error" testID="already-use-happier.home-address-error">{addressState.message}</PaneHelp>
+                    <StepFieldHelp tone="error" testID="already-use-happier.home-address-error">{addressState.message}</StepFieldHelp>
                 ) : (
-                    <PaneHelp>{t('homesJourneys.byAddressHelp')}</PaneHelp>
+                    <StepFieldHelp>{t('homesJourneys.byAddressHelp')}</StepFieldHelp>
                 )}
                 {remediation ? (
                     <ServerReachabilityRemediationCard
@@ -225,24 +228,23 @@ export function DirectHomePathPane(props: Readonly<{
                     />
                 ) : null}
                 {remediationController.error ? (
-                    <PaneHelp tone="error">{remediationController.error}</PaneHelp>
+                    <StepFieldHelp tone="error">{remediationController.error}</StepFieldHelp>
                 ) : null}
-            </View>
+            </StepFieldGroup>
         </View>
     );
 }
 
-const styles = StyleSheet.create(() => ({
+const styles = StyleSheet.create((theme) => ({
+    // The heading, then two ways in a section apart with "or" between them (StepFormParts anatomy).
     pane: {
-        gap: 14,
+        gap: theme.space.s24,
     },
-    group: {
-        gap: 6,
-    },
+    // A field and its action share one height (the page control), so they align on one line.
     fieldRow: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        gap: 8,
+        gap: theme.space.s8,
     },
     // The field gives way to its button at any width (a phone keeps both on screen).
     fieldInput: {

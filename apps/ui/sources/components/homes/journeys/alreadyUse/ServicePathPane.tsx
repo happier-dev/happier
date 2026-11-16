@@ -11,7 +11,8 @@ import { t } from '@/text';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 import { useJourneySignInRequest, type JourneyAccountService } from '../useJourneyAccountService';
-import { PaneHeader, PaneHelp, PaneIdentityRow, PaneLink } from './journeyPaneKit';
+import { StepFieldHelp } from '@/components/onboarding/unauthShell/StepFormParts';
+import { PaneHeader, PaneIdentityRow, PaneLink } from './journeyPaneKit';
 
 /**
  * Path (a): the sign-in service this device finds its Homes with. The service comes first — its
@@ -75,7 +76,7 @@ export function ServicePathPane(props: Readonly<{
                     action={{ label: t('common.retry'), onPress: service.entry.retry }}
                 />
             )}
-            <PaneHelp>{t('homesJourneys.serviceMethodsHelp', { service: service.name })}</PaneHelp>
+            <StepFieldHelp>{t('homesJourneys.serviceMethodsHelp', { service: service.name })}</StepFieldHelp>
         </View>
     );
 }

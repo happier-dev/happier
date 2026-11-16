@@ -102,21 +102,20 @@ const stylesheet = StyleSheet.create((theme) => ({
     width: '100%',
     gap: theme.space.s24,
   },
+  // The description sits directly under the title, as on every page (PageHeader): the title's own line
+  // box is the air between them, so the two read as one block (owner review 11-16).
   header: {
     width: '100%',
-    gap: theme.space.s10,
   },
   context: {
-    marginBottom: theme.space.s2,
+    marginBottom: theme.space.s8,
   },
   title: {
     ...Typography.variant('display'),
     color: theme.colors.text.primary,
   },
   subtitle: {
-    ...Typography.default(),
-    fontSize: 16,
-    lineHeight: 24,
+    ...Typography.variant('reading'),
     color: theme.colors.text.secondary,
   },
   body: {

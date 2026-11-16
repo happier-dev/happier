@@ -1,13 +1,14 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { normalizeSecretKey } from '@/auth/recovery/secretKeyBackup';
 import { authenticationErrorMessage } from '@/auth/flows/authenticationErrorMessage';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Text, TextInput } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { StepFieldGroup, StepFieldHelp, StepFieldLabel } from '@/components/onboarding/unauthShell/StepFormParts';
+import type { TextInput } from '@/components/ui/text/Text';
 import { decodeBase64 } from '@/encryption/base64';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
@@ -27,51 +28,19 @@ export type SecretKeyEntryFormProps = Readonly<{
     secondaryAction?: Readonly<{ label: string; onPress: () => void }>;
 }>;
 
+const LABEL_ID = 'restore-manual-secret-label';
+
 const stylesheet = StyleSheet.create((theme) => ({
-    help: {
-        marginBottom: theme.space.s16,
-        ...Typography.variant('body'),
-        color: theme.colors.text.secondary,
-    },
-    label: {
-        marginBottom: theme.space.s8,
-        ...Typography.variant('label', 'semiBold'),
-        color: theme.colors.text.primary,
-    },
-    input: {
-        backgroundColor: theme.colors.input.background,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        padding: theme.space.s16,
-        paddingRight: 58,
-        borderRadius: 14,
-        ...Typography.mono(),
-        fontSize: 14,
-        lineHeight: 20,
-        minHeight: 54,
-        color: theme.colors.input.text,
-    },
-    inputWrapper: {
+    root: {
         width: '100%',
-        position: 'relative',
-        marginBottom: theme.space.s8,
+        gap: theme.space.s16,
     },
-    revealButton: {
-        position: 'absolute',
-        right: 13,
-        top: 13,
-    },
-    error: {
-        marginBottom: theme.space.s16,
-        fontSize: 14,
-        lineHeight: 20,
-        color: theme.colors.state.danger.foreground,
-        ...Typography.default(),
+    actions: {
+        gap: theme.space.s12,
     },
 }));
 
 export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: SecretKeyEntryFormProps) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
     const inputRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
     const draftRef = React.useRef('');
@@ -144,16 +113,15 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
     }, [props, secretKey]);
 
     return (
-        <>
-            <Text style={styles.label}>{t('connect.secretKeyInputLabel')}</Text>
-            <View style={styles.inputWrapper}>
-                <TextInput
+        <View style={styles.root}>
+            <StepFieldGroup>
+                <StepFieldLabel nativeID={LABEL_ID}>{t('connect.secretKeyInputLabel')}</StepFieldLabel>
+                <FieldTextInput
                     ref={inputRef}
                     testID="restore-manual-secret-input"
                     accessibilityLabel={t('connect.secretKeyInputLabel')}
-                    style={styles.input}
+                    accessibilityLabelledBy={LABEL_ID}
                     placeholder={t('connect.secretKeyPlaceholder')}
-                    placeholderTextColor={theme.colors.input.placeholder}
                     value={secretKey}
                     onChangeText={(value) => {
                         draftRef.current = value;
@@ -163,49 +131,50 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
                     onSubmitEditing={() => {
                         void submit();
                     }}
+                    invalid={error !== null}
                     secureTextEntry={!revealed}
+                    multiline={false}
                     autoFocus
                     autoCapitalize="none"
                     autoComplete="off"
-                    autoCorrect={false}
                     returnKeyType="go"
-                    blurOnSubmit={false}
-                    multiline={false}
+                    monospace
+                    trailing={(
+                        <IconButton
+                            testID="restore-manual-secret-reveal"
+                            accessibilityLabel={revealed ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
+                            iconName={revealed ? 'eye-slash' : 'eye'}
+                            variant="plain"
+                            size={28}
+                            onPress={() => setRevealed((value) => !value)}
+                        />
+                    )}
                 />
-                <View style={styles.revealButton}>
-                    <IconButton
-                        testID="restore-manual-secret-reveal"
-                        accessibilityLabel={revealed ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
-                        iconName={revealed ? 'eye-slash' : 'eye'}
-                        variant="plain"
-                        size={28}
-                        onPress={() => setRevealed((value) => !value)}
+                {error ? (
+                    <StepFieldHelp testID="restore-manual-secret-error" tone="error">{error}</StepFieldHelp>
+                ) : (
+                    <StepFieldHelp>{props.description}</StepFieldHelp>
+                )}
+            </StepFieldGroup>
+            <View style={styles.actions}>
+                <RoundButton testID="restore-manual-submit" title={props.submitTitle} action={submit} loading={submitPending} />
+                {props.secondaryAction ? (
+                    <RoundButton
+                        testID="restore-manual-secondary"
+                        title={props.secondaryAction.label}
+                        display="inverted"
+                        onPress={props.secondaryAction.onPress}
                     />
-                </View>
+                ) : null}
+                {props.onBack ? (
+                    <RoundButton
+                        testID="restore-manual-back"
+                        title={t('common.back')}
+                        display="inverted"
+                        onPress={props.onBack}
+                    />
+                ) : null}
             </View>
-            <Text style={styles.help}>{props.description}</Text>
-            {error ? (
-                <Text testID="restore-manual-secret-error" accessibilityRole="alert" style={styles.error}>
-                    {error}
-                </Text>
-            ) : null}
-            <RoundButton testID="restore-manual-submit" title={props.submitTitle} action={submit} loading={submitPending} />
-            {props.secondaryAction ? (
-                <RoundButton
-                    testID="restore-manual-secondary"
-                    title={props.secondaryAction.label}
-                    display="inverted"
-                    onPress={props.secondaryAction.onPress}
-                />
-            ) : null}
-            {props.onBack ? (
-                <RoundButton
-                    testID="restore-manual-back"
-                    title={t('common.back')}
-                    display="inverted"
-                    onPress={props.onBack}
-                />
-            ) : null}
-        </>
+        </View>
     );
 });

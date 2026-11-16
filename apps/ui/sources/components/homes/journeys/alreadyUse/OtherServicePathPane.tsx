@@ -16,7 +16,8 @@ import {
 } from '@/sync/ops/accountDirectory/selectAccountServiceEndpoint';
 import { t } from '@/text';
 
-import { PaneConfirmed, PaneHeader, PaneHelp, PaneIdentityRow, PaneLabel } from './journeyPaneKit';
+import { StepFieldHelp, StepFieldLabel } from '@/components/onboarding/unauthShell/StepFormParts';
+import { PaneConfirmed, PaneHeader, PaneIdentityRow } from './journeyPaneKit';
 
 type Verified = Extract<CheckAccountServiceEndpointResult, { kind: 'verified' }>;
 
@@ -77,7 +78,7 @@ export function OtherServicePathPane(props: Readonly<{
             <OrganizationPolicyFieldNotice field="accountService" />
             <PaneHeader title={t('homesJourneys.pathOtherServiceTitle')} lead={t('homesJourneys.otherServiceLead')} />
             <View style={styles.field}>
-                <PaneLabel nativeID={ADDRESS_LABEL_ID}>{t('homesJourneys.serviceAddressLabel')}</PaneLabel>
+                <StepFieldLabel nativeID={ADDRESS_LABEL_ID}>{t('homesJourneys.serviceAddressLabel')}</StepFieldLabel>
                 <View style={styles.fieldRow}>
                     <FieldTextInput
                         testID="already-use-happier.service-address"
@@ -132,7 +133,7 @@ export function OtherServicePathPane(props: Readonly<{
                 </>
             ) : homeAddress ? (
                 <View style={styles.handoff}>
-                    <PaneHelp testID="already-use-happier.service-not-a-service">{t('homesJourneys.addressIsNotAService')}</PaneHelp>
+                    <StepFieldHelp testID="already-use-happier.service-not-a-service">{t('homesJourneys.addressIsNotAService')}</StepFieldHelp>
                     <View style={styles.actions}>
                         <RoundButton
                             testID="already-use-happier.connect-as-home"
@@ -144,9 +145,9 @@ export function OtherServicePathPane(props: Readonly<{
                     </View>
                 </View>
             ) : selection.error ? (
-                <PaneHelp tone="error" testID="already-use-happier.service-error">{selection.error}</PaneHelp>
+                <StepFieldHelp tone="error" testID="already-use-happier.service-error">{selection.error}</StepFieldHelp>
             ) : (
-                <PaneHelp>{t('settingsAccount.accountServiceChooserAddressHelp')}</PaneHelp>
+                <StepFieldHelp>{t('settingsAccount.accountServiceChooserAddressHelp')}</StepFieldHelp>
             )}
         </View>
     );

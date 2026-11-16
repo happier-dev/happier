@@ -1,12 +1,16 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
+import { StepFieldGroup, StepFieldHelp, StepFieldLabel } from '@/components/onboarding/unauthShell/StepFormParts';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { Text, type TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+
+const LABEL_ID = 'restore-pairing-link-label';
 
 export type PairingLinkEntryFormProps = Readonly<{
     /** The way back to the view that opened the form. Omitted, the host's own back is the only way out. */
@@ -14,10 +18,17 @@ export type PairingLinkEntryFormProps = Readonly<{
     onSubmit: (link: string) => Promise<boolean>;
     /**
      * Inside a host that already titles the step (the welcome pane, a setup card), the form is its
-     * field and actions on the host's column: no heading of its own, the warning as the field's
-     * help, and the way back as a quiet text action.
+     * field and actions on the host's column: no heading of its own, the field and its action on one
+     * row, the explanation under the field, and the way back as a quiet text action.
      */
     embedded?: boolean;
+    /**
+     * Embedded: the row's action while the field is still empty (this device's camera), in place of
+     * Continue. Typing a link brings Continue back.
+     */
+    emptyAction?: React.ReactNode;
+    /** Focus the field on arrival (default). A host offering several ways turns it off when another is open. */
+    autoFocus?: boolean;
     /**
      * Surface copy. Defaults describe Home restore; the shared QR scanner passes the
      * account- and terminal-specific wording so link entry keeps each flow's voice
@@ -44,61 +55,29 @@ const stylesheet = StyleSheet.create((theme) => ({
         textAlign: 'center',
     },
     description: {
-        fontSize: 16,
-        lineHeight: 24,
+        ...Typography.variant('reading'),
         color: theme.colors.text.secondary,
         textAlign: 'center',
-        ...Typography.default(),
-    },
-    field: {
-        gap: theme.space.s8,
-    },
-    label: {
-        ...Typography.variant('label', 'semiBold'),
-        color: theme.colors.text.primary,
-    },
-    input: {
-        minHeight: 54,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        borderRadius: 14,
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: 14,
-        backgroundColor: theme.colors.input.background,
-        color: theme.colors.input.text,
-        fontSize: 14,
-        lineHeight: 20,
-        ...Typography.mono(),
-    },
-    error: {
-        fontSize: 14,
-        lineHeight: 20,
-        color: theme.colors.state.danger.foreground,
-        ...Typography.default(),
     },
     actions: {
         gap: theme.space.s12,
     },
-    embeddedContainer: {
-        width: '100%',
-        gap: theme.space.s16,
+    fieldRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
     },
-    hint: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
+    // The field gives way to its action at any width (a phone keeps both on screen).
+    fieldInput: {
+        flex: 1,
+        minWidth: 0,
     },
-    embeddedActions: {
-        width: '100%',
+    quietAction: {
         alignItems: 'flex-start',
-        gap: theme.space.s16,
-    },
-    embeddedPrimary: {
-        width: '100%',
     },
 }));
 
 export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(props: PairingLinkEntryFormProps) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
     const inputRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
     const submittingRef = React.useRef(false);
@@ -135,88 +114,88 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
 
     const description = props.description ?? t('connect.pairingLinkSecurityWarning');
     const embedded = props.embedded === true;
+    const submitButton = (
+        <RoundButton
+            testID="restore-pairing-link-submit"
+            size={embedded ? 'normal' : undefined}
+            title={props.submitLabel ?? t('common.continue')}
+            action={submit}
+            loading={isSubmitting}
+        />
+    );
+    const field = (
+        <FieldTextInput
+            ref={inputRef}
+            testID="restore-pairing-link-input"
+            accessibilityLabel={t('connect.pairingLinkFieldLabel')}
+            accessibilityLabelledBy={LABEL_ID}
+            accessibilityHint={description}
+            placeholder={props.placeholder ?? t('common.urlPlaceholder')}
+            value={link}
+            onChangeText={(next) => {
+                setLink(next);
+                if (error) setError(null);
+            }}
+            onSubmitEditing={() => {
+                void submit();
+            }}
+            invalid={error !== null}
+            autoFocus={props.autoFocus !== false}
+            autoCapitalize="none"
+            keyboardType="url"
+            returnKeyType="go"
+            monospace
+            style={embedded ? styles.fieldInput : undefined}
+        />
+    );
+    const help = error ? (
+        <StepFieldHelp testID="restore-pairing-link-error" tone="error">{error}</StepFieldHelp>
+    ) : embedded ? (
+        <StepFieldHelp testID="restore-pairing-link-hint">{description}</StepFieldHelp>
+    ) : null;
 
-    return (
-        <View testID="pairing-link-entry-form" style={embedded ? styles.embeddedContainer : styles.container}>
-            {embedded ? null : (
-                <>
-                    <Text style={styles.title}>{props.title ?? t('connect.enterUrlManually')}</Text>
-                    <Text style={styles.description}>{description}</Text>
-                </>
-            )}
-            <View style={styles.field}>
-                <Text style={styles.label}>{t('connect.pairingLinkFieldLabel')}</Text>
-                <TextInput
-                    ref={inputRef}
-                    testID="restore-pairing-link-input"
-                    accessibilityLabel={t('connect.pairingLinkFieldLabel')}
-                    accessibilityHint={description}
-                    style={styles.input}
-                    placeholder={props.placeholder ?? t('common.urlPlaceholder')}
-                    placeholderTextColor={theme.colors.input.placeholder}
-                    value={link}
-                    onChangeText={(next) => {
-                        setLink(next);
-                        if (error) setError(null);
-                    }}
-                    onSubmitEditing={() => {
-                        void submit();
-                    }}
-                    autoFocus
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="url"
-                    returnKeyType="go"
-                    multiline={false}
-                />
-                {error ? (
-                    <Text
-                        testID="restore-pairing-link-error"
-                        accessibilityRole="alert"
-                        style={styles.error}
-                    >
-                        {error}
-                    </Text>
-                ) : embedded ? (
-                    <Text testID="restore-pairing-link-hint" style={styles.hint}>{description}</Text>
-                ) : null}
-            </View>
-            {embedded ? (
-                <View style={styles.embeddedActions}>
-                    <View style={styles.embeddedPrimary}>
-                        <RoundButton
-                            testID="restore-pairing-link-submit"
-                            title={props.submitLabel ?? t('common.continue')}
-                            action={submit}
-                            loading={isSubmitting}
-                        />
-                    </View>
-                    {props.onBack && props.backLabel ? (
+    if (embedded) {
+        return (
+            <StepFieldGroup testID="pairing-link-entry-form">
+                <StepFieldLabel nativeID={LABEL_ID}>{t('connect.pairingLinkFieldLabel')}</StepFieldLabel>
+                <View style={styles.fieldRow}>
+                    {field}
+                    {props.emptyAction && link.trim().length === 0 ? props.emptyAction : submitButton}
+                </View>
+                {help}
+                {props.onBack && props.backLabel ? (
+                    <View style={styles.quietAction}>
                         <TextLinkButton
                             testID="restore-pairing-link-back"
                             label={props.backLabel}
                             onPress={props.onBack}
                         />
-                    ) : null}
-                </View>
-            ) : (
-                <View style={styles.actions}>
+                    </View>
+                ) : null}
+            </StepFieldGroup>
+        );
+    }
+
+    return (
+        <View testID="pairing-link-entry-form" style={styles.container}>
+            <Text style={styles.title}>{props.title ?? t('connect.enterUrlManually')}</Text>
+            <Text style={styles.description}>{description}</Text>
+            <StepFieldGroup>
+                <StepFieldLabel nativeID={LABEL_ID}>{t('connect.pairingLinkFieldLabel')}</StepFieldLabel>
+                {field}
+                {help}
+            </StepFieldGroup>
+            <View style={styles.actions}>
+                {submitButton}
+                {props.onBack ? (
                     <RoundButton
-                        testID="restore-pairing-link-submit"
-                        title={props.submitLabel ?? t('common.continue')}
-                        action={submit}
-                        loading={isSubmitting}
+                        testID="restore-pairing-link-back"
+                        title={props.backLabel ?? t('common.back')}
+                        display="inverted"
+                        onPress={props.onBack}
                     />
-                    {props.onBack ? (
-                        <RoundButton
-                            testID="restore-pairing-link-back"
-                            title={props.backLabel ?? t('common.back')}
-                            display="inverted"
-                            onPress={props.onBack}
-                        />
-                    ) : null}
-                </View>
-            )}
+                ) : null}
+            </View>
         </View>
     );
 });
