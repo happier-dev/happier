@@ -4,6 +4,7 @@ import { decodeBase64 } from 'privacy-kit';
 import { createMachineDataEncryptionKeyV1, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilityHttpHeadersV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
@@ -20,7 +21,7 @@ import { readMachinePresetRecipientCensus } from '@/app/machines/managed/machine
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createMachineContentCodec } from '../../../../../../../cli/src/api/machine/machineStoredContent';
 import { registerExternalActionRoutes } from '../../actions/registerExternalActionRoutes';
-import { registerMachinePresetRoutes } from './registerMachinePresetRoutes';
+import { machinesRoutes } from '../machinesRoutes';
 
 describe('Prepare original admission through preset HTTP and storage', () => {
     const homeId = 'srv_preset_preparation';
@@ -50,7 +51,7 @@ describe('Prepare original admission through preset HTTP and storage', () => {
         token = await auth.createToken(accountId, undefined, { kind: 'terminal', authority: 'account_automation' });
         app = createAuthenticatedTestApp({ authentication: 'real' });
         registerExternalActionRoutes(app, { dispatch: async () => { throw new Error('Mint must not execute Prepare'); } });
-        registerMachinePresetRoutes(app);
+        machinesRoutes(app);
         await app.ready();
     }, 120_000);
     afterAll(async () => { try { await app?.close(); } finally { await database?.close(); } });
@@ -129,6 +130,58 @@ describe('Prepare original admission through preset HTTP and storage', () => {
         expect(archived.json()).toMatchObject({ kind: 'saved', preset: { revision: 2, archivedAt: expect.any(Number) } });
         expect((await signed(authorization, '/v1/machines/presets/archive', { homeId, id: 'archive-sibling', expectedRevision: 0 })).statusCode)
             .toBeGreaterThanOrEqual(400);
+    });
+
+    it('reads original Machine cleanup facts under the admitted Archive requester without treating inaccessible rows as gone', async () => {
+        await seed('archive-gone-host');
+        const issued = await app.inject({ method: 'POST',
+            url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.presets.archive'),
+            headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId,
+                envelope: { v: 1, requestId: 'archive-gone-host', target: { kind: 'machine', machineId },
+                    input: { homeId, id: 'archive-gone-host', expectedRevision: 0 } } } });
+        expect(issued.statusCode, issued.body).toBe(200);
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+        const originalId = 'original-revoked-prepare-host';
+        await db.machine.create({ data: { id: originalId, accountId, revokedAt: new Date(123),
+            metadata: encodePlainMachineStoredContent({ host: 'Old host', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/old', happyHomeDir: '/home/old/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+        await db.machine.create({ data: { id: 'foreign-gone-host', accountId: 'other-prepare-owner', revokedAt: new Date(123),
+            metadata: '', dataEncryptionKey: null } });
+        const readMachine = (id: string, effectActionId = authorization.binding.actionId, proof = authorization, hostFacts = true) => {
+            const path = `/v1/machines/${encodeURIComponent(id)}`;
+            return app.inject({ method: 'GET', url: path, headers: {
+                ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION),
+                ...(hostFacts ? { accept: 'application/json;happier-machine-projection=host-facts' } : {}),
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: proof.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(proof.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: proof.token, effectActionId, target: proof.binding.target,
+                    installationId, requestId: proof.binding.requestId, method: 'GET', path, privateKey: keys.secretKey,
+                }),
+            } });
+        };
+        const original = await readMachine(originalId);
+        expect(original.statusCode, original.body).toBe(200);
+        expect(original.json()).toMatchObject({ machine: { id: originalId, revokedAt: 123, replacedByMachineId: null } });
+        expect(original.json().machine).not.toHaveProperty('metadata');
+        // Accept is unsigned presentation demand. The admitted read must never
+        // release private Machine bodies when its installed signer omits it.
+        const unqualified = await readMachine(originalId, authorization.binding.actionId, authorization, false);
+        expect(unqualified.statusCode, unqualified.body).toBe(200);
+        expect(unqualified.json()).toEqual(original.json());
+        expect(unqualified.json().machine).not.toHaveProperty('metadata');
+        expect(unqualified.json().machine).not.toHaveProperty('daemonState');
+        expect(unqualified.json().machine).not.toHaveProperty('dataEncryptionKey');
+        expect((await readMachine('foreign-gone-host')).statusCode).toBe(404);
+        expect((await readMachine('missing-gone-host')).statusCode).toBe(404);
+        expect((await readMachine(originalId, MACHINE_PRESET_PREPARE_ACTION_ID_V1)).statusCode).toBe(401);
+        await seed('prepare-cannot-read-cleanup');
+        const prepareIssued = await mint('prepare-cannot-read-cleanup');
+        expect(prepareIssued.statusCode, prepareIssued.body).toBe(200);
+        const prepare = ExternalActionExecutionAuthorizationV1Schema.parse(prepareIssued.json());
+        expect((await readMachine(originalId, prepare.binding.actionId, prepare)).statusCode).toBe(401);
     });
 
     it('requires its own preset Manage and exact Home, Machine and initial revision at admission', async () => {

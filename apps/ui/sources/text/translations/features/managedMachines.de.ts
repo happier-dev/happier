@@ -577,6 +577,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         archive: "Vorlage archivieren",
         archiveHelp: "Keine neuen Rechner daraus. Laufende bleiben, bis sie gelöscht werden.",
         archivePreparedHelp: "Keine neuen Maschinen mehr daraus. Happier versucht, das vorbereitete Image zu löschen. Laufende arbeiten weiter, bis sie gelöscht werden.",
+        preparedImageCleanupRequired: ({ host }: { host: string }) => `Das vorbereitete Image auf ${host} konnte nicht entfernt werden. Lösche es dort.`,
         archiveSetupHelp: "Bereits eingerichtete Rechner behalten ihre Einrichtung.",
         editChoices: "Auswahl bearbeiten",
         onlyYou: "Nur du",

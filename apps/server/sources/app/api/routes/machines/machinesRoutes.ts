@@ -60,6 +60,7 @@ import { requireManagedMachineRegistrationInTx, linkManagedEnrollmentInTx } from
 import { ManagedMachineError, readMachineDevcontainerChildInTx, readMachineDevcontainerChildrenInTx } from "@/app/machines/managed/managedRows";
 import { MachineContentKeyTransitionInputV1Schema, MachineContentKeyTransitionResultV1Schema, MachinePublishedRowV1Schema } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
+import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { transitionMachineContentKeyInTx, readMachineContentKeySnapshotInTx } from "@/app/machines/transitionMachineContentKeyInTx";
 import { readCurrentManagedGuestActivityInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -69,8 +70,13 @@ import {
     readAccessibleMachineOpeningsInTx,
 } from '@/app/machines/machineAccess';
 
-// Accept is presentation demand only; the signed request path and admission stay unchanged.
+// Accept is presentation demand only. An admitted Archive reads host facts even
+// when its installed signer omits that unsigned header.
 function readMachineProjection(request: FastifyRequest): 'hostFacts' | undefined {
+    const binding = request.externalActionExecutionAuthorizationBinding;
+    if (request.externalActionExecutionAuthorized === true
+        && binding?.actionId === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1
+        && binding.presetPreparationAdmission) return 'hostFacts';
     return request.headers.accept === 'application/json;happier-machine-projection=host-facts' ? 'hostFacts' : undefined;
 }
 

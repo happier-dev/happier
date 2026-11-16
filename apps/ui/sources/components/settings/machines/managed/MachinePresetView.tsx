@@ -242,6 +242,12 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const conflict = detail.mutationResult?.kind === 'conflict';
     const refusal = detail.mutationResult?.kind === 'refused' ? detail.mutationResult.code : null;
     const archived = visiblePreset.archivedAt !== undefined;
+    const cleanupRequired = visiblePreset.prepared?.status === 'cancelled'
+        && visiblePreset.prepared.code === 'preparation_cleanup_required';
+    const cleanupHostId = cleanupRequired ? visiblePreset.prepared?.binding?.machineId : undefined;
+    const cleanupHost = cleanupHostId
+        ? getMachineDisplayName(machines?.find(machine => machine.id === cleanupHostId), machines ?? undefined) ?? cleanupHostId
+        : t('common.unknown');
     // The archived notice owns the state and its way back; Archive closes an active preset's page.
     const restore = canManage && archived ? () => fireAndForget(archiveOrRestore(), { tag: 'MachinePresetView.restore' }) : undefined;
     const archiveActions = canManage && !archived ? { onArchive: () => fireAndForget(archiveOrRestore(), { tag: 'MachinePresetView.archive' }) } : {};
@@ -250,7 +256,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const cannotCreateHere = Boolean(catalog.error) || configurationUnavailable;
     const notice = <>{approvalNotice}
         {configuration.creationDisabled ? <ManagedCreationDisabledBanner testID="machine-preset.creation-disabled" /> : null}
-        {archived ? <AttentionBanner testID="machine-preset.archived" tone="neutral" title={t('machinePresets.archived')}
+        {archived ? <AttentionBanner testID="machine-preset.archived" tone={cleanupRequired ? 'warning' : 'neutral'} title={t('machinePresets.archived')}
+            description={cleanupRequired ? t('machinePresets.preparedImageCleanupRequired', { host: cleanupHost }) : undefined}
             action={restore ? { label: t('common.restore'), onPress: restore, loading: busy, disabled: busy } : undefined} /> : null}
         {/* Why a preset can't create is moot once it is archived: its notice is the one message. */}
         {!archived && catalog.error ? <SurfaceStateCard testID="machine-preset.provider-error" kind="unavailable" size="line"
@@ -369,7 +376,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         ...(canUse && visiblePreset.archivedAt === undefined && configuration.creationEnabled && !cannotCreateHere
             ? { onCreateOne: () => openConfiguration(false) } : {}),
         // Archive attempts to delete the image it keeps ready; its retained report says when cleanup is needed.
-        ...(visiblePreset.preparation?.enabled ? { archiveHelp: t('machinePresets.archivePreparedHelp') } : {}),
+        ...(visiblePreset.preparation?.enabled || visiblePreset.prepared !== undefined
+            ? { archiveHelp: t('machinePresets.archivePreparedHelp') } : {}),
         ...(!archived && visiblePreset.preparation?.enabled ? { prepare: <MachinePresetPrepareSection serverId={props.serverId}
             preset={visiblePreset} canManage={canManage} busy={busy} onChanged={detail.refresh} /> } : {}),
         ...archiveActions,

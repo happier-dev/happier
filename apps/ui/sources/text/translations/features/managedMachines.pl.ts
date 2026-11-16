@@ -577,6 +577,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         archive: "Zarchiwizuj ustawienie",
         archiveHelp: "Bez nowych maszyn. Działające pozostają do usunięcia.",
         archivePreparedHelp: "Nie powstaną z niego nowe maszyny. Happier spróbuje usunąć jego przygotowany obraz. Działające pracują dalej, dopóki ich nie usuniesz.",
+        preparedImageCleanupRequired: ({ host }: { host: string }) => `Nie udało się usunąć przygotowanego obrazu na ${host}. Usuń go tam.`,
         archiveSetupHelp: "Maszyny, które już skonfigurowało, zachowują konfigurację.",
         editChoices: "Edytuj wybory",
         onlyYou: "Tylko Ty",

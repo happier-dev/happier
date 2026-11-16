@@ -2936,11 +2936,43 @@ describe('reachable preset detail', () => {
     );
   });
 
+  it('archives and restores the preset with its reviewed revision: explains retained image cleanup after opting out of Prepare', async () => {
+    const serverId = await seed();
+    const { replaceManagedMachinePresetPreparationV1, replaceManagedMachinePresetAuthorContentV1 } =
+      await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+    const stored = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } });
+    const built = replaceManagedMachinePresetPreparationV1({ presetId: preset.id, mode: 'plain', content: stored.content,
+      expectedOperationId: null, prepared: { operationId: 'retained-image-build', status: 'ready',
+        artifact: { contributionRef: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, value: { image: 'retained-image' } },
+        binding: { cliIdentity: 'supplier-identity', machineId: 'original-builder', credentialConfigurations: [],
+          configuration: { launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices } } } } });
+    if (!built) throw new Error('Expected a ready preparation');
+    const edited = replaceManagedMachinePresetAuthorContentV1({ presetId: preset.id, mode: 'plain',
+      projection: { content: built.content, recipientEnvelope: null },
+      content: { v: 1, name: preset.name, launch: preset.launch, preparation: { enabled: false } } });
+    if (!edited) throw new Error('Expected the authored opt-out to retain the prepared image');
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: { ...stored, content: edited.content } } });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={preset.id} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.detail.archive')).not.toBeNull());
+      const model = screen.tree.findByType(MachinePresetDetail).props.model as MachinePresetDetailModel;
+      expect(model.archiveHelp).toBeTruthy();
+      expect(screen.findByTestId('machine-preset.preparation')).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
   it('archives and restores the preset with its reviewed revision without changing its admitted resources', async () => {
     const serverId = await seed();
     const archived = { ...preset, revision: 4, archivedAt: 1 } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
+    let storedPreset = createPlainManagedMachinePresetFixture(preset);
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      select: () => ({ body: { kind: 'found', preset: storedPreset } }),
+    });
     harness.answer(serverId, '/v1/machines/presets/archive', {
-      body: { kind: 'saved', preset: createPlainManagedMachinePresetFixture(archived) },
+      select: () => {
+        storedPreset = createPlainManagedMachinePresetFixture(archived);
+        return { body: { kind: 'saved', preset: storedPreset } };
+      },
     });
     const screen = await renderSettingsView(
       <MachinePresetView serverId={serverId} presetId="preset" />,
@@ -2950,9 +2982,6 @@ describe('reachable preset detail', () => {
         screen.findByTestId('machine-preset.detail.archive'),
       ).not.toBeNull(),
     );
-    harness.answer(serverId, '/v1/machines/presets/get', {
-      body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(archived) },
-    });
     await act(async () =>
       screen.pressByTestId('machine-preset.detail.archive'),
     );
@@ -2968,10 +2997,10 @@ describe('reachable preset detail', () => {
     expect(screen.tree.findByType(PageHeader).props.description).toBeUndefined();
     expect(screen.findByTestId('machine-preset.detail.createOne')).toBeNull();
     harness.answer(serverId, '/v1/machines/presets/restore', {
-      body: { kind: 'saved', preset: createPlainManagedMachinePresetFixture({ ...preset, revision: 5 }) },
-    });
-    harness.answer(serverId, '/v1/machines/presets/get', {
-      body: { kind: 'found', preset: createPlainManagedMachinePresetFixture({ ...preset, revision: 5 }) },
+      select: () => {
+        storedPreset = createPlainManagedMachinePresetFixture({ ...preset, revision: 5 });
+        return { body: { kind: 'saved', preset: storedPreset } };
+      },
     });
     await act(async () =>
       screen.pressByTestId('machine-preset.archived.action'),
@@ -3000,6 +3029,39 @@ describe('reachable preset detail', () => {
             request.path === '/v1/actions/machines.provisioners.list',
         ),
     ).toBe(true);
+  });
+
+  it.each([true, false])('leaves an archived preset with its one notice naming the original image host when manual cleanup is required (listed=%s)', async listed => {
+    const serverId = await seed();
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const originalHostId = 'original-image-builder';
+    const originalHostName = 'Original image builder';
+    await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, [
+      createMachineFixture({ id: preset.controller.machineId, installationId: preset.controller.installationId,
+        metadata: { ...createMachineFixture().metadata!, displayName: 'Current controller' } }),
+      ...(listed ? [createMachineFixture({ id: originalHostId,
+        metadata: { ...createMachineFixture().metadata!, displayName: originalHostName } })] : []),
+    ]);
+    const { replaceManagedMachinePresetPreparationV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+    const stored = createPlainManagedMachinePresetFixture({ ...preset, archivedAt: 1, preparation: { enabled: true } });
+    const operational = replaceManagedMachinePresetPreparationV1({ presetId: preset.id, mode: 'plain',
+      content: stored.content, expectedOperationId: null, prepared: {
+        operationId: 'archived-image-build', status: 'cancelled', code: 'preparation_cleanup_required',
+        binding: { cliIdentity: 'supplier-identity', machineId: originalHostId, credentialConfigurations: [],
+          configuration: { launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices } } },
+      } });
+    if (!operational) throw new Error('Expected the retained manual cleanup report');
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: { ...stored, content: operational.content } } });
+    const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+    const screen = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId={preset.id} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.archived.action')).not.toBeNull());
+      const notice = screen.findAllByType(AttentionBanner).find(node => node.props.testID === 'machine-preset.archived');
+      expect(notice?.props.description).toContain(listed ? originalHostName : originalHostId);
+      expect(notice?.props.description).not.toContain('Current controller');
+      expect(notice?.props.tone).toBe('warning');
+      expect(screen.findByTestId('machine-preset.preparation')).toBeNull();
+    } finally { await screen.unmount(); }
   });
 
   it('leaves an archived preset with its one notice when the provisioner read fails, since it makes nothing either way', async () => {

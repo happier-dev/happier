@@ -2893,6 +2893,18 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     if (isMachinePresetFiniteOperationActionIdV1(root)) {
         const admission = verified.binding.presetPreparationAdmission;
         if (!admission || verified.effectActionId !== root) return false;
+        // Archive reads the original private binding's Machine facts using the
+        // same requester. The Machine reader retains its ordinary visibility.
+        if (root === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 && proof.method.toUpperCase() === 'GET' && proof.body === undefined) {
+            const path = /^\/v1\/machines\/([^/?#]+)$/u.exec(proof.path);
+            if (path) {
+                try {
+                    const id = decodeURIComponent(path[1]);
+                    return id.length > 0 && path[1] === encodeURIComponent(id)
+                        && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, { id }));
+                } catch { return false; }
+            }
+        }
         if (isAccountActionHttpOperation('machines.presets.get', proof)) {
             const read = MachinePresetActionInputSchemasV1['machines.presets.get'].safeParse(proof.body);
             return read.success && read.data.homeId === admission.homeId && read.data.id === admission.id;

@@ -3377,7 +3377,7 @@ image cleanup. Missing legacy placement or a different executing host returns
 CLI, agent, Account and UI Archive entry points consume the Common preparation
 owner's cleanup-only settlement. A settled cold preparation needs no provider
 acquisition when the restored preset is archived again.
-If Machine admission reports the original Prepare Machine revoked or replaced,
+If canonical Machine availability reports the original Prepare Machine revoked or replaced,
 Archive proceeds without retrying native cleanup, retains the private image
 references, and warns that the image must be deleted manually. Restore returns
 the preset cold; only an explicit Prepare rebuilds the image.

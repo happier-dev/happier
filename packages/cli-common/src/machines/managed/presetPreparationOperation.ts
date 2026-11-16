@@ -41,7 +41,7 @@ export type ManagedMachinePresetPreparationOperationInputV1 = Readonly<{
   cliIdentity?: string;
   /** Archive removes the incumbent image without composing a replacement. */
   cleanupOnly?: boolean;
-  /** Machine admission established that the original cleanup host is permanently gone. */
+  /** Canonical Machine availability established that the original cleanup host is permanently gone. */
   cleanupUnavailable?: Extract<MachineAvailabilityDiagnosticV1, { reason: 'machine_revoked' | 'machine_replaced' }>['reason'];
   /** Only a new build needs CLI assets; recovery uses the retained native facts. */
   composeBuild?: (capturedContent: ManagedMachinePresetContentV1) => Promise<ManagedMachinePresetPreparationBuildCompositionV1>;

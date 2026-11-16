@@ -583,6 +583,7 @@ export const managedMachinesEn = {
         archive: "Archive preset",
         archiveHelp: "No new machines from it. Running ones keep going until they’re deleted.",
         archivePreparedHelp: "No new machines from it. Happier attempts to delete its prepared image. Running ones keep going until they’re deleted.",
+        preparedImageCleanupRequired: ({ host }: { host: string }) => `The prepared image on ${host} couldn’t be removed. Delete it there.`,
         archiveSetupHelp: "Machines it already set up keep their setup.",
         editChoices: "Edit choices",
         onlyYou: "Only you",

@@ -577,6 +577,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         archive: "Arxivar el valor predefinit",
         archiveHelp: "No es crearan màquines noves. Les que funcionen continuen fins que se suprimeixin.",
         archivePreparedHelp: "No se’n creen màquines noves. Happier intenta eliminar-ne la imatge preparada. Les que s’executen continuen fins que s’eliminen.",
+        preparedImageCleanupRequired: ({ host }: { host: string }) => `No s’ha pogut eliminar la imatge preparada a ${host}. Elimina-la allà.`,
         archiveSetupHelp: "Les màquines que ja ha configurat en conserven la configuració.",
         editChoices: "Editar les opcions",
         onlyYou: "Només tu",

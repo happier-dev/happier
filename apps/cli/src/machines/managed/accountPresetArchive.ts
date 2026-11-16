@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
+import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ManagedMachinePresetGetResultV1Schema, PresetMutationResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { openManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -15,6 +16,8 @@ import { createManagedPresetHydrator } from './presetHydration';
 /** Archive spends its admitted parent through retained native cleanup and the final row CAS. */
 export async function executeCliMachinePresetArchive(request: Parameters<NonNullable<ActionExecutorDeps['machinePresetArchive']>>[0],
     host: Readonly<{ credentials: StoredCredentials; serverUrl: string;
+        readPreparationCleanupUnavailable?: (input: Readonly<{ machineId: string; context: ActionExecutorContext; signal?: AbortSignal }>) =>
+            Promise<Extract<MachineAvailabilityDiagnosticV1, { reason: 'machine_revoked' | 'machine_replaced' }>['reason'] | undefined>;
         transport: NonNullable<ActionExecutorDeps['machinePresetAction']> }>) {
     const { input, context, signal } = request;
     const read = async () => {

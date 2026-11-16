@@ -2,7 +2,8 @@ import axios from '@/api/client/credentialAxios';
 import { z } from 'zod/mini';
 import { ExternalActionMachineBootstrapV1Schema, type ExternalActionMachineBootstrapV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { AccessibleMachineAccessV1Schema, type AccessibleMachineAccessV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { AccessibleMachineAccessV1Schema, type AccessibleMachineAccessV1, type MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { resolveMachineSpawnReadinessV1 } from '@happier-dev/protocol/machines/machineSpawnReadinessV1';
 import { DevcontainerChildProjectionV1Schema, type DevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { isMachineReachableV1, type MachinePresenceV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
@@ -183,6 +184,19 @@ export async function listCurrentAccountMachines(params: Readonly<{
     params.signal?.throwIfAborted();
     throw Object.assign(new Error('The current machine inventory is unavailable.'), { code: 'machine_inventory_unavailable', cause: error });
   }
+}
+
+/** Only a returned original Machine can establish permanent cleanup unavailability; absence proves nothing. */
+export async function readCurrentAccountMachinePreparationCleanupUnavailable(params: Readonly<{
+  machineId: string; token?: string; authorization?: ExternalActionExecutionAuthorizationV1;
+  serverHttpBaseUrl?: string; signal?: AbortSignal;
+}>): Promise<Extract<MachineAvailabilityDiagnosticV1, { reason: 'machine_revoked' | 'machine_replaced' }>['reason'] | undefined> {
+  const [machine] = await listCurrentAccountMachines({ ...params, projection: 'hostFacts', machineIds: [params.machineId] });
+  // No reachability probe is needed: the canonical resolver decides revoked and replaced before offline.
+  const readiness = resolveMachineSpawnReadinessV1({ selectedMachineId: params.machineId, machine, machineReachable: false });
+  if (readiness.status === 'revoked') return 'machine_revoked';
+  if (readiness.status === 'replaced') return 'machine_replaced';
+  return undefined;
 }
 
 /**

@@ -577,6 +577,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         archive: "封存預設組合",
         archiveHelp: "不再用它建立新機器。執行中的機器會持續到被刪除。",
         archivePreparedHelp: "不再用它建立新機器。Happier 會嘗試刪除其準備好的映像。正在執行的機器會繼續執行，直到被刪除。",
+        preparedImageCleanupRequired: ({ host }: { host: string }) => `無法移除 ${host} 上準備好的映像。請在該機器上刪除它。`,
         archiveSetupHelp: "已設定的機器會保留其設定。",
         editChoices: "編輯選擇",
         onlyYou: "只有你",
