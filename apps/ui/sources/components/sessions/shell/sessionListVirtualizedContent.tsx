@@ -53,6 +53,19 @@ const SessionListSupportingSectionsContext = React.createContext<SessionListSupp
     rowDensity: 'default', first: false, scheduledShown: false,
 });
 
+/**
+ * Whether Scheduled or Drafts lead the list. Mounted header cells read it through context, because the virtualizer
+ * keeps their render until their own item changes: a closure value would leave the first group label spaced as if it
+ * opened the column after Drafts appeared (owner 2026-11-16, r2 item 3: Drafts → Sessions stood 32 instead of 40).
+ */
+const SessionListLeadingSectionsShownContext = React.createContext(false);
+
+/** A group header's place: it opens the column only while nothing leads it. */
+function SessionListLeadingGroupScope(props: Readonly<{ children: React.ReactNode }>) {
+    const leadingSectionsShown = React.useContext(SessionListLeadingSectionsShownContext);
+    return <SessionListFirstGroupContext.Provider value={!leadingSectionsShown}>{props.children}</SessionListFirstGroupContext.Provider>;
+}
+
 const SessionListSupportingSections = React.memo(function SessionListSupportingSections() {
     // Legend retains this fixed-key cell when only parent render props change.
     // Transport current slot props here without invalidating any entity cell.
@@ -253,9 +266,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             ? <View {...{ dataSet: { sessionListFlight: params.item.id } }}>{rendered}</View>
             : rendered;
         return params.item.kind === 'header' && params.item.headerKind !== 'attention' && params.item.headerKind !== 'working'
-            ? <SessionListFirstGroupContext.Provider value={!leadingSectionsShown}>
-                {row}
-            </SessionListFirstGroupContext.Provider>
+            ? <SessionListLeadingGroupScope>{row}</SessionListLeadingGroupScope>
             : row;
     };
     // As with viewability above, the virtualizer gets one forwarding function
@@ -296,6 +307,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     if (awaitingFirstComposition) return <SessionListSkeletonRows />;
     return (
         <SessionListSupportingSectionsContext.Provider value={supportingSectionsValue}>
+        <SessionListLeadingSectionsShownContext.Provider value={leadingSectionsShown}>
         <SessionListFirstGroupContext.Provider value={true}>
         <VirtualizedList
             ref={props.listRef as React.Ref<VirtualizedListRef>}
@@ -335,6 +347,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             recycleItems={false}
         />
         </SessionListFirstGroupContext.Provider>
+        </SessionListLeadingSectionsShownContext.Provider>
         </SessionListSupportingSectionsContext.Provider>
     );
 });

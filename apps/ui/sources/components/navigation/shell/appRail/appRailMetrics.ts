@@ -1,4 +1,4 @@
-import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_SHELL_TITLE_ROW_GLYPH_PX, resolveHappierTitleRowInsetPx } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_SHELL_RAIL_STEP_PX, HAPPIER_SHELL_TITLE_ROW_GLYPH_PX, resolveHappierTitleRowInsetPx } from '@happier-dev/plugin-ui/presentation';
 
 import {
     DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX,
@@ -16,8 +16,8 @@ export const APP_RAIL_WIDTH_PX = 56;
 export const APP_RAIL_ICON_GLYPH_SIZE_PX = HAPPIER_SHELL_TITLE_ROW_GLYPH_PX;
 /** The visible square of a rail icon button. */
 export const APP_RAIL_ITEM_SIZE_PX = 36;
-/** One rail row: the button plus the gap to the next. The plugin group's overflow counts in these. */
-export const APP_RAIL_ITEM_SLOT_PX = 40;
+/** One rail row: the button plus the gap to the next (the shell's rail step). The plugin group's overflow counts in these. */
+export const APP_RAIL_ITEM_SLOT_PX = HAPPIER_SHELL_RAIL_STEP_PX;
 /**
  * How far a rail button's hit area may reach past its drawn square: half the gap to the button above and
  * below (the slot's free space), and the rail's free width beside it. Neighbouring slots' hit areas meet

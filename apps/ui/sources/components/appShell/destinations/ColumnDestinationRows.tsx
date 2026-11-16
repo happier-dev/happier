@@ -38,7 +38,8 @@ const stylesheet = StyleSheet.create(() => ({
     // Beside the rail the column's own entries keep a small gap under the title strip, on the same
     // plane the column paints (`appShellColumnSurface`), so the column reads as one surface.
     column: {
-        marginTop: -(Platform.select(ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX) ?? 0) + 8,
+        // The column's header gap: the first entry stands one rail step under the title row (r2 item 3).
+        marginTop: -(Platform.select(ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX) ?? 0) + HAPPIER_COLLECTION_LIST_METRICS.headerGap,
         // The column's own rows are a group: the list's first group label after them keeps its air under the
         // header and gains this, so it stands the same group pause below them as every other group (owner 11-11).
         marginBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelPaddingTop - HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop,

@@ -4,7 +4,7 @@ import { Platform, View, type ViewStyle } from 'react-native';
 
 import { happierPageRowDividerWidth, useHappierPageSection } from '../layout/PageSection.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
-import { resolveHappierTitleRowInsetPx, resolveHappierTitleRowTitleLiftPx } from '../layout/shellTitleRow.js';
+import { HAPPIER_SHELL_RAIL_STEP_PX, resolveHappierTitleRowInsetPx } from '../layout/shellTitleRow.js';
 import { HAPPIER_MENU_ROW_METRICS } from '../interaction/Menu.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { useHappierPrecisePointer } from '../interaction/precisePointer.js';
@@ -171,8 +171,20 @@ export type HappierCollectionListProps = Readonly<{
  */
 const PHONE_COLUMN = Platform.OS === 'ios';
 
-/** A column header's title row (title, count, the header action's 30px icon buttons). */
+/**
+ * A column header's title row (title, count, the header action's 30px icon buttons): as tall as a rail item, so the
+ * title, its controls and the rail's first icon share one centre line (owner 2026-11-16, r2 item 2).
+ */
 const COLUMN_TITLE_ROW_HEIGHT_PX = 36;
+/** A navigation row's floor and a group label's row (see `rowMinHeight`, `groupLabelHeight`). */
+const COLUMN_ROW_MIN_HEIGHT_PX = 32;
+const COLUMN_GROUP_LABEL_HEIGHT_PX = 28;
+/**
+ * The column's one gap rhythm: the rail's step, centre to centre (owner 2026-11-16, r2 item 3). The title row to the
+ * first row, a row to the next group's label, and the title row to a group label directly under it are each one
+ * step, so the header gap and the gap between sections read alike.
+ */
+const COLUMN_HEADER_GAP_PX = HAPPIER_SHELL_RAIL_STEP_PX - COLUMN_TITLE_ROW_HEIGHT_PX / 2 - COLUMN_ROW_MIN_HEIGHT_PX / 2;
 
 /**
  * Geometry of the list anatomy, at normal text scale: the one rhythm owner for every navigation
@@ -207,7 +219,7 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
    * platforms, the lab's dense pointer row (`clflat`, P4 §4.5); glyph box 20 on the web, 18 on iOS; 10 to
    * the title), which core navigation rows draw with. Touch platforms keep their own floor.
    */
-  rowMinHeight: 32,
+  rowMinHeight: COLUMN_ROW_MIN_HEIGHT_PX,
   /**
    * A described row in a column (a Settings rail, a phone's collection page): the navigation row with its
    * description under the title, on the same glyph column, so every row of the column shares one icon axis
@@ -258,26 +270,25 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
    */
   headerPaddingTop: resolveHappierTitleRowInsetPx(COLUMN_TITLE_ROW_HEIGHT_PX),
   /**
-   * How far the title (and its count and chevron) rises on that row, so its capitals start on the line of the
-   * rail's first icon. A phone column has no rail beside it.
+   * Header → search field, and the field → the first row: the first row then centres one rail step under the title
+   * row, on the rail's second icon.
    */
-  titleLift: PHONE_COLUMN ? 0 : resolveHappierTitleRowTitleLiftPx(collectionTextStep('heading').fontSize),
-  /** Header → search field, and the field → the first row. */
-  headerGap: 4,
+  headerGap: COLUMN_HEADER_GAP_PX,
   /**
    * Groups part by space alone (lab `clspace`, s24): each group reads as one paragraph, its label tight to
    * its first row. The label's own row is the space it needs above its rows.
    */
   groupGap: 24,
   /** A group label's row: its glyph, title, count, disclosure and hover actions on one line (lab `.ls-h`). */
-  groupLabelHeight: 28,
-  /** A group label sits this far below what precedes it and this far above its first row. */
-  groupLabelPaddingTop: 24,
+  groupLabelHeight: COLUMN_GROUP_LABEL_HEIGHT_PX,
+  /** A group label sits this far below the row before it: one rail step, centre to centre. */
+  groupLabelPaddingTop: HAPPIER_SHELL_RAIL_STEP_PX - COLUMN_ROW_MIN_HEIGHT_PX / 2 - COLUMN_GROUP_LABEL_HEIGHT_PX / 2,
   groupLabelPaddingBottom: 0,
   /** Air after the last row, in both static and virtualized navigation columns. */
   endSpacing: 16,
-  /** A label directly under the header needs less air. */
-  groupLabelFirstPaddingTop: 4,
+  /** A label directly under the header (after its `headerGap`): one rail step under the title row's centre. */
+  groupLabelFirstPaddingTop: HAPPIER_SHELL_RAIL_STEP_PX - COLUMN_TITLE_ROW_HEIGHT_PX / 2 - COLUMN_GROUP_LABEL_HEIGHT_PX / 2
+    - COLUMN_HEADER_GAP_PX,
   /**
    * A group label's mark glyph: the rows' own mark size (a column row's glyph; a phone's touch row mark,
    * `HAPPIER_COLLECTION_ROW_METRICS.identity.touchCompact.markSize`), so the mark reads as big as theirs on their icon
@@ -532,7 +543,7 @@ const headerStyle: ViewStyle = {
 const headerActionStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center' };
 // The search toggle and the header action are one trailing cluster, so the magnifier never floats mid-row.
 const headerTrailingStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', gap: M.headerActionGap, flexShrink: 0 };
-const headingStyle: ViewStyle = { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexShrink: 1, ...(M.titleLift > 0 ? { transform: [{ translateY: -M.titleLift }] } : null) };
+const headingStyle: ViewStyle = { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexShrink: 1 };
 // With a control beside it the heading takes the row's free width, so its measured width is the title's room.
 const headingWithAccessoryStyle: ViewStyle = { flexGrow: 1, flexBasis: 0, minWidth: 0 };
 const titleAccessoryStyle: ViewStyle = { marginLeft: 8 };

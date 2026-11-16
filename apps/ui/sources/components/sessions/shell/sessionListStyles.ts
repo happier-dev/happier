@@ -182,10 +182,6 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         alignItems: 'center' as const,
         justifyContent: 'flex-start' as const,
     },
-    /** The column title rises as every column's does, its capitals on the line of the rail's first icon. */
-    searchChromeTitleSlotOnRow: {
-        transform: [{ translateY: -HAPPIER_COLLECTION_LIST_METRICS.titleLift }],
-    },
     /** The Projects/Recent segment hugs its two glyphs beside Find and View (lab `clviews`). */
     layoutSegment: {
         flexShrink: 0,
