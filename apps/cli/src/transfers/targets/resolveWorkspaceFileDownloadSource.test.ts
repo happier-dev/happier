@@ -10,6 +10,8 @@ import { build } from 'esbuild';
 import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR } from '../policy/serverRoutedTransferPolicy';
 import { resolveWorkspaceFileDownloadSource } from './resolveWorkspaceFileDownloadSource';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 const createdPaths = new Set<string>();
 
@@ -88,6 +90,28 @@ describe('resolveWorkspaceFileDownloadSource', () => {
             await expect(resolveWorkspaceFileDownloadSource(request)).resolves.toMatchObject({ success: false });
         }
     });
+    it('never archives host files through an agent-planted link in a target workspace', async () => {
+        // A target source over real paths: like the holder, readlink returns an outside target verbatim.
+        const target = { ...localWorkspaceSource, kind: 'target' as const, id: 'target:planted-link' };
+        const workspace = createWorkspace();
+        const hostSecrets = createWorkspace();
+        writeFileSync(join(hostSecrets, 'host-secret.txt'), 'HOST-SECRET');
+        mkdirSync(join(workspace, 'project'));
+        writeFileSync(join(workspace, 'project', 'kept.txt'), 'kept');
+        symlinkSync(hostSecrets, join(workspace, 'leak'));
+        symlinkSync(hostSecrets, join(workspace, 'project', 'leak'));
+        const download = (path: string) => runWithWorkspaceSource(target, () => resolveWorkspaceFileDownloadSource({ workingDirectory: workspace,
+            path, asZip: true, accessPolicy: { kind: 'restrictedRoots', roots: [workspace] } }));
+        // A root link is skipped while staging, so there is nothing to archive.
+        await expect(download('leak')).rejects.toMatchObject({ code: 'ENOENT' });
+        const result = await download('project');
+        if (!result.success) throw new Error(result.error);
+        createdPaths.add(result.source.filePath);
+        const archive = readFileSync(result.source.filePath);
+        expect(archive.includes(Buffer.from('kept.txt'))).toBe(true);
+        expect(archive.includes(Buffer.from('host-secret.txt'))).toBe(false);
+    });
+
     it('allows sources outside the default directory by default', async () => {
         const workspace = createWorkspace();
         const externalRoot = createWorkspace();

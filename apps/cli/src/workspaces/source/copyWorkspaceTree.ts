@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import type { WorkspaceSource } from './workspaceSource';
 
@@ -17,7 +17,10 @@ export class WorkspaceTreeCopyLimitError extends Error {
 /**
  * Copy one file, symbolic link or directory tree between workspace sources
  * (target→target for copy, target→this Machine's staging for folder download)
- * using only port operations. Links are copied as links, never followed.
+ * using only port operations. Links are copied as links, never followed. Across
+ * sources a link keeps its text but changes filesystem, so it is copied only when it
+ * resolves inside the copied tree; any other link (absolute, or leaving the tree) is
+ * skipped and never becomes a link into the destination's own disk.
  */
 export async function copyWorkspaceTree(input: Readonly<{
   from: Readonly<{ source: WorkspaceSource; path: string }>;
@@ -38,8 +41,10 @@ export async function copyWorkspaceTree(input: Readonly<{
     input.signal?.throwIfAborted();
     const stats = await from.source.lstat(source);
     if (stats.isSymbolicLink()) {
+      const linkTarget = await from.source.readlink(source);
+      if (from.source !== to.source && !resolvesInsideCopiedTree(to.path, destination, linkTarget)) return;
       count(0);
-      await to.source.symlink(await from.source.readlink(source), destination);
+      await to.source.symlink(linkTarget, destination);
       return;
     }
     if (stats.isDirectory()) {
@@ -57,6 +62,11 @@ export async function copyWorkspaceTree(input: Readonly<{
     await to.source.writeFile(destination, await from.source.readFile(source));
   };
   await copy(from.path, to.path, 0);
+}
+
+function resolvesInsideCopiedTree(treeRoot: string, linkPath: string, linkTarget: string): boolean {
+  const rest = relative(treeRoot, resolve(dirname(linkPath), linkTarget));
+  return rest !== '' && rest !== '..' && !rest.startsWith(`..${sep}`) && !isAbsolute(rest);
 }
 
 export type WorkspaceTreeInstallOutcome = Readonly<{ status: 'installed' }> | Readonly<{ status: 'restored' }>;
