@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '../../usage/usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { executeUsageAction } from './usageActions.js';
 import { normalizeUsageQuery, usageQueryToAnalyticsRequest } from '../../inputs/usageQuery.js';
@@ -38,7 +39,7 @@ describe('usage recap Action composition', () => {
       readActionsSettings: () => settings,
       usageActions: {
         query: async request => resolveUsagePageAggregation({ queries: request.queries,
-          accounting: [{ query: request.queries[0]!, value: compact, status: 'available', asOfMs: 500 }] }),
+          accounting: [{ query: request.queries[0]!, value: compact, status: 'available', asOfMs: 500 }] }, bundledUsageModelPriceCatalog),
         renderRecap: async () => ({ kind: 'rendered', base64: 'iVBORw==' }),
         deliverRecap: async () => ({ kind: 'delivered' }),
       },
@@ -61,7 +62,7 @@ describe('usage recap Action composition', () => {
         includeWorkEvidence: true, includeLeaders: false, includeComparison: false, includeQuotaHistory: false,
         includeContributions: false, includeModelTimeline: false, includeMessageStats: false, breakdown: ['agent', 'model'] });
       return resolveUsagePageAggregation({ queries: request.queries,
-        accounting: [{ query: demanded, value: response, status: 'available' }] });
+        accounting: [{ query: demanded, value: response, status: 'available' }] }, bundledUsageModelPriceCatalog);
     } }, {});
     expect(result).toMatchObject({ ok: true, result: { kind: 'composed', facts: { tokens: { total: 12 } } } });
   });
@@ -77,7 +78,7 @@ describe('usage recap Action composition', () => {
           includeWorkEvidence: false, includeLeaders: false, includeComparison: false, includeQuotaHistory: false,
           includeContributions: false, includeModelTimeline: false, includeMessageStats: false, breakdown: [] });
         return resolveUsagePageAggregation({ queries: request.queries,
-          accounting: [{ query: demanded, value: response, status: 'available' }] });
+          accounting: [{ query: demanded, value: response, status: 'available' }] }, bundledUsageModelPriceCatalog);
       },
     }, {});
     expect(result).toMatchObject({ ok: true, result: { kind: 'composed', facts: { tokens: { total: 12 } } } });
@@ -85,9 +86,9 @@ describe('usage recap Action composition', () => {
   it('refuses mismatched query results at read admission before composing private facts', async () => {
     const different = normalizeUsageQuery({ ...query, machines: ['other-machine'] });
     for (const mismatched of [
-      resolveUsagePageAggregation({ queries: [different], accounting: [{ query: different, value: response, status: 'available' }] }),
+      resolveUsagePageAggregation({ queries: [different], accounting: [{ query: different, value: response, status: 'available' }] }, bundledUsageModelPriceCatalog),
       (() => {
-        const batch = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: response, status: 'available' }] });
+        const batch = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: response, status: 'available' }] }, bundledUsageModelPriceCatalog);
         return { ...batch, results: batch.results.map(slice => ({ ...slice, shownQuery: different })) };
       })(),
     ]) {
@@ -96,7 +97,7 @@ describe('usage recap Action composition', () => {
     }
   });
   it('keeps a rejected query issue path and code without returning its data', async () => {
-    const raw = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: response, status: 'available' }] });
+    const raw = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: response, status: 'available' }] }, bundledUsageModelPriceCatalog);
     const rejected = { ...raw, results: raw.results.map(slice => ({ ...slice, shownQuery: normalizeUsageQuery({ ...query, machines: ['private-machine-value'] }) })) };
     const result = await executeUsageAction('usage.recap.private.compose', { query, selectedFields: ['tokens'] },
       { query: async () => rejected }, {});
@@ -146,7 +147,7 @@ describe('usage recap Action composition', () => {
       isApprovalExecutionOriginCurrent: async () => true,
       usageActions: {
         query: async request => resolveUsagePageAggregation({ queries: request.queries,
-          accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }] }),
+          accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }] }, bundledUsageModelPriceCatalog),
         renderRecap: async () => ({ kind: 'rendered', base64: 'iVBORw==' }),
         deliverRecap: async (file, intent) => {
           expect(file).toMatchObject({ mediaType: 'image/png', base64: 'iVBORw==', selectedFields: ['tokens'] });
@@ -174,7 +175,7 @@ describe('usage recap Action composition', () => {
         query, intent: 'share', selectedFields: ['tokens'],
       }, {
         query: async request => resolveUsagePageAggregation({ queries: request.queries,
-          accounting: [{ query: request.queries[0]!, value: response, status: 'available' }] }),
+          accounting: [{ query: request.queries[0]!, value: response, status: 'available' }] }, bundledUsageModelPriceCatalog),
         renderRecap: async () => ({ kind: 'rendered', base64: 'iVBORw==' }),
         deliverRecap: async () => { effects += 1; controller.abort(); return delivered; },
       }, { signal: controller.signal });
@@ -189,7 +190,7 @@ describe('usage recap Action composition', () => {
     const ports = {
       query: async (request: Parameters<NonNullable<ActionExecutorDeps['usageActions']>['query']>[0]) =>
         resolveUsagePageAggregation({ queries: request.queries,
-          accounting: [{ query: request.queries[0]!, value: response, status: 'available' as const }] }),
+          accounting: [{ query: request.queries[0]!, value: response, status: 'available' as const }] }, bundledUsageModelPriceCatalog),
       renderRecap: async () => { controller.abort(); return { kind: 'rendered' as const, base64: 'iVBORw==' }; },
       deliverRecap: async () => { effects += 1; return { kind: 'delivered' as const }; },
     };
@@ -211,7 +212,7 @@ describe('usage recap Action composition', () => {
           accounting: [{ query: demanded, status: 'available', value: { ...response, breakdowns: {
             agent: [{ key: 'agent', tokens: response.totals.tokens, cost: response.totals.cost, eventCount: 1 }],
             model: [{ key: 'model', tokens: response.totals.tokens, cost: response.totals.cost, eventCount: 1 }],
-          } } }] });
+          } } }] }, bundledUsageModelPriceCatalog);
       },
     }, {});
     expect(result).toMatchObject({ ok: true, result: { kind: 'composed', unavailableFields: [],
@@ -221,7 +222,7 @@ describe('usage recap Action composition', () => {
     const result = await executeUsageAction('usage.recap.private.export',
       { query, style: 'sigil', format: 'story', selectedFields: ['tokens'] }, {
         query: async request => resolveUsagePageAggregation({ queries: request.queries,
-          accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }] }),
+          accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }] }, bundledUsageModelPriceCatalog),
       }, {});
     expect(result).toMatchObject({ ok: true, result: { kind: 'unavailable', reason: 'render_target_unavailable',
       compose: { kind: 'composed', style: 'sigil', format: 'story', selectedFields: ['tokens'], asOfMs: 900,
@@ -236,7 +237,7 @@ describe('usage recap Action composition', () => {
     const result = await executeUsageAction('usage.recap.private.export',
       { query, style: 'terminal', format: 'link-preview', selectedFields: ['tokens', 'modelMix'] }, {
         query: async request => resolveUsagePageAggregation({ queries: request.queries,
-          accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }] }),
+          accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }] }, bundledUsageModelPriceCatalog),
         // Text/font rasterization is the genuine client renderer boundary.
         renderRecap: async composed => { pixelsInput = composed; return { kind: 'rendered', base64: 'iVBORw==' }; },
       }, {});
@@ -256,7 +257,7 @@ describe('usage recap Action composition', () => {
       query, selectedFields: ['tokens', 'modelMix'],
     }, {
       query: async request => resolveUsagePageAggregation({ queries: request.queries,
-        accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }] }),
+        accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }] }, bundledUsageModelPriceCatalog),
       renderRecap: async () => ({ kind: 'rendered', base64: 'iVBORw==' }),
     }, {});
     if (!result.ok) throw new Error('Expected exported recap');
@@ -280,7 +281,7 @@ describe('usage recap Action composition', () => {
       query, selectedFields: ['tokens', 'modelMix'],
     }, {
       query: async request => resolveUsagePageAggregation({ queries: request.queries,
-        accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }] }),
+        accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }] }, bundledUsageModelPriceCatalog),
       renderRecap: async () => ({ kind: 'rendered', base64: 'iVBORw==' }),
     }, {});
     if (!result.ok) throw new Error('Expected exported recap');
@@ -302,7 +303,7 @@ describe('usage recap Action composition', () => {
     const controller = new AbortController();
     const result = await executeUsageAction('usage.recap.private.export', { query, selectedFields: ['tokens'] }, {
       query: async request => resolveUsagePageAggregation({ queries: request.queries,
-        accounting: [{ query: request.queries[0]!, value: response, status: 'available' }] }),
+        accounting: [{ query: request.queries[0]!, value: response, status: 'available' }] }, bundledUsageModelPriceCatalog),
       renderRecap: async () => { controller.abort(); return { kind: 'rendered', base64: 'iVBORw==' }; },
     }, { signal: controller.signal });
     expect(result).toEqual({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
@@ -311,7 +312,7 @@ describe('usage recap Action composition', () => {
     const deps: Partial<ActionExecutorDeps> = {
       isApprovalExecutionOriginCurrent: async () => true,
       usageActions: { query: async (request: Parameters<NonNullable<ActionExecutorDeps['usageActions']>['query']>[0]) =>
-        resolveUsagePageAggregation({ queries: request.queries, accounting: [{ query: request.queries[0]!, value: response, status: 'available' }] }) },
+        resolveUsagePageAggregation({ queries: request.queries, accounting: [{ query: request.queries[0]!, value: response, status: 'available' }] }, bundledUsageModelPriceCatalog) },
     };
     const headless = createActionExecutor(deps as ActionExecutorDeps);
     const input = { query, selectedFields: ['tokens'] };
@@ -334,7 +335,7 @@ describe('usage recap Action composition', () => {
       clientActionExecute: async ({ actionId }: Parameters<NonNullable<ActionExecutorDeps['clientActionExecute']>>[0]) => clientActionUnavailable(actionId),
       usageActions: {
         query: async (request: Parameters<NonNullable<ActionExecutorDeps['usageActions']>['query']>[0]) =>
-          resolveUsagePageAggregation({ queries: request.queries, accounting: [{ query: request.queries[0]!, value: response, status: 'available' }] }),
+          resolveUsagePageAggregation({ queries: request.queries, accounting: [{ query: request.queries[0]!, value: response, status: 'available' }] }, bundledUsageModelPriceCatalog),
         renderRecap: async () => { throw new Error('A headless host must not render'); },
       },
     };
@@ -367,7 +368,7 @@ describe('usage recap Action composition', () => {
         accounting: [{ query: request.queries[0]!, value: response, status: 'available', asOfMs: 900 }],
         howYouWork: [{ query: request.queries[0]!, nightHours: { startHour: 22, endHour: 6 }, detail: { status: 'partial',
           permissions: [], acceptedInputs: [], facts: [{ workId: 'private-work', machineId: 'private-machine', agentId: 'agent',
-            evidenceId: 'private-evidence', kind: 'busy', startMs: 200, endMs: 500 }] } }] }),
+            evidenceId: 'private-evidence', kind: 'busy', startMs: 200, endMs: 500 }] } }] }, bundledUsageModelPriceCatalog),
     }, {});
     expect(result).toMatchObject({ ok: true, result: { kind: 'composed', style: 'daybreak', format: 'square',
       period: { startMs: 100, endMs: 900 }, coverage: { intervals: { detailStatus: 'partial' } },
@@ -381,7 +382,7 @@ describe('usage recap Action composition', () => {
     const controller = new AbortController();
     const result = await executeUsageAction('usage.recap.private.compose', { query }, {
       query: async request => { controller.abort(); return resolveUsagePageAggregation({ queries: request.queries,
-        accounting: [{ query: request.queries[0]!, value: response, status: 'available' }] }); },
+        accounting: [{ query: request.queries[0]!, value: response, status: 'available' }] }, bundledUsageModelPriceCatalog); },
     }, { signal: controller.signal });
     expect(result).toEqual({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
   });

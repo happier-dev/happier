@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -41,7 +42,7 @@ const evaluation = evaluateUsageCoach({
       remedy: { kind: 'setting', anchor: ANCHOR, value: true },
     },
   ],
-});
+}, bundledUsageModelPriceCatalog);
 const finding = evaluation.findings[0]!;
 
 function lifetimeHarness() {
@@ -212,7 +213,7 @@ describe('Usage Coach widget controller', () => {
   });
   it('retains the agent surface when creating a suggested digest', async () => {
     const { controller } = harness({ agentDigestDisabled: true });
-    const suggestion = resolveUsagePageAggregation({ queries: [query] }).results[0]!.coach!.digestSuggestion!;
+    const suggestion = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!.coach!.digestSuggestion!;
     const schedule = { kind: 'schedule' as const, enabled: true,
       schedule: { kind: 'interval' as const, everyMs: 60_000, scheduleExpr: null, timezone: null } };
     try {
@@ -223,7 +224,7 @@ describe('Usage Coach widget controller', () => {
   });
   it('keeps digest opt-in within the captured Account and refuses an invalid Automation destination', async () => {
     const { controller, retire } = harness();
-    const suggestion = resolveUsagePageAggregation({ queries: [query] }).results[0]!.coach!.digestSuggestion!;
+    const suggestion = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!.coach!.digestSuggestion!;
     const schedule = { kind: 'schedule' as const, enabled: true,
       schedule: { kind: 'interval' as const, everyMs: 60_000, scheduleExpr: null, timezone: null } };
     try {

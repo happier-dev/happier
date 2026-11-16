@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '../../usage/usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { executeUsageAction } from './usageActions.js';
 import { normalizeUsageQuery } from '../../inputs/usageQuery.js';
@@ -23,7 +24,7 @@ const quota: ConnectedServiceQuotaGetResultV1 = {
 };
 const selectedEvents = [{ account, kind: 'reset', meterId: 'week' }, { account, kind: 'renewal' }] as const;
 const read = (reads: readonly ConnectedServiceQuotaGetResultV1[]) => async (request: Parameters<typeof resolveUsagePageAggregation>[0]['queries']) =>
-  resolveUsagePageAggregation({ queries: request, quota: { value: reads, status: 'available', asOfMs: 100 } });
+  resolveUsagePageAggregation({ queries: request, quota: { value: reads, status: 'available', asOfMs: 100 } }, bundledUsageModelPriceCatalog);
 
 describe('calendar export through admitted Usage Action reads', () => {
   it('returns only selected witnessed reset/renewal instants, stable identities and escaped calendar text', async () => {

@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -28,7 +29,7 @@ const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1,
 });
 const composed = composeUsageRecap({
   input: UsageRecapPrivateComposeInputSchema.parse({ query, style: 'sigil', format: 'story', selectedFields: ['tokens'] }),
-  snapshot: resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available', asOfMs: 900 }] }).results[0]!,
+  snapshot: resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available', asOfMs: 900 }] }, bundledUsageModelPriceCatalog).results[0]!,
 });
 if (composed.kind !== 'composed') throw new Error('The canonical recap producer must admit the image fixture');
 

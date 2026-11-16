@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -593,7 +594,7 @@ describe('useActionApprovalContinuation', () => {
             executor: createDefaultActionExecutor({ resolveServerIdForSessionId: () => null }),
             onApproval: hook.getCurrent().requestApproval });
         const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
-        const suggestion = resolveUsagePageAggregation({ queries: [query] }).results[0]!.coach!.digestSuggestion!;
+        const suggestion = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!.coach!.digestSuggestion!;
         const project = { machineId: 'machine-a', directory: '/repo' };
         const trigger = { kind: 'schedule' as const, enabled: true,
             schedule: { kind: 'interval' as const, scheduleExpr: null, everyMs: 60_000, timezone: null } };

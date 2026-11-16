@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '../usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { applyUsageCoachPreferences, evaluateUsageCoach } from './evaluateUsageCoach.js';
 import { USAGE_COACH_DETECTOR_IDS, UsageCoachEvaluationSchema, type UsageCoachEvaluationInput,
@@ -11,7 +12,7 @@ import { UsageAnalyticsQueryResponseSchema } from '../usageAnalyticsContracts.js
 
 const base: UsageCoachEvaluationInput = { queryKey: 'q', period: { startMs: 0, endMs: 1000 }, asOfMs: 1000, currentness: 'current' };
 const result = (input: Partial<UsageCoachEvaluationInput>, id: UsageCoachDetectorId) =>
-    evaluateUsageCoach({ ...base, ...input }).evaluations.find(row => row.detectorId === id)!;
+    evaluateUsageCoach({ ...base, ...input }, bundledUsageModelPriceCatalog).evaluations.find(row => row.detectorId === id)!;
 const component: UsagePromptComposition['components'][number] = { sourceId: '1'.repeat(64), kind: 'instructions',
     digest: 'a'.repeat(64), location: 'system', byteLength: 20, tokenCount: null, tokenizerId: null, cacheClass: 'unknown', overlap: 'none' };
 const composition: UsagePromptComposition = { v: 1, evidenceId: 'prompt', sessionId: 's', turnId: 't', inputId: 'i',
@@ -25,7 +26,7 @@ describe('evidence-bound usage coach', () => {
         expect(result({ detail, preferences: { v: 1, disabledChecks: ['model_misfit'], modelSuggestion: 'suggest_with_estimates' } }, 'model_misfit').status).toBe('disabled');
         expect(result({ detail, preferences: null }, 'model_misfit').status).toBe('insufficient_evidence');
         const disabled = evaluateUsageCoach({ ...base, composition: [{ ...composition, components: [{ ...component, byteLength: -1 }] }],
-            preferences: { v: 1, disabledChecks: [...USAGE_COACH_DETECTOR_IDS], modelSuggestion: 'suggest_with_estimates' } });
+            preferences: { v: 1, disabledChecks: [...USAGE_COACH_DETECTOR_IDS], modelSuggestion: 'suggest_with_estimates' } }, bundledUsageModelPriceCatalog);
         expect(disabled.evaluations.every(row => row.status === 'disabled')).toBe(true);
         expect(disabled.findings).toEqual([]);
         expect(UsageCoachEvaluationSchema.safeParse(disabled).success).toBe(true);
@@ -148,7 +149,7 @@ describe('evidence-bound usage coach', () => {
             title: 'Unrelated birth configuration' } }).success).toBe(false);
     });
     it('names all eleven capabilities and keeps missing detail insufficient rather than zero', () => {
-        const evaluation = UsageCoachEvaluationSchema.parse(evaluateUsageCoach(base));
+        const evaluation = UsageCoachEvaluationSchema.parse(evaluateUsageCoach(base, bundledUsageModelPriceCatalog));
         expect(evaluation.evaluations.map(row => row.detectorId)).toEqual([...USAGE_COACH_DETECTOR_IDS]);
         expect(evaluation.evaluations.every(row => row.status === 'insufficient_evidence' && row.requiredEvidence.length > 0)).toBe(true);
         expect(evaluation.findings).toEqual([]);
@@ -301,7 +302,7 @@ describe('evidence-bound usage coach', () => {
         expect(first.status).toBe('finding');
         expect(second).toMatchObject({ status: 'finding', finding: { currentness: 'stale' } });
         if (first.status === 'finding' && second.status === 'finding') expect(first.finding.evidenceKey).toBe(second.finding.evidenceKey);
-        expect(UsageCoachEvaluationSchema.safeParse({ ...evaluateUsageCoach(base), arbitrary: {} }).success).toBe(false);
+        expect(UsageCoachEvaluationSchema.safeParse({ ...evaluateUsageCoach(base, bundledUsageModelPriceCatalog), arbitrary: {} }).success).toBe(false);
     });
     it('keeps open-query evidence identity stable across witnessed rereads, but not changed facts', () => {
         const query = normalizeUsageQuery({ period: { startMs: 0 }, session: 's' });
@@ -310,12 +311,12 @@ describe('evidence-bound usage coach', () => {
             toolId: 'shell', answeringClientCategory: null };
         const prompt = { ...composition, components: [component, { ...component, sourceId: '2'.repeat(64) }] };
         const evidence = { composition: [prompt], detail: { coverage: 'partial' as const, permissions: [permission] } };
-        const first = evaluateUsageCoach({ ...base, ...evidence, queryKey, asOfMs: 100, period: { startMs: 0, endMs: 100 } });
+        const first = evaluateUsageCoach({ ...base, ...evidence, queryKey, asOfMs: 100, period: { startMs: 0, endMs: 100 } }, bundledUsageModelPriceCatalog);
         const second = evaluateUsageCoach({ ...base, ...evidence, queryKey: getUsageQueryKey(normalizeUsageQuery(query)),
-            asOfMs: 200, period: { startMs: 0, endMs: 200 } });
+            asOfMs: 200, period: { startMs: 0, endMs: 200 } }, bundledUsageModelPriceCatalog);
         const changed = evaluateUsageCoach({ ...base, queryKey, asOfMs: 200, period: { startMs: 0, endMs: 200 },
             composition: [{ ...prompt, evidenceId: 'next-prompt', observedAtMs: 20 }],
-            detail: { coverage: 'partial', permissions: [{ ...permission, decidedAtMs: 50 }] } });
+            detail: { coverage: 'partial', permissions: [{ ...permission, decidedAtMs: 50 }] } }, bundledUsageModelPriceCatalog);
         for (const detectorId of ['duplicated_instructions', 'approval_friction'] as const) {
             const key = (evaluation: typeof first) => evaluation.findings.find(row => row.detectorId === detectorId)!.evidenceKey;
             expect(key(second)).toBe(key(first));
@@ -324,10 +325,10 @@ describe('evidence-bound usage coach', () => {
     });
     it('refuses a serialized public result that swaps evidence, remedy identity or evaluated concepts', () => {
         // These are transport tamper cases: a typed finding must not advertise another finding's Apply.
-        const value = evaluateUsageCoach({ ...base, composition: [{ ...composition, components: [component, component] }] });
+        const value = evaluateUsageCoach({ ...base, composition: [{ ...composition, components: [component, component] }] }, bundledUsageModelPriceCatalog);
         const transport: typeof value = JSON.parse(JSON.stringify(value));
-        expect(UsageCoachEvaluationSchema.safeParse({ ...evaluateUsageCoach(base), asOfMs: null, currentness: 'unknown' }).success).toBe(true);
-        expect(UsageCoachEvaluationSchema.safeParse({ ...evaluateUsageCoach(base), asOfMs: null, currentness: 'current' }).success).toBe(false);
+        expect(UsageCoachEvaluationSchema.safeParse({ ...evaluateUsageCoach(base, bundledUsageModelPriceCatalog), asOfMs: null, currentness: 'unknown' }).success).toBe(true);
+        expect(UsageCoachEvaluationSchema.safeParse({ ...evaluateUsageCoach(base, bundledUsageModelPriceCatalog), asOfMs: null, currentness: 'current' }).success).toBe(false);
         expect(UsageCoachEvaluationSchema.safeParse({ ...transport, evaluations: transport.evaluations.slice(1) }).success).toBe(false);
         expect(UsageCoachEvaluationSchema.safeParse({ ...transport, evaluations: [transport.evaluations[0], ...transport.evaluations.slice(0, -1)] }).success).toBe(false);
         const index = transport.evaluations.findIndex(row => row.status === 'finding');
@@ -348,7 +349,7 @@ describe('evidence-bound usage coach', () => {
         expect(UsageCoachEvaluationSchema.safeParse(replaceFinding({ ...finding, evidenceKey: 'plugin-owned-opaque-key' })).success).toBe(true);
     });
     it('applies Coach KV suppressions only to exact finding evidence and expires snooze at the explicit clock', () => {
-        const evaluation = evaluateUsageCoach({ ...base, composition: [{ ...composition, components: [component, component] }] });
+        const evaluation = evaluateUsageCoach({ ...base, composition: [{ ...composition, components: [component, component] }] }, bundledUsageModelPriceCatalog);
         const key = evaluation.findings[0]!.evidenceKey;
         const preferences = { v: 1 as const, disabledChecks: [], modelSuggestion: 'suggest_with_estimates' as const,
             suppressions: [{ kind: 'dismissed' as const, evidenceKey: key }] };
@@ -358,7 +359,7 @@ describe('evidence-bound usage coach', () => {
         const snoozed = { ...preferences, suppressions: [{ kind: 'snoozed' as const, evidenceKey: key, untilMs: 40 }] };
         expect(applyUsageCoachPreferences(evaluation, snoozed, 30).findings[0]!.state.snoozedUntilMs).toBe(40);
         expect(applyUsageCoachPreferences(evaluation, snoozed, 40).findings[0]!.state.snoozedUntilMs).toBeNull();
-        const changed = evaluateUsageCoach({ ...base, composition: [{ ...composition, evidenceId: 'changed', components: [component, component] }] });
+        const changed = evaluateUsageCoach({ ...base, composition: [{ ...composition, evidenceId: 'changed', components: [component, component] }] }, bundledUsageModelPriceCatalog);
         expect(applyUsageCoachPreferences(changed, preferences, 30).findings[0]!.state.dismissed).toBe(false);
     });
 });

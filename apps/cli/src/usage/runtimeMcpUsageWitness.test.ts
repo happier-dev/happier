@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { describe, expect, it } from 'vitest';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { McpServerCatalogSnapshotV1 } from '@happier-dev/protocol';
@@ -75,7 +76,7 @@ describe('Claude native MCP witness → retained evidence → Coach remedy', () 
                 expect(JSON.stringify(retained)).not.toContain('native_connector');
                 const now = Date.now();
                 const evaluation = evaluateUsageCoach({ queryKey: 'query', period: { startMs: 0, endMs: now }, asOfMs: now,
-                    currentness: 'current', detail: detail.coach?.detail });
+                    currentness: 'current', detail: detail.coach?.detail }, bundledUsageModelPriceCatalog);
                 expect(evaluation.evaluations.find(row => row.detectorId === 'mcp_overhead')?.status)
                     .toBe(complete ? 'finding' : 'insufficient_evidence');
                 const catalog: McpServerCatalogSnapshotV1 = { status: 'ready', authority: 'active', revision: 40, diagnostics: [],

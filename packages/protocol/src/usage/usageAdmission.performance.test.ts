@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { describe, expect, it, vi } from 'vitest';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '../connect/providerAccountUsagePrimitives.js';
 import { buildProviderAccountUsagePageProjectionV1,
@@ -75,7 +76,7 @@ describe('admitted Usage data stays typed inside the process', () => {
     try {
       const started = performance.now();
       const evaluation = evaluateUsageCoach({ queryKey: 'q', period: { startMs: 0, endMs: 45_001 }, asOfMs: 45_000,
-        currentness: 'current', composition, compositionCoverage: 'partial' });
+        currentness: 'current', composition, compositionCoverage: 'partial' }, bundledUsageModelPriceCatalog);
       const preferred = applyUsageCoachPreferences(evaluation, { suppressions: [] }, 45_000);
       expect(preferred, 'unchanged preferences retain the admitted finding tree without a whole-value equality pass').toBe(evaluation);
       console.info(JSON.stringify({ admission45kCoach: true, elapsedMs: performance.now() - started,
@@ -108,7 +109,7 @@ describe('admitted Usage data stays typed inside the process', () => {
     try {
       const started = performance.now();
       const query = normalizeUsageQuery({ period, includeSessionEvidence: false });
-      const batch = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available' }] });
+      const batch = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available' }] }, bundledUsageModelPriceCatalog);
       const detail = resolveUsageHowYouWork({ period, timeZoneOffsetMinutes: 0, detail: { status: 'partial', phaseEvents } });
       console.info(JSON.stringify({ admission45kDetails: true, elapsedMs: performance.now() - started,
         workParses: workParse.mock.calls.length, detailParses: detailParse.mock.calls.length, digestParses: digestParse.mock.calls.length }));

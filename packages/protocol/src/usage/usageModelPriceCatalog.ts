@@ -1,9 +1,8 @@
 import { z } from '../zodRuntimePolicy.js';
 import { LITELLM_BUNDLED_SNAPSHOT } from './usageModelPriceSnapshot.js';
-import { canonicalUsageModelPriceId, UsageModelPriceCatalogSchema, UsageModelPriceEntrySchema, type UsageModelPriceCatalog, type UsageModelPriceProvenance, type UsageModelPriceRates, type UsageModelPriceOverridesV1 } from './usageModelPriceSchemas.js';
-export * from './usageModelPriceSchemas.js';
+import { UsageModelPriceCatalogSchema, UsageModelPriceEntrySchema, type UsageModelPriceCatalog, type UsageModelPriceProvenance } from './usageModelPriceSchemas.js';
 
-export const LITELLM_MODEL_PRICE_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
+export { LITELLM_MODEL_PRICE_URL } from './usageModelPriceSchemas.js';
 export const bundledUsageModelPriceCatalog: UsageModelPriceCatalog = UsageModelPriceCatalogSchema.parse(LITELLM_BUNDLED_SNAPSHOT);
 
 /** LiteLLM is an external, heterogeneous file. Only standard text-token tariffs enter this catalog. */
@@ -48,55 +47,4 @@ export function parseLiteLlmModelPriceCatalog(value: unknown, provenance: UsageM
   return UsageModelPriceCatalogSchema.parse({ v: 1, models, provenance });
 }
 
-export interface ResolvedUsageModelPrice {
-  modelId: string;
-  rates: UsageModelPriceRates;
-  source: 'catalog' | 'override' | 'mapping';
-  mappedFrom?: string;
-}
-
-/** Read pre-fix alias keys without maintaining a second override authority.
- * If both spellings were edited, the canonical key wins consistently for every reader.
- */
-export function readUsageModelPriceOverride(modelId: string | null | undefined, overrides: UsageModelPriceOverridesV1): UsageModelPriceOverridesV1[string] | null {
-  const canonical = canonicalUsageModelPriceId(modelId);
-  if (canonical === null) return null;
-  if (Object.hasOwn(overrides, canonical)) return overrides[canonical]!;
-  const alias = Object.keys(overrides).sort().find(id => canonicalUsageModelPriceId(id) === canonical);
-  return alias === undefined ? null : overrides[alias]!;
-}
-
-/** Explicit user mappings win; all readers consume the same exact model identity. */
-export function resolveUsageModelPrice(modelId: string | null | undefined, catalog: UsageModelPriceCatalog = bundledUsageModelPriceCatalog,
-  overrides: UsageModelPriceOverridesV1 = {}): ResolvedUsageModelPrice | null {
-  let current = canonicalUsageModelPriceId(modelId);
-  if (current === null) return null;
-  const original = modelId!.trim();
-  const seen = new Set<string>();
-  let mapped = false;
-  while (true) {
-    if (seen.has(current)) return null;
-    seen.add(current);
-    const override = readUsageModelPriceOverride(current, overrides);
-    if (override?.kind === 'rates') return { modelId: current, rates: override, source: mapped ? 'mapping' : 'override',
-      ...(mapped ? { mappedFrom: original } : {}) };
-    if (override?.kind === 'map') {
-      const target = canonicalUsageModelPriceId(override.modelId);
-      if (target === null) return null;
-      current = target; mapped = true; continue;
-    }
-    // A fetched catalog can retain only the vendor snapshot spelling.
-    const catalogId = !Object.hasOwn(catalog.models, current) && current === 'claude-haiku-4-5'
-      ? 'claude-haiku-4-5-20251001' : current;
-    const rates = Object.hasOwn(catalog.models, catalogId) ? catalog.models[catalogId] : undefined;
-    if (rates) return { modelId: current, rates, source: mapped ? 'mapping' : 'catalog', ...(mapped ? { mappedFrom: original } : {}) };
-    // Retain the existing fallback only after exact overrides and catalog tariffs.
-    const alias = /^(openai|anthropic)\/(.+)$/.exec(current);
-    const entry = alias && Object.hasOwn(catalog.models, alias[2]!) ? catalog.models[alias[2]!] : undefined;
-    if (entry && entry.provider === alias![1]) { current = canonicalUsageModelPriceId(alias![2]!)!; continue; }
-    const baseId: string | null = current.endsWith('[1m]') ? current.slice(0, -4).trim() : null;
-    const base = baseId && Object.hasOwn(catalog.models, baseId) ? catalog.models[baseId] : undefined;
-    if (base?.provider === 'anthropic') { current = canonicalUsageModelPriceId(baseId)!; continue; }
-    return null;
-  }
-}
+export * from './usageModelPriceSchemas.js';

@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { View } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
@@ -60,7 +61,7 @@ describe('Usage chart bodies while activity is still being read', () => {
     const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status,
       ...(status === 'error' ? { errorCode: 'usage_query_failed' } : {}),
       ...(status === 'available' || status === 'partial' ? { value } : {}),
-    }] }).results[0]!;
+    }] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsageChartPending slice={slice} testID="chart" title="Needs another week"
       reason="later" onRetry={() => {}} />);
     expect(screen.findByTestId(`chart.${state}`)).not.toBeNull();
@@ -73,7 +74,7 @@ describe('Usage chart bodies while activity is still being read', () => {
       period: { relative: '7days' },
       granularity: 'day',
     });
-    const base = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
+    const base = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!;
     const slice: UsageQueryResultSlice = {
       ...base,
       sources: [
@@ -99,7 +100,7 @@ describe('Usage chart bodies while activity is still being read', () => {
       period: { relative: '7days' },
       granularity: 'day',
     });
-    const base = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
+    const base = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!;
     const slice: UsageQueryResultSlice = {
       ...base,
       sources: [

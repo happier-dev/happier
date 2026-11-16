@@ -403,12 +403,15 @@ it('reprices shared accounting once per tariff across sibling evidence queries a
     // Capture it before observing the separate client projection cost contract.
     const projectServerAccounting = usageCost.repriceUsageAnalyticsResponse;
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-pricing-inputs.test', accountId: 'account-a' }],
-        route: request => request.path === '/v2/usage/query' ? Response.json(projectServerAccounting({ v: 1,
+        route: request => {
+            const priceCatalog = { ...bundledUsageModelPriceCatalog, models: { model: { inputUsdPerMillion: rate, outputUsdPerMillion: 1 } } };
+            return request.path === '/v2/usage/query' ? Response.json(projectServerAccounting({ v: 1,
             totals: { eventCount: count, tokens: { ...tokens, input: 10 * count, output: 5 * count, total: 15 * count }, cost },
-            priceCatalog: { ...bundledUsageModelPriceCatalog, models: { model: { inputUsdPerMillion: rate, outputUsdPerMillion: 1 } } },
+            priceCatalog,
             contributions: Array.from({ length: count }, (_, index) => ({ id: String(index), observedAtMs: 1500,
                 sessionId: null, turnId: null, agentId: null, modelId: 'model', machineId: null, projectKey: null,
-                workspaceId: null, source: null, eventCount: 1, tokens, tokenCategories: tokens, cost })) })) : undefined });
+                workspaceId: null, source: null, eventCount: 1, tokens, tokenCategories: tokens, cost })) }, priceCatalog)) : undefined;
+        } });
     publishAppliedActiveServerSnapshot({ serverId: home.homes.a!.id, serverUrl: home.homes.a!.serverUrl, generation: 0 });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const captured = captureUiUsageQueryAccountContext((await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!)!;

@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { getUsageQueryKey, usageQueryNeedsContributionRows, usageQueryToAnalyticsRequest, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { createUsagePricingReuseResolver, resolveUsagePageAggregation, resolveUsageQuotaPageAggregation, resolveUsageComparisonQuery, retainUsageQueryResultReferences, retainAccountingReferences, projectUsageAccountingSnapshotPrices,
     projectUsageAccountingSnapshotCalendar, type UsageAccountingSourceSnapshot, type UsageWorkSourceSnapshot,
@@ -198,7 +199,7 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
         // without changing the already admitted contribution population.
         const prepared = input.prepareAccounting(snapshot, retained => {
             const pricedSnapshot = projectUsageAccountingSnapshotPrices(retained, accountSettings.usageModelPriceOverridesV1,
-                accounting.values(), priorAccounting.get(key)?.value,
+                bundledUsageModelPriceCatalog, accounting.values(), priorAccounting.get(key)?.value,
                 () => retained.value ? pricingReuseFor(retained.value, accountSettings.usageModelPriceOverridesV1, retained.query.costBasis) : undefined);
             const priced = prepareAccountingDelivery(pricedSnapshot, accountingNowMs);
             return calendarQueryKeys.has(key) ? projectUsageAccountingSnapshotCalendar(priced, accounting.values()) : priced;
@@ -308,7 +309,7 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
         quota, pools, work, howYouWork, nowMs: accountingNowMs,
         sources: [...(quota.sources ?? []), ...(settledHowYouWorkQueries.size < evidenceQueries.length
             ? [{ source: 'how_you_work', status: 'pending' as const }]
-            : evidenceQueries.length === 0 ? [{ source: 'how_you_work', status: 'not_loaded' as const }] : [])] });
+            : evidenceQueries.length === 0 ? [{ source: 'how_you_work', status: 'not_loaded' as const }] : [])] }, bundledUsageModelPriceCatalog);
     // The base source remains pending until the complete private read
     // settles. Its staged facts and reading phases belong to this query,
     // never a held sibling in the same batch.

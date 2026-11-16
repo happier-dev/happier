@@ -81,7 +81,7 @@ import { captureSessionOrganizationDisplayHost } from '@/api/sessionOrganization
 import { getUsageQueryKey, resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveSessionProjectScopeV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { readUsageAccountingSnapshots } from './usageAccountingReads';
-import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
+import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveUsagePageAggregation, resolveUsagePageAccountingReads, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -778,11 +778,12 @@ export function createAccountServerActionDeps(input: Readonly<{
             readRow: async () => McpServerCatalogRowReadResponseV1Schema.parse(await read(MCP_SERVER_CATALOG_ROWS_ROUTE_V1)) });
           await check();
         }
+        const { bundledUsageModelPriceCatalog } = await import('@happier-dev/protocol/usage/usageModelPriceCatalog');
         const result = resolveUsagePageAggregation({ queries: request.queries, accountSettings, quota, pools, pricingOverrides, coachPreferences: preferences ?? null, nowMs: accountingNowMs,
           accounting, work: detail.work, howYouWork: detail.howYouWork,
           sources: [...quotaSources, { source: 'coach_preferences', status: preferences ? 'available' : 'unknown' },
             { source: 'pricing_overrides', status: pricingOverrides === undefined ? 'unknown' : 'available' }],
-        });
+        }, bundledUsageModelPriceCatalog);
         const nowMs = accountingNowMs;
         return { ...result, results: result.results.map(slice => {
           if (!slice.coach) return slice;

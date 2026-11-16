@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
 import * as howYouWork from './resolveUsageHowYouWork.js';
@@ -31,7 +32,7 @@ it('resolves once for unchanged evidence across source phases, then consumes cha
         const detail = projectUsageQueryWorkEvidence({ query, sessions, sessionEvidence });
         previous = resolveUsagePageAggregation({ queries: [query], previous, nowMs,
             howYouWork: [{ query, detail, ...(errorCode ? { errorCode } : {}),
-                sessionCoverage: { selected: population, admitted: population, notRead: 0 } }] });
+                sessionCoverage: { selected: population, admitted: population, notRead: 0 } }] }, bundledUsageModelPriceCatalog);
         return previous.results[0]!.howYouWork!;
     };
     const initial = run(0);
@@ -152,7 +153,7 @@ it('keeps private preparation with the admitted numeric period when accounting a
             tokens: { input: eventCount, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: eventCount },
             cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } };
         previous = resolveUsagePageAggregation({ queries: [query], previous, nowMs,
-            accounting: [{ query, value: accounting, status: 'available' }], howYouWork: [{ query, detail }] });
+            accounting: [{ query, value: accounting, status: 'available' }], howYouWork: [{ query, detail }] }, bundledUsageModelPriceCatalog);
         return previous.results[0]!.howYouWork!;
     };
     expect(run(1).inputs?.acceptedCount).toBe(1);

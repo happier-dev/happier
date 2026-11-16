@@ -43,14 +43,14 @@ describe('bundled model price catalog portability', () => {
     expect(chunks).toHaveLength(1);
     const expected = {
       catalog: bundledUsageModelPriceCatalog,
-      resolved: resolveUsageModelPrice('gpt-5.4'),
+      resolved: resolveUsageModelPrice('gpt-5.4', bundledUsageModelPriceCatalog),
     };
     if (platform === 'browser') {
       // Deliberately omit Node globals: the browser must consume the JSON inline.
       const browser = { URL };
       const result: unknown = runInNewContext(`${chunks[0]}; ({
         catalog: usagePrices.bundledUsageModelPriceCatalog,
-        resolved: usagePrices.resolveUsageModelPrice('gpt-5.4'),
+        resolved: usagePrices.resolveUsageModelPrice('gpt-5.4', usagePrices.bundledUsageModelPriceCatalog),
       })`, browser);
       expect(result).toEqual(expected);
     } else {
@@ -60,9 +60,12 @@ describe('bundled model price catalog portability', () => {
         await writeFile(output, chunks[0]!);
         const result = execFileSync(process.execPath, ['--input-type=module', '-e', `
           const prices = await import(process.argv[1]);
+          if ((await import(process.argv[1])).bundledUsageModelPriceCatalog !== prices.bundledUsageModelPriceCatalog) {
+            throw new Error('Catalog import must reuse the process module singleton');
+          }
           process.stdout.write(JSON.stringify({
             catalog: prices.bundledUsageModelPriceCatalog,
-            resolved: prices.resolveUsageModelPrice('gpt-5.4'),
+            resolved: prices.resolveUsageModelPrice('gpt-5.4', prices.bundledUsageModelPriceCatalog),
           }));
         `, pathToFileURL(output).href], { encoding: 'utf8' });
         expect(JSON.parse(result)).toEqual(expected);

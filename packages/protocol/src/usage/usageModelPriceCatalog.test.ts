@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { bundledUsageModelPriceCatalog, canonicalUsageModelPriceId, parseLiteLlmModelPriceCatalog, resolveUsageModelPrice, UsageModelPriceOverridesV1Schema } from './usageModelPriceCatalog.js';
+import { bundledUsageModelPriceCatalog, BUNDLED_USAGE_MODEL_PRICE_REVISION, canonicalUsageModelPriceId, parseLiteLlmModelPriceCatalog, resolveUsageModelPrice, UsageModelPriceOverridesV1Schema } from './usageModelPriceCatalog.js';
 import { estimateUsageModelCost, repriceUsageAnalyticsResponse } from './usageCost.js';
 import { UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
 
 describe('canonical model price catalog', () => {
+  it('publishes the vendored revision without loading catalog data in projection consumers', () => {
+    expect(BUNDLED_USAGE_MODEL_PRICE_REVISION).toBe(bundledUsageModelPriceCatalog.provenance.revision);
+  });
   it('treats synthetic transcript sentinels as no model while preserving exact real model ids', () => {
     expect(canonicalUsageModelPriceId(' <synthetic> ')).toBeNull();
     expect(canonicalUsageModelPriceId('third-party/MODEL-snapshot')).toBe('third-party/MODEL-snapshot');
@@ -57,8 +60,8 @@ describe('canonical model price catalog', () => {
       'gpt-5.4': rates };
     expect([alias, dated].map(id => estimateUsageModelCost(id, tokens, bundledUsageModelPriceCatalog, mapped)?.total))
       .toEqual([20, 20]);
-    expect(resolveUsageModelPrice('claude-haiku-4-5-20990101')).toBeNull();
-    expect(resolveUsageModelPrice('vertex_ai/claude-haiku-4-5')?.modelId).toBe('vertex_ai/claude-haiku-4-5');
+    expect(resolveUsageModelPrice('claude-haiku-4-5-20990101', bundledUsageModelPriceCatalog)).toBeNull();
+    expect(resolveUsageModelPrice('vertex_ai/claude-haiku-4-5', bundledUsageModelPriceCatalog)?.modelId).toBe('vertex_ai/claude-haiku-4-5');
   });
 
   it('projects standard text-token rates from the heterogeneous public file without inventing cache prices', () => {
@@ -78,7 +81,7 @@ describe('canonical model price catalog', () => {
   });
 
   it('keeps unknown models unpriced and applies explicit mappings and overrides without fuzzy matching', () => {
-    expect(resolveUsageModelPrice('future-gpt-5.4')).toBeNull();
+    expect(resolveUsageModelPrice('future-gpt-5.4', bundledUsageModelPriceCatalog)).toBeNull();
     const overrides = UsageModelPriceOverridesV1Schema.parse({ custom: { kind: 'map', modelId: 'gpt-5.4' },
       'gpt-5.4': { kind: 'rates', inputUsdPerMillion: 7, outputUsdPerMillion: 11, cacheReadUsdPerMillion: 0 } });
     expect(resolveUsageModelPrice('custom', bundledUsageModelPriceCatalog, overrides)).toMatchObject({ source: 'mapping', modelId: 'gpt-5.4',

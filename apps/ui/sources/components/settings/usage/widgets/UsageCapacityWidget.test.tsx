@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -277,7 +278,7 @@ it('renders every overlapping pool membership without duplicating standalone Acc
       { group: { service, groupId: 'first' }, memberAccountIds: ['work', 'personal'], activeAccountId: 'work', selection: { status: 'pending' } },
       { group: { service, groupId: 'second' }, memberAccountIds: ['work', 'personal'], activeAccountId: null, selection: { status: 'pending' } },
     ] }],
-  }).results[0]!;
+  }, bundledUsageModelPriceCatalog).results[0]!;
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
     freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
@@ -330,7 +331,7 @@ it('outlines only a pool of two or more members; a pool of one reads as its acco
       { group: { service, groupId: 'duo' }, memberAccountIds: ['work', 'personal'], activeAccountId: 'work', selection: { status: 'pending' } },
       { group: { service, groupId: 'one' }, memberAccountIds: ['solo'], activeAccountId: 'solo', selection: { status: 'pending' } },
     ] }],
-  }).results[0]!;
+  }, bundledUsageModelPriceCatalog).results[0]!;
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
     freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
@@ -371,7 +372,7 @@ it('keeps each reset and renewal as an exact point when the shared plot cannot f
         resetsAt: now + (index + 1) * 3_600_000 })) },
     pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
   });
-  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read] } }).results[0]!;
+  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read] } }, bundledUsageModelPriceCatalog).results[0]!;
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
     freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
   const { UsageResetPlannerWidget } = await import('./UsageResetPlannerWidget');
@@ -405,7 +406,7 @@ it('names only pending accounts once in the held headline row, and drops it once
       source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [], planLabel: null },
     pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
   });
-  const settled = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read] } }).results[0]!;
+  const settled = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read] } }, bundledUsageModelPriceCatalog).results[0]!;
   const pending = ['personal', 'shared'].map(accountId => ({ source: `quota:${createCanonicalJsonSigningInput({
     bindingKind: 'account', ref: { service, accountId },
   })}`, status: 'pending' as const }));
@@ -440,7 +441,7 @@ it.each([['loaded_data', true], ['loaded_empty', false], ['not_loaded', false]] 
       source: 'providerHttp', confidence: 'confirmed', state, meters: [], planLabel: null, accountLabel: 'Mail plan' },
     pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
   });
-  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read] } }).results[0]!;
+  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read] } }, bundledUsageModelPriceCatalog).results[0]!;
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
     freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
@@ -480,7 +481,7 @@ it.each([['medium', true, 520, false], ['tall', true, 520, false], ['full', fals
       pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
     });
   });
-  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }).results[0]!;
+  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }, bundledUsageModelPriceCatalog).results[0]!;
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
     freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
@@ -519,7 +520,7 @@ it('says Limits beside other widgets too narrow for a label per segment as the t
       pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
     });
   });
-  const read = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }).results[0]!;
+  const read = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }, bundledUsageModelPriceCatalog).results[0]!;
   // Two more accounts whose allowance could not be read: they are not "more" figures, and are said apart.
   const slice = { ...read, sources: [...read.sources, ...['unread1', 'unread2'].map(accountId => ({
     source: `quota:${createCanonicalJsonSigningInput({ bindingKind: 'account', ref: { service, accountId } })}`, status: 'error' as const }))] };
@@ -560,7 +561,7 @@ it.each(['pending', 'not_loaded'] as const)('shows an observed headline with fir
       pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
     });
   });
-  const settled = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: reads } }).results[0]!;
+  const settled = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: reads } }, bundledUsageModelPriceCatalog).results[0]!;
   const partial = { ...settled, quota: reads.slice(0, 1), sources: [...settled.sources, {
     source: `quota:${createCanonicalJsonSigningInput(reads[1]!.source)}`, status,
   }] };
@@ -608,7 +609,7 @@ it('says a lone account once: the headline names it, no cell repeats its figure,
   };
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
   const render = (accounts: readonly string[], usedPct = 100) => {
-    const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: accounts.map(id => read(id, usedPct)) } }).results[0]!;
+    const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: accounts.map(id => read(id, usedPct)) } }, bundledUsageModelPriceCatalog).results[0]!;
     return renderScreen(<InjectedAuthProvider credentials={null}>
       <UsageCapacityWidget id="usage_capacity" slice={slice} query={query} serverId="home" testID="capacity"
         model={{ refresh: async () => {} }} />
@@ -649,7 +650,7 @@ it('says a lone account read a while ago once too, and a used-up lone plan offer
   };
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
   const render = (usedPct: number) => {
-    const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read(usedPct)] } }).results[0]!;
+    const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read(usedPct)] } }, bundledUsageModelPriceCatalog).results[0]!;
     return renderScreen(<InjectedAuthProvider credentials={null}>
       <UsageCapacityWidget id="usage_capacity" slice={slice} query={query} serverId="home" testID="capacity"
         model={{ refresh: async () => {} }} />
@@ -686,7 +687,7 @@ it('says Limits beside other widgets as the account the next session uses: its f
   });
   const base = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota },
     pools: [{ query, value: [{ group: { service, groupId: 'team' }, memberAccountIds: ['work', 'personal'], activeAccountId: 'personal', selection: { status: 'pending' } }] }],
-  }).results[0]!;
+  }, bundledUsageModelPriceCatalog).results[0]!;
   // The selector's current pick is 'work' (60% left), not the tightest account ('spare', used up).
   const slice = { ...base, pools: base.pools!.map(pool => {
     const candidates = ['work', 'personal'].map(profileId => ({ profileId, priority: 1, createdAtMs: 1, enabled: true, leastLimitedScore: null }));
@@ -753,7 +754,7 @@ it('names the only account in the Limits headline beside other widgets, where no
         unit: 'count', status: 'ok', resetsAt: now + 86_400_000, windowDurationMs: 7 * 86_400_000 }] },
     pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
   });
-  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read] } }).results[0]!;
+  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read] } }, bundledUsageModelPriceCatalog).results[0]!;
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
   const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
     <WidgetPresentationProvider value={{ size: 'medium', footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' },

@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
@@ -48,7 +49,7 @@ it('keeps declared source choices distinct with qualified Agent identity while s
 
 it('retains the drill choices when a batch changes only facts outside its scope options', async () => {
     const query = normalizeUsageQuery({ agents: ['codex'] });
-    const base = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
+    const base = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!;
     let slices = [base];
     let scope = readUsageWidgetPageScope(query);
     const hook = await renderHook(() => {
@@ -151,7 +152,7 @@ it('D21 names accounting-only Project choices from the opened Project owner and 
             mutate: async () => { throw new Error('Reading Project names cannot mutate'); } },
         apply: (...args) => storage.getState().applyProjectAccountRowsForScope(scope, ...args) });
     const query = normalizeUsageQuery({ projects: [keys[3]!] });
-    const base = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
+    const base = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!;
     // The real filter inventory requests accounting only, without Work/Session evidence.
     const slices = [{ ...base, accounting: { v: 1 as const,
         contributions: [{ ...usageQaAccountingFixture().contributions![0]!, projectKey: keys[2]!, machineId: machines[1]!.id }],
@@ -213,7 +214,7 @@ it('R140 folds unnamed Project choices like the ledger and selects their origina
     const query = normalizeUsageQuery({ projects: [unnamed[0]!] });
     const fixture = usageQaAccountingFixture();
     const projects = [...named, ...unnamed];
-    const slices = [{ ...resolveUsagePageAggregation({ queries: [query] }).results[0]!, accounting: { v: 1 as const,
+    const slices = [{ ...resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!, accounting: { v: 1 as const,
         totals: fixture.totals, breakdowns: { project: projects.map((key, index) => ({ key, ...fixture.totals,
             ...(index < named.length ? { label: index < 2 ? 'happier' : 'Other project' } : {}) })) } } }];
     const work = allocateUsageOutcomes({ contributions: projects.map((projectKey, index) => ({ ...fixture.contributions![0]!,

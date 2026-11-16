@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { describe, expect, it } from 'vitest';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import {
@@ -221,7 +222,7 @@ describe('Usage chart models', () => {
           },
         },
       ],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     expect(slice.howYouWork!.steering!.inputsObserved).toBe(true);
     const row = projectUsageSteeringModel(slice)!.rows[0]!;
     // Busy with no steer and no phone answer: a measured zero the body says once, not a flat lane (R8 #5).
@@ -304,7 +305,7 @@ describe('Usage chart models', () => {
           },
         },
       ],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     expect(
       projectUsageSteeringModel(slice)!.rows.map((row) => row.agentId),
     ).toEqual(['claude', 'codex', null]);
@@ -321,7 +322,7 @@ describe('Usage chart models', () => {
         { workId: 'a', agentId: 'claude', status: 'completed', startMs: START, endMs: START + hour },
         { workId: 'k', agentId: 'kimi', status: 'completed', startMs: START + hour, endMs: START + hour },
       ],
-      acceptedInputs: [] } }] }).results[0]!;
+      acceptedInputs: [] } }] }, bundledUsageModelPriceCatalog).results[0]!;
     expect(projectUsageRunLengthModel(slice)!.rows.map((row) => row.agentId)).toEqual(['claude']);
   });
   it('omits an Unknown Human loop member whose only fact is a non-phone answer', () => {
@@ -361,7 +362,7 @@ describe('Usage chart models', () => {
           },
         },
       ],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     expect(
       projectUsageSteeringModel(slice)!.rows.map((row) => row.agentId),
     ).toEqual(['claude']);
@@ -411,7 +412,7 @@ describe('Usage chart models', () => {
           },
         },
       ],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const day = slice.howYouWork!.agentCalendar!.days[0]!;
     const model = projectUsageDayModel(slice, day)!;
     expect(model.peak).toEqual({
@@ -474,7 +475,7 @@ describe('Usage chart models', () => {
           },
         },
       ],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const score = projectUsageScoreModel(
       slice.howYouWork!.agentCalendar!,
       undefined,
@@ -511,7 +512,7 @@ describe('Usage chart models', () => {
           },
         },
       ],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const owner = slice.howYouWork!.agentCalendar!;
     expect(projectUsageDayModel(slice, owner.days[0]!)!.peak.atHour).toBe(11);
     const score = projectUsageScoreModel(owner, undefined)!;
@@ -546,7 +547,7 @@ describe('Usage chart models', () => {
           },
         },
       ],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const model = projectUsageDayModel(
       slice,
       slice.howYouWork!.agentCalendar!.days[0]!,
@@ -845,7 +846,7 @@ describe('Usage chart models', () => {
     const slice = resolveUsagePageAggregation({
       queries: [query],
       howYouWork: [{ query, detail: { status: 'partial', facts: [] } }],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     // Use the canonical summary type; no rendering projection may truncate this membership.
     const model = projectUsageConstellationModel(
       {
@@ -938,7 +939,7 @@ describe('Usage chart models', () => {
           period: { startMs: START, endMs: START + 8 * DAY },
         }),
       ],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const value = calendar({
       weekdayHourBuckets: [
         {
@@ -1040,7 +1041,7 @@ describe('Usage chart models', () => {
           },
         },
       ],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const model = projectUsageDaylight(
       slice.howYouWork!.agentCalendar!,
       'busy',

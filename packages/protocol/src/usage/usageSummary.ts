@@ -2,7 +2,8 @@ import { resolveUsageMeasuredTokens, compareUsageMeasurementsDescending } from '
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsContribution, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse, type UsageAnalyticsSummary,
     type UsageObservationCost, type UsageAnalyticsBreakdownEntry, type UsagePricingPopulation, type UsageAnalyticsTimelineSource } from './usageAnalyticsContracts.js';
 import { readUsagePageCostProjectionBasis, resolveUsageCostBasis, resolveUsageContributionDimensionKey, serializeUsageCostBasis, usagePageCostProjectionBasis, type UsageCostMode } from './usageCostFacts.js';
-import { bundledUsageModelPriceCatalog, type UsageModelPriceCatalog, type UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
+import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceSchemas.js';
+import { BUNDLED_USAGE_MODEL_PRICE_REVISION } from './usageModelPriceSchemas.js';
 import { projectUsageAgentAccountingCalendar, rebaseUsageAgentAccountingCalendarEnd, resolveUsageAccountingCalendarPeriod } from './usageAgentCalendar.js';
 import { resolveUsageBucketBounds } from './usageCalendar.js';
 import { summarizeUsageExecutionSources } from './usageSourceSummary.js';
@@ -230,7 +231,7 @@ export function* projectUsageAnalyticsSummarySteps(value: UsageAnalyticsQueryRes
     const summary: UsageAnalyticsSummary = { v: 1, costMode: mode,
         ...groupedPricing,
         ...(observationRange ? { observationRange } : {}),
-        catalogRevision: (value.priceCatalog ?? bundledUsageModelPriceCatalog).provenance.revision,
+        catalogRevision: value.priceCatalog?.provenance.revision ?? BUNDLED_USAGE_MODEL_PRICE_REVISION,
         ...(accountingCalendar ? { accountingCalendar } : {}),
         ...(publicProfileAccounting ? { publicProfileAccounting } : {}),
         accounts,

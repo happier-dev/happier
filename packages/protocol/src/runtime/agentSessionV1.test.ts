@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '../usage/usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 
 import { projectMcpToolLaunchPolicyV1 } from '../mcp/servers/tools/resolveMcpToolDecisionV1.js';
@@ -127,7 +128,7 @@ it('carries the complete observed config catalog through the runtime, preflight 
 });
 
 it('admits priced cache savings while preserving closed usage envelopes and string-key limits', () => {
-  const estimate = estimateUsageModelCost('gpt-5.4', { input: 7, output: 3, reasoning: 2, cacheRead: 3, cacheWrite: 0, total: 15 })!;
+  const estimate = estimateUsageModelCost('gpt-5.4', { input: 7, output: 3, reasoning: 2, cacheRead: 3, cacheWrite: 0, total: 15 }, bundledUsageModelPriceCatalog)!;
   const event = { kind: 'usage-observed', sequence: 1, sessionId: 'session', emittedAtMs: 1,
     observationId: 'usage', source: 'native', scope: 'turn_delta', cost: {
       reportedUsd: 0, estimatedUsd: estimate.estimatedUsd, currency: 'USD', breakdown: estimate.breakdown } };

@@ -2,7 +2,8 @@ import type { UsageCoachSuppressionStateV1 } from './coachActions.js';
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { selectLatestUsageMcpBindingWindows } from './usageMcpBindingUsage.js';
 import { resolveUsageCostBasis, createUsageModelCostEstimator } from '../usageCost.js';
-import { bundledUsageModelPriceCatalog, LITELLM_MODEL_PRICE_URL } from '../usageModelPriceCatalog.js';
+import type { UsageModelPriceCatalog } from '../usageModelPriceSchemas.js';
+import { LITELLM_MODEL_PRICE_URL } from '../usageModelPriceSchemas.js';
 import { COACH_VENDOR_FACTS as facts, COACH_RESEARCH_SOURCES as research } from './coachVendorFacts.js';
 import { UsageRequestAttributionSchema } from '../usageAnalyticsContracts.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
@@ -51,7 +52,7 @@ export function admitUsageCoachRemedies(evaluation: UsageCoachEvaluation, admitt
         findings: evaluations.flatMap(row => row.status === 'finding' ? [row.finding] : []) };
 }
 
-export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoachEvaluation {
+export function evaluateUsageCoach(input: UsageCoachEvaluationInput, fallbackCatalog: UsageModelPriceCatalog): UsageCoachEvaluation {
     // A failed Account read is not evidence that the user enabled every check.
     const preferences = input.preferences === null ? null : UsageCoachPreferencesV1Schema.parse(input.preferences ?? {});
     const enabled = (id: UsageCoachDetectorId) => preferences !== null && !preferences.disabledChecks.includes(id)
@@ -127,7 +128,7 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
         evidence.sort((a, b) => a.observedAtMs - b.observedAtMs || a.id.localeCompare(b.id));
         const evidenceBasis = basis(detectorId);
         if (measurements.some(row => row.unit === 'currency' && row.costKind === 'api_equivalent')) {
-            const catalog = input.accounting?.priceCatalog ?? bundledUsageModelPriceCatalog;
+            const catalog = input.accounting?.priceCatalog ?? fallbackCatalog;
             const priceDate = new Date(catalog.provenance.asOfMs);
             if (Number.isFinite(priceDate.getTime())) evidenceBasis.citations.push({ url: LITELLM_MODEL_PRICE_URL,
                 sourceKind: 'price_catalog', asOf: priceDate.toISOString().slice(0, 10) });
@@ -209,7 +210,7 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
         return null;
     };
     const usesPrices = cacheEnabled || enabled('context_bloat');
-    const catalog = usesPrices ? input.accounting?.priceCatalog ?? bundledUsageModelPriceCatalog : bundledUsageModelPriceCatalog;
+    const catalog = usesPrices ? input.accounting?.priceCatalog ?? fallbackCatalog : fallbackCatalog;
     const accountingRows = usesPrices && input.accounting?.contributions
         ? [...new Map(input.accounting.contributions.filter(row => inPeriod(row.observedAtMs)).map(row => [row.id, row])).values()] : undefined;
     const estimateCost = createUsageModelCostEstimator(catalog, input.pricingOverrides);

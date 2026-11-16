@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '../usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { evaluateUsageCoach } from './evaluateUsageCoach.js';
 import { UsageCoachFindingSchema, type UsageCoachEvaluationInput } from './coachFinding.js';
@@ -8,7 +9,7 @@ import { resolveUsageHowYouWork } from '../resolveUsageHowYouWork.js';
 
 const base = { queryKey: 'evidence', period: { startMs: 0, endMs: 1000 }, asOfMs: 1000, currentness: 'current' as const };
 const read = (input: Partial<UsageCoachEvaluationInput>, id: string) =>
-    evaluateUsageCoach({ ...base, ...input }).evaluations.find(row => row.detectorId === id);
+    evaluateUsageCoach({ ...base, ...input }, bundledUsageModelPriceCatalog).evaluations.find(row => row.detectorId === id);
 const loop = { evidenceId: 'l1', observedAtMs: 10, turnId: 't', operationKey: 'op', errorDigest: 'error',
     outcome: 'failed' as const, progress: 'none' as const };
 const cache = { evidenceId: 'cache', observedAtMs: 30, inputId: 'i', boundary: 'agent_native_request' as const,
@@ -37,7 +38,7 @@ describe('research-grounded Coach rules', () => {
         value.priceCatalog = { ...prices, models: new Proxy(prices.models, {
             get(target, key, receiver) { lookups++; return Reflect.get(target, key, receiver); },
         }) };
-        const result = evaluateUsageCoach({ ...base, period: { startMs: 0, endMs: 10_000 }, asOfMs: 10_000, accounting: value });
+        const result = evaluateUsageCoach({ ...base, period: { startMs: 0, endMs: 10_000 }, asOfMs: 10_000, accounting: value }, bundledUsageModelPriceCatalog);
         expect(result.evaluations.find(row => row.detectorId === 'context_bloat')?.status).toBe('insufficient_evidence');
         expect(result.findings.find(row => row.detectorId === 'cache_economics')?.classification).toBe('informational');
         expect(lookups).toBe(0);
@@ -55,7 +56,7 @@ describe('research-grounded Coach rules', () => {
                 observedAtMs: row.observedAtMs, inputId: `input-${index}`, sessionId: 's', turnId: row.turnId!, modelId: 'model',
                 ttlMs: 300_000, idleMs: 300_000, rebuildCause: 'unexpected' as const }));
             const result = evaluateUsageCoach({ ...base, period: { startMs: 0, endMs: 10_000 }, asOfMs: 10_000,
-                accounting: value, detail: { coverage: 'complete', nativeCache } });
+                accounting: value, detail: { coverage: 'complete', nativeCache } }, bundledUsageModelPriceCatalog);
             expect(result.findings.find(row => row.detectorId === 'cache_economics')?.measurements)
                 .toEqual(expect.arrayContaining([expect.objectContaining({ metric: 'cache_replacement_premium' })]));
             expect(sessionReads).toBeLessThanOrEqual(12 * count);
@@ -73,7 +74,7 @@ describe('research-grounded Coach rules', () => {
             { ...permission, requestId: 'invalid', requestedAtMs: 160 }];
         const period = { startMs: 100, endMs: 200 };
         const human = resolveUsageHowYouWork({ period, timeZoneOffsetMinutes: 0, detail: { status: 'partial', permissions } });
-        const coach = evaluateUsageCoach({ ...base, period, detail: { coverage: 'partial', permissions } });
+        const coach = evaluateUsageCoach({ ...base, period, detail: { coverage: 'partial', permissions } }, bundledUsageModelPriceCatalog);
         const finding = coach.findings.find(row => row.detectorId === 'approval_friction')!;
         expect(human.permissions).toMatchObject({ pairedDecisionCount: 3, decisionLatencyMs: 80 });
         expect(finding.measurements).toEqual(expect.arrayContaining([
@@ -135,7 +136,7 @@ describe('research-grounded Coach rules', () => {
     it('adopts effort audit and fan-out as information without numerical waste thresholds', () => {
         const effort = { evidenceId: 'effort', observedAtMs: 10, effort: 'xhigh', outputTokens: 100, thinkingTokens: 80 };
         const fanout = { evidenceId: 'tree', observedAtMs: 20, parentTokens: 100, subagentTokens: 200 };
-        const evaluation = evaluateUsageCoach({ ...base, detail: { coverage: 'partial', effortAudits: [effort], subagentUsage: [fanout] } });
+        const evaluation = evaluateUsageCoach({ ...base, detail: { coverage: 'partial', effortAudits: [effort], subagentUsage: [fanout] } }, bundledUsageModelPriceCatalog);
         for (const id of ['effort_audit', 'subagent_fanout']) {
             expect(evaluation.evaluations.find(row => row.detectorId === id)).toMatchObject({ status: 'finding',
                 finding: { classification: 'informational', severity: 'info' } });
@@ -164,7 +165,7 @@ describe('research-grounded Coach rules', () => {
         expect(read({ composition: [composition] }, 'context_bloat')?.status).toBe('insufficient_evidence');
     });
     it('exposes unavailable conditional candidates rather than manufacturing telemetry', () => {
-        const evaluation = evaluateUsageCoach(base);
+        const evaluation = evaluateUsageCoach(base, bundledUsageModelPriceCatalog);
         expect(evaluation).toMatchObject({ unavailableChecks: [
             { check: 'fast_mode', reason: 'not_available' }, { check: 'scheduled_interval_vs_ttl', reason: 'not_available' },
         ] });
@@ -272,7 +273,7 @@ describe('research-grounded Coach rules', () => {
     it('does not inspect accounting when every check is disabled or Account preferences are unavailable', () => {
         for (const preferences of [null, { v: 1 as const, disabledChecks: [...USAGE_COACH_DETECTOR_IDS] }]) {
             const result = evaluateUsageCoach({ ...base, preferences,
-                get accounting(): never { throw new Error('Disabled accounting was inspected'); } });
+                get accounting(): never { throw new Error('Disabled accounting was inspected'); } }, bundledUsageModelPriceCatalog);
             expect(result.findings).toEqual([]);
             expect(result.evaluations.every(row => row.status === (preferences === null ? 'insufficient_evidence' : 'disabled'))).toBe(true);
         }

@@ -444,6 +444,7 @@ export type UsageAccountingSourceSnapshot = Readonly<{
 /** Admit prices and stable references once in the existing read snapshot, before source publications. */
 export function projectUsageAccountingSnapshotPrices(snapshot: UsageAccountingSourceSnapshot,
   overrides: UsageModelPriceOverridesV1 | undefined,
+  fallbackCatalog: UsageModelPriceCatalog,
   siblings?: Iterable<UsageAccountingSourceSnapshot>,
   previous?: UsageAnalyticsQueryResponse,
   reuse?: UsagePricingReuseSource): UsageAccountingSourceSnapshot {
@@ -470,7 +471,7 @@ export function projectUsageAccountingSnapshotPrices(snapshot: UsageAccountingSo
       return { ...snapshot, priceProjection: admitted === projection.value ? projection : { ...projection, value: admitted } };
     }
   }
-  const priced = repriceUsageAnalyticsResponse(value, value.priceCatalog, overrides, snapshot.query.costBasis, undefined, reuse);
+  const priced = repriceUsageAnalyticsResponse(value, value.priceCatalog ?? fallbackCatalog, overrides, snapshot.query.costBasis, undefined, reuse);
   const projected = priced.contributions && !needsRows ? projectUsageAnalyticsSummary(priced,
     usageQueryToAnalyticsRequest(snapshot.query, snapshot.period?.endMs ?? value.coverage?.range.endMs)) : priced;
   return { ...snapshot, priceProjection: { input: value, overrides, costBasis: snapshot.query.costBasis,
@@ -698,7 +699,7 @@ export function resolveUsageQuotaPageAggregation(input: Pick<UsagePageAggregatio
   return retainUsageQueryResultReferences({ v: 1, results }, input.previous);
 }
 
-export function resolveUsagePageAggregation(input: UsagePageAggregationInput): UsageQueryBatchResult {
+export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fallbackCatalog: UsageModelPriceCatalog): UsageQueryBatchResult {
   const pricingOverrides = input.pricingOverrides ?? input.accountSettings?.usageModelPriceOverridesV1;
   const coachPreferences = input.coachPreferences === undefined
     ? input.accountSettings?.usageCoachPreferencesV1 : input.coachPreferences;
@@ -737,7 +738,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
   };
   const projectPrices = (snapshot: UsageAccountingSourceSnapshot | undefined) => {
     if (!snapshot) return snapshot;
-    const projected = projectUsageAccountingSnapshotPrices(snapshot, pricingOverrides, accounting.values(), undefined,
+    const projected = projectUsageAccountingSnapshotPrices(snapshot, pricingOverrides, fallbackCatalog, accounting.values(), undefined,
       () => snapshot.value ? pricingReuseFor(snapshot.value, pricingOverrides, snapshot.query.costBasis) : undefined);
     const key = getUsageQueryKey(projected.query);
     if (accounting.get(key)?.value === projected.value) accounting.set(key, projected);
@@ -895,7 +896,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
         accounting: snapshot?.value,
         pricingOverrides,
         preferences: coachPreferences,
-      });
+      }, fallbackCatalog);
       const retainedEvaluations = retainedCoach?.evaluations.map(evaluation => {
         const configured = coach?.evaluations.find(row => row.detectorId === evaluation.detectorId);
         // Retention must not revive evidence that the current evaluator's configuration refuses.

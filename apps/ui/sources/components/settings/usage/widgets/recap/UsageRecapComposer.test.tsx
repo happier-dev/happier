@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -193,7 +194,7 @@ describe('recap composer through authorized query and composition', () => {
           reportedUsd: [0.10000000000000002, 0.2, 0.3][index] ?? 0, estimatedUsd: 0, currency: 'USD',
           costSource: index === 2 ? 'provider_reported_api_equivalent' as const : 'provider_reported' as const } }));
       const value = repriceUsageAnalyticsResponse({ ...accounting, contributions, totals: { ...accounting.totals, eventCount: 41,
-        tokens: { ...accounting.totals.tokens, input: 410, output: 82, total: 492 } } });
+        tokens: { ...accounting.totals.tokens, input: 410, output: 82, total: 492 } } }, bundledUsageModelPriceCatalog);
       const chunks = [...projectUsageAnalyticsBatchDelivery({ v: 1, results: input.queries.map(query => ({ query, value })) }, input, true)];
       return new Response(chunks.map(chunk => JSON.stringify(chunk) + '\n').join(''),
         { headers: { 'Content-Type': 'application/x-ndjson' } });

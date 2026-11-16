@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '../../usage/usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { SessionInputAdmissionResultV1Schema } from '../../sessions/messages/sessionInputAdmission.js';
 import { createSessionMembershipReadFixture } from '../../sessions/read/sessionReadBatchV1.testkit.js';
@@ -1795,7 +1796,7 @@ describe('workflow trigger Automation composition', () => {
   it('creates a Coach digest only through opted-in Automation Actions, retains approval rejection and removes through the same owner', async () => {
     const f = fixture();
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, sources: ['runtime'] });
-    const suggestion = resolveUsagePageAggregation({ queries: [query] }).results[0]!.coach!.digestSuggestion!;
+    const suggestion = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!.coach!.digestSuggestion!;
     expect(suggestion).toBeDefined();
     expect(f.rows.size).toBe(0);
     const request = { target: suggestion.target, project, trigger };

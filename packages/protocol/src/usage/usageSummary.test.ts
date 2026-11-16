@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { UsageAnalyticsBreakdownDimensionSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsagePricingPopulationSchema, type UsageAnalyticsContribution, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import * as usageCost from './usageCost.js';
@@ -35,7 +36,7 @@ function response(rows: UsageAnalyticsContribution[]): UsageAnalyticsQueryRespon
         cost: aggregateUsageContributionCosts(rows, 'auto') }, contributions: rows, priceCatalog: catalog,
         breakdowns: { model: buildUsageLeaderList(rows.map(row => ({ ...row, eventCount: row.eventCount! })), 'model', 1, 'auto') ?? [] },
         coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [], range: { startMs: 0, endMs: 86_400_000, complete: true },
-            sources: [{ source: 'runtime', path: 'runtime', machineId: 'machine', status: 'available', eventCount: rows.length, historyComplete: true }] } });
+            sources: [{ source: 'runtime', path: 'runtime', machineId: 'machine', status: 'available', eventCount: rows.length, historyComplete: true }] } }, catalog);
 }
 
 it.each(UsageAnalyticsBreakdownDimensionSchema.options)('conserves admitted report money across %s groups through compact JSON repricing', dimension => {
@@ -76,9 +77,9 @@ it('shares one tariff evaluator per pricing inputs across periods and repeated p
         expect(reuseFor({ ...equivalentValue }, {}, 'auto'), 'equal catalog revisions share one finite-read pricing owner').toBe(reuse);
     }
     const pricedFirst = projectUsageAccountingSnapshotPrices({ query: firstQuery, period: { startMs: 0, endMs: 86_400_000 },
-        status: 'available', value: first }, {}, undefined, undefined, () => reuseFor(first, {}, 'auto'));
+        status: 'available', value: first }, {}, bundledUsageModelPriceCatalog, undefined, undefined, () => reuseFor(first, {}, 'auto'));
     const pricedSecond = projectUsageAccountingSnapshotPrices({ query: secondQuery, period: { startMs: 86_400_000, endMs: 2 * 86_400_000 },
-        status: 'available', value: equivalentValue }, {}, undefined, undefined, () => reuseFor(equivalentValue, {}, 'auto'));
+        status: 'available', value: equivalentValue }, {}, bundledUsageModelPriceCatalog, undefined, undefined, () => reuseFor(equivalentValue, {}, 'auto'));
     expect(pricedFirst.priceProjection?.value.totals.cost.apiEquivalentUsd).toBe(0.000001);
     expect(pricedSecond.priceProjection?.value.totals.cost.apiEquivalentUsd).toBe(0.000001);
     expect(reuse.stats.tariffCalculations, 'pricing is one evaluation per distinct model/token operand across periods').toBe(1);
@@ -116,7 +117,7 @@ function priceCompact(compact: UsageAnalyticsQueryResponse,
         includeActivity: true, includeLeaders: true, includeModelTimeline: true,
         includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false });
     return projectUsageAccountingSnapshotPrices({ query: requested, status: 'available',
-        value: compact }, overrides).priceProjection!.value;
+        value: compact }, overrides, bundledUsageModelPriceCatalog).priceProjection!.value;
 }
 
 describe('partitioned compact Usage projection', () => {
@@ -626,7 +627,7 @@ describe('compact Usage summary', () => {
         const rows = [contribution(1)];
         const rich = usageCost.repriceUsageAnalyticsResponse({ ...response(rows), modelTimeline: [{ bucketStartMs: 0, bucketEndMs: 86_400_000,
             leaders: buildUsageLeaderList(rows.map(row => ({ ...row, eventCount: row.eventCount! })), 'model', 1,
-                'auto', new Map(), true) ?? [] }] });
+                'auto', new Map(), true) ?? [] }] }, catalog);
         const compact = usageCost.projectUsageAnalyticsSummary(rich, query);
         const rebuilt = usageCost.projectUsageAnalyticsSummary({ ...rich, totals: { ...rich.totals } }, query);
         expect(JSON.stringify(compact)).toBe(JSON.stringify(rebuilt));
@@ -815,7 +816,7 @@ describe('compact Usage summary', () => {
             // Coach admission retains rows (b67931869cc); this fixture exercises compact pricing only.
             includeWorkEvidence: true, workProjection: 'summary', includeSessionEvidence: true, includeCoach: false, includeTranscriptEvidence: false });
         const projected = projectUsageAccountingSnapshotPrices({ query: requested, status: 'available', value: rich },
-            { model: { kind: 'rates', inputUsdPerMillion: 283.3333333333333, outputUsdPerMillion: 0 } }).priceProjection!.value;
+            { model: { kind: 'rates', inputUsdPerMillion: 283.3333333333333, outputUsdPerMillion: 0 } }, bundledUsageModelPriceCatalog).priceProjection!.value;
         expect(projected.contributions).toBeUndefined();
         // 2026-10-31 orchestrator L0 ruling: exact decimal prices replace IEEE order artifacts.
         expect(projected.totals.cost.effectiveUsd).toBe(0.00085);
@@ -828,7 +829,7 @@ describe('compact Usage summary', () => {
             includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false });
         const pending = { query: requested, status: 'pending' as const, value: compact };
         const updated = projectUsageAccountingSnapshotPrices(pending,
-            { model: { kind: 'rates', inputUsdPerMillion: 283.3333333333333, outputUsdPerMillion: 0 } });
+            { model: { kind: 'rates', inputUsdPerMillion: 283.3333333333333, outputUsdPerMillion: 0 } }, bundledUsageModelPriceCatalog);
         expect(updated.priceProjection?.value.totals.cost.effectiveUsd).toBe(0.00085);
     });
 
@@ -845,7 +846,7 @@ describe('compact Usage summary', () => {
         const requested = normalizeUsageQuery({ period: { startMs: 0, endMs: 86_400_000 }, includeActivity: true,
             includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false });
         const overrides = { model: { kind: 'rates' as const, inputUsdPerMillion: 283.3333333333333, outputUsdPerMillion: 0 } };
-        const projected = projectUsageAccountingSnapshotPrices({ query: requested, status: 'available', value: rich }, overrides).priceProjection!.value;
+        const projected = projectUsageAccountingSnapshotPrices({ query: requested, status: 'available', value: rich }, overrides, bundledUsageModelPriceCatalog).priceProjection!.value;
         expect(projected.contributions).toBeUndefined();
         expect(projected.totals.cost.effectiveUsd).toBe(0.00085);
         expect(formatUsageCost(projected.totals.cost.effectiveUsd!, 'USD')).toBe('$0.0009');
@@ -876,7 +877,7 @@ describe('compact Usage summary', () => {
             includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false });
         const overrides = { model: { kind: 'rates' as const, inputUsdPerMillion: 283.3333333333333, outputUsdPerMillion: 0 } };
         const price = (value: UsageAnalyticsQueryResponse) => projectUsageAccountingSnapshotPrices(
-            { query: requested, status: 'available', value }, overrides).priceProjection!.value;
+            { query: requested, status: 'available', value }, overrides, bundledUsageModelPriceCatalog).priceProjection!.value;
         expect(price(first).contributions).toBeUndefined();
         expect(formatUsageCost(price(first).totals.cost.effectiveUsd!, 'USD')).toBe('$0.0042');
         expect(formatUsageCost(price(second).totals.cost.effectiveUsd!, 'USD')).toBe('$0.0042');

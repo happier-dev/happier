@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { act } from 'react-test-renderer';
@@ -155,7 +156,7 @@ const coach = evaluateUsageCoach({
   asOfMs: 1000,
   currentness: 'current',
   detail: { coverage: 'partial', compactions },
-});
+}, bundledUsageModelPriceCatalog);
 const slice: UsageQueryResultSlice = {
   key,
   requestedQuery: query,
@@ -457,7 +458,7 @@ describe('Work and Coach widget bodies', () => {
     const allQuery = normalizeUsageQuery({ ...query, period: { relative: 'all' } });
     const pendingSlice = resolveUsagePageAggregation({ queries: [allQuery],
       accounting: [{ query: allQuery, status: 'available', value: slice.accounting!, asOfMs: 1000 }],
-      sources: [{ source: 'how_you_work', status: 'pending' }], nowMs: 1000 }).results[0]!;
+      sources: [{ source: 'how_you_work', status: 'pending' }], nowMs: 1000 }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsageCoachWidget {...props} query={allQuery} slice={pendingSlice}
       id="usage_coach" testID="first-coach" />);
     expect(screen.findHostByTestId('first-coach.empty')).toBeNull();
@@ -473,7 +474,7 @@ describe('Work and Coach widget bodies', () => {
     const retainedPending = resolveUsagePageAggregation({ queries: [allQuery],
       accounting: [{ query: allQuery, status: 'available', value: slice.accounting!, asOfMs: 1000 }],
       previous: { v: 1, results: [pendingSlice] },
-      sources: [{ source: 'how_you_work', status: 'pending' }], nowMs: 1000 }).results[0]!;
+      sources: [{ source: 'how_you_work', status: 'pending' }], nowMs: 1000 }, bundledUsageModelPriceCatalog).results[0]!;
     expect(retainedPending.coach?.currentness).toBe('stale');
     await screen.update(<UsageCoachWidget {...props} query={allQuery} slice={retainedPending}
       id="usage_coach" testID="first-coach" />);
@@ -481,7 +482,7 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findHostByTestId('first-coach.loading')).not.toBeNull();
     const settledSlice = resolveUsagePageAggregation({ queries: [allQuery],
       accounting: [{ query: allQuery, status: 'available', value: slice.accounting! }],
-      howYouWork: [{ query: allQuery, asOfMs: 1000, detail: { status: 'available', facts: [] } }], nowMs: 1000 }).results[0]!;
+      howYouWork: [{ query: allQuery, asOfMs: 1000, detail: { status: 'available', facts: [] } }], nowMs: 1000 }, bundledUsageModelPriceCatalog).results[0]!;
     await screen.update(<UsageCoachWidget {...props} query={allQuery} slice={settledSlice}
       id="usage_coach" testID="first-coach" />);
     expect(screen.findHostByTestId('first-coach.empty')).not.toBeNull();
@@ -490,7 +491,7 @@ describe('Work and Coach widget bodies', () => {
   it('leads the facts band with the listed findings while another source still reads, never a row of dashes (USAGE-ACCEPT #8)', async () => {
     const pendingSlice = resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value: slice.accounting!, asOfMs: 1000 }],
-      sources: [{ source: 'how_you_work', status: 'pending' }], nowMs: 1000 }).results[0]!;
+      sources: [{ source: 'how_you_work', status: 'pending' }], nowMs: 1000 }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsageCoachWidget {...props} slice={{ ...pendingSlice, coach }} id="usage_coach" testID="reading-coach" />);
     expect(coach.findings.length).toBeGreaterThan(0);
     const band = screen.findAllByType(HappierDataMetric).filter(node => String(node.props.testID).startsWith('reading-coach.summary.'));
@@ -500,7 +501,7 @@ describe('Work and Coach widget bodies', () => {
   it('never reassures a first-use Coach whose every check still needs evidence, and leads to a session (C3)', async () => {
     const settled = resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value: slice.accounting! }],
-      howYouWork: [{ query, asOfMs: 1000, detail: { status: 'available', facts: [] } }], nowMs: 1000 }).results[0]!;
+      howYouWork: [{ query, asOfMs: 1000, detail: { status: 'available', facts: [] } }], nowMs: 1000 }, bundledUsageModelPriceCatalog).results[0]!;
     expect(settled.coach!.evaluations.some(row => row.status === 'no_finding')).toBe(false);
     const screen = await renderScreen(<UsageCoachWidget {...props} slice={settled} id="usage_coach" testID="new-coach" />);
     const empty = screen.findHostByTestId('new-coach.empty');
@@ -514,7 +515,7 @@ describe('Work and Coach widget bodies', () => {
     const project = (admitted: number, notRead?: number) => resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value: slice.accounting!, asOfMs: 1000 }],
       howYouWork: [{ query, asOfMs: 1000, sessionCoverage: { selected: 5, admitted, ...(notRead === undefined ? {} : { notRead }) },
-        detail: { status: admitted < 5 ? 'partial' : 'available', facts: [] } }], nowMs: 1000 }).results[0]!;
+        detail: { status: admitted < 5 ? 'partial' : 'available', facts: [] } }], nowMs: 1000 }, bundledUsageModelPriceCatalog).results[0]!;
     const partial = project(3);
     const screen = await renderScreen(<UsageCoachWidget {...props} slice={partial} id="usage_coach" testID="coverage-coach" />);
     const metric = (key: string) => screen.findAllByType(HappierDataMetric).find(node => node.props.testID === `coverage-coach.summary.${key}`)?.props.value;
@@ -543,7 +544,7 @@ describe('Work and Coach widget bodies', () => {
   it('does not reserve a second cold-read room inside the Coach widget', async () => {
     const pendingSlice = resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value: slice.accounting!, asOfMs: 1000 }],
-      sources: [{ source: 'how_you_work', status: 'pending' }], nowMs: 1000 }).results[0]!;
+      sources: [{ source: 'how_you_work', status: 'pending' }], nowMs: 1000 }, bundledUsageModelPriceCatalog).results[0]!;
     const heldRoom = async (size: 'medium' | 'large') => {
       const screen = await renderScreen(<WidgetPresentationProvider value={{ size,
         footprint: { columns: 1, columnSpan: 1, rowSpan: 2, width: 'full', height: 'regular' }, geometry: { width: 326, height: 260 } }}>
@@ -634,7 +635,7 @@ describe('Work and Coach widget bodies', () => {
         eventCount: 1, observedAtMs: 10 + index * 10, tokens: categories, tokenCategories: categories };
     });
     const evaluation = evaluateUsageCoach({ queryKey: key, period: { startMs: 0, endMs: 1000 }, asOfMs: 1000,
-      currentness: 'current', accounting: { ...slice.accounting!, contributions: rows } });
+      currentness: 'current', accounting: { ...slice.accounting!, contributions: rows } }, bundledUsageModelPriceCatalog);
     const screen = await renderScreen(<UsageCoachWidget {...props} slice={{ ...slice, coach: evaluation }}
       id="usage_coach" testID="coach" />);
     await screen.pressByTestIdAsync('coach.finding.context_bloat.why-header');
@@ -650,7 +651,7 @@ describe('Work and Coach widget bodies', () => {
         eventCount: 1, observedAtMs: 10 + index * 10, tokens: categories, tokenCategories: categories };
     });
     const evaluation = evaluateUsageCoach({ queryKey: key, period: { startMs: 0, endMs: 1000 }, asOfMs: 1000,
-      currentness: 'current', accounting: { ...slice.accounting!, contributions: rows } });
+      currentness: 'current', accounting: { ...slice.accounting!, contributions: rows } }, bundledUsageModelPriceCatalog);
     const finding = evaluation.findings.find(entry => entry.detectorId === 'context_bloat')!;
     expect(finding.evidenceSeries?.[0]?.points.length).toBeGreaterThan(1);
     const single = { ...evaluation, findings: evaluation.findings.map(entry => entry === finding
@@ -683,7 +684,7 @@ describe('Work and Coach widget bodies', () => {
   });
   it('does not open digest scheduling without a captured Account', async () => {
     const digestSlice = resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, value: slice.accounting!, status: 'available', asOfMs: 1000 }] }).results[0]!;
+      accounting: [{ query, value: slice.accounting!, status: 'available', asOfMs: 1000 }] }, bundledUsageModelPriceCatalog).results[0]!;
     storage.setState({ profileScope: null });
     const screen = await renderScreen(<UsageCoachWidget {...props} slice={digestSlice} id="usage_coach" testID="coach" />);
     expect(screen.findByTestId('coach.digest.configure')).toBeTruthy();

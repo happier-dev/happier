@@ -1,5 +1,6 @@
 import type { UsageAnalyticsContribution, UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageObservationCost, UsageObservationTokens } from './usageAnalyticsContracts.js';
-import { bundledUsageModelPriceCatalog, resolveUsageModelPrice, type ResolvedUsageModelPrice, type UsageModelPriceCatalog, type UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
+import { resolveUsageModelPrice, type ResolvedUsageModelPrice, type UsageModelPriceCatalog, type UsageModelPriceOverridesV1 } from './usageModelPriceSchemas.js';
+import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { hasMeasuredUsageTokenCategories, hasZeroUsageTokens, resolveUsageTokenCategories } from './usageTokenCategories.js';
 import { createUsageSourceCostFacts } from './usageCostFactTotals.js';
 import { reprojectUsageLeadersSteps, usageTimelinePartitionKey, type UsageAnalyticsPricingPartitions } from './usageLeaderProjection.js';
@@ -95,7 +96,7 @@ function estimateResolvedUsageModelCost(price: ResolvedUsageModelPrice | null, c
 
 /** Query-only price projection. Original reported/invoice/legacy estimate fields are immutable inputs. */
 export function repriceUsageObservationCost(rawCost: UsageObservationCost, modelId: string | null | undefined,
-  categories: UsageObservationTokens | null, catalog: UsageModelPriceCatalog = bundledUsageModelPriceCatalog,
+  categories: UsageObservationTokens | null, catalog: UsageModelPriceCatalog,
   overrides: UsageModelPriceOverridesV1 = {}, mode: UsageCostMode = 'auto'): UsageObservationCost {
   return priceUsageObservation(rawCost, modelId, categories, catalog, overrides, mode).cost;
 }
@@ -138,7 +139,7 @@ export function priceUsageObservation(rawCost: UsageObservationCost, modelId: st
 }
 
 /** Recompute history from the admitted contribution projection, retaining the original money facts. */
-export function repriceUsageAnalyticsResponse(value: UsageAnalyticsQueryResponse, catalog: UsageModelPriceCatalog = value.priceCatalog ?? bundledUsageModelPriceCatalog,
+export function repriceUsageAnalyticsResponse(value: UsageAnalyticsQueryResponse, catalog: UsageModelPriceCatalog,
   overrides: UsageModelPriceOverridesV1 = {}, mode: UsageCostMode = 'auto',
   rankingDemand?: Pick<UsageAnalyticsQueryRequest, 'breakdowns' | 'includeLeaders' | 'topLimit'>,
   reuse?: UsagePricingReuseSource): UsageAnalyticsQueryResponse {
@@ -149,7 +150,7 @@ export function repriceUsageAnalyticsResponse(value: UsageAnalyticsQueryResponse
 }
 
 /** The server services I/O between committed pricing operands; synchronous callers drain the same owner. */
-export function* repriceUsageAnalyticsResponseSteps(value: UsageAnalyticsQueryResponse, catalog: UsageModelPriceCatalog = value.priceCatalog ?? bundledUsageModelPriceCatalog,
+export function* repriceUsageAnalyticsResponseSteps(value: UsageAnalyticsQueryResponse, catalog: UsageModelPriceCatalog,
   overrides: UsageModelPriceOverridesV1 = {}, mode: UsageCostMode = 'auto',
   rankingDemand?: Pick<UsageAnalyticsQueryRequest, 'breakdowns' | 'includeLeaders' | 'topLimit'>,
   shouldYield: () => boolean = () => true, reuse?: UsagePricingReuseSource): Generator<void, UsageAnalyticsQueryResponse, void> {

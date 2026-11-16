@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -559,7 +560,7 @@ describe('Usage page batch', () => {
         : request.path === '/v2/usage/query-batch' ? (() => {
         const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
         return Response.json(collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1,
-          results: input.queries.map(query => ({ query, value: repriceUsageAnalyticsResponse(response(), undefined, {}, query.costMode) })),
+          results: input.queries.map(query => ({ query, value: repriceUsageAnalyticsResponse(response(), bundledUsageModelPriceCatalog, {}, query.costMode) })),
         }, input, false)));
       })() : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
     const server = home.homes.a!;
@@ -677,7 +678,7 @@ describe('Usage page batch', () => {
         : request.path === '/v2/usage/query-batch' ? (() => {
           const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
           const delivery = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1,
-            results: input.queries.map(query => ({ query, value: repriceUsageAnalyticsResponse(value, undefined, {}, query.costMode) })),
+            results: input.queries.map(query => ({ query, value: repriceUsageAnalyticsResponse(value, (value).priceCatalog ?? bundledUsageModelPriceCatalog, {}, query.costMode) })),
           }, input, false));
           deliveries.push(delivery);
           return Response.json(delivery);
@@ -924,7 +925,7 @@ describe('Usage page batch', () => {
         ? Response.json(createRootLayoutFeaturesResponse()) : request.path === '/v2/usage/query-batch' ? (() => {
         const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
         const chunks = [...projectUsageAnalyticsBatchDelivery({ v: 1,
-          results: input.queries.map(query => ({ query, value: repriceUsageAnalyticsResponse(rich) })),
+          results: input.queries.map(query => ({ query, value: repriceUsageAnalyticsResponse(rich, (rich).priceCatalog ?? bundledUsageModelPriceCatalog) })),
         }, input, true)];
         deliveries.push(collectUsageAnalyticsBatchDelivery(chunks));
         return new Response(chunks.map(chunk => JSON.stringify(chunk)).join('\n'), { headers: { 'Content-Type': 'application/x-ndjson' } });
@@ -987,7 +988,7 @@ describe('Usage page batch', () => {
         const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
         const delivered = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1,
           results: input.queries.map(query => ({ query, value: repriceUsageAnalyticsResponse(
-            query.filters?.projectKeys?.includes('destination-project') ? ranked : accounting) })),
+            query.filters?.projectKeys?.includes('destination-project') ? ranked : accounting, bundledUsageModelPriceCatalog) })),
         }, input, false));
         deliveries.push(delivered);
         return Response.json(delivered);
@@ -1058,7 +1059,7 @@ describe('Usage page batch', () => {
       coverage: { status: 'partial', reasons: ['unpriced_tokens'], missingDimensions: [], range: { complete: false }, ranked: [],
         sources: [{ source: 'codex-native-accounting', path: 'native', status: 'partial', eventCount: 1, captureKind: 'from_logs' }] } };
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-source-panels.test', accountId: 'account-a' }],
-      route: request => request.path === '/v2/usage/query' ? Response.json(repriceUsageAnalyticsResponse(value)) : undefined });
+      route: request => request.path === '/v2/usage/query' ? Response.json(repriceUsageAnalyticsResponse(value, (value).priceCatalog ?? bundledUsageModelPriceCatalog)) : undefined });
     publishAppliedActiveServerSnapshot({ serverId: home.homes.a!.id, serverUrl: home.homes.a!.serverUrl, generation: 0 });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;

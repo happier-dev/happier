@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { Pressable } from 'react-native';
 import { Path } from 'react-native-svg';
@@ -320,7 +321,7 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
             tokens: { input: 123_456, output: 82_304, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 205_760 },
             cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' },
         } });
-        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }).results[0]!;
+        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
         const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
         const screen = await renderChart(<WidgetPresentationProvider value={{ size: 'small',
@@ -343,7 +344,7 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
             tokens: { input: 123_456, output: 82_304, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 205_760 },
             cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' },
         } });
-        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }).results[0]!;
+        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
         const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
         const screen = await renderChart(

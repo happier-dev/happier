@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
 import type { ScmWorkEvidenceReadRequest, ScmBranchWorkEvidence } from '../scm/index.js';
@@ -50,7 +51,7 @@ describe('Usage Work repository admission', () => {
       resolveSession: async () => ({ machineId: 'machine', cwd: '/repo' }),
       readMachine: async () => { calls++; throw createRpcCallError({ error: code, errorCode: code }); },
     });
-    const result = resolveUsagePageAggregation({ queries: [query], accounting, work });
+    const result = resolveUsagePageAggregation({ queries: [query], accounting, work }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.sources.find(source => source.source === 'work')).toEqual(code === 'target_unavailable'
       ? { source: 'work', status: 'unknown' }
       : { source: 'work', status: 'error', errorCode: 'work_evidence_failed' });

@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -2666,7 +2667,7 @@ describe('usage query captured Resource adapter', () => {
         if (!response.ok) throw new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN);
         return await response.json();
       } });
-      return resolveUsagePageAggregation({ queries: [query], accounting, work, previous });
+      return resolveUsagePageAggregation({ queries: [query], accounting, work, previous }, bundledUsageModelPriceCatalog);
     };
     const first = await read();
     expect(first.results[0]?.work?.branchAllocations[0]?.reason).toBe('allocated');

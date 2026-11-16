@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { normalizeUsageQuery, getUsageQueryKey, usageQueryToAnalyticsRequest } from '../inputs/usageQuery.js';
 import { resolveUsagePageAggregation } from './resolveUsagePageAggregation.js';
@@ -22,7 +23,7 @@ const response = UsageAnalyticsQueryResponseSchema.parse({
     cost: { reportedUsd: 1.5, estimatedUsd: 1.2, currency: 'USD' } }] },
   insights: { activeDays: 1, longestStreakDays: 1, sessionsUsed: 1, messagesUsed: 2, modelsTried: 1, favoriteModelChangeCount: 0 },
 });
-const snapshot = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: response, status: 'available', asOfMs: 9500 }] }).results[0]!;
+const snapshot = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: response, status: 'available', asOfMs: 9500 }] }, bundledUsageModelPriceCatalog).results[0]!;
 
 describe('private recap composition', () => {
   it('keeps additive measured floors in mixes and selects the measured peak without replacing raw totals', () => {
@@ -61,7 +62,7 @@ describe('private recap composition', () => {
         facts: [{ workId: 'private-work', machineId: null, agentId: 'codex', evidenceId: 'busy', kind: 'busy',
           startMs: observedAtMs, endMs: observedAtMs + 3000 }],
         coach: { detail: { coverage: 'partial', fileReads: [read,
-          { ...read, evidenceId: 'second', observedAtMs: observedAtMs + 1000, reason: 'redundant' }] } } } }] }).results[0]!;
+          { ...read, evidenceId: 'second', observedAtMs: observedAtMs + 1000, reason: 'redundant' }] } } } }] }, bundledUsageModelPriceCatalog).results[0]!;
     const input = UsageRecapComposeInputSchema.parse({ query: selected, selectedFields: ['parallel', 'night', 'coach'] });
     const composed = composeUsageRecap({ input, snapshot: shown });
     expect(composed).toMatchObject({ kind: 'composed', period: { startMs: 0, endMs }, unavailableFields: [], facts: {
@@ -83,7 +84,7 @@ describe('private recap composition', () => {
     const accounting = projectUsageAnalyticsSummary(rich, usageQueryToAnalyticsRequest(selected, endMs));
     expect(accounting.summary?.accountingCalendar).toBeUndefined();
     const shown = resolveUsagePageAggregation({ queries: [selected], accounting: [{ query: selected,
-      value: accounting, status: 'available', asOfMs: endMs }] }).results[0]!;
+      value: accounting, status: 'available', asOfMs: endMs }] }, bundledUsageModelPriceCatalog).results[0]!;
     const input = UsageRecapComposeInputSchema.parse({ query: selected, selectedFields: ['tokens'] });
     for (const snapshot of [shown, { ...shown, accounting: { ...accounting, summary: undefined },
       accountingObservationRange: accounting.summary!.observationRange }]) {
@@ -157,7 +158,7 @@ describe('private recap composition', () => {
             costSource: 'provider_reported', reportedTotalContributionIds: ['inference'] } },
       ] });
     const shown = resolveUsagePageAggregation({ queries: [query], pricingOverrides: {},
-      accounting: [{ query, value: accounting, status: 'available' }] }).results[0]!;
+      accounting: [{ query, value: accounting, status: 'available' }] }, bundledUsageModelPriceCatalog).results[0]!;
     const result = composeUsageRecap({ input: UsageRecapComposeInputSchema.parse({ query, selectedFields: ['dollars'] }), snapshot: shown });
     expect(result).toMatchObject({ kind: 'composed', facts: { dollars: {
       selected: { kind: 'reported', currency: 'USD', amountUsd: 0.12 },
@@ -173,7 +174,7 @@ describe('private recap composition', () => {
     const value = { ...response, coverage: { status: 'partial' as const, reasons: [], missingDimensions: [],
       range: { ...period, complete: false }, ranked: [], sources: [] } };
     const shown = resolveUsagePageAggregation({ queries: [relative], accounting: [{ query: relative, value,
-      status: 'available', asOfMs: endMs }] }).results[0]!;
+      status: 'available', asOfMs: endMs }] }, bundledUsageModelPriceCatalog).results[0]!;
     const input = UsageRecapComposeInputSchema.parse({ query: relative, selectedFields: ['tokens'] });
     expect(composeUsageRecap({ input, snapshot: shown })).toMatchObject({ kind: 'composed',
       period: { ...period, timeZoneOffsetMinutes: 120 }, facts: { tokens: response.totals.tokens } });
@@ -206,7 +207,7 @@ describe('private recap composition', () => {
     const costFact = { kind: 'reported' as const, amountUsd: 1.5, currency: 'USD', tokens: response.totals.tokens,
       eventCount: 2, source: 'private-source', asOfMs: 9500, complete: true };
     const pricedSnapshot = resolveUsagePageAggregation({ queries: [query], accounting: [{ query,
-      value: { ...response, costFacts: [costFact] }, status: 'available', asOfMs: 9500 }] }).results[0]!;
+      value: { ...response, costFacts: [costFact] }, status: 'available', asOfMs: 9500 }] }, bundledUsageModelPriceCatalog).results[0]!;
     const result = composeUsageRecap({ input, snapshot: pricedSnapshot });
     expect(result.kind).toBe('composed');
     if (result.kind !== 'composed') return;
@@ -241,7 +242,7 @@ describe('private recap composition', () => {
       } });
     for (const status of ['unknown', 'error', 'unsupported', 'not_loaded'] as const) {
       const unavailable = resolveUsagePageAggregation({ queries: [query],
-        accounting: [{ query, value, status: 'available' }], work: [{ query, status, evidence: [witness] }] }).results[0]!;
+        accounting: [{ query, value, status: 'available' }], work: [{ query, status, evidence: [witness] }] }, bundledUsageModelPriceCatalog).results[0]!;
       const composed = composeUsageRecap({ input, snapshot: unavailable });
       expect(composed.kind).toBe('composed');
       if (composed.kind !== 'composed') throw new Error('Expected available accounting');
@@ -251,25 +252,25 @@ describe('private recap composition', () => {
       expect(composed.coverage.sourceStatuses).toContainEqual({ status });
     }
     const available = resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'available', evidence: [] }] });
+      accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'available', evidence: [] }] }, bundledUsageModelPriceCatalog);
     const empty = composeUsageRecap({ input, snapshot: available.results[0]! });
     expect(empty).toMatchObject({ kind: 'composed', unavailableFields: [], facts: { work: {
       linkedOutcomes: 0, allocatedContributions: 0, unallocatedContributions: 1 }, highlights: [] } });
     const partial = resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'partial', evidence: [witness] }] });
+      accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'partial', evidence: [witness] }] }, bundledUsageModelPriceCatalog);
     const witnessed = composeUsageRecap({ input, snapshot: partial.results[0]! });
     expect(witnessed).toMatchObject({ kind: 'composed', unavailableFields: [], facts: { work: {
       linkedOutcomes: 1, allocatedContributions: 1, unallocatedContributions: 0 }, highlights: [{ kind: 'linked_outcomes', count: 1 }] },
       coverage: { sourceStatuses: expect.arrayContaining([{ status: 'partial' }]) } });
     expect(JSON.stringify(witnessed)).not.toContain('private-');
     const pending = resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'pending' }], previous: partial });
+      accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'pending' }], previous: partial }, bundledUsageModelPriceCatalog);
     expect(composeUsageRecap({ input, snapshot: pending.results[0]! })).toMatchObject({ kind: 'composed',
       unavailableFields: [], facts: { work: { linkedOutcomes: 1 }, highlights: [{ kind: 'linked_outcomes', count: 1 }] },
       coverage: { pending: true, sourceStatuses: expect.arrayContaining([{ status: 'pending' }]) } });
     for (const previous of [undefined, available]) {
       const noWitness = resolveUsagePageAggregation({ queries: [query],
-        accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'pending' }], previous }).results[0]!;
+        accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'pending' }], previous }, bundledUsageModelPriceCatalog).results[0]!;
       expect(composeUsageRecap({ input, snapshot: noWitness })).toMatchObject({ kind: 'composed',
         unavailableFields: ['work'], facts: { highlights: [] }, coverage: { pending: true } });
       const composed = composeUsageRecap({ input, snapshot: noWitness });
@@ -306,7 +307,7 @@ describe('private recap composition', () => {
       weekdayHourBuckets: [{ weekday: 5, hour: 0, eventCount: 7 }] } };
     const nativeSnapshot = resolveUsagePageAggregation({ queries: [nightQuery],
       accounting: [{ query: nightQuery, value: native, status: 'available', asOfMs: endMs }],
-      howYouWork: [{ query: nightQuery, nightHours: { startHour: 22, endHour: 6 }, detail: { status: 'unknown' } }] }).results[0]!;
+      howYouWork: [{ query: nightQuery, nightHours: { startHour: 22, endHour: 6 }, detail: { status: 'unknown' } }] }, bundledUsageModelPriceCatalog).results[0]!;
     const input = UsageRecapComposeInputSchema.parse({ query: nightQuery, selectedFields: ['night'] });
     const result = composeUsageRecap({ input, snapshot: nativeSnapshot });
     expect(result).toMatchObject({ kind: 'composed', period: { startMs, endMs, timeZoneOffsetMinutes: 120 }, asOfMs: endMs,
@@ -314,7 +315,7 @@ describe('private recap composition', () => {
       coverage: { night: { detailStatus: 'unknown' } } });
     expect(result.kind === 'composed' && result.coverage.intervals).toBeUndefined();
     const noWindowSnapshot = resolveUsagePageAggregation({ queries: [nightQuery],
-      accounting: [{ query: nightQuery, value: native, status: 'available', asOfMs: endMs }] }).results[0]!;
+      accounting: [{ query: nightQuery, value: native, status: 'available', asOfMs: endMs }] }, bundledUsageModelPriceCatalog).results[0]!;
     const noWindow = composeUsageRecap({ input, snapshot: noWindowSnapshot });
     expect(noWindow.kind === 'composed' && noWindow.facts.night).toBeUndefined();
     expect(noWindow.kind === 'composed' && noWindow.unavailableFields).toEqual(['night']);
@@ -336,7 +337,7 @@ describe('private recap composition', () => {
     const coached = resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, value: response, status: 'available', asOfMs: 9500 }],
       howYouWork: [{ query, detail: { status: 'partial', coach: { detail: { coverage: 'partial',
-        fileReads: [read, { ...read, evidenceId: 'private-read-2', observedAtMs: 3000, reason: 'redundant' }] } } } }] }).results[0]!;
+        fileReads: [read, { ...read, evidenceId: 'private-read-2', observedAtMs: 3000, reason: 'redundant' }] } } } }] }, bundledUsageModelPriceCatalog).results[0]!;
     const input = UsageRecapComposeInputSchema.parse({ query, selectedFields: ['coach'] });
     const result = composeUsageRecap({ input, snapshot: coached });
     expect(result.kind).toBe('composed');
@@ -363,7 +364,7 @@ describe('private recap composition', () => {
     const accounting = { ...response, costFacts, totals: { ...response.totals,
       cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } };
     const costSnapshot = resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, value: accounting, status: 'available', asOfMs: 9500 }] }).results[0]!;
+      accounting: [{ query, value: accounting, status: 'available', asOfMs: 9500 }] }, bundledUsageModelPriceCatalog).results[0]!;
     const input = UsageRecapComposeInputSchema.parse({ query, selectedFields: ['dollars'] });
     const result = composeUsageRecap({ input, snapshot: costSnapshot });
     expect(result.kind).toBe('composed');

@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { act } from 'react-test-renderer';
@@ -262,7 +263,7 @@ function bodyProps(
     previous,
     quota: { status: 'available', value: [...quota] },
     ...(pools ? { pools } : {}),
-  }).results[0]!;
+  }, bundledUsageModelPriceCatalog).results[0]!;
   const model = {
     requestedQuery: null,
     shownQuery: null,
@@ -810,7 +811,7 @@ it('holds no room of its own while first allowance reads are pending: the rememb
   }));
   const render = async (count: number, status: 'pending' | 'available', quota?: readonly ConnectedServiceQuotaGetResultV1[]) => {
     const slice = resolveUsagePageAggregation({ queries: [query], nowMs: Date.now(), sources: sourcesFor(count, status),
-      ...(status === 'available' || quota ? { quota: { status: 'available' as const, value: quota ?? [] } } : {}) }).results[0]!;
+      ...(status === 'available' || quota ? { quota: { status: 'available' as const, value: quota ?? [] } } : {}) }, bundledUsageModelPriceCatalog).results[0]!;
     const model = { requestedQuery: null, shownQuery: null, slice, pending: status === 'pending', error: null,
       freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
     return renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium',
@@ -854,7 +855,7 @@ it('shows attributed API-equivalent account value and a qualified price multiple
         modelId: 'model', machineId: null, projectKey: null, workspaceId: null, source: 'runtime', tokens,
         cost: { reportedUsd: 20, estimatedUsd: 8, currency: 'USD' }, providerAttribution: 'known', connectedAccount: read.source.ref }],
     } }],
-  }).results[0]!;
+  }, bundledUsageModelPriceCatalog).results[0]!;
   const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
   const screen = await renderScreen(wrap(<UsagePlanFitWidget {...base} slice={slice} id="usage_plan_fit" testID="fit" />));
   // The row's one key figure is the qualified multiple ($4.00 observed against the $2.00 entered price).
@@ -879,7 +880,7 @@ it('shows a recorded week from accounting even without connected plan accounts',
     accounting: [{ query: shownQuery, status: 'available', value: { v: 1,
       totals: { eventCount: 1, tokens, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
       activity: { calendarDays: [{ date: '2026-10-01', eventCount: 1 }], weekdayHourBuckets: [] },
-    } }] }).results[0]!;
+    } }] }, bundledUsageModelPriceCatalog).results[0]!;
   const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
   const screen = await renderScreen(wrap(<UsagePlanFitWidget {...base} slice={slice} id="usage_plan_fit" testID="fit" />));
   expect(screen.findByTestId('fit.recordedWeek')).toBeTruthy();
@@ -1133,7 +1134,7 @@ it('states one unreadable-order cause once under every pool that shares it (H30)
 it('greets an Account with nothing connected with the shared empty state, its connect scene and the one sign-in (58d AF1)', async () => {
   const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
   // Nothing connected: the quota read settles with no account, and a history page marker can still be partial.
-  const slice = resolveUsagePageAggregation({ queries: [query], nowMs: Date.now(), quota: { status: 'partial', value: [] } }).results[0]!;
+  const slice = resolveUsagePageAggregation({ queries: [query], nowMs: Date.now(), quota: { status: 'partial', value: [] } }, bundledUsageModelPriceCatalog).results[0]!;
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null, freshness: 'fresh', updatingPreviousPeriod: false,
     refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
   const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
@@ -1153,7 +1154,7 @@ it('greets an Account with nothing connected with the shared empty state, its co
 
 it('says "nothing connected" once: Capacity owns the cause, the widgets derived from it say what they will show (Plans ×4)', async () => {
   const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
-  const slice = resolveUsagePageAggregation({ queries: [query], nowMs: Date.now(), quota: { status: 'available', value: [] } }).results[0]!;
+  const slice = resolveUsagePageAggregation({ queries: [query], nowMs: Date.now(), quota: { status: 'available', value: [] } }, bundledUsageModelPriceCatalog).results[0]!;
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null, freshness: 'fresh', updatingPreviousPeriod: false,
     refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
   const { UsageCapacityWidget } = await import('../UsageCapacityWidget');

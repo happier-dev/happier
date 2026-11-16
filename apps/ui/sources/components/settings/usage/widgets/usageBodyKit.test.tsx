@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
@@ -54,7 +55,7 @@ describe('shared Usage identity and dependent coverage', () => {
         } });
         try {
             const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 } });
-            const slice = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
+            const slice = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!;
             const observed = { ...slice, sources: [{ source: 'research-observed-v1', status: 'error' as const }] };
             expect(usageCoverageDescription(observed, ['research-observed-v1'])).toContain('Research observations');
             expect(usageSourceAgentId('research-observed-v1')).toBe('third.party/research');
@@ -94,7 +95,7 @@ describe('shared Usage identity and dependent coverage', () => {
             { query, status: 'available', value: accounting },
             { query: comparison, status, ...(status === 'available' ? { value: accounting } : {}),
                 ...(status === 'error' ? { errorCode: 'usage_query_failed' } : {}) },
-        ] }).results[0]!;
+        ] }, bundledUsageModelPriceCatalog).results[0]!;
         const pending = sliceFor('pending');
         expect.soft(isUsageReadOutstanding(pending, ['comparison'])).toBe(true);
         expect.soft(readUsageCoverageGaps(pending, ['comparison'])).toEqual([{ source: 'comparison', status: 'pending' }]);
@@ -102,7 +103,7 @@ describe('shared Usage identity and dependent coverage', () => {
         expect.soft(readUsageCoverageGaps(sliceFor('error'), ['comparison'])).toEqual([
             { source: 'comparison', status: 'error', errorCode: 'usage_query_failed' },
         ]);
-        const unbounded = resolveUsagePageAggregation({ queries: [normalizeUsageQuery({ period: {} })] }).results[0]!;
+        const unbounded = resolveUsagePageAggregation({ queries: [normalizeUsageQuery({ period: {} })] }, bundledUsageModelPriceCatalog).results[0]!;
         expect(isUsageReadOutstanding(unbounded, ['comparison'])).toBe(false);
     });
     it('preserves unknown model ids exactly instead of inventing names or casing', () => {
@@ -114,7 +115,7 @@ describe('shared Usage identity and dependent coverage', () => {
     });
     it('holds an unanswered usage read as loading, never as "No usage in this period"', async () => {
         const query = normalizeUsageQuery({ period: { relative: '7days' }, granularity: 'day' });
-        const slice = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
+        const slice = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!;
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: true, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
         const screen = await renderScreen(<UsageDailyWidget query={query} slice={slice} model={model} serverId="home" id="usage_daily" testID="daily" />);
@@ -123,7 +124,7 @@ describe('shared Usage identity and dependent coverage', () => {
     });
     it('holds the settled Daily chart room at every width while the first read is outstanding', async () => {
         const query = normalizeUsageQuery({ period: { relative: '7days' }, granularity: 'day' });
-        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'pending' }] }).results[0]!;
+        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'pending' }] }, bundledUsageModelPriceCatalog).results[0]!;
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: true, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
         const heldRoom = async (width: number, height = 260) => {
@@ -143,7 +144,7 @@ describe('shared Usage identity and dependent coverage', () => {
     });
     it('keeps Rhythm reading until activity answers and retains known activity during refresh', async () => {
         const query = normalizeUsageQuery({ period: { relative: '7days' }, includeActivity: true, activityResolution: 'both' });
-        const cold = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'pending' }] }).results[0]!;
+        const cold = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'pending' }] }, bundledUsageModelPriceCatalog).results[0]!;
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice: cold, pending: true, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
         const render = (slice: UsageQueryResultSlice) => <WidgetPresentationProvider value={{ size: 'medium',
@@ -164,10 +165,10 @@ describe('shared Usage identity and dependent coverage', () => {
         expect(held).toBe(0);
         const empty = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
             ...usageQaAccountingFixture(), activity: { calendarDays: [], weekdayHourBuckets: [] },
-        } }] }).results[0]!;
+        } }] }, bundledUsageModelPriceCatalog).results[0]!;
         await screen.update(render(empty));
         expect(screen.findByTestId('rhythm-read.empty')).not.toBeNull();
-        const known = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'pending', value: usageQaAccountingFixture() }] }).results[0]!;
+        const known = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'pending', value: usageQaAccountingFixture() }] }, bundledUsageModelPriceCatalog).results[0]!;
         await screen.update(render(known));
         expect(screen.findByTestId('rhythm-read.rhythm')).not.toBeNull();
         expect(screen.findByTestId('rhythm-read.loading')).toBeNull();
@@ -175,7 +176,7 @@ describe('shared Usage identity and dependent coverage', () => {
     it('says a failed read as not read, never as zero; on the Usage page the header owns the cause and its Retry', async () => {
         const query = normalizeUsageQuery({ period: { relative: '7days' }, granularity: 'day', includeActivity: true, activityResolution: 'both' });
         const failed = resolveUsagePageAggregation({ queries: [query],
-            accounting: [{ query, status: 'error', errorCode: 'usage_query_failed' }] }).results[0]!;
+            accounting: [{ query, status: 'error', errorCode: 'usage_query_failed' }] }, bundledUsageModelPriceCatalog).results[0]!;
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice: failed, pending: false, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
         const bodies = <>
@@ -203,7 +204,7 @@ describe('shared Usage identity and dependent coverage', () => {
         const accounting = usageQaAccountingFixture();
         const query = normalizeUsageQuery({ period: relative ? { relative: '7days' } : { startMs: 1791064800000 },
             granularity: 'day', timeZoneOffsetMinutes: 120, includeActivity: true, activityResolution: 'both' });
-        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }).results[0]!;
+        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
         const props = { query, slice, model, serverId: 'home' };
@@ -241,7 +242,7 @@ describe('shared Usage identity and dependent coverage', () => {
     });
     it('names a Rhythm card by its Style and keeps only the measure in its caption (USAGE-ACCEPT #11)', async () => {
         const query = normalizeUsageQuery({ period: { relative: '7days' }, includeActivity: true, activityResolution: 'both' });
-        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: usageQaAccountingFixture() }] }).results[0]!;
+        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: usageQaAccountingFixture() }] }, bundledUsageModelPriceCatalog).results[0]!;
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
         const identity = vi.fn();
@@ -257,7 +258,7 @@ describe('shared Usage identity and dependent coverage', () => {
     });
     it('draws the weekday × hour matrix at a half-width card and the 24-hour rhythm only where a phone cannot hold it', async () => {
         const query = normalizeUsageQuery({ period: { relative: '7days' }, includeActivity: true, activityResolution: 'both' });
-        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: usageQaAccountingFixture() }] }).results[0]!;
+        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: usageQaAccountingFixture() }] }, bundledUsageModelPriceCatalog).results[0]!;
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
         const at = (width: number) => renderScreen(<WidgetPresentationProvider value={{ size: 'medium',
@@ -346,7 +347,7 @@ describe('shared Usage identity and dependent coverage', () => {
         const sliceFor = (complete: boolean) => resolveUsagePageAggregation({ queries: [query],
             quota: { status: 'available', asOfMs: 100, value: [projectProviderAccountUsageQuotaReadV1({ input: { source },
                 current, nowMs: 200, history: { entries: [], nextCursor: complete ? null : { id: 'next', observedAtMs: 50 } } })] },
-        }).results[0]!;
+        }, bundledUsageModelPriceCatalog).results[0]!;
         const settled = sliceFor(false);
         const screen = await renderScreen(<UsageCoverageLine slice={settled} sources={['quota']} testID="settled-coverage" />);
         expect.soft(usageCoverageSummary(settled, ['quota'])).toBe('Partial history');
@@ -446,13 +447,13 @@ describe('shared Usage identity and dependent coverage', () => {
     it('does not call undemanded work and activity reads pending after accounting-only slices settle', () => {
         const query = normalizeUsageQuery({ period: { startMs: 100 }, includeWorkEvidence: false, includeSessionEvidence: false });
         const settled = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available',
-            value: usageQaAccountingFixture() }], quota: { status: 'unsupported' } }).results;
+            value: usageQaAccountingFixture() }], quota: { status: 'unsupported' } }, bundledUsageModelPriceCatalog).results;
         expect(settled[0]?.pending).toBe(false);
         expect(describeUsagePagePendingSources(settled)).toBeNull();
         const demanded = normalizeUsageQuery({ ...query, includeWorkEvidence: true, includeSessionEvidence: true });
         const reading = resolveUsagePageAggregation({ queries: [demanded], work: [{ query: demanded, status: 'pending' }],
             accounting: [{ query: demanded, status: 'available', value: usageQaAccountingFixture() }], quota: { status: 'unsupported' },
-            sources: [{ source: 'how_you_work', status: 'pending' }] }).results;
+            sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog).results;
         expect(describeUsagePagePendingSources(reading)).toBe(t('usage.board.page.coveragePending', {
             sources: [usageSourceTitle('work'), usageSourceTitle('how_you_work')].join(', '),
         }));
@@ -478,7 +479,7 @@ describe('shared Usage identity and dependent coverage', () => {
         };
         const query = normalizeUsageQuery({ period: { startMs: 100 } });
         const slices = resolveUsagePageAggregation({ queries: [query], quota: { status: 'partial', asOfMs: 100,
-            value: [readAt('older', 100), readAt('newer', 200)] } }).results;
+            value: [readAt('older', 100), readAt('newer', 200)] } }, bundledUsageModelPriceCatalog).results;
         expect(readUsagePageAsOfMs(slices)).toBe(200);
         expect(slices[0]?.sources.find(source => source.source === 'quota')?.asOfMs).toBe(100);
         expect(readUsagePageAsOfMs([{ sources: [], quota: [readAt('never', 0, 'not_loaded')] }])).toBeNull();
@@ -498,7 +499,7 @@ describe('shared Usage identity and dependent coverage', () => {
             v: 1, totals: { eventCount: 2, tokens: { ...tokens, total: 20, input: 20 }, cost }, modelTimeline: [0, 86_400_000].map(bucketStartMs => ({ bucketStartMs, bucketEndMs: bucketStartMs + 86_400_000,
                 leaders: [{ key: 'claude-fable-5', label: 'claude-fable-5', eventCount: 1, tokens, cost,
                     ...(partitioned ? { sources: [{ source: 'runtime', path: 'runtime' as const, execution: 'happier' as const, eventCount: 1, tokens, cost }] } : {}) }] })),
-        } }] }).results[0]!;
+        } }] }, bundledUsageModelPriceCatalog).results[0]!;
         const slice = sliceFor(true);
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
@@ -542,7 +543,7 @@ describe('shared Usage identity and dependent coverage', () => {
                     { source: 'native', path: 'native', execution: 'outside', eventCount: 1, tokens, cost },
                     { source: 'older', path: 'unknown', execution: 'unknown', eventCount: 1, tokens, cost },
                 ] }] }],
-        } }] }).results[0]!;
+        } }] }, bundledUsageModelPriceCatalog).results[0]!;
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
         const props = { query, slice, model, serverId: 'home' };
@@ -579,7 +580,7 @@ describe('shared Usage identity and dependent coverage', () => {
             series: [{ bucketStartMs: start, bucketEndMs: start + 86_400_000, eventCount: 1, tokens, cost }],
             activity: { calendarDays: [{ date: '2024-04-22', eventCount: 1 }], weekdayHourBuckets: [] },
             coverage: { status: 'partial', reasons: ['incomplete_history'], sources: [], missingDimensions: [], ranked: [], range: { startMs: start, endMs: end, complete: false } },
-        } }] }).results[0]!;
+        } }] }, bundledUsageModelPriceCatalog).results[0]!;
         const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
             freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
         const props = { query, slice, model, serverId: 'home' };
@@ -692,7 +693,7 @@ describe('shared Usage identity and dependent coverage', () => {
                 cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD' }, eventCount: 0 },
             coverage: { status: 'unknown', reasons: [], sources: [], missingDimensions: [],
                 range: { startMs: 1000, endMs: 2000, complete: false }, ranked: [] },
-        } }] }).results[0]!;
+        } }] }, bundledUsageModelPriceCatalog).results[0]!;
         expect(readUsageCoverageGaps(slice, ['accounting'])).toEqual([{ source: 'accounting', status: 'unknown' }]);
         expect(usageCoverageDescription(slice, ['accounting'])).toBe(t('usage.board.sources.coverageUnknown'));
         expect(usageCoverageSummary(slice, ['accounting'])).toBe(t('usage.board.sources.coverageUnknown'));
@@ -711,7 +712,7 @@ describe('shared Usage identity and dependent coverage', () => {
                 { source: 'native:claude', path: 'native', status: 'partial', eventCount: 1, historyComplete: false },
                 { source: 'native:gemini', path: 'native', status: 'unsupported', eventCount: 0 },
             ], missingDimensions: [], range: { startMs: 0, endMs: 1000, complete: false }, ranked: [] },
-        } }] }).results[0]!;
+        } }] }, bundledUsageModelPriceCatalog).results[0]!;
         expect(readUsageCoverageGaps(slice, ['accounting']).map(gap => gap.source)).toEqual(['accounting', 'native:claude', 'native:gemini']);
         const screen = await renderScreen(<UsageCoverageLine slice={slice} sources={['accounting']} testID="coverage" />);
         expect(screen.getTextContent()).not.toContain('native:claude');
@@ -736,7 +737,7 @@ describe('shared Usage identity and dependent coverage', () => {
                     { source: 'runtime:codex', path: 'runtime', status: 'available', eventCount: 1, asOfMs: later },
                 ],
             } },
-        }] }).results[0]!;
+        }] }, bundledUsageModelPriceCatalog).results[0]!;
         const render = (sourceAt: number) => <UsageCoverageLine slice={sliceFor(sourceAt)} sources={['accounting']} testID="source-date" />;
         const screen = await renderScreen(render(observedAt));
         const expected = (at: number) => `Oldest source update ${formatUsageObservedAt(at)}`;
@@ -754,7 +755,7 @@ describe('shared Usage identity and dependent coverage', () => {
         const oldest = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
             ...accounting, coverage: { ...accounting.coverage!, sources: accounting.coverage!.sources.map(source =>
                 source.status === 'available' ? { ...source, asOfMs: observedAt } : source) },
-        } }] }).results[0]!;
+        } }] }, bundledUsageModelPriceCatalog).results[0]!;
         await screen.update(<UsageCoverageLine slice={oldest} sources={['accounting']} testID="source-date" />);
         expect(screen.getTextContent()).toContain(expected(observedAt));
     });
@@ -762,7 +763,7 @@ describe('shared Usage identity and dependent coverage', () => {
         const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 } });
         const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
             v: 1, totals: { tokens: { total: 5, input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' }, eventCount: 1 },
-        } }] }).results[0]!;
+        } }] }, bundledUsageModelPriceCatalog).results[0]!;
         expect(readUsageCoverageGaps(slice, ['accounting'])).toEqual([{ source: 'accounting', status: 'unknown' }]);
         expect(usageCoverageDescription(slice, ['accounting'])).toBe(t('usage.board.sources.coverageUnknown'));
         expect(usageCoverageSummary(slice, ['accounting'])).toBe(t('usage.board.sources.coverageUnknown'));

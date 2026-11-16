@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '../usage/usageModelPriceCatalog.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec, SignedRootActionIdSchema } from './actionSpecs.js';
@@ -40,7 +41,7 @@ describe('evidence-bound Coach Action admission', () => {
         }
         const aggregate = () => resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, asOfMs: 200,
             detail: { status: 'partial', permissions: [{ requestId: 'p', workId: 'w', requestedAtMs: 120,
-                decidedAtMs: 160, toolId: null, answeringClientCategory: null }] } }] });
+                decidedAtMs: 160, toolId: null, answeringClientCategory: null }] } }] }, bundledUsageModelPriceCatalog);
         const base = aggregate().results[0]!.coach!;
         const evidenceKey = base.findings[0]!.evidenceKey;
         let state = UsageCoachSuppressionStateV1Schema.parse({ v: 1, suppressions: [] });
@@ -83,7 +84,7 @@ describe('evidence-bound Coach Action admission', () => {
         const owner = coachKv(() => kv, value => { kv = value; });
         const settingsWrites: unknown[] = [];
         const executor = createActionExecutor({
-            usageActions: { query: async () => resolveUsagePageAggregation({ queries: [query] }), coachSuppressions: () => owner },
+            usageActions: { query: async () => resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog), coachSuppressions: () => owner },
             settingsDeclarationAction: async request => {
                 if (request.actionId === 'settings.set') {
                     settingsWrites.push(request.input);
@@ -108,7 +109,7 @@ describe('evidence-bound Coach Action admission', () => {
             const startMs = 'startMs' in selected.period ? selected.period.startMs! : 100;
             return resolveUsagePageAggregation({ queries: [selected], coachPreferences, howYouWork: [{ query: selected, asOfMs: startMs + 100,
                 detail: { status: 'partial', permissions: [{ requestId: `permission-${startMs}`, workId: 'work',
-                    requestedAtMs: startMs + 20, decidedAtMs: startMs + 60, toolId: null, answeringClientCategory: null }] } }] });
+                    requestedAtMs: startMs + 20, decidedAtMs: startMs + 60, toolId: null, answeringClientCategory: null }] } }] }, bundledUsageModelPriceCatalog);
         };
         let batch = read(query);
         let analyticsReads = 0;
@@ -175,7 +176,7 @@ describe('evidence-bound Coach Action admission', () => {
         try {
             const detail = { status: 'partial' as const, permissions: [{ requestId: 'permission', workId: 'work',
                 requestedAtMs: 120, decidedAtMs: 160, toolId: null, answeringClientCategory: null }] };
-            const batch = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, detail, asOfMs: 200 }] });
+            const batch = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, detail, asOfMs: 200 }] }, bundledUsageModelPriceCatalog);
             const evaluation = batch.results[0]!.coach!;
             const finding = evaluation.findings[0]!;
             const retained = [{ kind: 'dismissed' as const, evidenceKey: 'historical-unrelated' },
@@ -246,12 +247,12 @@ describe('evidence-bound Coach Action admission', () => {
                 analyticsReads += 1;
                 if (!analyticsAvailable) throw new Error('Analytics transport unavailable');
                 const finding = evaluateUsageCoach({ queryKey: 'query', period: { startMs: 100, endMs: 200 }, asOfMs: 200,
-                    currentness: 'current', detail: { coverage: 'partial', mcpUsage: [usage] } }).findings;
+                    currentness: 'current', detail: { coverage: 'partial', mcpUsage: [usage] } }, bundledUsageModelPriceCatalog).findings;
                 const admittedRemedies = buildUsageCoachRemedies({ findings: finding, composition: [], mcpUsage: [usage], serverId: 'home',
                     sessions: [{ id: 'session', serverId: 'home', active: false, ownerMetadata: {}, agentTarget: null,
                         access: { capabilities: { submitAgentInput: true } } }], mcpCatalog: await snapshot() });
                 const batch = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, asOfMs: 200,
-                    detail: { status: 'partial', coach: { detail: { coverage: 'partial', mcpUsage: [usage] }, admittedRemedies } } }] });
+                    detail: { status: 'partial', coach: { detail: { coverage: 'partial', mcpUsage: [usage] }, admittedRemedies } } }] }, bundledUsageModelPriceCatalog);
                 if (raceAfterQuery) { revision += 1; raceAfterQuery = false; }
                 return batch;
             } },
@@ -259,7 +260,7 @@ describe('evidence-bound Coach Action admission', () => {
         const queried = await executor.execute('usage.query', { queries: [query] }, context);
         expect(queried.ok).toBe(true);
         const evaluation = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, asOfMs: 200,
-            detail: { status: 'partial', coach: { detail: { coverage: 'partial', mcpUsage: [usage] } } } }] });
+            detail: { status: 'partial', coach: { detail: { coverage: 'partial', mcpUsage: [usage] } } } }] }, bundledUsageModelPriceCatalog);
         const evidenceKey = evaluation.results[0]!.coach!.findings.find(row => row.detectorId === 'mcp_overhead')!.evidenceKey;
         const apply = await executor.execute('usage.coach.apply', { query, evidenceKey }, context);
         expect(apply, JSON.stringify(apply)).toMatchObject({ ok: true, result: { kind: 'applied', reversal: { kind: 'mcp_binding' } } });
@@ -322,7 +323,7 @@ describe('evidence-bound Coach Action admission', () => {
             observedAtMs: 150, window: { startMs: 100, endMs: 150 }, coverage: 'complete', bindings: [{ serverId: 'server',
                 bindingId: 'rule', serverRevision: 10, bindingRevision: 20, catalogRevision: 40, toolCallCount: 0, schemaBytes: null }] });
         const finding = evaluateUsageCoach({ queryKey: 'query', period: { startMs: 100, endMs: 200 }, asOfMs: 200,
-            currentness: 'current', detail: { coverage: 'partial', mcpUsage: [usage] } }).findings;
+            currentness: 'current', detail: { coverage: 'partial', mcpUsage: [usage] } }, bundledUsageModelPriceCatalog).findings;
         const input = { findings: finding, composition: [], mcpUsage: [usage], serverId: 'home',
             sessions: [{ id: 'session', serverId: 'home', active: true, ownerMetadata: {}, agentTarget: null,
                 access: { capabilities: { submitAgentInput: true } } }],
@@ -333,7 +334,7 @@ describe('evidence-bound Coach Action admission', () => {
         expect(buildUsageCoachRemedies(input)).toEqual([]);
         const currentUsage = UsageMcpBindingUsageSchema.parse({ ...usage, v: 2 });
         const currentFinding = evaluateUsageCoach({ queryKey: 'query', period: { startMs: 100, endMs: 200 }, asOfMs: 200,
-            currentness: 'current', detail: { coverage: 'partial', mcpUsage: [currentUsage] } }).findings;
+            currentness: 'current', detail: { coverage: 'partial', mcpUsage: [currentUsage] } }, bundledUsageModelPriceCatalog).findings;
         expect(buildUsageCoachRemedies({ ...input, findings: currentFinding, mcpUsage: [currentUsage] }))
             .toMatchObject([{ remedy: { kind: 'mcp_binding', bindingId: 'rule', serverId: 'server',
             target: { t: 'allMachines' }, agentId: 'codex', enabled: false, expectedRevision: 40 } }]);
@@ -341,7 +342,7 @@ describe('evidence-bound Coach Action admission', () => {
     it('forwards private evidence preference Actions to the available answering client owner', async () => {
         const detail = { status: 'partial' as const, permissions: [{ requestId: 'permission', workId: 'work',
             requestedAtMs: 120, decidedAtMs: 160, toolId: null, answeringClientCategory: null }] };
-        const batch = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, detail, asOfMs: 200 }] });
+        const batch = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, detail, asOfMs: 200 }] }, bundledUsageModelPriceCatalog);
         const finding = batch.results[0]!.coach!.findings.find(row => row.detectorId === 'approval_friction')!;
         let preferences = UsageCoachPreferencesV1Schema.parse({});
         let suppressions = UsageCoachSuppressionStateV1Schema.parse({ v: 1, suppressions: [] });
@@ -357,7 +358,7 @@ describe('evidence-bound Coach Action admission', () => {
         const headless = createActionExecutor({
             // This transport reaches the existing client Action executor; no private finding crosses in input.
             clientActionExecute: async request => client.execute(request.actionId, request.input, { ...request.context, surface: 'ui' }),
-            usageActions: { query: async input => resolveUsagePageAggregation({ queries: input.queries }),
+            usageActions: { query: async input => resolveUsagePageAggregation({ queries: input.queries }, bundledUsageModelPriceCatalog),
                 coachSuppressions: () => coachKv(() => suppressions, value => { suppressions = value; }) },
         } as ActionExecutorDeps);
         const input = { query, evidenceKey: finding.evidenceKey, dismissed: true };

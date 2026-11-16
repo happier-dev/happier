@@ -62,7 +62,7 @@ it('reuses admitted precision across repeated projection consumers while replaci
 
 it('admits exact cache-savings money through in-memory and serialized Usage results', () => {
   const categories = { input: 7, output: 3, reasoning: 2, cacheRead: 3, cacheWrite: 0, total: 15 };
-  const estimate = estimateUsageModelCost('gpt-5', categories)!;
+  const estimate = estimateUsageModelCost('gpt-5', categories, bundledUsageModelPriceCatalog)!;
   const row: UsageAnalyticsContribution = { id: 'cache-savings', observedAtMs: 150, eventCount: 1,
     agentId: 'codex', modelId: 'gpt-5', sessionId: null, turnId: null, machineId: null,
     projectKey: null, workspaceId: null, source: 'native', tokens: categories,
@@ -75,7 +75,7 @@ it('admits exact cache-savings money through in-memory and serialized Usage resu
   const batch = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
     v: 1, contributions: [row], totals: { eventCount: 1, tokens: categories,
       cost: aggregateUsageContributionCosts([row], 'auto') },
-  } }] });
+  } }] }, bundledUsageModelPriceCatalog);
   for (const candidate of [batch, JSON.parse(JSON.stringify(batch))]) {
     const admitted = UsageQueryBatchResultSchema.safeParse(candidate);
     expect(admitted.success, JSON.stringify(admitted.error?.issues.map(issue => ({ code: issue.code, path: issue.path })))).toBe(true);

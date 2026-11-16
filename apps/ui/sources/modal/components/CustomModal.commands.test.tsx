@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -72,7 +73,7 @@ describe('CustomModal shared dismissal commands', () => {
             cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } });
         const composed = composeUsageRecap({ input: UsageRecapPrivateComposeInputSchema.parse({ query, style: 'sigil',
             format: 'story', selectedFields: ['tokens'] }), snapshot: resolveUsagePageAggregation({ queries: [query],
-            accounting: [{ query, value: accounting, status: 'available', asOfMs: 900 }] }).results[0]! });
+            accounting: [{ query, value: accounting, status: 'available', asOfMs: 900 }] }, bundledUsageModelPriceCatalog).results[0]! });
         if (composed.kind !== 'composed') throw new Error('Canonical recap fixture was not composed');
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
             <MainAppTabStateProvider><AppPaneProvider><ModalProvider><CurrentUiContextProvider>

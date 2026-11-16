@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '../usage/usageModelPriceCatalog.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionExecutorDeps, ActionPluginCaller } from './executor/types.js';
@@ -63,7 +64,7 @@ describe('createActionExecutor plugin caller policy', () => {
       tokens: { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 },
       cost: { reportedUsd: 1, estimatedUsd: 0, currency: 'USD' } } });
     const executor = createExecutor({ usageActions: { query: async request => resolveUsagePageAggregation({ queries: request.queries,
-      accounting: request.queries.map(query => ({ query, value: accounting, status: 'available' as const, asOfMs: 150 })) }) } });
+      accounting: request.queries.map(query => ({ query, value: accounting, status: 'available' as const, asOfMs: 150 })) }, bundledUsageModelPriceCatalog) } });
     const request = { query, format: 'json', fields: ['totals'] };
     const permitted = await executor.execute('usage.export', request, { surface: 'plugin', actionCaller: pluginCaller('example.usage') });
     expect(permitted.ok).toBe(true);

@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -154,7 +155,7 @@ describe('Usage settings UI Action admission', () => {
         const coach = evaluateUsageCoach({ queryKey: key, period: { startMs: 0, endMs: 1000 }, asOfMs: 1000,
             currentness: 'current', detail: { coverage: 'partial', compactions: [10, 20, 30].map((observedAtMs, index) => ({
                 evidenceId: `c${index}`, observedAtMs, sessionId: 'session', turnId: 'turn', immediateRefillToLimit: true,
-            })) } });
+            })) } }, bundledUsageModelPriceCatalog);
         raw.actionsSettingsV1 = { v: 1, actions: { 'usage.coach.dismiss': admission === 'disabled'
             ? { enabled: false } : { approvalRequiredSurfaces: ['ui'] } } };
         storage.getState().applySettings(settingsParse(raw), ++version);

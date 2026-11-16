@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -70,7 +71,7 @@ function mountedCosts(unpriced: boolean | 'all' = false, tokenCount = 10) {
     breakdowns: { agent: [{ key: 'claude', eventCount: 2, tokens: { ...tokens, input: tokenCount * 2, total: tokenCount * 2 }, cost }] },
     engineTimeline: [{ bucketStartMs: 0, bucketEndMs: day, leaders: [{ key: 'claude', eventCount: 2,
       tokens: { ...tokens, input: tokenCount * 2, total: tokenCount * 2 }, cost }] }],
-  }) }] }).results[0]!;
+  }, bundledUsageModelPriceCatalog) }] }, bundledUsageModelPriceCatalog).results[0]!;
   const identity = { query, authority: { serverId: 'home', accountId: 'usage-account' } };
   const model: UsageWidgetBodyModel = { requestedQuery: identity, shownQuery: identity, slice, pending: false, error: null,
     freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
@@ -87,8 +88,8 @@ describe('one selected money basis across Usage bodies', () => {
       totals: { ...source.totals, tokens: parts },
       contributions: source.contributions!.slice(0, 1).map(row => ({ ...row, modelId: 'parts-model', tokens: parts })),
       breakdowns: { model: [{ key: 'parts-model', eventCount: 1, tokens: parts, cost: source.contributions![0]!.cost }] },
-    });
-    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }).results[0]!;
+    }, bundledUsageModelPriceCatalog);
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<>
       <UsageBreakdownsWidget {...base} query={query} slice={slice} id="usage_breakdowns" testID="parts-breakdown" />
       <UsageCostFactsWidget {...base} query={query} slice={slice} id="usage_cost_facts" testID="parts-facts" />
@@ -234,7 +235,7 @@ describe('one selected money basis across Usage bodies', () => {
     const slice = resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value: props.slice.accounting! }],
       howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [] } }],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const calendar = slice.howYouWork!.agentCalendar!;
     const week = (startMs: number) => ({ startMs, endMs: startMs + 7 * day, date: '', weekday: 1, hour: null,
       totals: { ...calendar.periodSummary.totals, tokens: null, eventCount: 0 }, agents: [], leaders: calendar.periodSummary.leaders });
@@ -251,7 +252,7 @@ describe('one selected money basis across Usage bodies', () => {
     const slice = resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value: props.slice.accounting! }],
       howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [] } }],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const calendar = slice.howYouWork!.agentCalendar!;
     const member = calendar.periodSummary.agents[0]!;
     const unknowns = { ...slice, howYouWork: { ...slice.howYouWork!, agentCalendar: { ...calendar,
@@ -337,7 +338,7 @@ describe('one selected money basis across Usage bodies', () => {
     const slice = resolveUsagePageAggregation({ queries: [props.query],
       accounting: [{ query: props.query, status: 'available', value: props.slice.accounting! }],
       howYouWork: [{ query: props.query, asOfMs: day, detail: { status: 'available', facts: [] } }],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsageFootprintWidget {...props} slice={slice} id="usage_footprint" testID="footprint" />);
     const metric = screen.findAllByType(HappierDataMetric).find(row => row.props.testID === 'footprint.tokens');
     expect(metric?.props.value).toBe(formatTokenCount(slice.accounting!.totals.tokens.total));
@@ -361,7 +362,7 @@ describe('one selected money basis across Usage bodies', () => {
     const withComparison = resolveUsagePageAggregation({ queries: [query], accounting: [
       { query, status: 'available', value: props.slice.accounting! },
       { query: priorQuery, status: 'available', value: previous },
-    ] }).results[0]!;
+    ] }, bundledUsageModelPriceCatalog).results[0]!;
     expect(reads).toBeGreaterThan(0);
     expect(withComparison.comparison!.accounting).not.toHaveProperty('contributions');
     reads = 0;
@@ -385,11 +386,11 @@ describe('one selected money basis across Usage bodies', () => {
     const changedPrevious = repriceUsageAnalyticsResponse({ ...previous,
       totals: { ...previous.totals, cost: { ...previous.totals.cost, reportedUsd: (previous.totals.cost.reportedUsd ?? 0) * 2 } },
       contributions: previous.contributions.map(row => ({ ...row, cost: { ...row.cost, reportedUsd: (row.cost.reportedUsd ?? 0) * 2 } })),
-    });
+    }, bundledUsageModelPriceCatalog);
     const changed = resolveUsagePageAggregation({ queries: [query], accounting: [
       { query, status: 'available', value: props.slice.accounting! },
       { query: priorQuery, status: 'available', value: changedPrevious },
-    ] }).results[0]!;
+    ] }, bundledUsageModelPriceCatalog).results[0]!;
     expect(changed.comparison!.accounting).not.toHaveProperty('contributions');
     await screen.update(bodies(changed));
     expect(metrics().map(metric => metric.props.comparison?.value)).toEqual(['▼ 50%', '▼ 50%']);
@@ -419,7 +420,7 @@ describe('one selected money basis across Usage bodies', () => {
   it('keeps pending and failed accounting distinct from zero unpriced tokens', async () => {
     const props = mountedCosts();
     for (const status of ['pending', 'error'] as const) {
-      const slice = resolveUsagePageAggregation({ queries: [props.query], accounting: [{ query: props.query, status }] }).results[0]!;
+      const slice = resolveUsagePageAggregation({ queries: [props.query], accounting: [{ query: props.query, status }] }, bundledUsageModelPriceCatalog).results[0]!;
       const screen = await renderScreen(<UsageUnpricedWidget {...props} slice={slice} id="usage_unpriced" testID="unpriced" />);
       expect(screen.findAllByType(HappierDataMetric)).toHaveLength(0);
       expect(screen.findByTestId(status === 'pending' ? 'unpriced.loading' : 'unpriced.unavailable')).not.toBeNull();
@@ -438,7 +439,7 @@ describe('one selected money basis across Usage bodies', () => {
       missingDimensions: [], range: { startMs: 0, endMs: day, complete: false }, ranked: [],
       sources: [{ source: 'codex-token-count', path: 'native' as const, status: 'partial' as const,
         eventCount: 2, captureKind: 'from_logs' as const, historyComplete: false, asOfMs: 100 }] } };
-    const slice = resolveUsagePageAggregation({ queries: [props.query], accounting: [{ query: props.query, status: 'available', value: accounting }] }).results[0]!;
+    const slice = resolveUsagePageAggregation({ queries: [props.query], accounting: [{ query: props.query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderControls(<UsageSourceCoverageWidget {...props} slice={slice} id="usage_source_coverage" testID="coverage" />);
     expect(screen.findByType(HappierDataRows).props.rows).toHaveLength(1);
     expect(screen.getTextContent()).toContain(t('usage.board.page.sourceKindFromLogs'));
@@ -453,7 +454,7 @@ describe('one selected money basis across Usage bodies', () => {
     const source: Omit<CoverageSource, 'source'> = { path: 'native', status: 'unknown', eventCount: 0, captureKind: 'measured', asOfMs: 100 };
     const coverageOf = (sources: readonly CoverageSource[]) => resolveUsagePageAggregation({ queries: [props.query],
       accounting: [{ query: props.query, status: 'available', value: { ...props.slice.accounting!, coverage: { status: 'partial' as const,
-        reasons: [], missingDimensions: [], range: { startMs: 0, endMs: day, complete: false }, ranked: [], sources: [...sources] } } }] }).results[0]!;
+        reasons: [], missingDimensions: [], range: { startMs: 0, endMs: day, complete: false }, ranked: [], sources: [...sources] } } }] }, bundledUsageModelPriceCatalog).results[0]!;
     const twins = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
       slice={coverageOf([...Array.from({ length: 30 }, () => ({ ...source, source: 'claude-assistant-usage' })), { ...source, source: 'codex-token-count' }])} />);
     expect(twins.findByType(HappierDataRows).props.rows).toHaveLength(2);
@@ -507,8 +508,8 @@ describe('one selected money basis across Usage bodies', () => {
       breakdowns: { agent: [{ key: 'claude', ...total }] },
       engineTimeline: [{ bucketStartMs: day, bucketEndMs: 2 * day, leaders: [{ key: 'claude', ...known }] },
         ...(olderUnpriced ? [{ bucketStartMs: 0, bucketEndMs: day, leaders: [{ key: 'claude', ...older }] }] : [])],
-    }, undefined, {}, costBasis);
-    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }).results[0]!;
+    }, bundledUsageModelPriceCatalog, {}, costBasis);
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<>
       <UsageDailyWidget {...props} query={query} slice={slice} id="usage_daily" testID="whole-daily" />
       <UsageBreakdownsWidget {...props} query={query} slice={slice} id="usage_breakdowns" testID="whole-breakdown" />
@@ -541,7 +542,7 @@ describe('one selected money basis across Usage bodies', () => {
     const accounting = { ...mounted.slice.accounting!, breakdowns: { agent: [claude], model: [{ ...claude, key: 'opus' }] } };
     const headings = async (breakdown: readonly ('agent' | 'model')[]) => {
       const q = normalizeUsageQuery({ ...mounted.query, breakdown: [...breakdown] });
-      const slice = resolveUsagePageAggregation({ queries: [q], accounting: [{ query: q, status: 'available', value: accounting }] }).results[0]!;
+      const slice = resolveUsagePageAggregation({ queries: [q], accounting: [{ query: q, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
       const screen = await renderScreen(<UsageBreakdownsWidget {...mounted} query={q} slice={slice} id="usage_breakdowns" testID="heads" />);
       return screen.findAll(node => node.props.accessibilityRole === 'header').length;
     };
@@ -559,7 +560,7 @@ describe('one selected money basis across Usage bodies', () => {
       tokens: { ...tokens, total: previousTokens, input: previousTokens } } };
     const slice = resolveUsagePageAggregation({ queries: [query], accounting: [
       { query, status: 'available', value: accounting }, { query: priorQuery, status: 'available', value: previous },
-    ] }).results[0]!;
+    ] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} query={query} slice={slice}
       id="usage_period_summary" testID="summary" />);
     const comparison = screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'summary.hero')?.props.comparison;
@@ -576,7 +577,7 @@ describe('one selected money basis across Usage bodies', () => {
     const previous = { ...accounting, totals: { ...accounting.totals, tokens: previousTokens } };
     const slice = resolveUsagePageAggregation({ queries: [query], accounting: [
       { query, status: 'available', value: accounting }, { query: priorQuery, status: 'available', value: previous },
-    ] }).results[0]!;
+    ] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} query={query} slice={slice}
       id="usage_period_summary" testID="floor-comparison" />);
     const hero = screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'floor-comparison.hero')!;
@@ -595,23 +596,23 @@ describe('one selected money basis across Usage bodies', () => {
     const props = mountedCosts();
     const query = normalizeUsageQuery({ ...props.query, includeSessionEvidence: true });
     const accounting = [{ query, status: 'available' as const, value: props.slice.accounting! }];
-    const cold = resolveUsagePageAggregation({ queries: [query], accounting });
+    const cold = resolveUsagePageAggregation({ queries: [query], accounting }, bundledUsageModelPriceCatalog);
     const facts = [{ workId: 'work', evidenceId: 'turn', agentId: null, machineId: null,
       kind: 'busy' as const, startMs: 0, endMs: 3_600_000 }];
     const partial = resolveUsagePageAggregation({ queries: [query], accounting,
-      howYouWork: [{ query, asOfMs: day, detail: { status: 'partial', facts: facts.map(fact => ({ ...fact, endMs: null })) } }] });
+      howYouWork: [{ query, asOfMs: day, detail: { status: 'partial', facts: facts.map(fact => ({ ...fact, endMs: null })) } }] }, bundledUsageModelPriceCatalog);
     const complete = resolveUsagePageAggregation({ queries: [query], accounting,
-      howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts } }] });
+      howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts } }] }, bundledUsageModelPriceCatalog);
     // Transcript coverage can be partial while every admitted busy interval is
     // closed. Completeness of this duration belongs to the interval facet.
     const completeIntervals = resolveUsagePageAggregation({ queries: [query], accounting,
-      howYouWork: [{ query, asOfMs: day, detail: { status: 'partial', facts } }] });
+      howYouWork: [{ query, asOfMs: day, detail: { status: 'partial', facts } }] }, bundledUsageModelPriceCatalog);
     const measuredZero = resolveUsagePageAggregation({ queries: [query], accounting,
-      howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [] } }] });
+      howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [] } }] }, bundledUsageModelPriceCatalog);
     const pending = resolveUsagePageAggregation({ queries: [query], accounting, previous: complete,
-      sources: [{ source: 'how_you_work', status: 'pending' }] });
+      sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog);
     const refused = resolveUsagePageAggregation({ queries: [query], accounting, previous: complete,
-      howYouWork: [{ query, asOfMs: day, detail: { status: 'unknown' } }] });
+      howYouWork: [{ query, asOfMs: day, detail: { status: 'unknown' } }] }, bundledUsageModelPriceCatalog);
     const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} query={query}
       slice={cold.results[0]!} id="usage_period_summary" testID="summary" />);
     const statLabels = () => screen.findAllByType(HappierDataMetric)
@@ -638,7 +639,7 @@ describe('one selected money basis across Usage bodies', () => {
       howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [
         { workId: 'work', evidenceId: 'turn', agentId: null, machineId: null, kind: 'busy', startMs: 0, endMs: 5_400_000 },
       ] } }],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} query={query} slice={slice}
       id="usage_period_summary" testID="duration-summary" />);
     const agent = screen.findAllByType(HappierDataMetric).find(metric => metric.props.label === t('usage.board.page.agentTime'))!;
@@ -665,7 +666,7 @@ describe('one selected money basis across Usage bodies', () => {
     }).outcomes);
     const slice = (merged: typeof summary) => resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value }], work: [{ query, status: 'available', summary: merged }],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const current = slice(summary);
     expect(current.accounting).not.toHaveProperty('contributions');
     expect(current.work).toBeUndefined();
@@ -684,7 +685,7 @@ describe('one selected money basis across Usage bodies', () => {
     const tooOld = (operation: string) => ({ status: 'error' as const, errorCode: 'update_required',
       updateRequired: { kind: 'update_required' as const, operation, component: 'server' as const, reason: 'session_read_batch_unsupported' } });
     const slice = resolveUsagePageAggregation({ queries: [query], accounting,
-      sources: [{ source: 'how_you_work', ...tooOld('session.detail') }, { source: 'work', ...tooOld('work.outcomes') }] }).results[0]!;
+      sources: [{ source: 'how_you_work', ...tooOld('session.detail') }, { source: 'work', ...tooOld('work.outcomes') }] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} query={query} slice={slice} id="usage_period_summary" testID="summary" />);
     const caption = (label: string) => screen.findAllByType(HappierDataMetric).find(metric => metric.props.label === label)?.props.caption;
     // Waiting cannot fill these in: the slot says why once, in the same words as the page header, and keeps its place.
@@ -698,7 +699,7 @@ describe('one selected money basis across Usage bodies', () => {
       .map(key => ({ key, eventCount: 1, tokens, cost: captured.totals.cost }));
     const accounting = repriceUsageAnalyticsResponse({ ...captured,
       breakdowns: { ...captured.breakdowns, agent: candidates }, leaders: { ...captured.leaders, agents: candidates },
-    });
+    }, bundledUsageModelPriceCatalog);
     const rows = accounting.contributions!;
     const claudeCost = rows.filter(row => row.agentId === 'claude')
       .reduce((sum, row) => sum + (row.cost.apiEquivalentUsd ?? row.cost.estimatedUsd ?? 0), 0);
@@ -717,7 +718,7 @@ describe('one selected money basis across Usage bodies', () => {
     const summary = summarizeUsageWork(allocateUsageOutcomes({ contributions: rows, evidence: [] }), { metric: 'cost', costBasis: 'auto' });
     expect(summary.total).toBeCloseTo(total);
     expect(summary.moneyBasis).toMatchObject({ kind: 'mixed', currency: 'USD' });
-    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }).results[0]!;
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
     const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
       freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
     const props = { query, slice, model, serverId: 'home' };
@@ -741,7 +742,7 @@ describe('one selected money basis across Usage bodies', () => {
   it('groups the real QA Haiku aliases once, conserves their tokens, and keeps Haiku 5.5 distinct', async () => {
     const query = normalizeUsageQuery({ breakdown: ['model'], metric: 'tokens' });
     const accounting = usageQaAccountingFixture();
-    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }).results[0]!;
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
     const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
       freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
     const screen = await renderScreen(<UsageBreakdownsWidget query={query} slice={slice} model={model} serverId="home" id="usage_breakdowns" testID="qa-models" />);
@@ -753,7 +754,7 @@ describe('one selected money basis across Usage bodies', () => {
   });
   it('distinguishes a folded returned ranking from the three real QA machines omitted by the query', async () => {
     const query = normalizeUsageQuery({ breakdown: ['machine'], metric: 'tokens' });
-    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: usageQaAccountingFixture() }] }).results[0]!;
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: usageQaAccountingFixture() }] }, bundledUsageModelPriceCatalog).results[0]!;
     const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
       freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
     const screen = await renderControls(<UsageBreakdownsWidget query={query} slice={slice} model={model} serverId="home" id="usage_breakdowns" testID="qa-machines" />);
@@ -786,7 +787,7 @@ describe('one selected money basis across Usage bodies', () => {
     const slice = resolveUsagePageAggregation({ queries: [query], accounting: [
       { query, status: 'available', value: accounting },
       { query: resolveUsageComparisonQuery(query)!, status: 'available', value: previous },
-    ] }).results[0]!;
+    ] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsageEfficiencyWidget {...props} query={query} slice={slice} id="usage_efficiency" testID="measured-efficiency" />);
     const metric = screen.findAllByType(HappierDataMetric).find(row => row.props.testID === 'measured-efficiency.perMtok');
     expect.soft(metric?.props.value).toBe(7_500);
@@ -803,7 +804,7 @@ describe('one selected money basis across Usage bodies', () => {
     const priorQuery = resolveUsageComparisonQuery(query)!;
     const slice = resolveUsagePageAggregation({ queries: [query], accounting: [
       { query, status: 'available', value: accounting }, { query: priorQuery, status: 'available', value: previous },
-    ] }).results[0]!;
+    ] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsageEfficiencyWidget {...props} query={query} slice={slice} id="usage_efficiency" testID="efficiency" />);
     expect(screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'efficiency.perMtok')?.props.comparison)
       .toMatchObject({ value: previousTokens === 23 ? '▼ 8%' : '▲ 228×', meaning: previousTokens === 23 ? 'good' : 'bad' });
@@ -872,7 +873,7 @@ describe('one selected money basis across Usage bodies', () => {
     for (const metric of ['cost', 'tokens'] as const) {
       const query = normalizeUsageQuery({ ...base.query, metric });
       const slice = resolveUsagePageAggregation({ queries: [query],
-        accounting: [{ query, status: 'available', value: repriceUsageAnalyticsResponse(empty) }] }).results[0]!;
+        accounting: [{ query, status: 'available', value: repriceUsageAnalyticsResponse(empty, (empty).priceCatalog ?? bundledUsageModelPriceCatalog) }] }, bundledUsageModelPriceCatalog).results[0]!;
       const screen = await renderScreen(<UsagePeriodSummaryWidget {...base} query={query} slice={slice}
         id="usage_period_summary" testID="empty" />);
       const figure = screen.findAllByType(HappierDataMetric)

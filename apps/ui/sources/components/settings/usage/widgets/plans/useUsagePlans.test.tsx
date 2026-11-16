@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { afterEach, expect, it } from 'vitest';
 import * as React from 'react';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -70,7 +71,7 @@ it('does no Plans render work for quota-cache publications when its displayed sl
   const query = normalizeUsageQuery({});
   const slice = resolveUsagePageAggregation({ queries: [query], sources: refs.map(ref => ({
     source: `quota:${JSON.stringify({ bindingKind: 'account', ref })}`, status: 'pending' as const,
-  })) }).results[0]!;
+  })) }, bundledUsageModelPriceCatalog).results[0]!;
   const refresh = async () => {};
   let renders = 0;
   const hook = await renderHook(() => { renders++; return useUsagePlans(slice, refresh); }, {
@@ -197,7 +198,7 @@ it.each([
     renders++;
     const resource = useUsageWidgetResource({ credentials, enabled: true, plan });
     const model = useUsageWidgetBodyModel(resource, 'plans');
-    const empty = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
+    const empty = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!;
     return { ...useUsagePlans(model.slice ?? empty, model.refresh), pending: model.pending,
       refreshing: model.refreshing, freshness: model.freshness, error: model.error, refresh: model.refresh };
   }, { wrapper: ({ children }) => React.createElement(InjectedAuthProvider, { credentials, children }) });
@@ -298,7 +299,7 @@ it('keeps external usage rows on a first Plans mount after every Machine sleeps'
     expect(registry.entries.find(entry => entry.service?.pluginId === service.pluginId)).toBeUndefined();
     const source = QualifiedConnectedServiceUsageSourceV4Schema.parse({ bindingKind: 'account', ref });
     const slice = resolveUsagePageAggregation({ queries: [normalizeUsageQuery({})],
-      sources: [{ source: `quota:${JSON.stringify(source)}`, status: 'pending' }] }).results[0]!;
+      sources: [{ source: `quota:${JSON.stringify(source)}`, status: 'pending' }] }, bundledUsageModelPriceCatalog).results[0]!;
     const hook = await renderHook(() => useUsagePlans(slice, async () => {}), {
       wrapper: ({ children }) => React.createElement(InjectedAuthProvider, { credentials, children }),
     });
@@ -352,7 +353,7 @@ it.each([false, true])('keeps compact connected-account names distinct when ever
       });
     });
     const query = normalizeUsageQuery({});
-    const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }).results[0]!;
+    const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }, bundledUsageModelPriceCatalog).results[0]!;
     const refresh = async () => {};
     const hook = await renderHook(() => useUsagePlans(slice, refresh), {
       wrapper: ({ children }) => React.createElement(InjectedAuthProvider, { credentials, children }),
@@ -422,7 +423,7 @@ it('retains the answered pool order during refresh and failed reads, but not aft
   let aggregation: ReturnType<typeof resolveUsagePageAggregation> | undefined;
   const aggregate = (selection: Selection, members = ['work'], previous: typeof aggregation | null = aggregation) => {
     aggregation = resolveUsagePageAggregation({ queries: [query],
-      pools: [{ query, value: [{ ...pool, memberAccountIds: members, selection }] }], previous: previous ?? undefined });
+      pools: [{ query, value: [{ ...pool, memberAccountIds: members, selection }] }], previous: previous ?? undefined }, bundledUsageModelPriceCatalog);
     return aggregation.results[0]!;
   };
   let slice = aggregate(pool.selection, ['work'], null);
@@ -461,7 +462,7 @@ it('retains the answered pool order during refresh and failed reads, but not aft
   await hook.unmount();
   // A newly mounted reader of the same Resource sees the retained answer too.
   const warmSlice = resolveUsagePageAggregation({ queries: [query], previous: aggregation,
-    pools: [{ query, value: [{ ...pool, selection: { status: 'pending', machineId: 'machine' } }] }] }).results[0]!;
+    pools: [{ query, value: [{ ...pool, selection: { status: 'pending', machineId: 'machine' } }] }] }, bundledUsageModelPriceCatalog).results[0]!;
   const warm = await renderHook(() => useUsagePoolSelections(warmSlice));
   expect.soft(warm.getCurrent().get(key)).toMatchObject({ observedAtMs: 2 });
   await warm.unmount();
@@ -540,7 +541,7 @@ it('refreshes the displayed Usage Resource and creates no independent quota poll
   let slice = resolveUsagePageAggregation({ queries: [normalizeUsageQuery({})], pools: [{ query: normalizeUsageQuery({}),
     value: [{ group: poolRef, memberAccountIds: ['work'], activeAccountId: null, selection: { status: 'pending' } }] }], sources: [
     { source: `quota:${JSON.stringify(source)}`, status: 'pending' },
-  ] }).results[0]!;
+  ] }, bundledUsageModelPriceCatalog).results[0]!;
   let refreshed = false;
   const refresh = async () => { refreshed = true; };
   const hook = await renderHook(() => useUsagePlans(slice, refresh), {

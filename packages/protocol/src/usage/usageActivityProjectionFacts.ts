@@ -5,7 +5,7 @@ import { mergeUsageAccountingSessionMembership, projectUsageAccountingSessionIds
 import { projectUsageAgentAccountingCalendar, projectUsageCalendarAccountingFacts, resolveUsageAccountingCalendarPeriod, type UsageAgentAccountingHourFacts } from './usageAgentCalendar.js';
 import { buildUsageAdmittedPricingPopulation, mergeUsagePricingPopulations, projectUsagePricingOperandSelections, type UsagePricingOperandSelection } from './usagePricingPopulation.js';
 import { hasCompleteUsageCostEvidence } from './usageAnalyticsDemandProjection.js';
-import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
+import { BUNDLED_USAGE_MODEL_PRICE_REVISION } from './usageModelPriceSchemas.js';
 import { summarizeUsageExecutionSources } from './usageSourceSummary.js';
 import { sameQualifiedConnectedAccountRef } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { restoreUsageMoneyProvenance, serializeUsageMoneyProvenance, type SerializedUsageMoneyProvenance } from './usageMoney.js';
@@ -193,7 +193,7 @@ export function mergeUsageActivityProjectionFacts(parts: readonly UsageActivityP
         period, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, costMode: query.costMode }).projection : undefined;
     for (const [index, group] of accountGroups.entries()) pricing[`account:${index}`] = mergeUsagePricingPopulations(group.populations);
     return { ...value, summary: { v: 1, costMode: query.costMode ?? 'auto', pricing, rankedPricing: {}, countedPricing: true,
-        observationRange, catalogRevision: bundledUsageModelPriceCatalog.provenance.revision,
+        observationRange, catalogRevision: BUNDLED_USAGE_MODEL_PRICE_REVISION,
         ...(calendar && period ? { accountingCalendar: { value: calendar, pricing: Object.fromEntries(parts.flatMap(part => part.hourPricing)
             .map(hour => [usageSummaryCalendarHourPricingKey(Math.max(period.startMs, hour.startMs), hour.agentId),
                 resolveUsageSummaryCalendarWholePopulation(pricing.totals, contributionCount,

@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
@@ -128,7 +129,7 @@ async function openEditor(published: boolean, usage?: Readonly<{ eventCount: num
     activity: { calendarDays: [{ date: '2026-10-20', eventCount }] },
     coverage: { status: 'partial', reasons: ['incomplete_history'], missingDimensions: [], ranked: [],
       range: { startMs, endMs, complete: false }, sources: [{ source: 'runtime', path: 'runtime', status: 'available',
-        eventCount, asOfMs: endMs, historyComplete: false }] } }));
+        eventCount, asOfMs: endMs, historyComplete: false }] } }), bundledUsageModelPriceCatalog);
   harness.answer(serverId, 'POST /v2/usage/query', { body: accounting });
   const deliveries: UsageAnalyticsQueryBatchResponse[] = [];
   const batchRequests: unknown[] = [];
@@ -150,7 +151,7 @@ async function openEditor(published: boolean, usage?: Readonly<{ eventCount: num
             cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [], activity: { calendarDays: [] } }),
           coverage: { ...accounting.coverage!, range: { ...range, complete: false },
             sources: accounting.coverage!.sources.map(source => ({ ...source, eventCount: includesFixture ? eventCount : 0 })) },
-        });
+        }, bundledUsageModelPriceCatalog);
         return { query, value };
       }),
     }, request, false));

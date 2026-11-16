@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
@@ -44,7 +45,7 @@ function fixture(values: readonly (number | null)[], endMs: number, byAgent = tr
         sources: [{ source: 'runtime', path: 'runtime' as const, execution: 'happier' as const, eventCount: 1, tokens: tokens(value), cost }] }] }]) : [],
     coverage: { status: 'partial', reasons: ['incomplete_history'], sources: [], missingDimensions: [], ranked: [],
       range: { startMs: start, endMs, complete: false } },
-  } }] }).results[0]!;
+  } }] }, bundledUsageModelPriceCatalog).results[0]!;
   const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
     freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
   return { query, slice, model, serverId: 'home', id: 'usage_daily' as const, testID: 'daily' };
@@ -184,7 +185,7 @@ describe('Daily keeps its shape: declared plot height and a chart-shaped first r
     try {
       const props = fixture([10, 30], start + 2 * day);
       const query = props.query;
-      const slice = resolveUsagePageAggregation({ queries: [query], sources: [{ source: 'accounting', status: 'pending' as const }] }).results[0]!;
+      const slice = resolveUsagePageAggregation({ queries: [query], sources: [{ source: 'accounting', status: 'pending' as const }] }, bundledUsageModelPriceCatalog).results[0]!;
       const geometry = { width: 560, height: 336 };
       const settled = await renderScreen(<WidgetPresentationProvider value={{ ...medium, geometry }}><UsageDailyWidget {...props} /></WidgetPresentationProvider>);
       const reading = await renderScreen(<WidgetPresentationProvider value={{ ...medium, geometry }}><UsageDailyWidget {...props} slice={slice} /></WidgetPresentationProvider>);

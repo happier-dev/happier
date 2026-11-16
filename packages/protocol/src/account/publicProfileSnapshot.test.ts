@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '../usage/usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { buildPublicProfileSnapshot } from './publicProfileSnapshot.js';
 import { PublicProfilePolicyV1Schema, PUBLIC_PROFILE_FIELDS_V1 } from './publicProfile.js';
@@ -40,7 +41,7 @@ function result(evidence?: readonly UsageWorkEvidence[], complete = false, agent
       updatedAt: row.observedAtMs + (index + 1) * 100 })) } };
   const detail = projectUsageQueryWorkEvidence({ query, sessions: [session], contributions: accounting.contributions });
   return resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', asOfMs: endMs, value: accounting }],
-    howYouWork: [{ query, asOfMs: endMs, detail }], ...(evidence ? { work: [{ query, evidence, status: 'available' as const, asOfMs: endMs }] } : {}) }).results[0]!;
+    howYouWork: [{ query, asOfMs: endMs, detail }], ...(evidence ? { work: [{ query, evidence, status: 'available' as const, asOfMs: endMs }] } : {}) }, bundledUsageModelPriceCatalog).results[0]!;
 }
 
 describe('public-profile snapshot computation from canonical Usage', () => {
@@ -55,7 +56,7 @@ describe('public-profile snapshot computation from canonical Usage', () => {
     const prepared = [accounting, projectUsageAnalyticsSummary(accounting, usageQueryToAnalyticsRequest(query, endMs))];
     for (const value of prepared) {
       const queryResult = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value,
-        status: 'available', asOfMs: endMs }] }).results[0]!;
+        status: 'available', asOfMs: endMs }] }, bundledUsageModelPriceCatalog).results[0]!;
       const built = buildPublicProfileSnapshot({ queryResult, policy, nowMs: endMs });
       expect(built.kind).toBe('ready');
       if (built.kind !== 'ready') throw new Error('Expected public measured tokens');
@@ -98,7 +99,7 @@ describe('public-profile snapshot computation from canonical Usage', () => {
     expect(compact.summary!.publicProfileAccounting!.total.calendar.days).toHaveLength(3);
     expect(compact.summary!.publicProfileAccounting!.lenses.every(lens => lens.population.calendar.days.length === 3)).toBe(true);
     const snapshots = [accounting, compact].map(value => resolveUsagePageAggregation({ queries: [selected],
-      accounting: [{ query: selected, value, status: 'available', asOfMs: endMs }] }).results[0]!);
+      accounting: [{ query: selected, value, status: 'available', asOfMs: endMs }] }, bundledUsageModelPriceCatalog).results[0]!);
     const calendarPolicy = PublicProfilePolicyV1Schema.parse({ ...policy, fields: { ...policy.fields, mergedPrs: false } });
     const built = snapshots.map(queryResult => buildPublicProfileSnapshot({ queryResult, policy: calendarPolicy, nowMs: endMs }));
     expect(built[0]).toEqual(built[1]);
@@ -126,7 +127,7 @@ describe('public-profile snapshot computation from canonical Usage', () => {
     expect(compact.summary!.publicProfileAccounting!.period).toEqual({ startMs: 0, endMs, timeZoneOffsetMinutes: 0 });
     for (const value of [accounting, compact]) {
       const shown = resolveUsagePageAggregation({ queries: [selected], accounting: [{ query: selected, value,
-        status: 'available', asOfMs: endMs }] }).results[0]!;
+        status: 'available', asOfMs: endMs }] }, bundledUsageModelPriceCatalog).results[0]!;
       const built = buildPublicProfileSnapshot({ queryResult: shown, policy, nowMs: endMs });
       expect(built.kind).toBe('ready');
       if (built.kind !== 'ready') throw new Error('Expected known-empty All profile');
@@ -221,7 +222,7 @@ describe('public-profile snapshot computation from canonical Usage', () => {
         coverage: { ...slice.accounting!.coverage, sources: [] },
       });
       const queryResult = resolveUsagePageAggregation({ queries: [query],
-        accounting: [{ query, status: 'available', asOfMs, value: accounting }] }).results[0]!;
+        accounting: [{ query, status: 'available', asOfMs, value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
       expect(buildPublicProfileSnapshot({ queryResult, policy, nowMs: endMs })).toEqual({ kind: 'unavailable',
         reason: empty ? 'no_eligible_personal_usage' : 'source_time_unavailable' });
     }
@@ -233,7 +234,7 @@ describe('public-profile snapshot computation from canonical Usage', () => {
       contributions: slice.accounting!.contributions!.map(row => ({ ...row, eventCount: undefined })),
       coverage: { ...slice.accounting!.coverage, status: 'complete', range: { startMs, endMs, complete: true } } });
     const queryResult = resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, status: 'available', asOfMs: endMs, value: accounting }] }).results[0]!;
+      accounting: [{ query, status: 'available', asOfMs: endMs, value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
     const built = buildPublicProfileSnapshot({ queryResult, policy, nowMs: endMs });
     if (built.kind !== 'ready') throw new Error('Expected witnessed token facts');
     expect(built.snapshot.facts.tokens).toBe(50);

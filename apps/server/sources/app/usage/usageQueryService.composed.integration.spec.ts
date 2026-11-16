@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, estimateUsageModelCost, buildConnectedServiceCredentialRecord,
     normalizeUsageQuery, resolveUsagePageAggregation,
     UsageAnalyticsQueryRequestSchema, UsageEventIngestRequestSchema, usageQueryToAnalyticsRequest } from '@happier-dev/protocol';
@@ -176,7 +177,7 @@ describe('native usage producer → ingest → query', () => {
                     expect(publicResult.coverage?.sources.some(source => source.source === 'codex-app-server-response-usage'
                         && source.path === 'runtime' && source.status === 'partial' && typeof source.asOfMs === 'number')).toBe(true);
                     const queryResult = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available',
-                        value: publicResult }] }).results[0]!;
+                        value: publicResult }] }, bundledUsageModelPriceCatalog).results[0]!;
                     expect(buildPublicProfileSnapshot({ queryResult, policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1, nowMs: endMs }))
                         .toMatchObject({ kind: 'ready', snapshot: { facts: { tokens: expectedPublicTokens } } });
                 }
@@ -292,7 +293,7 @@ describe('native usage producer → ingest → query', () => {
         expect(finalDay.costFacts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'reported', amountUsd: 0.12 })]));
         if (earlierTokens === 100) {
             const priced = await querySession({ costMode: 'api_equivalent' });
-            expect(priced.totals.cost.apiEquivalentUsd).toBeCloseTo(estimateUsageModelCost(modelId, assistant!.tokens)!.total, 10);
+            expect(priced.totals.cost.apiEquivalentUsd).toBeCloseTo(estimateUsageModelCost(modelId, assistant!.tokens, bundledUsageModelPriceCatalog)!.total, 10);
         }
     });
 });

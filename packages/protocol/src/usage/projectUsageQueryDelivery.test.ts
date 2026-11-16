@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
 import { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '../actions/externalActionLimits.js';
@@ -37,7 +38,7 @@ describe('agent Usage coverage delivery', () => {
     expect(accounting.summary?.accountingCalendar).toBeDefined();
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs }, includeActivity: true, includeComparison: false });
     const rich = resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, value: accounting, status: 'available' }] });
+      accounting: [{ query, value: accounting, status: 'available' }] }, bundledUsageModelPriceCatalog);
     for (const surface of ['agent', 'mcp'] as const) {
       const delivered = projectUsageQueryDelivery(rich, surface);
       expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(delivered)).toBeLessThan(50 * 1024);
@@ -84,7 +85,7 @@ describe('agent Usage coverage delivery', () => {
         { query: comparison, value: { ...accounting, coverage: { ...accounting.coverage!,
           range: { startMs: 0, endMs: 100, complete: false } } }, status: 'available' }],
       work: [{ query, evidence: [], status: 'available' }],
-    });
+    }, bundledUsageModelPriceCatalog);
     // Substitute only the authenticated query transport. Action validation,
     // surface selection, aggregation and delivery all run their real owners.
     const invoke = async (batch: typeof rich, surface: 'cli' | 'agent' | 'mcp') => {
@@ -128,7 +129,7 @@ describe('agent Usage coverage delivery', () => {
         coverage: { ...accounting.coverage!, sources: sources.slice(0, 1) },
         contributions: contributions.filter(row => row.sessionId === 'session-0') }, status: 'available' }],
       work: [{ query: selected, evidence: [], status: 'available' }],
-    });
+    }, bundledUsageModelPriceCatalog);
     for (const surface of ['agent', 'mcp'] as const) {
       const recovered = (await invoke(detail, surface)).results[0]!;
       expect(recovered.accounting?.coverage?.sources).toEqual(sources.slice(0, 1));

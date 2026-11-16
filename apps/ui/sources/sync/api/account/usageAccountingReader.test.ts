@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { expect, it } from 'vitest';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { collectUsageAnalyticsBatchDelivery, encodeUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery, repriceUsageAnalyticsResponse } from '@happier-dev/protocol/usage/usageCost';
@@ -60,9 +61,9 @@ it('requests compact Work rows and preserves allocation, money modes and local r
             expect(presentation(work.contributions!)).toEqual(presentation(rich.contributions!));
         }
         const rates = { model: { kind: 'rates' as const, inputUsdPerMillion: 9, outputUsdPerMillion: 0 } };
-        const repriced = repriceUsageAnalyticsResponse(work, undefined, rates);
+        const repriced = repriceUsageAnalyticsResponse(work, (work).priceCatalog ?? bundledUsageModelPriceCatalog, rates);
         expect(repriced.contributions?.map(row => row.cost))
-            .toEqual(repriceUsageAnalyticsResponse(rich, undefined, rates).contributions?.map(row => row.cost));
+            .toEqual(repriceUsageAnalyticsResponse(rich, (rich).priceCatalog ?? bundledUsageModelPriceCatalog, rates).contributions?.map(row => row.cost));
         expect(repriced.contributions![0]!.cost.apiEquivalentUsd).toBe(9);
         const full = await accounting.read(query, undefined, true);
         expect(full.contributions![0]!.providerConnectionId).toBe('connection');
@@ -83,7 +84,7 @@ it.each([false, true])('admits compact server prices and preserves rich repricin
             totals: { eventCount: count, tokens: { ...tokens, input: count * tokens.input, total: count * tokens.total }, cost: value.totals.cost },
             contributions: Array.from({ length: count }, (_, index) => ({ id: String(index), observedAtMs: 500,
                 sessionId: null, turnId: null, agentId: null, modelId: 'model', machineId: null, projectKey: null,
-                workspaceId: null, source: null, eventCount: 1, tokens, tokenCategories: tokens, cost: value.totals.cost })) });
+                workspaceId: null, source: null, eventCount: 1, tokens, tokenCategories: tokens, cost: value.totals.cost })) }, catalog);
         const request = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [query],
             contributionQueries: detail ? [query] : [], sessionQueries: [] });
         const delivery = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery(
@@ -99,18 +100,18 @@ it.each([false, true])('admits compact server prices and preserves rich repricin
         } });
         const requested = { ...usageAnalyticsRequestToQuery(query), includeContributions: detail,
             includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false };
-        const initial = projectUsageAccountingSnapshotPrices({ query: requested, status: 'available', value: admitted }, undefined);
+        const initial = projectUsageAccountingSnapshotPrices({ query: requested, status: 'available', value: admitted }, undefined, bundledUsageModelPriceCatalog);
         if (detail) expect(lookups, 'rich rows still admit their exact decimal operands locally').toBeGreaterThan(0);
         else expect.soft(lookups, `${count} freshly admitted rows must not replay the server's compact tariff projection`).toBe(0);
         expect(initial.priceProjection!.value.totals.cost.apiEquivalentUsd).toBe(count * 7);
         const changed = projectUsageAccountingSnapshotPrices(initial,
-            { model: { kind: 'rates', inputUsdPerMillion: 9, outputUsdPerMillion: 0 } });
+            { model: { kind: 'rates', inputUsdPerMillion: 9, outputUsdPerMillion: 0 } }, bundledUsageModelPriceCatalog);
         expect(changed.priceProjection!.value.totals.cost.apiEquivalentUsd).toBe(count * 9);
-        expect(projectUsageAccountingSnapshotPrices(changed, undefined).priceProjection!.value.totals.cost.apiEquivalentUsd).toBe(count * 7);
+        expect(projectUsageAccountingSnapshotPrices(changed, undefined, bundledUsageModelPriceCatalog).priceProjection!.value.totals.cost.apiEquivalentUsd).toBe(count * 7);
         const updatedCatalog = { ...admitted.priceCatalog!, models: { model: { inputUsdPerMillion: 11, outputUsdPerMillion: 0 } },
             provenance: { ...catalog.provenance, revision: 'new-prices' } };
         const updated = projectUsageAccountingSnapshotPrices({ query: requested, status: 'available',
-            value: { ...admitted, priceCatalog: updatedCatalog } }, undefined);
+            value: { ...admitted, priceCatalog: updatedCatalog } }, undefined, bundledUsageModelPriceCatalog);
         expect(updated.priceProjection!.value.totals.cost.apiEquivalentUsd).toBe(count * 11);
     }
 });

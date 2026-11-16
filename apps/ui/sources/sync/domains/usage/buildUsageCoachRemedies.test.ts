@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { describe, expect, it } from 'vitest';
 import { UsageCoachFindingSchema } from '@happier-dev/protocol/usage/coach/coachFinding';
 import { UsagePromptCompositionSchema } from '@happier-dev/protocol/usage/coach/usagePromptComposition';
@@ -15,7 +16,7 @@ const composition = UsagePromptCompositionSchema.parse({ v: 1, evidenceId: 'comp
     nativePrefix: null, contextWindowTokens: null });
 // The builder consumes the evaluator's strict finding contract; detector behavior has its own source tests.
 const findings = evaluateUsageCoach({ queryKey: 'query', period: { startMs: 100, endMs: 200 }, asOfMs: 200,
-    currentness: 'current', composition: [composition] }).findings;
+    currentness: 'current', composition: [composition] }, bundledUsageModelPriceCatalog).findings;
 const session = createSessionFixture({ id: 'session', serverId: 'home', metadata: { path: '/workspace/project', host: 'host',
     machineId: 'machine', agent: 'codex', agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } });
 const buildUsageCoachRemedies = (input: Omit<Parameters<typeof buildProjectedRemedies>[0], 'sessions'>
@@ -43,7 +44,7 @@ describe('Coach repository remedy preparation', () => {
                 env: {}, createdAt: 1, updatedAt: 10 }], bindings: [{ id: 'binding', serverId: 'server', enabled: true,
                     target: { t: 'allMachines' }, createdAt: 1, updatedAt: 20 }] } };
         const evaluation = evaluateUsageCoach({ queryKey: 'q', period: { startMs: 100, endMs: 200 }, asOfMs: 200,
-            currentness: 'current', detail: { coverage: 'partial', mcpUsage: [usage] } });
+            currentness: 'current', detail: { coverage: 'partial', mcpUsage: [usage] } }, bundledUsageModelPriceCatalog);
         const read = (mcpCatalog: McpServerCatalogSnapshotV1) => buildUsageCoachRemedies({ findings: evaluation.findings,
             composition: [], mcpUsage: [usage], mcpCatalog, sessions: [session], serverId: 'home' });
         expect(read(current)).toEqual([{ detectorId: 'mcp_overhead', evidenceIds: ['mcp-window'],
@@ -65,7 +66,7 @@ describe('Coach repository remedy preparation', () => {
             bindings: [{ ...usage.bindings[0]!, bindingRevision: 19, catalogRevision: 39, toolCallCount: 1 }] };
         const readWindows = (mcpUsage: typeof usage[]) => buildUsageCoachRemedies({
             findings: evaluateUsageCoach({ queryKey: 'q', period: { startMs: 100, endMs: 200 }, asOfMs: 200,
-                currentness: 'current', detail: { coverage: 'partial', mcpUsage } }).findings,
+                currentness: 'current', detail: { coverage: 'partial', mcpUsage } }, bundledUsageModelPriceCatalog).findings,
             composition: [], mcpUsage, mcpCatalog: current, sessions: [session], serverId: 'home' });
         expect(readWindows([stale, usage])).toEqual(read(current));
         const later = { ...usage, evidenceId: 'later-window', observedAtMs: 180, window: { startMs: 160, endMs: 180 } };

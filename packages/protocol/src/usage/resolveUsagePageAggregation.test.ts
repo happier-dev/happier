@@ -29,7 +29,7 @@ it('projects producer coverage into distinct source states with the freshest obs
   sources.push({ ...sources[0]!, status: 'error', asOfMs: 50 });
   const value = { ...accounting, coverage: { status: 'partial' as const, reasons: [], missingDimensions: [], sources,
     range: { complete: false } } };
-  const result = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] });
+  const result = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] }, bundledUsageModelPriceCatalog);
   expect(result.results[0]?.sources.filter(source => source.source === 'claude-sdk-result')).toEqual([
     { source: 'claude-sdk-result', status: 'partial', asOfMs: 99 },
     { source: 'claude-sdk-result', status: 'error', asOfMs: 50 },
@@ -43,7 +43,7 @@ it('evaluates no Coach detectors for chart demand while retaining Session interv
     const read = (query: typeof chart) => resolveUsagePageAggregation({ queries: [query], nowMs: 1000,
       accounting: [{ query, value: accounting, status: 'available', asOfMs: 1000 }],
       howYouWork: [{ query, asOfMs: 1000, detail: { status: 'available', facts: [{ workId: 'work', evidenceId: 'turn',
-        agentId: 'codex', machineId: null, kind: 'busy', startMs: 100, endMs: 400 }] } }] }).results[0]!;
+        agentId: 'codex', machineId: null, kind: 'busy', startMs: 100, endMs: 400 }] } }] }, bundledUsageModelPriceCatalog).results[0]!;
     const first = read(chart);
     expect(evaluations.mock.calls.length).toBe(0);
     expect(first.coach).toBeUndefined();
@@ -62,7 +62,7 @@ it.each([false, true])('does not attach or await undemanded quota sources (accou
     accounting: [{ query, value: accounting, status: 'available', asOfMs: 1000 }],
     quota: { status: 'pending', value: [] },
     sources: [{ source: 'quota:other-visible-widget', status: 'pending' }],
-  }).results[0]!;
+  }, bundledUsageModelPriceCatalog).results[0]!;
   expect(slice.quota).toBeUndefined();
   expect(slice.pools).toBeUndefined();
   expect(slice.sources.filter(source => source.source.startsWith('quota'))).toEqual([]);
@@ -83,7 +83,7 @@ it.each([false, true])('uses the selected All calendar bounds in rich and compac
   const snapshot = projectUsageAccountingSnapshotCalendar({ query, period: { endMs }, value, status: 'available' });
   expect(snapshot.agentCalendarAccounting!.period).toEqual({ startMs: Date.parse('2026-10-21T22:00:00Z'), endMs });
   expect(snapshot.agentCalendarAccounting!.projection.days.map(day => day.date)).toEqual(['2026-10-22']);
-  const page = resolveUsagePageAggregation({ queries: [query], accounting: [snapshot], nowMs: endMs });
+  const page = resolveUsagePageAggregation({ queries: [query], accounting: [snapshot], nowMs: endMs }, bundledUsageModelPriceCatalog);
   expect(UsageQueryBatchResultSchema.safeParse(page).success).toBe(true);
   const result = page.results[0]!;
   expect(result.howYouWork!.agentCalendar!.days.map(day => day.date)).toEqual(['2026-10-22']);
@@ -111,7 +111,7 @@ it.each([false, true])('keeps earlier private days and weekly accounting when co
         accounting: [{ query: requested, period, value, status: 'available' }],
         howYouWork: [{ query: requested, detail: { status: 'available', facts: [{ workId: 'work', evidenceId: 'turn',
           agentId: 'codex', machineId: null, kind: 'busy', startMs: startMs + 1_000, endMs: startMs + 2_000 }] } }],
-      });
+      }, bundledUsageModelPriceCatalog);
       expect(UsageQueryBatchResultSchema.safeParse(page).success).toBe(true);
       return page.results[0]!;
     };
@@ -148,7 +148,7 @@ it('retains equal public projections when a source wrapper carries a different p
   const inputs = { queries: [query], nowMs: 1_000,
     accounting: [{ query, status: 'available' as const, value: accounting }],
     howYouWork: [{ query, detail: { status: 'available' as const, facts } }] };
-  const original = resolveUsagePageAggregation(inputs);
+  const original = resolveUsagePageAggregation(inputs, bundledUsageModelPriceCatalog);
   const source = original.results[0]!;
   // In-process source wrappers carry the private admission symbol alongside
   // public facts. Its calculation value can differ from the published identity.
@@ -159,12 +159,12 @@ it('retains equal public projections when a source wrapper carries a different p
   expect(retained, 'equal public facts must retain the already published batch').toBe(wrapped);
   factVisits = 0;
   const changed = resolveUsagePageAggregation({ ...inputs, previous: retained,
-    quota: { status: 'pending', asOfMs: 2_000 } });
+    quota: { status: 'pending', asOfMs: 2_000 } }, bundledUsageModelPriceCatalog);
   expect(changed.results[0]!.howYouWork).toBe(wrapped.results[0]!.howYouWork);
   expect(changed.results[0]!.sources).toContainEqual({ source: 'quota', status: 'pending', asOfMs: 2_000 });
   expect(factVisits, 'independent quota progress must not traverse retained Work facts').toBe(0);
   const realChange = resolveUsagePageAggregation({ ...inputs, previous: changed,
-    howYouWork: [{ query, detail: { status: 'available', facts: [{ ...facts[0]!, endMs: 300 }] } }] });
+    howYouWork: [{ query, detail: { status: 'available', facts: [{ ...facts[0]!, endMs: 300 }] } }] }, bundledUsageModelPriceCatalog);
   expect(realChange.results[0]!.howYouWork!.intervals!.agentTimeMs).toBe(200);
 });
 
@@ -177,13 +177,13 @@ it('does not derive Coach facts for accounting-only queries, while evidence quer
       sessionId: 's', turnId: String(index), agentId: null, modelId: 'model', machineId: null, projectKey: null,
       workspaceId: null, source: null, eventCount: 1, tokens, tokenCategories: tokens, cost: accounting.totals.cost })),
     priceCatalog: { ...bundledUsageModelPriceCatalog, models: { model: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } } },
-  }));
+  }), { ...bundledUsageModelPriceCatalog, models: { model: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } } });
   let lookups = 0;
   value.priceCatalog!.models = new Proxy(value.priceCatalog!.models, {
     get(target, key, receiver) { lookups++; return Reflect.get(target, key, receiver); },
   });
   const project = (queries: typeof query[]) => resolveUsagePageAggregation({ queries,
-    accounting: queries.map(query => ({ query, status: 'available' as const, value, asOfMs: 1_000 })) });
+    accounting: queries.map(query => ({ query, status: 'available' as const, value, asOfMs: 1_000 })) }, bundledUsageModelPriceCatalog);
   const compact = project([query]).results[0]!;
   expect(compact.accounting?.totals.tokens.total).toBe(value.totals.tokens.total);
   expect(compact.coach).toBeUndefined();
@@ -205,8 +205,8 @@ describe('resolveUsagePageAggregation', () => {
         costSource: index === 2 ? 'provider_reported_api_equivalent' as const : 'provider_reported' as const },
     }));
     const value = repriceUsageAnalyticsResponse({ ...accounting, contributions, totals: { ...accounting.totals, eventCount: 3,
-      tokens: { ...tokens, input: 36, output: 12, total: 48 } } });
-    const batch = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] });
+      tokens: { ...tokens, input: 36, output: 12, total: 48 } } }, bundledUsageModelPriceCatalog);
+    const batch = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] }, bundledUsageModelPriceCatalog);
     for (const candidate of [batch, JSON.parse(JSON.stringify(batch))]) {
       const admitted = UsageQueryBatchResultSchema.safeParse(candidate);
       expect(admitted.success, JSON.stringify(admitted.error?.issues.map(issue => ({ code: issue.code, path: issue.path })))).toBe(true);
@@ -222,7 +222,7 @@ describe('resolveUsagePageAggregation', () => {
     expect(resolveUsagePageAccountingRequests([query], 200)).toHaveLength(2);
     const currentOnly = normalizeUsageQuery({ ...query, includeComparison: false });
     expect(resolveUsagePageAccountingRequests([currentOnly], 200)).toEqual([currentOnly]);
-    expect(resolveUsagePageAggregation({ queries: [currentOnly] }).results[0]).not.toHaveProperty('comparison');
+    expect(resolveUsagePageAggregation({ queries: [currentOnly] }, bundledUsageModelPriceCatalog).results[0]).not.toHaveProperty('comparison');
   });
   it('keeps a rolling retained accounting answer with its witnessed comparison until replacement settles', () => {
     const nowMs = Date.parse('2026-11-07T12:00:00Z');
@@ -232,7 +232,7 @@ describe('resolveUsagePageAggregation', () => {
     const initial = resolveUsagePageAggregation({ queries: [query], nowMs, accounting: [
       { query, period: resolveUsageQueryPeriod(query, nowMs), value: accounting, status: 'available' },
       { query: oldComparison, value: accounting, status: 'available' },
-    ] });
+    ] }, bundledUsageModelPriceCatalog);
     const prior = initial.results[0]!;
     expect(prior.accounting?.coverage).toBeUndefined();
     expect(prior.comparison?.accounting).toBeDefined();
@@ -243,14 +243,14 @@ describe('resolveUsagePageAggregation', () => {
       { query, period: resolveUsageQueryPeriod(query, laterMs), value: prior.accounting, status: 'pending' },
       { query: newComparison, status: 'pending' },
       { query: oldComparison, value: prior.comparison!.accounting, status: 'pending' },
-    ] });
+    ] }, bundledUsageModelPriceCatalog);
     expect(pending.results[0]!.accounting).toEqual(prior.accounting);
     expect(pending.results[0]!.comparison?.query).toEqual(oldComparison);
     expect(pending.results[0]!.comparison?.accounting).toEqual(prior.comparison!.accounting);
     const settled = resolveUsagePageAggregation({ queries: [query], nowMs: laterMs, previous: pending, accounting: [
       { query, period: resolveUsageQueryPeriod(query, laterMs), value: accounting, status: 'available' },
       { query: newComparison, value: accounting, status: 'available' },
-    ] });
+    ] }, bundledUsageModelPriceCatalog);
     expect(settled.results[0]!.comparison?.query).toEqual(newComparison);
     expect(settled.results[0]!.comparison?.accounting).toBeDefined();
   });
@@ -260,14 +260,14 @@ describe('resolveUsagePageAggregation', () => {
       reason: 'session_read_batch_unsupported' };
     const result = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }],
       work: [{ query, status: 'unsupported', errorCode: 'update_required', updateRequired }],
-      howYouWork: [{ query, errorCode: 'update_required', updateRequired }] });
+      howYouWork: [{ query, errorCode: 'update_required', updateRequired }] }, bundledUsageModelPriceCatalog);
     const slice = UsageQueryBatchResultSchema.parse(result).results[0]!;
     expect(slice.accounting?.totals).toEqual(accounting.totals);
     for (const source of ['work', 'how_you_work']) expect(slice.sources).toContainEqual(expect.objectContaining({
       source, errorCode: 'update_required', updateRequired }));
     const recovered = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({ queries: [query], previous: result,
       accounting: [{ query, status: 'available', value: accounting }], work: [{ query, status: 'available', evidence: [] }],
-      howYouWork: [{ query, detail: { status: 'available', facts: [] } }] })).results[0]!;
+      howYouWork: [{ query, detail: { status: 'available', facts: [] } }] }, bundledUsageModelPriceCatalog)).results[0]!;
     for (const source of ['work', 'how_you_work']) {
       expect(recovered.sources.find(row => row.source === source)).not.toHaveProperty('updateRequired');
       expect(recovered.sources.find(row => row.source === source)).not.toHaveProperty('errorCode');
@@ -314,7 +314,7 @@ describe('resolveUsagePageAggregation', () => {
       work: [{ query, status: 'available' as const, evidence }],
       howYouWork: [{ query, asOfMs: 1_000, detail: { status: 'available' as const, facts } }],
     };
-    let previous = resolveUsagePageAggregation(inputs);
+    let previous = resolveUsagePageAggregation(inputs, bundledUsageModelPriceCatalog);
     expect(accountingVisits).toBeGreaterThan(0);
     expect(intervalVisits).toBeGreaterThan(0);
     expect(workVisits).toBeGreaterThan(0);
@@ -328,7 +328,7 @@ describe('resolveUsagePageAggregation', () => {
     for (let revision = 0; revision < 10; revision++) previous = resolveUsagePageAggregation({ ...inputs, previous,
       quota: { status: 'pending', asOfMs: revision },
       sources: [{ source: 'native:capture', status: revision % 2 ? 'available' : 'pending', asOfMs: revision }],
-    });
+    }, bundledUsageModelPriceCatalog);
     expect({ accountingVisits, intervalVisits, workVisits, coachVisits })
       .toEqual({ accountingVisits: 0, intervalVisits: 0, workVisits: 0, coachVisits: 0 });
     expect(previous.results[0]!.work).toBe(original.work);
@@ -337,18 +337,18 @@ describe('resolveUsagePageAggregation', () => {
 
     const pending = { ...inputs, work: [{ query, status: 'pending' as const }], howYouWork: undefined,
       sources: [{ source: 'how_you_work', status: 'pending' as const }] };
-    let retained = resolveUsagePageAggregation({ ...pending, previous });
+    let retained = resolveUsagePageAggregation({ ...pending, previous }, bundledUsageModelPriceCatalog);
     accountingVisits = intervalVisits = workVisits = coachVisits = 0;
     for (let revision = 0; revision < 10; revision++) retained = resolveUsagePageAggregation({ ...pending, previous: retained,
       quota: { status: 'pending', asOfMs: revision },
-    });
+    }, bundledUsageModelPriceCatalog);
     expect({ accountingVisits, intervalVisits, workVisits, coachVisits })
       .toEqual({ accountingVisits: 0, intervalVisits: 0, workVisits: 0, coachVisits: 0 });
     expect(retained.results[0]!.howYouWork!.intervals).toEqual(original.howYouWork!.intervals);
 
     const changed = resolveUsagePageAggregation({ ...inputs, previous,
       accounting: [{ ...inputs.accounting[0]!, value: { ...value, contributions: value.contributions!.slice(1, 2) } }],
-    });
+    }, bundledUsageModelPriceCatalog);
     expect(accountingVisits).toBeGreaterThan(0);
     expect(changed.results[0]!.work!.allocations).toHaveLength(1);
     expect(changed.results[0]!.coach).not.toBe(original.coach);
@@ -357,7 +357,7 @@ describe('resolveUsagePageAggregation', () => {
     accountingVisits = intervalVisits = workVisits = 0;
     const configured = resolveUsagePageAggregation({ ...inputs, previous, coachPreferences: {
       v: 1, disabledChecks: ['outside_usage'], modelSuggestion: 'suggest_with_estimates',
-    } });
+    } }, bundledUsageModelPriceCatalog);
     expect(configured.results[0]!.coach!.evaluations.find(row => row.detectorId === 'outside_usage')!.status).toBe('disabled');
     expect(configured.results[0]!.work).toBe(original.work);
     expect(configured.results[0]!.howYouWork).toBe(original.howYouWork);
@@ -365,7 +365,7 @@ describe('resolveUsagePageAggregation', () => {
     expect(workVisits).toBe(0);
     const changedDetail = resolveUsagePageAggregation({ ...inputs, previous, howYouWork: [{ ...inputs.howYouWork[0]!,
       detail: { ...inputs.howYouWork[0]!.detail, facts: [{ ...facts[0]!, endMs: 180 }] },
-    }] });
+    }] }, bundledUsageModelPriceCatalog);
     expect(changedDetail.results[0]!.howYouWork!.intervals!.agentTimeMs).toBe(70);
     expect(changedDetail.results[0]!.work).toBe(original.work);
     expect(changedDetail.results[0]!.coach).toBe(original.coach);
@@ -387,12 +387,12 @@ describe('resolveUsagePageAggregation', () => {
     const first = resolveUsagePageAggregation({ queries: [query], nowMs: 1_000,
       accounting: [{ query, status: 'available', value: accounting }],
       howYouWork: [{ query, detail: { status: 'available', facts, activityAtMs: [150] } }],
-      nightHours: { startHour: 0, endHour: 6 } });
+      nightHours: { startHour: 0, endHour: 6 } }, bundledUsageModelPriceCatalog);
     const changedAccounting = { ...accounting, totals: { ...accounting.totals, eventCount: 2 } };
     const second = resolveUsagePageAggregation({ queries: [query], nowMs: 1_000, previous: first,
       accounting: [{ query, status: 'available', value: changedAccounting }],
       howYouWork: [{ query, detail: { status: 'available', facts: countPasses(facts.map(fact => ({ ...fact }))),
-        activityAtMs: [150] } }], nightHours: { startHour: 0, endHour: 6 } });
+        activityAtMs: [150] } }], nightHours: { startHour: 0, endHour: 6 } }, bundledUsageModelPriceCatalog);
     expect(second.results[0]!.accounting?.totals.eventCount).toBe(2);
     expect(second.results[0]!.howYouWork?.intervals).toBe(first.results[0]!.howYouWork?.intervals);
     expect(intervalPasses).toBe(0);
@@ -401,7 +401,7 @@ describe('resolveUsagePageAggregation', () => {
     const third = resolveUsagePageAggregation({ queries: [query], nowMs: 1_000, previous: second,
       accounting: [{ query, status: 'available', value: changedAccounting }],
       howYouWork: [{ query, detail: { status: 'available', facts: countPasses(changedFacts),
-        activityAtMs: [150] } }], nightHours: { startHour: 0, endHour: 6 } });
+        activityAtMs: [150] } }], nightHours: { startHour: 0, endHour: 6 } }, bundledUsageModelPriceCatalog);
     expect(third.results[0]!.howYouWork?.intervals?.agentTimeMs).toBe(first.results[0]!.howYouWork!.intervals!.agentTimeMs + 100);
     expect(intervalPasses).toBe(2);
   });
@@ -430,7 +430,7 @@ describe('resolveUsagePageAggregation', () => {
     const result = resolveUsagePageAggregation({ queries: [query], accounting: [
       { query: current!, value: value(24), status: 'available' },
       { query: comparison!, value: value(12), status: 'available' },
-    ], pricingOverrides: { model: { kind: 'rates', inputUsdPerMillion: 3, outputUsdPerMillion: 2 } } });
+    ], pricingOverrides: { model: { kind: 'rates', inputUsdPerMillion: 3, outputUsdPerMillion: 2 } } }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.accounting?.totals.tokens.total).toBe(28);
     expect(result.results[0]?.comparison?.accounting?.totals.tokens.total).toBe(16);
     expect(result.results[0]?.accounting?.totals.cost.apiEquivalentUsd).toBeCloseTo(80 / 1_000_000);
@@ -451,7 +451,7 @@ describe('resolveUsagePageAggregation', () => {
       howYouWork: [{ query: detailed, detail: { status: 'available', facts: [{ workId: 'work', evidenceId: 'turn',
         agentId: 'claude', machineId: null, kind: 'busy', startMs: 110, endMs: 160 }] } },
       { query: refused, detail: { status: 'unknown' }, errorCode: 'permission_denied' }],
-    });
+    }, bundledUsageModelPriceCatalog);
     const calendar = result.results[0]!.howYouWork!.agentCalendar!;
     expect(result.results[1]!.howYouWork!.agentCalendar).toBe(calendar);
     expect(result.results[2]!.howYouWork!.agentCalendar!.periodSummary.totals.busyMs).toBe(50);
@@ -508,17 +508,17 @@ describe('resolveUsagePageAggregation', () => {
         accounting: [{ query, status: 'available', value: initial }], howYouWork: [{ query, asOfMs: 1_000,
           detail: projectUsageQueryWorkEvidence({ query, sessions: [session], contributions: initial.contributions }),
         }],
-      });
+      }, bundledUsageModelPriceCatalog);
       expect(previous.results[0]?.howYouWork?.runLengths?.sampleCount).toBe(2);
       const unchangedMembership = resolveUsagePageAggregation({ queries: [query], previous,
         accounting: [{ query, status: 'available', value: value(['new', 'old']) }],
         sources: [{ source: 'how_you_work', status: 'pending' }],
-      });
+      }, bundledUsageModelPriceCatalog);
       expect(unchangedMembership.results[0]?.howYouWork).toEqual(previous.results[0]?.howYouWork);
       const refreshed = resolveUsagePageAggregation({ queries: [query], previous,
         accounting: [{ query, status: 'available', value: value(['new']) }],
         sources: [{ source: 'how_you_work', status: 'pending' }],
-      });
+      }, bundledUsageModelPriceCatalog);
       if (population === 'public_eligible_personal') {
         expect(refreshed.results[0]?.howYouWork).toMatchObject({ detailStatus: 'unknown', intervals: null, runLengths: null });
       } else expect(refreshed.results[0]?.howYouWork).toEqual(previous.results[0]?.howYouWork);
@@ -548,7 +548,7 @@ describe('resolveUsagePageAggregation', () => {
         collaboration: [{ evidenceId: 'child', workId: 'work', sourceSessionId: 'session', targetId: 'child',
           sourceAgentId: 'claude', targetAgentId: 'codex', observedAtMs: 130, relation: 'native' }],
       } }],
-    });
+    }, bundledUsageModelPriceCatalog);
     const first = project();
     expect(first.results[0]?.howYouWork).toMatchObject({ runLengths: { sampleCount: 1 },
       steering: { byAgent: [expect.objectContaining({ agentId: 'claude', steeringCount: 1 })] },
@@ -563,7 +563,7 @@ describe('resolveUsagePageAggregation', () => {
     const refused = resolveUsagePageAggregation({ queries: [query], previous: first,
       accounting: [{ query, status: 'available', value }], howYouWork: [{ query, detail: { status: 'unknown' } }],
       work: [{ query, status: 'error', evidence: [], errorCode: 'permission_denied' }],
-    });
+    }, bundledUsageModelPriceCatalog);
     expect(refused.results[0]?.howYouWork).toMatchObject({ runLengths: null, steering: null, collaboration: null });
     expect(refused.results[0]?.mergedOutcomes).toBeUndefined();
     expect(UsageQueryBatchResultSchema.safeParse(refused).success).toBe(true);
@@ -606,7 +606,7 @@ describe('resolveUsagePageAggregation', () => {
     const result = resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value: accounting }],
       howYouWork: [{ query, asOfMs: 200, detail }],
-    });
+    }, bundledUsageModelPriceCatalog);
     const slice = result.results[0]!;
     expect(slice.howYouWork?.permissions).toMatchObject({ pairedDecisionCount: 3, decisionLatencyMs: 80 });
     expect(slice.coach?.findings.find(row => row.detectorId === 'approval_friction')?.measurements)
@@ -620,7 +620,7 @@ describe('resolveUsagePageAggregation', () => {
       accounting: [{ query, status: 'available', value: accounting }],
       howYouWork: [{ query, asOfMs: 200, sessionCoverage: { selected, admitted },
         detail: { status: admitted < selected ? 'partial' : 'available', facts: [] } }],
-    });
+    }, bundledUsageModelPriceCatalog);
     const partial = project(5, 3);
     for (const value of [partial.results[0]?.howYouWork, partial.results[0]?.coach]) {
       expect(value?.sessionCoverage).toEqual({ selected: 5, admitted: 3 });
@@ -628,7 +628,7 @@ describe('resolveUsagePageAggregation', () => {
     expect(partial.results[0]?.howYouWork?.detailStatus).toBe('partial');
     expect(UsageQueryBatchResultSchema.safeParse(partial).success).toBe(true);
     const pending = resolveUsagePageAggregation({ queries: [query], previous: partial,
-      sources: [{ source: 'how_you_work', status: 'pending' }] });
+      sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog);
     expect(pending.results[0]?.coach?.sessionCoverage).toEqual({ selected: 5, admitted: 3 });
     const recovered = project(5, 5);
     expect(recovered.results[0]?.howYouWork?.sessionCoverage).toEqual({ selected: 5, admitted: 5 });
@@ -636,7 +636,7 @@ describe('resolveUsagePageAggregation', () => {
     expect(recovered.results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(0);
     expect(project(0, 0).results[0]?.coach?.sessionCoverage).toEqual({ selected: 0, admitted: 0 });
     const refused = resolveUsagePageAggregation({ queries: [query], previous: recovered,
-      howYouWork: [{ query, detail: { status: 'unknown' } }] });
+      howYouWork: [{ query, detail: { status: 'unknown' } }] }, bundledUsageModelPriceCatalog);
     expect(refused.results[0]?.howYouWork?.sessionCoverage).toBeUndefined();
     expect(refused.results[0]?.coach?.sessionCoverage).toBeUndefined();
     expect(UsageQueryBatchResultSchema.safeParse({ ...partial, results: [{ ...partial.results[0],
@@ -651,9 +651,9 @@ describe('resolveUsagePageAggregation', () => {
     const parse = vi.spyOn(UsageAnalyticsSourceCoverageSchema.shape.source._zod, 'run');
     try {
       const first = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
-        sourceLocations: [{ machineId: 'machine', displayLocation: 'Current machine' }] });
+        sourceLocations: [{ machineId: 'machine', displayLocation: 'Current machine' }] }, bundledUsageModelPriceCatalog);
       const second = resolveUsagePageAggregation({ queries: [query], previous: first,
-        accounting: [{ query, value: first.results[0]!.accounting, status: 'available' }] });
+        accounting: [{ query, value: first.results[0]!.accounting, status: 'available' }] }, bundledUsageModelPriceCatalog);
       expect(first.results[0]!.accounting!.coverage!.sources[0]).toHaveProperty('displayLocation', 'Current machine');
       expect(second.results[0]!.accounting!.coverage!.sources[0]).not.toHaveProperty('displayLocation');
       expect(parse.mock.calls.length, 'source-label refresh is not external admission').toBe(0);
@@ -670,17 +670,17 @@ describe('resolveUsagePageAggregation', () => {
       ] } });
     const snapshots = [{ query, value, status: 'available' as const }];
     const sourceLocations = [{ machineId: 'machine', displayLocation: 'Current machine' }];
-    const first = resolveUsagePageAggregation({ queries: [query], accounting: snapshots, sourceLocations });
+    const first = resolveUsagePageAggregation({ queries: [query], accounting: snapshots, sourceLocations }, bundledUsageModelPriceCatalog);
     expect(first.results[0]!.accounting!.coverage!.sources[1]).toHaveProperty('displayLocation', 'Current machine');
     // The same admitted A value feeds several evidence/query publications. A
     // previous slice must not be needed to avoid copying and comparing it again.
     const next = resolveUsagePageAggregation({ queries: [query], accounting: snapshots,
-      sourceLocations: sourceLocations.map(row => ({ ...row })), quota: { status: 'pending' } });
+      sourceLocations: sourceLocations.map(row => ({ ...row })), quota: { status: 'pending' } }, bundledUsageModelPriceCatalog);
     expect(next.results[0]!.accounting).toBe(first.results[0]!.accounting);
     const renamed = resolveUsagePageAggregation({ queries: [query], accounting: snapshots,
-      sourceLocations: [{ machineId: 'machine', displayLocation: 'Renamed machine' }] });
+      sourceLocations: [{ machineId: 'machine', displayLocation: 'Renamed machine' }] }, bundledUsageModelPriceCatalog);
     expect(renamed.results[0]!.accounting!.coverage!.sources[1]).toHaveProperty('displayLocation', 'Renamed machine');
-    const removed = resolveUsagePageAggregation({ queries: [query], accounting: snapshots });
+    const removed = resolveUsagePageAggregation({ queries: [query], accounting: snapshots }, bundledUsageModelPriceCatalog);
     expect(removed.results[0]!.accounting!.coverage!.sources.every(row => !('displayLocation' in row))).toBe(true);
     expect(removed.results[0]!.accounting).not.toBe(renamed.results[0]!.accounting);
     expect(UsageQueryBatchResultSchema.safeParse(next).success).toBe(true);
@@ -701,7 +701,7 @@ describe('resolveUsagePageAggregation', () => {
       const observedAtMs = row.observedAtMs;
       Object.defineProperty(row, 'observedAtMs', { enumerable: true, get() { visits++; return observedAtMs; } });
     }
-    const previous = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: before, status: 'available' }] });
+    const previous = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: before, status: 'available' }] }, bundledUsageModelPriceCatalog);
     expect(retainUsageQueryResultReferences({ ...previous, results: [...previous.results] }, previous)).toBe(previous);
     const current = { ...previous, results: previous.results.map(slice => ({ ...slice, accounting: after })) };
     const result = retainUsageQueryResultReferences(current, previous);
@@ -716,7 +716,7 @@ describe('resolveUsagePageAggregation', () => {
   });
   it('retains unchanged source rows while admitting sibling progress and corrected source facts', () => {
     const query = normalizeUsageQuery({ period: { relative: 'all' }, includeSessionEvidence: false, includeWorkEvidence: false });
-    const base = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available' }] });
+    const base = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available' }] }, bundledUsageModelPriceCatalog);
     const sources = [{ source: 'accounting', status: 'available' as const, asOfMs: 100 },
       { source: 'accounting', status: 'partial' as const },
       { source: 'quota', status: 'pending' as const }];
@@ -744,7 +744,7 @@ describe('resolveUsagePageAggregation', () => {
     const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting, contributions: Array.from({ length: 3600 }, (_, index) => ({
       id: String(index), observedAtMs: 150, sessionId: null, turnId: null, agentId: null, modelId: null,
       machineId: null, projectKey: null, workspaceId: null, source: null, tokens, cost: accounting.totals.cost })) });
-    const previous = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] });
+    const previous = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] }, bundledUsageModelPriceCatalog);
     let unchangedReads = 0;
     for (const row of value.contributions!.slice(0, -1)) {
       const cost = row.cost;
@@ -768,10 +768,10 @@ describe('resolveUsagePageAggregation', () => {
       contributions: Array.from({ length: 3600 }, (_, index) => ({ id: String(index), observedAtMs: 150,
         sessionId: null, turnId: null, agentId: null, modelId: null, machineId: null, projectKey: null,
         workspaceId: null, source: null, tokens, tokenCategories: tokens, cost: accounting.totals.cost })) });
-    const baseline = projectUsageAccountingSnapshotPrices({ query, value: before, status: 'available' }, undefined);
+    const baseline = projectUsageAccountingSnapshotPrices({ query, value: before, status: 'available' }, undefined, bundledUsageModelPriceCatalog);
     const previous = baseline.priceProjection!.value;
     const input = structuredClone(before);
-    const admitted = projectUsageAccountingSnapshotPrices({ query, value: input, status: 'available' }, undefined, undefined, previous);
+    const admitted = projectUsageAccountingSnapshotPrices({ query, value: input, status: 'available' }, undefined, bundledUsageModelPriceCatalog, undefined, previous);
     expect(admitted.priceProjection!.value).toBe(previous);
     let reads = 0;
     // Private Coach checks consume priced rows; withheld evidence keeps the projection compact.
@@ -783,7 +783,7 @@ describe('resolveUsagePageAggregation', () => {
       Object.defineProperty(row, 'id', { enumerable: true, get() { reads++; return id; } });
     }
     for (let revision = 0; revision < 12; revision++) {
-      const next = projectUsageAccountingSnapshotPrices(admitted, undefined, undefined, previous);
+      const next = projectUsageAccountingSnapshotPrices(admitted, undefined, bundledUsageModelPriceCatalog, undefined, previous);
       expect(next).toBe(admitted);
       expect(next.priceProjection!.value).toBe(previous);
       expectRows(next.priceProjection!.value);
@@ -819,11 +819,11 @@ describe('resolveUsagePageAggregation', () => {
     const projected = projectUsageAnalyticsResponseDemand(native, request, request)!;
     expect(JSON.stringify(projected)).toBe(JSON.stringify(accounting));
     const admitted = projectUsageAccountingSnapshotPrices({ query, value: projected, status: 'available' },
-      undefined, undefined, accounting);
+      undefined, bundledUsageModelPriceCatalog, undefined, accounting);
     expect(admitted.value, 'covered demand does not replace value-equal admitted accounting').toBe(accounting);
     const changed = { ...projected, totals: { ...projected.totals, eventCount: 2 } };
     const replacement = projectUsageAccountingSnapshotPrices({ query, value: changed, status: 'available' },
-      undefined, undefined, accounting);
+      undefined, bundledUsageModelPriceCatalog, undefined, accounting);
     expect(replacement.value?.totals.eventCount).toBe(2);
     expect(replacement.value?.totals.tokens).toBe(accounting.totals.tokens);
   });
@@ -833,21 +833,21 @@ describe('resolveUsagePageAggregation', () => {
       sessionId: null, turnId: null, agentId: null, modelId: 'model', machineId: null, projectKey: null, workspaceId: null, source: null,
       tokens, cost: accounting.totals.cost }] });
     const overrides = { model: { kind: 'rates' as const, inputUsdPerMillion: 2, outputUsdPerMillion: 1 } };
-    const projected = projectUsageAccountingSnapshotPrices({ query, value, status: 'available' }, overrides);
-    expect(projectUsageAccountingSnapshotPrices(projected, structuredClone(overrides))).toBe(projected);
+    const projected = projectUsageAccountingSnapshotPrices({ query, value, status: 'available' }, overrides, bundledUsageModelPriceCatalog);
+    expect(projectUsageAccountingSnapshotPrices(projected, structuredClone(overrides), bundledUsageModelPriceCatalog)).toBe(projected);
     const sibling = projectUsageAccountingSnapshotPrices({ query: normalizeUsageQuery({ ...query,
-      includeTranscriptEvidence: !query.includeTranscriptEvidence }), value, status: 'available' }, structuredClone(overrides), [projected]);
+      includeTranscriptEvidence: !query.includeTranscriptEvidence }), value, status: 'available' }, structuredClone(overrides), bundledUsageModelPriceCatalog, [projected]);
     expect(sibling.priceProjection).toBe(projected.priceProjection);
     expect(projected.priceProjection?.value.totals.cost.apiEquivalentUsd).toBeCloseTo(28 / 1_000_000);
-    const repriced = projectUsageAccountingSnapshotPrices(projected, { model: { ...overrides.model, inputUsdPerMillion: 3 } }, [projected]);
+    const repriced = projectUsageAccountingSnapshotPrices(projected, { model: { ...overrides.model, inputUsdPerMillion: 3 } }, bundledUsageModelPriceCatalog, [projected]);
     expect(repriced.priceProjection?.value.totals.cost.apiEquivalentUsd).toBeCloseTo(40 / 1_000_000);
     const replaced = projectUsageAccountingSnapshotPrices({ ...projected, value: { ...value,
-      contributions: value.contributions!.map(row => ({ ...row, tokens: { ...tokens, input: 24, total: 28 } })) } }, overrides, [projected]);
+      contributions: value.contributions!.map(row => ({ ...row, tokens: { ...tokens, input: 24, total: 28 } })) } }, overrides, bundledUsageModelPriceCatalog, [projected]);
     expect(replaced.priceProjection?.value.totals.cost.apiEquivalentUsd).toBeCloseTo(52 / 1_000_000);
-    const selected = projectUsageAccountingSnapshotPrices({ ...projected, query: normalizeUsageQuery({ ...query, costBasis: 'api_equivalent' }) }, overrides, [projected]);
+    const selected = projectUsageAccountingSnapshotPrices({ ...projected, query: normalizeUsageQuery({ ...query, costBasis: 'api_equivalent' }) }, overrides, bundledUsageModelPriceCatalog, [projected]);
     expect(selected.priceProjection?.value.costPresentation?.mode).toBe('api_equivalent');
-    expect(projectUsageAccountingSnapshotPrices(projected, undefined).priceProjection).toBeUndefined();
-    expect(projectUsageAccountingSnapshotPrices({ ...projected, value: undefined }, overrides).priceProjection).toBeUndefined();
+    expect(projectUsageAccountingSnapshotPrices(projected, undefined, bundledUsageModelPriceCatalog).priceProjection).toBeUndefined();
+    expect(projectUsageAccountingSnapshotPrices({ ...projected, value: undefined }, overrides, bundledUsageModelPriceCatalog).priceProjection).toBeUndefined();
     expect(projected.value).toBe(value);
     expect(projected.priceProjection?.value.totals.cost.reportedUsd).toBe(value.totals.cost.reportedUsd);
   });
@@ -859,13 +859,13 @@ describe('resolveUsagePageAggregation', () => {
     const batch = resolveUsagePageAggregation({ queries: [full, quota], quota: { status: 'unsupported' },
       accounting: [full, quota].map(query => ({ query, value: accounting, status: 'available' })),
       sources: [{ source: 'how_you_work', status: 'pending' }],
-    });
+    }, bundledUsageModelPriceCatalog);
     expect(batch.results[0]!.accounting).toBeDefined();
     expect(batch.results[1]).toMatchObject({ requestedQuery: quota, shownQuery: quota, pending: false });
     for (const field of ['accounting', 'comparison', 'work', 'howYouWork', 'coach', 'costFactTotals']) expect(batch.results[1]).not.toHaveProperty(field);
     expect(UsageQueryBatchResultSchema.safeParse(batch).success).toBe(true);
     expect(UsageQueryBatchResultSchema.safeParse({ ...batch, results: [{ ...batch.results[1], accounting }] }).success).toBe(false);
-    const refreshed = resolveUsagePageAggregation({ queries: [quota], previous: batch, quota: { status: 'unsupported' } });
+    const refreshed = resolveUsagePageAggregation({ queries: [quota], previous: batch, quota: { status: 'unsupported' } }, bundledUsageModelPriceCatalog);
     expect(refreshed.results[0]).toBe(batch.results[1]);
   });
   it('projects Work allocations only for the slice that requested Work evidence', () => {
@@ -877,7 +877,7 @@ describe('resolveUsagePageAggregation', () => {
     const observed = { ...accounting, contributions: [contribution] };
     const batch = resolveUsagePageAggregation({ queries: [query, workQuery], accounting: [query, workQuery].map(query => ({
       query, status: 'available' as const, value: observed,
-    })) });
+    })) }, bundledUsageModelPriceCatalog);
     expect(batch.results[0]?.accounting?.contributions).toEqual([contribution]);
     expect(batch.results[0]?.work).toBeUndefined();
     expect(batch.results[1]?.work?.allocations.map(row => row.contribution)).toEqual([contribution]);
@@ -887,11 +887,11 @@ describe('resolveUsagePageAggregation', () => {
     const nowMs = Date.UTC(2026, 9, 14, 12);
     const query = normalizeUsageQuery({ period: { relative: '7days' } });
     const initial = resolveUsagePageAggregation({ queries: [query], nowMs,
-      accounting: [{ query, status: 'pending' }], sources: [{ source: 'how_you_work', status: 'pending' }] });
+      accounting: [{ query, status: 'pending' }], sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog);
     expect(initial.results[0]?.coach?.asOfMs).toBeNull();
     const arrived = resolveUsagePageAggregation({ queries: [query], nowMs, previous: initial,
       accounting: [{ query, status: 'available', value: accounting, asOfMs: nowMs }],
-      sources: [{ source: 'how_you_work', status: 'pending' }] });
+      sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog);
     expect(arrived.results[0]?.coach).toMatchObject({ asOfMs: nowMs, currentness: 'current' });
     expect(UsageQueryBatchResultSchema.safeParse(arrived).success).toBe(true);
   });
@@ -909,11 +909,11 @@ describe('resolveUsagePageAggregation', () => {
       howYouWork: [{ query, asOfMs: nowMs, detail: { status: 'partial', facts: [
         { workId: 'work', evidenceId: 'turn', agentId: 'codex', machineId: null, kind: 'busy', startMs: nowMs - 500, endMs: nowMs - 100 },
       ] } }],
-    });
+    }, bundledUsageModelPriceCatalog);
     const refreshed = resolveUsagePageAggregation({ queries: [query], nowMs: laterMs, previous: first,
       accounting: [{ query, period: laterPeriod, value: observed(laterPeriod), status: 'available', asOfMs: laterMs }],
       sources: [{ source: 'how_you_work', status: 'pending' }],
-    });
+    }, bundledUsageModelPriceCatalog);
     const slice = refreshed.results[0]!;
     expect(slice.coach).toMatchObject({ period, currentness: 'stale' });
     expect(slice.howYouWork?.agentCalendar?.periodSummary.totals.busyMs).toBe(400);
@@ -928,14 +928,14 @@ describe('resolveUsagePageAggregation', () => {
     const failed = resolveUsagePageAggregation({ queries: [query], nowMs: laterMs, previous: first,
       accounting: [{ query, period: laterPeriod, status: 'error', errorCode: 'usage_query_failed' }],
       sources: [{ source: 'how_you_work', status: 'pending' }],
-    });
+    }, bundledUsageModelPriceCatalog);
     expect(failed.results[0]?.accounting?.coverage?.range).toMatchObject(period);
     expect(failed.results[0]?.comparison?.query).toEqual(first.results[0]?.comparison?.query);
     expect(UsageQueryBatchResultSchema.safeParse(failed).success).toBe(true);
     const refused = resolveUsagePageAggregation({ queries: [query], nowMs: laterMs, previous: refreshed,
       accounting: [{ query, period: laterPeriod, value: observed(laterPeriod), status: 'available', asOfMs: laterMs }],
       howYouWork: [{ query, asOfMs: laterMs, detail: { status: 'unknown' }, errorCode: 'permission_denied' }],
-    });
+    }, bundledUsageModelPriceCatalog);
     expect(refused.results[0]?.howYouWork?.agentCalendar?.periodSummary.totals.busyMs).toBeNull();
     expect(refused.results[0]?.howYouWork?.agentCalendar?.period).toEqual(laterPeriod);
     expect(UsageQueryBatchResultSchema.safeParse(refused).success).toBe(true);
@@ -944,14 +944,14 @@ describe('resolveUsagePageAggregation', () => {
       howYouWork: [{ query, asOfMs: laterMs, detail: { status: 'partial', facts: [
         { workId: 'work', evidenceId: 'turn', agentId: 'codex', machineId: null, kind: 'busy', startMs: laterMs - 1_000, endMs: laterMs },
       ] } }],
-    });
+    }, bundledUsageModelPriceCatalog);
     expect(completed.results[0]?.howYouWork?.agentCalendar?.periodSummary.totals.busyMs).toBe(1_000);
     expect(completed.results[0]?.howYouWork?.agentCalendar?.period).toEqual(laterPeriod);
     expect(UsageQueryBatchResultSchema.safeParse(completed).success).toBe(true);
     const unboundedCoverage = resolveUsagePageAggregation({ queries: [query], nowMs: laterMs,
       accounting: [{ query, period: laterPeriod, value: observed({ startMs: laterPeriod.startMs }),
         status: 'available', asOfMs: laterMs }],
-    });
+    }, bundledUsageModelPriceCatalog);
     expect(unboundedCoverage.results[0]?.coach?.period).toEqual(laterPeriod);
     expect(UsageQueryBatchResultSchema.safeParse(unboundedCoverage).success).toBe(true);
   });
@@ -971,7 +971,7 @@ describe('resolveUsagePageAggregation', () => {
         { workId: 'current', evidenceId: 'current', agentId: null, machineId: null, kind: 'busy' as const,
           startMs: nowMs - 3_600_000, endMs: nowMs },
       ] } }] };
-    const batch = resolveUsagePageAggregation({ ...input, queries: [query] });
+    const batch = resolveUsagePageAggregation({ ...input, queries: [query] }, bundledUsageModelPriceCatalog);
     const slice = batch.results[0]!;
     expect(slice.requestedQuery).toEqual(query);
     expect(slice.shownQuery).toEqual(query);
@@ -982,7 +982,7 @@ describe('resolveUsagePageAggregation', () => {
     const absoluteSlice = resolveUsagePageAggregation({ ...input, queries: [absolute],
       accounting: [{ query: absolute, status: 'error' }],
       howYouWork: input.howYouWork.map(snapshot => ({ ...snapshot, query: absolute })),
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     expect(slice.howYouWork).toEqual(absoluteSlice.howYouWork);
     expect(slice.comparison?.query).toEqual(absoluteSlice.comparison?.query);
     expect(UsageQueryBatchResultSchema.safeParse({ ...batch, results: [{ ...slice,
@@ -1011,13 +1011,13 @@ describe('resolveUsagePageAggregation', () => {
       pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' } });
     const queries = Array.from({ length: 8 }, (_, index) => normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, agents: [`agent-${index}`] }));
     const start = performance.now();
-    const batch = resolveUsagePageAggregation({ queries, quota: { status: 'available', value: [quota] }, nowMs: 150 });
+    const batch = resolveUsagePageAggregation({ queries, quota: { status: 'available', value: [quota] }, nowMs: 150 }, bundledUsageModelPriceCatalog);
     const ms = performance.now() - start;
     console.info('[PERF-RENDER aggregation]', JSON.stringify({ slices: queries.length, historyEntries: 1000,
       retainedQuotaReferences: batch.results.filter(slice => slice.quota?.[0] === quota).length, ms }));
     expect(batch.results.every(slice => slice.quota?.[0] === quota)).toBe(true);
     expect(UsageQueryBatchResultSchema.safeParse(batch).success).toBe(true);
-    const denied = resolveUsagePageAggregation({ queries, previous: batch, quota: { status: 'error', errorCode: 'denied' } });
+    const denied = resolveUsagePageAggregation({ queries, previous: batch, quota: { status: 'error', errorCode: 'denied' } }, bundledUsageModelPriceCatalog);
     expect(denied.results.every(slice => slice.quota === undefined)).toBe(true);
   });
   it('adds only authorized machine display locations and retires them when unavailable while accepting older source rows', () => {
@@ -1031,7 +1031,7 @@ describe('resolveUsagePageAggregation', () => {
       breakdowns: { machine: [{ key: 'work', label: 'Work', eventCount: 1, tokens, cost: accounting.totals.cost }] },
     });
     const first = resolveUsagePageAggregation({ queries: [query], accounting: [{ query,
-      value, status: 'available' }], sourceLocations: [{ machineId: 'work', displayLocation: 'Workstation' }] });
+      value, status: 'available' }], sourceLocations: [{ machineId: 'work', displayLocation: 'Workstation' }] }, bundledUsageModelPriceCatalog);
     expect(first.results[0]?.accounting?.coverage?.sources).toEqual([
       { ...coverage.sources[0], displayLocation: 'Workstation' }, coverage.sources[1], coverage.sources[2],
     ]);
@@ -1043,14 +1043,14 @@ describe('resolveUsagePageAggregation', () => {
     ]));
     expect(first.results[0]?.accounting?.breakdowns?.machine).toHaveLength(1);
     const retired = resolveUsagePageAggregation({ queries: [query], previous: first,
-      accounting: [{ query, status: 'error', errorCode: 'network_error' }], sourceLocations: [] });
+      accounting: [{ query, status: 'error', errorCode: 'network_error' }], sourceLocations: [] }, bundledUsageModelPriceCatalog);
     expect(retired.results[0]?.accounting?.coverage?.sources.every(source => !('displayLocation' in source))).toBe(true);
     expect(UsageAnalyticsQueryResponseSchema.safeParse({ ...accounting, coverage: { ...coverage,
       sources: [{ ...coverage.sources[0], displayLocation: '/private/project' }] } }).success).toBe(false);
     for (const errorCode of ['permission_denied', RPC_ERROR_CODES.FORBIDDEN,
       RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED, RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE]) {
       const denied = resolveUsagePageAggregation({ queries: [query], previous: first,
-        accounting: [{ query, status: 'error', errorCode }] });
+        accounting: [{ query, status: 'error', errorCode }] }, bundledUsageModelPriceCatalog);
       expect(readUsageScopeOptions(denied.results, 'machines', ['selected']), errorCode)
         .toEqual(new Map([['selected', 'selected']]));
     }
@@ -1062,15 +1062,15 @@ describe('resolveUsagePageAggregation', () => {
     } } };
     const input = { queries: [query], accounting: [source],
       accountSettings: { usageNightHoursV1: { startHour: 23, endHour: 7 } } };
-    const preferred = resolveUsagePageAggregation(input);
+    const preferred = resolveUsagePageAggregation(input, bundledUsageModelPriceCatalog);
     expect(preferred.results[0]?.howYouWork?.nightShift).toEqual({ startHour: 23, endHour: 7,
       recordedActivityCount: 7, observedBusyMs: null });
-    expect(resolveUsagePageAggregation({ ...input, nightHours: { startHour: 9, endHour: 17 } })
+    expect(resolveUsagePageAggregation({ ...input, nightHours: { startHour: 9, endHour: 17 } }, bundledUsageModelPriceCatalog)
       .results[0]?.howYouWork?.nightShift).toMatchObject({ startHour: 9, endHour: 17, recordedActivityCount: 3 });
     expect(resolveUsagePageAggregation({ ...input, previous: preferred, accountSettings: { usageNightHoursV1: null },
-      howYouWork: [{ query, nightHours: { startHour: 23, endHour: 7 }, detail: { status: 'partial', facts: [] } }] })
+      howYouWork: [{ query, nightHours: { startHour: 23, endHour: 7 }, detail: { status: 'partial', facts: [] } }] }, bundledUsageModelPriceCatalog)
       .results[0]?.howYouWork?.nightShift).toBeNull();
-    expect(resolveUsagePageAggregation({ ...input, nightHours: null }).results[0]?.howYouWork?.nightShift).toBeNull();
+    expect(resolveUsagePageAggregation({ ...input, nightHours: null }, bundledUsageModelPriceCatalog).results[0]?.howYouWork?.nightShift).toBeNull();
   });
 
   it('reprojects chosen night hours while retaining the exact query private interval evidence during a reread', () => {
@@ -1083,18 +1083,18 @@ describe('resolveUsagePageAggregation', () => {
     const first = resolveUsagePageAggregation({ queries: [query], accounting: [source],
       nightHours: { startHour: 22, endHour: 6 }, howYouWork: [{ query, detail: { status: 'partial',
         facts: [{ workId: 'w', evidenceId: 'e', agentId: null, machineId: null, kind: 'busy', startMs: 0, endMs: hour }],
-        acceptedInputs: [], permissions: [] } }] });
+        acceptedInputs: [], permissions: [] } }] }, bundledUsageModelPriceCatalog);
     const revised = resolveUsagePageAggregation({ queries: [query], accounting: [source], previous: first,
-      nightHours: { startHour: 9, endHour: 17 }, sources: [{ source: 'how_you_work', status: 'pending' }] });
+      nightHours: { startHour: 9, endHour: 17 }, sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog);
     expect(revised.results[0]?.howYouWork).toMatchObject({ detailStatus: 'partial',
       intervals: { agentTimeMs: hour, night: { startHour: 9, endHour: 17, busyMs: 0, activityCount: 3 } },
       nightShift: { startHour: 9, endHour: 17, recordedActivityCount: 3, observedBusyMs: 0 } });
     const cleared = resolveUsagePageAggregation({ queries: [query], accounting: [source], previous: revised,
-      nightHours: null, sources: [{ source: 'how_you_work', status: 'pending' }] });
+      nightHours: null, sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog);
     expect(cleared.results[0]?.howYouWork?.nightShift).toBeNull();
     expect(cleared.results[0]?.howYouWork?.intervals?.night).toBeNull();
     const refused = resolveUsagePageAggregation({ queries: [query], accounting: [source], previous: revised,
-      nightHours: { startHour: 9, endHour: 17 }, howYouWork: [{ query, detail: { status: 'unknown' } }] });
+      nightHours: { startHour: 9, endHour: 17 }, howYouWork: [{ query, detail: { status: 'unknown' } }] }, bundledUsageModelPriceCatalog);
     expect(refused.results[0]?.howYouWork).toMatchObject({ detailStatus: 'unknown', intervals: null,
       nightShift: { recordedActivityCount: 3, observedBusyMs: null } });
   });
@@ -1133,7 +1133,7 @@ describe('resolveUsagePageAggregation', () => {
     const period = { startMs: endMs - 7 * 86_400_000, endMs };
     const relativeResult = resolveUsagePageAggregation({ queries: [relative], quota: { status: 'available', value: [read] }, accounting: [{ query: relative,
       status: 'available', value: { ...value, coverage: { status: 'partial', reasons: [], missingDimensions: [],
-        range: { ...period, complete: false }, ranked: [], sources: [] } } }] });
+        range: { ...period, complete: false }, ranked: [], sources: [] } } }] }, bundledUsageModelPriceCatalog);
     expect(relativeResult.results[0]).toMatchObject({ shownQuery: relative,
       planInsights: { accounts: [{ value: { status: 'available', amountUsd: 4, period } }] }, coach: { period } });
     expect(project({ ...read, current: { ...read.current!, subscription: { ...read.current!.subscription!,
@@ -1173,20 +1173,20 @@ describe('resolveUsagePageAggregation', () => {
         usedFraction: 0.25, elapsedFraction: 0.5, evenPaceFraction: 0.5, pace: 0.5, projectedResetUtilizationFraction: 0.5, qualification: 'confirmed', sampleCount: 1 } }],
       targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
     });
-    const slice = resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [quota] } }).results[0]!;
+    const slice = resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [quota] } }, bundledUsageModelPriceCatalog).results[0]!;
     expect(slice).toMatchObject({ planInsights: { accounts: [{
       value: { status: 'insufficient_basis', reason: 'account_attribution_unavailable' },
       weather: [{ meterId: 'model', status: 'available', outlook: 'within_even_pace', projectedUsedFraction: 0.5, sampleCount: 1, method: 'witnessed_linear_pace' }],
       modelHeadroom: [{ meterId: 'model', modelId: 'witnessed-model', status: 'available', remainingFraction: 0.75, method: 'model_specific_quota_meter' }],
     }] } });
-    const stale = resolveUsagePageAggregation({ queries: [query], nowMs: 250, quota: { status: 'available', value: [quota] } }).results[0]!;
+    const stale = resolveUsagePageAggregation({ queries: [query], nowMs: 250, quota: { status: 'available', value: [quota] } }, bundledUsageModelPriceCatalog).results[0]!;
     expect(stale).toMatchObject({ planInsights: { accounts: [{ weather: [{ status: 'insufficient_basis', reason: 'stale' }],
       modelHeadroom: [{ status: 'insufficient_basis', reason: 'stale' }] }] } });
     const justStarted = ConnectedServiceQuotaGetResultV1Schema.parse({ ...quota,
       current: { ...quota.current!, meters: [{ ...quota.current!.meters[0]!, resetAtMs: 250, resetsAt: 250 }] },
       pace: [{ meterId: 'model', value: { status: 'unavailable', reason: 'zero_elapsed' } }],
     });
-    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [justStarted] } }).results[0])
+    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [justStarted] } }, bundledUsageModelPriceCatalog).results[0])
       .toMatchObject({ planInsights: { accounts: [{ modelHeadroom: [{ status: 'available', modelId: 'witnessed-model', remainingFraction: 0.75 }] }] } });
     const meter = { ...quota.current!.meters[0]!, resetAtMs: 180, resetsAt: 180, windowDurationMs: 40 };
     const subscription = { status: 'subscribed', renewal: 'on', observedAtMs: 150, staleAfterMs: 100,
@@ -1196,12 +1196,12 @@ describe('resolveUsagePageAggregation', () => {
       subscription },
       history: { entries: [{ id: 'one', observedAtMs: 138, snapshot: ended }, { id: 'duplicate', observedAtMs: 138, snapshot: ended }], nextCursor: null },
     });
-    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [resetRead] } }).results[0])
+    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [resetRead] } }, bundledUsageModelPriceCatalog).results[0])
       .toMatchObject({ planInsights: { accounts: [{ pricePerReset: [{ status: 'available', amount: 20, currency: 'EUR', priceKind: 'entered',
         recordedResetCount: 1, coverage: 'recorded_subset', method: 'period_price_divided_by_recorded_resets' }] }] } });
     const invalidRead = { ...resetRead, history: { entries: [{ id: 'not-recorded', observedAtMs: 150,
       snapshot: { ...ended, observedAtMs: 150, state: 'not_loaded' as const, meters: [{ ...meter, resetAtMs: 150, resetsAt: 150 }] } }], nextCursor: null } };
-    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [invalidRead] } }).results[0])
+    expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150, quota: { status: 'available', value: [invalidRead] } }, bundledUsageModelPriceCatalog).results[0])
       .toMatchObject({ planInsights: { accounts: [{ pricePerReset: [{ status: 'insufficient_basis', reason: 'recorded_resets_unavailable' }] }] } });
     expect.soft(UsageQueryBatchResultSchema.safeParse({ v: 1, results: [{ ...slice, quota: undefined }] }).success).toBe(false);
   });
@@ -1213,7 +1213,7 @@ describe('resolveUsagePageAggregation', () => {
       calendarDays: [{ date: '2026-10-05', eventCount: 1 }, { date: '2026-10-07', eventCount: 2 }],
       weekdayHourBuckets: [],
     } });
-    const slice = resolveUsagePageAggregation({ queries: [query], nowMs: endMs, accounting: [{ query, value, status: 'available' }] }).results[0]!;
+    const slice = resolveUsagePageAggregation({ queries: [query], nowMs: endMs, accounting: [{ query, value, status: 'available' }] }, bundledUsageModelPriceCatalog).results[0]!;
     expect(slice).toMatchObject({ planInsights: { recordedWeek: { status: 'available', startMs, endMs,
       recordedActiveDays: 2, recordedEvents: 3, coverage: 'partial', method: 'recorded_calendar_week', humanPresence: 'unknown' } } });
     expect(slice).not.toHaveProperty('planInsights.recordedWeek.score');
@@ -1221,9 +1221,9 @@ describe('resolveUsagePageAggregation', () => {
       planInsights: { ...slice.planInsights, recordedWeek: { ...slice.planInsights!.recordedWeek, endMs: endMs + 1 } } }] }).success).toBe(false);
     const completeAccounting = UsageAnalyticsQueryResponseSchema.parse({ ...value,
       coverage: { status: 'complete', reasons: [], sources: [], missingDimensions: [], range: { complete: true }, ranked: [] } });
-    expect(resolveUsagePageAggregation({ queries: [query], nowMs: endMs, accounting: [{ query, value: completeAccounting, status: 'available' }] }).results[0])
+    expect(resolveUsagePageAggregation({ queries: [query], nowMs: endMs, accounting: [{ query, value: completeAccounting, status: 'available' }] }, bundledUsageModelPriceCatalog).results[0])
       .toMatchObject({ planInsights: { recordedWeek: { coverage: 'partial', accountingCoverage: 'complete', intervalCoverage: 'unknown' } } });
-    expect(resolveUsagePageAggregation({ queries: [query], nowMs: endMs - 1, accounting: [{ query, value, status: 'available' }] }).results[0])
+    expect(resolveUsagePageAggregation({ queries: [query], nowMs: endMs - 1, accounting: [{ query, value, status: 'available' }] }, bundledUsageModelPriceCatalog).results[0])
       .toMatchObject({ planInsights: { recordedWeek: { status: 'insufficient_basis', reason: 'week_not_ended' } } });
   });
   it('re-prices historical API-equivalent facts through Account overrides without changing vendor reports', () => {
@@ -1238,20 +1238,20 @@ describe('resolveUsagePageAggregation', () => {
     });
     const result = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
       pricingOverrides: { 'gpt-5.2': { kind: 'rates', inputUsdPerMillion: 9, outputUsdPerMillion: 1 } },
-    });
+    }, bundledUsageModelPriceCatalog);
     expect(result.results[0]!.costFactTotals?.find(fact => fact.kind === 'api_equivalent')?.amountUsd).toBe(9);
     expect(result.results[0]!.accounting!.totals.cost.reportedUsd).toBe(4);
     expect(result.results[0]!.accounting!.contributions![0]!.cost.estimatedUsd).toBe(1.75);
     expect(result.results[0]!.costFactTotals?.find(fact => fact.kind === 'reported')?.amountUsd).toBe(4);
     const retained = resolveUsagePageAggregation({ queries: [query], previous: result,
       accounting: [{ query, status: 'error', errorCode: 'network_error' }],
-      pricingOverrides: { 'gpt-5.2': { kind: 'rates', inputUsdPerMillion: 13, outputUsdPerMillion: 1 } } });
+      pricingOverrides: { 'gpt-5.2': { kind: 'rates', inputUsdPerMillion: 13, outputUsdPerMillion: 1 } } }, bundledUsageModelPriceCatalog);
     expect(retained.results[0]!.costFactTotals?.find(fact => fact.kind === 'api_equivalent')?.amountUsd).toBe(13);
   });
   it('offers a query-bound recurring digest recipe without choosing or creating its Automation', () => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, machines: ['selected-machine'], costBasis: 'reported' });
     const result = resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, value: accounting, status: 'available', asOfMs: 200 }] });
+      accounting: [{ query, value: accounting, status: 'available', asOfMs: 200 }] }, bundledUsageModelPriceCatalog);
     const coach = result.results[0]!.coach!;
     expect(coach).toHaveProperty('digestSuggestion', {
       kind: 'recurring_automation', queryKey: result.results[0]!.key, lookbackMs: 100,
@@ -1267,7 +1267,7 @@ describe('resolveUsagePageAggregation', () => {
     expect(coach.digestSuggestion).not.toHaveProperty('trigger');
     expect(UsageQueryBatchResultSchema.safeParse(result).success).toBe(true);
     const emptyPeriod = normalizeUsageQuery({ ...query, period: { startMs: 100, endMs: 100 } });
-    expect(resolveUsagePageAggregation({ queries: [emptyPeriod] }).results[0]!.coach).not.toHaveProperty('digestSuggestion');
+    expect(resolveUsagePageAggregation({ queries: [emptyPeriod] }, bundledUsageModelPriceCatalog).results[0]!.coach).not.toHaveProperty('digestSuggestion');
   });
   it('keeps conservative witnessed accounting freshness and never substitutes an unavailable source or the clock', () => {
     const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting, coverage: { status: 'partial', reasons: [],
@@ -1276,10 +1276,10 @@ describe('resolveUsagePageAggregation', () => {
         { source: 'c', path: 'unknown', status: 'unsupported', asOfMs: 1, eventCount: 0 }],
       missingDimensions: [], range: { complete: false }, ranked: [] } });
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
-    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] }).results[0]!;
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] }, bundledUsageModelPriceCatalog).results[0]!;
     expect(slice.coach).toMatchObject({ asOfMs: 160, currentness: 'current' });
     expect(slice.sources.find(row => row.source === 'accounting')?.asOfMs).toBe(160);
-    const unknown = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available' }] }).results[0]!;
+    const unknown = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available' }] }, bundledUsageModelPriceCatalog).results[0]!;
     expect(unknown.coach).toMatchObject({ asOfMs: null, currentness: 'unknown' });
   });
   it('totals each monetary kind and denomination with all contributing source provenance', () => {
@@ -1291,7 +1291,7 @@ describe('resolveUsagePageAggregation', () => {
       { ...fact, source: 'invoice', kind: 'invoice', amountUsd: 10 },
       { ...fact, source: 'unknown', kind: 'unpriced', amountUsd: null },
     ] });
-    const result = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] });
+    const result = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] }, bundledUsageModelPriceCatalog);
     expect(result.results[0]).toHaveProperty('costFactTotals', [
       { ...fact, amountUsd: 5, tokens: { input: 24, output: 8, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 32 }, eventCount: 2, asOfMs: 150, complete: false, sources: ['native:a', 'runtime:b'] },
       { ...fact, currency: 'EUR', amountUsd: 4, sources: ['native:a'] },
@@ -1318,7 +1318,7 @@ describe('resolveUsagePageAggregation', () => {
       { group: { service, groupId: 'secondary' }, memberAccountIds: ['work'], activeAccountId: null,
         selection: { status: 'error' as const, errorCode: 'permission_denied', value } },
     ];
-    const result = resolveUsagePageAggregation({ queries: [query], pools: [{ query, value: pools }] });
+    const result = resolveUsagePageAggregation({ queries: [query], pools: [{ query, value: pools }] }, bundledUsageModelPriceCatalog);
     expect(result.results[0]).toMatchObject({ pools: [pools[0], {
       group: pools[1]!.group, memberAccountIds: ['work'], activeAccountId: null,
       selection: { status: 'error', errorCode: 'permission_denied' },
@@ -1336,11 +1336,11 @@ describe('resolveUsagePageAggregation', () => {
     const pool = { group, memberAccountIds: ['work'], activeAccountId: 'work',
       selection: { status: 'available' as const, machineId: 'machine', value, asOfMs: 100 } };
     const quota = { status: 'unsupported' as const };
-    const first = resolveUsagePageAggregation({ queries: [query], quota, pools: [{ query, value: [pool] }] });
+    const first = resolveUsagePageAggregation({ queries: [query], quota, pools: [{ query, value: [pool] }] }, bundledUsageModelPriceCatalog);
     let previous = first;
     for (const errorCode of ['MACHINE_RPC_TIMEOUT', 'connected_service_request_failed']) {
       previous = resolveUsagePageAggregation({ queries: [query], previous, quota, pools: [{ query, value: [{ ...pool,
-        selection: { status: 'error', machineId: 'machine', errorCode } }] }] });
+        selection: { status: 'error', machineId: 'machine', errorCode } }] }] }, bundledUsageModelPriceCatalog);
       expect(previous.results[0]?.pools?.[0]?.selection).toEqual({ status: 'stale', machineId: 'machine', value, asOfMs: 100, errorCode });
       expect(previous.results[0]?.sources).toContainEqual({ source: 'selection:test.provider/account:pool', status: 'stale', asOfMs: 100, errorCode });
       expect(previous.results[0]?.pending).toBe(false);
@@ -1348,30 +1348,30 @@ describe('resolveUsagePageAggregation', () => {
     }
     for (const errorCode of ['denied', 'permission_denied', 'unauthorized', 'forbidden', 'stale_surface', 'cancelled']) {
       const refused = resolveUsagePageAggregation({ queries: [query], previous, quota, pools: [{ query, value: [{ ...pool,
-        selection: { status: 'error', machineId: 'machine', errorCode } }] }] });
+        selection: { status: 'error', machineId: 'machine', errorCode } }] }] }, bundledUsageModelPriceCatalog);
       expect(refused.results[0]?.pools?.[0]?.selection.value).toBeUndefined();
       const failedAfterRefusal = resolveUsagePageAggregation({ queries: [query], previous: refused, quota, pools: [{ query, value: [{ ...pool,
-        selection: { status: 'error', machineId: 'machine', errorCode: 'MACHINE_RPC_TIMEOUT' } }] }] });
+        selection: { status: 'error', machineId: 'machine', errorCode: 'MACHINE_RPC_TIMEOUT' } }] }] }, bundledUsageModelPriceCatalog);
       expect(failedAfterRefusal.results[0]?.pools?.[0]?.selection.value).toBeUndefined();
     }
     const offline = resolveUsagePageAggregation({ queries: [query], previous, quota, pools: [{ query, value: [{ ...pool,
-      selection: { status: 'unsupported', errorCode: 'no_machine' } }] }] });
+      selection: { status: 'unsupported', errorCode: 'no_machine' } }] }] }, bundledUsageModelPriceCatalog);
     expect(offline.results[0]?.pools?.[0]?.selection).toMatchObject({ status: 'stale', machineId: 'machine', value, asOfMs: 100, errorCode: 'no_machine' });
     const changedMachine = resolveUsagePageAggregation({ queries: [query], previous, quota, pools: [{ query, value: [{ ...pool,
-      selection: { status: 'error', machineId: 'other', errorCode: 'MACHINE_RPC_TIMEOUT' } }] }] });
+      selection: { status: 'error', machineId: 'other', errorCode: 'MACHINE_RPC_TIMEOUT' } }] }] }, bundledUsageModelPriceCatalog);
     expect(changedMachine.results[0]?.pools?.[0]?.selection.value).toBeUndefined();
     const changedMembership = resolveUsagePageAggregation({ queries: [query], previous, quota, pools: [{ query, value: [{ ...pool,
-      memberAccountIds: ['personal'], selection: { status: 'error', machineId: 'machine', errorCode: 'MACHINE_RPC_TIMEOUT' } }] }] });
+      memberAccountIds: ['personal'], selection: { status: 'error', machineId: 'machine', errorCode: 'MACHINE_RPC_TIMEOUT' } }] }] }, bundledUsageModelPriceCatalog);
     expect(changedMembership.results[0]?.pools?.[0]?.selection.value).toBeUndefined();
     const recovered = resolveUsagePageAggregation({ queries: [query], previous, quota, pools: [{ query, value: [{ ...pool,
-      selection: { ...pool.selection, value: { ...value, observedAtMs: 200 }, asOfMs: 200 } }] }] });
+      selection: { ...pool.selection, value: { ...value, observedAtMs: 200 }, asOfMs: 200 } }] }] }, bundledUsageModelPriceCatalog);
     expect(recovered.results[0]?.pools?.[0]?.selection).toEqual({ ...pool.selection, value: { ...value, observedAtMs: 200 }, asOfMs: 200 });
-    expect(resolveUsagePageAggregation({ queries: [query], previous, quota, pools: [{ query, value: [] }] }).results[0]?.pools).toEqual([]);
+    expect(resolveUsagePageAggregation({ queries: [query], previous, quota, pools: [{ query, value: [] }] }, bundledUsageModelPriceCatalog).results[0]?.pools).toEqual([]);
   });
   it('publishes all Coach evidence states on the same admitted query rather than a separate detector read', () => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
     const result = resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, value: accounting, status: 'available', asOfMs: 200 }] });
+      accounting: [{ query, value: accounting, status: 'available', asOfMs: 200 }] }, bundledUsageModelPriceCatalog);
     expect(result).toMatchObject({ results: [{ coach: {
       period: { startMs: 100, endMs: 200 },
       evaluations: expect.arrayContaining([
@@ -1379,7 +1379,7 @@ describe('resolveUsagePageAggregation', () => {
         expect.objectContaining({ detectorId: 'cache_busting_prompt_changes', status: 'insufficient_evidence' }),
       ]),
     } }] });
-    const unavailable = resolveUsagePageAggregation({ queries: [query] });
+    const unavailable = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog);
     expect(unavailable.results[0]?.coach).toMatchObject({ asOfMs: null, currentness: 'unknown', findings: [] });
     expect(unavailable.results[0]?.coach?.evaluations).toHaveLength(USAGE_COACH_DETECTOR_IDS.length);
   });
@@ -1390,7 +1390,7 @@ describe('resolveUsagePageAggregation', () => {
       requestId: 'request', workId: JSON.stringify(['session', 'turn']), requestedAtMs: 120,
       decidedAtMs: 160, toolId: 'Bash', answeringClientCategory: null,
     }] };
-    const result = resolveUsagePageAggregation({ queries: [query, other], howYouWork: [{ query, detail, asOfMs: 200 }] });
+    const result = resolveUsagePageAggregation({ queries: [query, other], howYouWork: [{ query, detail, asOfMs: 200 }] }, bundledUsageModelPriceCatalog);
     expect(result.results[0]).toHaveProperty('coach.findings', expect.arrayContaining([
       expect.objectContaining({ detectorId: 'approval_friction', coverage: 'partial',
         measurements: expect.arrayContaining([{ metric: 'permission_wait', value: 40, unit: 'milliseconds' }]) }),
@@ -1398,31 +1398,31 @@ describe('resolveUsagePageAggregation', () => {
     expect(result.results[1]).toHaveProperty('coach.findings', []);
     const pending = resolveUsagePageAggregation({ queries: [query, other], previous: result,
       sources: [{ source: 'how_you_work', status: 'pending' }],
-      accounting: [{ query, value: accounting, status: 'available', asOfMs: 210 }] });
+      accounting: [{ query, value: accounting, status: 'available', asOfMs: 210 }] }, bundledUsageModelPriceCatalog);
     expect(pending.results[0]?.coach).toMatchObject({ currentness: 'stale', findings: [
       expect.objectContaining({ detectorId: 'approval_friction', currentness: 'stale', remedy: null, action: null }),
     ] });
     expect(pending.results[1]).toHaveProperty('coach.findings', []);
     expect(UsageQueryBatchResultSchema.safeParse(pending).success).toBe(true);
     const failed = resolveUsagePageAggregation({ queries: [query, other], previous: result,
-      howYouWork: [{ query, errorCode: 'usage_session_evidence_read_failed' }] });
+      howYouWork: [{ query, errorCode: 'usage_session_evidence_read_failed' }] }, bundledUsageModelPriceCatalog);
     expect(failed.results[0]?.sources).toContainEqual({ source: 'how_you_work', status: 'stale', asOfMs: 200, errorCode: 'usage_session_evidence_read_failed' });
     expect(failed.results[0]?.coach?.findings[0]?.evidenceKey).toBe(result.results[0]?.coach?.findings[0]?.evidenceKey);
     expect(failed.results[0]?.coach?.findings[0]).toMatchObject({ currentness: 'stale', remedy: null, action: null });
     expect(failed.results[1]).toHaveProperty('coach.findings', []);
     expect(UsageQueryBatchResultSchema.safeParse(failed).success).toBe(true);
     for (const errorCode of ['denied', 'permission_denied', 'unauthorized', 'forbidden', 'stale_surface', 'cancelled']) {
-      const refused = resolveUsagePageAggregation({ queries: [query], previous: result, howYouWork: [{ query, errorCode }] });
+      const refused = resolveUsagePageAggregation({ queries: [query], previous: result, howYouWork: [{ query, errorCode }] }, bundledUsageModelPriceCatalog);
       expect(refused.results[0]).toHaveProperty('coach.findings', []);
       expect(refused.results[0]?.howYouWork?.intervals).toBeNull();
       expect(UsageQueryBatchResultSchema.safeParse(refused).success).toBe(true);
     }
     const refusedBeforeFailure = resolveUsagePageAggregation({ queries: [query], previous: result,
-      howYouWork: [{ query, detail: { status: 'unknown' }, errorCode: 'usage_session_evidence_read_failed' }] });
+      howYouWork: [{ query, detail: { status: 'unknown' }, errorCode: 'usage_session_evidence_read_failed' }] }, bundledUsageModelPriceCatalog);
     expect(refusedBeforeFailure.results[0]).toHaveProperty('coach.findings', []);
     expect(UsageQueryBatchResultSchema.safeParse(refusedBeforeFailure).success).toBe(true);
     const denied = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query,
-      detail: { ...detail, status: 'unknown' }, asOfMs: 200 }], previous: result });
+      detail: { ...detail, status: 'unknown' }, asOfMs: 200 }], previous: result }, bundledUsageModelPriceCatalog);
     expect(denied.results[0]).toHaveProperty('coach.findings', []);
     expect(UsageQueryBatchResultSchema.safeParse({ ...result, results: [{ ...result.results[0],
       sources: [{ source: 'how_you_work', status: 'unknown' }] }] }).success).toBe(false);
@@ -1434,7 +1434,7 @@ describe('resolveUsagePageAggregation', () => {
       decidedAtMs: 160, toolId: 'Bash', answeringClientCategory: null,
     }] };
     const read = (asOfMs: number, decidedAtMs = 160) => resolveUsagePageAggregation({ queries: [query],
-      howYouWork: [{ query, detail: { ...detail, permissions: [{ ...detail.permissions[0]!, decidedAtMs }] }, asOfMs }] });
+      howYouWork: [{ query, detail: { ...detail, permissions: [{ ...detail.permissions[0]!, decidedAtMs }] }, asOfMs }] }, bundledUsageModelPriceCatalog);
     const first = read(200).results[0]!.coach!.findings.find(row => row.detectorId === 'approval_friction')!;
     const refreshed = read(201).results[0]!.coach!.findings.find(row => row.detectorId === 'approval_friction')!;
     expect(first).toBeDefined();
@@ -1448,7 +1448,7 @@ describe('resolveUsagePageAggregation', () => {
       service: { pluginId: 'test.provider', localId: 'account' }, accountId: 'personal',
     } }, current: null, pace: [], targets: [], waitingWork: { status: 'unavailable' as const, reason: 'read_failed' as const } };
     const result = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available' }],
-      quota: { status: 'available', value: [allowance] } });
+      quota: { status: 'available', value: [allowance] } }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.quota).toEqual([allowance]);
     expect(result.results[0]?.accounting?.totals).toEqual(accounting.totals);
     expect(UsageQueryBatchResultSchema.safeParse({ ...result, results: [{ ...result.results[0],
@@ -1457,14 +1457,14 @@ describe('resolveUsagePageAggregation', () => {
   it('retains exact-query authorized facts on refresh failure without retaining denied or changed-scope facts', () => {
     const query = normalizeUsageQuery({ agents: ['a'] });
     const other = normalizeUsageQuery({ agents: ['b'] });
-    const previous = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available' }] });
+    const previous = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available' }] }, bundledUsageModelPriceCatalog);
     const refreshed = resolveUsagePageAggregation({ queries: [query, other], previous,
-      accounting: [{ query, status: 'error', errorCode: 'usage_analytics_query_failed' }, { query: other, status: 'error' }] });
+      accounting: [{ query, status: 'error', errorCode: 'usage_analytics_query_failed' }, { query: other, status: 'error' }] }, bundledUsageModelPriceCatalog);
     expect(refreshed.results[0]?.accounting).toEqual(accounting);
     expect(refreshed.results[0]?.sources).toContainEqual({ source: 'accounting', status: 'error', errorCode: 'usage_analytics_query_failed' });
     expect(refreshed.results[1]?.accounting).toBeUndefined();
     for (const errorCode of ['denied', 'permission_denied']) {
-      const denied = resolveUsagePageAggregation({ queries: [query], previous, accounting: [{ query, status: 'error', errorCode }] });
+      const denied = resolveUsagePageAggregation({ queries: [query], previous, accounting: [{ query, status: 'error', errorCode }] }, bundledUsageModelPriceCatalog);
       expect(denied.results[0]?.accounting).toBeUndefined();
     }
   });
@@ -1475,7 +1475,7 @@ describe('resolveUsagePageAggregation', () => {
       status: 'partial', reasons: ['incomplete_history'], missingDimensions: [], range: { complete: false }, ranked: [],
       sources: [{ source: 'native:capture', path: 'native', status: 'pending', eventCount: 1, asOfMs: 200 }],
     } });
-    const result = resolveUsagePageAggregation({ queries: [query, other], accounting: [{ query, value, status: 'available' }] });
+    const result = resolveUsagePageAggregation({ queries: [query, other], accounting: [{ query, value, status: 'available' }] }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.sources).toContainEqual({ source: 'native:capture', status: 'pending', asOfMs: 200 });
     expect(result.results[1]?.sources.some(source => source.source === 'native:capture')).toBe(false);
   });
@@ -1484,14 +1484,14 @@ describe('resolveUsagePageAggregation', () => {
     const comparison = resolveUsagePageAccountingRequests([query], 200)[1]!;
     const previous = resolveUsagePageAggregation({ queries: [query], accounting: [
       { query, value: accounting, status: 'available' }, { query: comparison, value: accounting, status: 'available', asOfMs: 100 },
-    ] });
+    ] }, bundledUsageModelPriceCatalog);
     const result = resolveUsagePageAggregation({ queries: [query], previous, accounting: [
       { query, value: accounting, status: 'available' }, { query: comparison, status: 'error', errorCode: 'usage_query_failed' },
-    ] });
+    ] }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.comparison).toMatchObject({ accounting, source: { status: 'error', asOfMs: 100 } });
     const denied = resolveUsagePageAggregation({ queries: [query], previous, accounting: [
       { query, value: accounting, status: 'available' }, { query: comparison, status: 'error', errorCode: 'permission_denied' },
-    ] });
+    ] }, bundledUsageModelPriceCatalog);
     expect(denied.results[0]?.accounting).toEqual(accounting);
     expect(denied.results[0]?.comparison?.accounting).toBeUndefined();
   });
@@ -1501,42 +1501,42 @@ describe('resolveUsagePageAggregation', () => {
     const result = resolveUsagePageAggregation({ queries: [query, other], howYouWork: [{ query, detail: {
       status: 'partial', facts: [{ workId: 't', evidenceId: 't', kind: 'busy', agentId: null, machineId: null, startMs: 100, endMs: 180 }],
       permissions: [], acceptedInputs: [],
-    } }] });
+    } }] }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.howYouWork).toMatchObject({ detailStatus: 'partial', intervals: { elapsedBusyMs: 80 } });
     expect(result.results[1]?.howYouWork).toMatchObject({ detailStatus: 'unknown', intervals: null });
     const pending = resolveUsagePageAggregation({ queries: [query], previous: result,
-      sources: [{ source: 'how_you_work', status: 'pending' }] });
+      sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog);
     expect(pending.results[0]?.howYouWork).toEqual(result.results[0]?.howYouWork);
     expect(pending.results[0]?.coach?.currentness).not.toBe('current');
     const unavailable = resolveUsagePageAggregation({ queries: [query], previous: result,
-      howYouWork: [{ query, detail: { status: 'unknown' } }] });
+      howYouWork: [{ query, detail: { status: 'unknown' } }] }, bundledUsageModelPriceCatalog);
     expect(unavailable.results[0]?.howYouWork?.intervals).toBeNull();
   });
   it('honors Account check choices before evaluation and while prior detail is retained', () => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
     const detail = { status: 'partial' as const, permissions: [{ workId: 'turn', requestId: 'permission',
       requestedAtMs: 120, decidedAtMs: 160, toolId: 'Bash', answeringClientCategory: null }], facts: [], acceptedInputs: [] };
-    const previous = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, detail, asOfMs: 200 }] });
+    const previous = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, detail, asOfMs: 200 }] }, bundledUsageModelPriceCatalog);
     expect(previous.results[0]!.coach!.findings.some(finding => finding.detectorId === 'approval_friction')).toBe(true);
     const coachPreferences = { v: 1 as const, disabledChecks: ['approval_friction' as const], modelSuggestion: 'off' as const };
     for (const source of [{ howYouWork: [{ query, detail, asOfMs: 200 }] },
       { previous, sources: [{ source: 'how_you_work', status: 'pending' as const }] }]) {
-      const coach = resolveUsagePageAggregation({ queries: [query], ...source, coachPreferences }).results[0]!.coach!;
+      const coach = resolveUsagePageAggregation({ queries: [query], ...source, coachPreferences }, bundledUsageModelPriceCatalog).results[0]!.coach!;
       expect(coach.evaluations.find(row => row.detectorId === 'approval_friction')?.status).toBe('disabled');
       expect(coach.evaluations.find(row => row.detectorId === 'model_misfit')?.status).toBe('disabled');
       expect(coach.findings).toEqual([]);
     }
-    const disabled = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, detail, asOfMs: 200 }], coachPreferences });
+    const disabled = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, detail, asOfMs: 200 }], coachPreferences }, bundledUsageModelPriceCatalog);
     const enabledAgain = resolveUsagePageAggregation({ queries: [query], previous: disabled,
-      sources: [{ source: 'how_you_work', status: 'pending' }] }).results[0]!.coach!;
+      sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog).results[0]!.coach!;
     expect(enabledAgain.evaluations.find(row => row.detectorId === 'approval_friction')?.status).toBe('insufficient_evidence');
     const openQuery = normalizeUsageQuery({ period: { startMs: 100 } });
-    const openPrevious = resolveUsagePageAggregation({ queries: [openQuery], howYouWork: [{ query: openQuery, detail, asOfMs: 200 }] });
+    const openPrevious = resolveUsagePageAggregation({ queries: [openQuery], howYouWork: [{ query: openQuery, detail, asOfMs: 200 }] }, bundledUsageModelPriceCatalog);
     const openPending = resolveUsagePageAggregation({ queries: [openQuery], previous: openPrevious, coachPreferences,
-      sources: [{ source: 'how_you_work', status: 'pending' }] }).results[0]!.coach!;
+      sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog).results[0]!.coach!;
     expect(openPending.evaluations.find(row => row.detectorId === 'approval_friction')?.status).toBe('disabled');
     const unavailable = resolveUsagePageAggregation({ queries: [query], previous,
-      sources: [{ source: 'how_you_work', status: 'pending' }], coachPreferences: null }).results[0]!.coach!;
+      sources: [{ source: 'how_you_work', status: 'pending' }], coachPreferences: null }, bundledUsageModelPriceCatalog).results[0]!.coach!;
     expect(unavailable.findings).toEqual([]);
     expect(unavailable.evaluations.every(row => row.status === 'insufficient_evidence')).toBe(true);
   });
@@ -1555,65 +1555,65 @@ describe('resolveUsagePageAggregation', () => {
         number: 1, title: 'Work', url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'open',
       } };
     const result = resolveUsagePageAggregation({ queries: [query, other], accounting: [{ query, value, status: 'available' }],
-      work: [{ query, status: 'partial', evidence: [witness] }] });
+      work: [{ query, status: 'partial', evidence: [witness] }] }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.work?.allocations).toMatchObject([{ contribution, reason: 'allocated', outcome: { repositoryKey: 'repo' } }]);
     expect(result.results[0]?.sources).toContainEqual({ source: 'work', status: 'partial' });
     expect(result.results[1]?.work).toBeUndefined();
     expect(UsageQueryBatchResultSchema.safeParse(result).success).toBe(true);
     const pending = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
-      work: [{ query, status: 'pending' }], previous: result });
+      work: [{ query, status: 'pending' }], previous: result }, bundledUsageModelPriceCatalog);
     expect(pending.results[0]?.work).toEqual(result.results[0]?.work);
     const changedValue = UsageAnalyticsQueryResponseSchema.parse({ ...value, contributions: [{ ...contribution, tokens: { ...tokens, input: 14, total: 18 } }] });
     const changed = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: changedValue, status: 'available' }],
-      work: [{ query, status: 'pending' }], previous: result });
+      work: [{ query, status: 'pending' }], previous: result }, bundledUsageModelPriceCatalog);
     expect(changed.results[0]?.work?.allocations[0]).toMatchObject({ contribution: { tokens: { input: 14, total: 18 } }, reason: 'allocated' });
     const partialFailure = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
-      work: [{ query, status: 'partial', asOfMs: 200, errorCode: 'work_evidence_failed', evidence: [witness] }] });
+      work: [{ query, status: 'partial', asOfMs: 200, errorCode: 'work_evidence_failed', evidence: [witness] }] }, bundledUsageModelPriceCatalog);
     const retrying = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
-      work: [{ query, status: 'pending' }], previous: partialFailure });
+      work: [{ query, status: 'pending' }], previous: partialFailure }, bundledUsageModelPriceCatalog);
     expect(retrying.results[0], 'retrying unchanged Work keeps its observed partial facts').toBe(partialFailure.results[0]);
     const repeatedFailure = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
-      work: [{ query, status: 'partial', asOfMs: 200, errorCode: 'work_evidence_failed', evidence: [witness] }], previous: retrying });
+      work: [{ query, status: 'partial', asOfMs: 200, errorCode: 'work_evidence_failed', evidence: [witness] }], previous: retrying }, bundledUsageModelPriceCatalog);
     expect(repeatedFailure.results[0], 'the same failed evidence does not republish a slice').toBe(partialFailure.results[0]);
     const recovered = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
-      work: [{ query, status: 'partial', asOfMs: 200, evidence: [] }], previous: repeatedFailure });
+      work: [{ query, status: 'partial', asOfMs: 200, evidence: [] }], previous: repeatedFailure }, bundledUsageModelPriceCatalog);
     expect(recovered.results[0]?.work?.outcomes).toEqual([]);
     expect(recovered.results[0]?.sources).toContainEqual({ source: 'work', status: 'partial', asOfMs: 200 });
     expect(recovered.results[0]).not.toBe(repeatedFailure.results[0]);
     const completedPartialFailure = resolveUsagePageAggregation({ queries: [query], previous: partialFailure,
-      accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] });
+      accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] }, bundledUsageModelPriceCatalog);
     expect(completedPartialFailure.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', asOfMs: 200,
       errorCode: 'work_evidence_failed' });
     let failed = result;
     for (let attempt = 0; attempt < 2; attempt++) {
       failed = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }], previous: failed,
-        work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] });
+        work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] }, bundledUsageModelPriceCatalog);
       expect(failed.results[0]?.work).toEqual(result.results[0]?.work);
       expect(failed.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', errorCode: 'work_evidence_failed' });
       expect(UsageQueryBatchResultSchema.safeParse(failed).success).toBe(true);
     }
     const failedSource = failed.results[0]!.sources.find(source => source.source === 'work')!;
     const independentProgress = resolveUsagePageAggregation({ queries: [query], previous: failed,
-      accounting: [{ query, value, status: 'pending' }], work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] });
+      accounting: [{ query, value, status: 'pending' }], work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] }, bundledUsageModelPriceCatalog);
     expect(independentProgress.results[0]!.sources.find(source => source.source === 'work'),
       'independent accounting progress preserves the incumbent completed Work failure').toBe(failedSource);
     const updateRequired = { kind: 'update_required' as const, operation: 'session.detail', component: 'server' as const,
       reason: 'session_read_batch_unsupported' };
     const changedFailure = resolveUsagePageAggregation({ queries: [query], previous: independentProgress,
       accounting: [{ query, value, status: 'pending' }],
-      work: [{ query, status: 'error', errorCode: 'work_evidence_failed', updateRequired }] });
+      work: [{ query, status: 'error', errorCode: 'work_evidence_failed', updateRequired }] }, bundledUsageModelPriceCatalog);
     expect(changedFailure.results[0]!.sources.find(source => source.source === 'work')).toMatchObject({ updateRequired });
     const clearedRequirement = resolveUsagePageAggregation({ queries: [query], previous: changedFailure,
-      accounting: [{ query, value, status: 'pending' }], work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] });
+      accounting: [{ query, value, status: 'pending' }], work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] }, bundledUsageModelPriceCatalog);
     expect(clearedRequirement.results[0]!.sources.find(source => source.source === 'work')).not.toHaveProperty('updateRequired');
     const recoveredEmpty = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }], previous: failed,
-      work: [{ query, status: 'partial', evidence: [] }] });
+      work: [{ query, status: 'partial', evidence: [] }] }, bundledUsageModelPriceCatalog);
     expect(recoveredEmpty.results[0]?.work?.outcomes).toEqual([]);
     const quarantined = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }], previous: failed,
-      work: [{ query, status: 'error', errorCode: 'work_evidence_failed', evidence: [], branchEvidence: [] }] });
+      work: [{ query, status: 'error', errorCode: 'work_evidence_failed', evidence: [], branchEvidence: [] }] }, bundledUsageModelPriceCatalog);
     expect(quarantined.results[0]?.work?.outcomes).toEqual([]);
     const revoked = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
-      work: [{ query, status: 'error', errorCode: 'unauthorized', evidence: [witness] }], previous: failed });
+      work: [{ query, status: 'error', errorCode: 'unauthorized', evidence: [witness] }], previous: failed }, bundledUsageModelPriceCatalog);
     expect(revoked.results[0]?.work?.allocations).toMatchObject([{ contribution, reason: 'missing_evidence', outcome: null, evidence: [] }]);
     expect(revoked.results[0]?.work?.outcomes).toEqual([]);
     expect(revoked.results[0]?.sources).toContainEqual({ source: 'work', status: 'error', errorCode: 'unauthorized' });
@@ -1643,7 +1643,7 @@ describe('resolveUsagePageAggregation', () => {
         accounting: [{ query, period, value, status: 'available', asOfMs: nowMs }],
         work: [{ query, status, ...(status === 'available' ? { evidence: [], branchEvidence: [] }
           : status === 'error' ? { errorCode: 'work_evidence_failed' } : {}) }],
-      });
+      }, bundledUsageModelPriceCatalog);
     };
     const cold = read(undefined, nowMs, 'error');
     expect(cold.results[0]?.work?.allocations).toMatchObject([{ reason: 'missing_evidence', outcome: null }]);
@@ -1671,7 +1671,7 @@ describe('resolveUsagePageAggregation', () => {
       quota: { status: 'unsupported' },
       howYouWork: [{ query, asOfMs: 100, detail: { status: 'partial', facts: [] } }],
       sources: [{ source: 'how_you_work', status: 'pending' }],
-    });
+    }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.pending).toBe(false);
     expect(result.results[0]?.sources.filter(source => source.source === 'how_you_work'))
       .toEqual([{ source: 'how_you_work', status: 'partial', asOfMs: 100 }]);
@@ -1686,7 +1686,7 @@ describe('resolveUsagePageAggregation', () => {
     const pinned = normalizeUsageQuery({ ...query, period: { startMs: 0, endMs: 100 } });
     const result = resolveUsagePageAggregation({ queries: [query, equivalent, pinned], accounting: [
       { query, status: 'available', value: accounting, asOfMs: 200 },
-    ], quota: { status: 'pending' } });
+    ], quota: { status: 'pending' } }, bundledUsageModelPriceCatalog);
     expect(result.results).toHaveLength(2);
     expect(result.results[0]?.accounting?.totals.tokens.total).toBe(16);
     expect(result.results[0]?.requestedQuery.period).toEqual({ startMs: 100, endMs: 200 });
@@ -1700,7 +1700,7 @@ describe('resolveUsagePageAggregation', () => {
     const query = normalizeUsageQuery({});
     const result = resolveUsagePageAggregation({ queries: [query], accounting: [
       { query, status: 'available', value: accounting },
-    ], quota: { status: 'not_loaded' }, sources: [{ source: 'native:capture', status: 'pending' }] });
+    ], quota: { status: 'not_loaded' }, sources: [{ source: 'native:capture', status: 'pending' }] }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.accounting?.totals).toEqual(accounting.totals);
     expect(result.results[0]).not.toHaveProperty('quota');
     expect(result.results[0]?.sources).toEqual([
@@ -1714,7 +1714,7 @@ describe('resolveUsagePageAggregation', () => {
 
   it.each(['unchanged', 'changed', 'reordered'] as const)('admits %s repeated-name source coverage with linear fact visits', mode => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeSessionEvidence: false });
-    const base = resolveUsagePageAggregation({ queries: [query], accounting: [] });
+    const base = resolveUsagePageAggregation({ queries: [query], accounting: [] }, bundledUsageModelPriceCatalog);
     const visitsFor = (size: number) => {
       let visits = 0;
       const sources = Array.from({ length: size }, (_, asOfMs) => ({
@@ -1740,7 +1740,7 @@ describe('resolveUsagePageAggregation', () => {
 
   it('retains reordered repeated-name source facts while admitting a changed refusal', () => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeSessionEvidence: false });
-    const base = resolveUsagePageAggregation({ queries: [query], accounting: [] });
+    const base = resolveUsagePageAggregation({ queries: [query], accounting: [] }, bundledUsageModelPriceCatalog);
     const sources = [1, 2, 3].map(asOfMs => ({ source: 'runtime', status: 'available' as const, asOfMs }));
     const previous = { ...base, results: [{ ...base.results[0]!, sources }] };
     const current = { ...previous, results: [{ ...previous.results[0]!, sources: [
@@ -1758,20 +1758,20 @@ describe('resolveUsagePageAggregation', () => {
     const other = normalizeUsageQuery({ ...query, agents: ['b'] });
     const first = resolveUsagePageAggregation({ queries: [query, other], accounting: [
       { query, status: 'available', value: accounting },
-    ], sources: [{ source: 'how_you_work', status: 'available' }] });
+    ], sources: [{ source: 'how_you_work', status: 'available' }] }, bundledUsageModelPriceCatalog);
     const next = resolveUsagePageAggregation({ queries: [query, other], previous: first, accounting: [
       { query, status: 'available', value: accounting }, { query: other, status: 'available', value: accounting },
-    ], sources: [{ source: 'how_you_work', status: 'available' }] });
+    ], sources: [{ source: 'how_you_work', status: 'available' }] }, bundledUsageModelPriceCatalog);
     expect(next.results[0]).toBe(first.results[0]);
     expect(next.results[1]).not.toBe(first.results[1]);
     expect(next.results[1]?.accounting?.totals.tokens.total).toBe(16);
     const pending = resolveUsagePageAggregation({ queries: [query, other], previous: next, accounting: [
       { query, status: 'available', value: accounting }, { query: other, status: 'available', value: accounting },
-    ], sources: [{ source: 'how_you_work', status: 'pending' }] });
+    ], sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog);
     const refreshed = resolveUsagePageAggregation({ queries: [query, other], previous: pending, accounting: [
       { query, status: 'available', value: accounting },
       { query: other, status: 'available', value: { ...accounting, totals: { ...accounting.totals, eventCount: 2 } } },
-    ], sources: [{ source: 'how_you_work', status: 'available' }] });
+    ], sources: [{ source: 'how_you_work', status: 'available' }] }, bundledUsageModelPriceCatalog);
     const settled = retainUsageQueryResultReferences(refreshed, pending, next);
     expect(settled.results[0], 'a changed sibling must not lose the unchanged slice identity after pending detail settles').toBe(next.results[0]);
     expect(settled.results[1]?.accounting?.totals.eventCount).toBe(2);
@@ -1792,7 +1792,7 @@ describe('resolveUsagePageAggregation', () => {
         accounting: [{ query, status: 'available', value: current },
           { query: comparisonQuery, status: 'available', value }],
         sources: [{ source: 'how_you_work', status }],
-      });
+      }, bundledUsageModelPriceCatalog);
     const initial = compose(undefined, 'pending', 'Dev box');
     const settled = compose(initial, 'available', 'Dev box');
     expect(settled.results[0]).not.toBe(initial.results[0]);
@@ -1824,13 +1824,13 @@ describe('resolveUsagePageAggregation', () => {
     expect(reobserved.results[0]?.accounting?.priceCatalog?.models).toBe(changed.results[0]?.accounting?.priceCatalog?.models);
     expect(reobserved.results[0]?.accounting?.priceCatalog?.provenance.asOfMs).toBe(value.priceCatalog!.provenance.asOfMs + 1);
     const withdrawn = resolveUsagePageAggregation({ queries: [query], previous: changed,
-      accounting: [{ query, status: 'not_loaded' }] });
+      accounting: [{ query, status: 'not_loaded' }] }, bundledUsageModelPriceCatalog);
     expect(withdrawn.results[0]?.accounting).toBeUndefined();
   });
 
   it('refuses mismatched shown-query identity and unavailable facts in the public result', () => {
     const query = normalizeUsageQuery({});
-    const result = resolveUsagePageAggregation({ queries: [query] });
+    const result = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog);
     expect(UsageQueryBatchResultSchema.safeParse({ ...result, results: [{ ...result.results[0], key: 'wrong' }] }).success).toBe(false);
     expect(UsageQueryBatchResultSchema.safeParse({ ...result, credentials: 'not query authority' }).success).toBe(false);
   });
@@ -1840,7 +1840,7 @@ describe('resolveUsagePageAggregation', () => {
     const previousPeriod = resolveUsagePageAccountingRequests([query], 200)[1]!;
     const result = resolveUsagePageAggregation({ queries: [query], accounting: [
       { query, status: 'pending' }, { query: previousPeriod, status: 'available', value: accounting },
-    ] });
+    ] }, bundledUsageModelPriceCatalog);
     expect(result.results[0]).toMatchObject({
       requestedQuery: { period: { startMs: 100, endMs: 200 } },
       comparison: { query: { period: { startMs: 0, endMs: 100 }, timeZoneOffsetMinutes: 120 }, accounting },

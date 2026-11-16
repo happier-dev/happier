@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { expect, it, vi } from 'vitest';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { projectUsagePageCost, repriceUsageAnalyticsResponse } from '@happier-dev/protocol/usage/usageCost';
@@ -36,7 +37,7 @@ it('partitions a large admitted accounting population without scanning every row
     let scans: unknown[];
     const started = performance.now();
     try {
-        repriced = repriceUsageAnalyticsResponse(response);
+        repriced = repriceUsageAnalyticsResponse(response, (response).priceCatalog ?? bundledUsageModelPriceCatalog);
         projected = projectUsagePageCost(repriced, 'auto');
         scans = [...filter.mock.contexts];
     } finally { filter.mockRestore(); }
@@ -61,7 +62,7 @@ it('partitions a large admitted accounting population without scanning every row
         const expected = repriceUsageAnalyticsResponse({ ...response, contributions: selected,
             series: [{ ...bucket, ...captured.totals }],
             modelTimeline: [{ ...bucket, leaders: [leader] }], engineTimeline: [{ ...bucket, leaders: [leader] }],
-            leaders: undefined, breakdowns: undefined });
+            leaders: undefined, breakdowns: undefined }, bundledUsageModelPriceCatalog);
         expect(repriced.series![index]!.cost).toEqual(expected.series![0]!.cost);
         expect(repriced.modelTimeline![index]).toEqual(expected.modelTimeline![0]);
         expect(repriced.engineTimeline![index]).toEqual(expected.engineTimeline![0]);

@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -94,7 +95,7 @@ it.each(['cli', 'mcp'] as const)('uses Account night hours for the %s recorded a
     expect(result.ok, JSON.stringify(result)).toBe(true);
     const slice = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
     const ui = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: slice.accounting, status: 'available' }],
-      nightHours: hours });
+      nightHours: hours }, bundledUsageModelPriceCatalog);
     expect(slice.howYouWork?.nightShift).toEqual(ui.results[0]?.howYouWork?.nightShift);
     return slice.howYouWork?.nightShift;
   };

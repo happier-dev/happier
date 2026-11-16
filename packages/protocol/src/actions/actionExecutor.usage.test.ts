@@ -43,7 +43,7 @@ describe('personal usage Action execution', () => {
       accounting: [heavy, small].map(query => ({ query, status: 'available' as const,
         value: { ...accounting, contributions: query === small ? contributions.slice(0, 1) : contributions } })),
       work: [heavy, small].map(query => ({ query, status: 'available' as const, evidence })),
-    });
+    }, bundledUsageModelPriceCatalog);
     expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(rich)).toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
     let reads = 0;
     let admitted = rich;
@@ -57,7 +57,7 @@ describe('personal usage Action execution', () => {
     const todayBatch = resolveUsagePageAggregation({ queries: [today],
       accounting: [{ query: today, status: 'available', value: { ...accounting, contributions: todayRows } }],
       work: [{ query: today, status: 'available', evidence }],
-    });
+    }, bundledUsageModelPriceCatalog);
     for (const surface of ['agent', 'mcp'] as const) {
       const agent = await createActionExecutor({ usageActions: { query: async () => todayBatch } } as ActionExecutorDeps)
         .execute('usage.query', { queries: [{ period: { relative: 'today' } }] }, { surface });
@@ -95,7 +95,7 @@ describe('personal usage Action execution', () => {
     const selected = contributions.slice(0, 500);
     const near = normalizeUsageQuery({ ...heavy, session: selected.map(row => row.sessionId) });
     admitted = resolveUsagePageAggregation({ queries: [near], accounting: [{ query: near, status: 'available',
-      value: { ...accounting, contributions: selected } }], work: [{ query: near, status: 'available', evidence }] });
+      value: { ...accounting, contributions: selected } }], work: [{ query: near, status: 'available', evidence }] }, bundledUsageModelPriceCatalog);
     const nearBytes = measureExternalActionResultResponseEnvelopeUtf8BytesV1(admitted);
     // Doubling the real contributions adds at most another half-sized slice.
     expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(rich)).toBeLessThan(nearBytes * 2 +
@@ -115,7 +115,7 @@ describe('personal usage Action execution', () => {
     const wide = resolveUsagePageAggregation({ queries: wideQueries,
       accounting: wideQueries.map(query => ({ query, status: 'available' as const, value: { ...accounting, contributions } })),
       work: wideQueries.map(query => ({ query, status: 'available' as const, evidence })),
-    });
+    }, bundledUsageModelPriceCatalog);
     expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(wide)).toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
     const wideDelivery = usageDelivery.projectUsageQueryDelivery(wide);
     expect(wideDelivery.results.some(slice => slice.incomplete?.omittedSections.includes('work'))).toBe(true);
@@ -138,7 +138,7 @@ describe('personal usage Action execution', () => {
     const rich = resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value: accounting }],
       howYouWork: [{ query, detail: { status: 'available', phaseEvents } }],
-    });
+    }, bundledUsageModelPriceCatalog);
     const lastEvent = rich.results[0]!.howYouWork!.autopsy!.events.at(-1)!;
     const evidenceId = lastEvent.evidenceId;
     let evidenceReads = 0;
@@ -165,7 +165,7 @@ describe('personal usage Action execution', () => {
     const paired = resolveUsagePageAggregation({ queries: [query, sibling],
       accounting: [query, sibling].map(query => ({ query, status: 'available' as const, value: accounting })),
       howYouWork: [query, sibling].map(query => ({ query, detail: { status: 'available' as const, phaseEvents } })),
-    });
+    }, bundledUsageModelPriceCatalog);
     const pairedDelivery = usageDelivery.projectUsageQueryDelivery(paired);
     expect(pairedDelivery.results).toHaveLength(2);
     for (const slice of pairedDelivery.results) {
@@ -187,7 +187,7 @@ describe('personal usage Action execution', () => {
         workspaceId: null, source: 'runtime', tokens: accounting.totals.tokens, cost: accounting.totals.cost }));
       const value = { ...accounting, contributions, priceCatalog: bundledUsageModelPriceCatalog };
       return resolveUsagePageAggregation({ queries: input.queries,
-        accounting: input.queries.map(query => ({ query, value, status: 'available' as const })) });
+        accounting: input.queries.map(query => ({ query, value, status: 'available' as const })) }, bundledUsageModelPriceCatalog);
     } } };
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     const two = await executor.execute('usage.query', { queries: [summary, { ...summary, metric: 'cost' }, summary] }, { surface: 'cli' });
@@ -218,7 +218,7 @@ describe('personal usage Action execution', () => {
     const deps: Partial<ActionExecutorDeps> = {
       projectWorkspaceRefs: async () => ({ workspaceRefs: refs }),
       usageActions: { query: async request => resolveUsagePageAggregation({ queries: request.queries,
-        accounting: request.queries.map(query => ({ query, value, status: 'available' as const })) }) } };
+        accounting: request.queries.map(query => ({ query, value, status: 'available' as const })) }, bundledUsageModelPriceCatalog) } };
     expect(await resolveInputOptions({ deps: deps as ActionExecutorDeps, ctx: { surface: 'agent', serverId: 'home-1' }, actionId: null,
       optionsSourceId: 'usage.filters.projects', input: {}, readFailure: () => null,
       resolveSessionId: () => null, reviewScope: () => undefined })).toEqual({ ok: true, result: [{ value: 'project-1', label: 'App' }] });
@@ -237,7 +237,7 @@ describe('personal usage Action execution', () => {
       usageActions: { query: async request => {
         requested.push(...request.queries);
         return resolveUsagePageAggregation({ queries: request.queries,
-          accounting: request.queries.map(query => ({ query, value, status: 'available' as const })) });
+          accounting: request.queries.map(query => ({ query, value, status: 'available' as const })) }, bundledUsageModelPriceCatalog);
       } } };
     // Call-through instrumentation only: production parsing and envelope logic remain real.
     const delivery = vi.spyOn(usageDelivery, 'projectUsageQueryDelivery');
@@ -270,7 +270,7 @@ describe('personal usage Action execution', () => {
     const coachQuery = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
     const deps: Partial<ActionExecutorDeps> = { usageActions: {
       query: async input => resolveUsagePageAggregation({ queries: input.queries,
-        accounting: [{ query: coachQuery, value: accounting, status: 'available', asOfMs: 200 }] }),
+        accounting: [{ query: coachQuery, value: accounting, status: 'available', asOfMs: 200 }] }, bundledUsageModelPriceCatalog),
     } };
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     expect(await executor.execute('usage.query', { queries: [coachQuery] }, { surface: 'cli' }))
@@ -298,7 +298,7 @@ describe('personal usage Action execution', () => {
       } };
     const deps: Partial<ActionExecutorDeps> = { usageActions: {
       query: async input => resolveUsagePageAggregation({ queries: input.queries,
-        accounting: [{ query: workQuery, value, status: 'available' }], work: [{ query: workQuery, status: 'partial', evidence: [witness] }] }),
+        accounting: [{ query: workQuery, value, status: 'available' }], work: [{ query: workQuery, status: 'partial', evidence: [witness] }] }, bundledUsageModelPriceCatalog),
     } };
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     expect(await executor.execute('usage.query', { queries: [workQuery, other] }, { surface: 'cli' }))
@@ -310,7 +310,7 @@ describe('personal usage Action execution', () => {
   });
   it('treats reversed batches as the same canonical set of independently resolved slices', async () => {
     const deps: Partial<ActionExecutorDeps> = { usageActions: {
-      query: async request => resolveUsagePageAggregation({ queries: request.queries }),
+      query: async request => resolveUsagePageAggregation({ queries: request.queries }, bundledUsageModelPriceCatalog),
     } };
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     const pinned = { ...query, period: { startMs: 0, endMs: 100 } };
@@ -322,7 +322,7 @@ describe('personal usage Action execution', () => {
     const deps: Partial<ActionExecutorDeps> = { usageActions: {
       // Authenticated read transport is the boundary; query/key/aggregation logic stays real.
       query: async request => resolveUsagePageAggregation({ queries: request.queries,
-        accounting: [{ query, status: 'available', value: accounting }], quota: { status: 'pending' } }),
+        accounting: [{ query, status: 'available', value: accounting }], quota: { status: 'pending' } }, bundledUsageModelPriceCatalog),
     } };
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     const pinned = { ...query, period: { startMs: 0, endMs: 100 } };
@@ -335,7 +335,7 @@ describe('personal usage Action execution', () => {
   it('refuses incomplete or foreign slice sets instead of presenting unrequested accounting', async () => {
     const deps: Partial<ActionExecutorDeps> = { usageActions: {
       query: async () => resolveUsagePageAggregation({ queries: [normalizeUsageQuery({ agents: ['foreign'] })],
-        accounting: [{ query: normalizeUsageQuery({ agents: ['foreign'] }), status: 'available', value: accounting }] }),
+        accounting: [{ query: normalizeUsageQuery({ agents: ['foreign'] }), status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog),
     } };
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     expect(await executor.execute('usage.query', { queries: [query] }, { surface: 'mcp' }))
@@ -347,7 +347,7 @@ describe('personal usage Action execution', () => {
         expect(request.queries[0]).toMatchObject({ includeAccounting: true, includeContributions: false, includeComparison: false,
           includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
         return resolveUsagePageAggregation({ queries: request.queries,
-          accounting: request.queries.map(query => ({ query, status: 'available' as const, value: accounting, asOfMs: 150 })) });
+          accounting: request.queries.map(query => ({ query, status: 'available' as const, value: accounting, asOfMs: 150 })) }, bundledUsageModelPriceCatalog);
       },
     } };
     const executor = createActionExecutor(deps as ActionExecutorDeps);
@@ -370,7 +370,7 @@ describe('personal usage Action execution', () => {
       .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
     const retiredDeps: Partial<ActionExecutorDeps> = { usageActions: {
       query: async request => { controller.abort(); return resolveUsagePageAggregation({ queries: request.queries,
-        accounting: [{ query, status: 'available', value: accounting }] }); },
+        accounting: [{ query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog); },
     } };
     const retired = createActionExecutor(retiredDeps as ActionExecutorDeps);
     expect(await retired.execute('usage.query', { queries: [query] }, { surface: 'cli', signal: controller.signal }))
@@ -379,7 +379,7 @@ describe('personal usage Action execution', () => {
   it('reports unknown accounting freshness without substituting the export clock', async () => {
     const deps: Partial<ActionExecutorDeps> = { usageActions: {
       query: async request => resolveUsagePageAggregation({ queries: request.queries,
-        accounting: request.queries.map(query => ({ query, status: 'available' as const, value: accounting })) }),
+        accounting: request.queries.map(query => ({ query, status: 'available' as const, value: accounting })) }, bundledUsageModelPriceCatalog),
     } };
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     expect(await executor.execute('usage.export', { query, format: 'json', fields: ['totals'] }, { surface: 'cli' }))

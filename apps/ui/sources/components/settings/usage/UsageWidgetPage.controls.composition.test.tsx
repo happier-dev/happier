@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { Text } from 'react-native';
 import { act } from 'react-test-renderer';
@@ -152,7 +153,7 @@ afterEach(async () => {
     retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined;
 });
 function bodyProps(input: Parameters<typeof resolveUsagePageAggregation>[0]) {
-    const slice = resolveUsagePageAggregation(input).results[0]!;
+    const slice = resolveUsagePageAggregation(input, bundledUsageModelPriceCatalog).results[0]!;
     const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
         freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
     return { slice, model, query: slice.shownQuery, serverId: 'home' };

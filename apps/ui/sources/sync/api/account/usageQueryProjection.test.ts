@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { afterEach, expect, it, vi } from 'vitest';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsagePageAggregation, resolveUsageComparisonQuery, UsageQueryBatchResultSchema, type UsageQuerySourceState, type UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -207,7 +208,7 @@ it('keeps every Usage view and Coach consistent through the UI read model and Ac
             sources: Array.from({ length: 288 }, (_, index) => ({ source: `source-${index}`, path: 'runtime',
                 status: index === 0 ? 'unknown' : 'partial', eventCount: 1, historyComplete: false })) },
         activity: { calendarDays: [{ date: '1970-01-01', eventCount: 2_077 }], weekdayHourBuckets: [{ weekday: 4, hour: 0, eventCount: 2_077 }] },
-    }));
+    }), bundledUsageModelPriceCatalog);
     const comparedValue = UsageAnalyticsQueryResponseSchema.parse({ ...value, contributions: [], costFacts: [],
             totals: { ...value.totals, eventCount: 0, tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
                 cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
@@ -246,7 +247,7 @@ it('keeps every Usage view and Coach consistent through the UI read model and Ac
     const executor = createActionExecutor({ usageActions: { query: async () => resolveUsagePageAggregation({
         queries, accounting, work, howYouWork, quota, nowMs: 2000,
         accountSettings: settingsDefaults, coachPreferences: settingsDefaults.usageCoachPreferencesV1,
-    }) } } as ActionExecutorDeps);
+    }, bundledUsageModelPriceCatalog) } } as ActionExecutorDeps);
     const dispatched = await executor.execute('usage.query', { queries }, { surface: 'cli' });
     if (!dispatched.ok) throw new Error(`Usage Action refused: ${dispatched.errorCode}`);
     const action = UsageQueryBatchResultSchema.parse(dispatched.result);

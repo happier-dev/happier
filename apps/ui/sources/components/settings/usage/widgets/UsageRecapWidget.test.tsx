@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 /** @vitest-environment jsdom */
 import * as React from 'react';
 import { URL as NodeURL } from 'node:url';
@@ -180,7 +181,7 @@ describe('Recap table/text controls through the admitted export Action', () => {
   it.each(['json', 'csv'] as const)('downloads the same %s Action bytes with explicit table fields', async format => {
     const details = repriceUsageAnalyticsResponse({ ...accounting, contributions: [{ id: 'export-detail', observedAtMs: 500,
       sessionId: 's1', turnId: 'turn', agentId: 'claude', modelId: null, machineId: 'pinned-machine', projectKey: 'opaque-project',
-      workspaceId: 'workspace', source: 'native', tokens: accounting.totals.tokens, cost: accounting.totals.cost }] });
+      workspaceId: 'workspace', source: 'native', tokens: accounting.totals.tokens, cost: accounting.totals.cost }] }, bundledUsageModelPriceCatalog);
     // The mounted recap has no raw rows. Only the explicit download may request them.
     const screen = await mount(false, () => Response.json(details));
     const blobs: Blob[] = [];

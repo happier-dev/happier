@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { expect, it } from 'vitest';
 import { repriceUsageAnalyticsResponse, projectUsagePageCost, resolveUsageCostForSelection } from './usageCost.js';
 import { buildUsageBreakdownList, buildUsageLeaderList, compareUsageRankedLeaders, groupUsageLeaderSources, selectUsageLeaderTokenFrontier, selectUsageRankedLeaders } from './usageLeaderProjection.js';
@@ -165,7 +166,7 @@ it('buckets the same selected Claude money as the breakdown across a midnight-sp
         engineTimeline: [start, midnight].map(bucketStartMs => ({ bucketStartMs, bucketEndMs: bucketStartMs + 86400000,
             leaders: [{ key: 'claude', ...raw }] })),
     });
-    const repriced = repriceUsageAnalyticsResponse(response);
+    const repriced = repriceUsageAnalyticsResponse(response, (response).priceCatalog ?? bundledUsageModelPriceCatalog);
     const page = projectUsagePageCost(UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(repriced))), 'auto');
     const days = page.accounting.engineTimeline!.map(bucket => resolveUsageCostForSelection(bucket.leaders[0]!.cost!, page.selection));
     expect(days).toEqual([0.0300936, 0.138759]);

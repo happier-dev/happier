@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '../usage/usageModelPriceCatalog.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
@@ -188,7 +189,7 @@ describe('public-profile Actions through the shared executor', () => {
               coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [],
                 range: { startMs: 0, endMs: 1_000, complete: true }, sources: [] },
             }),
-          })) });
+          })) }, bundledUsageModelPriceCatalog);
         } },
       }),
     } as ActionExecutorDeps);
@@ -405,7 +406,7 @@ describe('public-profile Actions through the shared executor', () => {
               machineId: null, projectKey: null, workspaceId: null, source: 'runtime', eventCount: 1,
               tokens: { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 },
               cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }],
-          }) })) }) } }),
+          }) })) }, bundledUsageModelPriceCatalog) } }),
     } as ActionExecutorDeps);
     const result = await executor.execute('account.public_profile.publish', {
       intent: 'publish', policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1, metadataSelection: {},
@@ -527,7 +528,7 @@ describe('public-profile Actions through the shared executor', () => {
               coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [],
                 range: { startMs: 0, endMs: 1_000, complete: true }, sources: [] },
             }),
-          })) });
+          })) }, bundledUsageModelPriceCatalog);
         } },
       }),
     } as ActionExecutorDeps);
@@ -576,7 +577,7 @@ describe('public-profile Actions through the shared executor', () => {
               coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [],
                 range: { startMs: 0, endMs: 1_000, complete: true }, sources: [] },
             }),
-          })) });
+          })) }, bundledUsageModelPriceCatalog);
         } } }),
       }),
     } as ActionExecutorDeps);
@@ -694,7 +695,7 @@ describe('public-profile Actions through the shared executor', () => {
             coverage: { status: 'partial', reasons: ['incomplete_history'], missingDimensions: [], ranked: [],
               range: { startMs: 0, endMs: 1_000, complete: false }, sources: [] },
           }),
-        })) }) },
+        })) }, bundledUsageModelPriceCatalog) },
       }),
     } as ActionExecutorDeps);
     const intent = { policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1, metadataSelection: {}, query: current.record.query,
@@ -755,7 +756,7 @@ describe('public-profile Actions through the shared executor', () => {
               machineId: null, projectKey: null, workspaceId: null, source: 'runtime', eventCount: 1,
               tokens: { input: observedTokens, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: observedTokens },
               cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }],
-          }) })) }) } }),
+          }) })) }, bundledUsageModelPriceCatalog) } }),
       approvalsCreate: async ({ request }) => { reviewOrder.push('approval'); offered = structuredClone(request); stored = request; return { artifactId: 'snapshot-review' }; },
       approvalsGet: async () => stored,
       approvalsUpdate: async ({ request }) => {

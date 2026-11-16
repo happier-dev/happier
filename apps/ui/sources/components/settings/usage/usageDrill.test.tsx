@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
@@ -93,7 +94,7 @@ describe('drill-to-filter', () => {
           },
         },
       ],
-    }).results[0]!;
+    }, bundledUsageModelPriceCatalog).results[0]!;
     const model: UsageWidgetBodyModel = {
       requestedQuery: null,
       shownQuery: null,

@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { decodeBase64 } from '../crypto/base64.js';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
@@ -25,7 +26,7 @@ describe('authorized selected-field usage file bytes', () => {
     const batch = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, value: accounting, status: 'available', asOfMs: 100 }],
       sourceLocations: [{ machineId: 'machine', displayLocation: 'Private workstation' }],
-    }));
+    }, bundledUsageModelPriceCatalog));
     const value = batch.results[0]!.accounting!;
     expect(value.coverage?.sources[0]).toMatchObject({ displayLocation: 'Private workstation' });
     for (const format of ['json', 'csv', 'text'] as const) {

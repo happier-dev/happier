@@ -1,3 +1,4 @@
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import tweetnacl from 'tweetnacl';
 import { openSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -1147,7 +1148,7 @@ describe('UI Workflow Action front door', () => {
             runtimeFetch.mockImplementation(request);
             storage.setState({ profileScope: { serverId: h.account.serverId, accountId } });
             const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, sources: ['runtime'] });
-            const slice = resolveUsagePageAggregation({ queries: [query] }).results[0]!;
+            const slice = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!;
             const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false,
                 error: null, freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
             screen = await renderScreen(React.createElement(UsageCoachWidget, {
