@@ -23,6 +23,7 @@ import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/own
 import { prepareTargetLinkForHost } from './prepareTargetLinkForHost';
 import { readDeploymentTargetV1 } from './targets/deploymentTargetCatalog';
 import { createContributedDeploymentTargetForHost } from './targets/contributedDeploymentTargetForHost';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import * as vercel from '../../../../packages/plugins/deploy-vercel/src/index';
 import { PLUGIN_MANIFEST as machineVercel } from '../../../../packages/plugins/machine-vercel/src/manifest';
 
@@ -124,6 +125,26 @@ it('retains a real Vercel Create choice through protected storage and omitted-me
         }, environment);
         expect.soft(await prepare()).toMatchObject({ ok: true, content: { sourceMethod: 'upload' } });
         expect(await prepare('gitIntegration')).toMatchObject({ ok: true, content: { sourceMethod: 'gitIntegration' } });
+        // COR4-164 (#164): an agent Session's Home-minted root reaches preparation with the Session host's
+        // projected same-Account custody (requesterAccountProjection), not a dispatched requester context.
+        const sessionCarrier = (accountId: string) => {
+            const carrier = { v: 1, token: 'session-root', binding: { accountId, actionId: 'deployments.deploy' } };
+            Object.defineProperty(carrier, 'requesterAccountProjection', { value: { accountId }, enumerable: false });
+            return carrier as unknown as NonNullable<Parameters<typeof targetHost.prepareCandidate>[0]['context']['externalActionExecutionAuthorization']>;
+        };
+        const ownerAccountId = readAccountIdFromToken(boundary.credentials.token);
+        if (!ownerAccountId) throw new Error('Expected a credential owner');
+        expect.soft(await targetHost.prepareCandidate({ environmentId: environment.environment.id, targetLinkId: link.id,
+            context: { externalActionExecutionAuthorization: sessionCarrier(ownerAccountId) } }, environment))
+            .toMatchObject({ ok: true, content: { sourceMethod: 'upload' } });
+        // Another Account's carrier never borrows this host's credentials, and a bare root without custody stays refused.
+        await expect(targetHost.prepareCandidate({ environmentId: environment.environment.id, targetLinkId: link.id,
+            context: { externalActionExecutionAuthorization: sessionCarrier('someone-else') } }, environment))
+            .rejects.toMatchObject({ code: 'action_forbidden' });
+        const bare = sessionCarrier(ownerAccountId);
+        await expect(targetHost.prepareCandidate({ environmentId: environment.environment.id, targetLinkId: link.id,
+            context: { externalActionExecutionAuthorization: { ...bare } } }, environment))
+            .rejects.toMatchObject({ code: 'action_forbidden' });
         delete reopened.content.sourceMethod;
         expect(await prepare()).toMatchObject({ ok: true, content: { sourceMethod: 'gitIntegration' } });
     } finally { await app.close(); await mounted.dispose(); await kit.dispose(); }

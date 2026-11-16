@@ -139,8 +139,13 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             const purposeAuthorization = resolveRegistryConnectedAccountActionCredentialPurposeAuthorization({
                 registry: lease.registry.contributes, qualifiedActionId: buildQualifiedPluginContributionKey(action),
                 fieldPath: 'credentialRef', requireSelect: false });
-            const requester = readRequesterAccountActionContext(request.context.externalActionExecutionAuthorization);
-            if (request.context.externalActionExecutionAuthorization && !requester) return refuse('action_forbidden');
+            const carrier = request.context.externalActionExecutionAuthorization;
+            const requester = readRequesterAccountActionContext(carrier);
+            // A dispatched root spends its requester context. An agent Session's root carries the Session host's
+            // projected same-Account custody instead (projectRequesterAccountActionAuthorization), so this host's
+            // own credentials serve it, as headers() does; they never serve another Account or a bare root.
+            if (carrier && !requester && (!carrier.requesterAccountProjection
+                || readAccountIdFromToken(host.credentials.token) !== carrier.binding.accountId)) return refuse('action_forbidden');
             const credentials = requester?.credentials ?? host.credentials;
             const assertCurrent = () => host.assertCurrent(request.context);
             const admit = async (input: unknown, phase: 'preparation' | 'execution', receipt?: DeploymentReceiptDetailV1) => {
