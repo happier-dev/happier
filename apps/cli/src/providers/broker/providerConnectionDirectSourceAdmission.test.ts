@@ -31,6 +31,7 @@ import { prepareTeamCredentialNativeProviderSource, type TeamCredentialNativePro
 import {
   materializeProviderConnectionDirectCredential,
   resolveAdmittedProviderConnectionDirectSourceSnapshot,
+  resolveAdmittedProviderConnectionSourceSnapshot,
 } from './providerConnectionSource';
 
 // System boundaries only: the Home HTTP transport (catalog list and features)
@@ -204,7 +205,33 @@ describe('Provider direct source admits its shared Saved Secret before preparati
     vi.unstubAllGlobals();
   });
 
-  it('prepares private native metadata, refreshes the selected key before rendering and refuses missed revocation', async () => {
+  it.each(['direct', 'native'] as const)('admits the selected shared key from a cold catalog for %s preparation', async (mode) => {
+    resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot({ source: 'network', settings, providerConnectionsCatalog,
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey });
+    vi.mocked(axios.get).mockClear();
+
+    const resolved = mode === 'direct' ? await resolve() : await resolveAdmittedProviderConnectionSourceSnapshot({
+      source, machineId: 'machine-a', expectedScopeKey: scopeKey, registry, dnsEvidenceByEndpointUrl,
+      getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
+      endpoint: { endpointTemplateId: 'responses', protocol: 'openai-responses',
+        credentialTransport: definition.credential!.transports[0]! },
+    });
+    expect(resolved).toMatchObject({ ok: true });
+    if (!resolved.ok) throw new Error(resolved.error.code);
+    await expect(materializeProviderConnectionDirectCredential({ expected: resolved.snapshot,
+      registry, dnsEvidenceByEndpointUrl, getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
+    })).resolves.toEqual({ ok: true, credential: { kind: 'apiKey', value: 'shared-provider-value' } });
+    expect(axios.get).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(axios.get).mock.calls[0]?.[1]).toMatchObject({ params: { resourceIds: [resourceId] } });
+  });
+
+  it.each(['warm', 'cold'] as const)('prepares private native metadata from a %s catalog, refreshes the selected key before rendering and refuses missed revocation', async (catalogState) => {
+    if (catalogState === 'cold') {
+      resetActiveAccountSettingsSnapshotForTests();
+      setActiveAccountSettingsSnapshot({ source: 'network', settings, providerConnectionsCatalog,
+        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey });
+    }
     const runtime = await createManagedRunLaunchFixture();
     try {
     const agentTargetKey = runtime.agentTargetKey;
@@ -245,12 +272,13 @@ describe('Provider direct source admits its shared Saved Secret before preparati
     expect(prepared, prepared.ok ? 'prepared' : prepared.error.code).toMatchObject({ ok: true });
     if (!prepared.ok) throw new Error(prepared.error.code);
     try {
-      expect(axios.get).toHaveBeenCalledTimes(1); // Only the initial fixture hydration.
+      const metadataReads = catalogState === 'cold' ? 2 : 1;
+      expect(axios.get).toHaveBeenCalledTimes(metadataReads);
       expect(prepared.source.providerTicket).toMatch(/^[A-Za-z0-9_-]{43}$/);
       expect(prepared.source.endpoint.publicHeaders).toEqual({ 'http-referer': 'https://happier.dev', 'x-title': 'Happier' });
       expect(JSON.stringify(prepared.source)).not.toContain('shared-provider-value');
       const rendered = await prepared.source.readRenderedHeaders();
-      expect(axios.get).toHaveBeenCalledTimes(2);
+      expect(axios.get).toHaveBeenCalledTimes(metadataReads + 1);
       expect.soft(rendered).toEqual({ ok: true, headers: { authorization: 'Bearer shared-provider-value' } });
       expect(prepared.source.redact('Bearer shared-provider-value shared-provider-value')).toBe('[REDACTED] [REDACTED]');
       expect(await prepareTeamCredentialNativeProviderSource({ ...input, expectedProviderTicket: 'x'.repeat(43) }))
@@ -275,6 +303,30 @@ describe('Provider direct source admits its shared Saved Secret before preparati
 
     await expect(resolve()).resolves.toMatchObject({ ok: false });
     expect(axios.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses an unbound source without reading Saved Secret material', async () => {
+    resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot({ source: 'network', settings,
+      providerConnectionsCatalog: { ...providerConnectionsCatalog,
+        catalog: { ...providerConnectionsCatalog.catalog, secretBindingsByConnectionId: {} } },
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey });
+    vi.mocked(axios.get).mockClear();
+    await expect(resolve()).resolves.toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it.each(['missing', 'forbidden'] as const)('keeps a cold selected key denied when Home reports %s', async (reason) => {
+    resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot({ source: 'network', settings, providerConnectionsCatalog,
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey });
+    vi.mocked(axios.get).mockClear();
+    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: {
+      resources: reason === 'missing' ? [] : [{ resourceId, status: 'unavailable', reason: 'forbidden' }],
+    } });
+
+    await expect(resolve()).resolves.toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
+    expect(axios.get).toHaveBeenCalledTimes(1);
   });
 
   it('retains the typed transport cause when refreshing the selected shared key fails', async () => {

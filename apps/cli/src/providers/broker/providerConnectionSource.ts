@@ -1,4 +1,5 @@
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { AgentProviderCredentialTransport } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ProviderCredentialTransportV1, ProviderErrorV1, ProviderWireProtocol, ProviderSettingsV1 } from '@happier-dev/protocol';
@@ -368,16 +369,25 @@ export async function resolveAdmittedProviderConnectionSourceSnapshot(input: Rea
     operationContext: input.operationContext, signal: input.signal });
   if (catalog.status !== 'ready') return fail('provider_authorization_changed', input.source, input.machineId);
   const current = input.getAccountSettingsSnapshot();
-  if (!current) return fail('provider_authorization_changed', input.source, input.machineId);
-  const resolved = resolveFrom(current);
-  if (!resolved.ok || resolved.snapshot.credentialRef.reference.kind !== 'apiKey') return resolved;
+  if (!current || current.scopeKey !== input.expectedScopeKey || input.signal?.aborted) {
+    return fail('provider_authorization_changed', input.source, input.machineId);
+  }
+  const providerSettings = readProviderSettingsForCli(current).settings;
+  // Binding selection does not require opened material. The direct selector
+  // excludes companion sets; native preparation supplies its selected transport.
+  const references = [input.source.credentialSlotId,
+    ...(input.endpoint?.credentialTransport.additionalCredentials ?? []).map(row => row.slotId)]
+    .flatMap(slotId => {
+      const ref = resolveProviderSecretBindingIdV1(providerSettings, input.source.connectionId, input.machineId, slotId);
+      return ref === null ? [] : [{ ref }];
+    });
+  if (!references.length) return resolveFrom(current);
   let admitted: ActiveAccountSettingsSnapshot;
   try {
     admitted = await refreshSavedSecretCatalogForOperation({
       expectedScopeKey: input.expectedScopeKey,
       operationContext: input.operationContext,
-      references: [{ ref: resolved.snapshot.credentialRef.reference.secretId },
-        ...(resolved.snapshot.credentialRef.reference.additionalCredentials ?? []).map(row => ({ ref: row.secretId }))],
+      references,
       ...(input.signal ? { signal: input.signal } : {}),
     });
   } catch (error) {

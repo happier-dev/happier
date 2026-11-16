@@ -107,9 +107,21 @@ export async function prepareTeamCredentialNativeProviderSource(
     const initial = input.getAccountSettingsSnapshot();
     if (!initial || initial.scopeKey !== input.accountScopeKey || initial.providerConnectionsCatalog?.status !== 'ready') return fail();
     const dnsEvidenceByEndpointUrl = await input.collectDnsEvidence({ source: resource.source, registry, signal: input.signal, accountSettingsSnapshot: initial });
-    const snapshot = input.getAccountSettingsSnapshot();
+    let snapshot = input.getAccountSettingsSnapshot();
     if (closed || input.signal.aborted || !snapshot || snapshot.scopeKey !== input.accountScopeKey
       || snapshot.providerConnectionsCatalog?.status !== 'ready') return fail();
+    // Metadata consumes a warm catalog without another acquisition. A cold
+    // catalog must enter the same source admission before fingerprint reads.
+    if (snapshot.savedSecretCatalogState !== 'ready') {
+      const admitted = await resolveAdmittedProviderConnectionSourceSnapshot({
+        source: resource.source, machineId: input.controllerMachineId, expectedScopeKey: input.accountScopeKey,
+        registry, dnsEvidenceByEndpointUrl, getAccountSettingsSnapshot: input.getAccountSettingsSnapshot,
+        operationContext: input.savedSecretOperationContext, signal: input.signal,
+      });
+      if (!admitted.ok) return admitted;
+      snapshot = input.getAccountSettingsSnapshot();
+      if (!snapshot || snapshot.scopeKey !== input.accountScopeKey) return fail();
+    }
     const providerSettings = readProviderSettingsForCli(snapshot).settings;
     const savedSecretMaterializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, {
       isCurrent: () => !closed && !input.signal.aborted,
