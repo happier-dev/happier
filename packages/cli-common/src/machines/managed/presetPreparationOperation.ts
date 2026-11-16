@@ -196,11 +196,17 @@ export async function cancelManagedMachinePresetPreparationOperationV1(
   return await cancelOperation(input, current);
 }
 
+/** Definite refusal and settled absence need no provider to clean up. */
+export function managedMachinePresetPreparationNeedsNativeCleanupV1(prepared: ManagedMachinePresetPreparedV1): boolean {
+  return Boolean(prepared.artifact || prepared.nativeOperationRef)
+    || prepared.status !== 'failed' && prepared.status !== 'cancelled';
+}
+
 async function cancelOperation(input: OperationInput, current: OpenPreset, expectedRevision?: number): Promise<OperationResult> {
   let prepared = current.content.prepared;
   if (!prepared || prepared.operationId !== input.operationId) return { kind: 'conflict', currentRevision: current.preset.revision };
   if (expectedRevision !== undefined && !prepared.artifact && !prepared.nativeOperationRef
-    && prepared.status !== 'failed' && prepared.status !== 'cancelled') {
+    && managedMachinePresetPreparationNeedsNativeCleanupV1(prepared)) {
     // Establish this new replacement's original revision before even recovery
     // inspection. Keep building/no-ref distinct from confirmed absence.
     const admitted = await persist(input, current, prepared, 'pending', expectedRevision);
@@ -208,15 +214,17 @@ async function cancelOperation(input: OperationInput, current: OpenPreset, expec
     prepared = admitted.prepared;
     expectedRevision = undefined;
   }
-  let owned: ManagedMachinePresetPreparedWriteV1 = prepared;
-  if (!prepared.artifact && !prepared.nativeOperationRef) {
+  if (!managedMachinePresetPreparationNeedsNativeCleanupV1(prepared)) {
     // A definite build refusal creates failed/no-ref: its contract guarantees
     // no native side effect. Ambiguous work remains building/unknown instead.
     if (prepared.status === 'failed') {
       const { code: _code, ...refused } = prepared;
       return await persist(input, current, { ...refused, status: 'cancelled' }, 'cancelled', expectedRevision);
     }
-    if (prepared.status === 'cancelled') return result(current, 'cancelled');
+    return result(current, 'cancelled');
+  }
+  let owned: ManagedMachinePresetPreparedWriteV1 = prepared;
+  if (!prepared.artifact && !prepared.nativeOperationRef) {
     const recovered = await input.native.inspect({ operationId: prepared.operationId,
       launch: prepared.binding.configuration.launch.choices }, root(current));
     if (recovered.kind === 'absent') {
