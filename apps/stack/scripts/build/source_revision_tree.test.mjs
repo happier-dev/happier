@@ -10,10 +10,29 @@ import { generateServerClients, installServerGeneratorFixture, readGeneratedClie
 import { resolveSourceRevision } from './source_revision.mjs';
 import { beginPendingSourceStart } from '../runtime/shared/pending_source_start.mjs';
 import { prepareSourceTreeRuntimeComponents, prepareStackSourceRevisionTree, releaseStackSourceRevisionTree, releaseStackSourceTrees,
-  resolveSourceTreeRevision, setSourceRevisionTreeWritable, sourceRevisionTreesRoot, writeSourceRevisionArchive } from './source_revision_tree.mjs';
+  resolveSourceTreeRevision, selectsSourceTreeReload, setSourceRevisionTreeWritable, sourceRevisionTreesRoot, writeSourceRevisionArchive } from './source_revision_tree.mjs';
 
 const COMMITTED_MAIN = 'export { marker } from "@happier-dev/shared";';
 const COMMITTED_SHARED = 'export const marker = "committed";';
+
+const FIXTURE_SUPPORT_OWNER = `import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { appendFile, chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+export async function ensureDaemonSupportArtifact({ stackBaseDir, repoDir }) {
+  const fingerprint = createHash('sha256').update(await readFile(join(repoDir, 'apps/cli/native/version.txt'))).digest('hex');
+  const payloadDir = join(stackBaseDir, 'artifacts/daemon-support', fingerprint, 'payload');
+  if (!existsSync(payloadDir)) {
+    await mkdir(join(payloadDir, 'tools/unpacked'), { recursive: true });
+    await writeFile(join(payloadDir, 'tools/unpacked/happier-cliproxyapi-managed'), '#!/bin/sh\\n# ' + fingerprint + '\\n');
+    await chmod(join(payloadDir, 'tools/unpacked/happier-cliproxyapi-managed'), 0o755);
+    await mkdir(join(payloadDir, 'node_modules/@happier-dev/iroh-native/native'), { recursive: true });
+    await writeFile(join(payloadDir, 'node_modules/@happier-dev/iroh-native/native/happier-session-holder'), fingerprint);
+    await appendFile(join(stackBaseDir, 'builds.log'), fingerprint + '\\n');
+  }
+  return { fingerprint, payloadDir };
+}
+`;
 
 async function createRevisionFixture(t) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-revision-tree-', registerCleanup: false });
@@ -45,6 +64,15 @@ async function createRevisionFixture(t) {
   await symlink('../../../../packages/shared', join(server, 'node_modules/@happier-dev/shared'), process.platform === 'win32' ? 'junction' : 'dir');
   await writeFile(join(server, 'sources/main.light.ts'), COMMITTED_MAIN);
   await writeFile(join(repoDir, 'packages/shared/src/index.ts'), COMMITTED_SHARED);
+  // Native support is built by the daemon support owner (Go, Rust and pnpm builds: a
+  // system boundary). This stand-in keeps the owner's contract: one artifact per
+  // support identity under the store, `tools/unpacked` plus the Iroh `native/` dir.
+  await mkdir(join(repoDir, 'packages/cli-common'), { recursive: true });
+  await writeFile(join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs'), '// fixture source runtime\n');
+  await mkdir(join(repoDir, 'apps/stack/scripts/build'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/stack/scripts/build/build_daemon_artifact.mjs'), FIXTURE_SUPPORT_OWNER);
+  await mkdir(join(repoDir, 'apps/cli/native'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/cli/native/version.txt'), 'native-1');
   // A tracked file outside every component's inputs (like apps/ui for a server/daemon base).
   await mkdir(join(repoDir, 'docs'));
   await writeFile(join(repoDir, 'docs/notes.md'), 'committed notes');
@@ -301,4 +329,71 @@ test('a base derives generated server clients from its revision schema; a commit
   const second = await reload();
   assert.equal(second.baseBuilt, true);
   assert.deepEqual(await readGeneratedClientFields(second.treeDir), { default: ['id', 'name'], sqlite: ['id', 'name'], mysql: ['id', 'name'] });
+});
+
+// 2026-11-16: untracked authored files (other lanes' vault plugin, new migrations)
+// rode into reloads through a package's shipped `files` directories. A base keeps
+// only ignored generated outputs there, the same rule a revision capture applies.
+test('a base never takes untracked authored files under a shipped package directory', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await gitIn('checkout', '--quiet', '--', '.');
+  await gitIn('clean', '-fdq');
+  const manifestPath = join(repoDir, 'packages/shared/package.json');
+  await writeFile(manifestPath, JSON.stringify({ ...JSON.parse(await readFile(manifestPath, 'utf8')), files: ['src', 'dist'] }));
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules\ndist\n');
+  await gitIn('commit', '--quiet', '-am', 'ship src and dist');
+  await writeFile(join(repoDir, 'packages/shared/src/leak.ts'), 'export const leaked = "other-lane";');
+  const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [],
+    outputDir: fixture.path('descriptors') });
+  const tree = await prepareStackSourceRevisionTree({ repoDir, treesRoot: fixture.path('trees'), treeDir: fixture.path('stack/tree'),
+    descriptorPath: revision.descriptorPath });
+  assert.equal(await lstat(join(tree.baseDir, 'packages/shared/src/leak.ts')).catch(error => error.code), 'ENOENT');
+});
+
+// 2026-11-15 16:47Z (Usage): a tree daemon's real Agent start failed with
+// plugin_packaged_runtime_binary_unavailable: trees carried source but none of the
+// native runtime support. Each tree takes it from the support owner, built once per
+// support identity, inside the tree's real path (resolvers refuse links out of it).
+test('a Stack tree carries the native runtime support inside its own path; one build per support identity', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await gitIn('checkout', '--quiet', '--', '.');
+  await gitIn('clean', '-fdq');
+  const treesRoot = fixture.path('trees');
+  const prepare = async stack => {
+    const revision = await resolveSourceTreeRevision({ repoDir, treesRoot, rev: 'HEAD', overlay: [], outputDir: fixture.path(`descriptors-${stack}`) });
+    return await prepareStackSourceRevisionTree({ repoDir, treesRoot, treeDir: fixture.path(`stacks/${stack}/tree`), descriptorPath: revision.descriptorPath });
+  };
+  const builds = async () => (await readFile(join(treesRoot, 'daemon-support-store/builds.log'), 'utf8').catch(() => '')).split('\n').filter(Boolean);
+  const a = await prepare('a');
+  const b = await prepare('b');
+  for (const tree of [a.treeDir, b.treeDir]) {
+    const binary = join(tree, 'apps/cli/tools/unpacked/happier-cliproxyapi-managed');
+    const info = await lstat(binary);
+    assert.equal(info.isFile(), true, 'a regular file, not a link out of the runtime root');
+    assert.equal((await realpath(binary)).startsWith(await realpath(tree)), true);
+    assert.equal(await lstat(join(tree, 'packages/iroh-native/native/happier-session-holder')).then(entry => entry.isFile()), true);
+  }
+  assert.equal((await builds()).length, 1, 'one support build for one identity');
+  // A commit that changes the native inputs gives the next tree its own support.
+  await writeFile(join(repoDir, 'apps/cli/native/version.txt'), 'native-2');
+  await gitIn('commit', '--quiet', '-am', 'native change');
+  const c = await prepare('c');
+  assert.equal((await builds()).length, 2);
+  assert.notEqual(await readFile(join(c.treeDir, 'packages/iroh-native/native/happier-session-holder'), 'utf8'),
+    await readFile(join(a.treeDir, 'packages/iroh-native/native/happier-session-holder'), 'utf8'));
+});
+
+// 2026-11-16: QA Stacks reload onto trees by default; the producer keeps bundles;
+// HAPPIER_STACK_SOURCE_TREES=0 is the one-day rollback, =1 forces trees.
+test('QA Stacks select source trees by default; the producer keeps bundles; the Stack flag rolls back or forces', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-tree-default-' });
+  const storage = fixture.path('stacks');
+  const env = extra => ({ HAPPIER_STACK_STORAGE_DIR: storage, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'repo-producer', ...extra });
+  const select = (stack, extra = {}) => selectsSourceTreeReload({ stackBaseDir: join(storage, stack), repoDir: fixture.root, env: env(extra) });
+  assert.equal(select('agent-qa-sample'), true);
+  assert.equal(select('agent-qa-sample', { HAPPIER_STACK_SOURCE_TREES: '0' }), false);
+  assert.equal(select('repo-producer'), false);
+  assert.equal(select('repo-producer', { HAPPIER_STACK_SOURCE_TREES: '1' }), true);
 });

@@ -5,7 +5,7 @@ import { pathExists } from './utils/fs/fs.mjs';
 import { killProcessTree, runCapture, spawnProc } from './utils/proc/proc.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRepoDir, getRootDir } from './utils/paths/paths.mjs';
 import { killPortListeners, observeTcpPortAvailability } from './utils/net/ports.mjs';
-import { fetchHappierHealth, getServerComponentName, isHappierServerRunning, waitForServerReady } from './utils/server/server.mjs';
+import { fetchHappierHealth, getServerComponentName, isHappierServerRunning, resolveServerReadyTimeoutMs, waitForServerReady } from './utils/server/server.mjs';
 import { resolveServerShutdownGraceMs } from './utils/server/shutdown_grace.mjs';
 import { prepareStackRelay } from './utils/server/infra/iroh/runtime.mjs';
 import { ensureDepsInstalled, requireDir } from './utils/proc/pm.mjs';
@@ -720,6 +720,9 @@ async function main() {
     });
   }
 
+  // One readiness budget for a server this runner starts, the same owner remote
+  // placement and dev use: a cold source-tree server needs minutes on a loaded host.
+  const serverStartReadyTimeoutMs = resolveServerReadyTimeoutMs({ serverComponentName, env: baseEnv });
   baseEnv = (await prepareStackRelay({ repoDir: getRepoDir(rootDir, baseEnv), env: baseEnv,
     runtimeStatePath, signal: pendingSourceStart?.signal })).env;
   daemonScopeEnv = await getDaemonEnv({
@@ -825,7 +828,8 @@ async function main() {
           : await spawnSourceServerScript({ label: 'server', serverDir, script: 'start', env: backendEnv });
         if (!serverLaunchSpec) children.push(backend);
         activeServerProcess = backend;
-        await waitForServerReady(backendUrl, { childProcess: backend, env: daemonScopeEnv, cliHomeDir });
+        await waitForServerReady(backendUrl, { childProcess: backend, env: daemonScopeEnv, cliHomeDir,
+          timeoutMs: serverStartReadyTimeoutMs });
         if (sourceRuntimeIdentities.server) await recordStackRuntimeUpdate(runtimeStatePath, {
           sourceRuntimeIdentities: { server: { ...sourceRuntimeIdentities.server, loaded: sourceRuntimeIdentities.server.selected } },
         });
@@ -847,7 +851,8 @@ async function main() {
         ];
         const gateway = spawnProc('ui', process.execPath, gatewayArgs, { ...backendEnv, PORT: String(serverPort) }, { cwd: rootDir });
         children.push(gateway);
-        await waitForServerReady(internalServerUrl, { childProcess: gateway, env: daemonScopeEnv, cliHomeDir });
+        await waitForServerReady(internalServerUrl, { childProcess: gateway, env: daemonScopeEnv, cliHomeDir,
+          timeoutMs: serverStartReadyTimeoutMs });
         if (stackMode && runtimeStatePath) {
           await recordStackRuntimeServerActivation(runtimeStatePath, {
             stablePort: serverPort,
@@ -880,7 +885,8 @@ async function main() {
         : await spawnSourceServerScript({ label: 'server', serverDir, script: serverStartScript, env: serverEnv });
       if (!serverLaunchSpec) children.push(server);
       activeServerProcess = server;
-      await waitForServerReady(internalServerUrl, { childProcess: server, env: daemonScopeEnv, cliHomeDir });
+      await waitForServerReady(internalServerUrl, { childProcess: server, env: daemonScopeEnv, cliHomeDir,
+          timeoutMs: serverStartReadyTimeoutMs });
       if (sourceRuntimeIdentities.server) await recordStackRuntimeUpdate(runtimeStatePath, {
         sourceRuntimeIdentities: { server: { ...sourceRuntimeIdentities.server, loaded: sourceRuntimeIdentities.server.selected } },
       });

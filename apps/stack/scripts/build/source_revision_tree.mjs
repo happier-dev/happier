@@ -2,16 +2,17 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { chmod, link, lstat, mkdir, readdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { BuildInputDriftError, captureBuildInputFiles, mountCapturedWorkspaceDependencies, readBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readWorkspacePackages } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
+import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isPidAlive } from '../utils/proc/pids.mjs';
-import { setBundleReadOnly } from './build_source_runtime.mjs';
-import { run } from '../utils/proc/proc.mjs';
+import { resolveSourceRuntimeProducerContext, setBundleReadOnly } from './build_source_runtime.mjs';
+import { run, runCapture } from '../utils/proc/proc.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
@@ -160,10 +161,14 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, env = process.e
     // Only the declared generated inputs the runtime consumes come from the checkout
     // (never stray ignored files); a Stack's new (untracked) overlay file is its own,
     // never the shared base's.
+    // Authored untracked files (the controller's --exclude-standard list) are other
+    // lanes' uncommitted work, even under a package's shipped `files` dirs; only
+    // ignored generated outputs survive there (the revision capture's rule).
     const shipped = await readDeclaredShippedPaths(staging, [...new Set(inputs.flatMap(input => input.workspaceDirs))]);
+    const untracked = new Set(descriptor.untracked ?? []);
     await captureBuildInputFiles({ sourceDir: repoDir, captureDir: staging, readPaths: async () => [...new Set(inputs.flatMap(input => input.files))]
       .filter(path => !Object.hasOwn(descriptor.tree, path) && !Object.hasOwn(descriptor.overlay, path)
-        && isRevisionKeptUntrackedPath(path, shipped)) });
+        && !untracked.has(path) && isRevisionKeptUntrackedPath(path, shipped)) });
     // Those generated inputs follow the revision's sources, not the checkout's.
     await deriveRevisionGeneratedInputs({ captureDir: staging, sourceDir: repoDir, env, signal });
     await rm(baseDir, { recursive: true, force: true });
@@ -190,6 +195,82 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, env = process.e
 }
 
 const PROJECTIONS = '.source-daemon-projections';
+const SUPPORT_STORE = 'daemon-support-store';
+
+function supportStoreDir(treesRoot) {
+  return join(resolve(treesRoot), SUPPORT_STORE);
+}
+
+/**
+ * Native runtime support (packaged Provider runtime binaries, the process-custody
+ * helpers, the Iroh addon and Session holders) comes from the daemon support owner,
+ * built from the Stack tree's own sources (revision + commit diff + overlay) once
+ * per support identity per host, and hardlinked where the tree's source runtime
+ * resolves it: the CLI runtime root's `tools/unpacked` and the Iroh package's
+ * `native/`. Resolvers require the real path inside the runtime root, so these
+ * are hardlinks, never symlinks. An unchanged identity only links.
+ * @returns {Promise<string>} the support identity this tree consumed
+ */
+async function stageTreeNativeSupport({ treeDir, treesRoot, env, signal }) {
+  const storeDir = supportStoreDir(treesRoot);
+  // The tree's own owner, loaded through the tree's source runtime.
+  const code = `const { pathToFileURL } = await import('node:url');
+const { join } = await import('node:path');
+const [baseDir, storeDir] = JSON.parse(process.argv[1]);
+const owner = await import(pathToFileURL(join(baseDir, 'apps/stack/scripts/build/build_daemon_artifact.mjs')).href);
+if (typeof owner.ensureDaemonSupportArtifact !== 'function') throw new Error('[source-tree] this revision predates source-tree native support; reload at a newer --rev');
+const support = await owner.ensureDaemonSupportArtifact({ stackBaseDir: storeDir, repoDir: baseDir, env: process.env });
+process.stdout.write('HSTACK_DAEMON_SUPPORT ' + JSON.stringify(support) + '\\n');`;
+  const output = await runCapture(process.execPath, ['--conditions=happier-source',
+    '--import', pathToFileURL(join(treeDir, 'packages/cli-common/registerSourceRuntime.mjs')).href,
+    '--input-type=module', '-e', code, JSON.stringify([treeDir, storeDir])], {
+    cwd: treeDir, signal,
+    // Rust intermediates are shared per host, never inside a published base.
+    env: { ...env, CARGO_TARGET_DIR: join(storeDir, 'cargo-target') } });
+  const line = String(output).split(/\r?\n/u).find(entry => entry.startsWith('HSTACK_DAEMON_SUPPORT '));
+  if (!line) throw new Error('[source-tree] daemon support preparation returned no artifact');
+  const { fingerprint, payloadDir } = JSON.parse(line.slice('HSTACK_DAEMON_SUPPORT '.length));
+  for (const [from, to] of [['tools/unpacked', 'apps/cli/tools/unpacked'],
+    ['node_modules/@happier-dev/iroh-native/native', 'packages/iroh-native/native']]) {
+    if (!existsSync(join(payloadDir, from))) continue;
+    // The clone's directories are its own; unlink, never write through a base inode.
+    await rm(join(treeDir, to), { recursive: true, force: true });
+    await cloneTree(join(payloadDir, from), join(treeDir, to));
+  }
+  return fingerprint;
+}
+
+/**
+ * Delete support artifacts no live Stack tree names. The newest is kept, so a tree
+ * still linking one it just prepared never loses it. Runs with the base sweep.
+ */
+async function sweepUnreferencedSupport({ treesRoot }) {
+  const supportDir = join(supportStoreDir(treesRoot), 'artifacts', 'daemon-support');
+  const entries = (await readdir(supportDir, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error)))
+    .filter(entry => entry.isDirectory() && /^[a-f0-9]{16,128}$/.test(entry.name));
+  if (entries.length < 2) return [];
+  const keep = new Set();
+  for (const refs of (await readdir(treesRoot)).filter(name => name.endsWith('.refs'))) {
+    for (const name of await readdir(join(treesRoot, refs)).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))) {
+      const reference = await readJson(join(treesRoot, refs, name));
+      const marker = reference?.treeDir ? await readJson(join(reference.treeDir, TREE_MARKER)) : null;
+      if (marker?.supportFingerprint) keep.add(marker.supportFingerprint);
+    }
+  }
+  const dated = await Promise.all(entries.map(async entry => ({ name: entry.name, at: (await lstat(join(supportDir, entry.name))).mtimeMs })));
+  keep.add(dated.sort((a, b) => b.at - a.at)[0].name);
+  const deleted = [];
+  for (const { name } of dated) {
+    if (keep.has(name)) continue;
+    // The support owner's own artifact lock: never delete one it is publishing.
+    await withWorkspaceBundleLock(async () => {
+      await setBundleReadOnly(join(supportDir, name), false);
+      await rm(join(supportDir, name), { recursive: true, force: true });
+    }, { lockPath: `${join(supportDir, name)}.lock`, errorLabel: 'daemon support artifact build lock' });
+    deleted.push(name);
+  }
+  return deleted;
+}
 
 /**
  * The daemon's bundled-plugin publication evidence comes from its canonical
@@ -289,6 +370,7 @@ export async function sweepSourceRevisionBases({ treesRoot, signal }) {
       deleted.push(baseDir);
     });
   }
+  await sweepUnreferencedSupport({ treesRoot });
   return deleted;
 }
 
@@ -371,6 +453,9 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
   if (touchesPluginInputs([...Object.keys(descriptor.commit?.paths ?? {}), ...Object.keys(descriptor.overlay)])) {
     await deriveDaemonPluginPublication({ treeDir, env, signal });
   }
+  const supportFingerprint = await stageTreeNativeSupport({ treeDir, treesRoot, env, signal });
+  await writeOwnFile(join(treeDir, TREE_MARKER), JSON.stringify({ baseDir: base.baseDir,
+    revision: descriptor.commit?.revision ?? descriptor.revision, supportFingerprint }));
   // A new base, or a Stack that moved to another base, can leave an unreferenced one.
   await sweepSourceRevisionBases({ treesRoot, signal });
   const revision = descriptor.commit?.revision ?? descriptor.revision;
@@ -382,6 +467,19 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
 /** Restore write permission before deleting a tree (bases are kept read-only). */
 export async function setSourceRevisionTreeWritable(directory) {
   await setBundleReadOnly(directory, false);
+}
+
+/**
+ * QA (non-producer) Stacks reload onto source revision trees by default (owner
+ * 2026-11-14); the repository producer's own Stack keeps its bundles.
+ * `HAPPIER_STACK_SOURCE_TREES=0` on a Stack rolls it back to the bundle path
+ * (rollback window, 2026-11-16); `=1` forces trees.
+ */
+export function selectsSourceTreeReload({ stackBaseDir, repoDir, env = process.env }) {
+  const flag = String(env.HAPPIER_STACK_SOURCE_TREES ?? '').trim();
+  if (flag === '0') return false;
+  if (flag === '1') return true;
+  return resolveSourceRuntimeProducerContext({ repoDir, stackBaseDir, env }).producerStackName !== basename(resolve(stackBaseDir));
 }
 
 /** Host-wide root for revision bases, beside the shared source bundles. */

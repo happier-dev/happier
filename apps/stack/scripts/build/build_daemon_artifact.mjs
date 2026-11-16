@@ -229,6 +229,23 @@ async function buildDaemonSupportArtifact({
   });
 }
 
+/**
+ * The daemon support artifact (native executables and their runtime packages) for
+ * the sources at `repoDir`, built once per support identity under `stackBaseDir`.
+ * Source revision trees consume it beside their source graph.
+ * @returns {Promise<{ fingerprint: string, payloadDir: string }>}
+ */
+export async function ensureDaemonSupportArtifact({ stackBaseDir, repoDir, env = process.env,
+  runtimeTarget = { platform: process.platform, arch: process.arch } }) {
+  const fingerprint = await resolveDaemonSupportArtifactFingerprint({ sourceMetadata: { repoDir }, env, target: runtimeTarget });
+  // The support identity is derived from these sources alone.
+  const sourceMetadata = { repoDir, sourceFingerprint: fingerprint, builtAt: new Date().toISOString() };
+  const support = await buildDaemonSupportArtifact({ stackBaseDir, supportArtifactFingerprint: fingerprint, sourceMetadata,
+    target: resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS, platform: runtimeTarget.platform, arch: runtimeTarget.arch }),
+    runtimeTarget, env, runCaptureImpl: runCapture, buildDaemonSupportArtifactPayloadImpl: buildCliBinaryArtifactSupportPayload });
+  return { fingerprint, payloadDir: support.payloadDir };
+}
+
 export async function buildDaemonArtifact({
   rootDir,
   stackBaseDir,
