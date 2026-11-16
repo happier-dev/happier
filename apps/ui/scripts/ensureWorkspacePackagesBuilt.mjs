@@ -37,7 +37,15 @@ async function waitForMetroPluginUiInventory({ metroServer, metroConfig, invento
   const sourceAssets = readSourceUiAssetsRecord(sourceAssetsRecordPath)?.assetPaths ?? [];
   const paths = [...pluginPaths, ...sourceAssets];
   const roots = [metroConfig.projectRoot, ...metroServer.getWatchFolders()];
-  const realRoots = await Promise.all(roots.map(root => realpath(root)));
+  const realRoots = (await Promise.all(roots.map(async root => {
+    try { return await realpath(root); }
+    catch (error) {
+      // Metro retains startup roots when a workspace package is retired.
+      // Each consumed asset still has to exist beneath a surviving real root.
+      if (['ENOENT', 'ENOTDIR'].includes(error.code)) return null;
+      throw error;
+    }
+  }))).filter(root => root !== null);
   const blockList = [metroConfig.resolver.blacklistRE || metroConfig.resolver.blockList].flat().filter(Boolean);
   const extensions = new Set([...metroConfig.resolver.sourceExts, ...metroConfig.resolver.assetExts,
     ...metroConfig.watcher.additionalExts]);

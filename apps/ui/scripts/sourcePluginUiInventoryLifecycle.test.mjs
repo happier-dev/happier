@@ -1,7 +1,7 @@
 // @happier-test-preparation source
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
 import { createTempFixture } from '../../stack/scripts/testkit/core/temp_fixture.mjs';
@@ -22,11 +22,11 @@ async function inventoryFixture(t) {
   await writeFile(inventoryPath,
     `const BUNDLED_PLUGIN_UI_APP_ASSET_0 = require(${JSON.stringify(assetPath)});\n` +
     'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = [];\n');
-  const open = getDependencyGraph => {
+  const open = (getDependencyGraph, watchFolders = []) => {
     const watcher = new EventEmitter();
     const owner = watchUiSourcePluginInventory({ uiPackageDir,
       metroServer: {
-        getWatchFolders: () => [],
+        getWatchFolders: () => watchFolders,
         getBundler: () => ({ getBundler: () => ({ getWatcher: () => watcher, getDependencyGraph }) }),
       },
       metroConfig: { projectRoot: fixture.root,
@@ -38,8 +38,24 @@ async function inventoryFixture(t) {
     t.after(() => owner.close());
     return owner;
   };
-  return { assetPath, open };
+  return { assetPath, fixture, open };
 }
+
+test('retiring an unrelated watch folder does not block valid inventory assets', async t => {
+  const { assetPath, fixture, open } = await inventoryFixture(t);
+  // Metro retains this startup root after a workspace package is removed.
+  const retiredRoot = fixture.path('source/packages/connected-accounts-protocol');
+  await mkdir(retiredRoot, { recursive: true });
+  const owner = open(async () => ({ doesFileExist: () => true }), [retiredRoot]);
+  await rm(retiredRoot, { recursive: true });
+  await owner.ready();
+  await owner.close();
+
+  await rm(assetPath);
+  const missingAsset = open(async () => ({ doesFileExist: () => true }), [retiredRoot]);
+  await assert.rejects(missingAsset.ready(), { code: 'plugin_ui_inventory_unindexable' },
+    'ignoring a retired root must not admit a missing consumed artifact');
+});
 
 test('a restarted Metro owner re-admits retained inventory against its new file map', async t => {
   const { assetPath, open } = await inventoryFixture(t);
