@@ -161,7 +161,8 @@ export function usageQueryToAnalyticsRequest(value: UsageQuery, nowMs = Date.now
     includeWorkEvidence: _workEvidence, workProjection: _workProjection, breakdown,
     modelIds, workspaceIds, backendModes, population, ...clauses } = query;
   const selected = (values: string[]) => values.length ? values : undefined;
-  return UsageAnalyticsQueryRequestSchema.parse({ ...clauses,
+  // UsageQuery consumers reprice locally and expose the captured price basis.
+  return UsageAnalyticsQueryRequestSchema.parse({ ...clauses, includePriceCatalog: true,
     ...(population === 'public_eligible_personal' ? { population } : {}),
     dateRange: resolveUsageQueryPeriod(query, nowMs), costMode: costBasis, breakdowns: breakdown,
     filters: { agentIds: selected(agents), machineIds: selected(machines),
@@ -173,7 +174,7 @@ export function usageQueryToAnalyticsRequest(value: UsageQuery, nowMs = Date.now
 }
 
 export function usageAnalyticsRequestToQuery(value: z.input<typeof UsageAnalyticsQueryRequestSchema>, presentation: Readonly<{ metric?: UsageQuery['metric'] }> = {}): UsageQuery {
-  const { dateRange, filters, costMode, breakdowns, ...clauses } = UsageAnalyticsQueryRequestSchema.parse(value);
+  const { dateRange, filters, costMode, breakdowns, includePriceCatalog: _catalog, ...clauses } = UsageAnalyticsQueryRequestSchema.parse(value);
   return normalizeUsageQuery({ ...clauses, period: dateRange, agents: filters?.agentIds, machines: filters?.machineIds,
     projects: filters?.projectKeys, sources: filters?.sources, ...(filters?.execution === undefined ? {} : { execution: filters.execution }), session: filters?.sessionIds ?? null,
     costBasis: costMode, breakdown: breakdowns, modelIds: filters?.modelIds, workspaceIds: filters?.workspaceIds,

@@ -15,6 +15,32 @@ import { UsageQueryTiming } from './query/usageQueryTiming';
 import { Session } from 'node:inspector';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 
+it('delivers the catalog only on declared scalar or batch demand, independent of contribution rows', async () => {
+    const snapshot: UsageAnalyticsSnapshot = { rows: [], legacyReports: [],
+        priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+    const query = UsageAnalyticsQueryRequestSchema.parse({ includeSeries: false });
+    const { projectUsageAnalyticsAsync } = await import('./usageQueryService');
+    const ordinary = UsageAnalyticsQueryResponseSchema.parse(await projectUsageAnalyticsAsync(snapshot, query));
+    expect(ordinary.priceCatalog).toBeUndefined();
+    const demanding = UsageAnalyticsQueryRequestSchema.parse({ ...query, includePriceCatalog: true });
+    const rich = UsageAnalyticsQueryResponseSchema.parse(await projectUsageAnalyticsAsync(snapshot, demanding));
+    expect(rich.priceCatalog?.provenance).toEqual(resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog).provenance);
+    expect(rich.totals).toEqual(ordinary.totals);
+    const ordinaryBytes = Buffer.byteLength(JSON.stringify(ordinary));
+    const richBytes = Buffer.byteLength(JSON.stringify(rich));
+    expect(richBytes - ordinaryBytes).toBe(Buffer.byteLength(JSON.stringify({ priceCatalog: rich.priceCatalog })) - 1);
+    expect(richBytes - ordinaryBytes).toBeGreaterThan(500_000);
+    for (const detail of [false, true]) {
+        for (const request of [query, demanding]) {
+            const batch = UsageAnalyticsQueryBatchResponseSchema.parse(await projectUsageAnalyticsBatch({
+                priceCatalog: snapshot.priceCatalog,
+                snapshots: new Map([[getUsageAnalyticsQueryRequestKey(request), snapshot]]),
+            }, [request], detail));
+            expect(batch.priceCatalog?.provenance).toEqual(request === demanding ? resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog).provenance : undefined);
+        }
+    }
+});
+
 type CapturedRow = UsageAnalyticsSnapshot['rows'][number];
 const subject = { kind: 'native', machineId: 'machine', agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
     sourceRootKey: 'root', nativeSessionKey: 'native', linkedSessionId: 'session' };

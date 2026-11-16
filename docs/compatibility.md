@@ -688,6 +688,19 @@ changes. The inspected `../0.2` frontier at
 `b141382c277a73d0e81e33c7469eb4f0b30802d6` has no deployment protocol directory
 or working-tree additions there. No predecessor adapter is introduced.
 
+## Usage catalog delivery (unreleased 0.3)
+
+Scalar and batch analytics queries accept optional `includePriceCatalog` per query.
+The batch projection owner includes one acquisition-level catalog only when at
+least one admitted query requests it; contribution delivery does not imply catalog
+demand. Scalar responses use the same decision. Pricing still uses the captured
+server catalog. The shared UsageQuery transport builder requests the catalog for
+local repricing and price explanations, while totals-only workflow reads omit it.
+Matching Protocol, server and clients reload together under the unshipped 0.3
+direct cut; no compatibility shim, capability flag or persistence change is added.
+The scoped clean `../0.2` frontier at `c680de922e4475b7dfbaeedcd63a8af7d985d3c3`
+has no current analytics query service/contracts.
+
 ## Usage filter inventory (unreleased 0.3)
 
 Private accounting responses add optional closed `scopeKeys` entries containing

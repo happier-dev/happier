@@ -235,6 +235,8 @@ export const UsageAnalyticsQueryRequestSchema = lazyZodSchema(() => z.strictObje
     dimensions => new Set(dimensions).size === dimensions.length, 'Breakdown dimensions must be unique'))),
   filters: z.optional(UsageAnalyticsQueryFiltersSchema),
   includeSeries: z._default(z.boolean(), true),
+  /** Delivery demand only; server pricing always uses its captured catalog. */
+  includePriceCatalog: z.optional(z.boolean()),
   includeInsights: z.optional(z.boolean()),
   includeActivity: z.optional(z.boolean()),
   includeLeaders: z.optional(z.boolean()),

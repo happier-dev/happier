@@ -3421,7 +3421,11 @@ transcript consumers use this membership to select evidence without requesting
 accounting contribution pages. Public
 profile preparation consumes bounded numeric source-lens projections and locally
 composed private facts through this same owner. The response carries one shared
-`priceCatalog`. The Account Resource
+`priceCatalog` only when a query declares `includePriceCatalog: true`, independently
+of contribution-row demand. Scalar queries omit it by default. The shared UsageQuery
+transport builder requests it for local repricing, price explanations and exports;
+totals-only workflow reads leave it absent. Server-side pricing always uses the
+captured tariff, even when the response omits it. The Account Resource
 retains these answers across view switches until inputs or source evidence change;
 the widget owner and Add-widget preview request only their consumed projections.
 Previous-period comparison defaults to available for explicit queries; the

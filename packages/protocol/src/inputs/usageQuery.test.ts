@@ -290,3 +290,10 @@ describe('shared UsageQuery', () => {
       .toEqual(['backendMode', 'session', 'workspace']);
   });
 });
+
+it('declares the tariff demand for shared UI, CLI and agent accounting reads without leaking it into UsageQuery', () => {
+  const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 } });
+  const request = usageQueryToAnalyticsRequest(query, 1000);
+  expect(request.includePriceCatalog).toBe(true);
+  expect(usageAnalyticsRequestToQuery(request)).toEqual(query);
+});

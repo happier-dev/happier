@@ -445,5 +445,5 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
         await setImmediate();
     }
     if (timing) timing.durations.project += performance.now() - startedAt - timing.durations.fold - timing.durations.price;
-    return { v: 1, ...(includeContributions ? { priceCatalog } : {}), results };
+    return { v: 1, ...(queries.some(query => query.includePriceCatalog === true) ? { priceCatalog } : {}), results };
 }
