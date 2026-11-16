@@ -13,6 +13,22 @@ Launch or setup changes still select a cold launch. No automatic rebuild setting
 is introduced. The inspected prospective 0.2 frontier `cfbc463ba8` has neither
 managed preset nor prepared-image schemas; no predecessor wire adapter is added.
 
+## Preset configuration counter (unreleased 0.3)
+
+The canonical client preset authoring owner writes optional public
+`configurationRevision` separately from the preset row revision. New presets
+start at zero; absent legacy counters mean zero. Only authored launch or setup
+changes advance the counter. Display names, Keep rules, preparation state and
+the supplier CLI identity leave it unchanged. The server receives no content
+digest or cross-preset equality key.
+
+Updates compare opened incumbent content at the exact expected row revision;
+unavailable incumbent content fails closed. Matching development Protocol,
+client and server readers deploy together: older strict development inputs
+reject the new field, while new readers accept its absence. The prospective
+0.2 frontier described above has no managed preset contract. No released wire
+epoch, compatibility adapter or migration is added by this client carrier.
+
 ## Workflow trigger Event references (unreleased 0.3)
 
 The closed Workflow value-reference union adds `trigger_event`, and the private

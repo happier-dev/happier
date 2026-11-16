@@ -184,6 +184,8 @@ export type AccountEncryptionMigrateManagedMachinePresetsDirectiveV1 = Readonly<
 export function createManagedMachinePresetV1BaseShape<Choices extends z.core.$ZodType>(_choices: Choices) {
   return {
     id: id(), homeId: id(), revision: revision(),
+    /** Client-maintained launch/setup change counter; absent legacy rows mean zero. */
+    configurationRevision: z.optional(revision()),
     owner: ManagedMachinePresetOwnerV1Schema,
     /** Persisted owner mode: readers must never substitute the viewer's Account mode. */
     contentEncryptionMode: AccountEncryptionModeSchema,
@@ -268,6 +270,7 @@ export const ManagedMachinePresetListInputV1Schema = lazyZodSchema(() => z.stric
 export const ManagedMachinePresetUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), id: id(), expectedRevision: revision(),
   patch: z.strictObject({
+    configurationRevision: z.optional(revision()),
     contentEncryptionMode: z.optional(AccountEncryptionModeSchema),
     content: mini.optional(mini.nullable(ManagedMachinePresetStoredContentCarrierV1Schema)),
     recipients: mini.optional(ManagedMachinePresetRecipientsV1Schema),

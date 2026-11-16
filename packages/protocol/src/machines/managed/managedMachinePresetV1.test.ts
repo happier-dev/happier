@@ -30,6 +30,20 @@ function preset(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('managed preset content and structural contracts', () => {
+  it('accepts legacy presets and transports a configuration counter without exposing content equality', () => {
+    expect(protocol.ManagedMachinePresetV1Schema.parse(preset())).not.toHaveProperty('configurationRevision');
+    expect(protocol.ManagedMachinePresetV1Schema.parse(preset({ configurationRevision: 0 })))
+      .toMatchObject({ configurationRevision: 0 });
+    const { revision: _revision, ...create } = preset({ configurationRevision: 0 });
+    expect(MachinePresetActionInputSchemasV1['machines.presets.create'].parse(create)).toMatchObject({ configurationRevision: 0 });
+    const update = { id: 'preset', homeId: 'home', expectedRevision: 1, patch: { configurationRevision: 2 } };
+    expect(MachinePresetActionInputSchemasV1['machines.presets.update'].parse(update)).toEqual(update);
+    for (const configurationRevision of [-1, 1.5]) {
+      expect(protocol.ManagedMachinePresetV1Schema.safeParse(preset({ configurationRevision })).success).toBe(false);
+    }
+    expect(protocol.ManagedMachinePresetV1Schema.safeParse(preset({ configurationDigest: 'private-equality' })).success).toBe(false);
+  });
+
   it('keeps preset search client-local and rejects it at the list wire', () => {
     const input = { homeId: 'home', includeArchived: false, cursor: 'cursor' };
     expect(protocol.ManagedMachinePresetListInputV1Schema.parse(input)).toEqual(input);
