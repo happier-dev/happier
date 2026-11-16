@@ -8,6 +8,8 @@ import { PluginDeclaredExecutableRefSchema } from '../../plugins/contributions/a
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { DevcontainerNativeObservationV1Schema } from './devcontainerV1.js';
 import { ActionInputIssueSchema } from '../../actions/executor/actionInputValidation.js';
+import { MachineSetupSourceApplyV1Schema } from '../setup/machineSetupSourcesV1.js';
+import { HomeEnrollmentCarrierFailureV1Schema } from '../../ssh/commandFailure.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const instant = () => z.number().check(z.gte(0));
@@ -17,6 +19,8 @@ export type SupportedNativeIntent = z.infer<typeof SupportedNativeIntentSchema>;
 export const ManagedPrerequisiteV1Schema = lazyDefinition(() => z.strictObject({
   requirement: PluginDeclaredExecutableRefSchema, status: z.enum(['available', 'unavailable', 'unknown']),
   reason: z.optional(id()),
+  /** Exact Setup sources for the incumbent plan/review flow; no repair input interpretation. */
+  setupSources: z.optional(MachineSetupSourceApplyV1Schema),
   repairAction: z.optional(z.strictObject({ action: asProtocolZod(PluginContributionIdentityV1Schema), input: PluginJsonValueV2Schema })),
 }));
 /** Observed host resources, not quotas. Omitted facts remain unknown. */
@@ -43,8 +47,15 @@ export const MachineProvisionerSizeV1Schema = lazyDefinition(() => z.strictObjec
   diskBytes: z.optional(z.int().check(z.gt(0))),
 }).check(z.refine(value => MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1.some(dimension => value[dimension] !== undefined))));
 export type MachineProvisionerSizeV1 = z.infer<typeof MachineProvisionerSizeV1Schema>;
+/** Exact image target supported by the managed guest CLI supplier. */
+export const ManagedGuestCliBuildTargetV1Schema = lazyDefinition(() => z.strictObject({
+  os: z.enum(['linux', 'darwin']), arch: z.enum(['x64', 'arm64']),
+}));
+export type ManagedGuestCliBuildTargetV1 = z.infer<typeof ManagedGuestCliBuildTargetV1Schema>;
 /** Labelled native choices are disclosure, not executable selectors or measured headroom. */
 export const ProviderNativeOptionFactsV1Schema = lazyDefinition(() => z.strictObject({
+  /** Provider-selected image/host facts; absence supplies no installation target. */
+  preparationGuest: z.optional(z.strictObject({ target: ManagedGuestCliBuildTargetV1Schema, remoteHomeDir: id() })),
   size: z.optional(z.strictObject({
     id: id(), title: PluginLocalizedStringV2Schema,
     cpuCores: z.optional(z.number().check(z.gte(0))),
@@ -161,6 +172,7 @@ export const ProviderObservationV1Schema = lazyDefinition(() => z.strictObject({
   deletionNotices: z.optional(z.array(ProviderDeletionNoticeV1Schema)),
   reason: z.optional(id()),
   nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema),
+  carrierFailure: z.optional(HomeEnrollmentCarrierFailureV1Schema),
 }).check(z.superRefine((value, context) => {
   if (!hasConsistentProviderObservationLifecycleV1(value)) {
     context.addIssue({ code: 'custom', path: ['power'], message: 'Unavailable resources cannot confirm power.' });

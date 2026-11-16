@@ -63,6 +63,8 @@ export type ManagedMachineReconciliation = Readonly<{
     action: ManagedMachineActionIdV1;
     requestId: string;
     signal?: AbortSignal;
+    /** Local Session placement needs native custody, without enrolling a guest daemon. */
+    acquisitionMode?: 'enrolled' | 'resource-bound';
     /** Passive controller refresh observes power without settling an admitted native operation. */
     observationOnly?: boolean;
     /** Host-admitted selection: verified reviewed parent for Account placement, installed registry for native placement. */
@@ -78,6 +80,8 @@ export type ManagedMachineReconciliation = Readonly<{
         readCredential(machine: ManagedMachineFullV1, revision?: number): Promise<Readonly<{
             publicKey?: string; guestHostPublicKey?: string; revision?: number;
         }>>;
+        /** Resource-bound placement may settle transport trust, without guest setup or enrollment. */
+        prepareTransport?(input: Pick<ManagedReconciliationEnrollment, 'machine' | 'carrier' | 'correlation' | 'guestHostPublicKey'>): Promise<void>;
         enroll(input: ManagedReconciliationEnrollment): Promise<ManagedMachineFullV1>;
         /** Finish host-owned guest policies before publishing successful enrollment. */
         complete?(machine: ManagedMachineFullV1): Promise<void>;
@@ -86,6 +90,22 @@ export type ManagedMachineReconciliation = Readonly<{
     onResource?(machine: ManagedMachineFullV1): void;
     onProgress?(progress: ActionOperationProgressV1): void;
 }>;
+
+/** Enrollment and Session-held transport prepare the same admitted resource. */
+export function buildManagedBootstrapInput(input: Readonly<{
+    resource: JsonValue;
+    credentialRef?: ManagedMachineFullV1['bootstrapCredentialRef'];
+    credentialKind?: 'ssh' | 'native-token';
+    credential?: Readonly<{ publicKey?: string; guestHostPublicKey?: string }> | null;
+}>) {
+    return { resource: input.resource,
+        ...(input.credentialKind === 'ssh' && input.credentialRef && input.credential ? {
+            credentialRef: input.credentialRef,
+            ...(input.credential.publicKey === undefined ? {} : { bootstrapPublicKey: input.credential.publicKey }),
+            ...(input.credential.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: input.credential.guestHostPublicKey }),
+        } : {}),
+    };
+}
 
 function acquisitionFailure(result: Exclude<AcquireResultV1, { kind: 'bound' }>) {
     const details = result.nativeCause ? { kind: 'managedNative' as const, nativeCause: result.nativeCause } : undefined;
@@ -187,7 +207,8 @@ function withManagedBootstrapObservation(machine: ManagedMachineFullV1, observat
     const retained = machine.observation?.reason?.startsWith('bootstrap.') ? machine.observation : undefined;
     if (!retained && (observation.availability !== 'present' || observation.power !== 'running')) return observation;
     return { ...observation, reason: retained?.reason ?? 'bootstrap.incomplete',
-        ...(retained?.nativeCause ? { nativeCause: retained.nativeCause } : {}) };
+        ...(retained?.nativeCause ? { nativeCause: retained.nativeCause } : {}),
+        ...(retained?.carrierFailure ? { carrierFailure: retained.carrierFailure } : {}) };
 }
 
 /** Observe a bound submission and report against its original admitted intent. */
@@ -283,7 +304,7 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
             observation: withManagedBootstrapObservation(machine, observation) });
     }
     if (machine.allocation === 'unsubmitted') {
-        await input.bootstrap.preflight();
+        if (input.acquisitionMode !== 'resource-bound') await input.bootstrap.preflight();
         await native.prepareRoles();
         let bootstrapPublicKey: string | undefined;
         let guestHostPublicKey: string | undefined;
@@ -328,7 +349,7 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
     const boundResource = machine.resource;
     input.onResource?.(machine);
     // Save before guest IO: a host exit can lose its operation, never the fact enrollment was unfinished.
-    machine = await input.home.row('report', { ...input.home.correlation(machine),
+    if (input.acquisitionMode !== 'resource-bound') machine = await input.home.row('report', { ...input.home.correlation(machine),
         result: { kind: 'bound', resource: machine.resource },
         observation: { observedAt: Date.now(), availability: 'unavailable', reason: 'bootstrap.incomplete' } }, null);
     try {
@@ -345,13 +366,8 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
         }
         const credential = machine.bootstrapCredentialRef ? await input.bootstrap.readCredential(machine, credentialRevision) : null;
         if (credential) credentialRevision = credential.revision;
-        const bootstrapInput = { resource: boundResource.value,
-            ...(bootstrapCredentialKind === 'ssh' && machine.bootstrapCredentialRef && credential ? {
-                credentialRef: machine.bootstrapCredentialRef,
-                ...(credential.publicKey === undefined ? {} : { bootstrapPublicKey: credential.publicKey }),
-                ...(credential.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: credential.guestHostPublicKey }),
-            } : {}),
-        };
+        const bootstrapInput = buildManagedBootstrapInput({ resource: boundResource.value,
+            credentialKind: bootstrapCredentialKind, credentialRef: machine.bootstrapCredentialRef, credential });
         let readinessCause: ProviderObservationV1['nativeCause'];
         const observeResourceRunning = async (acceptedStart = false) => {
             const observation = ProviderObservationV1Schema.parse(await invoke('inspect', { resource: bootstrapInput.resource }));
@@ -388,6 +404,12 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                     if (input.signal?.aborted && (waitingFor || bootstrapCredentialKind === 'ssh'
                         && !(error instanceof ManagedMachineNativeEffectGuardRefusal))) throw new ManagedMachineControllerError('cancelled');
                     throw error;
+                }
+                if (input.acquisitionMode === 'resource-bound') {
+                    const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse({ ...input.home.correlation(machine), resource: machine.resource });
+                    await input.bootstrap.prepareTransport?.({ machine, carrier, correlation,
+                        ...(credential?.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: credential.guestHostPublicKey }) });
+                    return machine;
                 }
                 if (!machine.enrolledMachineId || carrier.kind === 'native') {
                     const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse({ ...input.home.correlation(machine), resource: machine.resource });
@@ -435,16 +457,19 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
             await input.waitForObservation();
         }
     } catch (error) {
+        if (input.acquisitionMode === 'resource-bound') throw error;
         // The readiness owner already saved its exact native observation, including confirmed absence.
         if (error instanceof ManagedMachineControllerError && error.code === 'native_resource_unavailable') throw error;
         // Only typed producer codes and privacy-projected native facts are public; exception text stays private.
         const code = error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError ? error.code : 'failed';
         const nativeCause = error instanceof ManagedMachineControllerError && error.details?.kind === 'managedNative'
             ? error.details.nativeCause : undefined;
+        const carrierFailure = (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError)
+            && error.details?.kind === 'managedGuestHome' ? error.details.carrierFailure : undefined;
         await input.home.row('report', { ...input.home.correlation(machine),
             result: { kind: 'bound', resource: machine.resource },
             observation: { observedAt: Date.now(), availability: 'unavailable', reason: `bootstrap.${code}`,
-                ...(nativeCause ? { nativeCause } : {}) } }, null);
+                ...(nativeCause ? { nativeCause } : {}), ...(carrierFailure ? { carrierFailure } : {}) } }, null);
         throw error;
     }
 }

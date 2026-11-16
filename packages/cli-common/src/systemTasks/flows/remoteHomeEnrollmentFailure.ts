@@ -20,7 +20,7 @@ export function projectGuestHomeReachabilityFailure(target: HomeTargetInput, obs
     : target.kind === 'https_url' ? target.url : null;
   if (!homeOrigin) return null;
   return new SystemTaskExecutionError('home_not_guest_reachable', `The new machine could not reach Home at ${homeOrigin}.`, {
-    details: { kind: 'managedGuestHome', homeOrigin },
+    details: { kind: 'managedGuestHome', homeOrigin, ...(carrier ? { carrierFailure: carrier } : {}) },
   });
 }
 

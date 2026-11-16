@@ -1,5 +1,16 @@
 # Compatibility and version skew
 
+## Managed guest carrier diagnostics (unreleased 0.3)
+
+Managed guest Home failure details and provider observations optionally retain
+`carrierFailure`: the existing closed carrier/reason vocabulary, including the
+unavailable Iroh attempt preceding HTTPS. The guest diagnostic boundary removes
+private fields before reporting; retained observations and Details carry no
+addresses, URLs or keys. Older records without this diagnostic remain readable.
+Matching Protocol, controller and UI reload together under the unpublished 0.3
+direct cut; older strict development readers reject the added field. This adds
+no database migration, routing authority, wire epoch or compatibility adapter.
+
 ## Cloudflare tunnel retirement provenance (unreleased 0.3)
 
 Private Domain content optionally records closed `cloudflarePreparation.tunnelOwnership`

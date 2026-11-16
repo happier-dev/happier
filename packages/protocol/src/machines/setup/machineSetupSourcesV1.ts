@@ -5,43 +5,18 @@ import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { MachineSetupV1Schema, mergeMachineSetupsV1, readMachineSetupAppIdentityV1, readMachineSetupRecipeIdentityV1, type MachineSetupV1, type MachinePresetItemV1 } from '../managed/machineSetupV1.js';
 import { MachineRecipeReferenceV1Schema, type MachineRecipeReferenceV1 } from './machineRecipeV1.js';
-import { StoredAppPresetInputV1Schema, type StoredAppPresetInputV1 } from '../../deployments/storedAppInputV1.js';
-import { WorkflowRunIdV1Schema } from '../../workflows/workflowIdsV1.js';
+import { MachineSetupSourceFactsMapV1Schema, type MachineSetupSourceFactsMapV1,
+  type MachineSetupAcceptedAppRunV1, type MachineSetupFirstPresenceV1 as FirstPresence } from './machineSetupSourceFactsV1.js';
+export { MachineSetupSourceFactsMapV1Schema, type MachineSetupSourceFactsMapV1,
+  type MachineSetupAcceptedAppRunV1 } from './machineSetupSourceFactsV1.js';
 import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
 import { ManagedMachinePresetLaunchNameOverrideV1Schema,
-  type ManagedMachinePresetLaunchNameOverrideV1 } from '../managed/managedMachinePresetContentV1.js';
+  type ManagedMachinePresetLaunchNameOverrideV1 } from '../managed/managedMachinePresetContentCarrierV1.js';
 import { getMachineMetadataFieldV1, readMachineMetadataFieldV1, mutateMachineMetadataFieldV1,
   type MachineMetadataFieldDefinitionV1, type MachineMetadataFieldPortV1 } from '../machineMetadataFieldV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const revision = () => z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER));
-type FirstPresence = 'present' | 'absent';
-const firstPresence = z.enum(['present', 'absent']);
-/** Address only: authenticated Run progress, never native settlement, proves app completion. */
-export type MachineSetupAcceptedAppRunV1 = Readonly<{
-  intent: StoredAppPresetInputV1;
-  authoredKey?: string;
-  homeId: string;
-  runId: string;
-  sourceKey: string;
-  blockId: string;
-  actionId: 'deployments.deploy' | 'deployments.templates.instantiate';
-}>;
-export type MachineSetupSourceFactsMapV1 = Record<string, Readonly<{
-  firstPresence?: Record<string, FirstPresence>;
-  acceptedAppRuns?: MachineSetupAcceptedAppRunV1[];
-  /** Unfinished original script indices after a confirmed partial Apply. */
-  pendingScripts?: number[];
-}>>;
-/** Native target facts belong to this Machine, never to Home-certified copies. */
-export const MachineSetupSourceFactsMapV1Schema: z.ZodMiniType<MachineSetupSourceFactsMapV1> = lazyZodSchema(() => z.record(id(), z.strictObject({
-  firstPresence: z.optional(z.record(id(), firstPresence)),
-  pendingScripts: z.optional(z.array(revision())),
-  acceptedAppRuns: z.optional(z.array(z.strictObject({
-    intent: StoredAppPresetInputV1Schema, authoredKey: z.optional(id()), homeId: id(), runId: WorkflowRunIdV1Schema,
-    sourceKey: id(), blockId: id(), actionId: z.enum(['deployments.deploy', 'deployments.templates.instantiate']),
-  }))),
-})));
 export type MachineSetupSourceEntryV1 =
   | Readonly<{ kind: 'accountPreset'; presetId: string; presetRevision: number; setup: MachineSetupV1 } & (
       | { /** Author-owned mode captured with this opened local copy; never inferred from ciphertext. */
@@ -279,6 +254,34 @@ export const MachineSetupNonAccountPresetSourceEntryV1Schema: z.ZodMiniType<Mach
     z.strictObject({ kind: z.literal('direct'), ...copy }),
   ]);
 });
+/** A saved encrypted preset crosses Home by address only; its setup stays with the keyholding target. */
+export const MachineSetupOpaquePresetSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('accountPresetOpaque'), presetId: id(), presetRevision: z.int().check(z.gte(0)),
+  /** Persisted author mode, verified by the server against the saved Preset. */
+  contentEncryptionMode: AccountEncryptionModeSchema,
+  /** Optional keyholder-sealed setup edit for this exact preset snapshot. */
+  presetContentOverride: z.optional(ManagedMachinePresetLaunchNameOverrideV1Schema),
+}));
+export type MachineSetupOpaquePresetSourceV1 = z.infer<typeof MachineSetupOpaquePresetSourceV1Schema>;
+
+/** Input sources are carried through Actions. Only the daemon's local source model carries preset setup bytes. */
+export const MachineSetupSourceApplyEntryV1Schema = lazyZodSchema(() => z.union([
+  MachineSetupNonAccountPresetSourceEntryV1Schema,
+  MachineSetupOpaquePresetSourceV1Schema,
+]));
+export type MachineSetupSourceApplyEntryV1 = z.infer<typeof MachineSetupSourceApplyEntryV1Schema>;
+/** Canonical Action-wire identity for a setup source, including opaque saved presets. */
+export function machineSetupSourceApplyOriginKeyV1(source: MachineSetupSourceApplyEntryV1): string {
+  return source.kind === 'accountPresetOpaque' ? `account:${source.presetId}` : machineSetupSourceOriginKeyV1(source);
+}
+export const MachineSetupSourceApplyV1Schema = lazyZodSchema(() => z.array(MachineSetupSourceApplyEntryV1Schema).check(
+  z.refine(sources => sources.filter(source => source.kind === 'direct').length === 1,
+    { message: 'Setup has exactly one implicit direct source.' }),
+  z.refine(sources => new Set(sources.map(machineSetupSourceApplyOriginKeyV1)).size === sources.length,
+    { message: 'Each setup source is attached once.' }),
+));
+export type MachineSetupSourceApplyV1 = z.infer<typeof MachineSetupSourceApplyV1Schema>;
+
 export const MachineSetupSourceV1Schema: z.ZodMiniType<MachineSetupSourceV1> = lazyZodSchema(() => z.array(MachineSetupSourceEntryV1Schema).check(
   z.refine(sources => sources.filter(source => source.kind === 'direct').length === 1,
     { message: 'Setup has exactly one implicit direct source.' }),

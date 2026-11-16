@@ -261,12 +261,16 @@ describe('created machine resource rows (UIR5)', () => {
     ['running', 'bootstrap.incomplete'],
     ['failed', 'bootstrap.incomplete'],
     ['failed', 'bootstrap.native_command_failed'],
+    ['failed', 'bootstrap.home_not_guest_reachable'],
   ] as const)('presents %s bootstrap evidence (%s) through the operation lifecycle', async (state, reason) => {
     const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
     const machine = await boundMachine({ enrolledMachineId: undefined, desired: 'start', observation: {
       observedAt: 30, availability: 'unavailable', reason,
       ...(reason === 'bootstrap.native_command_failed' ? { nativeCause: {
         localCause: 'native_command_failed', command: 'run', exitCode: 1, stderr: 'guest installation failed',
+      } } : {}),
+      ...(reason === 'bootstrap.home_not_guest_reachable' ? { carrierFailure: {
+        attemptedCarrier: 'https', reason: 'home_unreachable', irohAttempt: { outcome: 'unavailable', reason: 'unavailable' },
       } } : {}),
     } });
     const operation = { serverId: machine.homeId, observation: 'available' as const, isUnavailableProjection: false,
@@ -292,6 +296,9 @@ describe('created machine resource rows (UIR5)', () => {
     expect(screen.getTextContent()).toContain(reason);
     if (reason === 'bootstrap.native_command_failed') {
       expect(screen.getTextContent()).toContain('run · exit 1 · guest installation failed');
+    }
+    if (reason === 'bootstrap.home_not_guest_reachable') {
+      expect(screen.getTextContent()).toContain('https · home_unreachable · iroh · unavailable');
     }
     await screen.update(<ManagedCreationProgress machine={machine} operation={operation} handlers={{ checkNow: vi.fn() }} checking />);
     // The current observation owns Check now; its diagnostic does not repeat the action.

@@ -24,7 +24,7 @@ import type { ActionOperationProjection } from '@/sync/domains/actionOperations/
 import { isManagedMachineBootstrapIncomplete } from '@/sync/domains/actionOperations/managedMachineOperation';
 import { describeActionOperationStatusLabel, resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
-import { describeManagedNativeFailureDiagnostic, describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
+import { describeManagedObservationDiagnostic, describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
 import { confirmSshHostKey } from '@/components/ssh/SshHostKeyTrustSheet';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 
@@ -108,11 +108,11 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const newerObservation = !prompt && !heldAsk && !bootstrapRunning && observation
         && (!operation || observation.observedAt > operationTime) ? observation : null;
     const error = !prompt && !heldAsk && !newerObservation ? operation?.snapshot.error : undefined;
-    const observationDiagnostic = newerObservation && (newerObservation.reason || newerObservation.nativeCause) ? newerObservation : null;
+    const observationDiagnostic = newerObservation && (newerObservation.reason || newerObservation.nativeCause || newerObservation.carrierFailure) ? newerObservation : null;
     const failure = observationDiagnostic ? {
         title: machine.allocation === 'confirmed-absent' ? t('managedMachines.inspect.notCreated')
             : resolveSystemTaskFailureMessage({ code: observationDiagnostic.reason }) ?? t('managedMachines.inspect.checkFailed'),
-        detail: describeManagedNativeFailureDiagnostic(observationDiagnostic.reason ?? 'provider_unavailable', observationDiagnostic.nativeCause),
+        detail: describeManagedObservationDiagnostic(observationDiagnostic),
     } : error ? {
         title: nothingCreated ? lifecycle.line
             : describeManagedInstallationFailure(error, operation?.snapshot.progress) ?? t('managedMachines.creation.installFailedTitle', { name }),

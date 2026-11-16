@@ -1,7 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderNativeOptionFactsV1Schema, ProviderObservationV1Schema,
+import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ManagedPrerequisiteV1Schema, ProviderNativeOptionFactsV1Schema, ProviderObservationV1Schema,
   ProviderDeletionNoticeV1Schema, resolveProviderDeletionNoticeV1, resolveProviderDeletionReminderV1, RetentionCapabilitiesV1Schema } from './providerFactsV1.js';
 import { MachineProvisionerDestroyResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
+
+describe('prerequisite Setup preview', () => {
+  it('carries the same source selection into the existing reviewed Setup plan', () => {
+    const prerequisite = {
+      requirement: { kind: 'managedDependency', id: { pluginId: 'fixture.runtime', localId: 'engine' } },
+      status: 'unavailable',
+      setupSources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: {
+        ref: { pluginId: 'fixture.recipes', recipeId: 'engine', revision: '1' }, inputs: {},
+      } }] } }],
+    };
+    expect(ManagedPrerequisiteV1Schema.parse(prerequisite)).toEqual(prerequisite);
+    for (const setupSources of [[], [...prerequisite.setupSources, ...prerequisite.setupSources], [
+      ...prerequisite.setupSources,
+      { kind: 'accountPreset', presetId: 'opened', presetRevision: 1, contentEncryptionMode: 'plain', setup: {} },
+    ]]) {
+      expect(ManagedPrerequisiteV1Schema.safeParse({ ...prerequisite, setupSources }).success).toBe(false);
+    }
+  });
+});
 
 describe('native acquisition failure facts', () => {
   it.each(['create', 'run', 'up'])('carries equivalent native acquisition command %s through the shared reader', command => {
@@ -98,6 +117,19 @@ describe('native acquisition failure facts', () => {
 });
 
 describe('native option presentation facts', () => {
+  it('carries the provider selected preparation target and installation home without guessing missing facts', () => {
+    const preparationGuest = { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' };
+    expect(ProviderNativeOptionFactsV1Schema.parse({ preparationGuest })).toEqual({ preparationGuest });
+    expect(ProviderNativeOptionFactsV1Schema.parse({})).toEqual({});
+    for (const invalid of [
+      { ...preparationGuest, target: { os: 'win32', arch: 'x64' } },
+      { ...preparationGuest, target: { os: 'linux', arch: 'ia32' } },
+      { target: preparationGuest.target },
+      { ...preparationGuest, remoteHomeDir: '' },
+      { ...preparationGuest, credential: 'undeclared' },
+    ]) expect(ProviderNativeOptionFactsV1Schema.safeParse({ preparationGuest: invalid }).success).toBe(false);
+  });
+
   it('preserves declarative image metadata and native country codes without admitting executable or remote previews', () => {
     const facts = {
       image: { id: 'ubuntu', title: 'Ubuntu', description: 'Ubuntu 24.04 LTS',

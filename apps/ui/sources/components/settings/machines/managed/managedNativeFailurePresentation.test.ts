@@ -1,9 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 import { ManagedNativeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
-import { describeManagedActionFailureDiagnostic, describeManagedOperationDiagnostic, describeManagedPresetAvailabilityFailure } from './managedNativeFailurePresentation';
+import { describeManagedActionFailureDiagnostic, describeManagedObservationDiagnostic, describeManagedOperationDiagnostic, describeManagedPresetAvailabilityFailure } from './managedNativeFailurePresentation';
 
 describe('managed native failure Details', () => {
+    it('shows the closed guest carrier reasons in immediate and retained operation Details', () => {
+        const details = { kind: 'managedGuestHome', homeOrigin: 'https://home.example.test',
+            carrierFailure: { attemptedCarrier: 'https', reason: 'home_unreachable',
+                irohAttempt: { outcome: 'unavailable', reason: 'transport_timeout' } } } as const;
+        for (const diagnostic of [describeManagedActionFailureDiagnostic('home_not_guest_reachable', details),
+            describeManagedOperationDiagnostic({ errorCode: 'home_not_guest_reachable', error: 'private diagnostic', details }),
+            describeManagedObservationDiagnostic({ reason: 'bootstrap.home_not_guest_reachable', carrierFailure: details.carrierFailure })]) {
+            expect(diagnostic).toContain('https');
+            expect(diagnostic).toContain('home_unreachable');
+            expect(diagnostic).toContain('transport_timeout');
+            expect(diagnostic).not.toContain('private diagnostic');
+            expect(diagnostic).not.toContain(details.homeOrigin);
+        }
+    });
     it('retains the Action owner cause through immediate and observed managed failures', () => {
         const failureCause = { phase: 'machines.managed.acquire', errorClass: 'ManagedMachineControllerError' as const,
             errorCode: 'credential_scope_denied', httpStatus: null };

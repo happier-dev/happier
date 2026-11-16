@@ -172,6 +172,33 @@ function boundary(initial: ManagedMachineFullV1 = machine) {
 }
 
 describe('portable managed reconciliation', () => {
+    it('binds a local Session resource without guest enrollment or enrollment preflight', async () => {
+        const run = boundary();
+        let prepared = false;
+        const result = await reconcileManagedMachine({ ...run.input, acquisitionMode: 'resource-bound', bootstrap: {
+            ...run.input.bootstrap, prepareTransport: async input => {
+                expect(input.carrier.kind).toBe('native');
+                expect(input.machine.resource).toEqual(resource);
+                prepared = true;
+            },
+        } });
+        expect(result).toMatchObject({ allocation: 'bound', resource });
+        expect(result.enrolledMachineId).toBeUndefined();
+        expect(run.events).toEqual(['prepare-roles', 'submit', 'report-bound']);
+        expect(run.roles).toEqual(['acquire', 'check', 'bootstrap']);
+        expect(prepared).toBe(true);
+    });
+
+    it('retries a bound local resource without creating or enrolling another guest', async () => {
+        const retained = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'bound', resource });
+        const run = boundary(retained);
+        const result = await reconcileManagedMachine({ ...run.input, action: 'machines.managed.bootstrap.retry',
+            acquisitionMode: 'resource-bound' });
+        expect(result.resource).toEqual(resource);
+        expect(run.events).toEqual([]);
+        expect(run.roles).toEqual(['bootstrap']);
+    });
+
     it('refuses unsupported or unidentified opaque cleanup at the native owner without IO', async () => {
         const initial = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'may-exist',
             creationState: 'canceled', desired: 'delete', preset: { id: 'preset', revision: 0, contentEncryptionMode: 'plain' } });
@@ -467,6 +494,23 @@ describe('portable managed reconciliation', () => {
         });
         expect(observed.observation).toMatchObject({ ...observation, reason: 'bootstrap.native_request_failed', nativeCause });
         expect(roles).toEqual(['inspect']);
+    });
+
+    it('retains guest Home reachability failure through bootstrap reporting and later Check now', async () => {
+        const run = boundary({ ...machine, allocation: 'bound', resource });
+        const carrierFailure = { attemptedCarrier: 'https', reason: 'home_unreachable',
+            irohAttempt: { outcome: 'unavailable', reason: 'unavailable' } } as const;
+        const failure = new SystemTaskExecutionError('home_not_guest_reachable', 'private enrollment diagnostic', {
+            details: { kind: 'managedGuestHome', homeOrigin: 'https://home.example.test', carrierFailure },
+        });
+        await expect(reconcileManagedMachine({ ...run.input, bootstrap: { ...run.input.bootstrap,
+            enroll: async () => { throw failure; },
+        } })).rejects.toBe(failure);
+        expect(run.read().observation).toMatchObject({ reason: 'bootstrap.home_not_guest_reachable', carrierFailure });
+        const afterRestart = boundary(ManagedMachineFullV1Schema.parse(JSON.parse(JSON.stringify(run.read()))));
+        const observed = await reconcileManagedMachine({ ...afterRestart.input, action: 'machines.managed.inspect' });
+        expect(observed.observation).toMatchObject({ reason: 'bootstrap.home_not_guest_reachable', carrierFailure });
+        expect(JSON.stringify(observed.observation)).not.toContain('private enrollment diagnostic');
     });
 
     it('diagnoses a retained running guest with no bootstrap evidence through Check now', async () => {

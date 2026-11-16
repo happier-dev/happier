@@ -9,7 +9,9 @@ import type { HappierJsonExecutor } from '../executors/happierJsonExecutor.js';
 import { runRemoteHomeEnrollmentFlow } from './remoteHomeEnrollmentFlow.js';
 import { createOpenSshHappierJsonExecutor } from '../executors/openSshHappierJsonExecutor.js';
 import { readRemoteEnrollmentCommandFailure } from '@happier-dev/protocol/ssh/commandFailure';
+import { ManagedGuestHomeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { createSystemTasksRunner } from '../interactiveTaskKinds.js';
+import { SystemTaskExecutionError } from '../runSystemTask.js';
 
 const descriptor = {
   v: 1 as const,
@@ -62,9 +64,11 @@ describe('runRemoteHomeEnrollmentFlow', () => {
   it.each([true, false])('names the selected Home when the guest cannot connect (buffered=%s)', async buffered => {
     const homeDescriptor = { ...descriptor, endpoints: [{ kind: 'https' as const, url: 'https://home.example.test:9443' }] };
     const seen: Array<Readonly<{ args: readonly string[] }>> = [];
+    const carrierFailure = { attemptedCarrier: 'https', reason: 'home_unreachable',
+      irohAttempt: { outcome: 'unavailable', reason: 'transport_timeout' } } as const;
     const envelope = { v: 1, ok: false, kind: buffered ? 'auth_request' : 'auth_enroll_remote', error: {
       code: 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE', category: 'network_error',
-      carrierFailure: { attemptedCarrier: 'https', reason: 'home_unreachable' },
+      carrierFailure: { ...carrierFailure, privateUrl: 'https://private.test?key=SECRET' },
     } };
     const failure = await runRemoteHomeEnrollmentFlow({ ...(buffered ? { processIO: 'buffered' as const } : {}),
       executor: createExecutor({ lines: [envelope], seen, status: 1 }),
@@ -72,9 +76,11 @@ describe('runRemoteHomeEnrollmentFlow', () => {
       approvePairingRequest: async () => { throw new Error('Unexpected approval'); },
     }).catch((error: unknown) => error);
     expect(failure).toMatchObject({ code: 'home_not_guest_reachable',
-      details: { kind: 'managedGuestHome', homeOrigin: 'https://home.example.test:9443' } });
+      details: { kind: 'managedGuestHome', homeOrigin: 'https://home.example.test:9443', carrierFailure } });
     expect(failure).toBeInstanceOf(Error);
-    if (!(failure instanceof Error)) throw failure;
+    if (!(failure instanceof SystemTaskExecutionError)) throw failure;
+    expect(ManagedGuestHomeFailureDetailsV1Schema.parse(failure.details)).toEqual({
+      kind: 'managedGuestHome', homeOrigin: 'https://home.example.test:9443', carrierFailure });
     expect(failure.message).toContain('home.example.test:9443');
     expect(seen).toHaveLength(1);
   });

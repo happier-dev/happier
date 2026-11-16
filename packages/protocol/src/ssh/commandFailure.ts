@@ -108,6 +108,12 @@ const enrollmentCarrierReasons = ['unavailable', 'invalid_descriptor', 'invalid_
     'identity_mismatch', 'endpoint_key_unavailable', 'relay_auth_failed', 'invalid_preamble', 'unsupported_alpn',
     'endpoint_config_conflict', 'loopback_bind_failed', 'home_unreachable', 'transport_timeout', 'transport_closed',
     'resource_limit', 'cancelled', 'transport', 'unknown'] as const;
+/** Closed diagnostic projection shared by enrollment failures and retained observations. */
+export const HomeEnrollmentCarrierFailureV1Schema = lazyZodSchema(() => z.strictObject({
+    attemptedCarrier: z.enum(enrollmentCarriers),
+    reason: z.enum(enrollmentCarrierReasons),
+    irohAttempt: z.optional(z.strictObject({ outcome: z.literal('unavailable'), reason: z.enum(enrollmentCarrierReasons) })),
+}));
 export type HomeEnrollmentCarrierFailure = Readonly<{
     attemptedCarrier: typeof enrollmentCarriers[number];
     reason: typeof enrollmentCarrierReasons[number];

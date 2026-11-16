@@ -2,6 +2,7 @@ import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { HomeApplicationOriginV1Schema } from '../../auth/accountDirectory.js';
 import { DeploymentReceiptSettlementFailureDetailsV1Schema, readDeploymentReceiptFailureCodeV1 } from '../../deployments/deploymentReceiptResultV1.js';
 import { DeploymentExecutionFailureDetailsV1Schema } from '../../deployments/deploymentReceiptEventsV1.js';
+import { ActionActorV1Schema } from '../actionRequestAttributionV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { MachineSudoPasswordPromptV1Schema, MachineElevationFailureV1Schema } from '../../machines/adminAccessV1.js';
 import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVitalsSampleV1.js';
@@ -37,7 +38,7 @@ import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavail
 import { DeploymentTargetLinkProvisionedResultV1Schema, projectDeploymentTargetLinkFailureV1 } from '../../deployments/deploymentActionsV1.js';
 import { DeploymentTemplateInstantiationPartialV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
 import { HomeAuthorityMismatchFailureDetailsV1Schema } from '../../ssh/homeAuthorityMismatch.js';
-import { GuestServiceFailureFactsV1Schema } from '../../ssh/commandFailure.js';
+import { GuestServiceFailureFactsV1Schema, HomeEnrollmentCarrierFailureV1Schema } from '../../ssh/commandFailure.js';
 import { OpenProjectRefusalV1Schema } from '../../projects/openProjectV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../../deployments/deploymentDomainFailureV1.js';
 import { MachineReachabilityNativeFailureDetailsV1Schema } from '../../machines/reachability/nativeFailureV1.js';
@@ -231,6 +232,7 @@ export const ManagedAgentStartFailureDetailsV1Schema = lazyZodSchema(() => z.str
 export const ManagedGuestHomeFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('managedGuestHome'), homeOrigin: HomeApplicationOriginV1Schema,
   reason: z.optional(ManagedGuestHomeNetworkHintV1Schema),
+  carrierFailure: z.optional(HomeEnrollmentCarrierFailureV1Schema),
 }));
 export const ManagedMachineFailureDetailsV1Schema = lazyZodSchema(() => z.union([
   ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema,
@@ -523,6 +525,8 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
   operationId: ActionOperationIdentifierV1Schema,
   revision: z.number().check(z.int(), z.positive()),
   actionId: ActionOperationIdentifierV1Schema,
+  /** Current V2 read: accountable actor; null is an accepted approval without person identity. */
+  actor: z.optional(z.nullable(ActionActorV1Schema)),
   state: ActionOperationStateV1Schema,
   scope: z.strictObject({
     accountId: ActionOperationIdentifierV1Schema,
@@ -698,7 +702,7 @@ export function readActionOperationTerminalResultV1(snapshot: ActionOperationSna
  * current readers use V2 and the store retains the complete owner observation.
  * Remove this projection when that supported predecessor reader is retired. */
 export function projectActionOperationSnapshotForV1Reader(snapshot: ActionOperationSnapshotV1): ActionOperationSnapshotV1 {
-  const { domainRef, setupReview: _review, observation: _observation, operationCredentialUses: _credentialUses,
+  const { actor: _actor, domainRef, setupReview: _review, observation: _observation, operationCredentialUses: _credentialUses,
     error, progress, result, ...projection } = snapshot;
   const legacyDomainRef = domainRef?.kind === 'forkRequest' || domainRef?.kind === 'spawnAttempt'
     || domainRef?.kind === 'handoff' ? domainRef : undefined;
