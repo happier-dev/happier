@@ -55,7 +55,7 @@ export { DeploymentNativeAdmissionV1Schema, DeploymentEnvironmentUpdateNativeAdm
 import { DeploymentChildExecutionProofV1Schema } from '../deployments/deploymentChildExecutionProofV1.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { ActionRequiredAuthoritySchema } from './metadata.js';
-import { ManagedAcquireInputV1Schema, ManagedAdmissionComputeInputV1Schema, ManagedResourceTargetV1Schema, ManagedInspectInputV1Schema, ManagedMutationInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema, ManagedResizeInputV1Schema } from '../machines/managed/actionsV1.js';
+import { ManagedAcquireInputV1Schema, ManagedAdmissionComputeInputV1Schema, ManagedResourceTargetV1Schema, ManagedInspectInputV1Schema, ManagedMutationInputV1Schema, ManagedBootstrapRetryInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema, ManagedResizeInputV1Schema } from '../machines/managed/actionsV1.js';
 import { isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1, MANAGED_CREATION_MUTATION_ACTION_IDS_V1 } from '../machines/managed/actionIdsV1.js';
 import { ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
 import { ActionOperationListActionInputV1Schema, ActionOperationGetActionInputV1Schema } from './specs/actionOperations.js';
@@ -745,7 +745,7 @@ const ExternalActionManagedInspectAdmissionV1Schema = lazyZodSchema(() => z.stri
   actionId: z.literal('machines.managed.inspect'), input: ManagedResourceTargetV1Schema,
 }));
 const ExternalActionManagedRetryAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
-  actionId: z.literal('machines.managed.bootstrap.retry'), input: ManagedMutationInputV1Schema,
+  actionId: z.literal('machines.managed.bootstrap.retry'), input: ManagedBootstrapRetryInputV1Schema,
 }));
 const ExternalActionManagedCancelAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   actionId: z.literal('machines.managed.cancel'), input: ManagedMutationInputV1Schema,
@@ -801,7 +801,8 @@ export function projectExternalActionManagedAdmissionV1(actionId: string, input:
     const { homeId, managedId } = ManagedInspectInputV1Schema.parse(input);
     return { actionId, input: { homeId, managedId } };
   }
-  if (actionId === 'machines.managed.bootstrap.retry' || isManagedCreationMutationActionIdV1(actionId)) {
+  if (actionId === 'machines.managed.bootstrap.retry') return { actionId, input: ManagedBootstrapRetryInputV1Schema.parse(input) };
+  if (isManagedCreationMutationActionIdV1(actionId)) {
     return { actionId, input: ManagedMutationInputV1Schema.parse(input) };
   }
   if (actionId === 'action.operations.list') {

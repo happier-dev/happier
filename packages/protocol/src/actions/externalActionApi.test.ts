@@ -390,6 +390,15 @@ it('binds pre-forward managed admission without admitting prompt custody or dupl
     managedAdmission: { ...managedAdmission, input: { ...compute, agentStart: { initialInput: { text: 'private' } } } } }).success).toBe(false);
 });
 
+it('binds the frozen Update archive pin through the existing signed managed recovery projection', () => {
+  const input = { homeId: 'home', managedId: 'guest', expectedIntentRevision: 1, guestCli: {
+    source: 'home-payload', line: '0.3', channel: 'stable', payloads: [{ target: { os: 'linux', arch: 'x64' },
+      sha256: 'a'.repeat(64), url: '/v1/runtime/guest-cli/payloads/linux/x64' }],
+  } };
+  const projection = externalActionApi.projectExternalActionManagedAdmissionV1('machines.managed.bootstrap.retry', input);
+  expect(externalActionApi.ExternalActionManagedAdmissionV1Schema.parse(projection)).toEqual({ actionId: 'machines.managed.bootstrap.retry', input });
+});
+
 it('admits only closed transport causes on an uncertain Action acknowledgement', () => {
   const payload = { error: 'invalid_request', code: 'action_outcome_unknown', requestId: 'request',
     diagnostic: { reason: 'daemon_rpc_refused', errorCode: 'RPC_FORBIDDEN' } };
