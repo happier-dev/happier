@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { z } from 'zod/mini';
 
 export const SESSION_MCP_CONTEXT_FILE_ENV = 'HAPPIER_SESSION_MCP_CONTEXT_FILE';
 /** The relay's registration bearer, carried in its MCP client config env, never the Agent env. */
 export const SESSION_MCP_BEARER_ENV = 'HAPPIER_SESSION_MCP_BEARER';
+/** Routing identity only: the target holder still admits the relay by its Agent-tree proof. */
+export const SESSION_MCP_REGISTRATION_ENV = 'HAPPIER_SESSION_MCP_REGISTRATION_ID';
 
 /** Session tool metadata shared by the client and its owning host endpoint. */
 export const SESSION_MCP_TOOL_SOURCES_META_KEY = 'happier/tool-sources';
@@ -59,6 +62,11 @@ export const SessionMcpLocalContextSchema = z.union([
     }),
 ]);
 export type SessionMcpLocalContext = Readonly<z.infer<typeof SessionMcpLocalContextSchema>>;
+
+/** Selects this registration without carrying its host-private bearer into a target. */
+export function sessionMcpRegistrationId(context: SessionMcpLocalContext): string {
+    return createHash('sha256').update(context.bearerToken).digest('hex');
+}
 
 /**
  * The context an Agent can read (`HAPPIER_SESSION_MCP_CONTEXT_FILE`, isolated launch material):

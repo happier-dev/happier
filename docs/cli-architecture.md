@@ -6122,7 +6122,11 @@ proof still refuses ambiguous registrations. The Session message writer
 exact value before storage. Where no socket transport exists (Windows), the
 127.0.0.1 endpoint stays bearer-only; the follow-up is a Windows named-pipe
 transport with peer proof. Placed Sessions retain their target holder transport
-and receive no Machine endpoint bearer. Plugin-hosted loopback MCP servers' bearers
+and receive no Machine endpoint bearer. Their relay MCP config carries only
+`HAPPIER_SESSION_MCP_REGISTRATION_ID`, the SHA-256 projection of that bridge's
+registration bearer. This selects the registration within its hosted scope after
+the target holder's peer admission; it grants no connection authority.
+Plugin-hosted loopback MCP servers' bearers
 ride only the private remote-bridge config written by the MCP materializer (its
 path, not the bearer, is in the bridge's MCP config env), and the same transcript
 redactor covers them while they are live. The session hook server
@@ -7468,8 +7472,14 @@ channels and exits when the holder closes that connection.
     `/proc` ancestry), answers the upgrade, and carries the connection on its existing
     client channel as a numbered stream (`M` opens it, then `O`/`X` and `I`/`C`, under
     the channel's sequence and replay). The runner hands that stream to the Session's
-    MCP endpoint (`registerSessionMcpRelayAcceptor`, `serveSessionMcpRelayConnection`),
-    which serves it exactly like a relay upgrade on the local socket. No listener but
+    MCP registration (`registerSessionMcpRelayAcceptor`, `serveSessionMcpRelayConnection`).
+    The relay sends its registration selector in `X-Happier-Mcp-Registration`; the
+    holder preserves it as `registrationId` in the `M` opening. Dispatch requires
+    exactly one matching registration within that holder's hosted scope. A missing
+    selector serves only a sole registration; unknown or ambiguous registrations
+    close the stream. Reload matching CLI and native-holder source together for
+    placed Runs to select their own catalog. It serves the stream like a relay
+    upgrade on the local socket. No listener but
     that socket exists in the target, and no second relay process.
   - The runner holds no custody. The daemon serves a relay
     (`subprocess/supervision/sessionTargetRelay.ts`: one `exec` per connection, or a

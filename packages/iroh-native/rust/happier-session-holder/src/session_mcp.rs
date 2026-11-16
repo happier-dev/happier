@@ -10,7 +10,7 @@
 //! holder answers the relay's upgrade itself and carries the connection on its own
 //! client channel as one numbered stream (no listener but this socket, no second
 //! relay):
-//! - holder -> client `M` `[seq][stream u32]` + JSON `{"toolNameMaxLength"?}`: a relay
+//! - holder -> client `M` `[seq][stream u32]` + JSON `{"toolNameMaxLength"?,"registrationId"?}`: a relay
 //!   connected; then `O` `[seq][stream][bytes]` (relay -> endpoint) and `X` at its end.
 //! - client -> holder `I` `[stream][bytes]` (endpoint -> relay), `C` `[stream]` (close).
 //!
@@ -90,16 +90,17 @@ pub fn holder_context_from_ancestry() -> Option<String> {
     None
 }
 
-/// The relay's upgrade head (`mcp_relay::upgrade_request`): the tool-name budget when
-/// valid, and the bytes after the head. `None` refuses the connection.
+/// The relay's upgrade head (`mcp_relay::upgrade_request`): the tool-name budget and
+/// registration selector, when present. `None` refuses an invalid opening.
 #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
-pub fn parse_upgrade_head(head: &[u8]) -> Option<Option<u32>> {
+pub fn parse_upgrade_head(head: &[u8]) -> Option<serde_json::Value> {
     let text = std::str::from_utf8(head).ok()?;
     let mut lines = text.split("\r\n");
     if !lines.next()?.starts_with("GET ") {
         return None;
     }
     let (mut upgrade, mut budget) = (false, None);
+    let mut registration_id = None;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else { continue };
         let (name, value) = (name.trim().to_ascii_lowercase(), value.trim());
@@ -112,9 +113,15 @@ pub fn parse_upgrade_head(head: &[u8]) -> Option<Option<u32>> {
                 return None;
             }
             budget = Some(parsed);
+        } else if name == "x-happier-mcp-registration" {
+            if registration_id.is_some() || !crate::mcp_relay::valid_registration_id(value) { return None; }
+            registration_id = Some(value);
         }
     }
-    upgrade.then_some(budget)
+    let mut options = serde_json::Map::new();
+    if let Some(max) = budget { options.insert("toolNameMaxLength".into(), max.into()); }
+    if let Some(id) = registration_id { options.insert("registrationId".into(), id.into()); }
+    upgrade.then_some(serde_json::Value::Object(options))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -183,7 +190,7 @@ mod unix {
         if !peer_in_agent_tree(&connection, agent_pid) {
             return;
         }
-        let Some((budget, early)) = read_head(&mut connection) else { return };
+        let Some((opened, early)) = read_head(&mut connection) else { return };
         let switched = format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: {}\r\nConnection: Upgrade\r\n\r\n", crate::mcp_relay::UPGRADE);
         let Ok(writer) = connection.try_clone() else { return };
         if connection.write_all(switched.as_bytes()).is_err() {
@@ -191,10 +198,6 @@ mod unix {
         }
         let stream = streams.allocate();
         streams.live.lock().unwrap().insert(stream, Stream { pid: None, stdin: Some(Box::new(ToRelay(writer))), stop: None, pty: None });
-        let opened = match budget {
-            Some(max) => json!({ "toolNameMaxLength": max }),
-            None => json!({}),
-        };
         outbox.send(b'M', &tagged(stream, opened.to_string().as_bytes()));
         if !early.is_empty() {
             outbox.send(b'O', &tagged(stream, &early));
@@ -229,7 +232,7 @@ mod unix {
         }
     }
 
-    fn read_head(connection: &mut UnixStream) -> Option<(Option<u32>, Vec<u8>)> {
+    fn read_head(connection: &mut UnixStream) -> Option<(serde_json::Value, Vec<u8>)> {
         let mut head = Vec::new();
         let mut buffer = [0u8; 1024];
         loop {
@@ -282,16 +285,29 @@ mod tests {
     #[test]
     fn upgrade_head_needs_the_relay_upgrade_and_a_valid_budget() {
         let head = |extra: &str| format!("GET /mcp-relay HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: happier-mcp-relay\r\n{extra}");
-        assert_eq!(parse_upgrade_head(head("").trim_end().as_bytes()), Some(None));
-        assert_eq!(parse_upgrade_head(head("X-Happier-Tool-Name-Max-Length: 64").as_bytes()), Some(Some(64)));
+        assert_eq!(parse_upgrade_head(head("").trim_end().as_bytes()), Some(serde_json::json!({})));
+        assert_eq!(parse_upgrade_head(head("X-Happier-Tool-Name-Max-Length: 64").as_bytes()), Some(serde_json::json!({ "toolNameMaxLength": 64 })));
         assert_eq!(parse_upgrade_head(head("X-Happier-Tool-Name-Max-Length: 0").as_bytes()), None);
         assert_eq!(parse_upgrade_head(head("X-Happier-Tool-Name-Max-Length: 1234567").as_bytes()), None);
         assert_eq!(parse_upgrade_head(b"GET /mcp HTTP/1.1\r\nUpgrade: websocket"), None);
         assert_eq!(parse_upgrade_head(b"POST /mcp-relay HTTP/1.1\r\nUpgrade: happier-mcp-relay"), None);
         // The relay builds exactly what the holder accepts.
-        let request = crate::mcp_relay::upgrade_request(None, Some(12));
+        let request = crate::mcp_relay::upgrade_request(None, Some(12), None);
         let end = request.windows(4).position(|window| window == b"\r\n\r\n").unwrap();
-        assert_eq!(parse_upgrade_head(&request[..end]), Some(Some(12)));
+        assert_eq!(parse_upgrade_head(&request[..end]), Some(serde_json::json!({ "toolNameMaxLength": 12 })));
+    }
+
+    #[test]
+    fn upgrade_preserves_the_registration_selector_in_the_opened_frame() {
+        let registration = "b".repeat(64);
+        let head = format!("GET /mcp-relay HTTP/1.1\r\nUpgrade: happier-mcp-relay\r\nX-Happier-Mcp-Registration: {registration}");
+        let options = parse_upgrade_head(head.as_bytes()).unwrap();
+        assert_eq!(serde_json::to_value(options).unwrap(), serde_json::json!({ "registrationId": registration }));
+        let request = crate::mcp_relay::upgrade_request(None, Some(64), Some(&registration));
+        let end = request.windows(4).position(|window| window == b"\r\n\r\n").unwrap();
+        assert_eq!(parse_upgrade_head(&request[..end]), Some(serde_json::json!({ "registrationId": registration, "toolNameMaxLength": 64 })));
+        assert_eq!(parse_upgrade_head(head.replace(&registration, "bad\r\nInjected: value").as_bytes()), None);
+        assert_eq!(parse_upgrade_head(format!("{head}\r\nX-Happier-Mcp-Registration: {registration}").as_bytes()), None);
     }
 
     #[cfg(target_os = "linux")]

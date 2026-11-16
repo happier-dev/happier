@@ -46,7 +46,8 @@ import { registerSessionMcpEndpointSession, type SessionMcpEndpointRegistration 
 import type { SessionMcpCustomToolsBridge } from './runtime/sessionMcpToolsBridge';
 import { createMcpWatchSession, type McpWatchSession } from './resources/watchSubscriptions';
 import { serveSessionMcpRelayConnection, serveSessionMcpRelayUpgrade } from './runtime/sessionMcpRelayEndpoint';
-import { currentSessionHolderScope, registerSessionMcpRelayAcceptor } from '@/subprocess/supervision/sessionHolder';
+import { currentSessionHolderScope, registerSessionMcpRelayAcceptor, type SessionMcpRelayAcceptor } from '@/subprocess/supervision/sessionHolder';
+import { sessionMcpRegistrationId } from './runtime/sessionMcpLocalContext';
 
 const NativeAgentToolCallRequestV1Schema = z.strictObject({
     toolName: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
@@ -552,7 +553,7 @@ export async function startHappyServer(
     };
     // Relays of this Session's Agents in a target arrive on its holder channel, already admitted there
     // (the holder's Agent-tree proof); they are served exactly like an upgrade on this endpoint.
-    const unregisterHeldRelays = registerSessionMcpRelayAcceptor(holderScope, (relay, relayOptions) => {
+    const acceptHeldRelay: SessionMcpRelayAcceptor = (relay, relayOptions) => {
         let closed = false;
         relay.once('exit', () => { closed = true; });
         relay.stdin.on('error', () => undefined);
@@ -563,7 +564,8 @@ export async function startHappyServer(
             logger.debug('[happierMCP] Session MCP held relay failed', { error: error instanceof Error ? error.message : String(error) });
             relay.stdin.end();
         });
-    });
+    };
+    let unregisterHeldRelays = () => {};
     let stopPromise: Promise<void> | undefined;
     const stop = (): Promise<void> => {
         if (stopPromise) return stopPromise;
@@ -587,6 +589,8 @@ export async function startHappyServer(
     let baseUrl: URL;
     try {
         registration = await registerSessionMcpEndpointSession(opts?.localTransport, { holderScope, handleRequest, handleUpgrade });
+        if (registration.localContext) unregisterHeldRelays = registerSessionMcpRelayAcceptor(holderScope,
+            acceptHeldRelay, sessionMcpRegistrationId(registration.localContext));
         // Socket transport: the URL is nominal (the SDK requires one); the dispatcher uses the socket.
         baseUrl = new URL(registration.url!);
         bridgeSignal.addEventListener('abort', onOwnerAbort, { once: true });

@@ -23,6 +23,33 @@ import { readSessionRunnerRestartAdmissionCurrent } from './plannedRunnerRestart
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('daemon control server: session runner restarts', () => {
+  it('resolves a restart hold by its request identity when Sessions share a runner pid', async () => {
+    const first: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: 'first' };
+    const second: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(process.pid + 1), pid: process.pid, happySessionId: 'second' };
+    const lifetime = new AbortController();
+    const rpc = new RpcHandlerManager({ scopePrefix: 'second', encryptionMode: 'plain', logger: () => {} });
+    const admission = createSessionRunnerRestartAdmission(() => rpc);
+    const release = await prepareSessionRunnerRestartAdmission({ expectedPid: process.pid, signal: lifetime.signal,
+      onHold: attempt => { second.plannedRestartAdmission = attempt; },
+      callRpc: (request, signal) => admission(request, signal) });
+    expect(release).not.toBeNull();
+    const app = createDaemonControlApp({ getChildren: () => [first, second], machineId: 'machine',
+      stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: 'second' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'test-token' });
+    const readCurrent = async (expectedPid = process.pid, requestId = second.plannedRestartAdmission!.requestId) => {
+      const response = await app.inject({ method: 'POST', url: '/session-runners/restart-admission/current',
+        headers: { 'x-happier-daemon-token': 'test-token' }, payload: { expectedPid, requestId } });
+      expect(response.statusCode).toBe(200);
+      return response.json();
+    };
+    try {
+      expect(await readCurrent()).toEqual({ current: true });
+      expect(await readCurrent(process.pid + 1)).toEqual({ current: false });
+      expect(await readCurrent(process.pid, 'another-request')).toEqual({ current: false });
+      lifetime.abort();
+      expect(await readCurrent()).toEqual({ current: false });
+    } finally { lifetime.abort(); await release?.(); rpc.onSocketDisconnect(); await app.close(); }
+  });
   it('reopens creation on demand after a lost cancellation forward using the exact daemon attempt', async () => {
     // The daemon tracks the launcher; the RPC receiver can be its distinct runner.
     const tracked: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(process.pid + 1), pid: process.pid + 1, sessionRunnerPid: process.pid, happySessionId: 'session' };

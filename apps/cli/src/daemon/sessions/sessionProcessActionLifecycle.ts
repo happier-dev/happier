@@ -43,14 +43,19 @@ export function createSessionProcessActionLifecycle(params: Readonly<{
       && admission.machineId === target.machineId && admission.installationId === target.installationId
       && admission.actorAccountId !== target.accountId;
   };
-  function bind(target: ExactTarget): BoundRunner | null | undefined {
-    const tracked = [...params.trackedSessionsByKey.values()].find(row => row.pid === target.pid || row.sessionRunnerPid === target.pid);
-    if (!tracked) return undefined;
-    const start = tracked.pid === target.pid ? tracked.processStartTimeMs : tracked.runnerProcessIdentity?.processStartTimeMs;
-    if (start === undefined || start !== target.start.startTimeMs) return null;
-    return { tracked, trackedPid: tracked.pid, sessionId: tracked.happySessionId, runnerIdentity: tracked.runnerProcessIdentity,
-      sessionRunnerPid: tracked.sessionRunnerPid, processStartTimeMs: tracked.processStartTimeMs,
-      processCommandHash: tracked.processCommandHash };
+  function bind(target: ExactTarget, sessionId?: string): BoundRunner[] | null {
+    const matches = [...params.trackedSessionsByKey.values()].filter(row =>
+      (row.pid === target.pid || row.sessionRunnerPid === target.pid)
+      && (sessionId === undefined || row.happySessionId === sessionId));
+    const witnesses: BoundRunner[] = [];
+    for (const tracked of matches) {
+      const start = tracked.pid === target.pid ? tracked.processStartTimeMs : tracked.runnerProcessIdentity?.processStartTimeMs;
+      if (start === undefined || start !== target.start.startTimeMs) return null;
+      witnesses.push({ tracked, trackedPid: tracked.pid, sessionId: tracked.happySessionId, runnerIdentity: tracked.runnerProcessIdentity,
+        sessionRunnerPid: tracked.sessionRunnerPid, processStartTimeMs: tracked.processStartTimeMs,
+        processCommandHash: tracked.processCommandHash });
+    }
+    return witnesses;
   }
   function current(witness: BoundRunner): boolean {
     const row = witness.tracked;
@@ -66,19 +71,23 @@ export function createSessionProcessActionLifecycle(params: Readonly<{
       let stamped = false;
       const witnesses: BoundRunner[] = [];
       for (const target of input.targets) {
-        const witness = bind(target);
-        if (witness === null) return null;
-        if (witness && !witnesses.some(row => row.tracked === witness.tracked)) witnesses.push(witness);
+        const bound = bind(target);
+        if (bound === null) return null;
+        for (const witness of bound) {
+          if (!witnesses.some(row => row.tracked === witness.tracked)) witnesses.push(witness);
+        }
       }
       const retiredWithoutReplacement = (witness: BoundRunner) => stamped
-        && ![...params.trackedSessionsByKey.values()].some(row => row === witness.tracked
-          || row.pid === witness.trackedPid || row.sessionRunnerPid === witness.sessionRunnerPid && witness.sessionRunnerPid !== undefined
-          || witness.sessionId !== undefined && row.happySessionId === witness.sessionId);
+        && ![...params.trackedSessionsByKey.values()].some(row =>
+          !witnesses.some(admitted => admitted.tracked === row && current(admitted))
+          && (row === witness.tracked || row.pid === witness.trackedPid
+            || row.sessionRunnerPid === witness.sessionRunnerPid && witness.sessionRunnerPid !== undefined
+            || witness.sessionId !== undefined && row.happySessionId === witness.sessionId));
       const authorized = async () => await executionCurrent(input)
         && witnesses.every(row => current(row) || retiredWithoutReplacement(row))
         && input.targets.every(target => {
           const now = bind(target);
-          return now === undefined || (now !== null && witnesses.some(row => row.tracked === now.tracked));
+          return now !== null && now.every(bound => witnesses.some(row => row.tracked === bound.tracked));
         });
       if (!await authorized()) return null;
       if (input.physicalStopEffect) for (const witness of witnesses) {
@@ -112,8 +121,9 @@ export function createSessionProcessActionLifecycle(params: Readonly<{
       };
     },
     async stopExactSession(input) {
-      const witness = bind(input);
-      if (!witness || witness.tracked.happySessionId !== input.sessionId
+      const matches = bind(input, input.sessionId);
+      const witness = matches?.length === 1 ? matches[0] : undefined;
+      if (!witness
         || !await executionCurrent(input) || !current(witness)) {
         return { status: 'incomplete', reason: 'runner_signal_incomplete' };
       }

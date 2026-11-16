@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { ensureManagedGuestSessionHolder } from '@happier-dev/cli-common/machines/managed';
 
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
@@ -19,6 +21,7 @@ import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
 import { createSessionHolderSocketPath, requireSessionHolderExecutablePath, spawnSessionHolderChild, type SessionHolderTarget } from '@/subprocess/supervision/sessionHolder';
 import { SESSION_TARGET_PLACEMENT_ENV_KEY } from '@/subprocess/supervision/sessionTargetRelay';
+import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 import { sessionMcpAgentTransport } from './sessionMcpClient.testkit';
 import { SESSION_MCP_BEARER_ENV, SESSION_MCP_CONTEXT_FILE_ENV } from './sessionMcpLocalContext';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
@@ -74,18 +77,18 @@ function initializeOverSocket(socketPath: string, authorization?: string): Promi
  * byte channel running `argv` (here this host's shell and a real `holder attach` child, as
  * `docker exec -i` runs it). The Agent's environment comes only from the launch preparation.
  */
-function shellTarget(directory: string, agentEnv: Readonly<Record<string, string>>): SessionHolderTarget {
+function shellTarget(directory: string, agentEnv: Readonly<Record<string, string>>, holderPath = requireSessionHolderExecutablePath()): SessionHolderTarget {
     return {
-        id: 'local-test-target', holderPath: requireSessionHolderExecutablePath(), socketDirectory: directory,
+        id: 'local-test-target', holderPath, socketDirectory: directory,
         exec: command => new Promise((resolve, reject) => {
-            const child = spawn('sh', ['-c', command], { stdio: ['ignore', 'pipe', 'pipe'] });
+            const child = spawn('sh', ['-c', command], { env: { ...process.env, HOME: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
             let stdout = '';
             child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
             child.once('error', reject);
             child.once('close', status => resolve({ status: status ?? 1, stdout, stderr: '' }));
         }),
         openChannel: argv => {
-            const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
+            const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'inherit'] });
             const channel = Duplex.from({ readable: child.stdout!, writable: child.stdin! });
             child.once('close', () => channel.destroy());
             return channel;
@@ -94,7 +97,60 @@ function shellTarget(directory: string, agentEnv: Readonly<Record<string, string
     };
 }
 
+async function placeHostHolder(directory: string) {
+    const provider = shellTarget(directory, {});
+    // This target is this host's shell: materialize its real native pair through
+    // the production bootstrap, without requiring cross-compiled guest artifacts.
+    const artifact = async (path: string) => {
+        const bytes = await readFile(path);
+        return { bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
+    };
+    return await ensureManagedGuestSessionHolder({ version: 'mcp-composed-test',
+        resolveArtifacts: async () => {
+            const helperPath = resolveProcessCustodySupportExecutable();
+            if (!helperPath) throw new Error('missing host process custody helper');
+            return { holder: await artifact(requireSessionHolderExecutablePath()), helper: await artifact(helperPath) };
+        },
+        io: { exec: ({ command }) => provider.exec(command), putFile: ({ path, bytes }) => writeFile(path, bytes) },
+    });
+}
+
 describe('Session MCP through the native holder relay', () => {
+    it.runIf(process.platform === 'linux')('routes a placed Run to its own catalog when its Session registered first', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'mcp-run-'));
+        const primarySocketPath = join(directory, 'p.sock');
+        const placed = await placeHostHolder(directory);
+        const environment = { ...process.env, [SESSION_TARGET_PLACEMENT_ENV_KEY]: JSON.stringify({
+            id: 'local-test-target', holderPath: placed.holderPath, socketDirectory: directory,
+            relaySocketPath: join(directory, 'r.sock'), primarySocketPath,
+        }) };
+        try {
+            await runAddedHostedSession({ environment, workingDirectory: directory, end: () => {} }, async () => {
+                const primary = await startSessionMcp('placed-own-run');
+                let run: Awaited<ReturnType<typeof startSessionMcp>> | undefined;
+                const primaryAgent = new Client({ name: 'placed-primary', version: '1' });
+                const runAgent = new Client({ name: 'placed-run', version: '1' });
+                try {
+                    run = await startSessionMcp('placed-own-run', {}, accountSettingsParse({
+                        actionsSettingsV1: { v: 1, actions: { 'session.title.set': { enabled: false } } },
+                    }));
+                    const connectAgent = (agent: Client, config: typeof primary.mcpServers.happier, socketPath: string) =>
+                        agent.connect(sessionMcpAgentTransport(config!, { target: shellTarget(directory, { ...config!.env }, placed.holderPath),
+                            socketPath, role: socketPath === primarySocketPath ? 'primary' : 'auxiliary' }));
+                    await connectAgent(runAgent, run.mcpServers.happier, join(directory, 'a.sock'));
+                    await connectAgent(primaryAgent, primary.mcpServers.happier, primarySocketPath);
+                    expect((await runAgent.listTools()).tools.map(tool => tool.name)).not.toContain('change_title');
+                    expect((await primaryAgent.listTools()).tools.map(tool => tool.name)).toContain('change_title');
+                    expect(JSON.stringify(run.mcpServers)).not.toContain(run.happierMcpServer.localContext!.bearerToken);
+                } finally {
+                    await Promise.allSettled([primaryAgent.close(), runAgent.close()]);
+                    await run?.happierMcpServer.stop();
+                    await primary.happierMcpServer.stop();
+                }
+            });
+        } finally { await rm(directory, { recursive: true, force: true }); }
+    }, 120_000);
+
     it.runIf(process.platform !== 'win32')('keeps a Session relay reachable when its own Run opens a second bridge in the same holder scope', async () => {
         await runAddedHostedSession({ environment: { ...process.env }, workingDirectory: process.cwd(), end: () => {} }, async () => {
             const primary = await startSessionMcp('session-mcp-own-run');
@@ -145,7 +201,8 @@ describe('Session MCP through the native holder relay', () => {
     it.runIf(process.platform === 'linux')('serves an Agent held in a target through its holder channel, never this Machine\'s socket', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'mcp-target-'));
         const primarySocketPath = join(directory, 'primary.sock');
-        process.env[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({ id: 'local-test-target', holderPath: requireSessionHolderExecutablePath(),
+        const placed = await placeHostHolder(directory);
+        process.env[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({ id: 'local-test-target', holderPath: placed.holderPath,
             socketDirectory: directory, relaySocketPath: join(directory, 'relay.sock'), primarySocketPath });
         let bridge: Awaited<ReturnType<typeof startSessionMcp>> | undefined;
         const agent = new Client({ name: 'target-agent', version: '1' });
@@ -156,7 +213,7 @@ describe('Session MCP through the native holder relay', () => {
             if (!hostContext) throw new Error('missing Session MCP context');
             // No context is named: the relay uses its own holder's in the target; this Machine's socket and bearer never cross.
             expect(config.env?.[SESSION_MCP_CONTEXT_FILE_ENV]).toBeUndefined();
-            const target = shellTarget(directory, { ...config.env });
+            const target = shellTarget(directory, { ...config.env }, placed.holderPath);
             await agent.connect(sessionMcpAgentTransport(config, { target, socketPath: primarySocketPath, role: 'primary' }));
             const names = (await agent.listTools()).tools.map(tool => tool.name);
             expect(names).toEqual(expect.arrayContaining(['action_spec_search', 'action_spec_get', 'action_execute']));
@@ -180,14 +237,15 @@ describe('Session MCP through the native holder relay', () => {
     it.runIf(process.platform === 'linux')('every Agent held in a target reaches Session MCP through its own holder (primary and auxiliary)', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'mcp-target-aux-'));
         const primarySocketPath = join(directory, 'primary.sock');
-        process.env[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({ id: 'local-test-target', holderPath: requireSessionHolderExecutablePath(),
+        const placed = await placeHostHolder(directory);
+        process.env[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({ id: 'local-test-target', holderPath: placed.holderPath,
             socketDirectory: directory, relaySocketPath: join(directory, 'relay.sock'), primarySocketPath });
         let bridge: Awaited<ReturnType<typeof startSessionMcp>> | undefined;
         const agents = [new Client({ name: 'target-primary', version: '1' }), new Client({ name: 'target-auxiliary', version: '1' })];
         try {
             bridge = await startSessionMcp('session-mcp-target-aux');
             const config = bridge.mcpServers.happier!;
-            const target = shellTarget(directory, { ...config.env });
+            const target = shellTarget(directory, { ...config.env }, placed.holderPath);
             await agents[0]!.connect(sessionMcpAgentTransport(config, { target, socketPath: primarySocketPath, role: 'primary' }));
             // An execution run's Agent in the same target: its own holder, its own Agent tree.
             // Keep the holder's appended `.mcp` socket within AF_UNIX's pathname limit under executor TMPDIRs.

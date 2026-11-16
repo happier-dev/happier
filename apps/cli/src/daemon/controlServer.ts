@@ -2001,8 +2001,11 @@ export function createDaemonControlApp({
     preHandler: requireAuth,
   }, async request => {
     const { expectedPid, requestId } = request.body;
-    const attempt = getChildren().find(tracked => (tracked.sessionRunnerPid ?? tracked.pid) === expectedPid)?.plannedRestartAdmission;
-    return { current: Boolean(attempt && attempt.requestId === requestId && !attempt.signal.aborted) };
+    return { current: getChildren().some(tracked => {
+      const attempt = tracked.plannedRestartAdmission;
+      return (tracked.sessionRunnerPid ?? tracked.pid) === expectedPid
+        && attempt?.requestId === requestId && !attempt.signal.aborted;
+    }) };
   });
 
   // The one machine result store is written by both Session and daemon processes.

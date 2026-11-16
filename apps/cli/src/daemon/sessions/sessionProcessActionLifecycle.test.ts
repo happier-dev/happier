@@ -21,11 +21,50 @@ function fixture(prepareStopIntent: (sessionId: string) => Promise<void> = async
     markStopRequested: respawn.markStopRequested,
     registerPhysicalStopEffect: createSessionStopOperationBarrier().registerPhysicalStopEffect,
     prepareStopIntent,
-    stopSession: createStopSession({ trackedSessionsByKey: sessions }) });
+    stopSession: createStopSession({ trackedSessionsByKey: sessions,
+      // Physical exit is an OS boundary; hosted Stop must settle from its own end report instead.
+      waitForTrackedRunnersExit: async () => { throw new Error('Hosted Stop must not wait for its shared host process to exit'); } }) });
   return { tracked, peer, sessions, lifecycle, respawn, spawned: () => spawned };
 }
 
 describe('Session process Action lifecycle', () => {
+  it('records every hosted Session affected by a physical host kill', async () => {
+    const stopped: string[] = [];
+    const f = fixture(async sessionId => { stopped.push(sessionId); });
+    f.peer.pid = f.tracked.pid;
+    const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }] });
+    expect(await stamp?.()).toBe(true);
+    expect(stopped).toEqual(['session-a', 'session-b']);
+    expect(f.peer.stopRequestedReason).toBe('user_process_kill');
+    expect(f.respawn.handleUnexpectedExit(f.peer, { reason: 'process-exited', code: null, signal: 'SIGKILL' })).toBe('ignored');
+  });
+
+  it('keeps physical-stop verification valid while admitted hosted Sessions retire separately', async () => {
+    const f = fixture();
+    f.peer.pid = f.tracked.pid;
+    const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }] });
+    expect(await stamp?.()).toBe(true);
+    f.sessions.delete(f.tracked.trackingKey);
+    expect(await stamp?.()).toBe(true);
+    f.sessions.set(f.tracked.trackingKey, { ...f.tracked, processStartTimeMs: 101 });
+    expect(await stamp?.()).toBe(false);
+  });
+
+  it('stops the named hosted Session when another Session shares its pid', async () => {
+    const stopped: string[] = [];
+    const f = fixture(async sessionId => { stopped.push(sessionId); });
+    f.peer.pid = f.tracked.pid;
+    f.peer.hostedSession = { observed: Promise.resolve(), end: async () => {
+      f.sessions.delete(f.peer.trackingKey);
+      return true;
+    } };
+    const result = await f.lifecycle.stopExactSession({ sessionId: 'session-b', pid: 300, start: { startTimeMs: 100 } });
+    expect(result.status).toBe('stopped');
+    expect(stopped).toEqual(['session-b']);
+    expect(f.sessions.get(f.tracked.trackingKey)).toBe(f.tracked);
+    expect(f.tracked.stopRequestedAtMs).toBeUndefined();
+  });
+
   it('keeps automatic Guard cleanup physical without authoring a person Stop hold', async () => {
     const f = fixture(async () => { throw new Error('Guard cleanup must not write person Stop custody'); });
     const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }],
@@ -38,7 +77,9 @@ describe('Session process Action lifecycle', () => {
   });
 
   it('keeps custodian cleanup of a guest runner physical without borrowing the guest Account for Stop metadata', async () => {
-    const f = fixture(async () => { throw new Error('Machine cleanup cannot borrow the guest Account'); });
+    const stopped: string[] = [];
+    const f = fixture(async sessionId => { stopped.push(sessionId); });
+    f.peer.pid = f.tracked.pid;
     f.tracked.requesterWorkAttributionV1 = { serverId: 'home', accountId: 'guest', machineId: 'machine', installationId: 'installed' };
     const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }],
       actionContext: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } },
@@ -51,6 +92,8 @@ describe('Session process Action lifecycle', () => {
     expect(await stamp?.()).toBe(true);
     expect(f.tracked.stopRequestedAtMs).toEqual(expect.any(Number));
     expect(f.tracked.stopRequestedReason).toBeUndefined();
+    expect(stopped).toEqual(['session-b']);
+    expect(f.peer.stopRequestedReason).toBe('user_process_kill');
     expect(f.respawn.handleUnexpectedExit(f.tracked, { reason: 'process-exited', code: null, signal: 'SIGKILL' })).toBe('ignored');
   });
 

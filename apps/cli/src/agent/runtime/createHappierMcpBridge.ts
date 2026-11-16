@@ -8,7 +8,7 @@ import type { StoredCredentials } from '@/persistence'
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider'
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller'
 import { SESSION_MCP_CONTEXT_FILE_ENV, SessionMcpUnavailableError, supportsSessionMcpLocalTransport, type SessionMcpLocalContext, type SessionMcpLocalTransportOptions } from '@/mcp/runtime/sessionMcpLocalTransport'
-import { SESSION_MCP_BEARER_ENV } from '@/mcp/runtime/sessionMcpLocalContext'
+import { SESSION_MCP_BEARER_ENV, SESSION_MCP_REGISTRATION_ENV, sessionMcpRegistrationId } from '@/mcp/runtime/sessionMcpLocalContext'
 import type { SessionMcpCustomToolsBridge } from '@/mcp/runtime/sessionMcpToolsBridge'
 import type {
   AccountSettings,
@@ -32,7 +32,9 @@ function resolveHappierMcpServerConfig(server: Readonly<{ localContext?: Session
   // admits by that holder's own Agent-tree proof; this Machine's bearer never crosses.
   const contextFilePath = resolveSessionAgentMcpContextFile(server.contextFilePath)
   const placed = readSessionTargetPlacement(sessionProcessEnvironment()) !== null
-  const relayEnvironment: Readonly<Record<string, string>> | undefined = placed ? undefined : {
+  const relayEnvironment: Readonly<Record<string, string>> = placed ? {
+    [SESSION_MCP_REGISTRATION_ENV]: sessionMcpRegistrationId(server.localContext),
+  } : {
     ...(contextFilePath ? { [SESSION_MCP_CONTEXT_FILE_ENV]: contextFilePath } : {}),
     [SESSION_MCP_BEARER_ENV]: server.localContext.bearerToken,
   }

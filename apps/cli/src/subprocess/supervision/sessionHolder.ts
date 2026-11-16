@@ -98,15 +98,16 @@ function trackSessionAgentTreeRoot(root: SessionAgentTreeRoot, lifetime: Pick<No
  */
 export type SessionMcpRelayAcceptor = (relay: SessionHolderStreamProcess, options: Readonly<{ toolNameMaxLength?: number }>) => void;
 
-/** Each Session's MCP endpoints that serve held relays, by hosted scope; the first registered (the Session's own) serves. */
-const sessionMcpRelayAcceptorsByScope = new WeakMap<object, Set<SessionMcpRelayAcceptor>>();
+/** Each Session's MCP endpoints that serve held relays, by hosted scope and registration identity. */
+const sessionMcpRelayAcceptorsByScope = new WeakMap<object, Set<Readonly<{ acceptor: SessionMcpRelayAcceptor; registrationId?: string }>>>();
 
 /** Registers the Session MCP endpoint of `scope` for relays its target holders carry; returns the unregistration. */
-export function registerSessionMcpRelayAcceptor(scope: object, acceptor: SessionMcpRelayAcceptor): () => void {
+export function registerSessionMcpRelayAcceptor(scope: object, acceptor: SessionMcpRelayAcceptor, registrationId?: string): () => void {
     let acceptors = sessionMcpRelayAcceptorsByScope.get(scope);
     if (!acceptors) sessionMcpRelayAcceptorsByScope.set(scope, acceptors = new Set());
-    acceptors.add(acceptor);
-    return () => { acceptors.delete(acceptor); };
+    const registration = { acceptor, registrationId };
+    acceptors.add(registration);
+    return () => { acceptors.delete(registration); };
 }
 
 export type SessionHolderHello = Readonly<{ protocol: number; holderPid: number; agentPid: number; replayFrom: number;
@@ -776,13 +777,18 @@ export class SessionHolderChild extends ChildProcess {
         relay.streamId = stream;
         this.streams.set(stream, relay);
         relay.once('exit', () => this.streams.delete(stream));
-        const [acceptor] = sessionMcpRelayAcceptorsByScope.get(this.holderScope) ?? [];
-        let options: { toolNameMaxLength?: unknown } = {};
-        try { options = JSON.parse(body.toString('utf8')) as typeof options; } catch { /* no budget */ }
-        const toolNameMaxLength = typeof options.toolNameMaxLength === 'number' ? options.toolNameMaxLength : undefined;
-        if (acceptor) acceptor(relay, toolNameMaxLength === undefined ? {} : { toolNameMaxLength });
+        let options: unknown;
+        try { options = JSON.parse(body.toString('utf8')); } catch { /* invalid opening is unresolved */ }
+        const opening = typeof options === 'object' && options !== null && !Array.isArray(options) ? options : undefined;
+        const registrationId = opening && 'registrationId' in opening ? opening.registrationId : undefined;
+        const candidates = opening ? [...(sessionMcpRelayAcceptorsByScope.get(this.holderScope) ?? [])]
+            .filter(registration => !('registrationId' in opening) || typeof registrationId === 'string'
+                && registration.registrationId === registrationId) : [];
+        const toolNameMaxLength = opening && 'toolNameMaxLength' in opening && typeof opening.toolNameMaxLength === 'number'
+            ? opening.toolNameMaxLength : undefined;
+        if (candidates.length === 1) candidates[0].acceptor(relay, toolNameMaxLength === undefined ? {} : { toolNameMaxLength });
         else {
-            logger.debug('[SessionHolder] Session MCP relay closed: no Session MCP endpoint in this runner');
+            logger.debug('[SessionHolder] Session MCP relay closed: registration unresolved');
             relay.stdin.end();
         }
     }

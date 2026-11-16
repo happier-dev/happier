@@ -22,6 +22,11 @@ use serde_json::Value;
 
 pub const CONTEXT_FILE_ENV: &str = "HAPPIER_SESSION_MCP_CONTEXT_FILE";
 pub const BEARER_ENV: &str = "HAPPIER_SESSION_MCP_BEARER";
+pub const REGISTRATION_ENV: &str = "HAPPIER_SESSION_MCP_REGISTRATION_ID";
+
+pub fn valid_registration_id(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Endpoint {
@@ -78,11 +83,12 @@ pub const UPGRADE: &str = "happier-mcp-relay";
 /// Protocol boundary: the endpoint's `101` response head is a few short lines.
 const RESPONSE_HEAD_MAX_BYTES: usize = 4096;
 
-pub fn upgrade_request(bearer: Option<&str>, tool_name_max_length: Option<u32>) -> Vec<u8> {
+pub fn upgrade_request(bearer: Option<&str>, tool_name_max_length: Option<u32>, registration_id: Option<&str>) -> Vec<u8> {
     let budget = tool_name_max_length.map(|max| format!("X-Happier-Tool-Name-Max-Length: {max}\r\n")).unwrap_or_default();
     let authorization = bearer.map(|bearer| format!("Authorization: Bearer {bearer}\r\n")).unwrap_or_default();
+    let registration = registration_id.map(|id| format!("X-Happier-Mcp-Registration: {id}\r\n")).unwrap_or_default();
     format!(
-        "GET /mcp-relay HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: {UPGRADE}\r\n{authorization}{budget}\r\n"
+        "GET /mcp-relay HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: {UPGRADE}\r\n{authorization}{budget}{registration}\r\n"
     )
     .into_bytes()
 }
@@ -135,7 +141,9 @@ pub fn run(args: &[String]) -> ! {
     let (endpoint, context_bearer) = context;
     let env_bearer = std::env::var(BEARER_ENV).ok();
     let bearer = resolve_bearer(&endpoint, context_bearer, env_bearer).unwrap_or_else(|| fail());
-    let request = upgrade_request(bearer.as_deref(), tool_name_max_length);
+    let registration_id = std::env::var(REGISTRATION_ENV).ok();
+    if registration_id.as_deref().is_some_and(|id| !valid_registration_id(id)) { fail(); }
+    let request = upgrade_request(bearer.as_deref(), tool_name_max_length, registration_id.as_deref());
     match endpoint {
         Endpoint::Socket(path) => {
             #[cfg(unix)]
@@ -223,14 +231,14 @@ mod tests {
         assert_eq!(resolve_bearer(&loopback, None, None), None);
         assert_eq!(resolve_bearer(&loopback, None, Some(BEARER.into())), Some(Some(BEARER.into())));
         assert_eq!(resolve_bearer(&loopback, None, Some("short".into())), None);
-        let request = String::from_utf8(upgrade_request(None, None)).unwrap();
+        let request = String::from_utf8(upgrade_request(None, None, None)).unwrap();
         assert!(!request.contains("Authorization"));
         assert!(request.ends_with("Upgrade: happier-mcp-relay\r\n\r\n"));
     }
 
     #[test]
     fn upgrade_carries_bearer_and_budget_and_only_101_switches() {
-        let request = String::from_utf8(upgrade_request(Some(BEARER), Some(64))).unwrap();
+        let request = String::from_utf8(upgrade_request(Some(BEARER), Some(64), None)).unwrap();
         assert!(request.starts_with("GET /mcp-relay HTTP/1.1\r\n"));
         assert!(request.contains(&format!("Authorization: Bearer {BEARER}\r\n")));
         assert!(request.contains("Upgrade: happier-mcp-relay\r\n"));
