@@ -5,12 +5,18 @@ import { openDaemonSessionTeamCredentialProviderBinding } from '@/daemon/provide
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { resolveProviderSourceFacts } from '@/providers/registry/sourceFacts';
 import { ProviderModelBindingSourceV1Schema } from '@happier-dev/protocol/providers/binding-compatibility';
-import { TeamCredentialResourceReadInputV1Schema, TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { TeamCredentialResourceReadInputV1Schema, TeamCredentialResourceCatalogEntryV1Schema, teamCredentialDisplayNamePrivateLabelBindingV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import type { TeamCredentialResourceReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import { readSessionTeamCredentialProviderModels } from './sessionTeamCredentialLaunch';
 import { prepareSessionTeamCredentialLaunch } from '@/daemon/startup/prepareSessionTeamCredentialLaunch';
 import { TeamPolicyV1Schema, NO_TEAM_CAPABILITIES_V1, resolveTeamAdmissionProjectionV1 } from '@happier-dev/protocol/teams';
 import { qualifySessionTeamCredentialProviderModels } from '@/providers/broker/sessionTeamCredentialProviderBinding';
+
+const resourceDisplayName = projectPrivateLabelForRecipientV1({
+  stored: sealPrivateLabelV1({ mode: 'plain', binding: teamCredentialDisplayNamePrivateLabelBindingV1('resource'), value: 'Team Pool' }),
+  recipientAccountId: 'recipient',
+});
 
 describe('Session Team runtime catalog', () => {
   it.each([false, true])('preserves worker qualification without Team experimental consent (experimental=%s)', async experimental => {
@@ -20,7 +26,7 @@ describe('Session Team runtime catalog', () => {
       const source = resolveProviderSourceFacts(worker.record);
       const endpoint = source.endpointTemplates[0]!;
       const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-        id: 'resource', teamId: 'team', displayName: 'Team source', resourceRevision: 4,
+        id: 'resource', teamId: 'team', displayName: resourceDisplayName, resourceRevision: 4,
         readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
         directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [],
         sourcePresentation: { kind: 'provider', provider: {
@@ -113,7 +119,7 @@ describe('Session Team runtime catalog', () => {
     let reads = 0;
     let readInput: unknown;
     const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-      id: 'resource', teamId: 'team', displayName: 'Team Pool', resourceRevision: 1,
+      id: 'resource', teamId: 'team', displayName: resourceDisplayName, resourceRevision: 1,
       readiness: { kind: 'limit_reached', metric: 'inference_requests', resetsAtUtc: '2026-10-29T00:00:00.000Z' },
       recoveryAction: null, mayBroker: true, mayReceiveDirect: true, directMaterialState: 'current',
       sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [],
@@ -158,14 +164,17 @@ describe('Session Team runtime catalog', () => {
     { deliveryMode: 'brokered', readiness: { kind: 'limit_reached', metric: 'inference_requests', resetsAtUtc: '2026-10-29T00:00:00.000Z' }, code: 'team_credential_usage_limit' },
     { deliveryMode: 'direct', readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' }, code: 'connected_service_credential_reconnect_required' },
     { deliveryMode: 'brokered', readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' }, code: 'connected_service_credential_reconnect_required' },
+    { deliveryMode: 'direct', readiness: { kind: 'source_unavailable' }, code: 'source_unavailable' },
+    { deliveryMode: 'brokered', readiness: { kind: 'source_unavailable' }, code: 'source_unavailable' },
     { deliveryMode: 'brokered', readiness: { kind: 'update_required' }, code: 'update_required' },
   ] satisfies readonly { deliveryMode: 'direct' | 'brokered'; readiness: TeamCredentialResourceReadinessV1; code: string | null }[])(
     'retains runtime readiness for $deliveryMode / $readiness.kind', async ({ deliveryMode, readiness, code }) => {
       const worker = await createManagedRunLaunchFixture();
       try {
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-          id: 'resource', teamId: 'team', displayName: 'Team Pool', resourceRevision: 1,
-          readiness, recoveryAction: null, mayBroker: true, mayReceiveDirect: true,
+          id: 'resource', teamId: 'team', displayName: resourceDisplayName, resourceRevision: 1,
+          readiness, recoveryAction: readiness.kind === 'source_unavailable' ? 'source_owner_action' : null,
+          mayBroker: true, mayReceiveDirect: true,
           directMaterialState: 'current', sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [],
           sourcePresentation: { kind: 'connected_service', service: { pluginId: 'acme.managed-run', localId: 'accounts' } },
           providerModels: code ? [] : [{
@@ -195,7 +204,7 @@ describe('Session Team runtime catalog', () => {
         implementationIdentity: { pluginId: 'acme.managed-run', localId: 'gateway' },
         endpointTemplateId: 'responses', protocol: 'openai-responses' };
       const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-        id: 'resource', teamId: 'team', displayName: 'Team Pool', resourceRevision: 1,
+        id: 'resource', teamId: 'team', displayName: resourceDisplayName, resourceRevision: 1,
         readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
         directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [],
         sourcePresentation: { kind: 'connected_service', service: { pluginId: 'acme.managed-run', localId: 'accounts' } },

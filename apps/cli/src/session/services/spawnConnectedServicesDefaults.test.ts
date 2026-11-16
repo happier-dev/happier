@@ -12,6 +12,8 @@ import { projectManifestAgentContribution } from '@/plugins/projection/registry/
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { teamCredentialDisplayNamePrivateLabelBindingV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import {
   createSpawnConnectedServicesTeamResourceCatalogResolver,
   mergeSessionTeamCredentialBindingIntents,
@@ -34,6 +36,13 @@ const CODEX_PURPOSE = CODEX_SCOPE?.purpose.purpose ?? 'missing';
 const nativeBindingsForAgent = (agentId: string) => Object.fromEntries(
   resolveCatalogAgentConnectedAccountServiceIds(agentId).map(serviceId => [serviceId, { source: 'native' as const }]),
 );
+
+function resourceDisplayName(resourceId: string, value: string) {
+  return projectPrivateLabelForRecipientV1({
+    stored: sealPrivateLabelV1({ mode: 'plain', binding: teamCredentialDisplayNamePrivateLabelBindingV1(resourceId), value }),
+    recipientAccountId: 'recipient-account',
+  });
+}
 
 describe('resolveSpawnConnectedServicesDefaults', () => {
   it('uses the retained authored Agent for Account defaults without installing it in the ambient catalog', async () => {
@@ -123,7 +132,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
   );
   it('reads every recipient-catalog continuation before resolving a Team default', async () => {
     const resource = {
-      id: 'resource-page-two', teamId: 'team-a', displayName: 'Page two', resourceRevision: 1, sourceOwnerDisplayName: null,
+      id: 'resource-page-two', teamId: 'team-a', displayName: resourceDisplayName('resource-page-two', 'Page two'), resourceRevision: 1, sourceOwnerDisplayName: null,
       readiness: { kind: 'available' as const }, recoveryAction: null,
       mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
       sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
@@ -247,7 +256,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       serverId: 'home-a',
       accountId: 'recipient-account',
       resources: [{
-        id: 'resource-a', teamId: 'team-a', displayName: 'Shared Codex account', sourceOwnerDisplayName: null,
+        id: 'resource-a', teamId: 'team-a', displayName: resourceDisplayName('resource-a', 'Shared Codex account'), sourceOwnerDisplayName: null,
         resourceRevision: 7, readiness: { kind: 'available' as const }, recoveryAction: null,
         mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
         sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
@@ -352,7 +361,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       serverId: 'home-a',
       accountId: 'recipient-account',
       resources: [{
-        id: 'resource-a', teamId: 'team-a', displayName: 'Shared Codex account', sourceOwnerDisplayName: null,
+        id: 'resource-a', teamId: 'team-a', displayName: resourceDisplayName('resource-a', 'Shared Codex account'), sourceOwnerDisplayName: null,
         resourceRevision: 7, readiness: { kind: 'available' as const }, recoveryAction: null,
         mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
         sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
@@ -410,7 +419,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       serverId: 'home-a',
       accountId: 'recipient-account',
       resources: [{
-        id: 'resource-a', teamId: 'team-a', displayName: 'Shared Codex account', sourceOwnerDisplayName: null,
+        id: 'resource-a', teamId: 'team-a', displayName: resourceDisplayName('resource-a', 'Shared Codex account'), sourceOwnerDisplayName: null,
         resourceRevision: 9, readiness: { kind: 'available' as const }, recoveryAction: null,
         mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
         sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
@@ -440,16 +449,19 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
     } catch (error) { refusal = error; }
     expect(refusal).toMatchObject({ code: 'team_credential_usage_limit',
       details: { v: 1, source: 'team_credential' } });
-    for (const readiness of [
-      { kind: 'broker_unavailable' as const, reason: 'projection_unavailable' as const },
-      { kind: 'broker_unavailable' as const, reason: 'response_invalid' as const },
-      { kind: 'source_unavailable' as const },
+    for (const { readiness, refusal } of [
+      { readiness: { kind: 'broker_unavailable' as const, reason: 'projection_unavailable' as const },
+        refusal: { code: 'broker_unavailable', details: { v: 1, source: 'team_credential' } } },
+      { readiness: { kind: 'broker_unavailable' as const, reason: 'response_invalid' as const },
+        refusal: { code: 'broker_unavailable', details: { v: 1, source: 'team_credential' } } },
+      { readiness: { kind: 'source_unavailable' as const }, refusal: { code: 'source_unavailable' } },
     ]) {
       expect(() => resolvePurposeTeamCredentialBindingIntents({ teamResourceSelections,
         teamCredentialResourceCatalog: { ...catalog, resources: catalog.resources.map(resource => ({ ...resource,
-          readiness, connectedServiceSelections: [], recoveryAction: 'retry' as const,
+          readiness, connectedServiceSelections: [],
+          recoveryAction: readiness.kind === 'source_unavailable' ? 'source_owner_action' as const : 'retry' as const,
         })) },
-      })).toThrow(expect.objectContaining({ code: 'broker_unavailable', details: { v: 1, source: 'team_credential' } }));
+      })).toThrow(expect.objectContaining(refusal));
     }
     expect(() => resolvePurposeTeamCredentialBindingIntents({
       teamResourceSelections,
@@ -493,7 +505,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
     const resource = {
       id: binding.resourceId,
       teamId: binding.teamId,
-      displayName: 'Shared Codex account', sourceOwnerDisplayName: null,
+      displayName: resourceDisplayName(binding.resourceId, 'Shared Codex account'), sourceOwnerDisplayName: null,
       resourceRevision: binding.expectedResourceRevision,
       readiness: { kind: 'available' as const },
       recoveryAction: null,

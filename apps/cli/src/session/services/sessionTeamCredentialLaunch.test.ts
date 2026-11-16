@@ -36,11 +36,16 @@ import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/cr
 import { ManagedCredentialDeliveryResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectTeamCredentialLaunchFailure } from './sessionTeamCredentialLaunchError';
 import { projectSessionModelSelectionV2ToV1, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import { teamCredentialDisplayNamePrivateLabelBindingV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 
 const target = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex', sourceKind: 'built_in' });
 const selection = { source: 'team_resource', resourceId: 'resource-a', deliveryMode: 'brokered' } as const;
 const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-  id: 'resource-a', teamId: 'team-a', displayName: 'Shared Pool', resourceRevision: 7,
+  id: 'resource-a', teamId: 'team-a', displayName: projectPrivateLabelForRecipientV1({
+    stored: sealPrivateLabelV1({ mode: 'plain', binding: teamCredentialDisplayNamePrivateLabelBindingV1('resource-a'), value: 'Shared Pool' }),
+    recipientAccountId: 'recipient',
+  }), resourceRevision: 7,
   readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
   directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
   connectedServiceSelections: [selection],
@@ -218,6 +223,23 @@ describe('Session Team launch composition', () => {
       executionMachineId: 'worker', contributions: readCurrentContributionRegistry(), applications,
       readCatalog: async () => [unavailable],
     })).rejects.toMatchObject({ code: 'provider_credential_transport_unavailable' });
+  });
+
+  it('preserves Home source-owner readiness through the public Session launch failure', async () => {
+    const unavailable = TeamCredentialResourceCatalogEntryV1Schema.parse({ ...resource, providerModels: [],
+      readiness: { kind: 'source_unavailable' }, recoveryAction: 'source_owner_action',
+    });
+    const error: unknown = await normalizeSessionTeamCredentialLaunch({ options, agentId: 'codex', agentTargetKey: target,
+      contributions: readCurrentContributionRegistry(), applications,
+      readCatalog: () => readSessionTeamCredentialResourceCatalog({ applications, teamIds: [resource.teamId],
+        homeDomainAction: async () => ({ resources: [unavailable], nextCursor: null }),
+      }),
+    }).catch(failure => failure);
+    expect(error).toMatchObject({ code: 'source_unavailable' });
+    if (!(error instanceof SessionTeamCredentialLaunchUnavailableError)) throw new Error('Expected typed source refusal');
+    expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: error.code,
+    }))).toMatchObject({ launchError: { code: 'source_unavailable' } });
   });
 
   it('retains the exact canonical native row rather than reselecting an unusable row of the same mode', async () => {
