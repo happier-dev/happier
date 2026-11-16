@@ -16,5 +16,6 @@
   "machineCua.configure.cpu": "Ядра CPU",
   "machineCua.configure.memoryBytes": "Память",
   "machineCua.configure.diskBytes": "Диск",
-  "machineCua.configure.cloud": "Облако"
+  "machineCua.configure.cloud": "Облако",
+  "machineCua.presentation.customSize": "Свой размер"
 }

@@ -16,5 +16,6 @@
   "machineCua.configure.cpu": "CPU 核心",
   "machineCua.configure.memoryBytes": "記憶體",
   "machineCua.configure.diskBytes": "磁碟",
-  "machineCua.configure.cloud": "雲端平台"
+  "machineCua.configure.cloud": "雲端平台",
+  "machineCua.presentation.customSize": "自訂規格"
 }

@@ -16,5 +16,6 @@
   "machineCua.configure.cpu": "Rdzenie CPU",
   "machineCua.configure.memoryBytes": "Pamięć",
   "machineCua.configure.diskBytes": "Dysk",
-  "machineCua.configure.cloud": "Chmura"
+  "machineCua.configure.cloud": "Chmura",
+  "machineCua.presentation.customSize": "Własny rozmiar"
 }

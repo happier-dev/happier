@@ -148,6 +148,7 @@ describe('Cua native read facts', () => {
         const size = { cpu: 2, memoryBytes: 4 * 1024 ** 3 };
         const choice = selected(await h.facts.options(undefined, { size }));
         expect(choice).toMatchObject({ kind: 'ready', nativeFacts: { size: { id: `2:${4 * 1024 ** 3}:image`,
+            title: { key: 'machineCua.presentation.customSize', fallback: 'Custom size' },
             cpuCores: 2, memoryBytes: 4 * 1024 ** 3, diskBytes: 21474836480 } },
             launch: { on: 'local', runtimeId: 'qemu', imageId: image.ref, size: { ...size, diskBytes: 21474836480 } } });
         // An explicit disk that is not the image's still refuses a sandbox.

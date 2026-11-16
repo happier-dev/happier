@@ -2,6 +2,7 @@ import * as z from 'zod/mini';
 import type { MachineProvisionerCheckResultV1, MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { CuaNativeClient, CuaNativeOutcome } from './nativeClient.js';
 import { CuaLocalOptionsQueryV1Schema, CuaNativeImageRefSchema, type CuaLocalLaunchV1, type CuaLocalOptionsQueryV1 } from './schemas.js';
+import { machinePresentationLabel } from '../ui/translations.js';
 
 // Immutable read contract: trycua/cua@2bce4442c107fc34c45b374b29a35d09f630fd83,
 // cua-cli/src/lib.rs RuntimeCmd::Doctor / ImagesCmd::Ls, catalog.rs row(),
@@ -123,7 +124,7 @@ export function createCuaNativeFacts(native: CuaNativeClient) {
             if (doctor.kind === 'unknown' || images.kind === 'unknown') return { dimensions };
             const nativeArch = doctor.value.host.arch === 'x86_64' ? 'amd64' : 'arm64';
             const size = selectors.size;
-            const sizeIdentity = size ? { id: `${size.cpu}:${size.memoryBytes}:${size.diskBytes ?? 'image'}`, title: `${size.cpu} CPU` } : undefined;
+            const sizeIdentity = size ? { id: `${size.cpu}:${size.memoryBytes}:${size.diskBytes ?? 'image'}`, title: machinePresentationLabel('customSize') } : undefined;
             const selectedImages = images.value.filter(image => !selectors.imageId || selectors.imageId === image.imageId);
             const runtimes = [...new Set(selectedImages.flatMap(image => image.runtimeIds))]
                 .filter(runtimeId => !selectors.runtimeId || runtimeId === selectors.runtimeId);

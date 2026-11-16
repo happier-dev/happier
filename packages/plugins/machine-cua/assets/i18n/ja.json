@@ -16,5 +16,6 @@
   "machineCua.configure.cpu": "CPU コア",
   "machineCua.configure.memoryBytes": "メモリ",
   "machineCua.configure.diskBytes": "ディスク",
-  "machineCua.configure.cloud": "クラウド"
+  "machineCua.configure.cloud": "クラウド",
+  "machineCua.presentation.customSize": "カスタムサイズ"
 }

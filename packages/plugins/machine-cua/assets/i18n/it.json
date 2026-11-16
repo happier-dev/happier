@@ -16,5 +16,6 @@
   "machineCua.configure.cpu": "Core CPU",
   "machineCua.configure.memoryBytes": "Memoria",
   "machineCua.configure.diskBytes": "Disco",
-  "machineCua.configure.cloud": "Cloud"
+  "machineCua.configure.cloud": "Cloud",
+  "machineCua.presentation.customSize": "Dimensioni personalizzate"
 }
