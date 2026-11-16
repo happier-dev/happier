@@ -120,9 +120,10 @@ export type ScmActionSpecDefinition<
    */
   localRepository?: 'read' | 'write';
   /**
-   * Runs on this Machine's SCM hosting providers and their credentials (pull requests, hosting repositories,
-   * clone). In a member's folder it is refused `credential_scope_denied`: those credentials do not belong to that
-   * member, and the member's own runs never hold them.
+   * Writes into the input's folder with this Machine's SCM hosting credentials (clone). In a member's folder it is
+   * refused `credential_scope_denied`: those credentials are not that member's, and Git's ownership check does not
+   * cover a new directory. Hosting methods that work on an existing repository need no mark: in a member folder the
+   * daemon's Git refuses that repository before any hosting call.
    */
   hostingCredentials?: true;
 }>;
@@ -1173,7 +1174,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read', hostingCredentials: true,
+    sideEffectClass: 'read',
     outputSchema: ScmPullRequestListResponseSchema,
     inputSchema: ScmPullRequestListRequestSchema,
     inputHints: {
@@ -1219,7 +1220,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read', hostingCredentials: true,
+    sideEffectClass: 'read',
     outputSchema: ScmPullRequestGetResponseSchema,
     inputSchema: SessionScmPullRequestGetInputSchema,
     inputHints: {
@@ -1252,7 +1253,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'external', hostingCredentials: true,
+    sideEffectClass: 'external',
     outputSchema: ScmPullRequestOpenOrReuseResponseSchema,
     inputSchema: ScmPullRequestOpenOrReuseRequestSchema,
     inputHints: {
@@ -1287,7 +1288,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read', hostingCredentials: true,
+    sideEffectClass: 'read',
     outputSchema: ScmPullRequestOpenComposeResponseSchema,
     inputSchema: ScmPullRequestOpenComposeRequestSchema,
     inputHints: {
@@ -1319,7 +1320,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'write', hostingCredentials: true,
+    sideEffectClass: 'write',
     outputSchema: ScmPullRequestCheckoutResponseSchema,
     inputSchema: ScmPullRequestCheckoutRequestSchema,
     inputHints: {
@@ -1351,7 +1352,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'write', hostingCredentials: true,
+    sideEffectClass: 'write',
     outputSchema: ScmPullRequestPrepareWorktreeResponseSchema,
     inputSchema: ScmPullRequestPrepareWorktreeRequestSchema,
     inputHints: {
@@ -1424,7 +1425,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'danger', hostingCredentials: true,
+    sideEffectClass: 'danger',
     outputSchema: ScmPullRequestRunStackedResponseSchema,
     inputSchema: ScmPullRequestRunStackedRequestSchema,
     inputHints: {
@@ -1590,7 +1591,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
     id: 'scm.hostingRepository.resolveAddress', approval: {result: 'required'},
     title: 'Resolve repository address',
     description: 'Resolve a credential-free repository address through the selected Machine’s SCM hosting providers.',
-    safety: 'safe', placements: [], sideEffectClass: 'read', hostingCredentials: true,
+    safety: 'safe', placements: [], sideEffectClass: 'read',
     bindings: { rpcMethod: RPC_METHODS.SCM_HOSTING_REPOSITORY_RESOLVE_ADDRESS, sdkMethod: 'scm.hostingRepository.resolveAddress',
       mcpToolName: 'scm_hosting_repository_resolve_address', voiceClientToolName: 'resolveScmRepositoryAddress' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
@@ -1603,7 +1604,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
     id: 'scm.hostingRepository.get', approval: {result: 'required'},
     title: 'Read hosting repository',
     description: 'Read authoritative public repository metadata through the selected Machine’s SCM hosting provider.',
-    safety: 'safe', placements: [], sideEffectClass: 'read', hostingCredentials: true,
+    safety: 'safe', placements: [], sideEffectClass: 'read',
     bindings: { rpcMethod: RPC_METHODS.SCM_HOSTING_REPOSITORY_GET, sdkMethod: 'scm.hostingRepository.get' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
     cli: { commands: [{ path: ['scm', 'hosting-repository', 'get'], visibility: 'canonical' }] },
@@ -1629,7 +1630,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read', hostingCredentials: true,
+    sideEffectClass: 'read',
     outputSchema: ScmHostingRepositoryDescribePublishTargetsResponseSchema,
     inputSchema: ScmHostingRepositoryDescribePublishTargetsRequestSchema,
     inputHints: {
@@ -1671,7 +1672,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'external', hostingCredentials: true,
+    sideEffectClass: 'external',
     outputSchema: ScmHostingRepositoryPublishResponseSchema,
     inputSchema: ScmHostingRepositoryPublishRequestSchema,
     inputHints: {

@@ -2640,11 +2640,12 @@ the member who owns the folder (named by the committed member binding), in that
 member's `workspace-effect` child, so daemon Git never runs a member repository's
 config or hooks. Writes there (stage, commit, branch, stash, conflicts,
 worktrees, remotes, fetch/pull/push) use the member's own Git identity and
-credentials; Happier adds no `safe.directory` exception. Methods marked
-`hostingCredentials` (pull requests, hosting repositories, clone) are refused
-there as `credential_scope_denied` before any Git: they would apply this
-Machine's hosting credentials to that member's repository. A clone names its
-folder by `destinationParentPath`.
+credentials; Happier adds no `safe.directory` exception. A clone into a member
+folder (its `destinationParentPath`, spec mark `hostingCredentials`) is refused
+as `credential_scope_denied` before any Git: it would write there with this
+Machine's hosting credentials. Other hosting work runs as it does elsewhere:
+methods on an existing repository are refused by the daemon Git's ownership
+check before any hosting call, and address resolution reads no folder.
 A person with Can use (or their own Account automation) gets local repository
 reads only. The SCM Action specs mark each Git-only repository method
 `localRepository: 'read'` (status, log, history, branches, stashes, commit and

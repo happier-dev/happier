@@ -349,18 +349,40 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(os.daemonTouches).toEqual([]);
   });
 
-  // Hosting work would apply this Machine's hosting credentials to another person's repository.
-  it('refuses Manage hosting work in a member folder with a typed credential refusal, before any Git', async () => {
+  // A clone would write into another person's folder with this Machine's hosting credentials; Git has no
+  // ownership check for a new directory, so the SCM owner refuses it.
+  it('refuses a Manage clone into a member folder with a typed credential refusal, before any Git', async () => {
     const f = await fixture();
-    for (const [method, params] of [
-      [RPC_METHODS.SCM_PULL_REQUEST_LIST, { cwd: f.memberRepository }],
-      [RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH, { cwd: f.memberRepository }],
-      [RPC_METHODS.SCM_REPOSITORY_CLONE, { destinationParentPath: f.memberRoot, destinationDirectoryName: 'clone' }],
-    ] as const) {
-      expect(await f.invoke(method, params, 'manager-account', 'manage'), method)
-        .toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'credential_scope_denied' });
-    }
+    expect(await f.invoke(RPC_METHODS.SCM_REPOSITORY_CLONE, { destinationParentPath: f.memberRoot, destinationDirectoryName: 'clone' },
+      'manager-account', 'manage'))
+      .toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'credential_scope_denied' });
     expect(gitLaunches()).toEqual([]);
+    expect(os.runAs).toEqual([]);
+  });
+
+  // SEC-FORKC-1116 N1: hosting work that reads no member folder runs as it does elsewhere, and repository
+  // hosting work there is refused by Git's own ownership check (no second refusal).
+  it('resolves a hosting address for a member Project like any other, and Git refuses a member-folder PR create', async () => {
+    const f = await fixture();
+    const services = { resolveScmHostingProviderRegistry: async () => ({ providers: [], getProvider: () => undefined,
+      detectRemote: () => ({ kind: 'unresolved' }), buildCompareUrl: () => ({ kind: 'unresolved' }) }) };
+    const resolve = (directory: string) => runWithHostingProviderRuntimeServices(
+      services as unknown as Parameters<typeof runWithHostingProviderRuntimeServices>[0],
+      () => f.invoke(RPC_METHODS.SCM_HOSTING_REPOSITORY_RESOLVE_ADDRESS, { v: 1, kind: 'targeted_action_rpc',
+        input: { address: 'https://example.invalid/owner/repo' },
+        target: { kind: 'machine', machineId: 'separate-users-machine', project: { machineId: 'separate-users-machine', directory } } },
+      'manager-account', 'manage'));
+    const outside = await resolve(f.ownerRepository);
+    const member = await resolve(f.memberRepository);
+    expect(member, JSON.stringify(member)).toEqual(outside);
+    expect(JSON.stringify(member)).not.toContain('credential_scope_denied');
+    // Git's different-owner hook stands in for the member owning the repository on a real host.
+    vi.stubEnv('GIT_TEST_ASSUME_DIFFERENT_OWNER', '1');
+    onTestFinished(() => { vi.unstubAllEnvs(); });
+    const created = await f.invoke(RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE, { cwd: f.memberRepository, base: 'main', title: 'x' },
+      'manager-account', 'manage');
+    expect(created, JSON.stringify(created)).toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE',
+      error: expect.stringContaining('dubious ownership') });
     expect(os.runAs).toEqual([]);
   });
 

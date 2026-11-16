@@ -197,8 +197,8 @@ export function registerScmHandlers(
                 // Manage keeps full access to a member folder, but daemon Git never runs a member
                 // repository's config or hooks (F-A ruling, MEMBER-CHILD-READS-1115): its repository
                 // reads and writes (F-B) run in that member's own child, as that member. Happier never
-                // adds a safe.directory exception for it. Hosting work there is refused: this Machine's
-                // hosting credentials are not that member's (F-B follow-up, orchestrator 2026-11-15).
+                // adds a safe.directory exception for it. A clone into it is refused: it would write there
+                // with this Machine's hosting credentials (SEC-FORKC-1116 N1).
                 const target = projectRoot ?? readRequestCwd(input);
                 const readOwner = deps.nativeOperationRuntime?.readMemberFolderOwner;
                 const hosting = isScmHostingCredentialRpcMethod(method);
@@ -325,8 +325,9 @@ export function registerScmHandlers(
         ...(deps?.machineId ? { targetMachineId: deps.machineId } : {}),
         defaultMachineTarget: true,
         mapRequestForMethod: async ({ actionId, method, input }) => {
-            // In the member child the daemon has already admitted this operation and run its Action policy;
-            // the child holds no Account credentials, so it executes the repository operation itself.
+            // In the member child. Ingress admitted the request and the daemon chose the member; no Action
+            // policy or approval runs for it. That is sound only because the child is same-person only: it
+            // holds no Account credentials and acts with the folder owner's own OS powers, nobody else's.
             if (deps?.admittedLocalRepositoryOperation && isScmLocalRepositoryRpcMethod(method) && isScmActionId(actionId)) return { accepted: false,
                 response: await executeScmActionOperation({ actionId, input, ...routeBase, rpcCompatibility: true }) };
             if (actionId !== 'scm.diff.file') return { accepted: true, input };
