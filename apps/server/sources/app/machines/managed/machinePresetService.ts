@@ -243,12 +243,18 @@ async function validatePresetRecipientsInTx(tx: Tx, context: PresetContext,
     const envelopes = readPresetRecipientEnvelopeRows(preset.recipients);
     if (envelopes === null) throw new ManagedMachineError('credential_unavailable');
     const census = await readPresetRecipientAudienceCensusInTx(tx, context, preset, envelopes);
-    const recipientRows = census.recipientAccountIds.length === 0 ? [] : await tx.account.findMany({
-        where: { id: { in: [...census.recipientAccountIds] } },
+    await validatePresetRecipientEnvelopeCensusInTx(tx, census.recipientAccountIds, envelopes);
+}
+
+/** Source saves and retained reports consume the same complete-audience envelope validator. */
+async function validatePresetRecipientEnvelopeCensusInTx(tx: Tx, recipientAccountIds: readonly string[],
+    envelopes: readonly ResourceRecipientEnvelopeRow[]): Promise<void> {
+    const recipientRows = recipientAccountIds.length === 0 ? [] : await tx.account.findMany({
+        where: { id: { in: [...recipientAccountIds] } },
         select: RESOURCE_RECIPIENT_ACCOUNT_SELECT,
     });
     const rejection = readRequiredResourceRecipientEnvelopeRejectionV1({
-        expectedRecipientAccountIds: census.recipientAccountIds,
+        expectedRecipientAccountIds: recipientAccountIds,
         envelopes,
         recipientsById: new Map(recipientRows.map((recipient) => [recipient.id, recipient])),
     });
@@ -441,6 +447,7 @@ export async function createMachinePreset(params: PresetContext & Readonly<{ inp
  */
 function matchesRecipientCensusTarget(input: ManagedMachinePresetRecipientCensusInputV1,
     preset: Pick<ManagedMachinePresetV1, 'owner' | 'controller' | 'controllerPoolId'>): boolean {
+    if ('managedId' in input) return false;
     return sameManagedInput(input.owner, preset.owner)
         && sameManagedInput(input.controller, preset.controller)
         && input.controllerPoolId === preset.controllerPoolId;
@@ -453,6 +460,16 @@ export async function readMachinePresetRecipientCensus(params: PresetContext & R
     try {
         return await inReadSnapshot(async tx => {
             await requireHomeInTx(tx, input.homeId);
+            if ('managedId' in input) {
+                const row = await tx.managedMachine.findFirst({ where: { id: input.managedId, homeId: input.homeId } });
+                if (!row || row.custodianAccountId !== params.accountId) throw new ManagedMachineError('permission_denied');
+                const stored = readStoredOpaquePresetLaunch(row.launch);
+                if (stored.contentEncryptionMode === 'plain') {
+                    return { kind: 'ready', contentEncryptionMode: 'plain', recipients: [] } as const;
+                }
+                const census = await readManagedPresetSnapshotRecipientCensusInTx(tx, row, stored.recipients);
+                return { kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [...census.recipients] } as const;
+            }
             if (input.presetId !== undefined) {
                 const row = await tx.managedMachinePreset.findFirst({ where: { id: input.presetId, homeId: input.homeId } });
                 if (!row || !await resolvePresetAccessInTx(tx, params, ownerOf(row), 'manage')) {
@@ -490,6 +507,38 @@ export async function readMachinePresetRecipientCensus(params: PresetContext & R
     } catch (error) {
         return refusal(error);
     }
+}
+
+/** Retained snapshots keep their own key; the source relation supplies only their current audience. */
+async function readManagedPresetSnapshotRecipientCensusInTx(tx: Tx, row: StoredManagedMachine,
+    recipients: ManagedMachinePresetV1['recipients']) {
+    const preset = row.presetId === null ? null : await tx.managedMachinePreset.findFirst({
+        where: { id: row.presetId, homeId: row.homeId },
+    });
+    if (!preset) throw new ManagedMachineError('preset_not_found');
+    const envelopes = readPresetRecipientEnvelopeRows(recipients);
+    if (envelopes === null) throw new ManagedMachineError('credential_unavailable');
+    const owner = ownerOf(preset);
+    const census = await readSavedSecretAudienceRecipientEnvelopeCensusInTx(tx, {
+        ownerAccountId: owner.kind === 'account' ? owner.accountId : undefined,
+        accountIds: [], teamIds: owner.kind === 'team' ? [owner.teamId] : [], groupIds: [], envelopes,
+    });
+    if (!census.recipientAccountIds.includes(row.custodianAccountId)) throw new ManagedMachineError('credential_unavailable');
+    return census;
+}
+
+/** Existing controller report authority may rewrap only to the exact current owner audience. */
+export async function validateManagedPresetSnapshotRecipientsInTx(tx: Tx, row: StoredManagedMachine,
+    recipients: ManagedMachinePresetV1['recipients']): Promise<void> {
+    const stored = readStoredOpaquePresetLaunch(row.launch);
+    if (stored.contentEncryptionMode === 'plain') {
+        if (recipients.length !== 0) throw new ManagedMachineError('invalid_request');
+        return;
+    }
+    const envelopes = readPresetRecipientEnvelopeRows(recipients);
+    if (envelopes === null) throw new ManagedMachineError('credential_unavailable');
+    const census = await readManagedPresetSnapshotRecipientCensusInTx(tx, row, recipients);
+    await validatePresetRecipientEnvelopeCensusInTx(tx, census.recipientAccountIds, envelopes);
 }
 
 type AccountManagedMachinePresetEncryptionMigrationResult = Readonly<{

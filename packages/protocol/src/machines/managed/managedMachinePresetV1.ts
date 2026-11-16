@@ -33,12 +33,16 @@ export const ManagedMachinePresetOwnerV1Schema = lazyZodSchema(() => z.union([
 ]));
 export const ManagedMachinePresetLimitV1Schema = lazyZodSchema(() => z.strictObject({ maximum: z.number().check(z.int(), z.positive()) }));
 /** Server computes the current Team audience/readiness; an existing preset binds mode to its stored author. */
-export const ManagedMachinePresetRecipientCensusInputV1Schema = lazyZodSchema(() => z.strictObject({
-  homeId: id(), presetId: z.optional(id()),
-  owner: ManagedMachinePresetOwnerV1Schema,
-  controller: z.optional(ManagedControllerV1Schema),
-  controllerPoolId: z.optional(MachinePoolIdV1Schema),
-}));
+export const ManagedMachinePresetRecipientCensusInputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    homeId: id(), presetId: z.optional(id()),
+    owner: ManagedMachinePresetOwnerV1Schema,
+    controller: z.optional(ManagedControllerV1Schema),
+    controllerPoolId: z.optional(MachinePoolIdV1Schema),
+  }),
+  /** The retained snapshot's custodian rewraps its independent content key. */
+  z.strictObject({ homeId: id(), managedId: id() }),
+]));
 export type ManagedMachinePresetRecipientCensusInputV1 = z.infer<
   typeof ManagedMachinePresetRecipientCensusInputV1Schema
 >;

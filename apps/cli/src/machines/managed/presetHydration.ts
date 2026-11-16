@@ -1,4 +1,6 @@
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedMachinePresetRecipientCensusResultV1Schema, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import axios from '@/api/client/credentialAxios';
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ManagedMachinePresetPreparationExecutionV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
@@ -8,6 +10,7 @@ import { ManagedMachineFullV1Schema, isManagedOpaquePresetMachineV1,
 import { ManagedMachinePresetContentV1Schema, ManagedMachinePresetStoredContentV1Schema, openManagedMachinePresetContentV1,
     openManagedMachinePresetRecipientProjectionV1, readManagedMachinePresetContentOverrideForModeV1,
     resolveManagedMachinePresetResizeOverrideV1,
+    rewrapManagedMachinePresetRecipientsV1,
     type ManagedMachinePresetContentV1, type ManagedMachinePresetNativeControlResultV1,
     type ManagedMachinePresetStoredContentCarrierV1, type ManagedMachinePresetStoredContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedConfigurationFactsV1Schema, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
@@ -50,6 +53,15 @@ type LocalPresetSnapshot = Readonly<{
     setup?: NonNullable<ManagedMachineFullV1['machineSetup']>['setup'];
     reviewedFacts?: ManagedMachineFullV1['reviewedFacts'];
     structural: ManagedOpaquePresetMachineV1;
+}>;
+
+type PresetReportInput = Readonly<{
+    reviewedFacts?: ManagedConfigurationFactsV1;
+    nativeResult?: AcquireResultV1;
+    observation?: ProviderObservationV1;
+    nativeControlResult?: ManagedMachinePresetNativeControlResultV1;
+    setupSourceFacts?: MachineSetupSourceFactsMapV1;
+    preparationExecution?: ManagedMachinePresetPreparationExecutionV1;
 }>;
 
 const managedOpaquePresetReview = Symbol('managedOpaquePresetReview');
@@ -334,36 +346,70 @@ export function createManagedPresetHydrator(input: Readonly<{
         return size;
     }
 
-    async function preparePresetContentReport(machine: ManagedMachineFullV1, input: Readonly<{
-        reviewedFacts?: ManagedConfigurationFactsV1;
-        nativeResult?: AcquireResultV1;
-        observation?: ProviderObservationV1;
-        nativeControlResult?: ManagedMachinePresetNativeControlResultV1;
-        setupSourceFacts?: MachineSetupSourceFactsMapV1;
-        preparationExecution?: ManagedMachinePresetPreparationExecutionV1;
-    }>, signal?: AbortSignal): Promise<ManagedMachinePresetStoredContentV1> {
+    async function preparePresetReport(machine: ManagedMachineFullV1, report: PresetReportInput,
+        signal?: AbortSignal, refreshRecipients = false): Promise<Readonly<{
+            content: ManagedMachinePresetStoredContentV1;
+            presetRecipients?: ManagedMachinePresetV1['recipients'];
+        }>> {
         if (!machine.preset) throw new ManagedMachineControllerError('credential_unavailable');
         const snapshot = snapshots.get(machine.id);
         if (!snapshot || !samePreset(snapshot.preset, machine.preset)) {
             throw new ManagedMachineControllerError('credential_unavailable');
         }
-        const reviewedFacts = input.reviewedFacts ?? snapshot.reviewedFacts;
+        const reviewedFacts = report.reviewedFacts ?? snapshot.reviewedFacts;
         const mode = machine.preset.contentEncryptionMode;
-        const prepared = await withVerifiedAccount(mode, signal, account => prepareManagedOpaquePresetReportV1({
-            machine: snapshot.structural, content: snapshot.content, recipients: snapshot.recipients,
-            opened: { ...snapshot.opened, launch: snapshot.launch }, accountId: account.accountId,
-            ...(account.accountKey === undefined ? {} : { accountKey: account.accountKey }), randomBytes,
-            ...(reviewedFacts === undefined ? {} : { reviewedFacts }),
-            ...(input.nativeResult === undefined ? {} : { nativeResult: input.nativeResult }),
-            ...(input.observation === undefined ? {} : { observation: input.observation }),
-            ...(input.nativeControlResult === undefined ? {} : { nativeControlResult: input.nativeControlResult }),
-            ...(input.setupSourceFacts === undefined ? {} : { setupSourceFacts: input.setupSourceFacts }),
-            ...(input.preparationExecution === undefined ? {} : { preparationExecution: input.preparationExecution }),
-        }));
+        const prepared = await withVerifiedAccount<Readonly<{
+            content: ManagedMachinePresetStoredContentV1;
+            opened: ManagedMachinePresetContentV1;
+            presetRecipients?: ManagedMachinePresetV1['recipients'];
+        }> | null>(mode, signal, async account => {
+            const prepared = prepareManagedOpaquePresetReportV1({
+                machine: snapshot.structural, content: snapshot.content, recipients: snapshot.recipients,
+                opened: { ...snapshot.opened, launch: snapshot.launch }, accountId: account.accountId,
+                ...(account.accountKey === undefined ? {} : { accountKey: account.accountKey }), randomBytes,
+                ...(reviewedFacts === undefined ? {} : { reviewedFacts }),
+                ...(report.nativeResult === undefined ? {} : { nativeResult: report.nativeResult }),
+                ...(report.observation === undefined ? {} : { observation: report.observation }),
+                ...(report.nativeControlResult === undefined ? {} : { nativeControlResult: report.nativeControlResult }),
+                ...(report.setupSourceFacts === undefined ? {} : { setupSourceFacts: report.setupSourceFacts }),
+                ...(report.preparationExecution === undefined ? {} : { preparationExecution: report.preparationExecution }),
+            });
+            if (!prepared || !refreshRecipients || mode !== 'e2ee' || account.accountKey === undefined) return prepared;
+            // The keyholder already opened this retained key. The source preset
+            // may now use another key, so census and rewrap target this Machine.
+            try {
+                const response = await axios.post<unknown>(`${input.serverUrl.replace(/\/+$/u, '')}/v1/machines/presets/recipient-census`,
+                    { homeId: machine.homeId, managedId: machine.id }, {
+                        headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${input.credentials.token}` },
+                        ...(signal ? { signal } : {}), validateStatus: () => true,
+                    });
+                signal?.throwIfAborted();
+                const census = ManagedMachinePresetRecipientCensusResultV1Schema.safeParse(response.data);
+                if (response.status !== 200 || !census.success || census.data.kind !== 'ready'
+                    || census.data.contentEncryptionMode !== 'e2ee') return prepared;
+                const recipients = rewrapManagedMachinePresetRecipientsV1({ recipients: snapshot.recipients,
+                    accountId: account.accountId, accountKey: account.accountKey,
+                    recipientCensus: census.data.recipients, randomBytes });
+                return recipients && !sameStrictJsonValue(recipients, snapshot.recipients)
+                    ? { ...prepared, presetRecipients: recipients } : prepared;
+            } catch {
+                signal?.throwIfAborted();
+                // Report native facts even when repair is unavailable. Missing
+                // recipient content remains unavailable until a keyholder retry.
+                return prepared;
+            }
+        });
         if (!prepared) throw new ManagedMachineControllerError('credential_unavailable');
         snapshots.set(machine.id, { ...snapshot, content: prepared.content, opened: prepared.opened,
+            recipients: prepared.presetRecipients ?? snapshot.recipients,
             ...(reviewedFacts === undefined ? {} : { reviewedFacts }) });
-        return prepared.content;
+        return { content: prepared.content,
+            ...(prepared.presetRecipients === undefined ? {} : { presetRecipients: prepared.presetRecipients }) };
+    }
+
+    async function preparePresetContentReport(machine: ManagedMachineFullV1, report: PresetReportInput,
+        signal?: AbortSignal): Promise<ManagedMachinePresetStoredContentV1> {
+        return (await preparePresetReport(machine, report, signal)).content;
     }
 
     /** Retry facts use the same admitted private snapshot as provider results.
@@ -419,14 +465,14 @@ export function createManagedPresetHydrator(input: Readonly<{
         if (path === 'report') {
             const result = AcquireResultV1Schema.safeParse(value.result);
             if (!result.success) throw new ManagedMachineControllerError('invalid_request');
-            const presetContent = await preparePresetContentReport(machine, {
+            const { content: presetContent, ...recipients } = await preparePresetReport(machine, {
                 ...(reviewedFacts === undefined ? {} : { reviewedFacts }),
                 nativeResult: result.data,
                 ...(observation === undefined ? {} : { observation }),
-            }, signal);
+            }, signal, true);
             return {
                 ...common,
-                result: projectManagedOpaquePresetAcquireResultV1(result.data), presetContent,
+                result: projectManagedOpaquePresetAcquireResultV1(result.data), presetContent, ...recipients,
                 ...(value.bootstrapInstalled === true ? { bootstrapInstalled: true as const } : {}),
                 ...(observation === undefined ? {} : { observation: projectManagedOpaquePresetObservationV1(observation) }),
             };
@@ -440,13 +486,13 @@ export function createManagedPresetHydrator(input: Readonly<{
         catch { throw new ManagedMachineControllerError('invalid_request'); }
         const nativeControlResult = readManagedOpaquePresetNativeControlResultV1(machine, value.result);
         if (!nativeControlResult) throw new ManagedMachineControllerError('invalid_request');
-        const presetContent = await preparePresetContentReport(machine, {
+        const { content: presetContent, ...recipients } = await preparePresetReport(machine, {
             ...(reviewedFacts === undefined ? {} : { reviewedFacts }),
             ...(observation === undefined ? {} : { observation }),
             nativeControlResult,
-        }, signal);
+        }, signal, true);
         return {
-            ...common, result, presetContent,
+            ...common, result, presetContent, ...recipients,
             ...(observation === undefined ? {} : { observation: projectManagedOpaquePresetObservationV1(observation) }),
         };
     }
@@ -478,15 +524,15 @@ export function createManagedPresetHydrator(input: Readonly<{
         let structuralResult: ReturnType<typeof projectManagedOpaquePresetResizeResultV1>;
         try { structuralResult = projectManagedOpaquePresetResizeResultV1(result.data); }
         catch { throw new ManagedMachineControllerError('invalid_request'); }
-        const presetContent = await preparePresetContentReport(machine, {
+        const { content: presetContent, ...recipients } = await preparePresetReport(machine, {
             nativeControlResult: { kind: 'resize', result: result.data },
             ...(observation === undefined ? {} : { observation }),
-        }, signal);
+        }, signal, true);
         const safeObservation = observation === undefined ? undefined : projectManagedOpaquePresetObservationV1(observation);
         const output = ManagedResizeOutputV1Schema.parse({ result: structuralResult, presetContent,
             ...(safeObservation === undefined ? {} : { observation: safeObservation }) });
         return { report: { homeId: value.homeId, managedId: value.managedId, requestId: value.requestId,
-            result: structuralResult, presetContent,
+            result: structuralResult, presetContent, ...recipients,
             ...(safeObservation === undefined ? {} : { observation: safeObservation }) }, output };
     }
 

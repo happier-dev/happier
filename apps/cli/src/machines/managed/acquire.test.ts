@@ -1891,6 +1891,73 @@ describe('opaque managed preset admission', () => {
             acquisition: carrier.acquisition, admission: oneOffAdmission,
         })).rejects.toMatchObject({ code: 'request_conflict' });
     });
+    it('rewraps a retained Team snapshot for a late member on the existing controller report', async () => {
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId: 'team-recipient-repair', machineId: 'team-recipient-repair-machine',
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+                name: 'Retained private launch', choices: {} }, allocation: 'unsubmitted' });
+        if (!('presetContent' in carrier.admission)) throw new Error('Expected opaque admission');
+        const lateKeys = tweetnacl.box.keyPair();
+        const nextKeys = tweetnacl.box.keyPair();
+        const lateRecipient = SavedSecretResourceEnvelopeCensusRecipientV1Schema.parse({
+            account: { kind: 'account', accountId: 'late-member', firstName: 'Late', lastName: null, username: null, avatarUrl: null },
+            readiness: { status: 'available', contentPublicKey: encodeBase64(lateKeys.publicKey, 'base64'),
+                contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(lateKeys.publicKey) }, envelopeStatus: 'missing',
+        });
+        let censusReads = 0;
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.memberPublicKey), updatedAt: 1 } });
+        // HTTP is the genuine boundary: the real census schema, key unwrap and report preparation run below it.
+        const censusHttp = vi.spyOn(axios, 'post').mockImplementation(async url => {
+            if (!String(url).endsWith('/v1/machines/presets/recipient-census')) throw new Error('Unexpected HTTP request');
+            censusReads += 1;
+            return { status: 200, data: { kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [
+                { ...lateRecipient, envelopeStatus: censusReads === 1 ? 'missing' : 'prepared' },
+                ...(censusReads < 3 ? [] : [{ ...lateRecipient,
+                    account: { ...lateRecipient.account, accountId: 'next-member' },
+                    readiness: { status: 'available', contentPublicKey: encodeBase64(nextKeys.publicKey, 'base64'),
+                        contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(nextKeys.publicKey) } }]),
+                { account: { kind: 'account', accountId: 'team-member', firstName: 'Custodian', lastName: null, username: null, avatarUrl: null },
+                    readiness: { status: 'available', contentPublicKey: encodeBase64(carrier.memberPublicKey, 'base64'),
+                        contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(carrier.memberPublicKey) }, envelopeStatus: 'prepared' }] } };
+        });
+        const hydrator = createManagedPresetHydrator({ credentials: { token: carrier.token,
+            encryption: { type: 'dataKey', machineKey: carrier.memberKey, publicKey: carrier.memberPublicKey } }, serverUrl: 'https://home.example' });
+        await hydrator.open(carrier.admission.machine, carrier.admission.presetContent);
+        const nativeReport = {
+            homeId: carrier.admission.machine.homeId, managedId: carrier.admission.machine.id, expectedIntentRevision: 0,
+            requestId: 'existing-report', result: { kind: 'bound', resource: {
+                contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'native' } } },
+        };
+        const report = ManagedControllerReportV1Schema.parse(await hydrator.prepareControllerReport('report', nativeReport));
+        if (!('presetContent' in report)) throw new Error('Expected opaque report');
+        expect(censusHttp).toHaveBeenCalledTimes(1);
+        expect(censusHttp.mock.calls[0]?.[1]).toEqual({ homeId: carrier.admission.machine.homeId, managedId: carrier.admission.machine.id });
+        expect(openManagedMachinePresetContentV1({ presetId: carrier.admission.machine.preset.id, mode: 'e2ee',
+            content: report.presetContent, recipients: report.presetRecipients ?? [],
+            accountId: 'late-member', accountKey: lateKeys.secretKey })).toMatchObject({ launch: { name: 'Retained private launch' } });
+        const unchanged = ManagedControllerReportV1Schema.parse(await hydrator.prepareControllerReport('report', nativeReport));
+        expect(unchanged).not.toHaveProperty('presetRecipients');
+        const next = ManagedControllerReportV1Schema.parse(await hydrator.prepareControllerReport('report', nativeReport));
+        if (!('presetContent' in next)) throw new Error('Expected opaque report');
+        expect(openManagedMachinePresetContentV1({ presetId: carrier.admission.machine.preset.id, mode: 'e2ee',
+            content: next.presetContent, recipients: next.presetRecipients ?? [],
+            accountId: 'next-member', accountKey: nextKeys.secretKey })).toMatchObject({ launch: { name: 'Retained private launch' } });
+        expect(censusHttp).toHaveBeenCalledTimes(3);
+    });
+    it('adds no recipient census request to a Plain controller report', async () => {
+        const carrier = plainOpaqueSetupReplayFixture();
+        if (!('presetContent' in carrier.admission)) throw new Error('Expected opaque admission');
+        const http = vi.spyOn(axios, 'post');
+        const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const hydrator = createManagedPresetHydrator({ credentials: { token, encryption: null }, serverUrl: 'https://home.example' });
+        const opened = await hydrator.open(carrier.admission.machine, carrier.admission.presetContent);
+        const report = ManagedControllerReportV1Schema.parse(await hydrator.prepareControllerReport('report', {
+            homeId: opened.homeId, managedId: opened.id, expectedIntentRevision: opened.intentRevision,
+            requestId: 'plain-existing-report', result: { kind: 'bound', resource: opened.resource },
+        }));
+        expect(report).toMatchObject({ presetContent: { t: 'plain' } });
+        expect(http).not.toHaveBeenCalled();
+    });
     it('fails closed when a Team custodian key no longer matches the current E2EE identity', async () => {
         const memberKey = new Uint8Array(32).fill(17);
         const memberPublicKey = tweetnacl.box.keyPair.fromSecretKey(memberKey).publicKey;
@@ -2216,6 +2283,9 @@ describe('opaque managed preset admission', () => {
         vi.spyOn(axios, 'post').mockImplementation(async (url, body, request) => {
             const path = String(url);
             homeBodies.push({ path, body });
+            if (path.endsWith('/presets/recipient-census')) {
+                return { status: 200, data: { kind: 'refused', code: 'credential_unavailable' } };
+            }
             if (path.endsWith('/admit')) return { status: 200, data: carrier.admission };
             if (path.endsWith('/submit')) {
                 retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'may-exist' });
@@ -2260,6 +2330,10 @@ describe('opaque managed preset admission', () => {
         const accepted: unknown[] = [];
         const acquisition = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token,
             serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            guestCliFetch: async url => {
+                expect(String(url)).toBe('https://home.example/v1/features');
+                return Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } } });
+            },
             credentials: { token: carrier.token, encryption: { type: 'dataKey', machineKey: carrier.custodianKey,
                 publicKey: carrier.custodianPublicKey } },
             externalActionMachineRequestPrivateKey: signing.secretKey,
@@ -2284,7 +2358,10 @@ describe('opaque managed preset admission', () => {
             .toEqual({ effects: 3, nativeEffectActions: ['acquire', 'check', 'options'], nativeEffectRoles: ['acquire'],
                 reportKinds: ['bound', 'bound'] });
         expect(reportBodies).toContainEqual(expect.objectContaining({ result: expect.objectContaining({ kind: 'bound' }) }));
-        expect(homeBodies.some(body => (body as { path: string }).path.includes('/preset'))).toBe(false);
+        expect(homeBodies.filter(body => (body as { path: string }).path.includes('/preset'))).toEqual(
+            reportBodies.map(() => ({ path: 'https://home.example/v1/machines/presets/recipient-census',
+                body: { homeId, managedId: retained.id } })));
+        expect(reportBodies.every(report => !Object.hasOwn(report as object, 'presetRecipients'))).toBe(true);
         expect(JSON.stringify(homeBodies)).not.toContain(privateLaunchName);
         expect(JSON.stringify(homeBodies)).not.toContain(privateCrabboxLaunch.namespace);
         expect(JSON.stringify(homeBodies)).not.toContain(privateCrabboxLaunch.nativeImageId);

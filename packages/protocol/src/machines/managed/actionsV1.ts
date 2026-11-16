@@ -476,6 +476,7 @@ export const ManagedControllerResizeReportV1Schema = lazyZodSchema(() => z.union
   z.strictObject({ ...target(), requestId: id(), result: asProtocolZod(MachineProvisionerResizeResultV1Schema), observation: z.optional(ProviderObservationV1Schema) }),
   z.strictObject({ ...target(), requestId: id(), result: ManagedOpaquePresetResizeResultV1Schema,
     presetContent: ManagedMachinePresetStoredContentCarrierV1Schema,
+    presetRecipients: z.optional(ManagedMachinePresetRecipientsV1Schema),
     observation: z.optional(ManagedOpaquePresetObservationV1Schema) }),
 ]));
 export type ManagedControllerResizeReportV1 = z.infer<typeof ManagedControllerResizeReportV1Schema>;
@@ -524,9 +525,9 @@ export const ManagedCommittedIdleEvidenceV1Schema = lazyZodSchema(() => z.strict
 }));
 export type ManagedCommittedIdleEvidenceV1 = z.infer<typeof ManagedCommittedIdleEvidenceV1Schema>;
 /**
- * A controller may replace only an opaque preset's private content snapshot
- * after applying a per-Machine name. Recipient envelopes remain admission
- * authority and never travel on this report path.
+ * A controller replaces the opaque private snapshot after local native work.
+ * Optional recipient rewraps use Home's current audience census independently
+ * of the source preset's current content key.
  */
 export const ManagedControllerPresetContentV1Schema = lazyZodSchema(() =>
   ManagedMachinePresetStoredContentCarrierV1Schema,
@@ -583,6 +584,7 @@ export const ManagedControllerReportV1Schema = lazyZodSchema(() => z.union([
   })),
   z.strictObject({ ...current(), result: ManagedOpaquePresetAcquireResultV1Schema,
     presetContent: ManagedControllerPresetContentV1Schema,
+    presetRecipients: z.optional(ManagedMachinePresetRecipientsV1Schema),
     bootstrapInstalled: z.optional(z.literal(true)), observation: mini.optional(ManagedOpaquePresetObservationV1Schema),
   }).check(z.superRefine((value, context) => {
     if (value.bootstrapInstalled && value.result.kind !== 'bound') context.addIssue({ code: 'custom', path: ['bootstrapInstalled'], message: 'Installation completes on a bound resource.' });
@@ -765,6 +767,7 @@ export const ManagedControllerIntentReportV1Schema = lazyZodSchema(() => z.union
     observation: mini.optional(ProviderObservationV1Schema) }),
   z.strictObject({ ...current(), result: ManagedOpaquePresetIntentResultV1Schema,
     presetContent: ManagedControllerPresetContentV1Schema,
+    presetRecipients: z.optional(ManagedMachinePresetRecipientsV1Schema),
     observation: mini.optional(ManagedOpaquePresetObservationV1Schema) }),
 ]));
 export type ManagedControllerIntentReportV1 = z.infer<typeof ManagedControllerIntentReportV1Schema>;

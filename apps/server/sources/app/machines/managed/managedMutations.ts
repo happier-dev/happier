@@ -15,7 +15,8 @@ import { type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protoc
 import { MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { isMachineRetentionPolicySupportedV1, resolveMachineRetentionNativeIntentV1, resolveMachineWakeNativeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
-import { validateManagedLaunchInTx } from "./machinePresetService";
+import { validateManagedLaunchInTx, validateManagedPresetSnapshotRecipientsInTx } from "./machinePresetService";
+import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 import { createSavedSecretResourceInTx } from "@/app/account/savedSecrets/savedSecretResourceService";
 import type { Prisma } from "@prisma/client";
@@ -60,6 +61,16 @@ function replaceOpaquePresetContent(row: StoredManagedMachine, content: NonNulla
     const stored = readStoredOpaquePresetLaunch(row.launch);
     if ((stored.contentEncryptionMode === 'plain') !== (content.t === 'plain')) throw new ManagedMachineError('account_mode_mismatch');
     return { ...stored, content };
+}
+
+/** Recipient writes share the existing admitted report and current Team census owner. */
+async function replaceOpaquePresetReportInTx(tx: Tx, row: StoredManagedMachine,
+    report: Readonly<{ presetContent: NonNullable<ManagedControllerSubmitInputV1['presetContent']>;
+        presetRecipients?: ManagedMachinePresetV1['recipients'] }>) {
+    const replacement = replaceOpaquePresetContent(row, report.presetContent);
+    if (report.presetRecipients === undefined) return replacement;
+    await validateManagedPresetSnapshotRecipientsInTx(tx, row, report.presetRecipients);
+    return { ...replacement, recipients: report.presetRecipients };
 }
 
 /** Declared reconciliation can recover partial cleanup; native submission still requires its concrete target. */
@@ -424,10 +435,7 @@ export async function reportManagedResize(input: ManagedControllerResizeReportV1
         const row = await requireActiveManagedResizeInTx(tx, canonical);
         if (isStoredOpaquePresetMachine(row)) {
             if (!('presetContent' in canonical)) throw new ManagedMachineError('invalid_request');
-            const storedPreset = readStoredOpaquePresetLaunch(row.launch);
-            if ((storedPreset.contentEncryptionMode === 'plain') !== (canonical.presetContent.t === 'plain')) {
-                throw new ManagedMachineError('account_mode_mismatch');
-            }
+            const replacementLaunch = await replaceOpaquePresetReportInTx(tx, row, canonical);
             const admitted = readManagedAdmissionState(row.admittedInput);
             const currentAdmission = admitted.currentAdmission;
             if (currentAdmission?.kind !== 'control' || !isManagedResizeActionIdV1(currentAdmission.request.action)) {
@@ -436,7 +444,7 @@ export async function reportManagedResize(input: ManagedControllerResizeReportV1
             const updated = await tx.managedMachine.updateMany({ where: { id: row.id,
                 launch: { equals: readManagedJsonEqualityOperand(row.launch) },
                 admittedInput: { equals: readManagedJsonEqualityOperand(row.admittedInput) } }, data: {
-                launch: { ...storedPreset, content: canonical.presetContent },
+                launch: replacementLaunch,
                 resource: getActivePrismaRuntime().DbNull,
                 nativeOperationRef: getActivePrismaRuntime().DbNull,
                 recovery: getActivePrismaRuntime().DbNull,
@@ -498,11 +506,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             if (!('presetContent' in canonical)) throw new ManagedMachineError('invalid_request');
             if (canonical.result.kind === 'pending' && pending.intent !== 'delete') throw new ManagedMachineError('resource_mismatch');
             if (canonical.result.kind === 'accepted' && pending.intent !== 'delete') throw new ManagedMachineError('resource_mismatch');
-            const storedPreset = readStoredOpaquePresetLaunch(row.launch);
-            if ((storedPreset.contentEncryptionMode === 'plain') !== (canonical.presetContent.t === 'plain')) {
-                throw new ManagedMachineError('account_mode_mismatch');
-            }
-            const replacementLaunch = { ...storedPreset, content: canonical.presetContent };
+            const replacementLaunch = await replaceOpaquePresetReportInTx(tx, row, canonical);
             const data: Prisma.ManagedMachineUncheckedUpdateManyInput = {
                 launch: replacementLaunch,
                 resource: getActivePrismaRuntime().DbNull,
@@ -750,7 +754,7 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
             // A controller snapshots its locally validated opaque content.
             // Native provider identity, recovery and diagnostics stay in that
             // sealed snapshot; Home retains only lifecycle state.
-            const replacementLaunch = replaceOpaquePresetContent(row, canonical.presetContent);
+            const replacementLaunch = await replaceOpaquePresetReportInTx(tx, row, canonical);
             const admitted = readManagedAdmissionState(row.admittedInput);
             const { presetContentOverride: _override, ...nextAdmission } = admitted;
             if (canonical.result.kind === "bound") {

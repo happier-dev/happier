@@ -92,7 +92,7 @@ async function createManagedPresetSavedSecretReader(params: ManagedPresetSavedSe
       },
       readRecipientCensus: async input => {
         const body = ManagedMachinePresetRecipientCensusInputV1Schema.safeParse(input);
-        if (!body.success || body.data.homeId !== homeId || body.data.presetId === undefined) return null;
+        if (!body.success || body.data.homeId !== homeId || !('presetId' in body.data) || body.data.presetId === undefined) return null;
         const result = ManagedMachinePresetRecipientCensusResultV1Schema.safeParse(await postHomeJson({
           serverHttpBaseUrl: params.serverHttpBaseUrl, credentials: params.credentials,
           path: PRESET_RECIPIENT_CENSUS_PATH, body: body.data, signal: params.signal,

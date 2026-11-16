@@ -1596,7 +1596,13 @@ there is no Machine recipient. Its daemon already holds the custodian's Account
 material and opens that Account's envelope. A successful keyholder read uses the
 Saved Secret recipient census and rewrap owner to add or prune current Account
 envelopes. A joining member without an envelope sees unavailable content until
-that repair runs. Recipient-only repair retains the existing ciphertext and data
+that repair runs. Retained per-Machine snapshots use their own key, including
+after the source preset changes. When the custodian's native Inspect or another
+operation reports, the daemon rewraps that retained key using the same current
+recipient census. Home accepts the optional recipients only for the exact
+current audience; the existing report carries the write. A member can retry the
+read after that report. Without an available custodian keyholder, content stays
+unavailable. Recipient-only repair retains the existing ciphertext and data
 key. A newly sealed content revision uses a fresh key that
 excludes former members; removing access cannot recall prior content.
 

@@ -9,6 +9,7 @@ import { PluginManifestV2Schema } from "@happier-dev/protocol";
 import { ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { MachineSetupSourcesApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createManagedMachinePresetAcquireOverrideV1, createManagedMachinePresetResizeOverrideV1, createManagedMachinePresetSetupOverrideV1,
+    openManagedMachinePresetRecipientProjectionV1, rewrapManagedMachinePresetRecipientsV1,
     replaceManagedMachinePresetLaunchNameV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 
 import { db } from "@/storage/db";
@@ -1079,6 +1080,92 @@ describe("Machine preset relational owner", () => {
         expect(listed.statusCode, listed.body).toBe(200);
         expect(listed.json().presets).toContainEqual(preset);
         expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: controller.machineId, accountId: member } })).toBe(0);
+    });
+
+    it('repairs a late Team member on the retained snapshot key after the source key has changed', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = 'preset-late-snapshot-owner';
+        const member = 'preset-late-snapshot-member';
+        const outsider = 'preset-late-snapshot-outsider';
+        const former = 'preset-late-snapshot-former';
+        const ownerKeys = tweetnacl.box.keyPair();
+        const memberKeys = tweetnacl.box.keyPair();
+        const outsiderKeys = tweetnacl.box.keyPair();
+        const formerKeys = tweetnacl.box.keyPair();
+        await db.account.createMany({ data: [
+            { id: owner, encryptionMode: 'e2ee', ...createSignedAccountContentBinding(ownerKeys.publicKey) },
+            { id: member, encryptionMode: 'e2ee', ...createSignedAccountContentBinding(memberKeys.publicKey) },
+            { id: outsider, encryptionMode: 'e2ee', ...createSignedAccountContentBinding(outsiderKeys.publicKey) },
+            { id: former, encryptionMode: 'e2ee', ...createSignedAccountContentBinding(formerKeys.publicKey) },
+        ] });
+        const team = await db.team.create({ data: { name: 'Late snapshot recipient Team' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner, role: 'admin' },
+            { teamId: team.id, accountId: former, role: 'member' },
+        ] });
+        const controller = await seedCurrentProvisioner(owner, homeId);
+        const id = 'preset-late-snapshot';
+        const target = { homeId, owner: { kind: 'team' as const, teamId: team.id }, controller };
+        const census = await readReadyPresetRecipientCensus(owner, target);
+        const original = sealManagedMachinePresetContentV1({ presetId: id, mode: 'e2ee',
+            content: { v: 1, name: 'Original retained private setup', launch },
+            recipientCensus: census.recipients, randomBytes: tweetnacl.randomBytes });
+        expect((await requestPreset(owner, 'create', { ...target, id, teamAcquireDelegated: true,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            contentEncryptionMode: 'e2ee', ...original })).statusCode).toBe(200);
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: member, role: 'member' } });
+        const admission = await admitManagedAcquire({ custodianAccountId: owner, requesterAccountId: member,
+            managedAcquireDelegation: true, requestEnvelopeDigest: 'late-snapshot-create', input: {
+                requestId: 'late-snapshot-create', continuationPresent: false, input: {
+                    selection: { kind: 'preset', homeId, id, revision: 0 }, controller,
+                    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+                },
+            } });
+        const correlation = { homeId, managedId: admission.machine.id, controller,
+            expectedIntentRevision: admission.machine.intentRevision, requestId: 'late-snapshot-create' };
+        await submitManagedAcquire(correlation);
+        await reportManagedAcquire({ ...correlation, result: { kind: 'bound' }, presetContent: original.content });
+        const unreadable = await getManagedMachine({ actorAccountId: member, input: { homeId, managedId: admission.machine.id } });
+        expect(unreadable).toMatchObject({ presetContent: { recipientEnvelope: null } });
+
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: former } },
+            data: { status: 'suspended' } });
+        const current = await readReadyPresetRecipientCensus(owner, target);
+        const revised = sealManagedMachinePresetContentV1({ presetId: id, mode: 'e2ee',
+            content: { v: 1, name: 'Later authored private setup', launch },
+            recipientCensus: current.recipients, randomBytes: tweetnacl.randomBytes });
+        expect((await requestPreset(owner, 'update', { homeId, id, expectedRevision: 0,
+            patch: revised })).statusCode).toBe(200);
+
+        const snapshotCensus = await readReadyPresetRecipientCensus(owner, { homeId, managedId: admission.machine.id });
+        expect(snapshotCensus.recipients.map(recipient => recipient.account.accountId)).toEqual([member, owner].sort());
+        expect((await requestPreset(member, 'recipient-census', { homeId, managedId: admission.machine.id })).json())
+            .toMatchObject({ kind: 'refused', code: 'permission_denied' });
+        expect((await requestPreset(outsider, 'recipient-census', { homeId, managedId: admission.machine.id })).json())
+            .toMatchObject({ kind: 'refused', code: 'permission_denied' });
+        const recipients = rewrapManagedMachinePresetRecipientsV1({ recipients: original.recipients,
+            accountId: owner, accountKey: ownerKeys.secretKey, recipientCensus: snapshotCensus.recipients,
+            randomBytes: tweetnacl.randomBytes });
+        if (!recipients) throw new Error('Expected retained snapshot recipient envelopes');
+        await expect(reportManagedAcquire({ ...correlation, result: { kind: 'bound' },
+            presetContent: original.content, presetRecipients: original.recipients })).rejects.toMatchObject({ code: 'credential_unavailable' });
+        const formerRecipient = original.recipients.find(recipient => recipient.accountId === former);
+        if (!formerRecipient) throw new Error('Expected former recipient fixture');
+        await expect(reportManagedAcquire({ ...correlation, result: { kind: 'bound' },
+            presetContent: original.content, presetRecipients: [...recipients, formerRecipient] })).rejects.toMatchObject({ code: 'credential_unavailable' });
+        await reportManagedAcquire({ ...correlation, result: { kind: 'bound' },
+            presetContent: original.content, presetRecipients: recipients });
+        // An older controller can still report without replacing the repaired audience.
+        await reportManagedAcquire({ ...correlation, result: { kind: 'bound' }, presetContent: original.content });
+        const repaired = await getManagedMachine({ actorAccountId: member, input: { homeId, managedId: admission.machine.id } });
+        if (!('presetContent' in repaired)) throw new Error('Expected opaque snapshot');
+        expect(openManagedMachinePresetRecipientProjectionV1({ presetId: id, mode: 'e2ee', projection: repaired.presetContent,
+            accountId: member, accountKey: memberKeys.secretKey })).toMatchObject({ name: 'Original retained private setup' });
+        const retained = await db.managedMachine.findUniqueOrThrow({ where: { id: admission.machine.id } });
+        expect(retained.launch).toMatchObject({ content: original.content, recipients });
+        expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id } })).launch).toMatchObject({ content: revised.content });
+        expect(recipients.map(recipient => recipient.accountId)).not.toContain(former);
+        expect(recipients.map(recipient => recipient.accountId)).not.toContain(outsider);
     });
 
     it('projects an opaque E2EE managed row to only the authenticated recipient envelope', async () => {
