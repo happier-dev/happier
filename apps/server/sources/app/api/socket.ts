@@ -95,7 +95,7 @@ import { readSharedQaSchemaMismatchDiagnostic } from '@/storage/prismaErrors';
 import { isServerFeatureEnabledForHome, isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readMachineLiveStreamFeatureEnv, readMachineTransferFeatureEnv, readMachineTunnelFeatureEnv, readPeerMediationFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { confirmSessionScopedMachineAccess, readSessionScopedSocketBinding, resolveSessionScopedSocketBinding,
-    watchSessionScopedMachineAccess } from "./socket/sessionScopedBinding";
+    resolveSocketResourceIdentity, watchSessionScopedMachineAccess } from "./socket/sessionScopedBinding";
 import {
     resolveRestrictedSocketAdmission,
     type RestrictedSocketAdmission,
@@ -811,10 +811,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
         const userId = socket.data.userId;
         const clientType = normalizeSocketHandshakeClientType(socket.data.clientType);
         const clientPurpose = socket.data.clientPurpose;
-        const sessionId =
-            socket.data.sessionScopedBinding?.sessionId
-            ?? socket.data.sessionId;
-        const machineId = socket.data.machineId;
+        const { sessionId, machineId } = resolveSocketResourceIdentity(socket.data);
         const isMachineSocketCurrent = async (): Promise<boolean> => socket.connected
             && typeof machineId === 'string'
             && (await machineOwnershipRegistry.readOwner({ accountId: userId, machineId }))?.socketId === socket.id;

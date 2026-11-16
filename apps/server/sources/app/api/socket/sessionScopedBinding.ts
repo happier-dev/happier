@@ -301,6 +301,20 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
     };
 }
 
+/**
+ * The resource identity a connected socket's rooms and connection record are keyed by. A
+ * Session-scoped socket uses the identity its handshake admitted, so Session-delete and
+ * Machine revoke/replacement evictions (`getMachineBoundSessionSocketRoom`) reach it.
+ */
+export function resolveSocketResourceIdentity(data: unknown): Readonly<{ sessionId?: string; machineId?: string }> {
+    const raw = (data ?? {}) as { sessionId?: unknown; machineId?: unknown };
+    const binding = readSessionScopedSocketBinding({ data: raw });
+    const sessionId = binding?.sessionId ?? (typeof raw.sessionId === "string" ? raw.sessionId : undefined);
+    const machineId = binding ? binding.machineId ?? undefined
+        : typeof raw.machineId === "string" ? raw.machineId : undefined;
+    return { ...(sessionId !== undefined ? { sessionId } : {}), ...(machineId !== undefined ? { machineId } : {}) };
+}
+
 export function readSessionScopedSocketBinding(socket: Pick<Socket, 'data'>): SessionScopedSocketBinding | null {
     const binding = (socket.data as { sessionScopedBinding?: unknown } | undefined)?.sessionScopedBinding;
     if (!binding || typeof binding !== "object") return null;

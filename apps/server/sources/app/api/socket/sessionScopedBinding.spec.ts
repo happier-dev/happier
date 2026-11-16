@@ -32,7 +32,9 @@ import {
     canReadAccessKeyFromSessionScopedSocket,
     isMachineBoundPublisherSocketForSession,
     resolveSessionScopedSocketBinding,
+    resolveSocketResourceIdentity,
 } from "./sessionScopedBinding";
+import { getMachineBoundSessionSocketRoom, getSocketRooms } from "@/app/api/socketRooms";
 
 describe("resolveSessionScopedSocketBinding", () => {
     beforeEach(() => {
@@ -243,5 +245,27 @@ describe("resolveSessionScopedSocketBinding", () => {
         ).resolves.toBe(false);
 
         expect(accessKeyFindUniqueMock).not.toHaveBeenCalled();
+    });
+});
+
+describe("resolveSocketResourceIdentity", () => {
+    // Admission trims the handshake ids; the rooms must use the admitted ones, or the
+    // Session-delete / Machine revoke disconnects (getMachineBoundSessionSocketRoom) miss the socket.
+    it("keys a Session-scoped socket's rooms by its admitted binding, not the raw handshake ids", async () => {
+        accessKeyFindUniqueMock.mockResolvedValue({
+            machineId: "m1",
+            session: { active: true, lastActiveAt: 1 },
+            machine: { active: true, lastActiveAt: 1, revokedAt: null, replacedByMachineId: null },
+        });
+        const admitted = await resolveSessionScopedSocketBinding({ userId: "u1", sessionId: " s1 ", machineId: "m1 " });
+        if (!admitted.ok) throw new Error("expected admission");
+        const identity = resolveSocketResourceIdentity({ clientType: "session-scoped", sessionId: " s1 ", machineId: "m1 ",
+            sessionScopedBinding: admitted.binding });
+        const rooms = getSocketRooms({ userId: "u1", clientType: "session-scoped", ...identity });
+        expect(rooms).toContain(getMachineBoundSessionSocketRoom("u1", "s1", "m1"));
+    });
+
+    it("keeps a Machine-scoped socket's handshake Machine id", () => {
+        expect(resolveSocketResourceIdentity({ clientType: "machine-scoped", machineId: "m1" })).toEqual({ machineId: "m1" });
     });
 });
