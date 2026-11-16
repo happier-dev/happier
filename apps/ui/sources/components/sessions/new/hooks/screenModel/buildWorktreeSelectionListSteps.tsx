@@ -130,7 +130,70 @@ export type WorktreeSelectionListBuilderParams = Readonly<{
     pendingWorktreeBaseRef?: string | null;
     /** Re-affirm the pending "New worktree" row (it is already the selection). */
     onSelectPendingWorktree?: () => void;
+    /**
+     * A workflow's workspace choices (WF-REDESIGN-1116 change a). A workflow creates its worktree per run
+     * from the last commit, so "New worktree" selects directly instead of opening the branch and name
+     * steps. At step scope, "Same as the workflow" and "Where a step left it" lead the list. Every other
+     * host omits it.
+     */
+    workflowScope?: WorktreeSelectionWorkflowScope;
 }>;
+
+export type WorktreeSelectionStepScope = Readonly<{
+    /** Its subtitle names the workflow's current choice. */
+    sameAsWorkflow: Readonly<{ subtitle: string; onSelect: () => void }>;
+    /** One row per earlier step that leaves a folder; one step selects in place, several open a list. */
+    fromSteps: ReadonlyArray<Readonly<{ blockId: string; label: string; onSelect: () => void }>>;
+}>;
+
+export type WorktreeSelectionWorkflowScope = Readonly<{
+    newWorktree: Readonly<{ onSelect: () => void }>;
+    step?: WorktreeSelectionStepScope;
+}>;
+
+/** Option ids of the workflow rows; a host points the popover's selection at them. */
+export const WORKSPACE_NEW_WORKTREE_OPTION_ID = 'create_git_worktree';
+export const WORKSPACE_SAME_AS_WORKFLOW_OPTION_ID = 'workspace_same_as_workflow';
+export const WORKSPACE_FROM_STEP_OPTION_ID = 'workspace_from_step';
+export function workspaceFromStepOptionId(blockId: string): string {
+    return `${WORKSPACE_FROM_STEP_OPTION_ID}:${blockId}`;
+}
+
+function buildStepScopeSection(scope: WorktreeSelectionStepScope, rowIconColor: string): SelectionListSectionDescriptor {
+    const stepRows: SelectionListOption[] = scope.fromSteps.map((step) => ({
+        id: workspaceFromStepOptionId(step.blockId),
+        label: step.label,
+        icon: <Icon name="arrow-right" size={WORKTREE_ROW_ICON_SIZE} color={rowIconColor} />,
+        onSelect: step.onSelect,
+    }));
+    const whereStepLeftIt = t('workflows.workspace.whereStepLeftIt');
+    const fromStep: SelectionListOption[] = stepRows.length === 0 ? []
+        // One earlier step: the row selects its folder, naming the step beneath.
+        : stepRows.length === 1 ? [{ ...stepRows[0]!, label: whereStepLeftIt, subtitle: stepRows[0]!.label }]
+        : [{
+            id: WORKSPACE_FROM_STEP_OPTION_ID,
+            label: whereStepLeftIt,
+            subtitle: t('workflows.workspace.whereStepLeftItSubtitle'),
+            icon: <Icon name="arrow-right" size={WORKTREE_ROW_ICON_SIZE} color={rowIconColor} />,
+            openStep: {
+                id: 'workspace-from-step',
+                title: whereStepLeftIt,
+                backLabel: t('newSession.worktree.backToRoot'),
+                sections: [{ kind: 'static', id: 'workspace:from-step', options: stepRows }],
+            },
+        }];
+    return {
+        kind: 'static',
+        id: 'worktree:step-scope',
+        options: [{
+            id: WORKSPACE_SAME_AS_WORKFLOW_OPTION_ID,
+            label: t('workflows.workspace.sameAsWorkflow'),
+            subtitle: scope.sameAsWorkflow.subtitle,
+            icon: <Icon name="arrow-up" size={WORKTREE_ROW_ICON_SIZE} color={rowIconColor} />,
+            onSelect: scope.sameAsWorkflow.onSelect,
+        }, ...fromStep],
+    };
+}
 
 /**
  * Strip a known remote prefix from a branch name (e.g. `origin/feature` → `feature`,
@@ -627,7 +690,14 @@ export function buildWorktreeSelectionListSteps(params: WorktreeSelectionListBui
             icon: <Icon name="folder" size={WORKTREE_ROW_ICON_SIZE} color={params.rowIconColor} />,
             onSelect: params.onSelectCurrentDir,
         },
-        ...(createStep === null ? [] : [{
+        ...(params.workflowScope === undefined ? [] : [{
+            id: WORKSPACE_NEW_WORKTREE_OPTION_ID,
+            label: t('newSession.checkout.newWorktree'),
+            subtitle: t('workflows.workspace.newWorktreeSubtitle'),
+            icon: <Icon name="plus-circle" size={WORKTREE_ROW_ICON_SIZE} color={params.rowIconColor} />,
+            onSelect: params.workflowScope.newWorktree.onSelect,
+        }]),
+        ...(createStep === null || params.workflowScope !== undefined ? [] : [{
             id: 'create_git_worktree',
             label: t('newSession.checkout.newWorktree'),
             subtitle: t('newSession.checkout.newWorktreeSubtitle'),
@@ -639,6 +709,10 @@ export function buildWorktreeSelectionListSteps(params: WorktreeSelectionListBui
     const existingOptions = buildExistingWorktreeOptions(params);
 
     const sections: SelectionListSectionDescriptor[] = [];
+
+    // A step's own choices lead: they decide whether this step picks a checkout at all.
+    const stepScope = params.workflowScope?.step;
+    if (stepScope !== undefined) sections.push(buildStepScopeSection(stepScope, params.rowIconColor));
 
     // A pending git-worktree creation has no real worktree yet, so surface a
     // selected "New worktree: <name>" row at the very top — this is what the

@@ -1619,3 +1619,87 @@ describe('buildWorktreeSelectionListSteps', () => {
         expect(local.resolverKey).toBe('no-machine');
     });
 });
+
+describe('buildWorktreeSelectionListSteps workflow scope (a workflow\'s workspace choices)', () => {
+    type WorkflowScope = NonNullable<Parameters<typeof import('./buildWorktreeSelectionListSteps').buildWorktreeSelectionListSteps>[0]['workflowScope']>;
+    function build(workflowScope: WorkflowScope) {
+        return import('./buildWorktreeSelectionListSteps').then(({ buildWorktreeSelectionListSteps }) => buildWorktreeSelectionListSteps({
+            snapshot: makeSnapshot({
+                worktrees: [
+                    { path: '/repo', branch: 'main', isCurrent: true, isMain: true },
+                    { path: '/repo/.worktrees/release', branch: 'release', isCurrent: false },
+                ],
+            }),
+            currentDirPath: '/repo',
+            rowIconColor: TEST_ROW_ICON_COLOR,
+            machineId: 'machine-1',
+            machinePath: '/repo',
+            onSelectCurrentDir: vi.fn(),
+            onSelectExistingWorktree: vi.fn(),
+            workflowScope,
+        }));
+    }
+
+    it('selects a per-run new worktree directly, without the branch and name steps', async () => {
+        const newWorktree = vi.fn();
+        const rootStep = await build({ newWorktree: { onSelect: newWorktree } });
+        const quickActions = requireStaticSection(rootStep, 'worktree:quick-actions');
+        expect(quickActions.options.map((option) => option.id)).toEqual(['current_path', 'create_git_worktree']);
+        const row = requireOption(quickActions, 'create_git_worktree');
+        expect(row.openStep).toBeUndefined();
+        row.onSelect?.();
+        expect(newWorktree).toHaveBeenCalledTimes(1);
+        // Existing checkouts stay offered, and a workflow has no step rows.
+        expect(requireStaticSection(rootStep, 'worktree:existing').options.map((option) => option.id)).toContain('checkout:/repo/.worktrees/release');
+        expect(rootStep.sections.find((section) => section.id === 'worktree:step-scope')).toBeUndefined();
+    });
+
+    it('leads a step with "Same as the workflow" and "Where a step left it"', async () => {
+        const sameAsWorkflow = vi.fn();
+        const fromCause = vi.fn();
+        const rootStep = await build({ newWorktree: { onSelect: vi.fn() }, step: {
+            sameAsWorkflow: { subtitle: 'Project folder', onSelect: sameAsWorkflow },
+            fromSteps: [{ blockId: 'cause', label: 'Find the cause', onSelect: fromCause }],
+        } });
+
+        expect(rootStep.sections[0]?.id).toBe('worktree:step-scope');
+        const scope = requireStaticSection(rootStep, 'worktree:step-scope');
+        expect(scope.options.map((option) => option.id)).toEqual(['workspace_same_as_workflow', 'workspace_from_step:cause']);
+        const same = requireOption(scope, 'workspace_same_as_workflow');
+        expect(same.subtitle).toBe('Project folder');
+        same.onSelect?.();
+        expect(sameAsWorkflow).toHaveBeenCalledTimes(1);
+        const fromStep = requireOption(scope, 'workspace_from_step:cause');
+        expect(fromStep.subtitle).toBe('Find the cause');
+        fromStep.onSelect?.();
+        expect(fromCause).toHaveBeenCalledTimes(1);
+    });
+
+    it('lists several earlier steps one level down, each selecting its own folder', async () => {
+        const fromCause = vi.fn();
+        const fromFix = vi.fn();
+        const rootStep = await build({ newWorktree: { onSelect: vi.fn() }, step: {
+            sameAsWorkflow: { subtitle: 'New worktree', onSelect: vi.fn() },
+            fromSteps: [
+                { blockId: 'cause', label: 'Find the cause', onSelect: fromCause },
+                { blockId: 'fix', label: 'Check the fix', onSelect: fromFix },
+            ],
+        } });
+        const scope = requireStaticSection(rootStep, 'worktree:step-scope');
+        const steps = requireOpenStep(requireOption(scope, 'workspace_from_step'));
+        const rows = steps.sections.flatMap((section) => section.kind === 'static' ? section.options : []);
+        expect(rows.map((row) => [row.id, row.label])).toEqual([
+            ['workspace_from_step:cause', 'Find the cause'],
+            ['workspace_from_step:fix', 'Check the fix'],
+        ]);
+        rows[1]?.onSelect?.();
+        expect(fromFix).toHaveBeenCalledTimes(1);
+        expect(fromCause).not.toHaveBeenCalled();
+    });
+
+    it('offers only "Same as the workflow" when no earlier step leaves a folder', async () => {
+        const rootStep = await build({ newWorktree: { onSelect: vi.fn() }, step: {
+            sameAsWorkflow: { subtitle: 'Project folder', onSelect: vi.fn() }, fromSteps: [] } });
+        expect(requireStaticSection(rootStep, 'worktree:step-scope').options.map((option) => option.id)).toEqual(['workspace_same_as_workflow']);
+    });
+});

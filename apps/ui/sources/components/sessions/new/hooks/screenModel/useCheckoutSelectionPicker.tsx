@@ -12,6 +12,7 @@ import {
     buildWorktreeSelectionListSteps,
     PENDING_GIT_WORKTREE_OPTION_ID,
     type WorktreeCreateSelection,
+    type WorktreeSelectionWorkflowScope,
 } from './buildWorktreeSelectionListSteps';
 
 /**
@@ -55,6 +56,13 @@ export function useCheckoutSelectionPicker(params: Readonly<{
         onCreateWorktree: (selection: WorktreeCreateSelection) => void;
         onSelectPendingWorktree: () => void;
     }>;
+    /** A workflow's choices: a per-run new worktree and, for a step, its own rows (see `buildWorktreeSelectionListSteps`). */
+    workflowScope?: WorktreeSelectionWorkflowScope;
+    /**
+     * The host's current choice when it is not a checkout of the folder ("Same as the workflow", a
+     * step's folder, a new worktree not yet named): the row the popover selects and what the chip says.
+     */
+    selection?: Readonly<{ optionId: string; label: string }>;
 }>): CheckoutSelectionPicker | null {
     const { theme } = useUnistyles();
     const rowIconColor = theme.colors.text.tertiary;
@@ -72,7 +80,9 @@ export function useCheckoutSelectionPicker(params: Readonly<{
         repoScmSnapshot,
         selectedMachineId,
         selectedPath,
+        selection,
         serverId,
+        workflowScope,
     } = params;
 
     return React.useMemo<CheckoutSelectionPicker | null>(() => {
@@ -111,7 +121,9 @@ export function useCheckoutSelectionPicker(params: Readonly<{
                     onSelectCheckoutPath(info.worktreePath)
                 ),
             }),
+            ...(workflowScope === undefined ? {} : { workflowScope }),
         });
+        if (selection !== undefined) return { rootStep, selectedOptionId: selection.optionId, selectedLabel: selection.label };
 
         // A pending creation names itself (e.g. "New worktree: clever-cloud")
         // rather than the generic "New worktree".
@@ -136,7 +148,9 @@ export function useCheckoutSelectionPicker(params: Readonly<{
         rowIconColor,
         selectedMachineId,
         selectedPath,
+        selection,
         serverId,
+        workflowScope,
         worktreeNameSuggestion,
     ]);
 }
