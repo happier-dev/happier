@@ -61,7 +61,7 @@ it('retains validation field paths when admission storage throws a schema error'
   const executor = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner });
   await expect(executor({ actionId: 'workflow.run.start', input: { runId, source: { kind: 'inline', definition } },
     context: { surface: 'cli', authority: 'present_user', serverId: 'home', externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } },
-  })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_input', details: { issues: [{ path: ['actionContract', 'inputSchema'] }] } });
+  })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_input', details: { issues: [{ path: '/actionContract/inputSchema' }] } });
 });
 it.each(['literal', 'text'] as const)('admits a real machines.command.run leaf through the current Action contract (%s)', async (bindingKind) => {
   const deps = ownerDeps({ execute: async (op) => {
