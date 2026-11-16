@@ -53,6 +53,7 @@ import { handleActionsCommand } from '@/cli/commands/actions';
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
 import { listCompiledActionCliCommands } from '@/cli/actions/compiledCommands';
 import { runCompiledActionCliCommand } from '@/cli/actions/executeCommand';
+import { cmdSessionCreate } from '@/cli/commands/session/create';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { configuration } from '@/configuration';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -84,16 +85,62 @@ import * as machineRpc from '@/session/transport/rpc/machineRpc';
 
 // Terminal reads and controlling-TTY availability are genuine user/OS boundaries;
 // the consent owner and its default-no answer parsing stay real.
-const terminal = vi.hoisted(() => ({ interactive: true, answer: 'no', prompts: [] as string[] }));
+const terminal = vi.hoisted(() => ({ interactive: true, answer: 'no', prompts: [] as string[], onPrompt: null as (() => void) | null }));
 vi.mock('@/terminal/prompts/promptInput', async importOriginal => ({
   ...await importOriginal<typeof import('@/terminal/prompts/promptInput')>(),
   isInteractiveTerminal: () => terminal.interactive,
-  promptInput: async (message: string) => { terminal.prompts.push(message); return terminal.answer; },
+  promptInput: async (message: string) => { terminal.prompts.push(message); terminal.onPrompt?.(); return terminal.answer; },
 }));
 
 const servers: Server[] = [];
 const controlApps: ReturnType<typeof createDaemonControlApp>[] = [];
 const homeIdentityId = 'srv_requester_home';
+it.each([
+  { mode: 'interactive', answer: 'y', interactive: true, structured: [] as string[], accepted: true },
+  { mode: 'declined', answer: 'no', interactive: true, structured: [] as string[], accepted: false },
+  { mode: 'json', answer: 'y', interactive: true, structured: ['--json'], accepted: false },
+  { mode: 'jsonl', answer: 'y', interactive: true, structured: ['--jsonl', '--follow'], accepted: false },
+  { mode: 'noninteractive', answer: 'y', interactive: false, structured: [] as string[], accepted: false },
+])('keeps friendly Session creation requester disclosure explicit ($mode)', async scenario => {
+  const events: string[] = [];
+  const target = await home('plain', events, { originalOwnAction: 'session.spawn_new', ownExecution: {
+    ok: true, result: { type: 'success', sessionId: 'member-session', disposition: 'created',
+      executionTarget: { serverId: 'home', machineId: 'alice-machine' },
+      organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } },
+  } });
+  terminal.interactive = scenario.interactive;
+  terminal.answer = scenario.answer;
+  terminal.onPrompt = () => {
+    expect(events).not.toContain('dispatch');
+    expect(target.readReceived()).toBeUndefined();
+  };
+  await withConfiguredDaemonTestHome({ prefix: 'session-create-disclosure-',
+    env: { HAPPIER_SERVER_URL: target.url, HAPPIER_WEBAPP_URL: target.url } }, async () => {
+    const output = captureConsoleText();
+    try {
+      const invocation = cmdSessionCreate(['create', '--machine-id', 'alice-machine', '--path', '/tmp',
+        '--agent', 'codex', '--model', 'gpt-6-luna', '--spawn-attempt-id', 'request-1',
+        '--title', 'Shared Computer Session', '--prompt', 'Reply with a greeting.', ...scenario.structured], {
+        readCredentialsFn: async () => ({ token: token(), encryption: null, credentialProvenance: 'stored_session' }),
+      });
+      if (scenario.accepted || scenario.structured.length) await invocation;
+      else await expect(invocation).rejects.toMatchObject({ code: 'requester_credential_disclosure_declined' });
+      if (scenario.accepted) {
+        expect(output.text()).toContain('member-session');
+        const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+        expect(openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
+          purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
+          serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey }))
+          .toMatchObject({ token: token() });
+      } else {
+        expect(events).not.toContain('dispatch');
+        expect(target.readReceived()).toBeUndefined();
+        if (scenario.structured.length) expect(output.text()).toContain('requester_credential_disclosure_declined');
+      }
+      expect(terminal.prompts).toHaveLength(scenario.interactive && !scenario.structured.length ? 1 : 0);
+    } finally { output.restore(); }
+  });
+});
 it('retains Home preset refusal through the friendly managed acquire command without a Session', async () => {
   const presetReads: unknown[] = [];
   // Only Home HTTP is substituted; CLI parsing, requester projection and preset routing stay real.
@@ -511,7 +558,7 @@ it('projects a runtime plugin caller into private custody without losing admitte
     .toEqual({ surface: 'cli', authority: 'present_user', caller: { kind: 'host' } });
 });
 afterEach(async () => {
-  terminal.interactive = true; terminal.answer = 'no'; terminal.prompts = []; process.exitCode = undefined;
+  terminal.interactive = true; terminal.answer = 'no'; terminal.prompts = []; terminal.onPrompt = null; process.exitCode = undefined;
   await Promise.all(controlApps.splice(0).map(app => app.close()));
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))));
 });
