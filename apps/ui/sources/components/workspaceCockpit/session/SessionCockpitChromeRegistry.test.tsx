@@ -16,6 +16,7 @@ import {
     useReportSessionCockpitFloatingBottomChromeHeight,
     useSessionCockpitChromeRegister,
     useSessionCockpitChromeRegistration,
+    useSessionCockpitTerminalTabAvailable,
     type SessionCockpitChromeRegistration,
 } from './SessionCockpitChromeRegistry';
 import type { SessionMobileSurface } from './sessionCockpitState';
@@ -315,4 +316,23 @@ describe('SessionCockpitChromeRegistry', () => {
         expect(heights).toEqual([0, 25, 25]);
     });
 
+    it('a Session follows only its own Terminal tab: another Session taking the chrome renders nothing of it', async () => {
+        const reads: boolean[] = [];
+        const control: { register: ((registration: SessionCockpitChromeRegistration) => () => void) | null } = { register: null };
+        const Registrar = () => { control.register = useSessionCockpitChromeRegister(); return null; };
+        const OwnTerminalTab = () => { reads.push(useSessionCockpitTerminalTabAvailable('session-a')); return null; };
+        await renderScreen(<SessionCockpitChromeRegistryProvider><Registrar /><OwnTerminalTab /></SessionCockpitChromeRegistryProvider>);
+        const show = (sessionId: string, terminalTabAvailable: boolean) => act(async () => {
+            control.register!({ sessionId, activeSurface: 'chat', terminalTabAvailable, catalog, readColumn, openDetailsTabCount: 0, switchSurface: () => {} });
+        });
+        await show('session-a', true);
+        expect(reads).toEqual([false, true]);
+        // A phone rail switch to another Session and back: the answer for session-a never changed.
+        await show('session-b', false);
+        await show('session-a', true);
+        expect(reads).toEqual([false, true]);
+        // Its own registration changing still reaches it.
+        await show('session-a', false);
+        expect(reads).toEqual([false, true, false]);
+    });
 });

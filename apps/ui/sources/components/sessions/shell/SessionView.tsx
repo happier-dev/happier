@@ -4,7 +4,7 @@ import { SESSION_PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projection
 import { usePluginLocalizedTextResolver } from "@/sync/domains/plugins/ui/i18n";
 import { isEmbedWindowContext } from "@/embed/isEmbedWindowContext";
 import { useAppPaneActionRailVisible } from "@/components/appShell/panes/hooks/useAppPaneActionRailVisible";
-import { useReadSessionCockpitChromeRegistration, useSessionCockpitChromeRegistrationSelector } from "@/components/workspaceCockpit/session/SessionCockpitChromeRegistry";
+import { useReadSessionCockpitChromeRegistration, useSessionCockpitTerminalTabAvailable } from "@/components/workspaceCockpit/session/SessionCockpitChromeRegistry";
 import { requestSessionWorkTriggersReveal } from '@/components/sessions/work/sessionWorkTriggersReveal';
 import { useOpenSessionCollaboration } from "@/components/sessions/collaboration/useOpenSessionCollaboration";
 import { useSessionCollaborationDestinationEntryAdmitted } from "@/hooks/session/useSessionCollaborationAvailability";
@@ -1267,8 +1267,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     const browserMenuEntryAvailable = deviceType !== 'phone' && headerBrowserDecision?.state === 'enabled'
         && headerBrowserTargetsDecision?.state === 'enabled';
     // The cockpit chrome names the shown Session: this view follows only whether its own has a Terminal tab.
-    const cockpitTerminalTabAvailable = useSessionCockpitChromeRegistrationSelector(
-        registration => registration?.sessionId === sessionId && registration.terminalTabAvailable);
+    const cockpitTerminalTabAvailable = useSessionCockpitTerminalTabAvailable(sessionId);
     const mobileTerminalTabAvailable = deviceType === 'phone' && cockpitTerminalTabAvailable;
     const sessionsRightPaneDefaultOpen = useLocalSetting('sessionsRightPaneDefaultOpen');
     const {

@@ -240,8 +240,10 @@ function CockpitChromeRegistrar(props: Readonly<{ initialSessionId: string; serv
     const register = useSessionCockpitChromeRegister();
     const [sessionId, setSessionId] = React.useState(props.initialSessionId);
     props.show.current = setSessionId;
+    // A Session screen offers its Terminal tab unless told otherwise (SessionCockpitSurfaceScreen), so the shown
+    // Session's registration differs from this view's own on each switch.
     React.useLayoutEffect(() => register({ sessionId, serverId: props.serverId, activeSurface: 'chat',
-        terminalTabAvailable: false, openDetailsTabCount: 0, catalog: NO_COCKPIT_CATALOG, readColumn: closedCockpitColumn,
+        terminalTabAvailable: true, openDetailsTabCount: 0, catalog: NO_COCKPIT_CATALOG, readColumn: closedCockpitColumn,
         switchSurface: () => {} }), [props.serverId, sessionId, register]);
     return null;
 }

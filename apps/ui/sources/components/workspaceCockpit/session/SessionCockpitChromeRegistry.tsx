@@ -400,10 +400,21 @@ export function useSessionCockpitChromeRegistration(): SessionCockpitChromeRegis
     return React.useSyncExternalStore(store.subscribe, store.get, store.get);
 }
 
-/** One derived fact of the registration (return a primitive): its reader renders only when that fact changes. */
-export function useSessionCockpitChromeRegistrationSelector<T>(select: (registration: SessionCockpitChromeRegistration | null) => T): T {
+/**
+ * Whether this Session's cockpit chrome offers a Terminal tab, as this Session last registered it. The chrome
+ * names only the shown Session: another Session's show (a phone rail switch) leaves this answer as it was, so a
+ * retained Session view renders neither when it is hidden nor when it is shown again with nothing changed.
+ */
+export function useSessionCockpitTerminalTabAvailable(sessionId: string): boolean {
     const store = React.useContext(SessionCockpitChromeRegistrationContext);
-    const read = () => select(store.get());
+    const read = React.useMemo(() => {
+        let own = false;
+        return () => {
+            const registration = store.get();
+            if (registration?.sessionId === sessionId) own = registration.terminalTabAvailable;
+            return own;
+        };
+    }, [sessionId, store]);
     return React.useSyncExternalStore(store.subscribe, read, read);
 }
 
