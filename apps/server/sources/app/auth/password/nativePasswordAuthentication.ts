@@ -64,7 +64,7 @@ export async function loginWithNativePlainPassword(params: Readonly<{
     if (!await verifyPasswordMaterial(candidate.parsed.credential.hash, text.utf8)) {
         return { ok: false, statusCode: 401, error: "authentication_failed" } as const;
     }
-    const eligible = await enforceLoginEligibility({ accountId: candidate.account.id, env: params.env });
+    const eligible = await enforceLoginEligibility({ accountId: candidate.account.id, readEnv: async () => params.env });
     if (!eligible.ok) return eligible;
     const sameServicePreparation = tokenKind === "account_directory"
         ? await prepareSameServiceHomeEntry({ env: params.env })
@@ -137,7 +137,7 @@ export async function unlockNativeE2eePassword(params: Readonly<{
     if (!await verifyPasswordMaterial(candidate.parsed.credential.authVerifier.hash, params.authKey)) {
         return { ok: false, statusCode: 401, error: "authentication_failed" } as const;
     }
-    const eligible = await enforceLoginEligibility({ accountId: candidate.account.id, env: params.env });
+    const eligible = await enforceLoginEligibility({ accountId: candidate.account.id, readEnv: async () => params.env });
     if (!eligible.ok) return eligible;
     try {
         const result = await inTx(async (tx) => {

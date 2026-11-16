@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { readHomeConfigEnv } from "@/app/home/settings/homeSettings";
 import type { Prisma } from "@prisma/client";
 import tweetnacl from "tweetnacl";
 import { db } from "@/storage/db";
@@ -799,7 +800,7 @@ export async function redeemHomeLoginAssertion(params: Readonly<{
     const preparedHomeConnectionDescriptor = await validateCredentialDestination(assertion, resolveHomeConnectionDescriptor);
     const eligibility = await enforceLoginEligibility({
         accountId: link.accountId,
-        env: params.env ?? process.env,
+        readEnv: async () => params.env ?? await readHomeConfigEnv(),
     });
     if (!eligibility.ok) {
         if (eligibility.error === "account-disabled") throw new AccountDirectoryError("account_disabled");

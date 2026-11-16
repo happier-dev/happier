@@ -563,7 +563,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
             setHandshakeStage("login-eligibility");
             const eligibility = await enforceLoginEligibility({
                 accountId: verified.userId,
-                env: process.env,
+                readEnv: () => readHomeConfigEnv(),
                 verifiedCredential: verified,
             });
             if (!eligibility.ok) {

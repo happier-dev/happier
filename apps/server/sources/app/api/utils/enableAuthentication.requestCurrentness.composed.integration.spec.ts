@@ -23,7 +23,8 @@ describe('authenticated request Account currentness', () => {
             tempDirPrefix: 'happier-request-currentness-',
             initAuth: true,
             initEncrypt: true,
-            env: { AUTH_REQUIRED_LOGIN_PROVIDERS: '' },
+            // A long positive TTL keeps the cache-hit count below deterministic on a slow host.
+            env: { AUTH_REQUIRED_LOGIN_PROVIDERS: '', AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: '60000' },
         });
         enableAuthentication(app);
         app.get('/private', { preHandler: app.authenticate }, async () => ({ ok: true }));
@@ -66,11 +67,13 @@ describe('authenticated request Account currentness', () => {
         }
     });
 
-    it('reads no Home settings per authenticated request, and a Home write applies the diagnostics flag on this instance', async () => {
+    it('reads no Home settings per authenticated request on a hot eligibility result, and a Home write applies the diagnostics flag on this instance', async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain', homeRole: 'owner' } });
         const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user',
             authenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }] });
         const headers = { authorization: `Bearer ${token}` };
+        // The first admission resolves the live Home sign-in policy once; later admissions reuse its result.
+        expect((await app.inject({ method: 'GET', url: '/private', headers })).statusCode).toBe(200);
         // Persistence is the measured boundary: count Home settings and governance row reads.
         const reader = await withSqliteReadSnapshot(async snapshot => snapshot);
         const original = { settings: reader.homeSettings.findUnique, policy: reader.homeGovernancePolicy.findUnique };
@@ -102,6 +105,20 @@ describe('authenticated request Account currentness', () => {
             reader.homeSettings.findUnique = original.settings;
             reader.homeGovernancePolicy.findUnique = original.policy;
             await db.homeSettings.deleteMany({});
+        }
+    });
+
+    it('refuses an existing credential under a sign-in provider the Home requires in its settings', async () => {
+        harness.resetEnv({ AUTH_REQUIRED_LOGIN_PROVIDERS: undefined });
+        await db.homeSettings.create({ data: { id: 'home', revision: 1, values: { AUTH_REQUIRED_LOGIN_PROVIDERS: ['github'] } } });
+        try {
+            const { token } = await credential();
+            const response = await app.inject({ method: 'GET', url: '/private', headers: { authorization: `Bearer ${token}` } });
+            expect(response.statusCode).toBe(403);
+            expect(response.json()).toMatchObject({ error: 'provider-required', provider: 'github' });
+        } finally {
+            await db.homeSettings.deleteMany({});
+            harness.resetEnv();
         }
     });
 
@@ -145,7 +162,7 @@ describe('authenticated request Account currentness', () => {
         const bob = await credential();
         const verified = await auth.verifyToken(alice.token);
         if (!verified) throw new Error('Issued credential did not verify');
-        const input = { accountId: bob.account.id, env: process.env, verifiedCredential: verified };
+        const input = { accountId: bob.account.id, readEnv: async () => process.env, verifiedCredential: verified };
         await expect(enforceLoginEligibility(input))
             .resolves.toEqual({ ok: false, statusCode: 401, error: 'invalid-token' });
     });

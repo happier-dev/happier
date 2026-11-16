@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 
@@ -46,7 +46,6 @@ vi.mock("@/utils/logging/log", () => ({
 function envWithDeploymentProvider(): NodeJS.ProcessEnv {
     return {
         AUTH_REQUIRED_LOGIN_PROVIDERS: "acme",
-        AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: "0",
         AUTH_PROVIDERS_CONFIG_JSON: JSON.stringify([
             {
                 id: "acme",
@@ -63,8 +62,14 @@ function envWithDeploymentProvider(): NodeJS.ProcessEnv {
 }
 
 describe("enforceLoginEligibility (provider failures)", () => {
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+
     beforeEach(() => {
         vi.clearAllMocks();
+        // The positive cache is sized from deployment keys; each case observes a fresh provider result.
+        vi.stubEnv("AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS", "0");
         dbAccountFindUnique.mockImplementation(async (query: { where: { id: string } }) => ({
             id: query.where.id, status: "active",
         }));
@@ -84,13 +89,13 @@ describe("enforceLoginEligibility (provider failures)", () => {
 
     it("fails closed with upstream_error when required provider runtime resolution throws", async () => {
         const env = envWithDeploymentProvider();
-        await expect(enforceLoginEligibility({ accountId: "acct-catalog-throws", env }))
+        await expect(enforceLoginEligibility({ accountId: "acct-catalog-throws", readEnv: async () => env }))
             .resolves.toEqual({ ok: true });
         dbIdentityProviderInstanceFindUnique.mockClear();
         dbIdentityProviderInstanceFindUnique.mockRejectedValueOnce(new Error("provider catalog unavailable"));
 
         await expect(
-            enforceLoginEligibility({ accountId: "acct-catalog-throws", env }),
+            enforceLoginEligibility({ accountId: "acct-catalog-throws", readEnv: async () => env }),
         ).resolves.toEqual({ ok: false, statusCode: 503, error: "upstream_error" });
         expect(dbIdentityProviderInstanceFindUnique).toHaveBeenCalledWith({
             where: { id: "acme" }, select: { id: true },
@@ -99,13 +104,13 @@ describe("enforceLoginEligibility (provider failures)", () => {
 
     it("fails closed with upstream_error when a required provider enforcement throws", async () => {
         const env = envWithDeploymentProvider();
-        await expect(enforceLoginEligibility({ accountId: "acct-provider-throws", env }))
+        await expect(enforceLoginEligibility({ accountId: "acct-provider-throws", readEnv: async () => env }))
             .resolves.toEqual({ ok: true });
         dbAccountIdentityFindFirst.mockClear();
         dbAccountIdentityFindFirst.mockRejectedValueOnce(new Error("provider down"));
 
         await expect(
-            enforceLoginEligibility({ accountId: "acct-provider-throws", env }),
+            enforceLoginEligibility({ accountId: "acct-provider-throws", readEnv: async () => env }),
         ).resolves.toEqual({ ok: false, statusCode: 503, error: "upstream_error" });
         expect(dbAccountIdentityFindFirst).toHaveBeenCalledWith(expect.objectContaining({
             where: { accountId: "acct-provider-throws", provider: "acme" },
@@ -114,12 +119,12 @@ describe("enforceLoginEligibility (provider failures)", () => {
 
     it("fails closed with upstream_error when a required provider is not in the catalog", async () => {
         const env = envWithDeploymentProvider();
-        await expect(enforceLoginEligibility({ accountId: "acct-provider-missing", env }))
+        await expect(enforceLoginEligibility({ accountId: "acct-provider-missing", readEnv: async () => env }))
             .resolves.toEqual({ ok: true });
         dbTeamIdentityConnectionFindMany.mockClear();
 
         await expect(
-            enforceLoginEligibility({ accountId: "acct-provider-missing", env: { ...env, AUTH_REQUIRED_LOGIN_PROVIDERS: "not-configured" } }),
+            enforceLoginEligibility({ accountId: "acct-provider-missing", readEnv: async () => ({ ...env, AUTH_REQUIRED_LOGIN_PROVIDERS: "not-configured" }) }),
         ).resolves.toEqual({ ok: false, statusCode: 503, error: "upstream_error" });
         expect(dbTeamIdentityConnectionFindMany).toHaveBeenCalledWith({
             where: { teamId: null, providerInstanceId: "not-configured" },

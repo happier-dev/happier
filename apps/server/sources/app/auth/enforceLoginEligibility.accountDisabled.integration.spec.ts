@@ -29,28 +29,34 @@ describe("enforceLoginEligibility (account disabled)", () => {
 
         await db.account.update({ where: { id: account.id }, data: { status: "disabled" } });
 
-        const out = await enforceLoginEligibility({ accountId: account.id, env: process.env });
+        const out = await enforceLoginEligibility({ accountId: account.id, readEnv: async () => process.env });
         expect(out).toEqual({ ok: false, statusCode: 403, error: "account-disabled" });
     });
 
     it.each(["1000", "0"])("does not let cached eligibility hide disablement (positive TTL %s)", async (ttl) => {
         const account = await db.account.create({ data: { publicKey: `eligibility-disable-cache-${ttl}` } });
-        const env = { ...process.env, AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: ttl };
-        await expect(enforceLoginEligibility({ accountId: account.id, env })).resolves.toEqual({ ok: true });
+        // The positive cache is sized from deployment keys, so the TTL is a process setting.
+        harness.resetEnv({ AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: ttl });
+        const readEnv = async () => process.env;
+        try {
+            await expect(enforceLoginEligibility({ accountId: account.id, readEnv })).resolves.toEqual({ ok: true });
 
-        await db.account.update({ where: { id: account.id }, data: { status: "suspended" } });
+            await db.account.update({ where: { id: account.id }, data: { status: "suspended" } });
 
-        await expect(enforceLoginEligibility({ accountId: account.id, env })).resolves.toEqual({
-            ok: false, statusCode: 403, error: "account-disabled",
-        });
+            await expect(enforceLoginEligibility({ accountId: account.id, readEnv })).resolves.toEqual({
+                ok: false, statusCode: 403, error: "account-disabled",
+            });
+        } finally {
+            harness.resetEnv();
+        }
     });
 
     it("does not let cached eligibility authenticate an erased Account", async () => {
         const account = await db.account.create({ data: { publicKey: "eligibility-erased-cache" } });
-        await expect(enforceLoginEligibility({ accountId: account.id, env: process.env })).resolves.toEqual({ ok: true });
+        await expect(enforceLoginEligibility({ accountId: account.id, readEnv: async () => process.env })).resolves.toEqual({ ok: true });
         await db.account.delete({ where: { id: account.id } });
 
-        await expect(enforceLoginEligibility({ accountId: account.id, env: process.env })).resolves.toEqual({
+        await expect(enforceLoginEligibility({ accountId: account.id, readEnv: async () => process.env })).resolves.toEqual({
             ok: false, statusCode: 401, error: "invalid-token",
         });
     });

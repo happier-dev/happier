@@ -54,7 +54,12 @@ function getLoginEligibilityPositiveCache(env: NodeJS.ProcessEnv): LRUTtlMap<str
 
 export async function enforceLoginEligibility(params: {
     accountId: string;
-    env: NodeJS.ProcessEnv;
+    /**
+     * Reads the sign-in policy env: the Home overlay of the request (`readRequestHomeEnv`) or socket
+     * (`readHomeConfigEnv`), because the policy keys are live Home settings. Called only when the
+     * positive cache misses, so a hot result costs no Home read; a Home change applies at the next miss.
+     */
+    readEnv: () => Promise<NodeJS.ProcessEnv>;
     now?: Date;
     /** The canonical verifier result from this admission only; never a cached caller projection. */
     verifiedCredential?: VerifiedAuthToken;
@@ -123,7 +128,8 @@ export async function enforceLoginEligibility(params: {
         }
     }
 
-    const positiveCache = getLoginEligibilityPositiveCache(params.env);
+    // The cache TTL and size are deployment keys, never live Home settings.
+    const positiveCache = getLoginEligibilityPositiveCache(process.env);
     if (positiveCache?.get(accountId) === true) {
         recordLoginEligibilityCache({ cache: "positive_result", result: "hit" });
         observeLoginEligibilityStage({
@@ -143,7 +149,23 @@ export async function enforceLoginEligibility(params: {
     recordLoginEligibilityCache({ cache: "inflight", result: "miss" });
 
     const eligibilityPromise = (async (): Promise<LoginEligibilityResult> => {
-        const policy = resolveAuthPolicyFromEnv(params.env);
+        let env: NodeJS.ProcessEnv;
+        try {
+            env = await params.readEnv();
+        } catch (error) {
+            log(
+                { module: "auth-login-eligibility", level: "error" },
+                "Failed to read the sign-in policy for eligibility enforcement",
+                { accountId, error },
+            );
+            observeLoginEligibilityStage({
+                stage: "total",
+                result: "error",
+                durationMs: Date.now() - startedAt,
+            });
+            return { ok: false, statusCode: 503, error: "upstream_error" };
+        }
+        const policy = resolveAuthPolicyFromEnv(env);
         if (policy.requiredLoginProviders.length === 0) {
             positiveCache?.set(accountId, true);
             observeLoginEligibilityStage({
@@ -162,7 +184,7 @@ export async function enforceLoginEligibility(params: {
 
             let result: LoginEligibilityResult;
             try {
-                const provider = (await resolveIdentityRuntimeById(params.env, providerId))?.provider;
+                const provider = (await resolveIdentityRuntimeById(env, providerId))?.provider;
                 if (!provider?.enforceLoginEligibility) {
                     observeLoginEligibilityStage({
                         stage: "provider_checks",
@@ -183,7 +205,7 @@ export async function enforceLoginEligibility(params: {
                 }
                 result = await provider.enforceLoginEligibility({
                     accountId: accountId,
-                    env: params.env,
+                    env,
                     policy,
                     now,
                 });

@@ -540,6 +540,33 @@ describe("startSocket (auth policy enforcement)", () => {
         });
     }, 30_000);
 
+    it("refuses an existing credential's socket under a sign-in provider the Home requires in its settings", async () => {
+        await db.homeSettings.create({ data: { id: "home", revision: 1, values: { AUTH_REQUIRED_LOGIN_PROVIDERS: ["github"] } } });
+        const account = await db.account.create({ data: { publicKey: `pk-home-required-${Date.now()}` }, select: { id: true } });
+        const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address();
+        if (!address || typeof address === "string") {
+            await app.close();
+            await db.homeSettings.deleteMany({});
+            throw new Error("Failed to bind socket server");
+        }
+        const socket = ioClient(`http://127.0.0.1:${address.port}`, {
+            path: "/v1/updates", transports: ["websocket"], reconnection: false, auth: { token },
+        });
+        let payload: ProviderRequiredErrorPayload;
+        try {
+            payload = await waitForConnectionFailure(socket);
+        } finally {
+            socket.close();
+            await app.close();
+            await db.homeSettings.deleteMany({});
+        }
+        expect(payload.data).toEqual({ error: "provider-required", provider: "github", statusCode: 403 });
+    }, 30_000);
+
     it("rejects API tokens outside an admitted Session viewer socket", async () => {
         const account = await db.account.create({
             data: { publicKey: `pk-api-token-${Date.now()}` },

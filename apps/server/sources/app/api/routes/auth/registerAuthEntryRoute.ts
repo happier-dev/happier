@@ -47,7 +47,7 @@ export function registerAuthEntryRoute(app: Fastify, params: Readonly<{
             const verification = await verifyRequestPrincipal({
                 authorizationHeader: request.headers?.authorization,
                 allowLegacyHomeToken: true,
-                env: requestHomeEnv,
+                readEnv: async () => requestHomeEnv,
             });
             const publicAuthDisposition = resolveOptionalPublicAuthDisposition(
                 verification.status === 'verified'

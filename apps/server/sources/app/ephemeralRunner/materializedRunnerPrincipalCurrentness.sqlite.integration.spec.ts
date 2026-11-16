@@ -237,7 +237,7 @@ describe("materialized ephemeral Runner principal currentness", () => {
             await expect(verifyRequestPrincipal({
                 authorizationHeader: `Bearer ${fixture.token}`,
                 allowLegacyHomeToken: true,
-                env: process.env,
+                readEnv: async () => process.env,
             })).resolves.toEqual({
                 status: "rejected_restricted",
                 kind: "ephemeral_session_runner",

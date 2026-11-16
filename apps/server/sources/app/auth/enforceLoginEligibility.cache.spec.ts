@@ -24,6 +24,7 @@ const env = {
     AUTH_REQUIRED_LOGIN_PROVIDERS: "github",
     AUTH_GITHUB_ALLOWED_USERS: "octocat",
 };
+const readEnv = async () => env;
 const identity = {
     id: "identity-a", providerLogin: "octocat", token: null,
     eligibilityStatus: "eligible", eligibilityCheckedAt: null, eligibilityNextCheckAt: null,
@@ -44,17 +45,17 @@ describe("enforceLoginEligibility provider cache", () => {
             releaseIdentity = () => resolve(identity);
             signalIdentity();
         }));
-        const first = enforceLoginEligibility({ accountId: "account-a", env });
+        const first = enforceLoginEligibility({ accountId: "account-a", readEnv });
         try {
             await Promise.race([started, first.then(() => {
                 throw new Error("Eligibility settled before reaching the held provider identity read");
             })]);
-            const second = enforceLoginEligibility({ accountId: "account-a", env });
+            const second = enforceLoginEligibility({ accountId: "account-a", readEnv });
             await setImmediate();
             expect(boundary.identity).toHaveBeenCalledTimes(1);
             releaseIdentity?.();
             await expect(Promise.all([first, second])).resolves.toEqual([{ ok: true }, { ok: true }]);
-            await expect(enforceLoginEligibility({ accountId: "account-a", env })).resolves.toEqual({ ok: true });
+            await expect(enforceLoginEligibility({ accountId: "account-a", readEnv })).resolves.toEqual({ ok: true });
             expect(boundary.identity).toHaveBeenCalledTimes(1);
         } finally {
             releaseIdentity?.();
@@ -62,17 +63,35 @@ describe("enforceLoginEligibility provider cache", () => {
         }
 
         boundary.account.mockResolvedValue({ id: "account-a", status: "suspended" });
-        await expect(enforceLoginEligibility({ accountId: "account-a", env })).resolves.toEqual({
+        await expect(enforceLoginEligibility({ accountId: "account-a", readEnv })).resolves.toEqual({
             ok: false, statusCode: 403, error: "account-disabled",
         });
     });
 
-    it("fails closed on a current database failure despite a hot provider result and permits recovery", async () => {
-        await expect(enforceLoginEligibility({ accountId: "account-b", env })).resolves.toEqual({ ok: true });
-        boundary.account.mockRejectedValueOnce(new Error("database unavailable"));
-        await expect(enforceLoginEligibility({ accountId: "account-b", env })).resolves.toEqual({
+    it("reads the live sign-in policy only when the positive cache misses", async () => {
+        // The reader stands in for the Home settings row read; the policy and provider logic stay real.
+        const homeReads = vi.fn(readEnv);
+        await expect(enforceLoginEligibility({ accountId: "account-c", readEnv: homeReads })).resolves.toEqual({ ok: true });
+        expect(homeReads).toHaveBeenCalledTimes(1);
+        homeReads.mockClear();
+        await expect(enforceLoginEligibility({ accountId: "account-c", readEnv: homeReads })).resolves.toEqual({ ok: true });
+        expect(homeReads).toHaveBeenCalledTimes(0);
+    });
+
+    it("fails closed when the live sign-in policy cannot be read and permits recovery", async () => {
+        const unavailable = vi.fn(async (): Promise<NodeJS.ProcessEnv> => { throw new Error("home settings unavailable"); });
+        await expect(enforceLoginEligibility({ accountId: "account-d", readEnv: unavailable })).resolves.toEqual({
             ok: false, statusCode: 503, error: "upstream_error",
         });
-        await expect(enforceLoginEligibility({ accountId: "account-b", env })).resolves.toEqual({ ok: true });
+        await expect(enforceLoginEligibility({ accountId: "account-d", readEnv })).resolves.toEqual({ ok: true });
+    });
+
+    it("fails closed on a current database failure despite a hot provider result and permits recovery", async () => {
+        await expect(enforceLoginEligibility({ accountId: "account-b", readEnv })).resolves.toEqual({ ok: true });
+        boundary.account.mockRejectedValueOnce(new Error("database unavailable"));
+        await expect(enforceLoginEligibility({ accountId: "account-b", readEnv })).resolves.toEqual({
+            ok: false, statusCode: 503, error: "upstream_error",
+        });
+        await expect(enforceLoginEligibility({ accountId: "account-b", readEnv })).resolves.toEqual({ ok: true });
     });
 });

@@ -402,7 +402,7 @@ function registerKeyChallengeAuthRoutesForPurpose(
             }
             const eligibility = await enforceLoginEligibility({
                 accountId: expectedAccount.id,
-                env: requestHomeEnv,
+                readEnv: async () => requestHomeEnv,
             });
             if (!eligibility.ok) {
                 return sendLoginEligibilityFailure(reply, eligibility);
@@ -510,7 +510,7 @@ function registerKeyChallengeAuthRoutesForPurpose(
                     error: "Invalid token",
                 });
             }
-            const eligibility = await enforceLoginEligibility({ accountId: existingAccount.id, env: requestHomeEnv });
+            const eligibility = await enforceLoginEligibility({ accountId: existingAccount.id, readEnv: async () => requestHomeEnv });
             if (!eligibility.ok) {
                 return sendLoginEligibilityFailure(reply, eligibility);
             }

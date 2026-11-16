@@ -1,4 +1,5 @@
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
+import { readHomeConfigEnv } from '@/app/home/settings/homeSettings';
 import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
 import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
@@ -899,7 +900,7 @@ async function verifyCurrentExternalActionPrincipalForPurpose(
     }
     const principal = await readCurrentExternalActionPrincipal(binding, db, purpose, deploymentContinuation, retainedCreationAdmission);
     if (!principal) return null;
-    const eligibility = await enforceLoginEligibility({ accountId: principal.accountId, env: process.env });
+    const eligibility = await enforceLoginEligibility({ accountId: principal.accountId, readEnv: () => readHomeConfigEnv() });
     if (!eligibility.ok && eligibility.statusCode === 503) {
         // Unavailable eligibility evidence is not a revoked signed credential.
         throw Object.assign(new Error(eligibility.error), { statusCode: 503, code: eligibility.error });

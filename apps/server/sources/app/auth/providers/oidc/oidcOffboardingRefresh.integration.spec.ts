@@ -325,7 +325,7 @@ describe("OIDC offboarding refresh (integration)", () => {
             select: { id: true },
         });
         expect(account).toBeTruthy();
-        const initial = await enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() });
+        const initial = await enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() });
         expect(initial).toEqual({ ok: true });
         return { app, accountId: account!.id };
     }
@@ -394,7 +394,7 @@ describe("OIDC offboarding refresh (integration)", () => {
         const account = await db.account.findFirst({ where: { publicKey: privacyKit.encodeHex(new Uint8Array(kp.publicKey)) } });
         expect(account).toBeTruthy();
 
-        const first = await enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() });
+        const first = await enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() });
         expect(first.ok).toBe(true);
 
         // Simulate the user losing group membership, and force re-check.
@@ -404,9 +404,9 @@ describe("OIDC offboarding refresh (integration)", () => {
             data: { eligibilityNextCheckAt: new Date(0) },
         });
 
-        const second = await enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() });
+        const second = await enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() });
         expect(second).toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
-        await expect(enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
 
         // A new successful proof replaces the old denial, without deleting or transferring the identity.
@@ -445,14 +445,14 @@ describe("OIDC offboarding refresh (integration)", () => {
             where: { accountId, provider: "okta" },
             data: { eligibilityStatus: "ineligible", eligibilityNextCheckAt: nextCheckAt },
         });
-        await expect(enforceLoginEligibility({ accountId, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
 
         await db.accountIdentity.updateMany({
             where: { accountId, provider: "okta" },
             data: { eligibilityStatus: "unknown", eligibilityNextCheckAt: nextCheckAt },
         });
-        await expect(enforceLoginEligibility({ accountId, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual({ ok: true });
         await app.close();
     });
@@ -480,7 +480,7 @@ describe("OIDC offboarding refresh (integration)", () => {
             data: { eligibilityNextCheckAt: new Date(0) },
         });
 
-        await expect(enforceLoginEligibility({ accountId, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
         await app.close();
     });
@@ -506,7 +506,7 @@ describe("OIDC offboarding refresh (integration)", () => {
             data: { eligibilityNextCheckAt: new Date(0) },
         });
 
-        await expect(enforceLoginEligibility({ accountId, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
         await expect(db.accountIdentity.findFirst({
             where: { accountId, provider: "okta" },
@@ -539,7 +539,7 @@ describe("OIDC offboarding refresh (integration)", () => {
             data: { eligibilityNextCheckAt: new Date(0) },
         });
 
-        await expect(enforceLoginEligibility({ accountId, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual({ ok: true });
         await expect(db.accountIdentity.findFirst({
             where: { accountId, provider: "okta" },
@@ -573,7 +573,7 @@ describe("OIDC offboarding refresh (integration)", () => {
             data: { eligibilityNextCheckAt: new Date(0) },
         });
 
-        await expect(enforceLoginEligibility({ accountId, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual({ ok: true });
 
         const rotated = await db.accountIdentity.findFirst({
@@ -587,7 +587,7 @@ describe("OIDC offboarding refresh (integration)", () => {
             where: { accountId, provider: "okta" },
             data: { eligibilityNextCheckAt: new Date(0) },
         });
-        await expect(enforceLoginEligibility({ accountId, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual({ ok: true });
         await expect(db.accountIdentity.findFirst({
             where: { accountId, provider: "okta" },
@@ -627,14 +627,14 @@ describe("OIDC offboarding refresh (integration)", () => {
         // The grant succeeds and rotates (revoking the presented token); only the later UserInfo call fails.
         userInfoServerError = true;
         await expireCheck();
-        await expect(enforceLoginEligibility({ accountId, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual(transientResult);
         expect(await storedToken()).toBe(currentRefreshToken);
 
         // Recovery: the retained replacement is still honoured by the issuer.
         userInfoServerError = false;
         await expireCheck();
-        await expect(enforceLoginEligibility({ accountId, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual({ ok: true });
         expect(await storedToken()).toBe(currentRefreshToken);
         await expect(db.accountIdentity.findFirst({
@@ -708,7 +708,7 @@ describe("OIDC offboarding refresh (integration)", () => {
         const account = await db.account.findFirst({ where: { publicKey: privacyKit.encodeHex(new Uint8Array(kp.publicKey)) } });
         expect(account).toBeTruthy();
 
-        const first = await enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() });
+        const first = await enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() });
         expect(first.ok).toBe(true);
 
         // Force re-check, but make refresh token grant fail with invalid_grant.
@@ -718,9 +718,9 @@ describe("OIDC offboarding refresh (integration)", () => {
             data: { eligibilityNextCheckAt: new Date(0) },
         });
 
-        const second = await enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() });
+        const second = await enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() });
         expect(second).toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
-        await expect(enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
 
         await app.close();
@@ -790,7 +790,7 @@ describe("OIDC offboarding refresh (integration)", () => {
         const account = await db.account.findFirst({ where: { publicKey: privacyKit.encodeHex(new Uint8Array(kp.publicKey)) } });
         expect(account).toBeTruthy();
 
-        const first = await enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() });
+        const first = await enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() });
         expect(first.ok).toBe(true);
 
         refreshServerError = true;
@@ -799,7 +799,7 @@ describe("OIDC offboarding refresh (integration)", () => {
             data: { eligibilityNextCheckAt: new Date(0) },
         });
 
-        const second = await enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() });
+        const second = await enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() });
         expect(second).toEqual({ ok: true });
 
         await app.close();
@@ -872,7 +872,7 @@ describe("OIDC offboarding refresh (integration)", () => {
         const account = await db.account.findFirst({ where: { publicKey: privacyKit.encodeHex(new Uint8Array(kp.publicKey)) } });
         expect(account).toBeTruthy();
 
-        const first = await enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() });
+        const first = await enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() });
         expect(first.ok).toBe(true);
 
         refreshServerError = true;
@@ -881,7 +881,7 @@ describe("OIDC offboarding refresh (integration)", () => {
             data: { eligibilityNextCheckAt: new Date(0) },
         });
 
-        const second = await enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() });
+        const second = await enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() });
         expect(second).toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
 
         await app.close();
@@ -951,7 +951,7 @@ describe("OIDC offboarding refresh (integration)", () => {
         const account = await db.account.findFirst({ where: { publicKey: privacyKit.encodeHex(new Uint8Array(kp.publicKey)) } });
         expect(account).toBeTruthy();
 
-        const first = await enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() });
+        const first = await enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() });
         expect(first.ok).toBe(true);
 
         await db.accountIdentity.updateMany({
@@ -962,7 +962,7 @@ describe("OIDC offboarding refresh (integration)", () => {
             },
         });
 
-        const second = await enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() });
+        const second = await enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() });
         expect(second).toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
 
         const identityAfterMismatch = await db.accountIdentity.findFirst({
@@ -970,7 +970,7 @@ describe("OIDC offboarding refresh (integration)", () => {
             select: { eligibilityStatus: true },
         });
         expect(identityAfterMismatch).toEqual({ eligibilityStatus: "ineligible" });
-        await expect(enforceLoginEligibility({ accountId: account!.id, env: process.env, now: new Date() }))
+        await expect(enforceLoginEligibility({ accountId: account!.id, readEnv: async () => process.env, now: new Date() }))
             .resolves.toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
 
         await app.close();

@@ -142,7 +142,8 @@ export function readBearerCredential(authorizationHeader: unknown): string | nul
 export async function verifyRequestPrincipal(input: Readonly<{
     authorizationHeader: unknown;
     allowLegacyHomeToken: boolean;
-    env: NodeJS.ProcessEnv;
+    /** The request's Home overlay reader, which carries the live sign-in policy. */
+    readEnv: () => Promise<NodeJS.ProcessEnv>;
 }>): Promise<RequestPrincipalVerification> {
     const token = readBearerCredential(input.authorizationHeader);
     if (token === null) return { status: "absent" };
@@ -177,7 +178,7 @@ export async function verifyRequestPrincipal(input: Readonly<{
 
     const eligibility = await enforceLoginEligibility({
         accountId: verified.userId,
-        env: input.env,
+        readEnv: input.readEnv,
         verifiedCredential: disposition.credential,
     });
     if (!eligibility.ok) return { status: "ineligible", eligibility };

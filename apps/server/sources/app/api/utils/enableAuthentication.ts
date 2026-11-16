@@ -117,7 +117,7 @@ export function enableAuthentication(app: Fastify) {
             authorizationHeader: request.headers.authorization,
             allowLegacyHomeToken: request.routeOptions.config.allowAccountDirectoryToken !== true
                 && request.routeOptions.config.allowLegacyHomeToken !== false,
-            env: process.env,
+            readEnv: () => readRequestHomeEnv(request),
         });
         // Routes that authenticate in preHandler reuse the canonical verification;
         // only browser-origin admission runs before the body becomes available.
@@ -157,7 +157,8 @@ export function enableAuthentication(app: Fastify) {
             const requesterVerification = authHeader !== undefined
                 ? earlyRequestPrincipals.get(request) ?? await verifyRequestPrincipal({ authorizationHeader: authHeader,
                     allowLegacyHomeToken: request.routeOptions?.config?.allowAccountDirectoryToken !== true
-                        && request.routeOptions?.config?.allowLegacyHomeToken !== false, env: process.env }) : null;
+                        && request.routeOptions?.config?.allowLegacyHomeToken !== false,
+                    readEnv: () => readRequestHomeEnv(request) }) : null;
             // A rejected execution carrier does not invalidate a verified
             // Account bearer. Clients retire Account credentials only on 401.
             let authorizationRefusal: ExternalActionAuthorizationRefusalPhase | undefined;
@@ -315,7 +316,7 @@ export function enableAuthentication(app: Fastify) {
             authorizationHeader: authHeader,
             allowLegacyHomeToken: request.routeOptions?.config?.allowAccountDirectoryToken !== true
                 && request.routeOptions?.config?.allowLegacyHomeToken !== false,
-            env: process.env,
+            readEnv: () => readRequestHomeEnv(request),
         }));
         if (
             verification.status === "absent"

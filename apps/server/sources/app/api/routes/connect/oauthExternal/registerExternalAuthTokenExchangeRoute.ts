@@ -57,7 +57,7 @@ export function registerExternalAuthTokenExchangeRoute(app: Fastify) {
         });
         if (!identity) return reply.code(404).send({ error: "not-linked" });
 
-        const eligibility = await enforceLoginEligibility({ accountId: identity.accountId, env });
+        const eligibility = await enforceLoginEligibility({ accountId: identity.accountId, readEnv: async () => env });
         if (!eligibility.ok) {
             if (eligibility.statusCode === 401) return reply.code(401).send({ error: "invalid-token" });
             if (eligibility.statusCode === 503) return reply.code(503).send({ error: "upstream_error" });
