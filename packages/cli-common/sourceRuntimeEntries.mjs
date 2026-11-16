@@ -268,6 +268,14 @@ export function workspaceSourceCompilerPaths(packages) {
   return paths;
 }
 
+/** Private file-URL runtime entries share one projection in bundles and source trees. */
+export function readCliPrivateSourceEntries({ projectDir, manifest, publicPrefix }) {
+  return Object.fromEntries(Object.entries(manifest.imports ?? {}).map(([key, value]) => {
+    const source = sourceExport(value, key);
+    return [`${publicPrefix}/${source.slice('./src/'.length).replace(/\.[^.]+$/, '')}`, resolve(projectDir, source)];
+  }));
+}
+
 /** CLI exports/imports and the generated semantic projection are the entry
  * authority for both retained source QA and native artifact construction. */
 // readText/exists default to the checkout; the commit gate passes Git-revision readers so a candidate's
@@ -285,10 +293,7 @@ export async function readCliSourceEntries({ repoDir, manifest, transform,
     const source = sourceExport(value, key);
     entries[`${publicPrefix}/${key === '.' ? 'index' : key.slice(2)}`] = resolve(projectDir, source);
   }
-  for (const [key, value] of Object.entries(manifest.imports ?? {})) {
-    const source = sourceExport(value, key);
-    entries[`${publicPrefix}/${source.slice('./src/'.length).replace(/\.[^.]+$/, '')}`] = resolve(projectDir, source);
-  }
+  Object.assign(entries, readCliPrivateSourceEntries({ projectDir, manifest, publicPrefix }));
   const pluginMetadata = [];
   const locatorPath = join(projectionDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
   if (exists(locatorPath)) {

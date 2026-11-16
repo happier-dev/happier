@@ -45,7 +45,7 @@ async function createRevisionFixture(t) {
   await gitIn('config', 'user.name', 'test');
   await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
   await writeFile(join(repoDir, '.gitignore'), 'node_modules\n');
-  for (const [directory, name] of [['apps/server', '@happier-dev/server'], ['packages/shared', '@happier-dev/shared']]) {
+  for (const [directory, name] of [['apps/server', '@happier-dev/server'], ['apps/cli', '@happier-dev/cli'], ['packages/shared', '@happier-dev/shared']]) {
     await mkdir(join(repoDir, directory, 'src'), { recursive: true });
     await writeFile(join(repoDir, directory, 'package.json'), JSON.stringify({ name, type: 'module',
       exports: { '.': { 'happier-source': './src/index.ts', default: './dist/index.js' } } }));
@@ -396,4 +396,32 @@ test('QA Stacks select source trees by default; the producer keeps bundles; the 
   assert.equal(select('agent-qa-sample', { HAPPIER_STACK_SOURCE_TREES: '0' }), false);
   assert.equal(select('repo-producer'), false);
   assert.equal(select('repo-producer', { HAPPIER_STACK_SOURCE_TREES: '1' }), true);
+});
+
+// r1116b: the source daemon's canonical Voice loader found no packaged runtime
+// entry even though its authored private import was present in the revision.
+test('daemon source trees expose declared private CLI runtime entries from their own revision', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const cli = join(repoDir, 'apps/cli');
+  const source = 'src/daemon/voiceInference/runtime/packagedVoiceInferenceRuntime.ts';
+  await mkdir(dirname(join(cli, source)), { recursive: true });
+  await writeFile(join(cli, source), 'export const voiceInferenceRuntimeEngine = { revision: "committed" };');
+  await writeFile(join(cli, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module', imports: {
+    '#voice-inference-runtime': { 'happier-source': './' + source, default: './dist/daemon/voiceInference/runtime/packagedVoiceInferenceRuntime.mjs' },
+    '#process-census': { 'happier-source': './src/processCensus.ts', default: './dist/processCensus.mjs' },
+  } }));
+  await writeFile(join(cli, 'src/processCensus.ts'), 'export const census = "committed sibling";');
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await gitIn('add', 'apps/cli');
+  await gitIn('commit', '--quiet', '-m', 'private runtime entries');
+  // A competing checkout edit must never leak through the generated entry.
+  await writeFile(join(cli, source), 'export const voiceInferenceRuntimeEngine = { revision: "foreign dirty" };');
+  const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
+  const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir: fixture.path('stacks/qa'),
+    descriptorPath: revision.descriptorPath, components: [{ component: 'daemon' }], logger: { error() {} } });
+  const entry = join(daemon.cliDir, 'package-dist/daemon/voiceInference/runtime/packagedVoiceInferenceRuntime.mjs');
+  const sibling = join(daemon.cliDir, 'package-dist/processCensus.mjs');
+  const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e',
+    `const { pathToFileURL } = await import("node:url"); const voice = await import(pathToFileURL(process.argv[1])); const census = await import(pathToFileURL(process.argv[2])); console.log(JSON.stringify([voice.voiceInferenceRuntimeEngine.revision, census.census]));`, entry, sibling]);
+  assert.deepEqual(JSON.parse(stdout), ['committed', 'committed sibling']);
 });

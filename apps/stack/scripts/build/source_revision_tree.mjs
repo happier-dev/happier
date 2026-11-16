@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { BuildInputDriftError, captureBuildInputFiles, mountCapturedWorkspaceDependencies, readBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
-import { readWorkspacePackages } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { readCliPrivateSourceEntries, readWorkspacePackages } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isPidAlive } from '../utils/proc/pids.mjs';
@@ -534,6 +534,17 @@ export async function prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir
       const cliDir = join(t, 'apps/cli');
       const entrypoint = join(cliDir, 'src/index.mjs');
       await writeOwnFile(entrypoint, sourceLauncher(t, `await import(${JSON.stringify(pathToFileURL(join(cliDir, 'src/index.ts')).href)});`));
+      // File-URL consumers use the same declared private entry paths as bundles.
+      // They execute this tree's source under its already-registered source loader.
+      const manifestPath = join(cliDir, 'package.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+      for (const [output, source] of Object.entries(readCliPrivateSourceEntries({
+        projectDir: cliDir, manifest, publicPrefix: 'apps/cli/package-dist',
+      }))) {
+        const target = join(t, `${output}.mjs`);
+        await mkdir(dirname(target), { recursive: true });
+        await writeOwnFile(target, sourceLauncher(t, `export * from ${JSON.stringify(pathToFileURL(source).href)};`));
+      }
       record = { identity, entrypoint, runtimeCommand: entrypoint, args: [], runtimeDir: cliDir, nodeEntrypoint: entrypoint, cliDir,
         env: { HAPPIER_STACK_CLI_ROOT_DIR: cliDir, HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
           HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0', HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '0' } };

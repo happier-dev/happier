@@ -53,6 +53,11 @@ export type CliSourcePluginMetadata = Readonly<{
   manifest: Record<string, unknown>;
   package: Record<string, unknown>;
 }>;
+export function readCliPrivateSourceEntries(options: Readonly<{
+  projectDir: string;
+  manifest: { imports?: Record<string, unknown> };
+  publicPrefix: string;
+}>): Record<string, string>;
 export function readCliSourceEntries(options: Readonly<{
   repoDir: string;
   projectionRoot?: string;
