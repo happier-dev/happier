@@ -24,7 +24,7 @@ const RUNTIME_ACTION_ENABLED_SURFACES = Object.freeze({
 // Per-family/per-action runtime-action surface enablement. Runtime specs are otherwise fail-closed
 // projection contracts; a runtime action is surfaced only where a real executor routes through the
 // ActionExecutor front door.
-const RUNTIME_ACTION_REAL_EXECUTOR_FAMILY_IDS: readonly RuntimeActionIdV1[] = [
+export const RUNTIME_ACTION_REAL_EXECUTOR_SET: ReadonlySet<RuntimeActionIdV1> = new Set<RuntimeActionIdV1>([
   // Native confidential fill is deferred beyond 0.3. Keep its Protocol shape
   // readable without advertising or routing an executable implementation.
   ...ACTION_ID_FAMILIES_V1.computer.filter(actionId => actionId !== 'computer.secret.fill'),
@@ -36,48 +36,10 @@ const RUNTIME_ACTION_REAL_EXECUTOR_FAMILY_IDS: readonly RuntimeActionIdV1[] = [
   ...ACTION_ID_FAMILIES_V1.browser_control,
   ...ACTION_ID_FAMILIES_V1.browser_automation,
   ...ACTION_ID_FAMILIES_V1.peer_mediation_observability,
-];
-
-// Individually-backed runtime actions inside families whose other members have no executor yet.
-// Enabling a whole family would surface inert actions.
-const RUNTIME_ACTION_REAL_EXECUTOR_ACTION_IDS: readonly RuntimeActionIdV1[] = [
-  'browser.context.capturePage',
-  'browser.context.captureScreenshot',
-  'browser.context.captureSelectedElement',
-  'browser.context.captureNetworkSummary',
-  'browser.context.captureConsoleSummary',
-  'browser.context.annotation.start',
-  'browser.context.annotation.cancel',
-  'browser.context.annotation.attachDraft',
-  'browser.context.annotation.setDraftComment',
-  'browser.context.attachToComposer',
-  'browser.context.attachToAgentTurn',
-  'browser.context.clear',
-  'browser.recording.start',
-  'browser.recording.stop',
-  'browser.recording.cancel',
-  'browser.recording.status',
-  'browser.recording.listForView',
-  'browser.recording.discard',
-  'browser.recording.cleanupExpired',
-  'browser.recording.attachToComposer',
-  'browser.diagnostics.snapshot',
-  'browser.diagnostics.clear',
-  'browser.diagnostics.pause',
-  'browser.diagnostics.resume',
-  'browser.diagnostics.eval',
-  'browser.diagnostics.getProperties',
-  'browser.diagnostics.releaseObjectGroup',
-  'browser.diagnostics.elementPicker.start',
-  'browser.diagnostics.elementPicker.cancel',
-  'localServices.preview.openOrCreate',
-  'localServices.preview.status',
-  'localServices.preview.revoke',
-];
-
-export const RUNTIME_ACTION_REAL_EXECUTOR_SET: ReadonlySet<RuntimeActionIdV1> = new Set<RuntimeActionIdV1>([
-  ...RUNTIME_ACTION_REAL_EXECUTOR_FAMILY_IDS,
-  ...RUNTIME_ACTION_REAL_EXECUTOR_ACTION_IDS,
+  ...ACTION_ID_FAMILIES_V1.browser_context,
+  ...ACTION_ID_FAMILIES_V1.browser_recording,
+  ...ACTION_ID_FAMILIES_V1.browser_diagnostics,
+  ...ACTION_ID_FAMILIES_V1.local_services_preview,
 ]);
 
 export function isRuntimeActionExecutorReal(actionId: RuntimeActionIdV1): boolean {
