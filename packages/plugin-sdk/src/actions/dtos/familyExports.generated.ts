@@ -39,6 +39,7 @@ export type { ConnectedServicesConfigurationActionInputById, ConnectedServicesCo
 export type { CurrentUiContextActionInputById, CurrentUiContextActionResultById } from './currentUiContextActionDtos.generated.js';
 export type { DaemonAdminActionInputById, DaemonAdminActionResultById } from './daemonAdminActionDtos.generated.js';
 export type { DeploymentsActionInputById, DeploymentsActionResultById } from './deploymentsActionDtos.generated.js';
+export type { DeploymentSuggestionsActionInputById, DeploymentSuggestionsActionResultById } from './deploymentSuggestionsActionDtos.generated.js';
 export type { DesktopShellActionInputById, DesktopShellActionResultById } from './desktopShellActionDtos.generated.js';
 export type { DesktopWindowsActionInputById, DesktopWindowsActionResultById } from './desktopWindowsActionDtos.generated.js';
 export type { DevicesSimulatorActionInputById, DevicesSimulatorActionResultById } from './devicesSimulatorActionDtos.generated.js';

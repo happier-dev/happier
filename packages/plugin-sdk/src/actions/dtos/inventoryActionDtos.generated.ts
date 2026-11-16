@@ -7,7 +7,7 @@ import type { ActionFailureCauseV1 } from './pluginActionDtoSupport.generated.js
 export type InventoryActionInputById = {
     readonly "agents.models.list": {
         purpose?: 'llm_task_runner' | 'scm_diff_summary' | undefined;
-        task?: 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary' | 'session_replay_summary' | undefined;
+        task?: 'deploy_suggestion' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary' | 'session_replay_summary' | undefined;
         choice?: unknown;
         sessionAgentTargetKey?: string | undefined;
         discoveryTargetKey?: string | undefined;

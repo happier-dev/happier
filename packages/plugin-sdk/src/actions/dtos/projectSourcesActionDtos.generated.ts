@@ -17,6 +17,7 @@ export type ProjectSourcesActionInputById = {
             name: string;
             visibility?: 'private' | 'public' | undefined;
         };
+        starterSourceId?: string | undefined;
         resume?: undefined | {
             directory: string;
             repositoryUrl: string;

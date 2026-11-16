@@ -1563,6 +1563,10 @@ export type GeneratedActions = Readonly<{
     }> ;
     readonly restart: (input: PublicActionInputById["deployments.restart"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.restart">>;
     readonly rollback: (input: PublicActionInputById["deployments.rollback"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.rollback">>;
+    readonly suggestions: Readonly<{
+      readonly catalog: (input: PublicActionInputById["deployments.suggestions.catalog"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.suggestions.catalog">>;
+      readonly check: (input: PublicActionInputById["deployments.suggestions.check"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.suggestions.check">>;
+    }> ;
     readonly targets: Readonly<{
       readonly link: (input: PublicActionInputById["deployments.targets.link"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.targets.link">>;
       readonly unlink: (input: PublicActionInputById["deployments.targets.unlink"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.targets.unlink">>;
@@ -4440,6 +4444,10 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       },
       restart: (input: PublicActionInputById["deployments.restart"], options?: ActionExecutionOptions) => execute("deployments.restart", input, options),
       rollback: (input: PublicActionInputById["deployments.rollback"], options?: ActionExecutionOptions) => execute("deployments.rollback", input, options),
+      suggestions: {
+        catalog: (input: PublicActionInputById["deployments.suggestions.catalog"], options?: ActionExecutionOptions) => execute("deployments.suggestions.catalog", input, options),
+        check: (input: PublicActionInputById["deployments.suggestions.check"], options?: ActionExecutionOptions) => execute("deployments.suggestions.check", input, options),
+      },
       targets: {
         link: (input: PublicActionInputById["deployments.targets.link"], options?: ActionExecutionOptions) => execute("deployments.targets.link", input, options),
         unlink: (input: PublicActionInputById["deployments.targets.unlink"], options?: ActionExecutionOptions) => execute("deployments.targets.unlink", input, options),

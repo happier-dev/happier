@@ -447,6 +447,16 @@ export type RegistriesActionResultById = {
                 } | {
                     kind: 'uv';
                 };
+                starterDeploy?: undefined | {
+                    framework: string;
+                    output: 'compose' | 'container' | 'native' | 'server' | 'static' | 'workers';
+                    data?: string[] | undefined;
+                    variables?: undefined | {
+                        key: string;
+                        secret: boolean;
+                        purpose?: string | undefined;
+                    }[];
+                };
                 pluginListing?: undefined | {
                     pluginId: string;
                     packageName: string;
@@ -593,6 +603,16 @@ export type RegistriesActionResultById = {
                     kind: 'npm';
                 } | {
                     kind: 'uv';
+                };
+                starterDeploy?: undefined | {
+                    framework: string;
+                    output: 'compose' | 'container' | 'native' | 'server' | 'static' | 'workers';
+                    data?: string[] | undefined;
+                    variables?: undefined | {
+                        key: string;
+                        secret: boolean;
+                        purpose?: string | undefined;
+                    }[];
                 };
                 pluginListing?: undefined | {
                     pluginId: string;
@@ -1106,6 +1126,16 @@ export type RegistriesActionResultById = {
                     tags: string[];
                     buildGoal: string;
                     previewImage?: string | undefined;
+                    deploy?: undefined | {
+                        framework: string;
+                        output: 'compose' | 'container' | 'native' | 'server' | 'static' | 'workers';
+                        data?: string[] | undefined;
+                        variables?: undefined | {
+                            key: string;
+                            secret: boolean;
+                            purpose?: string | undefined;
+                        }[];
+                    };
                 };
                 ref: {
                     digest: string;
