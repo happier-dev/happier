@@ -71,11 +71,6 @@
       "types": "./dist/agents/claude/settingsPolicy.d.ts",
       "default": "./dist/agents/claude/settingsPolicy.js"
     },
-    "./agents/claude/transcripts": {
-      "happier-source": "./src/agents/claude/rawJsonLines.ts",
-      "types": "./dist/agents/claude/rawJsonLines.d.ts",
-      "default": "./dist/agents/claude/rawJsonLines.js"
-    },
     "./agents/codex/native-home-policy": {
       "happier-source": "./src/agents/codex/nativeHomePolicy.ts",
       "types": "./dist/agents/codex/nativeHomePolicy.d.ts",
