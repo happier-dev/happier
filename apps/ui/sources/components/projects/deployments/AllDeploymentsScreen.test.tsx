@@ -324,6 +324,23 @@ describe('Projects → All deployments', () => {
     controller.retire();
   });
 
+  it('says which version is live beside when it was deployed (lab envRow "ver · age", owner D4)', async () => {
+    const { createDeploymentReceiptHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { deploymentRevisionLabelV1 } = await import('@happier-dev/deployments');
+    const source = { kind: 'repository' as const, sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' };
+    const deployed = {
+      environment: createDeploymentEnvironmentHeaderV1({ id: 'env-shop', projectSourceId: 'source-shop' }),
+      title: 'Production', projectSourceName: 'storefront',
+      currentDeployment: { ...createDeploymentReceiptHeaderV1({ id: 'receipt-1', environmentId: 'env-shop', state: 'succeeded' }), source },
+    };
+    const { controller } = controllerFor(() => page([deployed]));
+    const screen = await render(controller, 'all-deployments.row.env-shop:column:lastDeploy');
+    const cell = screen.findByTestId('all-deployments.row.env-shop:column:lastDeploy')!.findAll(() => true)
+      .map((node) => node.props.children).filter((child): child is string => typeof child === 'string').join(' ');
+    expect(cell).toContain(deploymentRevisionLabelV1(source));
+    controller.retire();
+  });
+
   it('says Last deploy from the latest deploy itself, never from the Environment\'s own updates (QA-WAVE-1115)', async () => {
     const { createDeploymentReceiptHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const now = Date.now();
@@ -450,13 +467,15 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
     const bare = createDeploymentEnvironmentHeaderV1({ id: 'env-bare', projectSourceId: 'source-bare' });
     const shop = createDeploymentEnvironmentHeaderV1({ id: 'env-shop', projectSourceId: 'source-shop' });
     const content = createDeploymentEnvironmentDetailV1().content;
+    // What makes an Environment one the Databases page lists: its definition declares the data service.
+    const holding = { ...content, template: { ...content.template!, data: [{ service: 'shop-db', engine: 'postgres' as const }] } };
     const cursors: (string | undefined)[] = [];
     const { controller } = controllerFor(() => page([environment('env-shop', 'source-shop', 'Production')]), {
       listDataServicePage: async (_scope, query) => {
         cursors.push(query.cursor);
         return query.cursor === undefined
           ? { ok: true, value: { nextCursor: 'older', items: [{ environment: bare, title: 'Demo', content, databaseSizes: [] }] } }
-          : { ok: true, value: { nextCursor: null, items: [{ environment: shop, title: 'Production', content, databaseSizes: [
+          : { ok: true, value: { nextCursor: null, items: [{ environment: shop, title: 'Production', content: holding, databaseSizes: [
             { service: 'shop-db', size: { status: 'available', bytes: 8_136_000, measurement: 'database_bytes', observedAtMs: 1 },
               growth: { status: 'unavailable', reason: 'no_previous_measurement' } }] }] } };
       },
@@ -475,7 +494,8 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
     const shop = createDeploymentEnvironmentHeaderV1({ id: 'env-shop', projectSourceId: 'source-shop' });
     const { controller } = controllerFor(() => page([environment('env-shop', 'source-shop', 'Production')]), {
       listDataServicePage: async () => ({ ok: true, value: { nextCursor: null, items: [{ environment: shop, title: 'Production',
-        content: createDeploymentEnvironmentDetailV1().content,
+        content: { ...createDeploymentEnvironmentDetailV1().content, template: { ...createDeploymentEnvironmentDetailV1().content.template!,
+          data: [{ service: 'shop-db', engine: 'postgres' as const }, { service: 'cache', engine: 'redis' as const }] } },
         databaseSizes: [
           { service: 'shop-db', size: { status: 'available', bytes: 1288490188, measurement: 'database_bytes', observedAtMs: 1 },
             growth: { status: 'unavailable', reason: 'no_previous_measurement' } },

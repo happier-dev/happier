@@ -59,10 +59,33 @@ describe('deployment demand read controller', () => {
             .toEqual({ status: 'available', bytes: 4096, fromMs: 1000, toMs: 2000 });
         lease.release(); controller.retire();
     });
+    it('pages the data page by the Environments that hold databases: pages without one are read past, never shown (owner D3)', async () => {
+        const base = networkBoundary();
+        const content = base.environmentDetail.content;
+        const bare = { environment: { ...base.environment, id: 'env-bare' }, title: 'Demo', content: { ...content, template: { ...content.template!, data: [] } } };
+        const holding = { environment: { ...base.environment, id: 'env-db' }, title: 'Shop', content: { ...content,
+            template: { ...content.template!, data: [{ service: 'postgres', engine: 'postgres' as const }] } } };
+        const cursors: (string | undefined)[] = [];
+        const listDataServicePage = vi.fn(async (_scope: unknown, query: { cursor?: string }) => {
+            cursors.push(query.cursor);
+            return { ok: true as const, value: query.cursor === undefined
+                ? { items: [bare], nextCursor: 'page-two' } : { items: [bare, holding], nextCursor: null } };
+        });
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...base.transport, listDataServicePage: listDataServicePage as never } });
+        const lease = controller.acquireDataServicePage({}, active);
+        await lease.refresh();
+        expect(cursors).toEqual([undefined, 'page-two']);
+        expect(lease.getSnapshot().value?.items.map((item) => item.environment.id)).toEqual(['env-db']);
+        expect(lease.getSnapshot().value).toMatchObject({ hasNextPage: false, hasPreviousPage: false });
+        lease.release(); controller.retire();
+    });
     it.each(['acquireDomainPage', 'acquireDataServicePage'] as const)('opens %s once per demanded page without detail fanout', async method => {
         const base = networkBoundary();
+        // The data page lists only Environments that hold databases (owner D3), so each of its pages holds one.
+        const dataItem = { environment: base.environment, title: 'Database', content: { ...base.environmentDetail.content,
+            template: { ...base.environmentDetail.content.template!, data: [{ service: 'postgres', engine: 'postgres' as const }] } } };
         const read = vi.fn(async (_scope: unknown, query: { cursor?: string }) => ({ ok: true as const,
-            value: { items: [], nextCursor: query.cursor ? null : 'page-two' } }));
+            value: { items: (method === 'acquireDataServicePage' ? [dataItem] : []) as never[], nextCursor: query.cursor ? null : 'page-two' } }));
         const observeDomainHealth = vi.fn(() => () => {});
         const observeEnvironmentHealth = vi.fn(() => () => {});
         const controller = createDeploymentReadControllerV1({ scope, transport: { ...base.transport,

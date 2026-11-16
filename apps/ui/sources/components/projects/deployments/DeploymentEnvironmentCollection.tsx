@@ -28,7 +28,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { DeploymentReadControllerV1 } from '@happier-dev/deployments';
 
-import { deploymentActionRefusalRemedy, deploymentRailState, deploymentReceiptAtMs, deploymentStateLabel } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentRailState, deploymentReceiptAtMs, deploymentRevisionLabel, deploymentStateLabel } from './deploymentPresentation';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { deploymentStepCaption } from './DeploymentStepStrip';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -278,7 +278,9 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       detail: formatRelativeTimeShort(environment.updatedAtMs, nowMs),
       // Last deploy (Services → Apps): when the latest deploy happened; an Environment never deployed has none, whatever
       // its own edits (QA-WAVE-1115).
-      lastDeploy: currentDeployment ? formatRelativeTimeShort(deploymentReceiptAtMs(currentDeployment), nowMs) : null,
+      // Lab envRow "ver · age": which version went live, then when (owner D4).
+      lastDeploy: currentDeployment ? [currentDeployment.source ? deploymentRevisionLabel(currentDeployment.source) : null,
+        formatRelativeTimeShort(deploymentReceiptAtMs(currentDeployment), nowMs)].filter(Boolean).join(' · ') : null,
     };
   });
   type Fact = typeof incoming[number];

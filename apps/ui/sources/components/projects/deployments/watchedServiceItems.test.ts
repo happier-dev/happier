@@ -97,3 +97,13 @@ describe('watchedServiceBands (Services → Watched bands)', () => {
     ]);
   });
 });
+
+describe('watchedServiceBands for a Machine this Home cannot reach (owner D2)', () => {
+  it('settles on the Machine\'s own presence word, never on a read that cannot answer', async () => {
+    const { watchedServiceBands } = await import('./watchedServiceItems');
+    const bands = watchedServiceBands(['m1'],
+      new Map([['m1', { status: 'unreachable' as const, rows: null, presence: 'Can’t reach from this Home' }]]),
+      { m1: 'NLDW3-5-36-33 · e8ba' });
+    expect(bands[0]).toMatchObject({ read: 'unreachable', presence: 'Can’t reach from this Home' });
+  });
+});

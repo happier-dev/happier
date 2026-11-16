@@ -5,7 +5,9 @@ type Environment = Pick<DeploymentEnvironmentHeaderV1, 'id' | 'serverId' | 'proj
 export type BackupReadinessObservation = Readonly<{ input: ProjectReadinessReadInputV1;
   result: ProjectReadinessReadResultV1 | null; pending: boolean; failureCode: string | null }>;
 export type EnvironmentBackupCoverage = Readonly<{ environment: Environment;
-  status: 'covered' | 'uncovered' | 'notNeeded' | 'loading' | 'unavailable'; reason: string | null; refreshing: boolean }>;
+  status: 'covered' | 'uncovered' | 'notNeeded' | 'loading' | 'unavailable'; reason: string | null; refreshing: boolean;
+  /** When its last backup completed (the recorded facts readiness already reads); null when none is recorded. */
+  lastBackupAt: number | null }>;
 
 /** Pass only the index's visible Environment headers. Closed surfaces select zero reads.
  * One existing projects.readiness.read per (Home, Project Source, Machine), never per app. */
@@ -49,11 +51,12 @@ export function projectBackupCoverage(visible: readonly Environment[], observati
         : fact.status === 'actionNeeded' ? 'uncovered' : 'unavailable'
         : admitted.has(selection.environmentId) ? 'notNeeded' : failureCode ? 'unavailable' : 'loading';
       outcomes.set(key,
-      { status, reason: fact?.reason ?? failureCode, refreshing: pending });
+      { status, reason: fact?.reason ?? failureCode, refreshing: pending,
+        lastBackupAt: fact?.backups?.lastSuccessfulBackup?.completedAt ?? null });
     }
   }
   const rows: readonly EnvironmentBackupCoverage[] = visible.map(environment => ({ environment,
-    ...(outcomes.get(selectionKey(environment)) ?? { status: 'loading', reason: null, refreshing: false }) }));
+    ...(outcomes.get(selectionKey(environment)) ?? { status: 'loading', reason: null, refreshing: false, lastBackupAt: null }) }));
   const count = (status: EnvironmentBackupCoverage['status']) => rows.filter(row => row.status === status).length;
   const covered = count('covered'); const uncovered = count('uncovered'); const notNeeded = count('notNeeded');
   const unresolved = count('loading') + count('unavailable');

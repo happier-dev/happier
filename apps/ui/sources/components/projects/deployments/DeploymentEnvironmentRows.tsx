@@ -175,7 +175,8 @@ export function DeploymentEnvironmentRows(
       {
         key: 'lastDeploy',
         title: t('projects.deployments.services.columnLastDeploy'),
-        minWidth: 112,
+        // "469b2bb · 10m ago": the version and its age whole at a desktop width (lab envRow "ver · age").
+        minWidth: 152,
         priority: 4,
         listColumn: true,
         render: (row) =>

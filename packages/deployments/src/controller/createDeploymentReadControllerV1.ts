@@ -358,6 +358,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             },
         };
     }
+    /** An Environment holds databases when its definition declares data services (the Databases page's rows). */
+    const holdsDatabases = (item: DeploymentDataServiceReadPageV1['items'][number]) => (item.content.template?.data?.length ?? 0) > 0;
     function acquireAccountPage<T extends DeploymentAccountDomainReadPageV1 | DeploymentDataServiceReadPageV1>(
         kind: 'domainPage' | 'dataServicePage', query: DeploymentAccountPageQueryV1, demand: DeploymentReadDemandV1,
     ) {
@@ -365,12 +367,29 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         return createDeploymentReadPageLease<T>({ initialCursor: query.cursor, demand,
             nextCursor: cursor => entries.get(key(cursor))?.nextCursor ?? null,
             acquire: (cursor, pageDemand) => acquire<T>({ key: key(cursor), kind, previousPage: cursor !== undefined,
-                read: signal => {
-                    const read = kind === 'domainPage' ? transport.listDomainPage : transport.listDataServicePage;
-                    const prior = entries.get(key(cursor))?.projection.getSnapshot().value as DeploymentDataServiceReadPageV1 | undefined;
-                    return read?.(scope, { ...query, cursor }, { signal, ...(kind === 'dataServicePage' && prior ? { previousItems: prior.items } : {}) }) ?? Promise.resolve({ ok: false,
+                read: async signal => {
+                    const unavailable = { ok: false as const,
                         failure: withActionFailureDiagnostic({ code: 'deployment_unavailable', retryable: false },
-                            { phase: `deployment.read.${kind}`, causeKind: 'client_required' }) });
+                            { phase: `deployment.read.${kind}`, causeKind: 'client_required' }) };
+                    if (kind === 'domainPage') return await transport.listDomainPage?.(scope, { ...query, cursor }, { signal }) ?? unavailable;
+                    const read = transport.listDataServicePage;
+                    if (!read) return unavailable;
+                    const prior = entries.get(key(cursor))?.projection.getSnapshot().value as DeploymentDataServiceReadPageV1 | undefined;
+                    // The Databases page lists the Environments that hold databases. Their contents are end-to-end
+                    // encrypted, so the Home pages every Environment: a page of none is read past here, and a page is
+                    // empty only when no Environment after it holds one (owner D3, 11-16).
+                    let at = cursor;
+                    let partial = false;
+                    for (;;) {
+                        const result = await read(scope, { ...query, cursor: at }, { signal, ...(prior ? { previousItems: prior.items } : {}) });
+                        if (!result.ok) return result;
+                        partial ||= result.value.coverage === 'partial';
+                        const items = result.value.items.filter(holdsDatabases);
+                        if (items.length > 0 || result.value.nextCursor === null) {
+                            return { ...result, value: { ...result.value, items, ...(partial ? { coverage: 'partial' as const } : {}) } };
+                        }
+                        at = result.value.nextCursor;
+                    }
                 },
                 // Typed host transport owns wire and opened Artifact admission.
                 admit: value => value,

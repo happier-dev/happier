@@ -15,6 +15,7 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -133,13 +134,14 @@ export function ServicesDatabasesView(
   const router = useRouter();
   const read = useDeploymentDataServicePage(props.controller, props.demand);
   const items = read.snapshot.value?.items ?? NO_ITEMS;
-  const withData = React.useMemo(() => items.filter((item) => (item.databaseSizes?.length ?? 0) > 0), [items]);
-  const environments = React.useMemo(() => withData.map((item) => item.environment), [withData]);
+  const environments = React.useMemo(() => items.map((item) => item.environment), [items]);
   const backups = useVisibleBackupCoverage(props.lifetime, environments, props.demand.visible);
   const coverage = React.useMemo(() => new Map(backups.coverage?.rows.map((row) => [row.environment.id, row.status])),
     [backups.coverage]);
-  const rows = React.useMemo<readonly DatabaseRow[]>(() => withData.length === 0 ? NO_DATABASES : withData.flatMap((item) =>
-    item.databaseSizes!.map((database) => {
+  const lastBackups = React.useMemo(() => new Map(backups.coverage?.rows.map((row) => [row.environment.id, row.lastBackupAt])),
+    [backups.coverage]);
+  const rows = React.useMemo<readonly DatabaseRow[]>(() => items.length === 0 ? NO_DATABASES : items.flatMap((item) =>
+    (item.databaseSizes ?? []).map((database) => {
       const declared = item.content.template?.data?.find((data) => data.service === database.service);
       return {
         key: `${item.environment.id}:${database.service}`,
@@ -150,11 +152,11 @@ export function ServicesDatabasesView(
         growth: describeDatabaseGrowth(database.growth),
         size: describeDatabaseSize(database.size),
       };
-    })), [withData]);
+    })), [items]);
   const groups = React.useMemo(() => ({
-    axis: withData.map((item) => ({ key: item.environment.id, title: item.title, section: SERVICES_ONE_SHEET })),
+    axis: items.map((item) => ({ key: item.environment.id, title: item.title, section: SERVICES_ONE_SHEET })),
     groupOf: groupOfDatabase,
-  }), [withData]);
+  }), [items]);
   const { serverId } = props;
   const open = React.useCallback((key: string | number | null) => {
     const row = key === null ? undefined : rows.find((candidate) => candidate.key === String(key));
@@ -183,6 +185,9 @@ export function ServicesDatabasesView(
       fields: [
         { key: 'size', title: t('projects.deployments.services.sizeLabel'), minWidth: 216, priority: 2, listColumn: true,
           render: (row) => row.size },
+        // Lab svcDb "Last backup": when the Environment's last backup completed, from the same coverage read.
+        { key: 'lastBackup', title: t('projects.deployments.databaseLastBackup'), minWidth: 136, priority: 0, listColumn: true,
+          render: (row) => { const at = lastBackups.get(row.environmentId); return at ? formatRelativeTimeShort(at, Date.now()) : null; } },
         { key: 'backups', title: t('projects.deployments.services.columnBackups'), minWidth: 140, priority: 1, align: 'end',
           listColumn: true, render: backupWord },
       ],
@@ -190,25 +195,14 @@ export function ServicesDatabasesView(
       testID: (row) => `services.databases.row.${row.environmentId}.${row.service}`,
       columnTitles: { title: t('projects.deployments.services.columnDatabase') },
     };
-  }, [coverage, theme.colors.text.secondary]);
+  }, [coverage, lastBackups, theme.colors.text.secondary]);
   const uncovered = backups.coverage?.rows.filter((row) => row.status === 'uncovered').length ?? 0;
   const countParts = React.useMemo(() => read.snapshot.value ? [
     rows.length > 0 ? t('projects.deployments.services.countDatabases', { count: rows.length }) : null,
     uncovered > 0 ? t('projects.deployments.notBackedUpCount', { count: uncovered }) : null,
   ] : null, [read.snapshot.value, rows.length, uncovered]);
   useReportViewCount('databases', countParts, props.onCount, uncovered);
-  // The data page reads every Environment (their contents are end-to-end encrypted, so the Home cannot pick the ones
-  // that hold databases): a page holding none moves on the way the person was going instead of stopping empty.
-  const travel = React.useRef<'older' | 'newer'>('older');
-  const settled = read.snapshot.status === 'ready' ? read.snapshot.value : undefined;
-  const skip = !settled || rows.length > 0 ? null
-    : travel.current === 'older' ? (read.hasNextPage ? read.nextPage : null)
-    : read.hasPreviousPage ? read.previousPage : null;
-  React.useEffect(() => { skip?.(); }, [skip, settled]);
-  const older = React.useCallback(() => { travel.current = 'older'; read.nextPage(); }, [read.nextPage]);
-  const newer = React.useCallback(() => { travel.current = 'newer'; read.previousPage(); }, [read.previousPage]);
-  // While it moves on (or the next page is on its way), the rows' place holds its skeleton, never an empty line.
-  if (!read.snapshot.value || skip || (rows.length === 0 && read.snapshot.status === 'loading')) {
+  if (!read.snapshot.value) {
     return read.snapshot.status === 'unavailable' ? (
       <ItemGroup surface="none">
         <SurfaceStateCard
@@ -226,7 +220,8 @@ export function ServicesDatabasesView(
       </ItemGroup>
     );
   }
-  if (rows.length === 0 && !read.snapshot.value.hasNextPage && !read.snapshot.value.hasPreviousPage) {
+  // An empty first page means no Environment holds a database: the read pages past the ones without (owner D3).
+  if (rows.length === 0 && !read.snapshot.value.hasPreviousPage) {
     return (
       <EmptyState
         testID="services.databases.empty"
@@ -241,7 +236,7 @@ export function ServicesDatabasesView(
     <>
       {backups.readers}
       {rows.length === 0 ? (
-        // A page whose Environments hold no databases still leads on to the next one.
+        // Past the last page that held one (the Environments after it hold none): Newer leads back.
         <ItemGroup surface="none">
           <EmptyState testID="services.databases.pageEmpty" layout="line" title={t('projects.deployments.services.pageEmpty')} />
         </ItemGroup>
@@ -249,7 +244,8 @@ export function ServicesDatabasesView(
         <ServicesPageList<DatabaseRow> testID="services.databases" model={model} anatomy={anatomy}
           accessibilityLabel={t('projects.deployments.services.databases')} />
       )}
-      <ServicesPaging testID="services.databases.paging" page={read.snapshot.value} onNewer={newer} onOlder={older} />
+      <ServicesPaging testID="services.databases.paging" page={read.snapshot.value}
+        onNewer={read.previousPage} onOlder={read.nextPage} />
     </>
   );
 }

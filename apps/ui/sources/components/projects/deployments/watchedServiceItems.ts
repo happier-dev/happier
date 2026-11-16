@@ -6,6 +6,12 @@ import type { ManagedWatchedServiceRow } from '@/components/store/inventory/mana
 export type WatchedMachineRead = Readonly<{
   status: 'listed' | 'failed';
   rows: readonly MachineServiceRowV1[] | null;
+}> | Readonly<{
+  /** This Home cannot reach the Machine: its read cannot answer, so its band says the Machine's presence instead. */
+  status: 'unreachable';
+  rows: readonly MachineServiceRowV1[] | null;
+  /** The Machine presence owner's word ("Can't reach from this Home", "Offline · seen 2 h ago"). */
+  presence: string;
 }>;
 
 export type WatchedServiceItem = Readonly<{
@@ -16,7 +22,7 @@ export type WatchedServiceItem = Readonly<{
   lifecyclePurpose: ManagedWatchedServiceRow['native']['lifecyclePurpose'];
   service: MachineServiceRowV1 | null;
   /** How its Machine's service read stands: still reading, last read failed, or listed. */
-  read: 'reading' | 'failed' | 'listed';
+  read: 'reading' | 'failed' | 'listed' | 'unreachable';
 }>;
 
 /**
@@ -53,6 +59,8 @@ export type WatchedServiceBand = Readonly<{
   /** The Machine's name, when the reach owner has one. */
   title: string | null;
   read: WatchedServiceItem['read'];
+  /** An unreachable Machine's presence word, said on its band; null otherwise. */
+  presence: string | null;
 }>;
 
 /** One band per Machine with watches, carrying that Machine's read state once (its rows never repeat it). */
@@ -63,6 +71,7 @@ export function watchedServiceBands(
 ): readonly WatchedServiceBand[] {
   return machineIds.map((machineId) => {
     const read = reads.get(machineId);
-    return { key: machineId, title: names[machineId] ?? null, read: !read ? 'reading' : read.status };
+    return { key: machineId, title: names[machineId] ?? null, read: !read ? 'reading' : read.status,
+      presence: read?.status === 'unreachable' ? read.presence : null };
   });
 }

@@ -29,6 +29,16 @@ describe('visible Environment backup coverage', () => {
   expect(projectBackupCoverage([{ ...visible[0]!, revision: 2 }], [{ input, result, pending: false, failureCode: null }]).rows[0]?.status).toBe('loading');
   expect(projectBackupCoverage(visible, [{ input, result, pending: false, failureCode: 'machine_offline' }]).status).toBe('partial');
  });
+ it('carries when the last backup completed, from the recorded facts the readiness owner already reads (owner D4)', () => {
+  const visible = headers.slice(0, 2); const input = planVisibleBackupReadiness(visible, true)[0]!;
+  const result: ProjectReadinessReadResultV1 = { serverId: input.serverId, projectId: input.projectId, status: 'ready', facts: [
+    { kind: 'backups', owner: 'deploymentBackups', environmentId: 'env-0', status: 'ready', reason: 'configured_sources_verified',
+      backups: { lastSuccessfulBackup: { operationId: 'op-1', completedAt: 1_700_000_000_000, configRevision: 1, snapshotIds: ['snap-1'] } } },
+    { kind: 'backups', owner: 'deploymentBackups', environmentId: 'env-1', status: 'actionNeeded', reason: 'no_verified_backup_yet' },
+  ] };
+  const coverage = projectBackupCoverage(visible, [{ input, result, pending: false, failureCode: null }]);
+  expect(coverage.rows.map(row => row.lastBackupAt)).toEqual([1_700_000_000_000, null]);
+ });
  it('settles missing, failed and pending reads without claiming coverage or fetching', () => {
   const visible = headers.slice(0, 1); const input = planVisibleBackupReadiness(visible, true)[0]!;
   expect(projectBackupCoverage([], []).status).toBe('empty');

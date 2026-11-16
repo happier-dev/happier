@@ -17,7 +17,8 @@ import type { ManagedWatchedServiceRow } from '@/components/store/inventory/mana
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useMachineDisplayNamesById } from '@/sync/store/hooks';
+import { useMachineDisplayNamesById, useServerScopedMachine } from '@/sync/store/hooks';
+import { describeMachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
@@ -272,7 +273,7 @@ export function ServicesWatchedView(
         ) : (
           <>
             {servicesFamilyCoverage(family, true, 'services.watched')}
-            <WatchedList state={state} serverId={props.scope?.serverId ?? null} presented={props.presented}
+            <WatchedList state={state} serverId={props.scope?.serverId ?? null} scope={props.scope} presented={props.presented}
               onCount={props.onCount} />
             <ServicesPaging testID="services.watched.paging" more={servicesFamilyMore(family)} />
           </>
@@ -290,6 +291,7 @@ const NO_SERVICE_READS: ReadonlyMap<string, WatchedMachineRead> = new Map();
 function WatchedList(props: Readonly<{
   state: ManagedInventorySectionsState;
   serverId: string | null;
+  scope: ServerAccountScope | null;
   presented: boolean;
   onCount: (count: ServicesViewCount) => void;
 }>) {
@@ -317,7 +319,9 @@ function WatchedList(props: Readonly<{
   const groups = React.useMemo(() => ({
     axis: bands.map((band) => ({ key: band.key, title: band.title ?? t('machineServices.groups.watched'),
       section: SERVICES_ONE_SHEET,
+      // A Machine this Home cannot reach says so in its presence owner's word, with no Retry (the Machine page's rule).
       ...(band.read === 'failed' ? { description: t('machineServices.error.title'), tone: 'attention' as const }
+        : band.presence !== null ? { description: band.presence }
         : band.read === 'reading' ? { description: t('machineServices.loading') } : {}) })),
     groupOf: groupOfWatched,
   }), [bands]);
@@ -365,7 +369,7 @@ function WatchedList(props: Readonly<{
   return (
     <>
       {props.serverId ? machineIds.map((machineId) => (
-        <WatchedMachineReader key={machineId} serverId={props.serverId!} machineId={machineId} active={props.presented}
+        <WatchedMachineReader key={machineId} serverId={props.serverId!} scope={props.scope} machineId={machineId} active={props.presented}
           onRead={report} onRefresh={registerRefresh} />
       )) : null}
       <ServicesPageList<WatchedItem> testID="services.watched" model={model} anatomy={anatomy}
@@ -375,7 +379,7 @@ function WatchedList(props: Readonly<{
 }
 
 /** One Machine's service read (no UI of its own), reported up so the Watched rows draw its facts. */
-function WatchedMachineReader(props: Readonly<{ serverId: string; machineId: string; active: boolean;
+function WatchedMachineReader(props: Readonly<{ serverId: string; scope: ServerAccountScope | null; machineId: string; active: boolean;
   onRead: (machineId: string, read: WatchedMachineRead) => void;
   onRefresh: (machineId: string, refresh: () => void) => void }>) {
   const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId, active: props.active });
@@ -384,9 +388,18 @@ function WatchedMachineReader(props: Readonly<{ serverId: string; machineId: str
   React.useEffect(() => { onRefresh(machineId, () => { void refresh(); }); }, [machineId, onRefresh, refresh]);
   const failed = Boolean(list.error || list.unavailable);
   const rows = list.rows ?? null;
+  // The Machine presence owner's word while this Home cannot reach it (the Machine page header's own line).
+  const { scope } = props;
+  const unreachable = useServerScopedMachine(props.serverId, machineId, (machine) => {
+    if (!machine) return null;
+    const presence = describeMachineRuntimePresence(machine, undefined, null, scope);
+    return presence.status === 'offline' && presence.label ? presence.label : null;
+  });
   React.useEffect(() => {
-    // Still reading reports nothing; a read that answered or failed reports its rows (the last listed ones on failure).
-    if (rows !== null || failed) onRead(machineId, { status: failed ? 'failed' : 'listed', rows });
-  }, [failed, machineId, onRead, rows]);
+    // An unreachable Machine settles on its presence; still reading reports nothing; a read that answered or failed
+    // reports its rows (the last listed ones on failure).
+    if (unreachable !== null) onRead(machineId, { status: 'unreachable', rows, presence: unreachable });
+    else if (rows !== null || failed) onRead(machineId, { status: failed ? 'failed' : 'listed', rows });
+  }, [failed, machineId, onRead, rows, unreachable]);
   return null;
 }
