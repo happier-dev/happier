@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { readHomeRequestArtifactReference } from '../homeRequestBody.testkit';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApprovalRequestV2Schema, DeploymentTemplateInstantiateInputV1Schema, FeaturesResponseSchema,
     type ApprovalRequestV2, type ActionExecutorContext } from '@happier-dev/protocol';
@@ -21,7 +22,7 @@ import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/ext
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { admitRequesterAccountActionContext, prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { projectExternalActionRequesterHttpAuthorization, resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { updateSettings } from '@/persistence';
 import { createDaemonDeploymentActionDeps } from '../createDaemonDeploymentActionDeps';
@@ -67,7 +68,7 @@ it('retains the signed allocated-Source refusal and partial creation through tem
                 value: { v: 2, sources: [sourceRow], disabledSourceIds: [] } } } : null,
         })) });
         const environment = createDeploymentEnvironmentDetailV1();
-        environment.environment.serverId = serverId;
+        environment.environment.serverId = homeId;
         environment.environment.owner = { kind: 'account', accountId: 'owner' };
         environment.environment.projectSourceId = 'allocated-source';
         const link = environment.targetLinks[0].targetLink;
@@ -75,7 +76,7 @@ it('retains the signed allocated-Source refusal and partial creation through tem
         const artifactRows = new Map<string, Record<string, unknown>>();
         const keys = { publicKey: Buffer.from(installation.publicKey, 'base64url'), secretKey: Buffer.from(installation.privateKey, 'base64url') };
         const target = { kind: 'machine' as const, machineId };
-        const input = DeploymentTemplateInstantiateInputV1Schema.parse({ mode: 'apply', serverId, machineId,
+        const input = DeploymentTemplateInstantiateInputV1Schema.parse({ mode: 'apply', serverId: homeId, machineId,
             newProject: { name: 'App', requestKey: 'new-project', owner: { kind: 'account', accountId: 'owner' } },
             templateRef: { sourceId: 'apps', itemId: 'app', version: selected.summary.version!, ref: selected.payload.ref },
             environment: { kind: 'create', name: 'App', requestKey: 'create-app', protection: 'nonProduction', purpose: 'standard',
@@ -141,16 +142,12 @@ it('retains the signed allocated-Source refusal and partial creation through tem
                 return { status: 401, data: { error: 'invalid_token', authorizationRefusal: 'deployment_preparation' } };
             }
             if (path === '/v1/deployments/environments' && request.method === 'POST') {
-                const body = request.data;
-                Object.assign(environment.environment, { contentArtifactId: body.contentArtifactId,
-                    contentHeaderVersion: body.contentHeaderVersion, contentBodyVersion: body.contentBodyVersion });
-                Object.assign(link, { contentArtifactId: body.firstTargetLink.contentArtifactId,
-                    contentHeaderVersion: body.firstTargetLink.contentHeaderVersion, contentBodyVersion: body.firstTargetLink.contentBodyVersion });
+                Object.assign(environment.environment, readHomeRequestArtifactReference(request.data));
+                Object.assign(link, readHomeRequestArtifactReference(request.data, 'firstTargetLink'));
                 return { status: 200, data: { ok: true, environmentId: environment.environment.id, revision: 1 } };
             }
             if (path === `/v1/deployments/environments/${environment.environment.id}/bindings`) {
-                Object.assign(environment.environment, { contentArtifactId: request.data.contentArtifactId,
-                    contentHeaderVersion: request.data.contentHeaderVersion, contentBodyVersion: request.data.contentBodyVersion, revision: 2 });
+                Object.assign(environment.environment, { ...readHomeRequestArtifactReference(request.data), revision: 2 });
                 return { status: 200, data: { ok: true, environmentId: environment.environment.id, revision: 2 } };
             }
             if (path === `/v1/deployments/environments/${environment.environment.id}`) return { status: 200, data: {
@@ -166,7 +163,7 @@ it('retains the signed allocated-Source refusal and partial creation through tem
                 serverIdentityId: homeId, serverHttpBaseUrl: endpoint, target, installationId: installation.installationId,
                 privateKey: keys.secretKey, isCurrent: admitted.isCurrent });
             if (!carrier) throw new Error('Requester projection unavailable');
-            const daemon = createDaemonDeploymentActionDeps({ credentials, serverId, machineId, serverHttpBaseUrl: endpoint,
+            const daemon = createDaemonDeploymentActionDeps({ credentials, serverId: homeId, machineId, serverHttpBaseUrl: endpoint,
                 savedSecretOperationContext: admitted.savedSecretOperationContext,
                 resolveRequesterIdentity: async () => { throw new Error('Signed grant owns target identity'); },
                 runtime: { acquire: async () => { throw new Error('Refused Source cannot acquire native runtime'); } } });
@@ -174,7 +171,7 @@ it('retains the signed allocated-Source refusal and partial creation through tem
             const operations = createHostActionOperationRuntime({ serverId, machineId, resolveAccountId: async () => 'owner' });
             let onApprovalRequested: Parameters<typeof createCliActionExecutorHarness>[0]['onApprovalRequested'];
             const { executor } = createCliActionExecutorHarness({ token: credentials.token, sessionId: '', mode: 'plain', ctx: null,
-                serverHttpBaseUrl: endpoint, onApprovalRequested: (...args) => onApprovalRequested?.(...args) }, {
+                serverId, serverIdentityId: homeId, serverHttpBaseUrl: endpoint, onApprovalRequested: (...args) => onApprovalRequested?.(...args) }, {
                 ...createUnavailableActionTransportDeps(), ...daemon,
                 runActionOperation: operations.runActionOperation,
                 prepareApprovalExecutionAuthorization: createDaemonApprovalExecutionAuthorizationPreparer({ machineId, serverId,
@@ -202,7 +199,7 @@ it('retains the signed allocated-Source refusal and partial creation through tem
                 if (typeof callback === 'function') callback(); return true;
             });
             vi.spyOn(console, 'error').mockImplementation(() => undefined);
-            const context = { authority: 'account_automation' as const, runtimeAccountId: 'owner', serverId,
+            const context = { authority: resolveExternalActionRootInvocationAuthority(authorization), runtimeAccountId: 'owner', serverId,
                 serverIdentityId: homeId, defaultSessionMachineId: machineId, externalActionTarget: target,
                 actionsSettings: admitted.accountSettingsContext.settings.actionsSettingsV1,
                 signExternalActionApprovalInput: (request: Parameters<NonNullable<ActionExecutorContext['signExternalActionApprovalInput']>>[0]) =>
