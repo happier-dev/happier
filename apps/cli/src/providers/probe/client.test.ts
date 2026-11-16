@@ -2,6 +2,7 @@ import { gzipSync } from 'node:zlib';
 import { createServer } from 'node:http';
 
 import { describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import {
   ProviderProbeCancelledError,
@@ -51,6 +52,22 @@ type MutableProbeModelFixture = {
 };
 
 describe('provider probe HTTP client', () => {
+  it.each(['catalog', 'usage'] as const)('retains a %s parser refusal without exposing its private message', async operation => {
+    const failureCause = { phase: 'providers.catalog.decode', errorClass: 'Error' as const,
+      errorCode: 'provider_contribution_unavailable', httpStatus: null };
+    const parse = (): never => { throw new PluginError({ code: 'plugin_service_unavailable',
+      message: 'private-parser-diagnostic', failureCause }); };
+    const client = createProviderProbeHttpClient({ resolveAddresses: async () => ['93.184.216.34'],
+      transport: async () => response() });
+    const request = { endpointUrl: 'https://models.example', path: '/models', publicHeaders: {}, ...authorizedDestination };
+    const result = operation === 'catalog'
+      ? client.getCatalog({ ...request, parser: 'fixture-catalog', contributedCatalogParsers: { 'fixture-catalog': parse } })
+      : client.getUsage({ ...request, parse });
+    const error = await result.catch((error: unknown) => error);
+    expect(error).toMatchObject({ code: 'provider_probe_response_invalid', failureCause });
+    expect(JSON.stringify(error)).not.toContain('private-parser-diagnostic');
+  });
+
   it('uses caller lifetime rather than a new GET deadline and accepts complete bodies beyond five MiB', async () => {
     let clock = 0;
     const client = createProviderProbeHttpClient({ now: () => clock,

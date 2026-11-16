@@ -632,7 +632,9 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
               throw new ProviderProbeClientError('provider_contribution_unavailable');
             }
             if (error instanceof ProviderProbeClientError && error.code === 'provider_contribution_unavailable') throw error;
-            throw new ProviderProbeClientError('provider_probe_response_invalid');
+            throw new ProviderProbeClientError('provider_probe_response_invalid', {
+              failureCause: projectActionFailureCauseV1(error, 'providers.probe.parse'),
+            });
           }
           if (containsSensitiveValue(
             value,
