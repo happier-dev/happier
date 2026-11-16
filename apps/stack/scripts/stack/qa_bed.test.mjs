@@ -57,4 +57,7 @@ test('a failed bed start stops what it started through the Stack lifecycle, so a
   calls.length = 0;
   await startQaBedStack({ rootDir: '/r', stackName: 'agent-qa-x-bed', step: 'start' }, { runStackImpl: async ({ args }) => { calls.push(args); return { ok: true }; } });
   assert.deepEqual(calls.map((args) => args[0]), ['start']);
+  // The bed serves its revision's shared web export: borrowed dev Metro never
+  // served the fleet's beds on 2026-11-16 (P03-UI-REQUESTS, servers-deploy).
+  assert.ok(calls[0].includes('--ui=export'), 'a bed start requests its revision export');
 });
