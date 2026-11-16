@@ -11,6 +11,7 @@ import type { MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/s
 import { machineSetupSourceOriginKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { isHealthCheckEventSourceV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { useAutomationDefinitionNextCursor, useAutomations, useIsDataReady } from '@/sync/store/hooks';
+import { getStorage } from '@/sync/domains/state/storageStore';
 import { isPluginEventAutomationTrigger, type AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { machineSetupSourceName } from '@/components/machines/setup/machineSetupSourceName';
@@ -199,8 +200,18 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
     const listed = demand.presented && !!scope && !input.projectKey && !input.machine;
     const lifetime = React.useMemo(() => admitted.binding ? readServerAccountScopeOwnerLifetime(admitted.binding) : null, [admitted.binding]);
     const definitions = useConfiguredCheckDefinitions(lifetime, listed, automations);
+    // A Check is one kind of Automation, paged with all the others: one Show more reads on until the next saved Check
+    // arrives or the list ends, so it never answers with nothing (SERVICES-ACCEPT-1116 F4).
     const loadAutomations = React.useCallback(async () => {
-        if (nextCursor) await (await import('@/sync/sync')).sync.loadMoreAutomations(nextCursor);
+        const { sync } = await import('@/sync/sync');
+        const checksIn = (rows: readonly AutomationDefinition[]) => rows.reduce((count, native) => count + native.triggers.filter(trigger =>
+            isPluginEventAutomationTrigger(trigger) && isHealthCheckEventSourceV1(trigger)).length, 0);
+        const before = checksIn(Object.values(getStorage().getState().automations));
+        let cursor = nextCursor;
+        while (cursor) {
+            cursor = (await sync.loadMoreAutomations(cursor)).nextCursor;
+            if (checksIn(Object.values(getStorage().getState().automations)) > before) return;
+        }
     }, [nextCursor]);
     const healthResults = useConfiguredHealthResults(scope, listed && automations.some(native => native.triggers.some(trigger =>
         isPluginEventAutomationTrigger(trigger) && isHealthCheckEventSourceV1(trigger))));

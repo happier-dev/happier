@@ -293,6 +293,32 @@ it('lists saved Checks from Automation summaries, keeps never-run and off subjec
     await hook.unmount();
 });
 
+// SERVICES-ACCEPT-1116 F4: a Check is one kind of Automation, paged with all the others. One Show more brings the
+// next saved Check even when the Automation page after this one holds none, instead of answering with nothing.
+it('follows the Automation pages past ones without a Check when the person asks for more Checks', async () => {
+    const [a, c] = await Promise.all([healthCheckDetail('a'), healthCheckDetail('c')]);
+    const { triggers: _triggers, ...plain } = a;
+    const other = { ...plain, id: 'other', name: 'Nightly report', triggers: [] };
+    const pages: Record<string, Readonly<{ automations: unknown[]; nextCursor: string | null }>> = {
+        first: { automations: [a], nextCursor: 'p2' }, p2: { automations: [other], nextCursor: 'p3' }, p3: { automations: [c], nextCursor: null },
+    };
+    const page = (cursor: string | null | undefined) => ({ body: pages[cursor ?? 'first'] });
+    await account.restore({ serverIdentityId: 'srv_inventory_check_pages', machines: [], httpAnswers: {
+        'POST /v3/automations/query': { select: (input) => page((input as { cursor?: string } | null)?.cursor) },
+        'GET /v3/automations': { select: (_input, request) => page(new URL(request.url).searchParams.get('cursor')) },
+    } });
+    const scope = storage.getState().settingsScope!;
+    await act(async () => { storage.setState({ automations: { a: healthCheckSummary('a') }, isDataReady: true, automationDefinitionNextCursor: 'p2' }); });
+    const query: ManagedInventoryQuery = { scope, machine: null, projectKey: null, presented: true, kinds: ['configuredCheck'] };
+    const hook = await renderHook(() => useManagedInventory(query), { wrapper: Boundary });
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).toEqual({ partial: 'automation_page' }));
+    const more = hook.getCurrent().operationalFamilies.configuredCheck.continuation as () => Promise<unknown>;
+    await act(async () => { await more(); });
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows.map(row => row.automationId)).toEqual(['a', 'c']));
+    expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).not.toEqual({ partial: 'automation_page' });
+    await hook.unmount();
+});
+
 it.each(['plain', 'e2ee'] as const)('reads never-observed Check definition facts once for the presented Account and releases private page demand when hidden (%s)', async mode => {
     const { createAutomationDefinitionFromDetail } = await import('@/sync/domains/automations/automationDefinitionProjection');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');

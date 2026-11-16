@@ -121,11 +121,12 @@ export function ServicesChecksView(
             )
           );
         }
+        const more = servicesFamilyMore(family, isConfiguredCheckResultsPartial);
         return (
           <>
             {pending}
-            <ChecksList rows={rows} scope={props.scope} selection={selection} onCount={props.onCount} />
-            <ServicesPaging testID="services.checks.paging" more={servicesFamilyMore(family, isConfiguredCheckResultsPartial)} />
+            <ChecksList rows={rows} scope={props.scope} selection={selection} onCount={props.onCount} partial={more !== null} />
+            <ServicesPaging testID="services.checks.paging" more={more} />
           </>
         );
       }}
@@ -140,12 +141,15 @@ function ChecksList(props: Readonly<{
   scope: ServerAccountScope | null;
   selection: ServiceCheckSelection;
   onCount: (count: ServicesViewCount) => void;
+  /** More Automation pages may hold more Checks: the count says "at least" until they are read. */
+  partial: boolean;
 }>) {
-  const { rows } = props;
+  const { rows, partial } = props;
   const offlineObservers = useServiceCheckOfflineObservers(rows, props.scope);
   const failing = React.useMemo(() => serviceCheckMonitorSummary(rows, offlineObservers).down, [rows, offlineObservers]);
-  const count = React.useMemo(() => [t('projects.deployments.services.countChecks', { count: rows.length }),
-    failing > 0 ? t('projects.deployments.services.countFailing', { count: failing }) : null], [failing, rows.length]);
+  const count = React.useMemo(() => [partial ? t('projects.deployments.monitoring.checksAtLeast', { count: rows.length })
+    : t('projects.deployments.services.countChecks', { count: rows.length }),
+    failing > 0 ? t('projects.deployments.services.countFailing', { count: failing }) : null], [failing, partial, rows.length]);
   useReportViewCount('checks', count, props.onCount, failing);
   return (
     <ServiceCheckList testID="services.checks" rows={rows} scope={props.scope} selection={props.selection}

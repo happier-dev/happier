@@ -138,16 +138,19 @@ it('lists saved Checks without a "haven\'t loaded" line while only their results
 
 // REVIEW-2 R2: a listed family still says what it has not read, and offers its next page instead of hiding it.
 it('keeps listed Checks and offers the next page of saved automations under them (ServicesPaging), never a silent end', async () => {
+  const counts: string[] = [];
   const { ServicesChecksView } = await import('./ServicesChecks');
   await account.restore({ serverIdentityId: 'srv_services_checks_paged', machines: [], httpAnswers: {
     'POST /v3/automations/query': { body: { automations: await Promise.all(['1'].map(healthCheckDetail)), nextCursor: 'cursor-2' } } } });
   const scope = storage.getState().settingsScope!;
   await act(async () => { storage.setState({ automations: { '1': healthCheckSummary('1') }, isDataReady: true, automationDefinitionNextCursor: 'cursor-2' }); });
   const screen = await renderScreen(<InboxArtifactSourceBoundary>
-    <ServicesChecksView scope={scope} presented selectedKey={null} onSelect={NO_COUNT} onSelectedRow={NO_COUNT} onCount={NO_COUNT} />
+    <ServicesChecksView scope={scope} presented selectedKey={null} onSelect={NO_COUNT} onSelectedRow={NO_COUNT} onCount={(count) => counts.push(count.parts.filter(Boolean).join(' · '))} />
   </InboxArtifactSourceBoundary>);
   await vi.waitFor(() => expect(screen.getTextContent()).toContain('Check 1'));
   await vi.waitFor(() => expect(screen.findHostByTestId('services.checks.paging.more')).not.toBeNull());
+  // SERVICES-ACCEPT-1116 F4: while later pages may hold more Checks, the count says at least, never an exact "1 check".
+  await vi.waitFor(() => expect(counts.at(-1)).toBe('1+ check'));
 });
 
 it('says a Machine\'s watches have not loaded beside the services already listed', async () => {

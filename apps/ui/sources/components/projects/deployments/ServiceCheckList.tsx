@@ -513,8 +513,8 @@ const CheckState = React.memo(function CheckState(
 
 /**
  * Line 2: why it fails while it does (cause and since when, or how much slower than usual), which Machine stopped
- * checking it, else what it is (kind, cadence, from where). A phone has no columns, so its line 2 draws the bars and the
- * uptime and response beside them (lab B3).
+ * checking it, else what it is (kind, cadence, from where). A phone has no columns, so a healthy row's line 2 draws the
+ * bars and the uptime and response beside them (lab B3).
  */
 const CheckByline = React.memo(function CheckByline(
   props: Readonly<{
@@ -569,7 +569,9 @@ const CheckByline = React.memo(function CheckByline(
     color: theme.colors.text.secondary,
     flexShrink: 1,
   } as const;
-  if (!props.columns && (stale || (!failing && !slow))) {
+  // A phone row draws its bars and figures only while its state is silent (healthy); a row whose state speaks says why
+  // on line 2 instead (lab B3 / A1p): both never fit one phone line.
+  if (!props.columns && !checkStateSpeaks(row, facts, stale)) {
     const uptime = serviceCheckUptimeText(facts.uptimePercent);
     const figures = [
       uptime,
