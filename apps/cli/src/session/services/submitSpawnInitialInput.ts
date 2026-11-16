@@ -19,6 +19,7 @@ import { resolveSessionUserMessageRequestedAction } from './resolveSessionUserMe
 export async function submitSpawnInitialInput(params: Readonly<{
   credentials: StoredCredentials;
   serverId?: string;
+  serverIdentityId?: string | null;
   sessionId: string;
   targetMachineId?: string;
   initialInput?: CreateSpawnedSessionParams['initialInput'];
@@ -91,6 +92,7 @@ export async function submitSpawnInitialInput(params: Readonly<{
     }
     const sent = await sendSessionMessage({
       credentials: params.credentials,
+      serverIdentityId: params.serverIdentityId,
       ...(params.serverId ? { serverId: params.serverId } : {}),
       idOrPrefix: params.sessionId,
       message: text,

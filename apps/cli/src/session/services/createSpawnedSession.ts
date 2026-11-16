@@ -129,6 +129,8 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   accountEncryptionCurrentness?: AccountEncryptionCurrentnessResponse;
   /** Authenticated target Home used by qualified Context preparation; never persisted in spawn input. */
   serverId?: string;
+  /** Portable Home identity already observed by the authenticated Action owner. */
+  serverIdentityId?: string | null;
   /** Invocation-local Account policy supplied by the authenticated Action owner. */
   accountSettings?: Readonly<Record<string, unknown>>;
   directoryKind?: 'path' | 'managed';
@@ -889,6 +891,7 @@ async function createSeededSpawnedSession(args: Readonly<{
       // admission outcome, never a fabricated acceptance.
       const initialInput = await submitSpawnInitialInput({
         credentials: params.credentials,
+        serverIdentityId: params.serverIdentityId,
         ...(params.serverId ? { serverId: params.serverId } : {}),
         sessionId,
         targetMachineId: params.machineId,
@@ -1283,6 +1286,7 @@ export async function createSpawnedSession(
       });
       const initialInput = await submitSpawnInitialInput({
         credentials: params.credentials,
+        serverIdentityId: params.serverIdentityId,
         ...(params.serverId ? { serverId: params.serverId } : {}),
         sessionId: existing.id,
         targetMachineId: params.machineId,
@@ -1641,6 +1645,7 @@ export async function createSpawnedSession(
   // admission outcome, never a fabricated acceptance.
   const submitInitialInput = (rejoinSession?: import('@/session/transport/http/sessionsHttp').RawSessionRecord) => submitSpawnInitialInput({
     credentials: params.credentials,
+    serverIdentityId: params.serverIdentityId,
     ...(params.serverId ? { serverId: params.serverId } : {}),
     sessionId,
     targetMachineId: params.machineId,

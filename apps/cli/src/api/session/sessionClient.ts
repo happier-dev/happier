@@ -1685,6 +1685,7 @@ export class ApiSessionClient extends EventEmitter {
                     credentials,
                     idOrPrefix: this.sessionId,
                     serverId: this.serverBinding.serverId,
+                    serverIdentityId: this.getServerIdentityId(),
                     message: text,
                     messageMeta: sourceMeta,
                     localId,

@@ -174,6 +174,7 @@ export type SessionAgentTransitionParams = Readonly<{
   /** Host-private authenticated input provenance and permission ceiling. */
   inputAdmission?: Parameters<typeof sendSessionMessage>[0]['inputAdmission'];
   callerInputAuthorization?: Parameters<typeof sendSessionMessage>[0]['callerInputAuthorization'];
+  serverIdentityId?: Parameters<typeof sendSessionMessage>[0]['serverIdentityId'];
   callerInputConstraints?: CallerInputConstraintsV1;
   credentialInputConstraints?: CallerInputConstraintsV1;
   /** Same admitted invocation and installed signer retained through every material effect. */
@@ -494,6 +495,7 @@ async function admitExactInput(params: Readonly<{
   machineAdmissionTransport: SessionAgentTransitionParams['machineAdmissionTransport'];
   inputAdmission: SessionAgentTransitionParams['inputAdmission'];
   callerInputAuthorization: SessionAgentTransitionParams['callerInputAuthorization'];
+  serverIdentityId: SessionAgentTransitionParams['serverIdentityId'];
   resolveAuthorizationHeaders?: Parameters<typeof sendSessionMessage>[0]['resolveAuthorizationHeaders'];
   timeoutMs: number;
   /** Proof that the target current view is committed; the source of every arm here. */
@@ -502,6 +504,7 @@ async function admitExactInput(params: Readonly<{
   const localId = params.request.input.localId;
   const send = await params.deps.sendSessionMessage({
     credentials: params.credentials,
+    serverIdentityId: params.serverIdentityId,
     idOrPrefix: params.sessionId,
     message: params.request.input.text,
     localId,
@@ -574,6 +577,7 @@ async function activateTargetAndAdmitInput(params: Readonly<{
   machineAdmissionTransport: SessionAgentTransitionParams['machineAdmissionTransport'];
   inputAdmission: SessionAgentTransitionParams['inputAdmission'];
   callerInputAuthorization: SessionAgentTransitionParams['callerInputAuthorization'];
+  serverIdentityId: SessionAgentTransitionParams['serverIdentityId'];
   externalAction: SessionAgentTransitionParams['externalAction'];
   executionAuthority?: SessionAgentTransitionParams['executionAuthority'];
   resolveAuthorizationHeaders?: Parameters<typeof sendSessionMessage>[0]['resolveAuthorizationHeaders'];
@@ -610,6 +614,7 @@ async function activateTargetAndAdmitInput(params: Readonly<{
     machineAdmissionTransport: params.machineAdmissionTransport,
     inputAdmission: params.inputAdmission,
     callerInputAuthorization: params.callerInputAuthorization,
+    serverIdentityId: params.serverIdentityId,
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
     timeoutMs: params.inputAdmissionTimeoutMs,
     committed,
@@ -675,6 +680,7 @@ async function reconcileAlreadyTargetedSession(params: Readonly<{
   machineAdmissionTransport: SessionAgentTransitionParams['machineAdmissionTransport'];
   inputAdmission: SessionAgentTransitionParams['inputAdmission'];
   callerInputAuthorization: SessionAgentTransitionParams['callerInputAuthorization'];
+  serverIdentityId: SessionAgentTransitionParams['serverIdentityId'];
   externalAction: SessionAgentTransitionParams['externalAction'];
   executionAuthority?: SessionAgentTransitionParams['executionAuthority'];
   resolveAuthorizationHeaders?: Parameters<typeof sendSessionMessage>[0]['resolveAuthorizationHeaders'];
@@ -710,6 +716,7 @@ async function reconcileAlreadyTargetedSession(params: Readonly<{
     machineAdmissionTransport: params.machineAdmissionTransport,
     inputAdmission: params.inputAdmission,
     callerInputAuthorization: params.callerInputAuthorization,
+    serverIdentityId: params.serverIdentityId,
     externalAction: params.externalAction,
     ...(params.executionAuthority ? { executionAuthority: params.executionAuthority } : {}),
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
@@ -888,6 +895,7 @@ export async function runSessionAgentTransition(
       machineAdmissionTransport: params.machineAdmissionTransport,
       inputAdmission: params.inputAdmission,
       callerInputAuthorization: params.callerInputAuthorization,
+      serverIdentityId: params.serverIdentityId,
       externalAction: params.externalAction,
       ...(params.executionAuthority ? { executionAuthority: params.executionAuthority } : {}),
       ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
@@ -1252,6 +1260,7 @@ export async function runSessionAgentTransition(
     machineAdmissionTransport: params.machineAdmissionTransport,
     inputAdmission: params.inputAdmission,
     callerInputAuthorization: params.callerInputAuthorization,
+    serverIdentityId: params.serverIdentityId,
     externalAction: params.externalAction,
     ...(params.executionAuthority ? { executionAuthority: params.executionAuthority } : {}),
     ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),

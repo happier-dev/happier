@@ -53,7 +53,7 @@ import {
   type TranscriptMessageLookupResult,
 } from '@/api/session/transcriptMessageLookup';
 import type { StoredCredentials } from '@/persistence';
-import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { fetchServerFeaturesSnapshot, readServerIdentityIdFromFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { PENDING_INPUT_PROTOCOL_VERSION_V5 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import {
@@ -214,6 +214,8 @@ type SendSessionMessageParams = Readonly<{
   idOrPrefix: string;
   /** Captured sending Home; direct local callers retain the active Home default. */
   serverId?: string;
+  /** Already observed portable Home identity; null is a ready legacy Home. */
+  serverIdentityId?: string | null;
   /** Existing host-admitted routing tuple; never message metadata or a wire option. */
   expectedSessionAddress?: ActionSessionAddressV1;
   message: string;
@@ -1561,12 +1563,17 @@ export async function sendSessionMessage(
   if (nextTurnNote && (executionRunRecipient || !readFileReviewNoteV1(params.messageMeta))) {
     return { ok: false, code: 'unsupported', message: 'Invalid file review note' };
   }
-  if (nextTurnNote) {
-    const snapshot = params.serverFeaturesSnapshot ?? await fetchServerFeaturesSnapshot({
+  let serverFeaturesSnapshot = params.serverFeaturesSnapshot;
+  const readServerFeatures = async () => {
+    serverFeaturesSnapshot ??= await fetchServerFeaturesSnapshot({
       serverUrl: resolveServerHttpBaseUrl(), token: params.credentials.token, timeoutMs: params.timeoutMs,
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
     });
+    return serverFeaturesSnapshot;
+  };
+  if (nextTurnNote) {
+    const snapshot = await readServerFeatures();
     if (snapshot.status !== 'ready'
       || (snapshot.features.capabilities.session.pendingInput?.protocolVersion ?? 0) < PENDING_INPUT_PROTOCOL_VERSION_V5) {
       return { ok: false, code: 'unsupported', message: 'File review notes require current Pending input support' };
@@ -1654,9 +1661,10 @@ export async function sendSessionMessage(
     const credentialAccountId = readAccountIdFromToken(params.credentials.token);
     const binding = params.callerInputAuthorization?.binding;
     const accountId = binding ? readAuthenticatedActionRequesterAccountIdV1(binding) : credentialAccountId;
-    const serverId = params.expectedSessionAddress?.serverId ?? params.serverId
-      ?? params.callerInputAuthorization?.requesterAccountProjection?.serverId
-      ?? params.callerInputAuthorization?.requesterHttpProjection?.serverId ?? configuration.activeServerId;
+    const serverId = binding?.serverIdentityId ?? (params.serverIdentityId === undefined
+      ? readServerIdentityIdFromFeaturesSnapshot(accountId ? await readServerFeatures() : serverFeaturesSnapshot) : params.serverIdentityId);
+    if (accountId && serverId === undefined) return { ok: false, code: 'authority_unavailable',
+      admissionResult: { status: 'outcomeUnknown', localId, code: 'authority_unavailable' } };
     const attribution = accountId && serverId ? materializeActionRequestAttributionV1({
       requestRef: localId, requester: { serverId, accountId }, persona: { serverId, sessionId }, origin: null,
     }) : undefined;

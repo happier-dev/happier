@@ -444,6 +444,7 @@ export function createCliMessageActionDeps(
       // `sharing.session` for a Home it never observed.
       const sendServerFeaturesSnapshot = await readServerFeaturesSnapshot();
       const sendModelSelection = {
+        serverIdentityId: context?.serverIdentityId ?? params.serverIdentityId,
         ...(sendServerFeaturesSnapshot ? { serverFeaturesSnapshot: sendServerFeaturesSnapshot } : {}),
         ...(modelSelectionInput ? { modelSelectionInput } : {}),
       } as const;

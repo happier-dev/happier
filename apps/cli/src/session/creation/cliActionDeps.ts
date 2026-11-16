@@ -1098,6 +1098,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           ...(requesterHttpAuthorization ? { authorizeRequest: requesterHttpAuthorization } : {}),
           ...(accountEncryptionCurrentness ? { accountEncryptionCurrentness } : {}),
           serverId: executionTarget.serverId,
+          serverIdentityId: context?.serverIdentityId ?? params.serverIdentityId,
           accountSettings: defaultsSettings,
           ...(workDepth !== undefined ? { workDepth } : {}),
           ...(discussionParticipant ? { originKind: 'discussion' as const, discussionParticipant, discussionParticipantLaunch }

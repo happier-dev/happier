@@ -251,6 +251,7 @@ export function createCliSessionLifecycleActionDeps(
       }
       const invocation: Parameters<typeof import('@/session/agentTransition/sessionAgentTransitionCoordinator').runSessionAgentTransition>[0] = {
         credentials: params.credentials, request,
+        serverIdentityId: context.serverIdentityId ?? params.serverIdentityId,
         ...(context.authority ? { executionAuthority: context.authority } : {}),
         ...(params.savedSecretOperationContext ? { operationContext: params.savedSecretOperationContext } : {}),
         ...(context.signal ? { signal: context.signal } : {}),

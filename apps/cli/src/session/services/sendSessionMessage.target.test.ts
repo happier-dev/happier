@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import nacl from 'tweetnacl';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
-import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, createActionExecutor, deriveSessionCreationTagV1, deriveAccountMachineKeyFromRecoverySecret,
+import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, FeaturesResponseSchema, createActionExecutor, deriveSessionCreationTagV1, deriveAccountMachineKeyFromRecoverySecret,
   sealEncryptedDataKeyEnvelopeV1, SessionPendingEnqueueByMachineRequestV1Schema, SessionMessageSendResultV1Schema,
   withParticipantRecipientV1 } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -240,7 +240,14 @@ describe('target Session input authoring through HTTP', () => {
       expect(admitted.map(message => message.meta?.permissionMode)).toEqual(['read-only', 'default']);
     } finally { await session.close(); }
   });
-  it('admits a signed external CLI Send through the current E2EE layout-one owner and Machine socket', async () => {
+  it.each([
+    { signed: true, home: 'canonical', assertedCause: false, direct: false }, { signed: false, home: 'canonical', assertedCause: false, direct: false },
+    { signed: false, home: 'legacy', assertedCause: false, direct: false }, { signed: false, home: 'unavailable', assertedCause: false, direct: false },
+    { signed: true, home: 'canonical', assertedCause: true, direct: false },
+    { signed: false, home: 'canonical', assertedCause: false, direct: true },
+  ] as const)('admits a signed external CLI Send through the current E2EE layout-one owner and Machine socket (signed=$signed, Home=$home, asserted=$assertedCause, direct=$direct)', async ({ signed, home, assertedCause, direct }) => {
+    const sendCredentials = { ...credentials,
+      token: `fixture.${Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url')}.signature` };
     const secret = credentials.encryption.secret;
     const machineKey = deriveAccountMachineKeyFromRecoverySecret(secret);
     const dek = new Uint8Array(32).fill(19);
@@ -269,19 +276,22 @@ describe('target Session input authoring through HTTP', () => {
     const client = new ApiMachineClient('token', { id: 'machine-a', encryptionMode: 'plain',
       metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
     const admitted: unknown[] = [];
+    const authoredInputs: ReturnType<typeof UserMessageSchema.parse>[] = [];
     Reflect.set(client, 'socket', createApiSessionSocketStub({ connected: true, emitWithAck: (event, raw) => {
       const request = SessionPendingEnqueueByMachineRequestV1Schema.parse(raw);
-      expect(request.externalAction?.authorization.binding.requestId).toBe('signed-cli-send');
-      if (!request.externalAction) throw new Error('Expected original caller authorization');
-      const { externalAction, ...unsignedRequest } = request;
-      expect(verifyExternalActionMachineRpcRequestV1({ authorizationToken: externalAction.authorization.token,
-        effectActionId: 'session.message.send', target: externalAction.target, installationId: externalAction.installationId,
-        event, method: event, requestId: 'signed-cli-send', params: unsignedRequest, publicKey: keys.publicKey,
-        signature: externalAction.machineSignature })).toBe(true);
+      if (signed) {
+        expect(request.externalAction?.authorization.binding.requestId).toBe('signed-cli-send');
+        if (!request.externalAction) throw new Error('Expected original caller authorization');
+        const { externalAction, ...unsignedRequest } = request;
+        expect(verifyExternalActionMachineRpcRequestV1({ authorizationToken: externalAction.authorization.token,
+          effectActionId: 'session.message.send', target: externalAction.target, installationId: externalAction.installationId,
+          event, method: event, requestId: 'signed-cli-send', params: unsignedRequest, publicKey: keys.publicKey,
+          signature: externalAction.machineSignature })).toBe(true);
+      } else expect(request.externalAction).toBeUndefined();
       expect(request.targetMachineId).toBe('machine-a');
-      expect(decryptSessionPayload({ ctx, ciphertextBase64: request.content.t === 'encrypted' ? request.content.c : '' }))
-        .toMatchObject({ content: { text: 'Continue the replied session' }, meta: { permissionMode: 'default',
-          happierInputRequestV1: { producer: 'cli' } } });
+      const authored = UserMessageSchema.parse(decryptSessionPayload({ ctx,
+        ciphertextBase64: request.content.t === 'encrypted' ? request.content.c : '' }));
+      authoredInputs.push(authored);
       admitted.push(request);
       return Promise.resolve({ v: 1, result: { status: 'accepted', localId: request.localId } });
     } }));
@@ -289,21 +299,54 @@ describe('target Session input authoring through HTTP', () => {
     const input = { sessionId, message: 'Continue the replied session', localId: 'signed-cli-input', wait: false };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'terminal-proof', binding: {
       accountId: 'requester', authentication: { kind: 'terminal', tokenEpoch: 1 },
-      serverIdentityId: 'home', machineId: 'machine-a', custodianAccountId: 'requester', installationId: 'installation',
+      serverIdentityId: 'srv_home', machineId: 'machine-a', custodianAccountId: 'requester', installationId: 'installation',
       actionId: 'session.message.send', requestId: 'signed-cli-send', target,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'signed-cli-send', target, input }),
       accountEncryptionMode: 'e2ee',
     } });
-    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null,
+    const deps = createCliActionDeps({ token: sendCredentials.token, credentials: sendCredentials, sessionId, mode: 'plain', ctx: null,
+      serverId: 'local-home-alias', serverHttpBaseUrl: 'http://fixture-home',
       machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('machine-a'),
       externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation',
-      serverIdentityId: 'home', machineAdmissionTransport: (request, options) => client.enqueueSessionPendingByMachine(request, options) });
+      ...(home === 'canonical' ? { serverIdentityId: 'srv_home' } : {}),
+      resolveServerFeaturesSnapshot: async () => home === 'unavailable' ? { status: 'error', reason: 'network' }
+        : { status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }) },
+      machineAdmissionTransport: (request, options) => client.enqueueSessionPendingByMachine(request, options) });
     try {
+      if (direct) {
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ features: {},
+          capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } }), { status: 200 })));
+        const result = await sendSessionMessage({ credentials: sendCredentials, idOrPrefix: sessionId,
+          serverId: 'local-home-alias', message: input.message, localId: input.localId, wait: false,
+          inputAdmission: buildTrustedHostSessionInputAdmissionV1('cli'),
+          timeoutMs: 1000, machineAdmissionTransport: (request, options) => client.enqueueSessionPendingByMachine(request, options) });
+        expect(result).toMatchObject({ ok: true, admissionResult: { status: 'accepted' } });
+        expect(authoredInputs[0]).toMatchObject({ meta: { happierInputRequestV1: {
+          actionRequestAttributionV1: { requester: { serverId: 'srv_home', accountId: 'requester' } },
+        } } });
+        return;
+      }
       const result = await createActionExecutor({
     readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps }).execute('session.message.send', input,
-        { surface: 'cli', authority: 'present_user', externalActionTarget: target, externalActionExecutionAuthorization: authorization });
-      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'signed-cli-input' } });
-      expect(admitted).toHaveLength(1);
+        { surface: 'cli', authority: 'present_user', externalActionTarget: target,
+          ...(assertedCause ? { actionRequestAttributionV1: { requestRef: 'signed-cli-input',
+            requester: { serverId: 'local-home-alias', accountId: 'requester' },
+            persona: { serverId: 'local-home-alias', sessionId }, origin: null } } : {}),
+          ...(signed ? { externalActionExecutionAuthorization: authorization } : {}) });
+      expect(result, JSON.stringify(result)).toMatchObject(assertedCause
+        ? { ok: true, result: { status: 'rejected', code: 'session_input_untrusted_assertion' } }
+        : home === 'unavailable'
+        ? { ok: true, result: { status: 'outcomeUnknown', localId: 'signed-cli-input', code: 'authority_unavailable' } }
+        : { ok: true, result: { status: 'accepted', localId: 'signed-cli-input' } });
+      expect(admitted).toHaveLength(assertedCause || home === 'unavailable' ? 0 : 1);
+      if (!assertedCause && home !== 'unavailable') {
+        expect(authoredInputs[0]).toMatchObject({ content: { text: 'Continue the replied session' }, meta: { permissionMode: 'default',
+          happierInputRequestV1: { producer: 'cli', ...(home === 'canonical' ? { actionRequestAttributionV1: {
+            requester: { serverId: 'srv_home', accountId: 'requester' },
+            persona: { serverId: 'srv_home', sessionId },
+          } } : {}) } } });
+        if (home === 'legacy') expect(authoredInputs[0]).not.toHaveProperty('meta.happierInputRequestV1.actionRequestAttributionV1');
+      }
       expect(http.post).not.toHaveBeenCalled();
     } finally { identity.mockRestore(); }
   });
