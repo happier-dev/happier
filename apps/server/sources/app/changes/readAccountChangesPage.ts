@@ -95,7 +95,8 @@ export async function withAccountChangesReads<T>(
 ): Promise<T> {
     return getDbProviderFromEnv(process.env, 'postgres') === 'sqlite'
         ? run((operation, singleStatement) => inReadSnapshot(operation, singleStatement ? { singleStatementRead: true } : undefined))
-        : inTx(tx => run(operation => operation(tx)), { readOnly: true, isolationLevel: 'ReadCommitted' });
+        // Reads return caller data, never a write's TransactionResult (the inReadSnapshot shape).
+        : (await inTx(async tx => ({ value: await run(operation => operation(tx)) }), { readOnly: true, isolationLevel: 'ReadCommitted' })).value;
 }
 
 /**

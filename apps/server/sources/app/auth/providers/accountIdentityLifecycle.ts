@@ -283,7 +283,7 @@ export async function claimIdentityEligibilityCheck(input: {
     provider: string;
     identityId: string;
     readNextCheckAt: Date | null;
-    readToken: Uint8Array;
+    readToken: Uint8Array<ArrayBuffer>;
     nextCheckAt: Date;
 }): Promise<boolean> {
     const { count } = await inTx(tx => tx.accountIdentity.updateMany({
