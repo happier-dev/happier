@@ -480,6 +480,7 @@ describe('deployment storage real SQLite boundary', () => {
             // A configured, resource-free data association follows the existing delete proof rule.
             await db.deploymentTargetLink.update({ where: { id: dependent.id }, data: { state: 'configured' } });
         }
+        const predecessorDomainBefore = await db.deploymentDomain.findUniqueOrThrow({ where: { id: removingId } });
         const admitted = await begin();
         expect(admitted, JSON.stringify(admitted)).toMatchObject({ ok: true, state: 'queued' });
         if (!admitted.ok || !('deploymentId' in admitted)) throw new Error('Expected captured Domain teardown admission');
@@ -488,6 +489,15 @@ describe('deployment storage real SQLite boundary', () => {
         for (const domainId of [activeId, removingId]) {
             const row = await db.deploymentDomain.findUniqueOrThrow({ where: { id: domainId } });
             const header = projectDeploymentDomainHeader(row);
+            if (domainId === removingId && !removeEnvironment) {
+                // Stopping one Link does not take over a predecessor's removal.
+                expect(row).toEqual(predecessorDomainBefore);
+                expect(await inTx(tx => readAcceptedDeploymentDomainInTx(tx, binding, {
+                    environmentId: environment.id, domainId, expectedDomainRevision: header.revision,
+                    actionOperationId: input.actionOperationId, capture: header.placements![0]!,
+                }))).toBeNull();
+                continue;
+            }
             expect(header).toMatchObject({ state: 'removing', revision: 2,
                 operationAddress: { operationId: input.actionOperationId, machineId: machine.id },
                 placements: [{ desired: false, environmentContent: domainId === removingId ? environmentRef : historicalEnvironmentRef,
@@ -509,8 +519,13 @@ describe('deployment storage real SQLite boundary', () => {
         expect(await readDomains(environment.id, activeId)).toMatchObject({ status: 200,
             body: { ok: true, domain: { id: activeId, state: 'removing' } } });
         expect((await readDomains(unrelated.environment.id)).status).toBe(401);
-        for (const reference of [domainRef, environmentRef, predecessorRef, historicalEnvironmentRef, historicalLinkRef]) {
+        for (const reference of [domainRef, historicalEnvironmentRef, historicalLinkRef]) {
             expect(await signedGet(`/v1/artifacts/${reference.contentArtifactId}`, 'deployments.teardown')).toMatchObject({ status: 200 });
+        }
+        // Only Environment removal captures the predecessor and its current Environment operand.
+        for (const reference of [environmentRef, predecessorRef]) {
+            expect(await signedGet(`/v1/artifacts/${reference.contentArtifactId}`, 'deployments.teardown'))
+                .toMatchObject({ status: removeEnvironment ? 200 : 404 });
         }
         const unrelatedReference = await artifactFor('deployment-domain.v1');
         expect(await signedGet(`/v1/artifacts/${unrelatedReference.contentArtifactId}`, 'deployments.teardown')).toMatchObject({ status: 404 });
@@ -549,7 +564,7 @@ describe('deployment storage real SQLite boundary', () => {
         await db.$executeRawUnsafe('UPDATE "DeploymentDomain" SET "deletedAt"=CURRENT_TIMESTAMP WHERE "id" IN (?, ?)', activeId, removingId);
         // This live retained Domain arrives after receipt admission but before
         // the first native stage. Removing the running guard must fail here.
-        const queuedDomainId = await insertDomain(environment.id, predecessor.id, 'removing');
+        const queuedDomainId = await insertDomain(environment.id, removeEnvironment ? predecessor.id : link.id, 'removing');
         await expectRefusedStart('failed');
         await db.$executeRawUnsafe('UPDATE "DeploymentDomain" SET "deletedAt"=CURRENT_TIMESTAMP WHERE "id"=?', queuedDomainId);
         expect(await transition('running')).toMatchObject({ ok: true, state: 'running' });
@@ -567,7 +582,7 @@ describe('deployment storage real SQLite boundary', () => {
         expect(await transition('running')).toMatchObject({ ok: true, deploymentId: admitted.deploymentId, state: 'running' });
         // A late persisted Domain changes no Environment revision. This tests
         // the final current-inventory read, not a future add-writer race proof.
-        const lateId = await insertDomain(environment.id, predecessor.id, 'removing');
+        const lateId = await insertDomain(environment.id, removeEnvironment ? predecessor.id : link.id, 'removing');
         const receiptBefore = await db.deployment.findUniqueOrThrow({ where: { id: admitted.deploymentId } });
         const linkBefore = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: link.id } });
         const sequenceBefore = (await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq;
@@ -1168,8 +1183,12 @@ describe('deployment storage real SQLite boundary', () => {
             expect(machineListQueries.filter(query => query.model === 'DeploymentEnvironment')).toMatchObject([
                 { action: 'findMany' },
             ]);
-            expect(machineListQueries.filter(query => query.model === 'Artifact')).toEqual([]);
-            expect(machineListQueries.filter(query => query.model === 'ProjectSource' && query.action === 'findUnique')).toHaveLength(1);
+            expect(machineListQueries.filter(query => query.model === 'Artifact')).toMatchObject([
+                { action: 'findMany', args: { select: { body: false }, where: { id: { in: [content.contentArtifactId] } } } },
+            ]);
+            expect(machineListQueries.filter(query => query.model === 'ProjectSource')).toMatchObject([
+                { action: 'findMany', args: { where: { id: { in: [source.source.id] } } } },
+            ]);
             expect((await app.inject({ method: 'GET', url: machineListUrl,
                 headers: { 'x-test-user-id': outsider.id } })).statusCode).toBe(404);
             await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { controllerMachineId: machine.id, buildMachineId: machine.id } });
@@ -1190,7 +1209,7 @@ describe('deployment storage real SQLite boundary', () => {
             const partialMachineList = await app.inject({ method: 'GET', url: machineListUrl,
                 headers: { 'x-test-user-id': owner.id } });
             expect(partialMachineList.statusCode, partialMachineList.body).toBe(200);
-            expect(partialMachineList.json()).toMatchObject({ coverage: 'partial' });
+            expect(partialMachineList.json()).toMatchObject({ coverage: 'complete' });
             expect(partialMachineList.json().items.map((row: { id: string }) => row.id)).toEqual([environment.id]);
             expect(partialMachineList.body).not.toContain(hiddenEnvironment.id);
             expect(partialMachineList.body).not.toContain(hidden.source.id);
@@ -1393,7 +1412,7 @@ describe('deployment storage real SQLite boundary', () => {
                 expect(linked.statusCode, linked.body).toBe(200);
                 const boundContent = DeploymentEnvironmentContentV1Schema.parse({ name: 'Grant Environment', retainPreviousDeployments: 1,
                     definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } },
-                    bindings: [{ purpose: 'variable', name: 'TOKEN', phase: 'runtime', source: {
+                    bindings: [{ purpose: 'variable', name: 'TOKEN', phase: 'runtime', grantRef: crypto.randomUUID(), source: {
                         kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1,
                     } }] });
                 const nextContent = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),

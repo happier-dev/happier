@@ -24,6 +24,7 @@ import { readDeploymentMachineReferencesInTx, readDeploymentReceiptInTx } from '
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MachineSecretGrantV1Schema } from '@happier-dev/deployment-protocol';
 
 const publishedMachine = { metadata: encodePlainMachineStoredContent({ host: 'Disposition', platform: 'linux',
     happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
@@ -200,11 +201,11 @@ it('releases former builder grants and Machine references after Stop leaves the 
     await db.deployment.update({ where: { id: receipt.id }, data: deploymentAcceptedExecutionColumns(
         createDeploymentAcceptedExecution({ controller: { machineId: f.machine.id, installationId: f.machine.installationId! },
             builder: { machineId: formerBuilder.id, installationId: formerBuilder.installationId! } })) });
-    await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.environment.id, grants: [{
+    await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.environment.id, grants: [MachineSecretGrantV1Schema.parse({
         v: 1, kind: 'environmentValues', environmentId: f.environment.id, machineId: formerBuilder.id,
-        installationId: formerBuilder.installationId!, binding: { purpose: 'variable', phase: 'build', name: 'BUILD_TOKEN' },
+        installationId: formerBuilder.installationId!, binding: { purpose: 'variable', phase: 'build', grantRef: crypto.randomUUID() },
         sealedContent: 'sealed-build-input',
-    }] }));
+    })] }));
     const retain = () => inTx(tx => syncEnvironmentSecretGrantsInTx(tx, {
         environmentId: f.environment.id, grants: [], retainAcceptedBuildCustody: true,
     }));
@@ -386,13 +387,13 @@ it('retires Automation and exact grant authority only when its surviving runtime
             serverId, projectSourceId: f.source.id, environmentId: f.environment.id,
         } },
     }) });
-    await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.environment.id, grants: [{
+    await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.environment.id, grants: [MachineSecretGrantV1Schema.parse({
         v: 1, kind: 'environmentValues', environmentId: f.environment.id, machineId: f.machine.id,
-        installationId: f.machine.installationId!, binding: { purpose: 'variable', phase: 'runtime', name: 'TOKEN' },
+        installationId: f.machine.installationId!, binding: { purpose: 'variable', phase: 'runtime', grantRef: crypto.randomUUID() },
         sealedContent: 'sealed-environment-values',
-    }, { v: 1, kind: 'environmentValues', environmentId: f.environment.id, machineId: builder.id,
-        installationId: builder.installationId!, binding: { purpose: 'variable', phase: 'build', name: 'BUILD_TOKEN' },
-        sealedContent: 'sealed-build-values' }] }));
+    }), MachineSecretGrantV1Schema.parse({ v: 1, kind: 'environmentValues', environmentId: f.environment.id, machineId: builder.id,
+        installationId: builder.installationId!, binding: { purpose: 'variable', phase: 'build', grantRef: crypto.randomUUID() },
+        sealedContent: 'sealed-build-values' })] }));
     const predecessor = await db.deploymentTargetLink.create({ data: { environmentId: f.environment.id,
         createdByAccountId: f.owner.id, role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer',
         state: 'configured', ...await f.content('deployment-target-link.v1'), machines: { create: [{

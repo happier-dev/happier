@@ -354,7 +354,7 @@ describe('reviewed create preparation authority', () => {
         }, { authentication: 'real' });
     });
 
-    it('lets a signed preview Create inspect only its execution Machines and preserves hidden workload incompleteness', async () => {
+    it('lets a signed preview Create inspect only its execution Machines and omits unreadable workload headers', async () => {
         const { f, read } = await previewFixture();
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const own = read(f.machine.id);
@@ -367,7 +367,7 @@ describe('reviewed create preparation authority', () => {
             await db.projectSource.update({ where: { id: f.source.source.id }, data: { audience: [] } });
             const partial = await app.inject({ method: 'GET', url: own.path, headers: own.headers });
             expect(partial.statusCode, partial.body).toBe(200);
-            expect(partial.json()).toMatchObject({ ok: true, coverage: 'partial' });
+            expect(partial.json()).toMatchObject({ ok: true, coverage: 'complete' });
             expect(partial.json().items.map((row: { id: string }) => row.id)).not.toContain(hidden.id);
             const other = read(crypto.randomUUID());
             const refused = await app.inject({ method: 'GET', url: other.path, headers: other.headers });

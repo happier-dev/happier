@@ -4,7 +4,7 @@ import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema,
     encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1, sealSessionDataKeyBundleV0 } from '@happier-dev/protocol';
-import { DeploymentEnvironmentContentV1Schema, DeploymentTargetLinkContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema, DeploymentTargetLinkContentV1Schema, MachineSecretGrantV1Schema } from '@happier-dev/deployment-protocol';
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx } from '@/storage/inTx';
@@ -95,10 +95,10 @@ describe('Duplicate through the Environment create HTTP/storage boundary', () =>
         await db.deploymentTargetLink.update({ where: { id: target.id }, data: { activeDeploymentId: receipt.id } });
         await db.deploymentEnvironment.update({ where: { id: f.original.environmentId }, data: { runtimeTargetLinkId: target.id } });
         await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.original.environmentId,
-            grants: [{ v: 1, kind: 'environmentValues', environmentId: f.original.environmentId,
+            grants: [MachineSecretGrantV1Schema.parse({ v: 1, kind: 'environmentValues', environmentId: f.original.environmentId,
                 machineId: f.sourceMachine.id, installationId: f.sourceMachine.installationId!,
-                binding: { purpose: 'variable', phase: 'runtime', name: 'SOURCE_ONLY' },
-                sealedContent: privacyKit.encodeBase64(nacl.randomBytes(48)) }] }));
+                binding: { purpose: 'variable', phase: 'runtime', grantRef: crypto.randomUUID() },
+                sealedContent: privacyKit.encodeBase64(nacl.randomBytes(48)) })] }));
         expect(await db.machineSecretGrant.count({ where: { environmentId: f.original.environmentId } })).toBe(1);
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const post = (payload: unknown) => app.inject({ method: 'POST', url: '/v1/deployments/environments',

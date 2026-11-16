@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as privacyKit from 'privacy-kit';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
+    MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { AutomationDefinitionCreateRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { parseAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { eventRouter } from '@/app/events/eventRouter';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { createProjectSourceInTx, updateProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
@@ -34,26 +36,30 @@ describe('preview retirement through the ordinary Automation Run wake', () => {
     it('commits only the related cleanup Workflow, publishes its incumbent queued wake, and permits the normal daemon claim', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
-            installationId: randomUUID(), metadata: '{}', active: false } });
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'Preview cleanup', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), active: false } });
         const source = await inTx(tx => createProjectSourceInTx(tx, account.id, {
             serverId, requestKey: randomUUID(), name: 'Preview cleanup', repository,
         }));
         if (!source.ok) throw new Error(source.error);
-        const artifact = async (kind: string) => {
+        const artifact = async (kind: string, content: unknown) => {
             const stored = await createArtifact({ actorUserId: account.id, artifactId: randomUUID(),
+                kind: `v1:other:${kind}`,
                 header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Preview' })),
-                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(content) })),
                 dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
             if (!stored.ok) throw new Error(stored.error);
             return { contentArtifactId: stored.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         };
         const placement = { serverId, projectSourceId: source.source.id, controllerMachineId: machine.id,
             protection: 'nonProduction' as const, deployerMode: 'managers' as const };
-        const templateContent = await artifact('deployment-environment.v1');
+        const fixtureContent = createDeploymentEnvironmentDetailV1();
+        const templateContent = await artifact('deployment-environment.v1', fixtureContent.content);
         const template = await inTx(tx => createDeploymentEnvironmentInTx(tx, account.id, { ...placement,
             ...templateContent, purpose: 'standard', requestKey: randomUUID() }));
         if (!template.ok) throw new Error(template.error);
-        const linkContent = await artifact('deployment-target-link.v1');
+        const linkContent = await artifact('deployment-target-link.v1', fixtureContent.targetLinks[0]!.content);
         const link = await inTx(tx => linkDeploymentTargetInTx(tx, account.id, { serverId,
             environmentId: template.environmentId, expectedRevision: template.revision, requestKey: randomUUID(),
             targetId: 'own-server', role: 'runtime', machines: [{ machineId: machine.id, installationId: machine.installationId! }],
@@ -81,7 +87,7 @@ describe('preview retirement through the ordinary Automation Run wake', () => {
         const cleanup = await author('preview_cleanup');
         const admission = await author('preview_admission');
         const unrelated = await author();
-        const childContent = await artifact('deployment-environment.v1');
+        const childContent = await artifact('deployment-environment.v1', fixtureContent.content);
         const child = await inTx(tx => createDeploymentEnvironmentInTx(tx, account.id, { ...placement,
             ...childContent, purpose: 'preview', requestKey: randomUUID(), preview: {
                 templateEnvironmentId: template.environmentId, expectedTemplateRevision: link.revision,

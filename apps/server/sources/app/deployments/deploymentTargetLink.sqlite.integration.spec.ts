@@ -608,7 +608,7 @@ describe('current runtime membership replacement', () => {
                 if (domain !== 'pending') {
                     const current = requireDomainMutationApplied(added);
                     const observations = current.domain.placements!.map(capture => {
-                        const observation = { capture, state: 'active' as const,
+                        const observation = { capture, state: domain === 'up' ? 'active' as const : 'warning' as const,
                             dnsHealth: { status: domain === 'up' ? 'up' as const : 'down' as const, evidence: { v: 1 as const,
                                 items: [{ source: { kind: 'alert' as const, label: 'dns' }, author: { kind: 'process' as const }, text: 'Membership DNS observation' }] } } };
                         return { ...observation, proof: signMachineInstallationProof({ privateKey: keys.secretKey,

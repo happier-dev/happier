@@ -499,7 +499,7 @@ describe('adopt create preparation admission', () => {
     const f = await fixture();
     await expect(
       f.mint('machines.services.adopt', f.adoptInput(f.foreign.id)),
-    ).rejects.toMatchObject({ code: 'credential_scope_denied' });
+    ).rejects.toMatchObject({ code: 'source_access_denied' });
   });
 
   it('issues no create admission for the review step', async () => {

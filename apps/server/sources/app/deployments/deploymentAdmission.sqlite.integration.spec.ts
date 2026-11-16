@@ -16,7 +16,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, signM
     DeploymentReceiptResultV1Schema } from '@happier-dev/protocol';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1, DeploymentEnvironmentUpdateStorageInputV1Schema,
     captureDeploymentBindingSavedSecretRevisionsV1, createOwnServerEnvironmentConfigurationV1,
-    type EnvironmentSecretLaunchAdmissionBodyV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+    MachineSecretGrantV1Schema, type EnvironmentSecretLaunchAdmissionBodyV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { readEnvironmentSecretLaunchAdmissionInTx } from './environmentSecretLaunchAdmission';
 import { createDeploymentEnvironmentInTx, loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader, updateDeploymentEnvironmentInTx, setDeploymentEnvironmentBindingsInTx,
@@ -38,6 +38,7 @@ import { auth } from '@/app/auth/auth';
 import { verifyExternalActionDomainExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { linkDeploymentTargetInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { projectDeploymentHealthAggregateV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
@@ -411,7 +412,7 @@ describe('current Source deployment authority', () => {
             if (!created.ok) throw new Error(created.error);
             return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         };
-        const variable = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'COLOR', source: { kind: 'value', value: 'blue' } };
+        const variable = createDeploymentVariableBindingV1({ phase: 'runtime', name: 'COLOR', source: { kind: 'value', value: 'blue' } });
         const initialBody = writer === 'grant' ? { ...body(1), bindings: [variable] } : body(1);
         const initial = await artifact(initialBody);
         const createInput = { ...initial, serverId, projectSourceId: source.source.id, requestKey: crypto.randomUUID(),
@@ -450,10 +451,10 @@ describe('current Source deployment authority', () => {
             if (writer === 'bindings') return setDeploymentEnvironmentBindingsInTx(tx, accountId, {
                 ...base, ...candidate, referencedSavedSecretRevisions: [], grants: [] });
             if (writer === 'bindingValues' || writer === 'grant') return setDeploymentEnvironmentBindingsInTx(tx, accountId, {
-                ...base, ...(writer === 'grant' ? initial : candidate), referencedSavedSecretRevisions: [], grants: [{
+                ...base, ...(writer === 'grant' ? initial : candidate), referencedSavedSecretRevisions: [], grants: [MachineSecretGrantV1Schema.parse({
                     v: 1, kind: 'environmentValues', environmentId: created.environmentId, machineId: target.id,
-                    installationId: target.installationId!, binding: { purpose: 'variable', phase: 'runtime', name: 'COLOR' }, sealedContent: 'sealed-new-values',
-                }] });
+                    installationId: target.installationId!, binding: { purpose: 'variable', phase: variable.phase, grantRef: variable.grantRef! }, sealedContent: 'sealed-new-values',
+                })] });
             if (writer === 'template') return setDeploymentEnvironmentTemplateInTx(tx, accountId, { ...base, ...candidate });
             if (writer === 'backup') return setDeploymentEnvironmentBackupInTx(tx, accountId, { ...base, ...candidate });
             if (writer === 'detach' || writer === 'unlinkEmpty') {
