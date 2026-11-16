@@ -237,10 +237,15 @@ external editor. Inspection and saving do not run setup or grant setup approval.
 
 Setup approval with **Until it changes** covers the setup commands and the current
 contents of the checkout files they run. For a plain command, that means a script
-named as the program or passed to an interpreter, such as `./setup.sh` or
-`bash scripts/setup.sh`. Editing one of those files asks again. Happier does not
-follow what a script sources or reads, so list those files in `workspace.setupInputs`
-to make their changes ask again too:
+named as the program, sourced, or passed to an interpreter, such as `./setup.sh`,
+`source scripts/env.sh`, `bash -e scripts/setup.sh` or
+`pwsh -File scripts/setup.ps1`, including after `env`, `sudo` or `cmd /c`. Editing,
+adding or relinking one of those files asks again. A program linked outside the
+checkout, such as `.venv/bin/python`, is reviewed by where it points. Happier does
+not follow inline `-c` code or what a script sources or reads. Commands such as
+`npm run setup` or `make setup` read their own definition files, so declare them
+with the native source kinds (`package_script`, `make` and so on) or list those
+files in `workspace.setupInputs` to make their changes ask again too:
 
 ```json
 {

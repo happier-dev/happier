@@ -14,7 +14,7 @@ import { prepareProjectSetup, type PreparedProjectSetupCommand, type PreparedPro
 import { authorizePreparedProjectCommand, createProjectNativeInvocationCustody, executeProjectSetup, projectBaseEnvironment, publishProjectFiniteAdmission, type ProjectSetupExecutionInput, type ProjectSetupExecutionOutcome, type ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import { readProjectExecutionInputs, resolveProjectNativeCommand } from '@/workspaces/projectSetup/projectNativeResolution';
 import { readProjectDefinitionFileBytes } from '@/workspaces/projectSetup/nativeDefinitionFiles';
-import { listLiteralCommandExecutedFiles } from '@/workspaces/projectSetup/literalCommandFiles';
+import { readLiteralCommandExecutedFiles, type LiteralCommandFileFactV1 } from '@/workspaces/projectSetup/literalCommandFiles';
 import { resolveProjectServiceStartChoice } from '@/workspaces/execution/projectServicePlacement';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { buildProjectManagedServiceStartRequest, type ProjectManagedServiceSupervisionInput, type ProjectManagedServiceHandle, type EnvironmentProjectManagedServiceHandle, type createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -543,20 +543,20 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 if (command.resolution.reviewInputs.some(fact => fact.file === file && fact.content !== read.bytes.toString('utf8'))) throw new ServiceStartRefusal('project_service_effect_changed');
                 files.push({ file, digest: createHash('sha256').update(read.bytes).digest('hex') });
             }
-        } else {
-            for (const file of listLiteralCommandExecutedFiles(association.workspace.rootPath, command.cwd, command.source.command)) {
-                const read = await phase('native_definition', () => readProjectDefinitionFileBytes(association.workspace.rootPath, file));
-                assertNotCancelled();
-                if (read.kind === 'absent') continue;
-                if (read.kind === 'refused') throw new ServiceStartRefusal(read.code);
-                files.push({ file, digest: createHash('sha256').update(read.bytes).digest('hex') });
-            }
+        }
+        let executedFiles: LiteralCommandFileFactV1[] = [];
+        if (command.kind === 'literal') {
+            const literal = command;
+            const executed = await phase('native_definition', () => readLiteralCommandExecutedFiles(association.workspace.rootPath, literal.cwd, literal.source.command));
+            assertNotCancelled();
+            if (executed.kind === 'refused') throw new ServiceStartRefusal(executed.code);
+            executedFiles = executed.files;
         }
         const portablePath = (value: string) => {
             const local = relative(association.workspace.rootPath, value);
             return isAbsolute(value) && local !== '..' && !local.startsWith('../') && !local.startsWith('..\\') && !isAbsolute(local) ? local.replaceAll('\\', '/') || '.' : value;
         };
-        const resolvedCommand = command.kind === 'literal' ? { source: command.source, cwd: portablePath(command.cwd) }
+        const resolvedCommand = command.kind === 'literal' ? { source: command.source, cwd: portablePath(command.cwd), ...(executedFiles.length ? { files: executedFiles } : {}) }
             : command.kind === 'pluginNative' ? { source: command.source, executable: command.resolution.executable,
                 args: command.resolution.args.map(portablePath), cwd: portablePath(command.resolution.cwd),
                 adapterVersion: command.lease.pluginVersion, nativeInstance: command.resolution.nativeInstance,

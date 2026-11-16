@@ -26,7 +26,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { resolveProjectToolchainSelection, inspectProjectNativeCommand, type ProjectNativeCommandIo, type ProjectNativeCommandResult, type ProjectNativeFileFact } from './projectNativeResolution';
 import { readProjectManifest } from './projectManifestFile';
-import { listLiteralCommandExecutedFiles } from './literalCommandFiles';
+import { readLiteralCommandExecutedFiles } from './literalCommandFiles';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -281,9 +281,9 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         const toolchainReviewInputs: ProjectNativeFileFact[] = selectedToolchain.file !== undefined && selectedToolchain.content !== undefined
             ? [{ file: selectedToolchain.file, content: selectedToolchain.content }] : [];
         const files = new Map<string, string>();
-        async function addFile(file: string, expectedContent?: string, presence: 'required' | 'whenPresent' = 'required'): Promise<ProjectSetupPreparationRefusal | null> {
+        async function addFile(file: string, expectedContent?: string): Promise<ProjectSetupPreparationRefusal | null> {
             const result = await readProjectDefinitionFileBytes(root, file);
-            if (result.kind === 'absent') return presence === 'whenPresent' ? null : refuse('setup_input_missing');
+            if (result.kind === 'absent') return refuse('setup_input_missing');
             if (result.kind === 'refused') return refuse(result.code);
             if (expectedContent !== undefined && result.bytes.toString('utf8') !== expectedContent) return refuse('project_setup_effect_changed');
             const normalized = relative(root, resolve(root, file.replaceAll('\\', '/'))).replaceAll('\\', '/');
@@ -361,12 +361,11 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
                 if (!cwd.valid || !cwd.resolvedPath) return refuse('outside_root');
                 if (source.command.includes('\0')) return refuse('project_setup_command_invalid');
                 // The command text names the files it runs; their current bytes are the reviewed effect.
-                for (const file of listLiteralCommandExecutedFiles(root, cwd.resolvedPath, source.command)) {
-                    const result = await addFile(file, undefined, 'whenPresent');
-                    if (result) return result;
-                }
+                const executed = await readLiteralCommandExecutedFiles(root, cwd.resolvedPath, source.command);
+                if (executed.kind === 'refused') return refuse(executed.code);
                 commands.push({ kind: 'literal', source, cwd: cwd.resolvedPath });
-                reviewedCommands.push({ kind: 'command', command: source.command, cwd: reviewPath(root, cwd.resolvedPath), os: input.platform.os });
+                reviewedCommands.push({ kind: 'command', command: source.command, cwd: reviewPath(root, cwd.resolvedPath), os: input.platform.os,
+                    ...(executed.files.length ? { files: executed.files } : {}) });
                 continue;
             }
             const provenance = { ...source, file: relative(root, resolve(root, source.file.replaceAll('\\', '/'))).replaceAll('\\', '/') };

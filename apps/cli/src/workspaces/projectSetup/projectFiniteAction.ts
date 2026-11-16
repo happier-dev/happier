@@ -45,7 +45,7 @@ import { inspectProjectDefinitionExecutionFacts } from './projectDefinitionInspe
 import { selectProjectDefinitionRead } from './projectDefinitionRead';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { readProjectManifest } from './projectManifestFile';
-import { listLiteralCommandExecutedFiles } from './literalCommandFiles';
+import { readLiteralCommandExecutedFiles } from './literalCommandFiles';
 import { prepareProjectSetup, resolveProjectSetupConfigEnvironment, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan } from './projectSetupPreparation';
 import { executeProjectSetup, executeProjectFiniteProcess, publishProjectFiniteAdmission, authorizePreparedProjectCommand,
     createProjectNativeLaunchAdmission, createProjectNativeInvocationCustody, type ProjectSetupExecutionOutcome, type ProjectSetupOperationContext } from './projectSetupExecution';
@@ -511,10 +511,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const config = resolveProjectSetupConfigEnvironment(manifest, runtime.configEnvironment);
             if (config.kind === 'refused') throw coded(config.code);
             const files = new Map<string, string>();
-            const addFile = async (file: string, presence: 'required' | 'whenPresent' = 'required') => {
+            const addFile = async (file: string) => {
                 const read = await readProjectDefinitionFileBytes(association.workspace.rootPath, file);
                 await assertNotCancelled();
-                if (read.kind === 'absent' && presence === 'whenPresent') return;
                 if (read.kind !== 'read') throw coded(read.kind === 'refused' ? read.code : 'native_configuration_missing');
                 files.set(file.replaceAll('\\', '/'), createHash('sha256').update(read.bytes).digest('hex'));
             };
@@ -522,8 +521,10 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 if (source.kind === 'command') {
                     const cwd = validatePath((source.cwd ?? '.').replaceAll('\\', '/'), association.workspace.rootPath);
                     if (!cwd.valid || !cwd.resolvedPath) throw coded('outside_root');
-                    for (const file of listLiteralCommandExecutedFiles(association.workspace.rootPath, cwd.resolvedPath, source.command)) await addFile(file, 'whenPresent');
-                    return { source };
+                    const executed = await readLiteralCommandExecutedFiles(association.workspace.rootPath, cwd.resolvedPath, source.command);
+                    await assertNotCancelled();
+                    if (executed.kind === 'refused') throw coded(executed.code);
+                    return { source, ...(executed.files.length ? { files: executed.files } : {}) };
                 }
                 await addFile(source.file);
                 if (source.kind === 'pluginNative') {
@@ -681,17 +682,10 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     reviewedFiles.set(file.replaceAll('\\', '/'), createHash('sha256').update(read.bytes).digest('hex'));
                 }
             }
-            if (command?.kind === 'literal') {
-                for (const file of listLiteralCommandExecutedFiles(plan.workspace.rootPath, command.cwd, command.source.command)) {
-                    const read = await readProjectDefinitionFileBytes(plan.workspace.rootPath, file);
-                    await assertNotCancelled();
-                    if (read.kind === 'absent') continue;
-                    if (read.kind === 'refused') return { kind: 'failed', result: failure(read.code) };
-                    reviewedFiles.set(file, createHash('sha256').update(read.bytes).digest('hex'));
-                }
-            }
-            const literalFiles = [...reviewedFiles].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, digest]) => ({ file, digest }));
-            const reviewedCommand = command?.kind === 'literal' ? { source, cwd: reviewPath(command.cwd), ...(literalFiles.length ? { files: literalFiles } : {}) }
+            const executed = command?.kind === 'literal' ? await readLiteralCommandExecutedFiles(plan.workspace.rootPath, command.cwd, command.source.command) : undefined;
+            await assertNotCancelled();
+            if (executed?.kind === 'refused') return { kind: 'failed', result: failure(executed.code) };
+            const reviewedCommand = command?.kind === 'literal' ? { source, cwd: reviewPath(command.cwd), ...(executed?.files.length ? { files: executed.files } : {}) }
                 : native ? { source, executable: command?.kind === 'native' ? reviewPath(command.resolution.command)
                     : command?.kind === 'pluginNative' ? command.resolution.executable : undefined,
                     args: (command?.kind === 'native' ? command.resolution.reviewInvocation.args : native.args).map(reviewPath), cwd: reviewPath(native.cwd),
