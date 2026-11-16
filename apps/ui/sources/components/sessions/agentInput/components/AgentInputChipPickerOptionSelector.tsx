@@ -336,7 +336,7 @@ function AgentInputChipPickerOptionButton(
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
-  // The Agent rail is a list picker: its rows take the menu's inset rounded highlight like every menu.
+  // The Agent rail is a list picker: its rows take the menu's edge-to-edge highlight like every menu.
   // The panel's rail frame owns the rail's fill (its material); the list adds none of its own.
   railContainer: {
     width: "100%",

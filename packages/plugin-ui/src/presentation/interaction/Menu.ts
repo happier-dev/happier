@@ -3,11 +3,11 @@ import { Platform } from 'react-native';
 import type { HappierPageTextStep } from '../layout/pageText.js';
 
 /**
- * One transient-menu scale, independent of a collection's density preference. The menu keeps one even inner
- * inset on every side (`sectionPaddingVerticalPx` top and bottom, `insetPx` at the sides) and a row's hover and
- * selection fill is an inset rounded highlight inside it, concentric with the menu's corner (owner 2026-11-11,
- * phone #03/#05 and desktop #05): no bare strip above a highlighted first row, and the first row is not glued to
- * the top. A row's words stay on `paddingHorizontalPx` from the menu's edge, like headings and footers.
+ * One transient-menu scale, independent of a collection's density preference. Rows run edge to edge (owner
+ * 2026-11-08, restated 2026-11-16 for the composer popovers): a row's hover and selection fill spans the menu's
+ * full width with no side inset and no rounded pill, and the surface's corner clips the first and last row. The
+ * menu keeps `sectionPaddingVerticalPx` top and bottom so the first row is not glued to the top (owner 2026-11-11,
+ * phone #03/#05). A row's words stay on `paddingHorizontalPx` from the menu's edge, like headings and footers.
  */
 export const HAPPIER_MENU_ROW_METRICS = {
   iconGlyphSizePx: 16,
@@ -23,18 +23,14 @@ export const HAPPIER_MENU_ROW_METRICS = {
   paddingVerticalPx: 8,
   paddingHorizontalPx: 12,
   sectionPaddingVerticalPx: 4,
-  /** The menu's side inset: a row's highlight stands this far in from the menu's edge. */
-  insetPx: 4,
-  /** The highlight's corner, concentric with the menu's 10 px corner at `insetPx`. */
-  highlightRadiusPx: 6,
   subtitleGapPx: 2,
 } as const;
 
-/** A menu row's highlight shape: inset from the menu's sides, rounded, with its words on the menu's text edge. */
+/** A menu row's highlight shape: edge to edge and square, with its words on the menu's text edge. */
 export const HAPPIER_MENU_ROW_SHAPE = Object.freeze({
-  marginHorizontal: HAPPIER_MENU_ROW_METRICS.insetPx,
-  paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx - HAPPIER_MENU_ROW_METRICS.insetPx,
-  borderRadius: HAPPIER_MENU_ROW_METRICS.highlightRadiusPx,
+  marginHorizontal: 0,
+  paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
+  borderRadius: 0,
 });
 
 /**

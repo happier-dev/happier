@@ -729,7 +729,7 @@ function MenuRows({
         style={(state) => ({
           minHeight: HAPPIER_MENU_ROW_METRICS.minHeightPx,
           paddingVertical: HAPPIER_MENU_ROW_METRICS.paddingVerticalPx,
-          // The menu's inset rounded highlight, words on the menu's text edge.
+          // The menu's edge-to-edge highlight, words on the menu's text edge.
           ...HAPPIER_MENU_ROW_SHAPE,
           borderWidth: 0,
           borderColor: 'transparent',
@@ -944,7 +944,7 @@ const FLOATING_SURFACE_SCROLL_INSET = Object.freeze({
   paddingHorizontal: FLOATING_SURFACE_INSET.horizontal,
   paddingVertical: FLOATING_SURFACE_INSET.vertical,
 });
-/** A menu keeps one even inset: top and bottom here, the sides on each row's inset highlight (HAPPIER_MENU_ROW_SHAPE). */
+/** A menu keeps its breathing room top and bottom; its rows run edge to edge at the sides (HAPPIER_MENU_ROW_SHAPE). */
 const FLOATING_MENU_SCROLL_INSET = Object.freeze({
   paddingVertical: HAPPIER_MENU_ROW_METRICS.sectionPaddingVerticalPx,
 });

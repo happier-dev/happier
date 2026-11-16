@@ -1,7 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
-import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import type { ActionListItem, ActionListItemContent } from './ActionListSection';
 import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
@@ -132,7 +131,7 @@ describe('ActionListSection', () => {
         }));
     });
 
-    it('draws menu rows as the menu\'s inset rounded highlight, with a fill and no outline', async () => {
+    it('draws menu rows edge to edge, with a fill and no outline', async () => {
         const { ActionListSection } = await import('./ActionListSection');
         const { flattenTestStyle } = await import('@/dev/testkit/harness/popoverHarness');
 
@@ -149,9 +148,9 @@ describe('ActionListSection', () => {
         for (const testID of ['row-current', 'row-other']) {
             const style = rowStyle(testID);
             expect(style.alignSelf).toBe('stretch');
-            // Inset rounded highlight (owner 2026-11-11, phone #03/#05): the menu keeps one even inner inset.
-            expect(style.marginHorizontal).toBe(MENU_ROW_METRICS.insetPx);
-            expect(style.borderRadius).toBe(MENU_ROW_METRICS.highlightRadiusPx);
+            // Edge to edge (owner 2026-11-08, restated 2026-11-16): the fill spans the menu's full width, no pill.
+            expect(style.marginHorizontal ?? 0).toBe(0);
+            expect(style.borderRadius ?? 0).toBe(0);
             expect(style.borderWidth).toBe(0);
         }
         // The current choice is a fill; the other row has none.

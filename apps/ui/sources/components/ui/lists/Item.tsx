@@ -380,7 +380,7 @@ const PANE_ROW_INSET_STYLE = { paddingHorizontal: PANE_TEXT_INSET_PX } as const;
 // the frame's mark and its meta on the frame's edge (lab `rw` C).
 const BODY_EDGE_ROW_INSET_STYLE = { paddingHorizontal: 0 } as const;
 // The inset too: a host menu row and a plugin menu row (and the state line among them) start on one edge. The
-// highlight is the menu's inset rounded fill (MENU_ROW_SHAPE), so the words keep the menu's text edge inside it.
+// highlight is the menu's edge-to-edge fill (MENU_ROW_SHAPE), so the words keep the menu's text edge inside it.
 const MENU_ROW_PADDING_STYLE = {
     paddingVertical: MENU_ROW_METRICS.paddingVerticalPx,
     paddingHorizontal: MENU_ROW_SHAPE.paddingHorizontal,

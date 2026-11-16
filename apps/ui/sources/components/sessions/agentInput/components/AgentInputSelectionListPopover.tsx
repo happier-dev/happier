@@ -101,7 +101,7 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
                         maxHeight={maxHeight}
                         heightBehavior={resolvePopoverSelectionListHeightBehavior(props.heightBehavior)}
                         optionsHostInlineControls={props.optionsHostInlineControls}
-                        // A floating chip menu draws inset rounded rows like every other menu
+                        // A floating chip menu draws edge-to-edge rows like every other menu
                         // (dropdowns, action lists, the command palette), not full-bleed bands.
                         optionPresentation={props.optionPresentation ?? 'menu'}
                     />
