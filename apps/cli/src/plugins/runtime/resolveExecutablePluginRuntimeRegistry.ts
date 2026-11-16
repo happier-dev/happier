@@ -5617,9 +5617,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         requestAuthUses: qualifiedRequestAuthUses,
                         isCurrent: readsInvocationCurrent,
                     });
-            } catch {
+            } catch (error) {
                 lifetime.complete();
-                return null;
+                throw error;
             }
         }
         const requestAuth = operationAuthority?.requestAuth ?? null;
