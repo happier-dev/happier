@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -18,7 +18,9 @@ it('preserves the template read refusal through preview workflow preparation', a
     admitAccount: async () => null,
     resolveRequestHeaders: async () => ({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'fixture-proof' }),
     dispatchReceipt: async () => { throw new Error('Read cannot dispatch'); } });
-  const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+  const { executor } = createCliActionExecutorHarness({ token: 'fixture', sessionId: '', mode: 'plain', ctx: null,
+    serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://preview.test' },
+  { ...createUnavailableActionTransportDeps(), ...deps });
   const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' };
   let caught: unknown;
   try {
