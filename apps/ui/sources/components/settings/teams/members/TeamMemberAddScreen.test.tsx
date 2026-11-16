@@ -102,8 +102,8 @@ describe('TeamMemberAddScreen search', () => {
         // An irreversible-at-mint horizon must say which audience it opens history
         // to. The row's title is rendered text, not a prop of the node the testID
         // resolves to, so it is asserted where a reader would actually see it.
-        expect(screen.getTextContent()).toContain('teams.history.fromMembershipNamed(name=Platform)');
-        expect(screen.getTextContent()).toContain('teams.history.allExistingNamed(name=Platform)');
+        expect(screen.getTextContent()).toContain('teams.history.fromMembership');
+        expect(screen.getTextContent()).toContain('teams.history.allExisting');
     });
 
     it('says why a found Account cannot be chosen instead of silently disabling it', async () => {

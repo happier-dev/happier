@@ -97,7 +97,7 @@ describe('TeamOverviewScreen shared-credentials destination', () => {
 
         const screen = await renderOverview(serverId);
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(
-            t('teams.overview.summary.credentialsShared', { count: 1, team: teamSummaryFixture().name }),
+            t('teams.overview.summary.credentialsShared', { count: 1 }),
         ));
         screen.pressByTestId('team-overview-credentials');
         expect(routerPush).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/credentials`);

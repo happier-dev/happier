@@ -20,6 +20,7 @@ import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -527,7 +528,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     description={t('teams.groups.archivedReadOnly')}
                     action={group.capabilities.restore ? {
                         testID: 'team-group-restore',
-                        label: t('teams.groups.restoreAction', { name: groupName ?? t('common.unavailable') }),
+                        label: t('teams.groups.restoreAction'),
                         // Restore is legitimate *because* the Group is archived, so it gates on host
                         // readiness rather than on the ordinary-write rule — but an unresolved approval
                         // for this exact restore is still custody the shell holds, and offering the
@@ -614,11 +615,14 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
             const last = start + GROUP_DETAIL_CHUNK_SIZE >= members.rows.length;
             add(`members:${chunk[0]!.membershipId}`, () => (
                 <ItemGroup
+                    surface="none"
                     title={first ? t('teams.groups.membersSection') : undefined}
                     action={first ? addMemberAction : undefined}
                     description={first ? notice ?? undefined : undefined}
                     virtualizedSegment={{ first, last }}
                 >
+                    {/* A roster is a browse list: flat, rows parted by the one list-row rule across chunks (LISTS-BUILD). */}
+                    <CollectionRows continued={!last}>
                     {chunk.map((member) => {
                         const person = resolveAccountDisplayName({ profile: member.account, accountId: member.accountId, viewerAccountId: context.scope.accountId });
                         const displayName = person.name;
@@ -635,6 +639,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                         id={member.accountId}
                                         size={PAGE_LIST_METRICS.rowIdentityMarkPx}
                                         imageUrl={member.account.avatarUrl}
+                                        monogram={person.named ? person.name : null}
                                     />
                                 )}
                                 // An external-only row is not read-only: a native
@@ -708,6 +713,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                             />
                         );
                     })}
+                    </CollectionRows>
                 </ItemGroup>
             ));
         }
@@ -767,7 +773,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     >
                         <Item
                             testID="team-group-history:from_membership"
-                            title={t('teams.history.fromMembershipNamed', { name: groupName ?? t('common.unavailable') })}
+                            title={t('teams.history.fromMembership')}
                             selected={groupHistoryAccess === 'from_membership'}
                             accessibilityRole="radio"
                             webRole="radio"
@@ -777,7 +783,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         />
                         <Item
                             testID="team-group-history:all_existing"
-                            title={t('teams.history.allExistingNamed', { name: groupName ?? t('common.unavailable') })}
+                            title={t('teams.history.allExistingGroup')}
                             selected={groupHistoryAccess === 'all_existing'}
                             accessibilityRole="radio"
                             webRole="radio"
@@ -808,6 +814,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                             id={membership.accountId}
                                             size={PAGE_LIST_METRICS.rowIdentityMarkPx}
                                             imageUrl={membership.account.avatarUrl}
+                                            monogram={resolveAccountDisplayName({ profile: membership.account, accountId: membership.accountId, viewerAccountId: context.scope.accountId }).name}
                                         />
                                     )}
                                     disabled={!canEditRoster}
@@ -928,7 +935,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         testID="team-group-archive"
                         size="small"
                         display="destructive"
-                        title={t('teams.groups.archiveAction', { name: groupName ?? t('common.unavailable') })}
+                        title={t('teams.groups.archiveAction')}
                         titleNumberOfLines="complete"
                         disabled={busy || !context.canMutate || !groupCurrent}
                         onPress={async () => {

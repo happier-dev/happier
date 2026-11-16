@@ -31,7 +31,7 @@ export const TeamMemberRow = React.memo(function TeamMemberRow(props: Readonly<{
             subtitle={teamMemberRowSubtitle(membership, person, t('teams.members.joined', {
                 when: formatCalendarDate(membership.joinedAt, props.language),
             }))}
-            leftElement={<Avatar id={membership.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={membership.account.avatarUrl} />}
+            leftElement={<Avatar id={membership.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={membership.account.avatarUrl} monogram={person.named ? person.name : null} />}
             accessoryLayout="adaptive"
             rightElementOutsidePressable={leaveContext !== undefined}
             rightElement={membership.status === 'suspended' || leaveContext ? <>

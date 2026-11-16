@@ -51,7 +51,7 @@ const PeopleRailRosterRow = React.memo(function PeopleRailRosterRow(props: Reado
             title={person.name}
             subtitle={[homeRoleLabel(row.homeRole), person.viewer && person.named ? t('homeGovernance.person.you') : null, person.hint]
                 .filter((part): part is string => part !== null).join(' · ')}
-            icon={<PersonMark rowRole="catalogRow" accountId={row.accountId} avatarUrl={row.profile.avatarUrl ?? null} />}
+            icon={<PersonMark rowRole="catalogRow" accountId={row.accountId} avatarUrl={row.profile.avatarUrl ?? null} monogram={person.named ? person.name : null} />}
             rightElement={row.status === 'active' ? undefined : <HomeAccountStatusGlyph row={row} locale={props.locale} />}
             selected={props.selected}
             density="compact"
@@ -121,7 +121,7 @@ export const HomePeopleCollectionRail = React.memo(function HomePeopleCollection
                     testID={`home-people-rail-row:${row.accountId}`}
                     title={person.name}
                     subtitle={person.hint ?? undefined}
-                    icon={<PersonMark rowRole="item" accountId={row.accountId} avatarUrl={row.profile.avatarUrl ?? null} />}
+                    icon={<PersonMark rowRole="item" accountId={row.accountId} avatarUrl={row.profile.avatarUrl ?? null} monogram={person.named ? person.name : null} />}
                     selected={props.selectedAccountId === row.accountId}
                     density="compact"
                     showChevron={false}
@@ -191,10 +191,10 @@ export const HomePeopleCollectionRail = React.memo(function HomePeopleCollection
     );
 });
 
-const PersonMark = React.memo(function PersonMark(props: Readonly<{ accountId: string; avatarUrl: string | null; rowRole: 'catalogRow' | 'item' }>) {
+const PersonMark = React.memo(function PersonMark(props: Readonly<{ accountId: string; avatarUrl: string | null; monogram: string | null; rowRole: 'catalogRow' | 'item' }>) {
     return (
         <HappierCollectionListMark rowRole={props.rowRole}>
-            <Avatar id={props.accountId} size={PERSON_RAIL_AVATAR_SIZE} imageUrl={props.avatarUrl} />
+            <Avatar id={props.accountId} size={PERSON_RAIL_AVATAR_SIZE} imageUrl={props.avatarUrl} monogram={props.monogram} />
         </HappierCollectionListMark>
     );
 });

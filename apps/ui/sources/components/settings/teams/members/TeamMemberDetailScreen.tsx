@@ -522,6 +522,7 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
                         id={membership.accountId}
                         size={MEMBER_HEADER_AVATAR_SIZE}
                         imageUrl={membership.account.avatarUrl}
+                        monogram={person.named ? person.name : null}
                     />
                 )}
                 meta={[
@@ -604,7 +605,7 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
                         subtitle={management.kind === 'native'
                             ? context.team.capabilities.manageMembers
                                 ? teamRoleDescription(membership.role)
-                                : `${teamRoleDescription(membership.role)} ${t('teams.members.roleReadOnly', { team: context.team.name })}`
+                                : `${teamRoleDescription(membership.role)} ${t('teams.members.roleReadOnly')}`
                             : t('teams.members.roleSetBy', { source: management.label })}
                         subtitleLines={0}
                         mode="info"
@@ -668,7 +669,7 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
                                 testID="team-member-remove"
                                 size="small"
                                 display="destructive"
-                                title={t('teams.members.removal.action', { team: context.team.name })}
+                                title={t('teams.members.removal.action')}
                                 disabled={!canAct}
                                 onPress={remove}
                             />

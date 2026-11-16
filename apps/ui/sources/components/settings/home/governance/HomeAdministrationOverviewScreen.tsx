@@ -404,7 +404,7 @@ const HomeOverviewOwnership = React.memo(function HomeOverviewOwnership(props: R
                                 subtitle={person.viewer && person.named
                                     ? t('homeGovernance.overviewPage.ownerYou')
                                     : homeRoleLabel('owner')}
-                                leftElement={<Avatar id={row.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={row.profile.avatarUrl ?? null} />}
+                                leftElement={<Avatar id={row.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={row.profile.avatarUrl ?? null} monogram={person.named ? person.name : null} />}
                                 mode="info"
                                 showChevron={false}
                             />

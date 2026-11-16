@@ -613,8 +613,8 @@ describe('TeamGroupDetailScreen', () => {
         // The horizon this choice mints is the Group's own, so both options name the
         // Group. The generic Team wording describes a different, broader audience.
         const historyText = screen.getTextContent();
-        expect(historyText).toContain('teams.history.fromMembershipNamed(name=Developers)');
-        expect(historyText).toContain('teams.history.allExistingNamed(name=Developers)');
+        expect(historyText).toContain('teams.history.fromMembership');
+        expect(historyText).toContain('teams.history.allExistingGroup');
 
         await waitForTestId(screen, 'team-group-candidates-retry');
         expect(screen.getTextContent()).toContain('teams.errors.loadFailed');

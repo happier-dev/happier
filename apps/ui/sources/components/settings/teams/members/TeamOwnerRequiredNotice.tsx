@@ -45,7 +45,7 @@ export const TeamOwnerRequiredNotice = React.memo(function TeamOwnerRequiredNoti
             title={t('teams.members.ownerRequiredTitle')}
             description={props.noCandidate === true
                 ? t('teams.members.ownerRequiredNoCandidate')
-                : t('teams.members.ownerRequiredBody', { team: context.team.name })}
+                : t('teams.members.ownerRequiredBody')}
             accessibilityLiveRegion="polite"
             action={context.team.recovery.canAppointOwner && props.onChooseOwner && props.noCandidate !== true ? {
                 label: t('teams.members.chooseOwner'),

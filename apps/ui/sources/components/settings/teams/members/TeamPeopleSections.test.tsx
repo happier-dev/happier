@@ -69,6 +69,8 @@ installSettingsViewCommonModuleMocks({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Import the real component at collection, after the boundaries: a cold import inside a test body can outlast it.
+const { TeamPeopleSections } = await import('./TeamPeopleSections');
 
 const ELIGIBILITY_PATH = '/v1/home/governance/eligibility/get';
 const TEAMS_LIST_PATH = '/v1/teams/list';
@@ -145,7 +147,6 @@ describe('People page teammates (owner ruling Q6)', () => {
         nextCursor: null,
       },
     });
-    const { TeamPeopleSections } = await import('./TeamPeopleSections');
     // The People page is a page-presented list; section actions draw only there.
     const { ItemList } = await import('@/components/ui/lists/ItemList');
     const screen = await renderScreen(<ItemList><TeamPeopleSections /></ItemList>);
@@ -182,7 +183,6 @@ describe('People page teammates (owner ruling Q6)', () => {
         capabilities: teamCapabilitiesFixture({ viewRoster: false }),
       }),
     );
-    const { TeamPeopleSections } = await import('./TeamPeopleSections');
     const { ItemList } = await import('@/components/ui/lists/ItemList');
     const screen = await renderScreen(<ItemList><TeamPeopleSections /></ItemList>);
     await vi.waitFor(() =>
@@ -207,7 +207,6 @@ describe('People page teammates (owner ruling Q6)', () => {
         teamMembershipFixture({ accountId: 'member-a' }),
         teamMembershipFixture({ id: 'membership-2', accountId: 'account-other' }),
       ], nextCursor: null } });
-      const { TeamPeopleSections } = await import('./TeamPeopleSections');
       const { ItemList } = await import('@/components/ui/lists/ItemList');
       const screen = await renderScreen(<ItemList><TeamPeopleSections /></ItemList>, {
         createNodeMock: (element) => ((element as Readonly<{ type?: unknown }>).type === 'div' ? {} : null),
@@ -246,7 +245,6 @@ describe('People page teammates (owner ruling Q6)', () => {
       teamMembershipFixture({ id: 'membership-2', accountId: 'account-other' }),
       teamMembershipFixture({ id: 'membership-3', accountId: 'account-third' }),
     ], nextCursor: null } });
-    const { TeamPeopleSections } = await import('./TeamPeopleSections');
     const { ItemList } = await import('@/components/ui/lists/ItemList');
     const { t } = await import('@/text');
     const screen = await renderScreen(<ItemList><TeamPeopleSections /></ItemList>);
@@ -269,7 +267,6 @@ describe('People page teammates (owner ruling Q6)', () => {
       counts: { members: 1, suspendedMembers: 0, groups: 0, waitingInvitations: null },
       capabilities: teamCapabilitiesFixture({ viewRoster: true }),
     }));
-    const { TeamPeopleSections } = await import('./TeamPeopleSections');
     const { ItemList } = await import('@/components/ui/lists/ItemList');
     const { t } = await import('@/text');
     const screen = await renderScreen(<ItemList><TeamPeopleSections /></ItemList>);
@@ -288,7 +285,6 @@ describe('People page teammates (owner ruling Q6)', () => {
       capabilities: teamCapabilitiesFixture({ viewRoster: true }),
     }));
     harness.answer(home, MEMBERS_LIST_PATH, { status: 500, body: { error: 'internal' } });
-    const { TeamPeopleSections } = await import('./TeamPeopleSections');
     const { ItemList } = await import('@/components/ui/lists/ItemList');
     const screen = await renderScreen(<ItemList><TeamPeopleSections /></ItemList>);
 

@@ -283,6 +283,7 @@ const TeamIdentityFacts = React.memo(function TeamIdentityFacts(props: Readonly<
                         size={READ_ONLY_LOGO_SIZE}
                         imageUrl={team.logo?.url ?? null}
                         thumbhash={team.logo?.thumbhash ?? null}
+                        monogram={team.name}
                     />
                 )}
             />
@@ -643,7 +644,7 @@ const TeamSettingsReadOnlyBanner = React.memo(function TeamSettingsReadOnlyBanne
             testID="team-settings-read-only"
             tone="neutral"
             icon={<Icon name="lock" />}
-            title={t('teams.denied.settings', { team: props.context.team.name })}
+            title={t('teams.denied.settings')}
             description={askTeamManagersText(names)}
         />
     );

@@ -286,12 +286,33 @@ export function homeInvitePeopleAction(
     presentation: 'primary' | 'secondary' = 'secondary',
 ): PageHeaderPrimaryAction | undefined {
     if (!canInvitePeople(context)) return undefined;
-    const serverId = context.scope.serverId;
+    return invitePeopleAction({ serverId: context.scope.serverId, testID, presentation });
+}
+
+/** The same action on a Team's own pages (its Overview and Invitations): it invites to that Team, filled. */
+export function teamInvitePeopleAction(input: Readonly<{
+    serverId: string;
+    teamId: string;
+    testID: string;
+    disabled?: boolean;
+}>): PageHeaderPrimaryAction {
+    return invitePeopleAction({ ...input, presentation: 'primary' });
+}
+
+function invitePeopleAction(input: Readonly<{
+    serverId: string;
+    teamId?: string;
+    testID: string;
+    presentation: 'primary' | 'secondary';
+    disabled?: boolean;
+}>): PageHeaderPrimaryAction {
+    const { serverId, teamId } = input;
     return {
         title: t('homeGovernance.invite.action'),
         icon: 'plus',
-        ...(presentation === 'secondary' ? { presentation } : {}),
-        testID,
-        onPress: () => { presentHomeInvitePeople({ serverId }); },
+        ...(input.presentation === 'secondary' ? { presentation: input.presentation } : {}),
+        testID: input.testID,
+        ...(input.disabled === undefined ? {} : { disabled: input.disabled }),
+        onPress: () => { presentHomeInvitePeople({ serverId, ...(teamId ? { teamId } : {}) }); },
     };
 }

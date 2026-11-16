@@ -188,7 +188,7 @@ export const TeamCredentialAudienceEditorSection = React.memo(function TeamCrede
                                     testID={`team-credential-audience-member:${membershipId}`}
                                     title={name}
                                     leftElement={membership ? (
-                                        <Avatar id={membership.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={membership.account.avatarUrl} />
+                                        <Avatar id={membership.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={membership.account.avatarUrl} monogram={name} />
                                     ) : undefined}
                                     detail={mode === null ? t('teams.credentials.audience.none') : deliveryModeLabel(mode)}
                                     accessibilityLabel={[name, mode === null ? t('teams.credentials.audience.none') : deliveryModeLabel(mode)].join(', ')}

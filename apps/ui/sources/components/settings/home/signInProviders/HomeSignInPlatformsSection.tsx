@@ -495,12 +495,8 @@ const SignInPlatformRow = React.memo(function SignInPlatformRow(
             <SectionContentRow>
               <Text style={styles.purpose}>
                 {platform.id === 'github'
-                  ? t('homeGovernance.signInProviders.githubPurpose', {
-                      home: context.homeName,
-                    })
-                  : t('homeGovernance.signInProviders.workosPurpose', {
-                      home: context.homeName,
-                    })}
+                  ? t('homeGovernance.signInProviders.githubPurpose')
+                  : t('homeGovernance.signInProviders.workosPurpose')}
               </Text>
             </SectionContentRow>
             {rows([...platform.primary, ...platform.details])}
@@ -597,12 +593,8 @@ export const HomeSignInPlatformsSection = React.memo(
           title={t('homeGovernance.signInProviders.platforms')}
           description={
             readOnly
-              ? t('homeGovernance.signInProviders.platformsDescriptionReadOnly', {
-                  home: context.homeName,
-                })
-              : t('homeGovernance.signInProviders.platformsDescription', {
-                  home: context.homeName,
-                })
+              ? t('homeGovernance.signInProviders.platformsDescriptionReadOnly')
+              : t('homeGovernance.signInProviders.platformsDescription')
           }
         >
           {platforms === null ? (

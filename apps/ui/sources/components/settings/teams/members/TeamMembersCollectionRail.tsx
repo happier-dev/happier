@@ -52,7 +52,7 @@ const MemberRailRow = React.memo(function MemberRailRow(props: Readonly<{
       ? `${t('teams.status.suspended')} · ${teamMemberRowSubtitle(membership, person)}`
       : teamMemberRowSubtitle(membership, person)}
     subtitleLeading={membership.status === 'suspended' ? <StatusDot size={6} color={theme.colors.state.warning.foreground} /> : undefined}
-    icon={<HappierCollectionListMark rowRole="catalogRow"><Avatar id={membership.accountId} size={MEMBER_RAIL_AVATAR_SIZE} imageUrl={membership.account.avatarUrl} /></HappierCollectionListMark>}
+    icon={<HappierCollectionListMark rowRole="catalogRow"><Avatar id={membership.accountId} size={MEMBER_RAIL_AVATAR_SIZE} imageUrl={membership.account.avatarUrl} monogram={person.named ? person.name : null} /></HappierCollectionListMark>}
     selected={props.selected}
     density="compact"
     showChevron={false}

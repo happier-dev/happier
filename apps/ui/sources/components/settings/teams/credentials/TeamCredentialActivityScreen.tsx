@@ -3,6 +3,7 @@ import type { TeamCredentialActivityKindV1 } from '@happier-dev/protocol/teams';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 import { useTeamCredentialActivity } from '@/hooks/teams/useTeamCredentialResources';
 import { useOpenedPrivateLabels } from '@/sync/ops/privateLabels/useOpenedPrivateLabels';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
@@ -152,7 +153,8 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
             ) : null}
 
             {activity.rows.length > 0 ? (
-                <ItemGroup title={t('teams.credentials.activity.title')}>
+                <ItemGroup surface="none" title={t('teams.credentials.activity.title')}>
+                    <CollectionRows>
                     {activity.rows.map((event, index) => {
                         const key = `${event.createdAt}:${index}`;
                         const subjectDisplayName = openedActivityDisplayNames[key] ?? t('common.unavailable');
@@ -171,6 +173,7 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
                             showChevron={false}
                         />;
                     })}
+                    </CollectionRows>
                 </ItemGroup>
             ) : null}
 

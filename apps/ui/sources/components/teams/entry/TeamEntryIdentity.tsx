@@ -40,6 +40,7 @@ export function TeamEntryIdentity(props: Readonly<{
                         size={TEAM_ENTRY_LOGO_SIZE}
                         imageUrl={props.logo?.url ?? null}
                         thumbhash={props.logo?.thumbhash ?? null}
+                        monogram={teamName}
                     />
                 </View>
                 <Text

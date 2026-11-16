@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
@@ -178,14 +179,16 @@ const TeamsCollectionLanding = React.memo(function TeamsCollectionLanding(props:
     const landing = resolveTeamsCollectionLanding(active.rows, readLastVisitedTeamsCollectionTeam());
     if (landing) return <Redirect href={teamDetailPath(landing) as never} />;
 
+    // A Home that failed to answer has not said it has no Teams: name the failure, never "No Teams yet" beside it.
+    const answeredUnavailableHomes = active.unavailableHomes.filter((home) => home.reason !== 'loading');
     return (
         <ItemList>
             <PageHeader testID="teams-directory-header" title={t('teams.title')} description={t('teams.pages.directory')} />
-            <TeamsEmptyState collection={collection} onCreate={() => router.push(teamsCreatePath() as never)} />
-            <UnavailableHomes
-                homes={active.unavailableHomes.filter((home) => home.reason !== 'loading')}
-                onRetry={active.refresh}
-            />
+            {answeredUnavailableHomes.length === 0 ? (
+                <TeamsEmptyState collection={collection} onCreate={() => router.push(teamsCreatePath() as never)} />
+            ) : (
+                <UnavailableHomes homes={answeredUnavailableHomes} onRetry={active.refresh} />
+            )}
         </ItemList>
     );
 });
@@ -282,15 +285,18 @@ function useTeamsDirectoryRows(input: Readonly<{
                 const first = start === 0;
                 const last = start + TEAM_DIRECTORY_CHUNK_SIZE >= list.length;
                 add(`${keyPrefix}:${teamAddressKey(chunk[0]!.address)}`, () => (
-                    <ItemGroup title={first ? title : undefined} virtualizedSegment={{ first, last }}>
-                        {chunk.map((row) => (
-                            <TeamRow
-                                key={`${keyPrefix}:${teamAddressKey(row.address)}`}
-                                row={row}
-                                showHome={active.multiHome}
-                                onPress={openTeam}
-                            />
-                        ))}
+                    <ItemGroup surface="none" title={first ? title : undefined} virtualizedSegment={{ first, last }}>
+                        {/* A browse list lies flat, its rows parted by the one list-row rule across chunks (LISTS-BUILD). */}
+                        <CollectionRows continued={!last}>
+                            {chunk.map((row) => (
+                                <TeamRow
+                                    key={`${keyPrefix}:${teamAddressKey(row.address)}`}
+                                    row={row}
+                                    showHome={active.multiHome}
+                                    onPress={openTeam}
+                                />
+                            ))}
+                        </CollectionRows>
                     </ItemGroup>
                 ));
             }

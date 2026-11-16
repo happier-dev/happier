@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { presentHomeInvitePeople } from '@/components/settings/home/governance/HomeInvitePeopleDialog';
+import { presentHomeInvitePeople, teamInvitePeopleAction } from '@/components/settings/home/governance/HomeInvitePeopleDialog';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -101,10 +101,7 @@ const CredentialsDestination = React.memo(function CredentialsDestination(
       testID="team-overview-credentials"
       icon={<Icon name="key" />}
       title={t('teams.credentials.title')}
-      subtitle={teamOverviewCredentialsSummary(
-        totalCount,
-        context.team.name,
-      )}
+      subtitle={teamOverviewCredentialsSummary(totalCount)}
       onPress={() => router.push(teamCredentialsPath(context.address))}
     />
   );
@@ -160,12 +157,12 @@ const TeamOverviewHeader = React.memo(function TeamOverviewHeader(
       ]}
       primaryAction={
         invite
-          ? {
-              title: t('homeGovernance.invite.action'),
+          ? teamInvitePeopleAction({
+              serverId: address.serverId,
+              teamId: address.teamId,
               testID: 'team-overview-invite',
               disabled: !props.context.canMutate,
-              onPress: () => openInvite(props.context),
-            }
+            })
           : undefined
       }
     />
@@ -230,13 +227,13 @@ const TeamSetupSection = React.memo(function TeamSetupSection(
           state,
           testID: 'team-overview-setup-share',
           title: t('teams.overview.setup.shareTitle'),
-          detail: t('teams.overview.setup.shareBody', { team: context.team.name }),
+          detail: t('teams.overview.setup.shareBody'),
         };
     }
   });
   return (
     <ItemGroup
-      title={t('teams.overview.setup.title', { team: context.team.name })}
+      title={t('teams.overview.setup.title')}
       description={t('teams.overview.setup.description')}
     >
       <SectionContentRow>
@@ -431,8 +428,8 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
             ? undefined
             // The first sentence already says who to ask; only real names add to it.
             : managerNames.length > 0
-              ? `${t('teams.overview.managedBy', { team: team.name })} ${askTeamManagersText(managerNames)}`
-              : t('teams.overview.managedBy', { team: team.name })
+              ? `${t('teams.overview.managedBy')} ${askTeamManagersText(managerNames)}`
+              : t('teams.overview.managedBy')
         }
       >
         {shown('members') ? (

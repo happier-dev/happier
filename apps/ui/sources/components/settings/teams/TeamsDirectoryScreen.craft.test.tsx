@@ -39,12 +39,13 @@ installSettingsViewCommonModuleMocks({
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
+// Import the real screen at collection, after the boundaries: a cold import inside a test body can outlast it.
+const { TeamsDirectoryScreen } = await import('./TeamsDirectoryScreen');
 
 const ELIGIBILITY_PATH = '/v1/home/governance/eligibility/get';
 const TEAMS_LIST_PATH = '/v1/teams/list';
 
 async function renderDirectory() {
-    const { TeamsDirectoryScreen } = await import('./TeamsDirectoryScreen');
     return renderScreen(<TeamsDirectoryScreen />);
 }
 
@@ -119,5 +120,18 @@ describe('TeamsDirectoryScreen craft', () => {
         expect(ids).toContain('teams-directory-header');
         expect(ids).not.toContain('teams-directory-loading');
         pending.answer();
+    });
+
+    it('beside the rail, never calls a Home that failed to answer "No Teams yet"', async () => {
+        const home = await harness.addHome({
+            name: 'Studio', serverUrl: 'https://studio.example', accountId: 'member-a', teamsEnabled: true,
+        });
+        await harness.selectHomes([home]);
+        harness.answer(home, TEAMS_LIST_PATH, { status: 503 });
+        indexView.current = 'land';
+
+        const screen = await renderDirectory();
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(`teams-home-unavailable:${home}`));
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-directory-empty');
     });
 });

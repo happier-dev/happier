@@ -9,6 +9,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -46,7 +47,7 @@ export const HomeActivityRow = React.memo(function HomeActivityRow(props: Readon
         <Item
             testID={`home-activity-row:${props.event.id}`}
             leftElement={row.actorAccount
-                ? <Avatar id={row.actorAccount.id} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={row.actorAccount.avatarUrl} />
+                ? <Avatar id={row.actorAccount.id} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={row.actorAccount.avatarUrl} monogram={row.actor} />
                 : <Icon name="terminal" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
             title={`${row.actor} ${row.verb}`}
             titleLines={0}
@@ -135,8 +136,10 @@ const ActivityList = React.memo(function ActivityList(props: Readonly<{
 
     return (
         <>
-            <ItemGroup description={t('homeGovernance.activity.footnote')}>
-                {audit.rows.map((event) => <HomeActivityRow key={event.id} event={event} now={now} viewerAccountId={context.scope.accountId} names={names} />)}
+            <ItemGroup surface="none" description={t('homeGovernance.activity.footnote')}>
+                <CollectionRows>
+                    {audit.rows.map((event) => <HomeActivityRow key={event.id} event={event} now={now} viewerAccountId={context.scope.accountId} names={names} />)}
+                </CollectionRows>
             </ItemGroup>
             {audit.error ? (
                 <ItemGroup>

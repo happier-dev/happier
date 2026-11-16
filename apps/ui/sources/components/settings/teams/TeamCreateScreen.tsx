@@ -158,6 +158,7 @@ const InitialOwnerPicker = React.memo(function InitialOwnerPicker(props: Readonl
                                     id={candidate.accountId}
                                     size={PAGE_LIST_METRICS.rowIdentityMarkPx}
                                     imageUrl={candidate.profile.avatarUrl}
+                                    monogram={resolveAccountDisplayName({ profile: candidate.profile, accountId: candidate.accountId }).name}
                                 />
                             )}
                             onPress={() => props.onSelect(candidate)}

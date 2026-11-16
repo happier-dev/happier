@@ -91,7 +91,6 @@ export const TeamMemberDefaultsSection = React.memo(
   ) {
     const { context, scope, access } = props;
     const home = 'home' in props && props.home;
-    const teamName = !home && 'team' in context ? context.team.name : undefined;
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const inFlightRef = React.useRef(false);
@@ -174,9 +173,7 @@ export const TeamMemberDefaultsSection = React.memo(
       access.editable
         ? null
           : access.reason === 'team' && !home
-          ? t('teams.settings.memberDefaults.readOnlyTeam', {
-              team: teamName ?? '',
-            })
+          ? t('teams.settings.memberDefaults.readOnlyTeam')
           : access.reason === 'group' ? t('teams.settings.memberDefaults.readOnlyGroup') : null,
     ]
       .filter(Boolean)

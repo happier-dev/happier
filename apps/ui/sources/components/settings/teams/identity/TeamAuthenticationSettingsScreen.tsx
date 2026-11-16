@@ -752,7 +752,7 @@ const AuthenticationFacts = React.memo(function AuthenticationFacts(
         testID="team-authentication-forbidden"
         tone="neutral"
         icon={<Icon name="lock" />}
-        title={t('teams.denied.authentication', { team: context.team.name })}
+        title={t('teams.denied.authentication')}
         description={askTeamManagersText(names)}
       />
       <ItemGroup

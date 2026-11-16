@@ -432,7 +432,7 @@ export const SignInPolicyEditor = React.memo(function SignInPolicyEditor(
                 description={options.methods.length === 0
                     ? t('homeGovernance.policyEditingUnavailable')
                     : editable
-                        ? t('homeGovernance.signInPolicy.methodsDescription', { home: context.homeName })
+                        ? t('homeGovernance.signInPolicy.methodsDescription')
                         : readOnlyDescription}
             >
                 {methodRows.map((method) => {

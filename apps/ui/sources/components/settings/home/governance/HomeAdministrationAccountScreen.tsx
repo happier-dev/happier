@@ -321,7 +321,7 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
                 testID="home-account-header"
                 alwaysShowTitle
                 title={name}
-                leading={<Avatar id={detail.accountId} size={44} imageUrl={detail.profile.avatarUrl ?? null} />}
+                leading={<Avatar id={detail.accountId} size={44} imageUrl={detail.profile.avatarUrl ?? null} monogram={person.named ? person.name : null} />}
                 meta={[
                     ...(person.hint ? [{ key: 'hint', text: person.hint }] : []),
                     ...(detail.profile.username ? [{ key: 'username', text: `@${detail.profile.username}` }] : []),
@@ -403,7 +403,7 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
                             team.status === 'suspended' ? t('homeGovernance.person.teamSuspended') : null,
                             team.archived ? t('homeGovernance.person.teamArchived') : null,
                         ].filter((part): part is string => part !== null).join(' · ')}
-                        icon={<Avatar id={team.teamId} square size={TEAM_MARK_SIZE} />}
+                        icon={<Avatar id={team.teamId} square size={TEAM_MARK_SIZE} monogram={team.name} />}
                         onPress={() => router.push(teamDetailPath({ serverId: context.scope.serverId, teamId: team.teamId }) as never)}
                     />
                 ))}

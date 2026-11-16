@@ -234,6 +234,7 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
                                 id={candidate.accountId}
                                 size={PAGE_LIST_METRICS.rowIdentityMarkPx}
                                 imageUrl={candidate.profile.avatarUrl}
+                                monogram={resolveAccountDisplayName({ profile: candidate.profile, accountId: candidate.accountId }).name}
                             />
                         )}
                         onPress={() => setSelected(candidate)}
@@ -300,7 +301,7 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
                 >
                     <Item
                         testID="team-member-add-history:from_membership"
-                        title={t('teams.history.fromMembershipNamed', { name: context.team.name })}
+                        title={t('teams.history.fromMembership')}
                         selected={historyAccess === 'from_membership'}
                         accessibilityRole="radio"
                         webRole="radio"
@@ -310,7 +311,7 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
                     />
                     <Item
                         testID="team-member-add-history:all_existing"
-                        title={t('teams.history.allExistingNamed', { name: context.team.name })}
+                        title={t('teams.history.allExisting')}
                         selected={historyAccess === 'all_existing'}
                         accessibilityRole="radio"
                         webRole="radio"

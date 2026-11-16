@@ -37,6 +37,8 @@ installSettingsViewCommonModuleMocks({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Import the real screen at collection, after the boundaries: a cold import inside a test body can outlast it.
+const { TeamsDirectoryScreen } = await import('./TeamsDirectoryScreen');
 const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
 
 const ELIGIBILITY_PATH = '/v1/home/governance/eligibility/get';
@@ -44,7 +46,6 @@ const GOVERNANCE_PATH = '/v1/home/governance/get';
 const TEAMS_LIST_PATH = '/v1/teams/list';
 
 async function renderDirectory() {
-    const { TeamsDirectoryScreen } = await import('./TeamsDirectoryScreen');
     return renderScreen(<TeamsDirectoryScreen />);
 }
 

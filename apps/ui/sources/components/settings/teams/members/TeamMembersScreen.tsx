@@ -11,6 +11,7 @@ import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
@@ -149,9 +150,10 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
         }
 
         // The roster section opens with its own controls — find someone, narrow by role — and
-        // continues into the member chunks as one sheet.
+        // continues into the member chunks as one flat list (a browse list lies flat, LISTS-BUILD).
         add('controls', () => (
             <ItemGroup
+                surface="none"
                 title={t('teams.tabs.members')}
                 action={<TeamMemberAddAction context={context} presentation="section" />}
                 virtualizedSegment={{ first: true, last: roster.rows.length === 0 && roster.status !== 'loading' && roster.status !== 'ready' }}
@@ -172,7 +174,7 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
         // roster with nobody to show says so on one line, where the rows would be.
         if (roster.status === 'loading' && roster.rows.length === 0) {
             add('loading', () => (
-                <ItemGroup virtualizedSegment={{ first: false, last: true }}>
+                <ItemGroup surface="none" virtualizedSegment={{ first: false, last: true }}>
                     <ItemLoadStateRows
                         testID="team-members-loading"
                         state={{ kind: 'loading' }}
@@ -185,7 +187,7 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
 
         if (roster.rows.length === 0 && roster.status === 'ready') {
             add('empty', () => (
-                <ItemGroup virtualizedSegment={{ first: false, last: true }}>
+                <ItemGroup surface="none" virtualizedSegment={{ first: false, last: true }}>
                     <SurfaceStateCard
                         testID="team-members-empty"
                         kind="empty"
@@ -201,7 +203,8 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
             const chunk = roster.rows.slice(start, start + MEMBER_CHUNK_SIZE);
             const last = start + MEMBER_CHUNK_SIZE >= roster.rows.length;
             add(`members:${chunk[0]!.id}`, () => (
-                <ItemGroup virtualizedSegment={{ first: false, last }}>
+                <ItemGroup surface="none" virtualizedSegment={{ first: false, last }}>
+                    <CollectionRows continued={!last}>
                     {chunk.map((membership) => {
                         const leavesOwnMembership = membership.accountId === context.scope.accountId && context.team.capabilities.leave;
                         return (
@@ -215,6 +218,7 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
                             />
                         );
                     })}
+                    </CollectionRows>
                 </ItemGroup>
             ));
         }

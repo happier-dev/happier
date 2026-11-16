@@ -36,6 +36,8 @@ installSettingsViewCommonModuleMocks({
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
+// Import the real screen at collection, after the boundaries: a cold import inside a test body can outlast it.
+const { HomeAdministrationActivityScreen } = await import('./HomeAdministrationActivityScreen');
 
 const GOVERNANCE_PATH = '/v1/home/governance/get';
 const AUDIT_PATH = '/v1/home/audit/list';
@@ -55,7 +57,6 @@ async function addHome(): Promise<string> {
 }
 
 async function renderActivity(serverId: string) {
-    const { HomeAdministrationActivityScreen } = await import('./HomeAdministrationActivityScreen');
     const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
     resetHomeGovernanceEngineForTests();
     return renderScreen(<HomeAdministrationActivityScreen serverId={serverId} />);

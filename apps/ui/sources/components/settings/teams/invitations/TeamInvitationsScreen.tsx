@@ -15,6 +15,7 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { useTeamInvitations } from '@/hooks/teams/useTeamInvitations';
@@ -32,7 +33,7 @@ import { TeamSection } from '../TeamSection';
 import { teamPageHeaderMeta, type TeamSectionContext } from '../teamSectionContext';
 import { teamMutationFailureLabel, teamReadFailureLabel } from '../teamMutationPresentation';
 import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
-import { presentHomeInvitePeople } from '@/components/settings/home/governance/HomeInvitePeopleDialog';
+import { presentHomeInvitePeople, teamInvitePeopleAction } from '@/components/settings/home/governance/HomeInvitePeopleDialog';
 import { TeamLinkDelivery } from '../TeamLinkDelivery';
 import { partitionTeamInvitations, resolveTeamInvitationPresentation } from './teamInvitationPresentation';
 
@@ -395,12 +396,12 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
                             teamName: context.team.name,
                             homeName: context.homeName,
                         })}
-                        primaryAction={canManage && !context.archived && !(invitations.status === 'ready' && invitations.rows.length === 0) ? {
-                            title: t('homeGovernance.invite.action'),
+                        primaryAction={canManage && !context.archived && !(invitations.status === 'ready' && invitations.rows.length === 0) ? teamInvitePeopleAction({
+                            serverId: context.address.serverId,
+                            teamId: context.address.teamId,
                             testID: 'team-invitations-create',
                             disabled: !context.canMutate,
-                            onPress: () => { presentHomeInvitePeople({ serverId: context.address.serverId, teamId: context.address.teamId }); },
-                        } : undefined}
+                        }) : undefined}
                     />
                     {props.header}
                     {!canManage ? (
@@ -463,6 +464,7 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
             )}
             renderItem={({ item: segment }) => (
                 <ItemGroup
+                    surface="none"
                     title={segment.first
                         ? t(segment.group === 'waiting' ? 'teams.invitations.waitingSection' : 'teams.invitations.finishedSection')
                         : undefined}
@@ -471,6 +473,7 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
                         : segment.key === firstSegmentKey ? notice ?? undefined : undefined}
                     virtualizedSegment={{ first: segment.first, last: segment.last }}
                 >
+                    <CollectionRows continued={!segment.last}>
                     {segment.items.map((row) => (
                         <InvitationRow
                             key={row.id}
@@ -485,6 +488,7 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
                             onAction={act}
                         />
                     ))}
+                    </CollectionRows>
                 </ItemGroup>
             )}
             ListFooterComponent={canManage ? (

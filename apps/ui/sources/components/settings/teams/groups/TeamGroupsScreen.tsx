@@ -7,6 +7,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -46,9 +47,12 @@ const GroupRows = React.memo(function GroupRows(props: Readonly<{
     if (props.groups.length === 0) return null;
     return (
         <ItemGroup
+            surface="none"
             title={props.first ? props.title : undefined}
             virtualizedSegment={{ first: props.first, last: props.last }}
         >
+            {/* A browse list lies flat, its rows parted by the one list-row rule (LISTS-BUILD). */}
+            <CollectionRows continued={!props.last}>
             {props.groups.map((row) => {
                 const { group } = row;
                 const managedBy = groupManagementLabel(group);
@@ -64,6 +68,7 @@ const GroupRows = React.memo(function GroupRows(props: Readonly<{
                     />
                 );
             })}
+            </CollectionRows>
         </ItemGroup>
     );
 });
