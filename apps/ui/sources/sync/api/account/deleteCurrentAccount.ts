@@ -11,6 +11,7 @@ import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch, type ServerFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 
 export class AccountErasureManagedResourcesReviewRequiredError extends HappyError {
     readonly resources: readonly ManagedResourceDependencyV1[];
@@ -47,7 +48,8 @@ export async function deleteCurrentAccount(credentials: Pick<AuthCredentials, 't
         if (response.status === 409 && parsed.success && parsed.data.error === 'account_erasure_managed_resources_review_required') {
             throw new AccountErasureManagedResourcesReviewRequiredError(parsed.data.resources);
         }
-        const code = parsed.success ? parsed.data.error : 'account_delete_failed';
+        const transient = readTransientAvailabilityFailure(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
+        const code = parsed.success ? parsed.data.error : transient?.code ?? 'account_delete_failed';
         throw new HappyError(code, true, {
             status: response.status,
             kind: response.status === 403 ? 'auth' : 'server',

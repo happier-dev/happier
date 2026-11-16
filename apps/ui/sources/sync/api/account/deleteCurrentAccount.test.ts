@@ -3,6 +3,9 @@ const serverFetch = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/http/client', () => ({ serverFetch }));
 import { deleteCurrentAccount } from './deleteCurrentAccount';
 import { createManagedResourceDependencyFixture } from '@/dev/testkit/fixtures/managedResourceDependencyFixtures';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { t } from '@/text';
 describe('deleteCurrentAccount', () => {
   beforeEach(() => serverFetch.mockReset());
   it('sends exact confirmation and accepts only typed success', async () => {
@@ -22,6 +25,19 @@ describe('deleteCurrentAccount', () => {
       code: 'account_erasure_transition_cleanup_pending',
       status: 409,
     });
+  });
+  it('preserves the Home transaction timeout through the Action failure projection', async () => {
+    // Captured Account deletion refusal: the generic Home error is outside the erasure result union.
+    serverFetch.mockResolvedValue(Response.json({ error: 'database_transaction_timeout', statusCode: 503 }, { status: 503 }));
+    const error = await deleteCurrentAccount({ token: 'signed' }).catch(error => error);
+    expect(error).toMatchObject({ code: 'database_transaction_timeout', status: 503 });
+    const failure = { ok: false, ...normalizeActionExecutorThrownError(error) };
+    expect(failure).toMatchObject({
+      errorCode: 'database_transaction_timeout',
+      failureCause: { errorCode: 'database_transaction_timeout', httpStatus: 503 },
+    });
+    expect(resolveActionExecutionFailureTitle(failure, 'Deletion failed')).toBe(t('approvals.transientFailureTitle'));
+    expect(resolveActionExecutionFailureMessage(failure, 'Deletion failed')).toBe(t('toolView.pending.unknownDescription'));
   });
   it('retains the strict safe resource review on refusal, then sends only explicitly reviewed manual expectations', async () => {
     const resource = createManagedResourceDependencyFixture();
