@@ -26,6 +26,7 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
 import type { ApiMachineClient } from '@/api/apiMachine';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const os = vi.hoisted(() => ({
   identity: undefined as unknown as import('node:async_hooks').AsyncLocalStorage<'member'>,
@@ -35,12 +36,15 @@ const os = vi.hoisted(() => ({
   memberReads: [] as string[],
   direct: [] as Array<{ command: string; uid: number | undefined; member: boolean }>,
   runAs: [] as Array<{ args: readonly string[]; uid?: number }>,
+  subprocessWorker: false,
 }));
 os.identity = new AsyncLocalStorage<'member'>();
 
 // OS boundaries only: the member's UID (an identity scope standing in for the kernel:
 // the member cannot read a daemon-private file) and RunAs. Ingress, requester
-// selection, Exec launch, the Workspace effect bridge and child, SCM and real Git stay real.
+// selection, Exec launch, the Workspace effect bridge, SCM and Git stay real.
+// One cold-runtime case starts the actual worker subprocess; the remaining
+// routing cases use a scoped worker so the filesystem boundary can model denial.
 // The builtin is patched in place (not module-mocked) so plugin-loaded backends see it too.
 const fsPromises = createRequire(import.meta.url)('node:fs/promises') as typeof import('node:fs/promises');
 const originalFs = { ...fsPromises };
@@ -67,7 +71,7 @@ vi.mock('node:child_process', async original => {
       os.direct.push({ command, uid: options.uid ?? process.getuid?.(), member: os.identity.getStore() === 'member' });
       return actual.spawn(command, args, options);
     }
-    // RunAs: the framed payload runs as the member (in-process, under the member identity scope).
+    // RunAs identity is simulated; the worker always consumes its frame environment.
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
       pid: undefined, exitCode: null as number | null, signalCode: null, killed: false });
     const finish = (code: number) => { child.exitCode = code; child.stdout.end(); child.stderr.end();
@@ -77,12 +81,23 @@ vi.mock('node:child_process', async original => {
         const frame = await readAgentLaunchFrame(child.stdin as Readable);
         os.runAs.push({ args: frame.args, uid: frame.nativeIdentity?.agentUid });
         if (frame.args[0] === 'workspace-effect') {
-          await runWorkspaceEffectWorker([], { input: child.stdin, output: child.stdout, signal: new AbortController().signal,
-            currentDirectory: () => frame.cwd });
+          if (os.subprocessWorker) {
+            const run = actual.spawn(process.execPath, ['--conditions=happier-source', '--import',
+              new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url).pathname,
+              new URL('../../index.ts', import.meta.url).pathname, 'workspace-effect'],
+              { cwd: frame.cwd, env: frame.environment });
+            child.stdin.pipe(run.stdin); run.stdout.pipe(child.stdout, { end: false }); run.stderr.pipe(child.stderr, { end: false });
+            run.on('error', () => finish(1));
+            run.on('close', code => finish(code ?? 1));
+            return;
+          }
+          await runAddedHostedSession({ environment: { ...frame.environment }, workingDirectory: frame.cwd, end() {} },
+            () => runWorkspaceEffectWorker([], { input: child.stdin, output: child.stdout, signal: new AbortController().signal,
+              currentDirectory: () => frame.cwd }));
           finish(0); return;
         }
         // Any other framed command (a Git invocation) runs as the member.
-        const run = actual.spawn(frame.executable, frame.args, { cwd: frame.cwd, env: { ...frame.environment, PATH: process.env.PATH } });
+        const run = actual.spawn(frame.executable, frame.args, { cwd: frame.cwd, env: frame.environment });
         child.stdin.pipe(run.stdin); run.stdout.pipe(child.stdout, { end: false }); run.stderr.pipe(child.stderr, { end: false });
         run.on('close', code => finish(code ?? 1));
       } catch { finish(1); }
@@ -91,7 +106,7 @@ vi.mock('node:child_process', async original => {
   } };
 });
 afterEach(() => { os.repository = ''; os.secret = ''; os.daemonTouches.length = 0; os.memberReads.length = 0;
-  os.direct.length = 0; os.runAs.length = 0; vi.restoreAllMocks(); });
+  os.direct.length = 0; os.runAs.length = 0; os.subprocessWorker = false; vi.restoreAllMocks(); });
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=Owner test', '-c', 'user.email=owner@example.invalid', ...args],
   { cwd, encoding: 'utf8' });
@@ -183,6 +198,14 @@ const daemonGit = () => gitLaunches().filter(launch => !launch.member);
 
 // R126S3 / ISOLATION-REPAIR-1114 / MEMBER-SCM-READ-1114 / SEC-FORKC-1115F on a separate-users Machine.
 describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placement', () => {
+  it('reads member Git status through the real worker process with only its launch environment', async () => {
+    const f = await fixture();
+    os.subprocessWorker = true;
+    const response = await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: f.memberRepository }, 'member-account', 'use');
+    expect(response, JSON.stringify(response)).toMatchObject({ success: true, snapshot: { repo: { isRepo: true } } });
+    expect(os.runAs.map(run => run.args[0])).toEqual(['workspace-effect']);
+    expect(daemonGit()).toEqual([]);
+  });
   it('keeps a closed host call on the daemon isolation port and runs Manage as the daemon user', async () => {
     const f = await fixture();
     // Before any cached snapshot: the daemon's isolation port refusal stays typed.
@@ -423,7 +446,7 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     const created = await f.invoke(RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE, { cwd: f.memberRepository, base: 'main', title: 'x' },
       'manager-account', 'manage');
     expect(created, JSON.stringify(created)).toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE',
-      error: expect.stringContaining('dubious ownership') });
+      error: expect.stringContaining('git_dubious_ownership') });
     expect(os.runAs).toEqual([]);
   });
 

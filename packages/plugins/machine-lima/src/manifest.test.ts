@@ -555,24 +555,19 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
         repairAction: { action: { pluginId: LIMA_PLUGIN.manifest.id, localId: 'install' }, input: {} } }] });
   });
 
-  it('repairs a missing native install through the dependency owner, then checks ready', async () => {
-    let installed = false;
-    const exec: Pick<ExecService, 'run'> = { run: async request => processResult(new TextEncoder().encode(
-      request.args?.[0] === 'info' ? JSON.stringify({ hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz'] })
-        : 'limactl version 2.2.1')) };
-    // Only the host dependency service is replaced; registration, Action schemas
-    // and the provider readiness path run through the public plugin testkit.
-    const services = { exec, managedServices: { dependencies: {
-      status: async (id: string) => installed ? { state: 'ready', id, sourceId: 'pinnedArchive', version: '2.2.1',
-        executable: { kind: 'managedDependency', id: { pluginId: LIMA_PLUGIN.manifest.id, localId: id } } }
-        : { state: 'missing', id, supported: true },
-      ensure: async () => { installed = true; },
+  it('delegates installation to the dependency owner and preserves its refusal', async () => {
+    const ensured: string[] = [];
+    const services = { managedServices: { dependencies: {
+      ensure: async (id: string) => {
+        ensured.push(id);
+        throw new PluginError({ code: 'plugin_managed_dependency_aborted', message: 'Installation cancelled' });
+      },
     } } } as unknown as PluginTestServicesFixture;
     const kit = await createPluginTestkit({ manifest: LIMA_PLUGIN.manifest, module: LIMA_PLUGIN, services });
     try {
-      expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: false });
-      await kit.invokeAction('install', {}, { surface: 'plugin' });
-      expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: true });
+      await expect(kit.invokeAction('install', {}, { surface: 'plugin' }))
+        .rejects.toMatchObject({ code: 'plugin_managed_dependency_aborted' });
+      expect(ensured).toEqual(['lima-cli']);
     } finally { await kit.dispose(); }
   });
 
@@ -609,6 +604,12 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
 
 
 it('declares saved CPU, memory and disk dimensions through the options Action', () => {
-  const fields = LIMA_PLUGIN.manifest.contributes.actions?.flatMap(action => action.inputHints?.fields ?? []) ?? [];
-  for (const role of ['cpu', 'memory', 'disk']) expect(fields).toContainEqual(expect.objectContaining({ role }));
+  const provisioner = LIMA_PLUGIN.manifest.contributes.machineProvisioners?.find(item => item.id === 'lima');
+  expect(provisioner).toBeDefined();
+  const options = LIMA_PLUGIN.manifest.contributes.actions?.find(action => action.id === provisioner?.actions.options);
+  expect(options?.inputHints?.fields).toEqual(expect.arrayContaining([
+    expect.objectContaining({ path: 'cpus', role: 'cpu' }),
+    expect.objectContaining({ path: 'memoryGiB', role: 'memory' }),
+    expect.objectContaining({ path: 'diskGiB', role: 'disk' }),
+  ]));
 });

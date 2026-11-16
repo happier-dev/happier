@@ -36,7 +36,13 @@ describe('native process disclosure', () => {
 });
 
 
-it('declares saved CPU, memory and disk dimensions through the options Action', () => {
-  const fields = PLUGIN_MANIFEST.contributes.actions?.flatMap(action => action.inputHints?.fields ?? []) ?? [];
-  for (const role of ['cpu', 'memory', 'disk']) expect(fields).toContainEqual(expect.objectContaining({ role }));
+it.each(['local-sandbox', 'local-space'])('declares saved size dimensions through the %s options Action', id => {
+  const provisioner = PLUGIN_MANIFEST.contributes.machineProvisioners?.find(item => item.id === id);
+  expect(provisioner).toBeDefined();
+  const options = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === provisioner?.actions.options);
+  expect(options?.inputHints?.fields).toEqual(expect.arrayContaining([
+    expect.objectContaining({ path: 'size.cpu', role: 'cpu' }),
+    expect.objectContaining({ path: 'size.memoryBytes', role: 'memory' }),
+    ...(id === 'local-space' ? [expect.objectContaining({ path: 'size.diskBytes', role: 'disk' })] : []),
+  ]));
 });

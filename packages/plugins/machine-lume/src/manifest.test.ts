@@ -140,19 +140,14 @@ describe('activated Lume provisioner Actions', () => {
     expect(current.requests).toEqual([]);
   });
 
-  it('installs Lume through the dependency owner and propagates refusal', async () => {
+  it('delegates Lume installation to the dependency owner and propagates refusal', async () => {
     const current = await activated(false);
     const ensured: string[] = [];
     current.context.services.managedServices.dependencies.ensure = async id => {
       ensured.push(id);
-      current.context.services.managedServices.dependencies.status = async () => ({
-        state: 'ready', id, version: '0.6.1', sourceId: 'pinnedArchive',
-        executable: { kind: 'managedDependency', id: { pluginId: LUME_PLUGIN.manifest.id, localId: id } },
-      });
       return { state: 'ready', id, version: '0.6.1', sourceId: 'pinnedArchive' };
     };
     expect(await current.action('install')({}, current.context)).toBeNull();
-    expect(await current.action('check')({}, current.context)).toMatchObject({ available: true });
     current.requests.length = 0;
     current.context.services.managedServices.dependencies.ensure = async id => {
       ensured.push(id);
@@ -681,6 +676,12 @@ describe('activated Lume provisioner Actions', () => {
 
 
 it('declares saved CPU, memory and disk dimensions through the options Action', () => {
-  const fields = LUME_PLUGIN.manifest.contributes.actions?.flatMap(action => action.inputHints?.fields ?? []) ?? [];
-  for (const role of ['cpu', 'memory', 'disk']) expect(fields).toContainEqual(expect.objectContaining({ role }));
+  const provisioner = LUME_PLUGIN.manifest.contributes.machineProvisioners?.find(item => item.id === 'lume');
+  expect(provisioner).toBeDefined();
+  const options = LUME_PLUGIN.manifest.contributes.actions?.find(action => action.id === provisioner?.actions.options);
+  expect(options?.inputHints?.fields).toEqual(expect.arrayContaining([
+    expect.objectContaining({ path: 'cpu', role: 'cpu' }),
+    expect.objectContaining({ path: 'memoryBytes', role: 'memory' }),
+    expect.objectContaining({ path: 'diskBytes', role: 'disk' }),
+  ]));
 });

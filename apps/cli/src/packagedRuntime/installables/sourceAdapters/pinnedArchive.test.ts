@@ -1,11 +1,18 @@
-import { appendFile, chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { appendFile, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { c as createTarArchive } from 'tar';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getHappierTempRoot } from '@happier-dev/cli-common/tempDirs';
+import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
 
 const { configurationState } = vi.hoisted(() => ({
   configurationState: { happyHomeDir: '' },
@@ -85,6 +92,104 @@ afterEach(async () => {
 });
 
 describe('pinned archive runtime installable adapter', () => {
+  it.skipIf(process.platform === 'win32').each(['lima', 'lume'] as const)(
+    'repairs missing %s through its Install Action, declared archive and dependency host before Check', async kind => {
+      const plugin = kind === 'lima'
+        ? (await import('@happier-dev/plugins-machine-lima/manifest')).LIMA_PLUGIN
+        : (await import('@happier-dev/plugins-machine-lume/manifest')).LUME_PLUGIN;
+      const { createV2ManagedDependencySourceModel } = await import('@/plugins/runtime/invocation/services/managedDependencySourceModel');
+      const { resolveExecutableManagedDependenciesRegistry } = await import('@/plugins/projection/registry/managedDependencyExecutables');
+      const { createStablePluginManagedDependenciesHost } = await import('@/plugins/runtime/invocation/services/managedDependencies');
+      const { createProductionManagedDependencySourceAdapter } = await import('@/plugins/runtime/invocation/services/managedDependencySourceAdapters');
+      const home = await makeTempHome();
+      configurationState.happyHomeDir = home;
+      const env = { ...process.env, HAPPIER_HOME_DIR: home, PATH: home };
+      const pluginId = plugin.manifest.id;
+      const localId = `${kind}-cli`;
+      const contributions = (plugin.manifest.contributes.managedDependencies ?? []).map(definition => ({
+        pluginId, provenance: 'external' as const, source: { kind: 'path' as const },
+        manifestPath: join(home, 'plugin.json'), daemonEntryPath: null,
+        sourceSpec: { kind: 'path' as const, locator: home, trustPolicy: 'local_trusted' as const, installPolicy: 'link' as const },
+        definition,
+      })) satisfies readonly ResolvedInstallableContribution[];
+      const definition = contributions.find(item => item.definition.id === localId)?.definition;
+      const archive = definition?.sources.find(source => source.kind === 'pinnedArchive');
+      if (archive?.kind !== 'pinnedArchive') throw new Error('Native dependency has no declared archive');
+      const asset = archive.assetsByPlatform['darwin-arm64'];
+      if (!asset) throw new Error('Native dependency has no Apple silicon archive');
+      const fixtureRoot = join(home, 'archive-source');
+      const fixtureExecutable = join(fixtureRoot, asset.executableSubpath);
+      await mkdir(dirname(fixtureExecutable), { recursive: true });
+      await writeFile(fixtureExecutable, `#!${process.execPath}
+const argument = process.argv[2];
+if (argument === '--version') process.stdout.write('${kind} version ${archive.version}');
+else if (argument === 'info') process.stdout.write(JSON.stringify({ hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz'] }));
+else process.exit(2);
+`);
+      const fixtureArchive = join(home, 'vendor-fixture.tar.gz');
+      await createTarArchive({ cwd: fixtureRoot, file: fixtureArchive, gzip: true, portable: true }, [asset.executableSubpath]);
+      // Substitute downloaded bytes at the network boundary. Extraction,
+      // promotion and installed-executable verification use their real owners.
+      downloadMock.mockImplementation(async ({ destinationPath }: { destinationPath: string }) => {
+        await copyFile(fixtureArchive, destinationPath);
+      });
+      const actualExtraction = await vi.importActual<typeof import('@happier-dev/release-runtime/archiveExtraction')>('@happier-dev/release-runtime/archiveExtraction');
+      extractRootMock.mockImplementation(actualExtraction.extractArchivePayloadToDirectory);
+      const dependencies = createStablePluginManagedDependenciesHost({
+        installablesRegistry: resolveExecutableManagedDependenciesRegistry(contributions, { platform: 'darwin', architecture: 'arm64' }),
+        sourceModel: createV2ManagedDependencySourceModel({ platform: 'darwin', architecture: 'arm64', contributions }),
+        env, getSettings: () => ({}),
+        resolveAdapter: async () => { throw new Error('Unexpected legacy dependency'); },
+        resolveSourceAdapter: input => createProductionManagedDependencySourceAdapter({ ...input, env, platform: 'darwin', architecture: 'arm64' }),
+        removeManagedInstall: async () => { throw new Error('Repair must not remove installed dependencies'); },
+      });
+      const service = dependencies.bind(pluginId);
+      const run: ExecService['run'] = async (input, options): Promise<PluginProcessResult> => {
+        if (input.executable.kind !== 'managedDependency') throw new Error('Unexpected native executable');
+        const executable = await dependencies.resolveExecutable(input.executable, pluginId, { requireReady: true });
+        try {
+          const args = [...(executable.args ?? []), ...(input.args ?? [])];
+          const result = await promisify(execFile)(executable.command, args, { env, signal: options?.signal, encoding: 'buffer' });
+          return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+            stdout: result.stdout, stderr: result.stderr, stdoutTruncated: false, stderrTruncated: false };
+        } finally { executable.release(); }
+      };
+      // Only the process, system-tool and HTTP boundaries used by these Actions
+      // are supplied; managed-dependency selection and installation stay real.
+      const services = {
+        managedServices: { dependencies: service },
+        exec: { run, systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: { pluginId, localId: 'ssh-keyscan' } }, executablePath: '/fixture/ssh-keyscan' }) } },
+        http: { request: async (input: Parameters<HttpService['request']>[0]) => {
+          const path = new URL(input.url).pathname;
+          const value = path === '/lume/host/status' ? { version: archive.version }
+            : path === '/lume/config' ? { cachingEnabled: true }
+            : path === '/lume/vms' ? [] : undefined;
+          if (value === undefined) throw new Error(`Unexpected native route: ${path}`);
+          return { status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) };
+        } },
+      } as unknown as PluginTestServicesFixture;
+      const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services });
+      try {
+        expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: false });
+        expect(downloadMock).not.toHaveBeenCalled();
+        const cancelled = new AbortController();
+        cancelled.abort();
+        await expect(service.ensure(localId, { signal: cancelled.signal })).rejects.toMatchObject({ code: 'plugin_managed_dependency_aborted' });
+        expect(downloadMock).not.toHaveBeenCalled();
+        downloadMock.mockRejectedValueOnce(Object.assign(new Error('Download unavailable'), { code: 'EACCES' }));
+        await expect(kit.invokeAction('install', {}, { surface: 'plugin' })).rejects.toMatchObject({ code: 'plugin_managed_dependency_install_failed' });
+        expect(await service.status(localId)).toMatchObject({ state: 'missing' });
+        expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: false });
+        expect(await kit.invokeAction('install', {}, { surface: 'plugin' })).toBeNull();
+        expect(downloadMock).toHaveBeenLastCalledWith(expect.objectContaining({ url: asset.archiveUrl, digest: `sha256:${asset.sha256}` }));
+        const installed = join(home, 'tools', archive.installId, 'current', asset.executableSubpath);
+        expect(await readFile(installed, 'utf8')).toContain(`${kind} version ${archive.version}`);
+        expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: true });
+        const version = await run({ executable: { kind: 'managedDependency', id: { pluginId, localId } }, args: ['--version'] });
+        expect(new TextDecoder().decode(version.stdout)).toBe(`${kind} version ${archive.version}`);
+      } finally { await kit.dispose(); }
+    });
+
   it('retains companion declarations beside a nested native executable', async () => {
     configurationState.happyHomeDir = await makeTempHome();
     downloadMock.mockImplementation(async (params: { destinationPath: string }) => {

@@ -10,7 +10,7 @@ import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows
 import { createProjectAccountSnapshotMutation, readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncTargetBootstrapPrepareV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -36,7 +36,7 @@ import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken'
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { WorkspaceSyncController } from '@/workspaces/sync/workspaceSyncController';
-import { createWorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import { createWorkspaceSyncHandoffAdapter, materializeWorkspaceSyncForOpen } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import { createWorkspaceRootOwnershipManager } from '@/workspaces/sync/workspaceSyncRootOwnership';
 import { createWorkspaceSyncMutagenAdapter } from '@/workspaces/sync/workspaceSyncMutagenAdapter';
 import { createWorkspaceSyncRelationshipOwner } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
@@ -44,8 +44,6 @@ import { workspaceSyncTargetBootstrap } from '@/workspaces/sync/workspaceSyncTar
 import type { MutagenSessionSummaryV1 } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { BrokerProtocolError } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { materializeWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { FeaturesResponseSchema, ScmHostingProviderContributionSchema } from '@happier-dev/protocol';
@@ -1089,62 +1087,77 @@ describe('Project Open RPC', () => {
         : { kind: 'create_relationship' as const, mode: 'keep_synced' as const, contentPolicy,
           flushBeforeCommit: true as const } } } satisfies OpenProjectInputV1;
     let remoteTargetPrepared = false;
+    let sourceSettlement: 'confirmed' | 'unconfirmed' | undefined;
     if (fault === 'remote_source_ack' && productionSync) {
       const targetHandlers = new Map<string, RpcHandler<unknown, unknown>>();
       const targetRegistrar: RpcHandlerRegistrar = { registerHandler: (method, handler) => {
         targetHandlers.set(method, handler as RpcHandler<unknown, unknown>);
       } };
       registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: targetRegistrar, service: productionSync.workspaceSync });
-      runtime = { ...runtime, callWorkspaceSource: async request => {
-        expect(request.machineId).toBe('remote-source');
-        const capture = productionSync.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId });
-        if (!capture?.input.sourceWorkspaceRefId || !context.machineAdmission)
-          throw new Error('Missing real private TARGET capture');
-        // The remote SOURCE never sees this host's capture: its relationship
-        // owner names TARGET by root in the requester's Account rows, minting
-        // an id when none exists (createWorkspaceSyncRelationshipOwner.materializeEndpoints).
-        const sourceView = rows.flatMap(row => {
-          if (row.key.kind !== 'workspace-ref' || !row.content) return [];
-          const parsed = WorkspaceRefV1Schema.safeParse(cipher.open(row.key, row.content).value);
-          return parsed.success ? [parsed.data] : [];
-        });
-        const targetWorkspaceRefId = materializeWorkspaceRefForMachineRoot(sourceView, { serverId: homeId, machineId: 'machine',
-          rootPath: targetRoot, nowMs: 1, createId: () => 'source-minted-target' }).workspaceRef.id;
-        const relationshipId = deriveWorkspaceSyncRelationshipId(request.operationId);
-        // The remote transport supplies SOURCE's admitted prepare packet. The
-        // real TARGET receiver binds custody and runs its native authority.
-        const prepare = { v: 1 as const, bootstrapOperationId: relationshipId,
-          owner: { kind: 'relationship' as const, relationshipId },
-          transientRelationship: { v: 1 as const, relationshipId, controllerMachineId: 'remote-source',
-            alphaWorkspaceRefId: capture.input.sourceWorkspaceRefId, betaWorkspaceRefId: targetWorkspaceRefId,
-            mode: 'keep_synced' as const, contentPolicy, enabled: true, createdAtMs: 1, updatedAtMs: 1 },
-          targetWorkspaceRefId: targetWorkspaceRefId, endpointRole: 'beta' as const,
-          policyDigest: contentPolicy.policyDigest, createIfMissing: true, targetBootstrap: 'use_existing' as const };
+      const sourceNative = createWorkspaceSyncNativeProcessTestBoundary();
+      let sourceOperationId: string | undefined;
+      const sourceSync = await createProductionDaemonWorkspaceSyncRuntime({
+        ...productionSyncInput, happyHomeDir: join(installed.directory, 'remote-source'),
+        activeServerDir: join(installed.directory, 'remote-source', 'server'),
+        localMachineId: 'remote-source', credentials: { token, encryption: null },
+        privateCheckout: undefined, requesterMachineAdmissionBoundary: undefined,
+      }, { ...sourceNative.factories, callMachineRpc: async call => {
+        expect(call.machineId).toBe('machine');
+        if (remoteTargetPrepared) throw new Error('SOURCE to TARGET transport is unavailable after prepare');
+        if (call.method !== RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE || !sourceOperationId)
+          throw new Error(`Unexpected SOURCE transport call: ${call.method}`);
+        const prepare = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(call.request);
+        if (!context.machineAdmission) throw new Error('Missing TARGET admission');
         const admitted = resolvePrivateWorkspaceSyncTargetExecution(productionSync.handoffAdapter, {
           context: context.machineAdmission, receivingMachine: { machineId: 'machine', installationId: installed.installation.installationId },
-          request: prepare, targetWorkspaceRefId: targetWorkspaceRefId,
-          routing: { v: 1, phase: 'prepare', operationId: request.operationId, accountServerId: homeId,
+          request: prepare, targetWorkspaceRefId: prepare.targetWorkspaceRefId,
+          routing: { v: 1, phase: 'prepare', operationId: sourceOperationId, accountServerId: homeId,
             targetMachineId: 'machine', targetRootPath: targetRoot },
         });
         if (admitted.kind !== 'matched') throw new Error(`TARGET admission failed: ${admitted.kind}`);
-        // Production order: the remote SOURCE's relationship owner stages both
-        // endpoints and the graph at Home before it signs TARGET prepare.
-        const targetKey = { kind: 'workspace-ref' as const, serverId: homeId, id: targetWorkspaceRefId };
-        const graphKey = { kind: 'relationship-graph' as const };
-        // materializeEndpoints keeps an existing row at this root unchanged.
-        if (!sourceView.some(ref => ref.id === targetWorkspaceRefId)) rows.push({ key: targetKey, revision: 0,
-          content: cipher.seal({ key: targetKey, value: { id: targetKey.id, serverId: homeId,
-            machineId: 'machine', rootPath: targetRoot, createdAtMs: 1 } }) });
-        // A graph row may already exist (the TARGET row publication commits an empty one); SOURCE CAS-replaces it.
-        const graphIndex = rows.findIndex(row => row.key.kind === 'relationship-graph');
-        const graphRow = { key: graphKey, revision: graphIndex < 0 ? 0 : rows[graphIndex]!.revision + 1, content: cipher.seal({ key: graphKey,
-          value: { relationships: [{ ...prepare.transientRelationship, enabled: false }] } }) };
-        if (graphIndex < 0) rows.push(graphRow); else rows[graphIndex] = graphRow;
-        const handler = targetHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE);
+        // Observe the real SOURCE publication at the transport effect boundary,
+        // before TARGET receives its prepare. The fixture supplies no graph row.
+        const sourcePublication = await readProjectAccountRows({ credentials: { token, encryption: null }, serverId: installed.serverId,
+          selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+        expect(sourcePublication.workspaceRefs).toEqual(expect.arrayContaining([
+          expect.objectContaining({ id: key.id, machineId: 'remote-source', rootPath: root }),
+          expect.objectContaining({ id: 'bob-sync', machineId: 'machine', rootPath: targetRoot }),
+        ]));
+        expect(sourcePublication.relationships).toEqual([expect.objectContaining({
+          enabled: false, controllerMachineId: 'remote-source', alphaWorkspaceRefId: key.id, betaWorkspaceRefId: 'bob-sync',
+        })]);
+        const handler = targetHandlers.get(call.method);
         if (!handler) throw new Error('TARGET prepare was not registered');
         await handler(prepare, { ...context, workspaceSyncPrivateExecution: admitted.capture });
         remoteTargetPrepared = true;
-        return { kind: 'outcomeUnknown' };
+        // Only the external transport loses the acknowledgement. Both hosts'
+        // production owners have materialized their own endpoints/custody.
+        return { errorCode: 'indeterminate', error: 'TARGET prepare acknowledgement was lost' };
+      } });
+      onTestFinished(() => sourceSync.stop());
+      runtime = { ...runtime, callWorkspaceSource: async request => {
+        expect(request.machineId).toBe('remote-source');
+        sourceOperationId = request.operationId;
+        if (request.request.materialization.kind !== 'sync') throw new Error('Missing SOURCE Sync action');
+        const action = request.request.materialization.workspaceAction;
+        // SOURCE consumes Home rows through its installed Account projection;
+        // TARGET's private requester projection is a separate reader lifetime.
+        await readProjectAccountRows({ credentials: { token, encryption: null }, serverId: installed.serverId,
+          publication: 'installed' });
+        try {
+          await nativeBoundary.identity.run('member', () => materializeWorkspaceSyncForOpen(sourceSync.handoffAdapter, {
+            operationId: request.operationId, accountServerId: homeId,
+            sourceMachineId: request.sourceWorkspace.machineId, sourceRootPath: request.sourceWorkspace.rootPath,
+            sourceWorkspaceRefId: request.sourceWorkspace.id, targetMachineId: 'machine', targetRootPath: targetRoot,
+            action, signal: request.context.signal,
+          }));
+          sourceSettlement = 'confirmed';
+          return { kind: 'materialized' };
+        } catch (error) {
+          if (!remoteTargetPrepared) throw error;
+          sourceSettlement = 'unconfirmed';
+          return { kind: 'outcomeUnknown' };
+        }
       } };
     }
     // Existing-checkout attachment needs the daemon-applied runtime lifetime,
@@ -1299,6 +1312,7 @@ describe('Project Open RPC', () => {
       }
       if (fault === 'remote_source_ack') {
         expect(remoteTargetPrepared, JSON.stringify({ diagnostics: admissionDiagnostics?.mock.calls, workerFrames: workerFrames.slice(-4) })).toBe(true);
+        expect(sourceSettlement).toBe('unconfirmed');
         expect(opened).toEqual({ kind: 'outcomeUnknown' });
         const captures = productionSync?.handoffAdapter.listPrivateExecutions?.();
         expect(captures).toHaveLength(1);

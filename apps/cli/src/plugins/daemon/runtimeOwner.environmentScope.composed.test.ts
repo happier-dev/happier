@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import axios from 'axios';
@@ -19,7 +19,7 @@ import { createDaemonPluginRuntimeOwner } from './runtimeOwner';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-it('retains captured daemon deployment custody through startup and registry replacement', async () => {
+it('preserves the live deployment Home origin through plugin initialization and registry replacement', async () => {
     vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
     vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(null);
     const root = await mkdtemp(join(tmpdir(), 'happier-daemon-environment-scope-'));
@@ -30,15 +30,15 @@ it('retains captured daemon deployment custody through startup and registry repl
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;
     let expectedOrigin = 'https://captured-home.test';
     let releaseOrigin = publishServerHttpRuntimeOrigin(expectedOrigin, 'https', undefined, serverId);
-    // Exercise the composition root's actual custody binding, as the Machine
-    // rotation regression does, without starting the daemon's OS lifecycle.
-    const source = await readFile(new URL('../../daemon/startDaemon.ts', import.meta.url), 'utf8');
-    const member = source.match(/deploymentAccountExecution: (\{[\s\S]*?\n      \}),\n      agentIsolation,/u)?.[1];
-    if (!member) throw new Error('Missing daemon deployment custody binding');
-    const deploymentAccountExecution = new Function('credentials', 'readDaemonHomeServerHttpBaseUrl',
-        'deploymentAccountHomeServerId', 'managedPolicyHomeId', 'machineId', 'homeTransportCancellation', 'configuration',
-        `return (${member});`)({ token, encryption: null }, captureServerHttpBaseUrl(), serverId, serverId,
-            'machine-1', new AbortController(), configuration) as NonNullable<Parameters<typeof createDaemonPluginRuntimeOwner>[0]['deploymentAccountExecution']>;
+    // Exercise the exported plugin runtime owner with a captured origin reader.
+    // Full startDaemon producer wiring remains a loaded-daemon journey.
+    const readServerUrl = captureServerHttpBaseUrl();
+    const deploymentAccountExecution = {
+        credentials: { token, encryption: null },
+        get serverUrl() { return readServerUrl(); },
+        serverId, serverIdentityId: serverId, machineId: 'machine-1',
+        isCurrent: async () => true,
+    } satisfies NonNullable<Parameters<typeof createDaemonPluginRuntimeOwner>[0]['deploymentAccountExecution']>;
     const template = createDeploymentEnvironmentHeaderV1({ serverId });
     const environment = createDeploymentEnvironmentHeaderV1({ serverId, id: 'preview-child', purpose: 'preview',
         previewTemplateEnvironmentId: template.id, previewRepositoryId: 'source-app',

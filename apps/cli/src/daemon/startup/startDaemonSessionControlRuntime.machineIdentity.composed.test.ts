@@ -1,5 +1,5 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import axios from 'axios';
@@ -28,7 +28,7 @@ import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local
 // Only the private listener, Home HTTP and Socket.IO are replaced.
 vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async () => ({ port: 44324, stop: async () => {} }) }));
 
-it('dispatches sealed requester Actions after registration replaces the startup Machine, but refuses a different origin', async () => {
+it('preserves a live Machine identity through Session-control runtime creation and registration replacement', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'daemon-machine-identity-'));
   const serverId = 'srv_identity_home';
   const serverHttpBaseUrl = 'https://identity-home.invalid';
@@ -39,15 +39,9 @@ it('dispatches sealed requester Actions after registration replaces the startup 
   const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) };
   const settingsContent = { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
     material: credentials.encryption, payload: {}, randomBytes: nacl.randomBytes }) };
-  // Consume startDaemon's actual binding expression. This avoids starting its OS
-  // lifecycle while preserving sensitivity to a value capture at the producer.
-  const source = await readFile(new URL('../startDaemon.ts', import.meta.url), 'utf8');
-  const member = source.match(/projectManagedServiceActivity: serviceActivity,\s*([\s\S]*?)\s*managedProviderOperationAuthority,/u)?.[1];
-  if (!member) throw new Error('Missing Session-control Machine identity binding');
-  const binding = new Function(`let machineId = 'before-registration'; return {
-    params: { ${member} }, setMachineId: value => { machineId = value; }, readMachineId: () => machineId };`)() as {
-      params: { machineId: string }; setMachineId(value: string): void; readMachineId(): string;
-    };
+  // The exported runtime consumes a live identity. Full startDaemon producer
+  // wiring still requires the Add-folder identity-rotation live journey.
+  let machineId = 'before-registration';
   let originMachineId: string | undefined;
   let machine: ApiMachineClient | null = null;
   const channel = await createRequesterCurrentnessSocketHarness();
@@ -70,16 +64,16 @@ it('dispatches sealed requester Actions after registration replaces the startup 
   });
   const fixture = await createRequesterSessionControlRuntimeFixture({
     happyHomeDir: directory, activeServerDir: join(directory, 'server'), serverId, serverHttpBaseUrl,
-    get machineId() { return binding.params.machineId; }, custodianAccountId: 'owner', credentials,
+    get machineId() { return machineId; }, custodianAccountId: 'owner', credentials,
     connectedServicesMaterializationBaseDir: join(directory, 'materialized'), registry: new ConnectedServiceRuntimeRegistry(),
     trackedSessions: new Map(), getRequester: () => null, getApiMachineForSessions: () => machine,
     resolveQualifiedConnectedAccountV4Support: () => 'indeterminate', startup: {
       resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: serverId,
-        machineId: originMachineId ?? binding.readMachineId() }),
+        machineId: originMachineId ?? machineId }),
     },
   });
   const services = createLocalServicesDaemonRuntime({
-    get machineId() { return binding.params.machineId; },
+    get machineId() { return machineId; },
     accountId: 'owner', serverId, startLoop: false, inventoryEnabled: () => true,
     scan: async () => ({ listeners: [{ address: '127.0.0.1', port: 5173, pid: 400, protocol: 'tcp' as const }],
       processes: new Map([[400, { pid: 400, command: 'node vite' }]]), workspaces: [], diagnostics: [] }),
@@ -104,8 +98,8 @@ it('dispatches sealed requester Actions after registration replaces the startup 
       initialDaemonState: {}, initialPreflightMachineRegistration: { machine: registered, machineId: registered.id, didRotateMachineId: true },
       machineRegistrationTimeoutMs: 10000, machineRegistrationRetryBaseDelayMs: 10000,
       machineRegistrationRetryMaxDelayMs: 10000, machineRegistrationRetryJitterMs: 0, machineRegistrationMaxAttempts: 1,
-      resolvesWhenShutdownRequested: new Promise(() => {}), resolveMachineId: binding.readMachineId,
-      setMachineId: binding.setMachineId, isShuttingDown: () => false, onMachineRegistered: async () => resolve(),
+      resolvesWhenShutdownRequested: new Promise(() => {}), resolveMachineId: () => machineId,
+      setMachineId: value => { machineId = value; }, isShuttingDown: () => false, onMachineRegistered: async () => resolve(),
     }));
     await services.refreshInventoryNow();
     const launcher = await services.launcherRoutes.getSnapshot({ scope: 'machine', discovery: 'cached' });
