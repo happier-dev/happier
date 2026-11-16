@@ -5,6 +5,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions';
 import { MachineServiceIdentityV1Schema } from '@happier-dev/protocol';
 import { AgentsBackendsListOutputSchema } from '@happier-dev/protocol/actions/agentBackendInventory';
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createTriageRunConfiguredActionHandler } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-configured-action-native';
@@ -123,16 +124,16 @@ describe('useHealthNoticeInvestigate', () => {
     const targetKey = buildAgentTargetKeyV2(agentTarget);
     const agents = AgentsBackendsListOutputSchema.parse({ defaultTargetKey: targetKey,
       items: [{ targetKey, label: 'Example Agent', agentTarget, enabled: true }] });
-    const environment = DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: {
+    const environment = DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: createDeploymentEnvironmentHeaderV1({
       v: 1, id: 'environment', serverId: scope.serverId, projectSourceId: 'project', revision: 1,
       owner: { kind: 'account', accountId: scope.accountId }, protection: 'nonProduction',
-      purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'other-account-machine',
+      purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'other-account-machine', buildMachineId: undefined,
       runtimeTargetLinkId: 'runtime', contentArtifactId: 'environment-content',
       contentHeaderVersion: 1, contentBodyVersion: 1,
       capabilities: { role: 'manager', read: true, deploy: true, manage: true,
         manageBindings: true, manageTargets: true, delete: true },
       createdByAccountId: scope.accountId, createdAtMs: 1, updatedAtMs: 1,
-    }, targetLinks: [] });
+    }), targetLinks: [] });
     const bundledManifest = JSON.parse(readFileSync(new URL('../../../../../cli/assets/bundled-plugin-manifests/triage.json', import.meta.url), 'utf8')) as {
       contributes: { actions: Array<{ id: string; inputSchema: object; resultSchema: object }> };
     };
