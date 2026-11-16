@@ -9,6 +9,7 @@ import { createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collection
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { DEFAULT_WORKFLOW_LIST_FILTER_V1, workflowListFilterFieldsV1 } from '@happier-dev/protocol/workflows/listing/workflowListFilterV1';
 import { DEFAULT_DISCUSSION_LIST_FILTER_V1, discussionListFilterFieldsV1 } from '@happier-dev/protocol/discussions/listing/discussionListFilterV1';
+import { DEFAULT_DEPLOYMENT_ENVIRONMENT_LIST_FILTER_V1, deploymentEnvironmentListFilterFieldsV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentListFilterV1';
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -38,7 +39,7 @@ await loadSyncSingletonForTests();
 const originalState = storage.getState();
 afterEach(() => { standardCleanup(); storage.setState(originalState, true); });
 
-async function mountEntity<K extends 'workflow' | 'discussion', Facts>(input: {
+async function mountEntity<K extends 'workflow' | 'discussion' | 'deploymentEnvironment', Facts>(input: {
     kind: K; defaultFilter: CollectionFilterMapV1[K]; narrowed: CollectionFilterMapV1[K];
     registry: EntityFilterRegistryV1<CollectionFilterMapV1[K], Facts>; rows: readonly (Facts & { id: string })[];
 }) {
@@ -86,7 +87,7 @@ async function mountEntity<K extends 'workflow' | 'discussion', Facts>(input: {
 }
 
 describe('saved Space deletion through the mounted Action owner', () => {
-    it.each(['sessionWork', 'workflow', 'discussion'] as const)('%s consumes the editor confirmation once even with saved Ask', async entityKind => {
+    it.each(['sessionWork', 'workflow', 'discussion', 'deploymentEnvironment'] as const)('%s consumes the editor confirmation once even with saved Ask', async entityKind => {
         confirm.mockClear();
         const base = createDefaultCollectionSpaceV1(entityKind);
         const saved = { ...base, id: 'release', name: 'Release' };
@@ -121,11 +122,17 @@ describe('shared entity Space presentation through real settings Actions and HTT
             registry: workflowListFilterFieldsV1, rows: [{ id: 'scheduled', triggered: true }, { id: 'ordinary', triggered: false }] },
         { kind: 'discussion' as const, defaultFilter: DEFAULT_DISCUSSION_LIST_FILTER_V1, narrowed: { ...DEFAULT_DISCUSSION_LIST_FILTER_V1, unreadOnly: true },
             registry: discussionListFilterFieldsV1, rows: [{ id: 'unread', state: 'active' as const, unread: true }, { id: 'read', state: 'active' as const, unread: false }] },
+        // Services (owner D5): a saved view of what needs the person.
+        { kind: 'deploymentEnvironment' as const, defaultFilter: DEFAULT_DEPLOYMENT_ENVIRONMENT_LIST_FILTER_V1,
+            narrowed: { states: { include: ['needsYou' as const], exclude: [] } }, registry: deploymentEnvironmentListFilterFieldsV1,
+            rows: [{ id: 'failing', projectSourceId: 'shop', state: 'needsYou' as const, machineId: 'machine-a' },
+                { id: 'live', projectSourceId: 'shop', state: 'deployed' as const, machineId: 'machine-a' }] },
     ] as const;
     for (const input of cases) {
         it(`${input.kind}: creates, edits, reorders, reopens and deletes with the user policy Allowed against populated facts`, async () => {
             // Each discriminated case keeps its own real registry/facts; their common owner is generic.
-            const mounted = input.kind === 'workflow' ? await mountEntity(input) : await mountEntity(input);
+            const mounted = input.kind === 'workflow' ? await mountEntity(input)
+                : input.kind === 'discussion' ? await mountEntity(input) : await mountEntity(input);
             const { account, screen } = mounted;
             try {
                 expect(mounted.ids()).toHaveLength(2);

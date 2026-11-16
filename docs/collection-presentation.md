@@ -161,6 +161,15 @@ pre-local-filter fact owners, not new queries; Discussion attention remains
 unknown for held summaries without an already-joined attention fact. Changed
 facts with equal counts reuse the prior result and unchanged option objects.
 
+In 0.3 development source, Services is the fourth host space kind
+(`deploymentEnvironment`). Its saved views filter Environments by Project, state
+(needs you, deploying, deployed, not deployed) and Machine. The state comes from the
+same readiness owner that draws the row's State mark. The Services column and the
+Apps page narrow through one shared Services draft (`useServicesListView`). Only one
+header places the shared title menu, strip, conditions and filter: the column when it
+stands beside the page, otherwise the page. Grouping (All, By project, By type) stays
+the column's per-device view state and is not part of a saved view.
+
 In 0.3 development source, the presented Workflows column and focused Library
 home expose `workflow.library.view.get/set/reset` through the same mounted Scope
 bridge and shared Workflow draft. Each reader releases only its own registration,

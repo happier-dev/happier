@@ -40,6 +40,7 @@ import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/man
 import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
 import type { DeploymentReadControllerV1, DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
+import { useServicesListView, useServicesSpaceHeader, type ServicesListViewController } from './useServicesListView';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
 const NO_ITEMS: readonly EnvironmentItem[] = Object.freeze([]);
@@ -141,6 +142,10 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   const filtering = notBackedUpOnly && backups.coverage !== null;
   const showBackupFilter = filtering || uncovered.size > 0;
   const view = props.controller && props.demand ? props.view ?? 'apps' : 'apps';
+  // One header (owner D5): beside the Services column its header places the saved views and filters; the page only narrows.
+  const besideColumn = useAppShellColumn().columnVisible;
+  const placesSpaces = view === 'apps' && !besideColumn;
+  const servicesView = useServicesListView(items, props.presented !== false && placesSpaces);
   const hasViewControls = Boolean(props.controller && props.demand && props.onSelectView);
   const localCommands = React.useMemo(() => props.presented === false ? [] : [
     ...(hasViewControls ? SERVICES_VIEWS.map(({ id, labelKey }) => ({
@@ -191,7 +196,6 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     <ServicesViewTabs active={view} needYou={needYou} onSelect={(next) => { void commands.invoke(`services.view.${next}`); }} />
   ) : null;
   // One create (reuse map D2): beside the Services column, its "+" is the page's create and its field the search.
-  const besideColumn = useAppShellColumn().columnVisible;
   // The main-screen head (lab svcHead): the title row's magnifier and create, the views and their filter right under
   // it, then the count line from the shown view's own reported counts.
   const [query, setQuery] = React.useState('');
@@ -212,27 +216,29 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     [items, pagedRead, total, view]);
   const count = view === 'apps' ? appsCount : viewCount?.view === view ? viewCount.parts : null;
   const header = (create: boolean) => (
-    <MainScreenHeader
-      testID="all-deployments.header"
-      title={t('projects.deployments.services.title')}
-      {...(phone ? {} : { description: t('projects.deployments.services.description') })}
-      alwaysShowTitle
-      search={create && !besideColumn ? search : null}
-      create={create && !besideColumn ? deployCreate : null}
-      {...(create && !besideColumn && !phone ? { createTrigger: <DeployAppButton onPress={openDeployApp} /> } : {})}
-      band={viewTabs || (view === 'apps' && notBackedUpFilter) ? <>{viewTabs}{view === 'apps' ? notBackedUpFilter : null}</> : undefined}
-      {...(create && count ? { count } : {})}
-    />
+    <ServicesPageHeader servicesView={servicesView} placesSpaces={placesSpaces && create} header={{
+      testID: 'all-deployments.header',
+      title: t('projects.deployments.services.title'),
+      ...(phone ? {} : { description: t('projects.deployments.services.description') }),
+      alwaysShowTitle: true,
+      search: create && !besideColumn ? search : null,
+      create: create && !besideColumn ? deployCreate : null,
+      ...(create && !besideColumn && !phone ? { createTrigger: <DeployAppButton onPress={openDeployApp} /> } : {}),
+      band: viewTabs || (view === 'apps' && notBackedUpFilter) ? <>{viewTabs}{view === 'apps' ? notBackedUpFilter : null}</> : undefined,
+      ...(create && count ? { count } : {}),
+    }} />
   );
   const retry = React.useCallback(() => {
     void read.refresh();
   }, [read]);
   // The search narrows the rows already read by the names they show (Environment and Project).
   const needle = query.trim().toLocaleLowerCase();
+  const { isVisible } = servicesView;
   const shownItems = React.useMemo(() => items.filter((item) => (!filtering || uncovered.has(item.environment.id))
+    && isVisible(item.environment.id)
     && (needle === '' || item.title.toLocaleLowerCase().includes(needle)
       || (item.projectSourceName ?? '').toLocaleLowerCase().includes(needle))),
-  [filtering, items, needle, uncovered]);
+  [filtering, isVisible, items, needle, uncovered]);
 
   // Each view owns its read state; an empty or unavailable Apps page cannot withhold another view.
   const selectedView = view === 'databases' && props.controller && serverId ? (
@@ -337,6 +343,11 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
         unresolved > 0 ? null : <ItemGroup surface="none">
           <EmptyState testID="all-deployments.allBackedUp" layout="line" title={t('projects.deployments.allBackedUp')} />
         </ItemGroup>
+      ) : shownItems.length === 0 && items.length > 0 && (needle !== '' || servicesView.narrowing) ? (
+        // The search or the view's conditions keep none of the rows read: say so, the header's tokens clear them.
+        <ItemGroup surface="none">
+          <EmptyState testID="all-deployments.noMatches" layout="line" title={t('projects.deployments.services.noMatches')} />
+        </ItemGroup>
       ) : items.length === 0 ? (
         // A page whose rows all belong to Projects this Account can't open still leads on to the next one.
         <ItemGroup surface="none">
@@ -351,6 +362,35 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     </>
   );
 });
+
+/**
+ * The Services page head with its saved views (owner D5). Where no Services column stands beside the page (a phone, or a
+ * wide window with the column closed) the page places the shared title menu, strip, conditions and filter, as the
+ * Workflows phone page does; beside the column, the column's header places them and the page draws none.
+ */
+function ServicesPageHeader(props: Readonly<{
+  header: React.ComponentProps<typeof MainScreenHeader>;
+  servicesView: ServicesListViewController;
+  placesSpaces: boolean;
+}>) {
+  const { header, placesSpaces } = props;
+  const spaceHeader = useServicesSpaceHeader(props.servicesView, 'services-page-space');
+  // One tree whether or not the page places them: the column opening or closing never remounts the head.
+  return (
+    <>
+      <MainScreenHeader
+        {...header}
+        {...(placesSpaces ? {
+          titleControl: spaceHeader.titleControl,
+          // The view's conditions end the field, as on My work and Workflows; the title's menu also opens them.
+          search: header.search ? { ...header.search, trailing: spaceHeader.filterButton } : header.search,
+          band: <>{header.band}{spaceHeader.strip}{spaceHeader.conditionRow}</>,
+        } : {})}
+      />
+      {placesSpaces ? spaceHeader.overlays : null}
+    </>
+  );
+}
 
 /** Environment rows banded by Project: the one Environment row (DeploymentEnvironmentRows), also a Machine's What runs here. */
 export function AllDeploymentsGroups(
