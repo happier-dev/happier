@@ -18,8 +18,6 @@ import {
 } from "./machinePoolService";
 import { getMachinePoolMemberEligibility } from './machinePoolMemberAdmission';
 
-vi.mock("@/app/events/connectionEventRouter", () => ({ eventRouter: { emitUpdate: vi.fn() } }));
-
 const ownerId = "pool-owner";
 const otherId = "pool-other";
 const poolId = "99d55938-f860-4af8-8023-01fecec86f35";

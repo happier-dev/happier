@@ -1,3 +1,4 @@
+import { homeGovernancePolicyProjectionFixture, homeGovernanceProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     NO_HOME_CAPABILITIES_V1,
@@ -29,24 +30,12 @@ import {
 } from './homeGovernanceEngine';
 
 function projection(activeOwnerCount = 1): HomeGovernanceProjectionV1 {
-    return {
+    return homeGovernanceProjectionFixture({
         viewer: { accountId: 'account', homeRole: 'owner', status: 'active' },
         capabilities: { ...NO_HOME_CAPABILITIES_V1, viewAdministration: true },
-        policy: {
-            revision: 3,
-            teamCreationPolicy: 'managed_only',
-            authentication: { status: 'inherited' },
-        },
-        authenticationOptions: {
-            methods: [],
-            permittedAccountModes: ['e2ee'],
-            recommendedProvisioningMode: 'e2ee',
-            signInService: { deploymentMode: null, canDisable: false },
-        },
-        setupState: 'owned',
+        policy: homeGovernancePolicyProjectionFixture({ revision: 3 }),
         activeOwnerCount,
-        teamsEnabled: true,
-    };
+    });
 }
 
 async function addHome(name: string, serverUrl: string): Promise<string> {

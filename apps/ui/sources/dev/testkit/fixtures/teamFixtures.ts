@@ -1,4 +1,15 @@
 import {
+    TeamPolicyV1Schema,
+    TeamSummaryV1Schema,
+    TeamCapabilitiesV1Schema,
+    TeamGroupV1Schema,
+    TeamGroupMemberV1Schema,
+    TeamMembershipV1Schema,
+    TeamInvitationRowV1Schema,
+    TeamCredentialResourceSummaryV1Schema,
+    TeamCredentialSourceResourceAdministrationV1Schema,
+    TeamCredentialSourceCandidateV1Schema,
+    TeamCredentialViewerCapabilitiesV1Schema,
     NO_TEAM_CAPABILITIES_V1,
     NO_TEAM_GROUP_CAPABILITIES_V1,
     NO_TEAM_MEMBERSHIP_CAPABILITIES_V1,
@@ -15,7 +26,7 @@ import {
     type TeamPolicyV1,
     type TeamSummaryV1,
 } from '@happier-dev/protocol/teams';
-import type { PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { PrivateLabelReadV1Schema, type PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 
 import { accountDisplayProfileFixture } from './homeGovernanceFixtures';
 
@@ -32,7 +43,7 @@ import { accountDisplayProfileFixture } from './homeGovernanceFixtures';
  * server's own projection.
  */
 export function teamPolicyFixture(overrides?: Partial<TeamPolicyV1>): TeamPolicyV1 {
-    return {
+    return TeamPolicyV1Schema.parse({
         v: 1,
         sessionCreationPolicy: 'team_default',
         externalSharingPolicy: 'allowed',
@@ -40,11 +51,11 @@ export function teamPolicyFixture(overrides?: Partial<TeamPolicyV1>): TeamPolicy
         admissionMode: 'invite_only',
         authenticationPolicy: null,
         ...overrides,
-    };
+    });
 }
 
 export function teamSummaryFixture(overrides?: Partial<TeamSummaryV1>): TeamSummaryV1 {
-    return {
+    return TeamSummaryV1Schema.parse({
         id: 'team-1',
         name: 'Platform',
         description: null,
@@ -61,7 +72,7 @@ export function teamSummaryFixture(overrides?: Partial<TeamSummaryV1>): TeamSumm
         admission: resolveTeamAdmissionProjectionV1(),
         counts: null,
         ...overrides,
-    };
+    });
 }
 
 export function teamCapabilitiesFixture(
@@ -69,13 +80,13 @@ export function teamCapabilitiesFixture(
 ): TeamCapabilitiesV1 {
     // A member's read pair: the Team and its roster/Groups. A case for a viewer who sees the
     // Team but not its roster (a non-member Home administrator) withdraws `viewRoster` itself.
-    return { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true, viewRoster: true, ...granted };
+    return TeamCapabilitiesV1Schema.parse({ ...NO_TEAM_CAPABILITIES_V1, viewTeam: true, viewRoster: true, ...granted });
 }
 
 export function teamGroupFixture(overrides?: Omit<Partial<TeamGroupV1>, 'name' | 'description'> & { name?: string | TeamGroupV1['name']; description?: string | TeamGroupV1['description'] }): TeamGroupV1 {
     const name = overrides?.name ?? 'Developers';
     const description = overrides?.description ?? null;
-    return {
+    return TeamGroupV1Schema.parse({
         v: 1,
         id: 'group-1',
         teamId: 'team-1',
@@ -90,26 +101,26 @@ export function teamGroupFixture(overrides?: Omit<Partial<TeamGroupV1>, 'name' |
         description: typeof description === 'string'
             ? { kind: 'available', label: { content: { t: 'plain', v: description }, recipientEnvelope: null } }
             : description,
-    };
+    });
 }
 
 export function teamGroupMemberFixture(
     overrides?: Partial<TeamGroupMemberV1>,
 ): TeamGroupMemberV1 {
-    return {
+    return TeamGroupMemberV1Schema.parse({
         accountId: 'account-ada',
         membershipId: 'membership-1',
         account: accountDisplayProfileFixture('Ada'),
         historyAccess: 'from_membership',
         contributions: { native: true, external: [] },
         ...overrides,
-    };
+    });
 }
 
 export function teamMembershipFixture(
     overrides?: Partial<TeamMembershipV1>,
 ): TeamMembershipV1 {
-    return {
+    return TeamMembershipV1Schema.parse({
         v: 1,
         id: 'membership-1',
         teamId: 'team-1',
@@ -122,13 +133,13 @@ export function teamMembershipFixture(
         capabilities: NO_TEAM_MEMBERSHIP_CAPABILITIES_V1,
         joinedAt: 1_000_000_000_000,
         ...overrides,
-    };
+    });
 }
 
 export function teamInvitationRowFixture(
     overrides?: Partial<TeamInvitationRowV1>,
 ): TeamInvitationRowV1 {
-    return {
+    return TeamInvitationRowV1Schema.parse({
         id: 'invitation-1',
         teamId: 'team-1',
         state: 'active',
@@ -141,7 +152,7 @@ export function teamInvitationRowFixture(
         acceptedByAccountId: null,
         lastEmailDelivery: null,
         ...overrides,
-    };
+    });
 }
 
 /**
@@ -152,7 +163,7 @@ export function teamInvitationRowFixture(
  * an audience or a delivery mode has to say so rather than inheriting one.
  */
 export function teamCredentialDisplayNameFixture(displayName: string): PrivateLabelReadV1 {
-    return { content: { t: 'plain', v: displayName }, recipientEnvelope: null };
+    return PrivateLabelReadV1Schema.parse({ content: { t: 'plain', v: displayName }, recipientEnvelope: null });
 }
 
 export type TeamCredentialResourceFixtureOverrides = Omit<Partial<TeamCredentialResourceSummaryV1>, 'capabilities' | 'displayName'> & Readonly<{
@@ -165,7 +176,7 @@ export function teamCredentialResourceFixture(
     overrides?: TeamCredentialResourceFixtureOverrides,
 ): TeamCredentialResourceSummaryV1 {
     const { displayName: displayNameOverride, capabilities: capabilityOverrides, ...rest } = overrides ?? {};
-    return {
+    return TeamCredentialResourceSummaryV1Schema.parse({
         id: 'resource-1',
         teamId: 'team-1',
         custodianAccountId: 'account-ada',
@@ -223,7 +234,7 @@ export function teamCredentialResourceFixture(
             delete: true,
             ...capabilityOverrides,
         },
-    };
+    });
 }
 
 export type TeamCredentialSourceResourceFixtureOverrides = Omit<Partial<TeamCredentialSourceResourceAdministrationV1>, 'capabilities' | 'displayName'> & Readonly<{
@@ -237,7 +248,7 @@ export function teamCredentialSourceResourceFixture(
 ): TeamCredentialSourceResourceAdministrationV1 {
     const { displayName: displayNameOverride, capabilities: capabilityOverrides, ...rest } = overrides ?? {};
     const resource = teamCredentialResourceFixture();
-    return {
+    return TeamCredentialSourceResourceAdministrationV1Schema.parse({
         id: resource.id,
         displayName: typeof displayNameOverride === 'string'
             ? teamCredentialDisplayNameFixture(displayNameOverride)
@@ -253,7 +264,7 @@ export function teamCredentialSourceResourceFixture(
         updatedAt: resource.updatedAt,
         ...rest,
         capabilities: { ...resource.capabilities, ...capabilityOverrides },
-    };
+    });
 }
 
 /**
@@ -266,7 +277,7 @@ export function teamCredentialSourceResourceFixture(
 export function teamCredentialSourceCandidateFixture(
     overrides?: Partial<TeamCredentialSourceCandidateV1>,
 ): TeamCredentialSourceCandidateV1 {
-    return {
+    return TeamCredentialSourceCandidateV1Schema.parse({
         source: {
             v: 1,
             kind: 'connected_pool',
@@ -283,12 +294,12 @@ export function teamCredentialSourceCandidateFixture(
         offeredByResourceId: null,
         directExportSupport: 'unsupported',
         ...overrides,
-    };
+    });
 }
 
 /** Denied by default, for the same reason Team capabilities are. */
 export function teamCredentialViewerFixture(
     overrides?: Partial<TeamCredentialViewerCapabilitiesV1>,
 ): TeamCredentialViewerCapabilitiesV1 {
-    return { manageCredentials: false, offerOwnCredential: false, ...overrides };
+    return TeamCredentialViewerCapabilitiesV1Schema.parse({ manageCredentials: false, offerOwnCredential: false, ...overrides });
 }

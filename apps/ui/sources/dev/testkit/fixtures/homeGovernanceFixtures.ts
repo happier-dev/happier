@@ -1,17 +1,27 @@
-import type { AccountDisplayProfileV1} from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import { AccountDisplayProfileV1Schema, type AccountDisplayProfileV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import type { FeatureDecision} from '@happier-dev/protocol/features/decision';
 import type { FeatureId } from '@happier-dev/protocol/features/catalog';
-import type {
-    HomeAccountDetailV1,
-    HomeAccountPickerRowV1,
-    HomeAccountRowV1,
-    HomeAdministrationEventV1,
-    HomeGovernancePolicyProjectionV1,
-    HomeGovernanceProjectionV1,
-    HomeMailDeliveryReadinessV1,
-    HomeReachabilityV1,
-    HomeSettingEntryV1,
-    HomeSettingsProjectionV1,
+import {
+    HomeGovernanceProjectionV1Schema,
+    HomeGovernancePolicyProjectionV1Schema,
+    HomeAccountRowV1Schema,
+    HomeAccountDetailV1Schema,
+    HomeAccountPickerRowV1Schema,
+    HomeSettingEntryV1Schema,
+    HomeSettingsProjectionV1Schema,
+    HomeMailDeliveryReadinessV1Schema,
+    HomeReachabilityV1Schema,
+    HomeAdministrationEventV1Schema,
+    type HomeAccountDetailV1,
+    type HomeAccountPickerRowV1,
+    type HomeAccountRowV1,
+    type HomeAdministrationEventV1,
+    type HomeGovernancePolicyProjectionV1,
+    type HomeGovernanceProjectionV1,
+    type HomeMailDeliveryReadinessV1,
+    type HomeReachabilityV1,
+    type HomeSettingEntryV1,
+    type HomeSettingsProjectionV1,
 } from '@happier-dev/protocol/home/governance';
 
 /**
@@ -24,7 +34,7 @@ import type {
 export function homeGovernanceProjectionFixture(
     overrides?: Partial<HomeGovernanceProjectionV1>,
 ): HomeGovernanceProjectionV1 {
-    return {
+    return HomeGovernanceProjectionV1Schema.parse({
         viewer: { accountId: 'account-ada', homeRole: 'owner', status: 'active' },
         capabilities: {
             viewAdministration: true,
@@ -56,7 +66,7 @@ export function homeGovernanceProjectionFixture(
             signInService: { deploymentMode: null, canDisable: false },
         },
         ...overrides,
-    };
+    });
 }
 
 /**
@@ -67,28 +77,28 @@ export function accountDisplayProfileFixture(
     name: string,
     overrides?: Partial<AccountDisplayProfileV1>,
 ): AccountDisplayProfileV1 {
-    return {
+    return AccountDisplayProfileV1Schema.parse({
         name,
         firstName: name,
         lastName: null,
         username: null,
         avatarUrl: null,
         ...overrides,
-    };
+    });
 }
 
 /** The policy document a Home returns from its one policy mutation. */
 export function homeGovernancePolicyProjectionFixture(
     overrides?: Partial<HomeGovernancePolicyProjectionV1>,
 ): HomeGovernancePolicyProjectionV1 {
-    return { ...homeGovernanceProjectionFixture().policy, ...overrides };
+    return HomeGovernancePolicyProjectionV1Schema.parse({ ...homeGovernanceProjectionFixture().policy, ...overrides });
 }
 
 export function homeAccountRowFixture(
     accountId: string,
     overrides?: Partial<HomeAccountRowV1>,
 ): HomeAccountRowV1 {
-    return {
+    return HomeAccountRowV1Schema.parse({
         accountId,
         homeRole: 'member',
         status: 'active',
@@ -110,7 +120,7 @@ export function homeAccountRowFixture(
             signOutEverywhere: { status: 'available' },
         },
         ...overrides,
-    };
+    });
 }
 
 /** One person as `home.accounts.get` answers: the row plus Teams, counts, providers and events. */
@@ -119,7 +129,7 @@ export function homeAccountDetailFixture(
     overrides?: Partial<HomeAccountDetailV1>,
 ): HomeAccountDetailV1 {
     const row = homeAccountRowFixture(accountId);
-    return {
+    return HomeAccountDetailV1Schema.parse({
         ...row,
         publicProfile: { managementCapability: { status: 'available' }, restricted: false },
         authentication: { ...row.authentication, linkedProviderIds: [] },
@@ -128,18 +138,18 @@ export function homeAccountDetailFixture(
         apiTokens: { count: 0, lastUsedAt: null },
         recentEvents: [],
         ...overrides,
-    };
+    });
 }
 
 export function homeAccountPickerRowFixture(
     accountId: string,
     firstName: string,
 ): HomeAccountPickerRowV1 {
-    return {
+    return HomeAccountPickerRowV1Schema.parse({
         accountId,
         profile: accountDisplayProfileFixture(firstName),
         eligible: true,
-    };
+    });
 }
 
 /**
@@ -150,7 +160,7 @@ export function homeSettingEntryFixture(
     key: string,
     overrides?: Partial<HomeSettingEntryV1>,
 ): HomeSettingEntryV1 {
-    return {
+    return HomeSettingEntryV1Schema.parse({
         key,
         value: null,
         source: 'default',
@@ -158,7 +168,7 @@ export function homeSettingEntryFixture(
         editable: 'home',
         apply: 'live',
         ...overrides,
-    };
+    });
 }
 
 /**
@@ -184,30 +194,30 @@ export function homeEmailSettingEntriesFixture(
 export function homeSettingsProjectionFixture(
     overrides?: Partial<HomeSettingsProjectionV1>,
 ): HomeSettingsProjectionV1 {
-    return {
+    return HomeSettingsProjectionV1Schema.parse({
         revision: 3,
         startedAt: null,
         entries: homeEmailSettingEntriesFixture(),
         ...overrides,
-    };
+    });
 }
 
 export function homeMailDeliveryReadinessFixture(
     overrides?: Partial<HomeMailDeliveryReadinessV1>,
 ): HomeMailDeliveryReadinessV1 {
-    return {
+    return HomeMailDeliveryReadinessV1Schema.parse({
         transportConfigured: true,
         linkTargetBuildable: true,
         linkOrigin: 'https://app.example.com',
         ready: true,
         passwordUnreadable: false,
         ...overrides,
-    };
+    });
 }
 
 /** How a Personal Home is reached: an address inferred from Tailscale Serve and active direct connections. */
 export function homeReachabilityFixture(overrides?: Partial<HomeReachabilityV1>): HomeReachabilityV1 {
-    return {
+    return HomeReachabilityV1Schema.parse({
         publicAddress: { url: 'https://home-mac.tailnet.ts.net', source: 'inferred', inferredFrom: 'tailscale_serve' },
         webApp: { url: 'https://app.example.com', source: 'default' },
         hostAccess: { method: 'tailscale_serve', exposure: 'private', shareUrl: 'https://home-mac.tailnet.ts.net' },
@@ -220,7 +230,7 @@ export function homeReachabilityFixture(overrides?: Partial<HomeReachabilityV1>)
             failureReason: null,
         },
         ...overrides,
-    };
+    });
 }
 
 type HomeAdministrationEventFixtureInput = HomeAdministrationEventV1 extends infer E
@@ -231,12 +241,12 @@ type HomeAdministrationEventFixtureInput = HomeAdministrationEventV1 extends inf
 
 /** One audit event, acted by an Account with a display profile, about nothing in particular. */
 export function homeAdministrationEventFixture(event: HomeAdministrationEventFixtureInput): HomeAdministrationEventV1 {
-    return {
+    return HomeAdministrationEventV1Schema.parse({
         at: 1_700_000_000_000,
         actor: { kind: 'account', accountId: 'account-ada', profile: accountDisplayProfileFixture('Ada') },
         target: null,
         ...event,
-    };
+    });
 }
 
 /** The env key the Home's feature family registers for a feature's switch (`HAPPIER_FEATURE_<X>__ENABLED`). */

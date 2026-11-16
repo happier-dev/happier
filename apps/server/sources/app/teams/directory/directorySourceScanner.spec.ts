@@ -6,7 +6,6 @@ const mocks = vi.hoisted(() => ({
     appRequest: vi.fn(),
     octokit: vi.fn(),
     request: vi.fn(),
-    beginWorkos: vi.fn(),
     updateMany: vi.fn(),
 }));
 
@@ -21,14 +20,11 @@ vi.mock("octokit", () => ({
     App: mocks.app,
     Octokit: Object.assign(mocks.octokit, { defaults: vi.fn(() => mocks.octokit) }),
 }));
-vi.mock("./workosDirectorySourceAdapter", () => ({
-    beginWorkosDirectoryRead: mocks.beginWorkos,
-}));
 
 import { initEncrypt } from "@/modules/encrypt";
 import { encryptGitHubAppRegistrationSecretsV1 } from "@/app/integrations/github/githubManagedApp";
 import type { ClaimedDirectorySource } from "./directorySourceService";
-import { catchUpDirectorySource, scanDirectorySource } from "./directorySourceScanner";
+import { scanDirectorySource } from "./directorySourceScanner";
 
 const previousMasterSecret = process.env.HANDY_MASTER_SECRET;
 
@@ -81,20 +77,6 @@ function claimedSource(): ClaimedDirectorySource {
     };
 }
 
-function claimedWorkosSource(): ClaimedDirectorySource {
-    return {
-        id: "source-workos",
-        teamId: "team-scanner",
-        kind: "workos_directory",
-        binding: { v: 1, kind: "workos_directory", workosDirectoryId: "directory_1" },
-        reconcileRunId: "run-workos",
-        eventCursor: null,
-        eventRangeStart: new Date("2026-09-05T09:00:00.000Z"),
-        observedManualSyncRequestedAt: null,
-        consecutiveFailureCount: 0,
-    };
-}
-
 beforeAll(async () => {
     process.env.HANDY_MASTER_SECRET = "directory-source-scanner-test-master-secret";
     await initEncrypt();
@@ -124,16 +106,6 @@ beforeEach(() => {
         : { data: { token: "installation-token" } });
     mocks.updateMany.mockResolvedValue({ count: 0 });
     mocks.octokit.mockImplementation(() => ({ request: mocks.request }));
-    mocks.beginWorkos.mockResolvedValue({
-        ok: true,
-        context: {
-            organizationId: "org_1",
-            directoryId: "directory_1",
-            listUsers: vi.fn(async () => ({ data: [], listMetadata: { after: null } })),
-            listGroups: vi.fn(async () => ({ data: [], listMetadata: { after: null } })),
-            listEvents: vi.fn(async () => ({ data: [], listMetadata: { after: null } })),
-        },
-    });
 });
 
 describe("directory source scanner", () => {
@@ -238,26 +210,4 @@ describe("directory source scanner", () => {
         await expect(scan()).resolves.toEqual({ ok: false, code: "directory_snapshot_incomplete" });
     });
 
-    it("uses the canonical WorkOS connection context for snapshot and boundary catch-up", async () => {
-        const source = claimedWorkosSource();
-        const writePeoplePage = vi.fn(async () => true);
-        const writeGroupsPage = vi.fn(async () => true);
-        const writeGroupMembersPage = vi.fn(async () => true);
-
-        await expect(scanDirectorySource({
-            source,
-            writePeoplePage,
-            writeGroupsPage,
-            writeGroupMembersPage,
-        })).resolves.toEqual({ ok: true });
-        await expect(catchUpDirectorySource({
-            source,
-            writeWorkosEvent: vi.fn(async () => true),
-            stageWorkosGroupMembersEventPage: vi.fn(async () => true),
-        })).resolves.toEqual({ ok: true });
-
-        expect(mocks.beginWorkos).toHaveBeenCalledTimes(2);
-        expect(mocks.beginWorkos).toHaveBeenNthCalledWith(1, { source, env: process.env });
-        expect(mocks.beginWorkos).toHaveBeenNthCalledWith(2, { source, env: process.env });
-    });
 });

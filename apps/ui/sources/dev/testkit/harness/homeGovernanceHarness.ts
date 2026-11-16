@@ -305,16 +305,14 @@ export type HomeGovernanceHarness = Readonly<{
     /**
      * Makes the named Actions explicitly approval-required for this Home's
      * Account, through the real persisted Actions policy the shared Action front
-     * door reads. That requirement is what turns an ordinary mutation into an
-     * approval request instead of an immediate Home call, so a case asserting
-     * approval routing exercises the shipped policy rather than a stub.
+     * door reads. An ordinary UI invocation then waits for its native confirmation;
+     * explicit approval proposals create Inbox Artifacts through the approval Action.
+     * Both paths exercise the shipped policy rather than a stub.
      *
      * The harness owns this write because it also owns undoing it: the policy
      * lives in the shared Account settings baseline, which no other reset owner
-     * clears, and a leftover requirement silently defers the *next* test's
-     * mutation into an approval Artifact its Home was never asked to answer for
-     * — which surfaces as a domain failure rather than the isolation defect it
-     * is. `reset` therefore removes exactly what this seeded.
+     * clears, and a leftover requirement silently prompts the *next* test's
+     * invocation. `reset` therefore removes exactly what this seeded.
      */
     requireUiApproval(serverId: string, actionId: string | readonly string[]): Promise<void>;
     /** Seed the same persisted policy for another real invocation surface. */

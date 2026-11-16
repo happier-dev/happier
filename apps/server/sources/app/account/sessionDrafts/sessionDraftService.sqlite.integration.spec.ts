@@ -19,7 +19,7 @@ import { eventRouter } from '@/app/events/connectionEventRouter';
 
 // Observe the canonical socket boundary without cloning the router singleton
 // while its barrel and production consumers are still being initialized.
-const emitEphemeral = vi.spyOn(eventRouter, 'emitEphemeral').mockImplementation(() => {});
+const emitEphemeral = vi.spyOn(eventRouter, 'emitEphemeral');
 
 import { inTx } from '@/storage/inTx';
 import { AccountScopedKvReservedKeyError } from '@/app/kv/accountScopedKv';
