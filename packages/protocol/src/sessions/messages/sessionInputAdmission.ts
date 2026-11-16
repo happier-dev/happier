@@ -1141,6 +1141,7 @@ export type SessionMessageSendResultV1 = z.infer<typeof SessionMessageSendResult
 /** Complete Action outcome, including the front door's exact-target fanout. */
 export const SessionMessageSendActionResultV1Schema = lazyZodSchema(() =>
   withSessionTargetFanoutResultV1(SessionMessageSendResultV1Schema));
+export type SessionMessageSendActionResultV1 = z.infer<typeof SessionMessageSendActionResultV1Schema>;
 export const SessionMessageSendResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SessionMessageSendActionResultV1Schema));
 
 export const SessionPermissionSourceAuthorityV1Schema = lazyZodSchema(() => z.strictObject({
