@@ -602,6 +602,46 @@ describe('WorkflowsColumn', () => {
         expect(rerendered.filter(testID => testID !== `workflows-column:library:${changed}`)).toEqual([]);
         await screen.unmount();
     });
+    it.each(['column', 'home'] as const)('discloses a failed saved-library refresh alongside retained rows and recovers through Retry in the %s', async surface => {
+        const answer = executeMock.getMockImplementation()!;
+        let title = 'Retained workflow';
+        executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => actionId === 'workflow.definition.list'
+            ? Promise.resolve({ ok: true, result: { definitions: [{
+                kind: 'workflow-definition.v1', definitionId: 'retained', metadata: { title },
+                revision: { headerVersion: 1, bodyVersion: 1 }, contentStatus: 'available', stepCount: 1,
+                ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null,
+            }] } satisfies WorkflowDefinitionListResultV1 }) : answer(actionId, input));
+        let failLibrary = false;
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        const http = boundary!;
+        setRuntimeFetch(async (url, init) => {
+            const target = new URL(String(url));
+            if (failLibrary && target.pathname === '/v1/artifacts' && (target.searchParams.get('kind') === 'other'
+                || target.searchParams.get('kinds')?.includes('workflow-definition.v1'))) {
+                return Response.json({ items: 'invalid-page' });
+            }
+            return http.request(url, init);
+        });
+        const { WorkflowsLibraryHome } = await import('../library/WorkflowsLibraryHome');
+        const screen = await renderScreen(surface === 'column' ? <WorkflowsColumn /> : <WorkflowsLibraryHome />,
+            { wrapper: TestAuth });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Retained workflow'));
+        expect(screen.findHostByTestId('workflow-library:refresh-failed')).toBeNull();
+        failLibrary = true;
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        await act(async () => publishHomeAccountChange(http.serverId, undefined, { changeKinds: ['artifact'] }));
+        await vi.waitFor(() => expect(screen.findHostByTestId('workflow-library:refresh-failed')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('Retained workflow');
+        expect(screen.findHostByTestId('home-unreachable')).toBeNull();
+        failLibrary = false;
+        title = 'Refreshed workflow';
+        await screen.pressByTestIdAsync('workflow-library:refresh-failed-action');
+        await vi.waitFor(() => {
+            expect(screen.getTextContent()).toContain('Refreshed workflow');
+            expect(screen.findHostByTestId('workflow-library:refresh-failed')).toBeNull();
+        });
+    });
+
     it('makes a failed-library retry visibly keyboard focusable with its button role', async () => {
         const answer = executeMock.getMockImplementation()!;
         executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => actionId === 'workflow.definition.list'

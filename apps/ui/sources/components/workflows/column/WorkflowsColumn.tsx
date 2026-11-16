@@ -50,6 +50,7 @@ import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatu
 import { useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
 import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
 import { readOpenWorkflowDefinition } from './workflowsColumnModel';
+import { WorkflowLibraryFreshness } from '../library/WorkflowLibraryFreshness';
 
 
 function isRunPath(pathname: string): boolean {
@@ -267,6 +268,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
                 <ColumnAccountWorkflowEntry row={row} editor={accountEditor} deepLink={params.trigger === row.accountTrigger.automationId} />
             )}
         </ColumnRowWindow></CollectionRowOrder>)}
+        <WorkflowLibraryFreshness library={library} hasRows={!empty} />
         {accountFailed ? <View style={styles.stale}>
             <SurfaceFreshnessLine testID="workflows-column:library:account-failed" tone="warning"
                 reason={t('workflows.triggers.section.accountLoadFailed')}

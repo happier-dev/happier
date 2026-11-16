@@ -71,6 +71,7 @@ import { AccountWorkflowRowAnchor, formatAccountWorkflowLine, isAccountWorkflowO
     type AccountWorkflowLibraryRow } from './AccountWorkflowRowAnchor';
 import { useWorkflowLibraryView, workflowLibraryRowTitle as rowTitle, type WorkflowLibraryRow } from './useWorkflowLibraryView';
 import { useWorkflowLibrarySpaceHeader } from './useWorkflowLibrarySpaceHeader';
+import { WorkflowLibraryFreshness } from './WorkflowLibraryFreshness';
 
 /**
  * The Collection's rows: saved and Account Workflows (one Library, Q7), shared and plugin workflows.
@@ -336,6 +337,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                                 {...(retainedRowKeys === undefined ? {} : { retainedRowKeys })}
                                 empty={empty}
                             />
+                        <WorkflowLibraryFreshness library={library} hasRows={rows.length > 0} />
                         <AddressedAccountTriggersSlot />
                         {/* ov-B: beside the Workflows column, which lists Built-in, the page does not repeat it. */}
                         {columnListsBuiltins ? null : <WorkflowBuiltinsSection isVisible={libraryView.isVisible} />}
