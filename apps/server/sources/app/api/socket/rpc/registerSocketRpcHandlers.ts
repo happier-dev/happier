@@ -1238,14 +1238,20 @@ export function registerSocketRpcHandlers(params: Readonly<{
             const reverseAutomationSeparator = method.indexOf(':');
             const reverseClientContinuation = reverseAutomationSeparator > 0
                 && isMachineVisibleClientRpcMethod(method.slice(reverseAutomationSeparator + 1));
+            const appClientContinuation = answeringClient !== undefined
+                && method.slice(reverseAutomationSeparator + 1) === RPC_METHODS.UI_ACTION_EXECUTE
+                && params.ephemeralRunnerAdmission == null
+                && isPresentUserLiveApprovalOriginCaller(params.socket)
+                && await hasCurrentSocketCredential(params.userId, params.socket);
             if (answeringClient && !reverseClientContinuation) {
                 callback?.(buildForbiddenRpcResponse());
                 return;
             }
-            if (reverseClientContinuation && (readMachineScopedSocketMachineId(params.socket) !== method.slice(0, reverseAutomationSeparator)
+            if (reverseClientContinuation && (!appClientContinuation
+                    && readMachineScopedSocketMachineId(params.socket) !== method.slice(0, reverseAutomationSeparator)
                     || !await isMachineScopedRpcMethodAvailable({ userId: params.userId, method }))) {
-                // Continue only an Action admitted by the exact daemon. An Account
-                // caller cannot use this lower transport to skip Action approval.
+                // Daemons and present-user Apps continue their admitted Action
+                // through a registered App in the same Account.
                 callback?.(buildForbiddenRpcResponse());
                 return;
             }
@@ -1847,7 +1853,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
             }
             let machineAdmissionGuard: RpcForwardTargetGuard | null = null;
             if (sessionBrowserAuthorization) machineAdmissionGuard = createCurrentMachineAdmissionTargetGuard(sessionBrowserAuthorization);
-            const machinePrefix = readMachineIdPrefix(method);
+            // This prefix carries the existing registration and encryption key;
+            // an App-to-App call does not execute work on that Machine.
+            const machinePrefix = appClientContinuation ? null : readMachineIdPrefix(method);
             let structuredMessageRouting: StructuredMessageActionRoutingV1 | undefined;
             const machineRpcMethod = machinePrefix ? method.slice(method.indexOf(':') + 1) : null;
             if (machinePrefix && (machineRpcMethod === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE
@@ -2321,6 +2329,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 } : (moveChildExecution || isHandoffCurrent || isTransitionRoot || verifiedExternalAction?.sessionRpcTarget || verifiedExternalAction?.binding.workflowActionOrigin) && verifiedExternalAction
                     ? { callerAuthority: requestAuthentication.authority } : {}),
                 ...(liveApprovalOrigin ? { callerAuthority: 'present_user' as const } : {}),
+                ...(appClientContinuation ? { callerAuthority: requestAuthentication.authority, allowCallerTarget: true } : {}),
                 ...(sessionBrowserAuthorization ? { callerAuthority: requestAuthentication.authority } : {}),
                 ...(explicitMachineStopRequest
                     ? { transportResponseEnvelopeVersion: 1 as const }

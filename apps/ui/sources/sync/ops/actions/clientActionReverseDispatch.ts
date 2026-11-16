@@ -7,11 +7,11 @@ import { projectKnownAccountAuthorityRetirementReceipt } from '@happier-dev/prot
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createDefaultActionExecutor } from './defaultActionExecutor';
 
-/** Only the server-authenticated exact Machine may enter this admitted continuation. */
+/** The server authenticates the App or exact Machine continuing its admitted Action. */
 export function createUiClientActionReverseHandler(binding: Readonly<{
     serverId: string;
     accountId: string;
-    /** The dispatching Machine that admitted, and awaits, this continuation. */
+    /** Existing Machine carrier for the admitted continuation. */
     machineId?: string;
     isCurrent(): boolean;
     canExecute?(): boolean;

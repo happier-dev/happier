@@ -13,8 +13,9 @@ export type SocketRpcContent =
 export type SocketRpcRequestBinding = Readonly<{ method: string; callId: string }>;
 export type DecodedSocketRpcRequest = Readonly<{ params: unknown; callId: string | null }>;
 
-function acknowledgementError(error: string, errorCode?: string, failureCause?: unknown, details?: unknown, effectAttempted?: unknown) {
-  const failure = createRpcCallError({ error, errorCode, failureCause, details, effectAttempted });
+function acknowledgementError(error: string, errorCode?: string, failureCause?: unknown, details?: unknown, effectAttempted?: unknown, answeringClients?: unknown) {
+  const failure = createRpcCallError({ error, errorCode, failureCause, effectAttempted,
+    details: errorCode === RPC_ERROR_CODES.CLIENT_AMBIGUOUS ? { clients: answeringClients } : details });
   // Reserved refusal codes in an actual error acknowledgement prove the call
   // did not reach handler execution. Local response-decoding errors do not.
   const refusedBeforeExecution = errorCode !== RPC_ERROR_CODES.OUTCOME_UNKNOWN
@@ -67,11 +68,11 @@ function interpretDecodedResult(value: unknown): unknown {
 }
 async function decodeResult(content: SocketRpcContent, acknowledgement: unknown, callId: string): Promise<unknown> {
   if (!acknowledgement || typeof acknowledgement !== 'object') throw createRpcCallError({ error: 'Invalid RPC acknowledgement' });
-  const ack = acknowledgement as { ok?: unknown; result?: unknown; error?: unknown; errorCode?: unknown; failureCause?: unknown; details?: unknown; effectAttempted?: unknown };
+  const ack = acknowledgement as { ok?: unknown; result?: unknown; error?: unknown; errorCode?: unknown; failureCause?: unknown; details?: unknown; effectAttempted?: unknown; answeringClients?: unknown };
   if (ack.ok === true) {
     if (content.mode === 'plain') return interpretDecodedResult(ack.result);
     if (isRecord(ack.result) && typeof ack.result.error === 'string' && typeof ack.result.errorCode === 'string') {
-      throw acknowledgementError(ack.result.error, ack.result.errorCode, ack.result.failureCause, ack.result.details, ack.result.effectAttempted);
+      throw acknowledgementError(ack.result.error, ack.result.errorCode, ack.result.failureCause, ack.result.details, ack.result.effectAttempted, ack.result.answeringClients);
     }
     const opened = await open(content, ack.result);
     if (opened.k !== 'res' || opened.c !== callId || Object.keys(opened).some(key => !['v', 'k', 'c', 'r'].includes(key))) throw updateRequired();
@@ -83,6 +84,7 @@ async function decodeResult(content: SocketRpcContent, acknowledgement: unknown,
     ack.failureCause,
     ack.details,
     ack.effectAttempted,
+    ack.answeringClients,
   );
 }
 /** Responders encode their raw result; the relay owns the outer acknowledgement. */

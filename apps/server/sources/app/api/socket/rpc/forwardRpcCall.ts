@@ -171,6 +171,8 @@ async function executeRpcForwardCall(params: Readonly<{
     createMachineAdmission?: (input: Readonly<{ target: RpcAckResponseEmitter }>) => Promise<SocketRpcMachineAdmissionContextV1 | null>;
     transportResponseEnvelopeVersion?: 1;
     callerSocketId?: string;
+    /** Admitted App-to-App Actions may explicitly address their own registered App. */
+    allowCallerTarget?: boolean;
     /** Home-minted observation only, independent of cancellation/signed request identity. */
     traceId?: string;
     answeringClient?: SocketRpcAnsweringClientV1;
@@ -222,7 +224,7 @@ async function executeRpcForwardCall(params: Readonly<{
     // An admitted Machine's post-firewall observation must travel through Home
     // and ACK on its own registered daemon. Keep ordinary self-calls excluded;
     // this exact read still consumes the existing admission and target guard.
-    const excludedSocketId = params.machineAdmission
+    const excludedSocketId = params.allowCallerTarget || params.machineAdmission
         && params.method === `${params.machineAdmission.machineId}:${RPC_METHODS.CAPABILITIES_DESCRIBE}`
         ? undefined : params.callerSocketId;
     const selection = await waitForRpcTargetAvailability({

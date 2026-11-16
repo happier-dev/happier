@@ -39,6 +39,12 @@ import {
 } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { UiActionDispatchRequestV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+import {
+    SocketRpcAnsweringClientCandidatesV1Schema,
+    type SocketRpcAnsweringClientCandidateV1,
+    type SocketRpcAnsweringClientV1,
+} from '@happier-dev/protocol/rpc/answeringClient';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { handleUiBrowserRecordingCaptureFrameRequest } from '@/sync/domains/browser/recording/reverseCaptureHandler';
 import {
@@ -885,7 +891,8 @@ class ApiSocket {
             timeoutMs?: number | null;
             authorization?: SocketRpcAuthorizationContext;
             onIssued?: () => void;
-            onResponse?: () => void;
+            onResponse?: (response: unknown) => void;
+            answeringClient?: SocketRpcAnsweringClientV1;
             signal?: AbortSignal;
             waitForResultOnCancel?: boolean;
             requestId?: string;
@@ -978,6 +985,27 @@ class ApiSocket {
         } finally {
             if (!physicalReadOwnsCustody) releaseRequestLease();
         }
+    }
+
+    /** App-to-app Actions use the same Machine content and answering-client carrier as reverse RPC. */
+    async callClientAction(input: Readonly<{
+        machineId: string;
+        request: UiActionDispatchRequestV1;
+        answeringClient?: SocketRpcAnsweringClientV1;
+        signal?: AbortSignal;
+    }>): Promise<Readonly<{ result: unknown; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>> {
+        let answeringClients: readonly SocketRpcAnsweringClientCandidateV1[] | undefined;
+        const result = await this.machineRPC(input.machineId, RPC_METHODS.UI_ACTION_EXECUTE, input.request, {
+            answeringClient: input.answeringClient ?? {},
+            signal: input.signal,
+            onResponse: response => {
+                const candidates = SocketRpcAnsweringClientCandidatesV1Schema.safeParse(
+                    response && typeof response === 'object' && 'answeringClients' in response ? response.answeringClients : undefined,
+                );
+                if (candidates.success) answeringClients = candidates.data;
+            },
+        });
+        return { result, ...(answeringClients === undefined ? {} : { answeringClients }) };
     }
 
     send(event: string, data: any) {

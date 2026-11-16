@@ -691,6 +691,17 @@ retry with an exact candidate. No client-discovery Action is required for that
 recovery. Unadvertised device labels remain null. No focus timer or polling is
 introduced.
 
+In unreleased 0.3 source, a present-user App can discover and address other
+connected Apps through the same Machine-scoped `answering-client.v1/` carrier
+and target selector. The carrier must belong to its Account; it retains the
+existing Machine-key encryption and does not require daemon execution. Discovery
+includes the calling App and its nullable device label. An explicit `clientId`
+may select that App or another eligible App. Theme Actions map a disconnected
+selection to the typed `client_not_connected` result without fallback or a queue.
+The existing Action executor decides admission and approval once; the receiving
+App consumes that admitted continuation. Other reverse RPC methods retain their
+authenticated daemon source requirement.
+
 Contributed plugin client Actions use the same receiver selection. Invoke the
 host `action.invoke` envelope with optional `clientId` alongside `action` and
 `input`; the selector is not a field in the plugin's business input. The shared

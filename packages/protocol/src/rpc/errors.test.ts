@@ -13,6 +13,17 @@ import {
 } from './errors.js';
 
 describe('rpcErrors', () => {
+  it.each(['client_ambiguous', RPC_ERROR_CODES.CLIENT_AMBIGUOUS])('retains labeled client ambiguity candidates through the canonical RPC error carrier (%s)', errorCode => {
+    const clients = [{ id: 'phone', deviceLabel: 'My phone' }, { id: 'desktop', deviceLabel: null }];
+    expect(createRpcCallError({ error: 'Choose a client', errorCode, details: { clients } }))
+      .toMatchObject({ rpcErrorCode: errorCode, details: { clients } });
+    expect(createRpcCallError({ error: 'Choose a client', errorCode, details: {
+      clients: [{ id: 'phone', deviceLabel: 42 }],
+    } })).not.toHaveProperty('details');
+    expect(createRpcCallError({ error: 'Failed', errorCode: 'action_failed', details: { clients } }))
+      .not.toHaveProperty('details');
+  });
+
   it.each([RPC_ERROR_CODES.OUTCOME_UNKNOWN, undefined])('keeps typed diagnostics separate from native Error.cause (%s)', errorCode => {
     const failureCause = { phase: 'rpc.relay', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: null };
     const error = createRpcCallError({ error: 'Relay failed', errorCode, failureCause });

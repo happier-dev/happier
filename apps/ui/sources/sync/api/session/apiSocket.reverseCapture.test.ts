@@ -22,6 +22,8 @@ import { SecretBoxEncryption } from '@/sync/encryption/encryptor';
 import { EncryptionCache } from '@/sync/encryption/encryptionCache';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createMachineRpcReadAdmission } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcReadAdmission';
+import type { UiActionDispatchRequestV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 
 type SocketEventHandler = (...args: unknown[]) => void;
 type SocketStub = ReturnType<typeof createSocketIoBoundaryStub>['socket'];
@@ -101,6 +103,57 @@ afterEach(() => {
 });
 
 describe('apiSocket inbound machine-scoped reverse RPC (RU2 G1)', () => {
+    it.each(['plain', 'e2ee'] as const)('dispatches an addressed client Action through the existing %s Machine carrier with labelled candidates', async mode => {
+        const { socket } = createSocketStub();
+        const machineId = mode === 'plain' ? 'client-action-plain-machine' : 'machine-1';
+        const machineEncryption = createMachineEncryption();
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applyMachines([createMachineFixture({ id: machineId, storageMode: mode })], true);
+        await bootApiSocket({ socket, getMachineEncryption: () => mode === 'plain' ? null : machineEncryption });
+        const request: UiActionDispatchRequestV1 = {
+            v: 1, actionId: THEME_ACTION_IDS.list, input: {}, context: { surface: 'ui', authority: 'present_user' },
+        };
+        const execution = { v: 1, execution: { ok: true, result: { themes: [] } } };
+        const candidates = [{ id: socket.id, deviceLabel: 'My browser' }, { id: 'app-other', deviceLabel: 'Phone' }];
+        const receive = getRegisteredHandler(socket, SOCKET_RPC_EVENTS.REQUEST)!;
+        const dispose = apiSocket.registerMachineScopedRpcHandler(machineId, RPC_METHODS.UI_ACTION_EXECUTE, async raw => {
+            expect(raw).toEqual(request);
+            return execution;
+        });
+        const emitWithAck = socket.emitWithAck.getMockImplementation()!;
+        socket.emitWithAck.mockImplementation(async (event, raw) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL) return await emitWithAck(event, raw);
+            expect(raw).toMatchObject({
+                method: `${machineId}:answering-client.v1/${RPC_METHODS.UI_ACTION_EXECUTE}`,
+                answeringClient: { clientId: socket.id, includeCandidates: true },
+            });
+            if (typeof raw !== 'object' || raw === null || !('params' in raw)) throw new Error('Missing RPC content');
+            const result = await new Promise<unknown>(resolve => receive({ method: `${machineId}:${RPC_METHODS.UI_ACTION_EXECUTE}`, params: raw.params }, resolve));
+            return { ok: true, result, answeringClients: candidates };
+        });
+        try {
+            await expect(apiSocket.callClientAction({ machineId, request,
+                answeringClient: { clientId: socket.id, includeCandidates: true },
+            })).resolves.toEqual({ result: execution, answeringClients: candidates });
+        } finally { dispose(); }
+    });
+
+    it('preserves server receiver-choice failures and their candidate labels', async () => {
+        const { socket } = createSocketStub();
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applyMachines([createMachineFixture({ id: 'client-choice-machine', storageMode: 'plain' })], true);
+        await bootApiSocket({ socket, getMachineEncryption: () => null });
+        const clients = [{ id: 'app-a', deviceLabel: 'Phone' }, { id: 'app-b', deviceLabel: null }];
+        const emitWithAck = socket.emitWithAck.getMockImplementation()!;
+        socket.emitWithAck.mockImplementation(async (event, raw) => event === SOCKET_RPC_EVENTS.CALL
+            ? { ok: false, error: 'Choose a client', errorCode: 'RPC_CLIENT_AMBIGUOUS', answeringClients: clients }
+            : await emitWithAck(event, raw));
+        await expect(apiSocket.callClientAction({ machineId: 'client-choice-machine',
+            request: { v: 1, actionId: THEME_ACTION_IDS.list, input: {}, context: { surface: 'ui', authority: 'present_user' } },
+            answeringClient: { requireSingle: true },
+        })).rejects.toMatchObject({ rpcErrorCode: 'RPC_CLIENT_AMBIGUOUS', details: { clients } });
+    });
+
     it.each(['plain', 'e2ee'] as const)('redacts thrown RPC messages and preserves producer causes in %s replies', async mode => {
         const { socket } = createSocketStub();
         const machineId = mode === 'plain' ? 'catch-plain-machine' : 'machine-1';

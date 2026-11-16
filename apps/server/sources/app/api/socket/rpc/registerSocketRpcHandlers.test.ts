@@ -1315,6 +1315,74 @@ describe("registerSocketRpcHandlers", () => {
         }
     });
 
+    it('lets an Account app discover and explicitly select connected apps, including itself, without fallback', async () => {
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'installed-machine-1' });
+        const { io, createRoomAwareSocket } = createRoomAwareIo();
+        const method = `machine-1:${RPC_METHODS.UI_ACTION_EXECUTE}`;
+        const effects: string[] = [];
+        const apps = ['app-a', 'app-b', 'app-c'].map((id, index) => createRoomAwareSocket({ id,
+            data: { userId: 'user-1', clientType: 'user-scoped', ...(index < 2 ? { rpcDeviceLabel: `Device ${index}` } : {}) },
+            timeout: () => ({ emitWithAck: async (_event: string, request: { params: unknown; callerAuthority?: string }) => {
+                expect(request.params).toBe('encrypted-action');
+                expect(request.callerAuthority).toBe('present_user');
+                effects.push(id);
+                return 'encrypted-result';
+            } }) }));
+        for (const app of apps) {
+            await app.join(app.id);
+            registerSocketRpcHandlers({ userId: 'user-1', socket: app as unknown as Socket, io });
+            await triggerSocketHandler(app, SOCKET_RPC_EVENTS.REGISTER, { method }, vi.fn());
+        }
+        const call = { method: `machine-1:answering-client.v1/${RPC_METHODS.UI_ACTION_EXECUTE}`, params: 'encrypted-action' };
+        const discovery = vi.fn();
+        await triggerSocketHandler(apps[0]!, SOCKET_RPC_EVENTS.CALL, { ...call,
+            answeringClient: { requireSingle: true, includeCandidates: true } }, discovery);
+        expect(discovery).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.CLIENT_AMBIGUOUS,
+            answeringClients: [{ id: 'app-a', deviceLabel: 'Device 0' }, { id: 'app-b', deviceLabel: 'Device 1' }, { id: 'app-c', deviceLabel: null }] }));
+        expect(effects).toEqual([]);
+        const listed = vi.fn();
+        await triggerSocketHandler(apps[0]!, SOCKET_RPC_EVENTS.CALL, { ...call,
+            answeringClient: { includeCandidates: true } }, listed);
+        expect(listed).toHaveBeenCalledWith(expect.objectContaining({ ok: true, answeringClientId: 'app-a',
+            answeringClients: [{ id: 'app-a', deviceLabel: 'Device 0' }, { id: 'app-b', deviceLabel: 'Device 1' }, { id: 'app-c', deviceLabel: null }] }));
+        for (const clientId of ['app-b', 'app-a']) {
+            const selected = vi.fn();
+            await triggerSocketHandler(apps[0]!, SOCKET_RPC_EVENTS.CALL, { ...call, answeringClient: { clientId } }, selected);
+            expect(selected).toHaveBeenCalledWith(expect.objectContaining({ ok: true, result: 'encrypted-result', answeringClientId: clientId }));
+        }
+        await triggerSocketHandler(apps[1]!, SOCKET_RPC_EVENTS.UNREGISTER, { method }, vi.fn());
+        const disconnected = vi.fn();
+        await triggerSocketHandler(apps[0]!, SOCKET_RPC_EVENTS.CALL, { ...call, answeringClient: { clientId: 'app-b' } }, disconnected);
+        expect(disconnected).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE }));
+        expect(effects).toEqual(['app-a', 'app-b', 'app-a']);
+    });
+
+    it('refuses app continuations from another Account or restricted credential and retains daemon-only reverse methods', async () => {
+        machineFindFirstMock.mockImplementation(async args => (args as { where: { accountId: string } }).where.accountId === 'user-1'
+            ? { revokedAt: null, replacedByMachineId: null } : null);
+        const { io, createRoomAwareSocket } = createRoomAwareIo();
+        const method = `machine-1:${RPC_METHODS.UI_ACTION_EXECUTE}`;
+        const effect = vi.fn(async () => 'encrypted-result');
+        const receiver = createRoomAwareSocket({ id: 'receiver', data: { clientType: 'user-scoped' },
+            timeout: () => ({ emitWithAck: effect }) });
+        registerSocketRpcHandlers({ userId: 'user-1', socket: receiver as unknown as Socket, io });
+        await triggerSocketHandler(receiver, SOCKET_RPC_EVENTS.REGISTER, { method }, vi.fn());
+        for (const scenario of ['foreign-account', 'automation', 'api-token', 'other-method', 'raw-method'] as const) {
+            const userId = scenario === 'foreign-account' ? 'user-2' : 'user-1';
+            const caller = createRoomAwareSocket({ id: scenario, data: { clientType: 'user-scoped', userId,
+                ...(scenario === 'automation' ? { authAuthority: 'account_automation' } : {}),
+                ...(scenario === 'api-token' ? { authTokenKind: 'api_token', apiTokenPrincipal: {} } : {}) } });
+            registerSocketRpcHandlers({ userId, socket: caller as unknown as Socket, io });
+            const ack = vi.fn();
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { params: 'encrypted-action',
+                method: scenario === 'raw-method' ? method
+                    : `machine-1:answering-client.v1/${scenario === 'other-method' ? RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE : RPC_METHODS.UI_ACTION_EXECUTE}`,
+                ...(scenario === 'raw-method' ? {} : { answeringClient: { clientId: receiver.id } }) }, ack);
+            expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        }
+        expect(effect).not.toHaveBeenCalled();
+    });
+
     it('routes a versioned answering-client continuation through the existing authenticated Machine owner', async () => {
         machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'installed-machine-1' });
         const method = `machine-1:${RPC_METHODS.UI_ACTION_EXECUTE}`;
@@ -1336,6 +1404,7 @@ describe("registerSocketRpcHandlers", () => {
         expect(selected).toHaveBeenCalledWith(expect.objectContaining({ ok: true, result: 'encrypted-result', answeringClientId: 'app-b' }));
         expect(effects).toEqual(['app-b']);
         socket.data!.clientType = 'user-scoped';
+        socket.data!.authAuthority = 'account_automation';
         const forged = vi.fn();
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { ...call, answeringClient: { clientId: 'app-b' } }, forged);
         expect(forged).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));

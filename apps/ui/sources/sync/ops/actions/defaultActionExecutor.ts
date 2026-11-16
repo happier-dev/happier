@@ -192,7 +192,9 @@ import { randomUUID } from '@/platform/randomUUID';
 import { executeCurrentUiContextAction, executeCurrentUiContextContributedAction, listCurrentUiContextContributedActionDefinitions } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { createUiAccountAction, resolveUiAccountActionFallbackMachineId } from './accountActionDeps';
 import { executeAdmittedClientActionChildAtMachine, type AdmittedClientActionParent } from './admittedClientActionChild';
-import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { clientActionUnavailable, buildUiActionDispatchRequestV1, parseClientActionDispatchResult, isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import type { ThemeActionOutput } from '@happier-dev/protocol/actions/themeActionFamily';
 import { buildMachineAgentInventoryDescriptors } from '@/agents/machineAgents/machineAgentCatalog';
 import { DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import {
@@ -1994,6 +1996,31 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           { expectedScope: accountContext.accountLifetime.scope, signal }),
         clientId: () => apiSocket.getSocketId(),
         readSelection: () => readThemeProfileReferenceSelection(storage.getState().localSettings.themeProfileSelection),
+        dispatchClientAction: async request => {
+          const machineId = resolveUiAccountActionFallbackMachineId(accountContext, { allowUnreachableFallback: true });
+          if (!machineId) return clientActionUnavailable(request.actionId);
+          const discovery = request.actionId === THEME_ACTION_IDS.list;
+          const input = discovery ? { ...request.input, includeDevices: false } : request.input;
+          try {
+            const response = await apiSocket.callClientAction({ machineId,
+              request: buildUiActionDispatchRequestV1({ ...request, input }),
+              answeringClient: { clientId: discovery ? apiSocket.getSocketId() : request.input.clientId,
+                requireSingle: true, ...(discovery ? { includeCandidates: true } : {}) },
+              signal: request.context.signal,
+            });
+            const execution = parseClientActionDispatchResult(request.actionId, response.result);
+            if (!execution) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+            if (!execution.ok) return execution;
+            // The shared dispatch parser validated this exact Action's output at the network boundary.
+            const result = execution.result as ThemeActionOutput;
+            return discovery ? { ...result, devices: response.answeringClients ?? [] } : result;
+          } catch (error) {
+            if (readRpcFailureCode(error) === RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE) {
+              return clientActionUnavailable(request.actionId);
+            }
+            throw error;
+          }
+        },
       }),
       profileActionExecute: createUiProfileActionExecuteV1(accountContext, { onRpcDispatched: opts?.onProviderRpcDispatched }),
       mcpServerAction: createUiMcpServerActionExecuteV1(accountContext, connectedServiceAction, {

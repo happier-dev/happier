@@ -50,6 +50,19 @@ it.each(['plain', 'e2ee'] as const)('retains the relay failure diagnostic withou
   expect(readRpcRequestDisposition(failure)).toBe('outcomeUnknown');
 });
 
+it.each(['plain', 'e2ee'] as const)('retains labeled answering clients from Home ambiguity in %s mode', async mode => {
+  const clients = [{ id: 'phone', deviceLabel: 'My phone' }, { id: 'desktop', deviceLabel: null }];
+  const socket = { emit() {}, timeout: () => ({ emitWithAck: async () => ({ ok: false,
+    error: 'Choose a client', errorCode: RPC_ERROR_CODES.CLIENT_AMBIGUOUS, answeringClients: clients }) }) };
+  const content: SocketRpcContent = mode === 'plain' ? { mode } : { mode, cipher: {
+    encryptRaw: async () => 'ciphertext', decryptRaw: async () => { throw new Error('Refusal must not be opened'); },
+  } };
+  await expect(callSocketRpc({ socket, target: { kind: 'machine', id: 'guest' }, method: 'ui.actions.execute.v1',
+    params: {}, answeringClient: { requireSingle: true }, content, timeoutMs: 30_000 })).rejects.toMatchObject({
+      rpcErrorCode: RPC_ERROR_CODES.CLIENT_AMBIGUOUS, details: { clients },
+    });
+});
+
 it.each(['plain', 'e2ee'] as const)('retains Home availability details from a refused socket call in %s mode', async mode => {
   const details = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
   const content: SocketRpcContent = mode === 'plain' ? { mode } : { mode, cipher: {
