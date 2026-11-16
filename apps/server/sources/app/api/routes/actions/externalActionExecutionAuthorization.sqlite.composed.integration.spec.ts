@@ -3172,7 +3172,8 @@ describe("external Action execution authorization", () => {
             qualifyCurrentAccountStoredContentSocket(receiver);
             machineReceivers.push(receiver);
             network.server.on('connection', socket => {
-                socket.data = { clientType: 'user-scoped', authTokenKind: 'account', authAuthority: 'present_user' };
+                // The handshake owner stamps the connect-time Account (socket.ts); currentness consumes it (e7b5e5b37e4).
+                socket.data = { clientType: 'user-scoped', userId: fixture.account.id, authTokenKind: 'account', authAuthority: 'present_user' };
                 qualifyCurrentAccountStoredContentSocket(socket);
                 // Observe only the genuine network acknowledgement's public discriminator, never authorization carriers.
                 socket.use((packet, next) => {
@@ -12716,6 +12717,46 @@ describe("external Action execution authorization", () => {
             expect(await verifyHttp('PATCH', `/v2/sessions/${foreign.id}`, stopRetirement)).toBeNull();
             expect(await verifyHttp('PATCH', `/v2/sessions/${session.id}`, { ...stopRetirement, mode: 'shared_editor' })).toBeNull();
             expect(await verifyHttp('PATCH', `/v2/sessions/${session.id}`, { metadata: 'untyped' })).toBeNull();
+        } finally { await app.close(); }
+    });
+
+    it.each(['session.archive', 'session.delete', 'session.sections.archive'] as const)(
+        '%s lets its admitted Stop phase retire the stopped Session control projection through the owner tuple', async actionId => {
+        // MACH-PRINCIPAL-AUDIT-1116: the Stop siblings of Archive, Delete and Section
+        // Archive reach the hosting daemon as the admitted session.stop effect, so
+        // their native Stop has the same owner-tuple retirement as a Stop root.
+        const fixture = await createFixture({ qualifiedPat: false });
+        const { app } = await createApp(fixture.team.id, false, async () => fixture.machine.id, undefined, false, registerSessionPatchRoute);
+        try {
+            const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
+                encryptionMode: 'plain', metadata: '{}', active: true } });
+            const foreign = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
+                encryptionMode: 'plain', metadata: '{}', active: true } });
+            for (const sessionId of [session.id, foreign.id]) await db.accessKey.create({ data: { accountId: fixture.account.id,
+                machineId: fixture.machine.id, sessionId, data: 'opaque-stop-key' } });
+            const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const input = actionId === 'session.sections.archive' ? { sectionId: 'active-members' } : { sessionId: session.id };
+            const authorization = await mint(app, fixture, actionId, { ...fixture.envelope, requestId: crypto.randomUUID(),
+                ...(actionId === 'session.sections.archive' ? {} : { target: { kind: 'session', sessionId: session.id } }), input }, token);
+            // The receiver signs the exact Session its admitted Stop RPC named.
+            const target = { kind: 'session' as const, sessionId: session.id };
+            const verifyHttp = (method: string, path: string, body?: unknown) => verifyExternalActionDomainExecutionRequest({
+                authorizationToken: authorization.token, effectActionId: 'session.stop',
+                encodedTarget: encodeExternalActionResolvedTargetV1(target), method, path, body,
+                sessionRouteTarget: { kind: 'session', sessionId: path.split('/')[3]! },
+                machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: 'session.stop', target, installationId: fixture.machine.installationId!,
+                    requestId: authorization.binding.requestId, method, path, body, privateKey: fixture.keyPair.secretKey }),
+            });
+            const stopRetirement = { mode: 'owner', metadataLayoutVersion: 1,
+                expectedOwnerMetadata: { t: 'plain', v: { v: 1 } },
+                sharedMetadata: { ciphertext: JSON.stringify({ v: 1 }), expectedVersion: 0 },
+                ownerMetadata: { t: 'plain', v: { v: 1 } },
+                agentState: { ciphertext: null, expectedVersion: 0 } };
+            expect(await verifyHttp('GET', `/v2/sessions/${session.id}`)).not.toBeNull();
+            expect(await verifyHttp('PATCH', `/v2/sessions/${session.id}`, stopRetirement)).not.toBeNull();
+            expect(await verifyHttp('PATCH', `/v2/sessions/${foreign.id}`, stopRetirement)).toBeNull();
+            expect(await verifyHttp('PATCH', `/v2/sessions/${session.id}`, { ...stopRetirement, mode: 'shared_editor' })).toBeNull();
         } finally { await app.close(); }
     });
 

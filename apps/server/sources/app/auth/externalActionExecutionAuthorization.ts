@@ -13,7 +13,7 @@ import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol
 import { readAdmittedManagedCreationChildInTx, hasAdmittedManagedCreationRootInTx, readSelectedManagedCreationChildAdmission, type ManagedCreationChildAdmission } from './externalActionManagedAdmission';
 import { readTeamCredentialActionHttpPurposeV1 } from '@happier-dev/protocol/teams/credentials/actionHttpPurposeV1';
 import { TeamCredentialDirectMaterialOpenRequestV1Schema, TeamCredentialDirectMaterialRouteParamsV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
-import { isSessionStopChildRootV1, isSessionStopChildEffectV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { isSessionStopChildRootV1, isSessionStopChildEffectV1, isSessionStopPhaseRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { ExternalActionManagedControlAdmissionV1Schema, isExternalActionRequestVersionAllowedForAccountModeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
 import { PROJECT_READINESS_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
@@ -2205,11 +2205,20 @@ function isSessionOwnerMetadataHttpPatch(proof: ExternalActionExecutionRequestPr
     return patch.success && patch.data.mode === 'owner';
 }
 
-/** A Session-target Stop retires its own control projection through the owner tuple writer. */
-function isSessionStopRetirementHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
+/**
+ * A Session-target Stop phase (a Stop root, or the admitted Stop sibling of Archive,
+ * Delete or Section Archive) retires its exact Session's control projection through the
+ * owner tuple writer. Archive's sibling also reads that Session; the route owns access.
+ */
+function isSessionStopRetirementHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
-    return verified.binding.actionId === 'session.stop' && verified.effectActionId === verified.binding.actionId
-        && verified.target.kind === 'session' && isSessionOwnerMetadataHttpPatch(proof, verified.target.sessionId);
+    const { sibling } = verified.signedChildPurpose;
+    if (verified.effectActionId !== 'session.stop' || verified.target.kind !== 'session'
+        || !isSessionStopPhaseRootV1(verified.binding.actionId)) return false;
+    const path = `/v2/sessions/${encodeURIComponent(verified.target.sessionId)}`;
+    return isSessionOwnerMetadataHttpPatch(proof, verified.target.sessionId) || sibling.archiveStop
+        && proof.method.toUpperCase() === 'GET' && proof.body === undefined
+        && (proof.path === path || proof.path === `${path}?accessProjectionVersion=1`);
 }
 
 /** Original lifecycle roots consume the same readable recursive subtree as Session listing. */
@@ -3445,6 +3454,7 @@ async function isSessionSectionHttpPurpose(verified: VerifiedSignedChildRequest,
             && proof.method.toUpperCase() === 'POST' && proof.path === `${sessionPath}/archive`
             && SessionArchiveHttpBodyV1Schema.safeParse(proof.body).success;
     }
+    if (isSessionStopRetirementHttpPurpose(verified, proof)) return true;
     if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
     // These are the incumbent Stop observations, not a second Stop admission.
     return isAccountEncryptionCurrentnessHttpRead(proof)

@@ -16,6 +16,11 @@ export function isSessionStopChildRootV1(actionId: unknown): actionId is 'sessio
   return actionId === 'session.sections.archive' || actionId === 'session.delete';
 }
 
+/** Roots whose admitted native Stop runs, and is signed, as the `session.stop` phase. */
+export function isSessionStopPhaseRootV1(actionId: unknown): boolean {
+  return actionId === 'session.stop' || actionId === 'session.archive' || isSessionStopChildRootV1(actionId);
+}
+
 export function isSessionStopChildEffectV1(rootActionId: string, effectActionId: string): boolean {
   return isSessionStopChildRootV1(rootActionId) && effectActionId === 'session.stop';
 }

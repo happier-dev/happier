@@ -1,8 +1,10 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import type { MachineInstallationIdentityV1 } from '@happier-dev/protocol';
 import type { ExternalActionRequesterAccountContextPurposeV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { isSessionStopPhaseRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -27,20 +29,22 @@ export function createRequesterSessionStopEffect(params: Readonly<{
     recordExplicitIntent: () => Promise<void | false>, credentials: StoredCredentials): Promise<StopSessionResult>;
 }>): NonNullable<ActionExecutorDeps['sessionStop']> {
   const { requester, purpose, installation } = params;
-  const headersFor = (context: ActionExecutorContext | undefined) =>
+  const rootActionId = requester.authorization.binding.actionId;
+  const headersFor = (context: ActionExecutorContext | undefined, effectActionId = rootActionId) =>
     (request: Readonly<{ method: string; path: string; body?: unknown }>) => {
-      const signed = resolveExternalActionServerRequestHeaders({ context,
-        effectActionId: requester.authorization.binding.actionId,
+      const signed = resolveExternalActionServerRequestHeaders({ context, effectActionId,
         ...request, daemonToken: requester.credentials.token,
         serverIdentityId: requester.authorization.binding.serverIdentityId,
         privateKey: installation.privateKey, installationId: installation.installationId,
       });
-      if (!signed.ok) throw new Error('Native Stop requester authorization unavailable');
+      if (!signed.ok) throw createExternalActionHeaderRefusalError(signed);
       return signed.headers;
     };
   // Preserve the existing receiving Stop's exact-attempt/currentness contract.
+  // Archive, Delete and Section Archive admit their native Stop as the `session.stop`
+  // phase; Home's Stop-phase purposes read and retire that exact Session.
   const stopPhysical = async (sessionId: string, context: ActionExecutorContext | undefined) => {
-    const resolveAuthorizationHeaders = headersFor(context);
+    const resolveAuthorizationHeaders = headersFor(context, isSessionStopPhaseRootV1(rootActionId) ? 'session.stop' : rootActionId);
     return await params.stopSession(sessionId, { source: readSessionStopRequestSource(context),
       transport: purpose.kind === 'machine_rpc' ? 'machine_rpc' : 'external_action', metadataContext: { credentials: requester.credentials,
       resolveAuthorizationHeaders, currentness: { verifyCurrent: () => requester.isCurrent(),

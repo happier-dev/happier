@@ -11,7 +11,7 @@ import { SessionOrganizationSnapshotRequestSchema, sessionOrganizationSnapshotRe
   type SessionOrganizationSnapshotRequest } from '../sessions/organization/snapshot.js';
 import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
 import { SessionSectionRefV1Schema, isSessionStopChildEffectV1 } from './sessionSectionArchive.js';
-export { SessionSectionRefV1Schema, readSessionStopChildTargetV1, isSessionStopChildV1, isSessionStopChildRootV1, isSessionStopChildEffectV1 } from './sessionSectionArchive.js';
+export { SessionSectionRefV1Schema, readSessionStopChildTargetV1, isSessionStopChildV1, isSessionStopChildRootV1, isSessionStopChildEffectV1, isSessionStopPhaseRootV1 } from './sessionSectionArchive.js';
 import { SessionArchiveActionResultV1Schema } from '../sessions/control/contract.js';
 import { readActionFailureEnvelope } from './executor/actionFailureEnvelope.js';
 import { isActionOutcomeUnknownErrorCodeV1, projectUnexpectedActionFailureV1, type ActionExecuteFailure, type ActionExecuteResult } from './actionExecutionResult.js';
