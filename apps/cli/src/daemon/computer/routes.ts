@@ -297,7 +297,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       const source = selected(provider);
       const element = actionId === 'computer.input' && ComputerInputRequestV1Schema.parse(parsed.data).operation.kind === 'element';
       if (element && request.sourceId && request.sourceId !== source?.sourceId) return failure('computer_element_stale');
-      if (!source) return (requiresConsent && !clipboard)
+      if (!source) return (requiresConsent && !clipboard && actionId !== COMPUTER_RECORDING_ACTION_IDS_V1.start)
         ? { status: 'target_selection_required', approvalDisplay: selection(provider).approvalDisplay }
         : failure('computer_target_not_open');
       const sourceId = source.sourceId;

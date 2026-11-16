@@ -40,7 +40,7 @@ async function setup() {
       queueMicrotask(() => child.emit('spawn'));
       return Object.assign(child, { stdin, kill: () => { child.emit('close', null, 'SIGKILL'); return true; } });
     } });
-  const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/cua-driver',
+  const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/cua-driver', defaultDisplayId: target.displayId,
     recording: { workingDirectory: directory, encoderFactory,
       commitAttachment: async ({ meta }) => { commits.push(JSON.parse(JSON.stringify(meta))); } } });
   const runtimeActionExecute = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' },
@@ -209,9 +209,25 @@ describe('Computer recording through the real Action entry', () => {
       expect(await fixture.runtimeActionExecute({ actionId: 'computer.recording.start', input, context })).toMatchObject({ ok: false, errorCode: 'computer_consent_required' });
       expect(await fixture.runtimeActionExecute({ actionId: 'computer.recording.start', input,
         context: { ...context, authority: 'present_user', surface: 'ui', defaultSessionId: 'other' } }))
-        .toMatchObject({ status: 'target_selection_required', approvalDisplay: { requiresTargetSelection: true } });
+        .toMatchObject({ ok: false, errorCode: 'computer_target_not_open' });
       expect(fixture.frames()).toBe(0);
       expect(native.tools.filter(call => call.name === 'get_window_state')).toHaveLength(0);
+    } finally { await fixture.close(); }
+  });
+
+  it.each(['person', 'approved-agent'] as const)('refuses a recording without a selected window for %s with its real cause', async caller => {
+    const fixture = await setup();
+    try {
+      await fixture.routes.closeSession('session');
+      expect(await fixture.runtimeActionExecute({ actionId: 'computer.recording.start', input: {
+        machineId: 'machine', mediaTarget: { sessionId: 'session', messageLocalId: 'unselected-recording' },
+      }, context: {
+        authority: caller === 'person' ? 'present_user' : 'account_automation',
+        surface: caller === 'person' ? 'ui' : 'agent',
+        defaultSessionId: 'session', defaultSessionMachineId: 'machine',
+        ...(caller === 'approved-agent' ? { bypassApprovals: true } : {}),
+      } })).toMatchObject({ ok: false, errorCode: 'computer_target_not_open' });
+      expect(fixture.frames()).toBe(0);
     } finally { await fixture.close(); }
   });
 
