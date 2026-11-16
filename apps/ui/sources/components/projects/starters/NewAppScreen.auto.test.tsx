@@ -464,6 +464,27 @@ it('says why no agent can suggest, per Machine, starting no run; Choose a starte
   }
 });
 
+it('a failed suggestion says so and keeps the owner’s code under Details, never a bare guess at the cause', async () => {
+  suggestionBoundary({ deploymentSuggestionTargets: async () => { throw new Error('targets unavailable'); } });
+  const { fixture, screen } = await openDescribe('auto-failed');
+  try {
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+    const failed = () => screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'newApp.auto.failed');
+    await waitForHomeGovernance(() => expect(failed()).toBeTruthy());
+    expect(failed()!.props.kind).toBe('error');
+    expect(typeof failed()!.props.diagnosticCode, 'the typed code a person can hand to support').toBe('string');
+    expect(failed()!.props.diagnosticCode.length).toBeGreaterThan(0);
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('when every suggestion is dropped it says it couldn’t suggest, and Try again runs once more (journey-deploy F3)', async () => {
   suggestionBoundary({
     executionRunWait: async () => ({

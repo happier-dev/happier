@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
@@ -74,7 +75,8 @@ export type NewAppAutoView =
   /** The suggestion owner needs answers first: the canonical questions, asked in the step (journey-deploy F2). */
   | Readonly<{ kind: 'questions'; questions: readonly InteractionTransientQuestionV1[] }>
   | Readonly<{ kind: 'nothing' }>
-  | Readonly<{ kind: 'failed' }>;
+  /** The suggestion owner's typed failure code, kept for the Details disclosure. */
+  | Readonly<{ kind: 'failed'; code: string }>;
 
 export function NewAppAutoStep(
   props: Readonly<{
@@ -139,18 +141,29 @@ export function NewAppAutoStep(
     );
   }
 
-  if (view.kind === 'nothing' || view.kind === 'failed') {
+  if (view.kind === 'failed') {
+    // A failure keeps the owner's typed code behind Details (DESIGN.md "Error and recovery copy").
+    return (
+      <SurfaceStateCard
+        testID="newApp.auto.failed"
+        kind="error"
+        title={t('newApp.auto.nothingTitle')}
+        reason={t('newApp.auto.failedBody')}
+        diagnosticCode={view.code}
+        action={{ label: t('newApp.auto.tryAgain'), onPress: props.onTryAgain, testID: 'newApp.auto.tryAgain' }}
+        secondaryAction={{ label: t('newApp.auto.chooseStarter'), onPress: props.onChooseStarter, testID: 'newApp.auto.chooseStarter' }}
+      />
+    );
+  }
+
+  if (view.kind === 'nothing') {
     return (
       <EmptyState
-        testID={`newApp.auto.${view.kind}`}
+        testID="newApp.auto.nothing"
         layout="centered"
         iconName="sparkle"
         title={t('newApp.auto.nothingTitle')}
-        subtitle={t(
-          view.kind === 'nothing'
-            ? 'newApp.auto.nothingBody'
-            : 'newApp.auto.failedBody',
-        )}
+        subtitle={t('newApp.auto.nothingBody')}
         primaryAction={{
           label: t('newApp.auto.tryAgain'),
           onPress: props.onTryAgain,

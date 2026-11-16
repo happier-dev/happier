@@ -233,7 +233,7 @@ export function useNewAppAutoSuggestions(
       };
     }
     if (outcome.kind === 'questions') return { kind: 'questions', questions: outcome.questions.questions };
-    if (outcome.kind === 'failed') return { kind: 'failed' };
+    if (outcome.kind === 'failed') return { kind: 'failed', code: outcome.code };
     return { kind: 'nothing' };
   }, [openMachineSetup, phase, stop, theme.colors.text.secondary]);
 
