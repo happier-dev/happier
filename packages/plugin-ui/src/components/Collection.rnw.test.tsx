@@ -6624,7 +6624,7 @@ describe("the search in the caller's header row", () => {
     unnamed.unmount();
   });
 
-  it("gives a phone main screen's large title its Machine, magnifier and + and keeps the search behind the magnifier", async () => {
+  it.each(['document', 'shadow'] as const)("gives a phone main screen's large title its Machine, magnifier and + and keeps the search behind the magnifier (%s)", async (rootKind) => {
     // Owner 11-15 (PRs & Issues on an iPhone): the head every phone main screen has (core's `MainScreenHeader`).
     let value = '';
     const changes: string[] = [];
@@ -6647,6 +6647,12 @@ describe("the search in the caller's header row", () => {
         primary={{ label: 'New task', testID: 'new-task', onPress: () => undefined }} />
     );
     const view = mount({ title: 'PRs & Issues', search: searchFor(), header, pageChrome });
+    const shadowHost = rootKind === 'shadow' ? document.createElement('div') : null;
+    if (shadowHost) {
+      document.body.append(shadowHost);
+      shadowHost.attachShadow({ mode: 'open' }).append(view.container);
+    }
+    const activeElement = () => (view.container.getRootNode() as Document | ShadowRoot).activeElement;
     view.measure(390);
     const titleLine = () => view.query('collection:large-title')!;
     // The title line carries the route's controls (the Machine), the magnifier and the page's +; the navigation bar
@@ -6660,12 +6666,22 @@ describe("the search in the caller's header row", () => {
     // The lens stays under the title.
     expect(view.query('lens')).toBeTruthy();
 
-    // Closed until the magnifier is pressed; then it opens focused.
+    // The keyboard shortcut opens the same disclosure from a row, including a plugin's shadow root.
     expect(view.query('search')).toBeNull();
-    await act(async () => { view.query('magnifier')!.click(); });
     const field = () => { const node = view.query('search'); return node === null ? null : node.matches('input') ? node : node.querySelector('input'); };
+    await act(async () => {
+      const row = view.query('row:a')!;
+      row.focus();
+      row.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true, composed: true, cancelable: true }));
+    });
     expect(field()).toBeTruthy();
-    expect(document.activeElement).toBe(field());
+    expect(activeElement()).toBe(field());
+    await act(async () => { view.query('magnifier')!.click(); });
+    expect(field()).toBeNull();
+    // Pointer opening still focuses the field.
+    await act(async () => { view.query('magnifier')!.click(); });
+    expect(field()).toBeTruthy();
+    expect(activeElement()).toBe(field());
 
     // A query keeps it open.
     value = 'fix';
@@ -6677,10 +6693,11 @@ describe("the search in the caller's header row", () => {
     expect(changes.at(-1)).toBe('');
     await act(async () => { view.update({ search: searchFor() }); });
     expect(field()).toBeNull();
-    expect(document.activeElement).toBe(view.query('magnifier'));
+    expect(activeElement()).toBe(view.query('magnifier'));
 
     // A query restored with the page keeps the field open without taking focus.
     view.unmount();
+    shadowHost?.remove();
     value = 'restored';
     const restored = mount({ title: 'PRs & Issues', search: searchFor(), header, pageChrome });
     restored.measure(390);

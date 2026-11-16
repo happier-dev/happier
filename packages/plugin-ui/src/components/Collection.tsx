@@ -2841,9 +2841,13 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const renderSearchToggle = largeTitle !== null && props.search !== undefined ? pageChrome?.renderSearchToggle : undefined;
   const dismissSearchRef = useRef<() => void>(() => undefined);
   const dismissSearch = useCallback(() => dismissSearchRef.current(), []);
-  const search = useListCollectionSearch(props.search, rootRef, compactToolbar, renderSearchToggle === undefined ? undefined : dismissSearch);
+  const openSearchRef = useRef<() => void>(() => undefined);
+  const openSearch = useCallback(() => openSearchRef.current(), []);
+  const search = useListCollectionSearch(props.search, rootRef, compactToolbar, renderSearchToggle === undefined ? undefined : dismissSearch,
+    renderSearchToggle === undefined ? undefined : openSearch);
   const searchDisclosure = useHappierSearchDisclosure(search.query, renderSearchToggle === undefined ? undefined : search.clear);
   dismissSearchRef.current = searchDisclosure.close;
+  openSearchRef.current = () => { if (!searchDisclosure.open) searchDisclosure.toggle(); else search.focus(); };
   const searchShown = renderSearchToggle === undefined || searchDisclosure.open;
   const focusSearch = search.focus;
   const focusSearchOnOpen = searchDisclosure.focusOnOpen;

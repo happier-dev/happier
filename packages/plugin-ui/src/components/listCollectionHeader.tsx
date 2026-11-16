@@ -65,7 +65,10 @@ export function useListCollectionSearch(
   compact = false,
   /** Escape also folds the field away (a search behind a magnifier, `useHappierSearchDisclosure`). */
   onEscape?: () => void,
+  onFocusSearch?: () => void,
 ) {
+  const focusSearchRef = useRef(onFocusSearch);
+  focusSearchRef.current = onFocusSearch;
   const [uncontrolledQuery, setUncontrolledQuery] = useState(search?.defaultValue ?? '');
   const query = search?.value ?? uncontrolledQuery;
   const [composingQuery, setComposingQuery] = useState<string | null>(null);
@@ -117,10 +120,13 @@ export function useListCollectionSearch(
     const listener = (event: KeyboardEvent) => {
       if (event.key !== SEARCH_FOCUS_KEY || event.isComposing || event.defaultPrevented) return;
       const root = rootRef.current as unknown as { contains?: (node: Node) => boolean } | null;
-      if (!document.activeElement || !root?.contains?.(document.activeElement)) return;
-      const element = event.target;
+      const element = event.composedPath()[0];
+      if (!(element instanceof Node) || !root?.contains?.(element)) return;
       if (element instanceof HTMLElement && (element.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName))) return;
-      if (target.focus()) event.preventDefault();
+      if (focusSearchRef.current) {
+        focusSearchRef.current();
+        event.preventDefault();
+      } else if (target.focus()) event.preventDefault();
     };
     document.addEventListener('keydown', listener);
     return () => document.removeEventListener('keydown', listener);
