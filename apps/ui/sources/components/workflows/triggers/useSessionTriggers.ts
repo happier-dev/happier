@@ -6,6 +6,7 @@ import { isPluginError } from '@happier-dev/plugin-sdk';
 import { getStorage, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
 import { observeCurrentUiContextContributedAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector } from '@/sync/store/domains/automations';
 import {
@@ -47,6 +48,7 @@ export type SessionTriggersRead = Readonly<{
  */
 export function useSessionTriggers(sessionId: string): SessionTriggersRead {
     const accountLifetime = useActiveServerAccountScopeLifetime();
+    const demanded = useLayoutPresentationActive();
     // Info can mount from an admitted list row without hydrating Session detail.
     // These Account reads need only the Session id and the Account lifetime.
     const sessionMachineId = getStorage()((state) => resolveMachineControlTargetForSessionFromState(state, sessionId)?.machineId ?? null);
@@ -59,7 +61,7 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
 
     const [attempt, setAttempt] = React.useState(0);
     const [observerAttempt, setObserverAttempt] = React.useState(0);
-    const accountRead = useWorkflowTriggerSets(ACCOUNT_TRIGGERS);
+    const accountRead = useWorkflowTriggerSets(ACCOUNT_TRIGGERS, undefined, { demanded });
     const [observerFailure, setObserverFailure] = React.useState<Readonly<{
         scopeKey: string; failure: NonNullable<SessionTriggersRead['observationFailure']>;
     }> | null>(null);
@@ -72,6 +74,7 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
     }, [sessionId]);
 
     React.useEffect(() => {
+        if (!demanded) return;
         if (linkScopeKey === null) return;
         if (!accountLifetime) return;
         const controller = new AbortController();
@@ -102,9 +105,10 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
             controller.abort(); retirement.dispose();
             void observer.then(subscription => subscription.dispose()).catch(() => {});
         };
-    }, [accountLifetime, observerAttempt, linkScopeKey, sessionId]);
+    }, [accountLifetime, demanded, observerAttempt, linkScopeKey, sessionId]);
 
     React.useEffect(() => {
+        if (!demanded) return;
         if (!accountLifetime) return;
         const controller = new AbortController();
         const retirement = accountLifetime.onRetire(() => controller.abort());
@@ -120,7 +124,7 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
                 }
             });
         return () => { controller.abort(); retirement.dispose(); };
-    }, [accountLifetime, attempt, changeSignal, linkScopeKey, options, sessionId]);
+    }, [accountLifetime, attempt, changeSignal, demanded, linkScopeKey, options, sessionId]);
 
     const applyWrite = React.useCallback((result: WorkflowTriggerWriteResult) => {
         setAttempt((value) => value + 1);

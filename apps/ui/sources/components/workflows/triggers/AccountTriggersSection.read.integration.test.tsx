@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { AutomationDefinitionDetailsRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -14,6 +15,7 @@ installDisconnectedServerSocketBoundary();
 const { AccountTriggersSection } = await import('./AccountTriggersSection');
 const { ScheduledWorkflowSection } = await import('./ScheduledWorkflowSection');
 const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+const { useSessionTriggers } = await import('./useSessionTriggers');
 const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -62,6 +64,36 @@ afterEach(async () => {
 });
 
 describe('Account trigger HTTP read failure and recovery', () => {
+    it('Session attachment reads follow the layout presentation owner', async () => {
+        await loadSyncSingletonForTests();
+        let reads = 0;
+        const accountDetailsQuery = JSON.stringify(AutomationDefinitionDetailsRequestSchema.parse({ details: true }));
+        const account = await restoreServerAccountForTest({
+            serverUrl: `https://session-trigger-demand-${crypto.randomUUID()}.test`,
+            accountId: 'session-trigger-demand',
+            request: homeRequest(async (url, init) => {
+                if (url.pathname === '/v3/automations/query') {
+                    const query = AutomationDefinitionDetailsRequestSchema.safeParse(JSON.parse(String(init?.body)));
+                    if (query.success && JSON.stringify(query.data) === accountDetailsQuery) reads++;
+                }
+                return json({ automations: [], nextCursor: null });
+            }),
+        });
+        disposals.push(() => account.dispose());
+        function SessionAttachmentRead() {
+            useSessionTriggers('demand-session');
+            return null;
+        }
+        const content = (presented: boolean) => <PluginSurfaceFocusEligibilityProvider active={presented}>
+            <SessionAttachmentRead />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(content(false));
+        await flushHookEffects();
+        expect(reads).toBe(0);
+        await act(async () => screen.update(content(true)));
+        await vi.waitFor(() => expect(reads).toBeGreaterThan(0));
+        await screen.unmount();
+    });
     it('resource attachment reads follow the layout presentation owner without an active prop', async () => {
         await loadSyncSingletonForTests();
         let reads = 0;
