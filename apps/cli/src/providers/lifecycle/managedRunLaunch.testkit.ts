@@ -37,6 +37,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
   connectedAccounts?: readonly ConnectedAccountPurposeDeclarationV1[];
   requiredCapabilities?: AgentProviderRequirementsV1['required'];
   supportsReasoningEffort?: boolean;
+  reasoningEffortValues?: AgentProviderRequirementsV1['reasoningEffortValues'];
   resolveAccountTarget?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['resolveAccountTarget'] }> = {}) {
   const directory = input.directory ?? await mkdtemp(join(tmpdir(), 'happier-managed-run-'));
   const pluginId = 'acme.managed-run';
@@ -94,6 +95,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
           executionRunContext: { versions: [1] } } },
         providerRequirements: { acceptsProtocols: ['openai-responses'], required: input.requiredCapabilities ?? { streaming: true },
           ...(input.supportsReasoningEffort !== undefined ? { supportsReasoningEffort: input.supportsReasoningEffort } : {}),
+          ...(input.reasoningEffortValues ? { reasoningEffortValues: input.reasoningEffortValues } : {}),
           credentialSupport: { supportsNoAuth: true, apiKeyTransports: [{ protocol: 'openai-responses',
             destination: { kind: 'httpHeader', names: 'anyValidated', formats: input.acceptedCredentialFormats ?? [input.runtimeCredentialHeader?.format ?? 'bearer'] } }] },
           authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['RUN_PROVIDER_TOKEN', 'RUN_PROVIDER_URL'] },

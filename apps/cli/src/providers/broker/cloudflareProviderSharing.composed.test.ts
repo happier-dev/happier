@@ -422,7 +422,7 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
       application: opened.authority.payload.application }).toEqual({ resourceId: row.selection.resourceId,
       sourceRevision: row.sourceRevision, application: row.application });
     const recipientSettings = ProviderSettingsV1Schema.parse(DEFAULT_PROVIDER_SETTINGS_V1);
-    const recipientCompatibility = await resolveTeamCredentialModelCompatibility({ model: { ...row, deliveryMode: 'brokered' },
+    const { compatibility: recipientCompatibility } = await resolveTeamCredentialModelCompatibility({ model: { ...row, deliveryMode: 'brokered' },
       lease: fixture.lease, agentId: 'codex' });
     expect(recipientCompatibility).toMatchObject({ confirmed: true, result: { status: 'experimental' } });
     // D23: Team experimental compatibility is informational; neither Account confirms it.

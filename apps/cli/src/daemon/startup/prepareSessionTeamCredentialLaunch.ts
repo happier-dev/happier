@@ -48,11 +48,11 @@ export async function prepareSessionTeamCredentialLaunch(input: Readonly<{
                 binding: accepted, agentTargetKey: input.agentTargetKey, modelId: model.modelId, signal: input.signal });
             assertSessionTeamCredentialNativeModel({ row, binding: accepted,
                 agentTargetKey: input.agentTargetKey, modelId: model.modelId });
-            await assertTeamCredentialModelAdmission({ model: { ...row, deliveryMode: 'vendor-native' },
+            const descriptor = await assertTeamCredentialModelAdmission({ model: { ...row, deliveryMode: 'vendor-native' },
                 lease: input.lease, agentId, signal: input.signal });
             return { options: { ...input.options, teamCredentialBindings: [
                 ...(input.options.teamCredentialBindings ?? []).filter(binding => binding.slot.kind !== 'provider_model'), accepted,
-            ] }, teamModelRow: row };
+            ] }, teamModelRow: { ...row, descriptor } };
         } catch (error) {
             throw projectTeamCredentialLaunchFailure(error, 'binding', 'team_credential_provider_selection_not_current');
         }

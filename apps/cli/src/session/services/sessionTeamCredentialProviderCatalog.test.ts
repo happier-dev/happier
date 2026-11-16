@@ -12,6 +12,27 @@ import { readSessionTeamCredentialProviderModels } from './sessionTeamCredential
 import { prepareSessionTeamCredentialLaunch } from '@/daemon/startup/prepareSessionTeamCredentialLaunch';
 import { TeamPolicyV1Schema, NO_TEAM_CAPABILITIES_V1, resolveTeamAdmissionProjectionV1 } from '@happier-dev/protocol/teams';
 import { qualifySessionTeamCredentialProviderModels } from '@/providers/broker/sessionTeamCredentialProviderBinding';
+import { PROVIDER_REASONING_EFFORT_LEVELS_V1 } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
+
+// r1116a Claude Team Session controls captured 2026-11-16, with the source
+// capability supplied by the Muse catalog producer. The displayed currentValue
+// is not billing evidence.
+const capturedMuseModel = {
+  id: 'muse-spark-1.3-contributor', name: 'muse-spark-1.3-contributor',
+  contextWindowTokens: 200_000, capabilities: { reasoningControls: 'supported' },
+  modelOptions: [{ id: 'reasoning_effort', name: 'Reasoning effort', type: 'select', currentValue: 'max',
+    options: [{ value: 'minimal', name: 'Minimal' }, { value: 'low', name: 'Low' },
+      { value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' },
+      { value: 'xhigh', name: 'XHigh', description: 'Use this for deepest analysis and complex fixes.' },
+      { value: 'max', name: 'Max' }],
+  }],
+} satisfies ProviderModelDescriptorV1;
+
+function expectApplicableMuseEfforts(model: ProviderModelDescriptorV1 | undefined) {
+  expect(model?.modelOptions?.find(option => option.id === 'reasoning_effort')?.options?.map(option => option.value))
+    .toEqual(PROVIDER_REASONING_EFFORT_LEVELS_V1);
+}
 
 const resourceDisplayName = projectPrivateLabelForRecipientV1({
   stored: sealPrivateLabelV1({ mode: 'plain', binding: teamCredentialDisplayNamePrivateLabelBindingV1('resource'), value: 'Team Pool' }),
@@ -21,6 +42,7 @@ const resourceDisplayName = projectPrivateLabelForRecipientV1({
 describe('Session Team runtime catalog', () => {
   it.each([false, true])('preserves worker qualification without Team experimental consent (experimental=%s)', async experimental => {
     const worker = await createManagedRunLaunchFixture({ experimental, acceptedCredentialFormats: ['raw', 'bearer'],
+      supportsReasoningEffort: true, reasoningEffortValues: PROVIDER_REASONING_EFFORT_LEVELS_V1,
       catalogModels: [{ id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna' }] });
     try {
       const source = resolveProviderSourceFacts(worker.record);
@@ -35,7 +57,7 @@ describe('Session Team runtime catalog', () => {
         providerModels: [{ application: { agentTargetKey: worker.agentTargetKey,
           implementationIdentity: { pluginId: 'acme.managed-run', localId: 'gateway' },
           endpointTemplateId: endpoint.id, protocol: endpoint.protocol },
-          descriptor: { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna' }, sourceRevision: 'source-v4', availability: 'available',
+          descriptor: { ...capturedMuseModel, id: 'gpt-5.6-luna' }, sourceRevision: 'source-v4', availability: 'available',
           confidence: 'account_unverified', sources: { manual: false, static: true, probe: false },
           sourceFacts: ProviderModelBindingSourceV1Schema.parse({ endpoint: {
             id: endpoint.id, protocol: endpoint.protocol, capabilities: endpoint.capabilities,
@@ -46,6 +68,7 @@ describe('Session Team runtime catalog', () => {
       });
       const qualified = await qualifySessionTeamCredentialProviderModels({ resource, lease: worker.lease, agentId: worker.agentId });
       expect(qualified.providerModels[0]).toMatchObject({ availability: 'available', compatibility: { confirmed: true } });
+      expectApplicableMuseEfforts(qualified.providerModels[0]?.descriptor);
       let catalogReads = 0;
       const pending = prepareSessionTeamCredentialLaunch({
         options: { directory: worker.happyHomeDir,
@@ -67,12 +90,14 @@ describe('Session Team runtime catalog', () => {
         },
       });
       await expect(pending).resolves.toMatchObject({ teamModelRow: { confidence: 'account_unverified', availability: 'available' } });
+      expectApplicableMuseEfforts((await pending).teamModelRow?.descriptor);
       expect(catalogReads).toBe(1);
     } finally { await worker.cleanup(); }
   });
 
   it('prepares an installed native Session from its accepted private model without controller discovery or fallback', async () => {
-    const worker = await createManagedRunLaunchFixture();
+    const worker = await createManagedRunLaunchFixture({ supportsReasoningEffort: true,
+      reasoningEffortValues: PROVIDER_REASONING_EFFORT_LEVELS_V1 });
     const source = resolveProviderSourceFacts(worker.record);
     const endpoint = source.endpointTemplates[0]!;
     const nativeDelivery = { managedId: 'managed', controllerInstallationId: 'controller-installation',
@@ -83,7 +108,7 @@ describe('Session Team runtime catalog', () => {
     const row = { selection: { kind: 'team_credential_provider_model' as const, resourceId: binding.resourceId,
       teamId: binding.teamId, expectedResourceRevision: binding.expectedResourceRevision, deliveryMode: binding.deliveryMode, nativeDelivery,
       agentTargetKey: worker.agentTargetKey, modelId: 'model-a' },
-      descriptor: { id: 'model-a', name: 'Model A' }, sourceRevision: 'source-1', availability: 'available' as const,
+      descriptor: { ...capturedMuseModel, id: 'model-a' }, sourceRevision: 'source-1', availability: 'available' as const,
       nativeSource: { providerTicket: nativeDelivery.providerTicket },
       application: { agentTargetKey: worker.agentTargetKey, implementationIdentity: { pluginId: 'acme.managed-run', localId: 'gateway' },
         endpointTemplateId: endpoint.id, protocol: endpoint.protocol },
@@ -100,7 +125,10 @@ describe('Session Team runtime catalog', () => {
       ...(readInstalled ? { readInstalledTeamCredentialProviderModel: async () => { privateReads++; return current; } } : {}),
     });
     try {
-      await expect(prepare()).resolves.toMatchObject({ teamModelRow: row });
+      const prepared = await prepare();
+      const { modelOptions: _sourceOptions, ...modelFacts } = row.descriptor;
+      expect(prepared.teamModelRow).toMatchObject({ ...row, descriptor: modelFacts });
+      expectApplicableMuseEfforts(prepared.teamModelRow?.descriptor);
       expect(privateReads).toBe(1);
       await expect(prepare(false)).rejects.toMatchObject({ code: 'team_credential_provider_selection_not_current' });
       await expect(prepare(true, null)).rejects.toMatchObject({ code: 'team_credential_provider_selection_not_current' });

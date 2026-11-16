@@ -1,6 +1,7 @@
 import type { TeamCredentialProviderModelCatalogEntryV1, TeamCredentialRouteV1 } from '@happier-dev/protocol/teams';
 import { resolveProviderBindingCompatibilityFromSourceFactsV1, ProviderModelBindingSourceV1Schema } from '@happier-dev/protocol/providers/binding-compatibility';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { projectProviderModelReasoningForAgent } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
 import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
@@ -35,13 +36,15 @@ export async function resolveTeamCredentialModelCompatibility(input: Readonly<{
     credential: credential ?? undefined,
     compatibilityOverrides: facts.data.compatibilityOverrides, model: input.model.descriptor,
   });
-  return { ...compatibility, confirmed: compatibility.result.status !== 'incompatible' };
+  return { compatibility: { ...compatibility, confirmed: compatibility.result.status !== 'incompatible' },
+    descriptor: projectProviderModelReasoningForAgent(input.model.descriptor, adapter.support) };
 }
 
-export async function assertTeamCredentialModelAdmission(input: Parameters<typeof resolveTeamCredentialModelCompatibility>[0]): Promise<void> {
+export async function assertTeamCredentialModelAdmission(input: Parameters<typeof resolveTeamCredentialModelCompatibility>[0]): Promise<TeamCredentialModelCompatibilityInput['descriptor']> {
   input.signal?.throwIfAborted();
-  const compatibility = await resolveTeamCredentialModelCompatibility(input);
+  const { compatibility, descriptor } = await resolveTeamCredentialModelCompatibility(input);
   input.signal?.throwIfAborted();
   const code = compatibility.result.status === 'incompatible' ? 'provider_incompatible_with_agent' : null;
   if (code) throw Object.assign(new Error(code), createProviderErrorV1(code));
+  return descriptor;
 }

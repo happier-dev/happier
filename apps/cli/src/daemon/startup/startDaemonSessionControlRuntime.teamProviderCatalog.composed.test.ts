@@ -521,7 +521,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     expect(h.nativeEffects()).toBe(0);
     return;
   }
-  const compatibility = await resolveTeamCredentialModelCompatibility({ lease: h.plugin.lease, agentId: 'codex',
+  const { compatibility } = await resolveTeamCredentialModelCompatibility({ lease: h.plugin.lease, agentId: 'codex',
     model: { ...model, deliveryMode: 'brokered' } });
   expect(compatibility).toMatchObject({ result: { status: 'experimental' }, confirmed: true });
   const snapshot = h.requester.readAccountSettingsSnapshot();

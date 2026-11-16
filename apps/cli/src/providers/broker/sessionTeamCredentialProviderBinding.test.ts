@@ -155,7 +155,7 @@ describe('Session Team credential Provider binding', () => {
       ...override, status: 'experimental' as const,
     })) };
     const workerLease = lease({ v: 1, adapterVersion: 1, prepare: prepareSpawnEnv, materialize: materializeEmptySpawnEnv });
-    const unconfirmed = await resolveTeamCredentialModelCompatibility({ lease: workerLease, agentId: 'codex',
+    const { compatibility: unconfirmed } = await resolveTeamCredentialModelCompatibility({ lease: workerLease, agentId: 'codex',
       model: { ...row, sourceFacts, deliveryMode } });
     expect(unconfirmed).toMatchObject({ result: { status: 'experimental' }, confirmed: true });
   });
@@ -263,7 +263,7 @@ describe('Session Team credential Provider binding', () => {
     publish();
     const adapter = { v: 1 as const, adapterVersion: 1, prepare: prepareSpawnEnv, materialize: materializeBrokerAuthoritySpawnEnv };
     const workerLease = lease(adapter);
-    const compatibility = await resolveTeamCredentialModelCompatibility({ lease: workerLease, agentId: 'codex',
+    const { compatibility } = await resolveTeamCredentialModelCompatibility({ lease: workerLease, agentId: 'codex',
       model: { ...offered, deliveryMode: 'brokered' } });
     const open = (selectedLease = workerLease) => openSessionTeamCredentialProviderBinding({
       sessionId: 'session-1', machineId: 'worker-1', agentId: 'codex', agentTargetKey: row.selection.agentTargetKey,

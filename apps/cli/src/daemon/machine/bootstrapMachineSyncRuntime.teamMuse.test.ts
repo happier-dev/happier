@@ -101,7 +101,7 @@ it('reads custodian Muse models for a Team member without impersonating requeste
     await expect(resolveTeamCredentialModelCompatibility({ lease: fixture.lease, agentId: 'pi',
       model: { ...catalog.rows[0]!, application: { ...catalog.application, agentTargetKey: 'agent:happier.agent.pi/pi' },
         deliveryMode: 'brokered' },
-    })).resolves.toMatchObject({ confirmed: true });
+    })).resolves.toMatchObject({ compatibility: { confirmed: true } });
     const authority: ProviderBrokerRouteGrantPayloadV1 = {
       v: 1, grantId: 'home-admitted-member', aud: 'happier-provider-broker-route-v1', issuedAt: 100, expiresAt: 200,
       teamId: 'team', resourceId: 'shared-muse', sourceRevision: catalog.sourceRevision, brokerPlacementFingerprint: 'c'.repeat(64), initiatorTokenEpoch: 0,

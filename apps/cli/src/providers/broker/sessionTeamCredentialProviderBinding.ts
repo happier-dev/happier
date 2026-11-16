@@ -124,10 +124,10 @@ export async function qualifySessionTeamCredentialProviderModels(input: Readonly
     input.signal?.throwIfAborted();
     const { compatibility: _sourceCompatibility, ...sourceModel } = model;
     try {
-      const compatibility = await resolveTeamCredentialModelCompatibility({ model: { ...sourceModel,
+      const { compatibility, descriptor } = await resolveTeamCredentialModelCompatibility({ model: { ...sourceModel,
         deliveryMode: model.selection.deliveryMode }, lease: input.lease, agentId: input.agentId, signal: input.signal });
       const reason: ProviderErrorCodeV1 | null = compatibility.result.status === 'incompatible' ? 'provider_incompatible_with_agent' : null;
-      return { ...sourceModel, compatibility, ...(reason ? { availability: 'policy_denied' as const,
+      return { ...sourceModel, descriptor, compatibility, ...(reason ? { availability: 'policy_denied' as const,
         deliveryUnavailableReason: reason } : {}) };
     } catch (error) {
       input.signal?.throwIfAborted();
@@ -208,7 +208,7 @@ export async function openExactSessionTeamCredentialProviderBinding(
   input.signal.throwIfAborted();
   assertExactSelectionIsCoherent(input);
   const selection = input.selection;
-  await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
+  const descriptor = await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
     model: { ...selection, deliveryMode: 'brokered' }, signal: input.signal });
   const consumer = resolveProviderBrokerConsumer(input);
   const materializationScopeId = consumer.kind === 'execution_run'
@@ -291,7 +291,7 @@ export async function openExactSessionTeamCredentialProviderBinding(
       binding: {
         v: 1,
         agentTargetKey: selection.agentTargetKey,
-        selection: { bindingKey, model: selection.descriptor },
+        selection: { bindingKey, model: descriptor },
         contributionKey: null,
         endpoint: {
           endpointTemplateId: selection.application.endpointTemplateId,
@@ -326,7 +326,7 @@ export async function openExactSessionTeamCredentialProviderBinding(
           resourceId: selection.resourceId,
           resourceRevision: selection.expectedResourceRevision,
         },
-        model: selection.descriptor,
+        model: descriptor,
         upstream: {
           protocol: selection.application.protocol,
           normalizedUrl: endpointUrl,
@@ -415,12 +415,12 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       agentTargetKey: input.agentTargetKey, modelId: input.modelId,
       binding: input.binding, signal: input.signal });
-    const row = opened.model;
+    let row = opened.model;
     try {
       assertSessionTeamCredentialNativeModel({ row, binding: input.binding,
         agentTargetKey: input.agentTargetKey, modelId: input.modelId });
-      await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
-        model: { ...row, deliveryMode: 'vendor-native' }, signal: input.signal });
+      row = { ...row, descriptor: await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
+        model: { ...row, deliveryMode: 'vendor-native' }, signal: input.signal }) };
     } catch (error) {
       await opened.cleanup();
       throw error;
@@ -442,7 +442,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
   ));
   if (!row) throw new SessionTeamCredentialLaunchUnavailableError();
   if (input.binding.deliveryMode === 'direct') {
-    await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
+    const descriptor = await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
       model: { ...row, deliveryMode: 'direct' }, signal: input.signal });
     if (!row.direct) {
       throw new Error('team_credential_direct_material_not_current');
@@ -500,7 +500,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
       binding: {
         v: 1,
         agentTargetKey: row.selection.agentTargetKey,
-        selection: { bindingKey, model: row.descriptor },
+        selection: { bindingKey, model: descriptor },
         contributionKey: null,
         endpoint: runtimeBinding.endpoint,
         runtimeCredentialTransport: runtimeBinding.credentialTransport,
@@ -528,7 +528,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
           resourceId: row.selection.resourceId,
           resourceRevision: row.selection.expectedResourceRevision,
         },
-        model: row.descriptor,
+        model: descriptor,
         upstream: {
           protocol: runtimeBinding.endpoint.protocol,
           normalizedUrl: runtimeBinding.endpoint.normalizedUrl,

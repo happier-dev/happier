@@ -207,7 +207,7 @@ describe('SessionHostBridge current custom Agent (integration)', () => {
           compatibilityOverrides: [{ agentTargetKey: fixture.agentTargetKey, protocol: 'openai-responses', status: 'experimental',
             reason: 'Experimental Agent pairing' }] }),
       };
-      const compatibility = await resolveTeamCredentialModelCompatibility({ lease: fixture.lease, agentId: fixture.agentId,
+      const { compatibility } = await resolveTeamCredentialModelCompatibility({ lease: fixture.lease, agentId: fixture.agentId,
         model: { ...model, deliveryMode: 'brokered' } });
       expect(compatibility).toMatchObject({ result: { status: 'experimental' }, confirmed: true });
       // Only the authenticated Home HTTP boundary is substituted. Catalog loading,
