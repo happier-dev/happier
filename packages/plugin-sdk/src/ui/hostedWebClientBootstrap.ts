@@ -32,6 +32,8 @@ type HostedWebMessageChannel = Readonly<{
     port2: HostedWebMessagePort;
 }>;
 
+type HostedWebThemeStyleElement = HTMLStyleElement;
+
 export interface HostedWebPluginUiClientRealm {
     readonly location?: Readonly<{ href?: string }>;
     readonly parent?: Readonly<{
@@ -42,8 +44,13 @@ export interface HostedWebPluginUiClientRealm {
         postMessage(message: string): void;
     }>;
     readonly document?: Readonly<{
-        documentElement?: PluginUiThemeVariableTarget & Readonly<{ getBoundingClientRect(): Readonly<{ height: number }> }>;
+        documentElement?: PluginUiThemeVariableTarget & Readonly<{
+            getBoundingClientRect(): Readonly<{ height: number }>;
+            classList?: Readonly<{ toggle(token: string, force: boolean): boolean }>;
+        }>;
         body?: Readonly<{ scrollHeight: number }> | null;
+        head?: Readonly<{ append(element: HostedWebThemeStyleElement): void }>;
+        createElement?(tagName: 'style'): HostedWebThemeStyleElement;
         addEventListener(type: 'click', listener: (event: unknown) => void, options?: unknown): void;
         removeEventListener(type: 'click', listener: (event: unknown) => void, options?: unknown): void;
     }>;
@@ -276,10 +283,41 @@ function createHostedWebBootstrapController(
     let removeExternalLinkCarrier: () => void = () => {};
     const presentationLifetime = new AbortController();
     let presentationObserver: InstanceType<NonNullable<HostedWebPluginUiClientRealm['ResizeObserver']>> | null = null;
+    let themeStylesheet: HostedWebThemeStyleElement | null = null;
     const removeCallerPresentation = () => {
         presentationLifetime.abort();
         presentationObserver?.disconnect();
         presentationObserver = null;
+        themeStylesheet?.remove();
+        if (themeStylesheet) realm.document?.documentElement?.classList?.toggle('dark', false);
+        themeStylesheet = null;
+    };
+    // Context comes from the host's semantic owner. Attach its completed sanitizer
+    // output unchanged, including for author-owned clients using this transport.
+    const applyContextStylesheet = (value: unknown): void => {
+        if (!value || typeof value !== 'object' || !('surface' in value)) return;
+        const surface = value.surface;
+        if (!surface || typeof surface !== 'object' || !('theme' in surface)) return;
+        const theme = surface.theme;
+        if (!theme || typeof theme !== 'object') return;
+        const css = 'sanitizedCss' in theme && typeof theme.sanitizedCss === 'string' ? theme.sanitizedCss : undefined;
+        if (css === undefined) {
+            themeStylesheet?.remove();
+            if (themeStylesheet) realm.document?.documentElement?.classList?.toggle('dark', false);
+            themeStylesheet = null;
+            return;
+        }
+        const document = realm.document;
+        if (!document?.head || !document.createElement) return;
+        if (!themeStylesheet) {
+            const sheet = document.createElement('style');
+            sheet.textContent = css;
+            document.head.append(sheet);
+            themeStylesheet = sheet;
+        } else if (themeStylesheet.textContent !== css) {
+            themeStylesheet.textContent = css;
+        }
+        document.documentElement?.classList?.toggle('dark', 'colorScheme' in surface && surface.colorScheme === 'dark');
     };
     const sendEnvelope = (envelope: PluginHostedWebBridgeEnvelopeV1): void => {
         if (typeof nativePostMessage === 'function') {
@@ -306,6 +344,8 @@ function createHostedWebBootstrapController(
                 if (requestId === wire.requestId) contextSubscriptions.delete(subscriptionId);
             }
         }
+        if (wire.kind === 'result' && wire.method === 'context') applyContextStylesheet(wire.result);
+        else if (wire.kind === 'subscription' && contextSubscriptions.has(wire.subscriptionId)) applyContextStylesheet(wire.event);
         for (const listener of listeners) {
             const version = negotiations.versionFor(listener);
             if (wire.kind === 'result' && wire.method === 'context') {

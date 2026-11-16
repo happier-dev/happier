@@ -9,6 +9,36 @@ The [public authoring example](examples/public-authoring/README.md) demonstrates
 `/manifest` text resolver. The [manifest guide](../../apps/docs/content/docs/plugins/manifest/index.mdx#localized-labels-03-development-source)
 describes fallback behavior and older-host compatibility.
 
+## Native SQLite reads (0.3 development source)
+
+Daemon plugins use `openSqliteDatabaseSync` from `@happier-dev/plugin-sdk/fs` to
+select the host's Node or Bun SQLite implementation. Open user-selected existing
+files with `{ readOnly: true }` when reading them, and close the database when the
+owning operation or demand ends.
+
+Use `columns()` and `values()` when result order matters:
+
+```ts
+import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
+
+const database = openSqliteDatabaseSync(selectedExistingFile, { readOnly: true });
+try {
+    const statement = database.prepare('SELECT id AS value, label AS value FROM records WHERE id=?');
+    const columns = statement.columns();
+    const rows = statement.values(9223372036854775807n);
+    // columns retains both labels and declared types even when rows is empty.
+    // Each row is positional; native INTEGER values remain bigint.
+} finally {
+    database.close();
+}
+```
+
+Expression columns can have a null declared type. SQLite values retain their
+native storage class, which can differ from a column's declared affinity.
+Existing `get()`, `all()` and `iterate()` calls keep their object rows; `run()`
+keeps its affected-count result. Matching 0.3 development hosts provide the added
+statement methods.
+
 ## Packaged Bot templates (0.3 development source)
 
 Declare cold releases with `botTemplates: { researcher: { path: 'templates/researcher.json' } }`
@@ -24,6 +54,31 @@ private draft id nor an attestation of its source. Generic `resources` with
 `kind: 'template'` remain a separate contract. This development descriptor requires
 a matching host; consult the generated capability matrix for product availability.
 See the [multiple-template public fixture](examples/public-authoring/botTemplates.ts).
+
+## Theme contributions (0.3 development source)
+
+Declare one or more portable themes with
+`definePlugin({ themes: { paper: { theme: profile } } })`. The manifest contains
+`contributes.themes: [{ id: 'paper', theme: profile }]`; the profile follows the
+host's canonical theme format. This is data only: listing or selecting a theme
+requires no activation callback or executable entrypoint. See the maintained
+[theme authoring example](examples/public-authoring/themes.ts).
+
+Installed themes retain their plugin's qualified identity. They are read-only;
+Duplicate creates an independent editable theme in your library. Removing the
+plugin withdraws its themes, while duplicates remain. A missing selected plugin
+theme renders the base theme without rewriting the saved selection.
+
+Mounted UI receives the active theme through the existing context channel.
+The optional `theme.sanitizedCss` contains the host sanitizer's completed web
+stylesheet; the hosted client applies and retires it with that context. Native
+presentation consumes the optional mode-resolved `theme.surfaces` table. Authors
+use the shared primitives rather than compiling or attaching a second theme.
+
+This requires matching 0.3 development hosts; older strict manifest readers may
+reject the new contribution family. Check the generated capability matrix for
+current availability. Theme CSS coverage is reported by the host, including
+rules that apply only on web and desktop.
 
 ## List extensions (0.3 development source)
 

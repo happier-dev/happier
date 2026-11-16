@@ -116,6 +116,14 @@ export type PluginUiHostApiSurfaceTargetV1 = Readonly<z.infer<
 
 const PluginUiHostApiSurfaceMetricV1Schema = lazyZodSchema(() => z.number().check(z.nonnegative()));
 
+// Mode-resolved output of the host's native declaration compiler. Presentation
+// maps are additive; the part envelope stays closed and never carries authority.
+const PluginUiThemeSurfaceStyleV1Schema = lazyZodSchema(() => z.record(z.string(), z.union([z.string(), z.number()])));
+const PluginUiThemeSurfacesV1Schema = lazyZodSchema(() => z.record(z.string(), z.record(z.string(), z.strictObject({
+  base: PluginUiThemeSurfaceStyleV1Schema,
+  states: z.record(z.string(), PluginUiThemeSurfaceStyleV1Schema),
+}))));
+
 const PluginUiHostApiSurfaceThemeTypographyV1Schema = lazyZodSchema(() => z.strictObject({
   body: z.strictObject({
     fontSize: PluginUiHostApiSurfaceMetricV1Schema,
@@ -158,6 +166,10 @@ const PluginUiHostApiSurfaceThemeTypographyV1Schema = lazyZodSchema(() => z.stri
 /** The complete semantic theme payload, not a style-system object. */
 export const PluginUiHostApiSurfaceThemeV1Schema = lazyZodSchema(() => z.strictObject({
   version: z.literal(1),
+  /** Completed host sanitizer output. Guests attach it without parsing it again. */
+  sanitizedCss: z.optional(z.string()),
+  /** Already compiled for this snapshot's appearance; native primitives consume it directly. */
+  surfaces: z.optional(PluginUiThemeSurfacesV1Schema),
   /** Optional host presentation choices. Unknown ids use the shared renderer's defaults. */
   spinner: z.optional(z.strictObject({
     style: PluginUiHostApiSurfaceNonBlankStringV1Schema,

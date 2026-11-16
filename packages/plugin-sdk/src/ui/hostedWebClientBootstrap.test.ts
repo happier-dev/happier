@@ -101,7 +101,54 @@ function readyAcknowledgementMessage(input: Readonly<{
         } };
 }
 
+function createStylesheetDocument() {
+    const styles = new Set<{ textContent: string | null; remove(): void }>();
+    let writes = 0;
+    return {
+        styles,
+        get writes() { return writes; },
+        document: {
+            head: { append: (style: { textContent: string | null; remove(): void }) => styles.add(style) },
+            createElement: () => {
+                let text: string | null = null;
+                const style = {
+                    get textContent() { return text; },
+                    set textContent(value: string | null) { text = value; writes += 1; },
+                    remove() { styles.delete(style); },
+                };
+                return style;
+            },
+        },
+    };
+}
+
 describe('hosted-web UI client bootstrap', () => {
+    it('applies the host stylesheet for authored clients without adding context reads or watches', async () => {
+        const harness = createRealm();
+        const sheets = createStylesheetDocument();
+        Object.defineProperty(harness.realm, 'document', { value: sheets.document });
+        installHostedWebPluginUiHostApiClientBootstrap(harness.realm);
+        harness.dispatch({ source: harness.parent, origin: 'https://host.test', data: bootstrapMessage() });
+        const { transport } = await awaitHostedWebPluginUiHostApiClientBootstrap(harness.realm);
+        transport.subscribe(() => {});
+        transport.send({ wireVersion: 1, identity, kind: 'negotiate', apiRange: `^${PLUGIN_UI_HOST_API_VERSION_V1}` });
+        const request = PluginHostedWebBridgeEnvelopeV1Schema.parse(harness.posted.at(-1)?.message);
+        harness.dispatch({ source: harness.parent, origin: 'https://host.test', data: {
+            version: 1, identity, sequence: request.sequence, requestSequence: request.sequence, kind: 'result',
+            payload: { wireVersion: 1, identity, kind: 'negotiated', apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context', 'watchContext'] },
+        } });
+        transport.send({ wireVersion: 1, identity, kind: 'request', method: 'context', requestId: 'author-context' });
+        const sent = harness.posted.length;
+        const surface = createSurfaceContextFixture();
+        const css = '[data-surface="composer"] { border-radius: 3px; }';
+        harness.dispatch({ source: harness.parent, origin: 'https://host.test', data: {
+            version: 1, identity, direction: 'hostToFrame', sequence: 4, kind: 'hostApi',
+            payload: { wireVersion: 1, identity, kind: 'result', method: 'context', requestId: 'author-context',
+                result: { surface: { ...surface, theme: { ...surface.theme, sanitizedCss: css } }, activity: { active: true } } },
+        } });
+        expect([...sheets.styles].map(style => style.textContent)).toEqual([css]);
+        expect(harness.posted).toHaveLength(sent);
+    });
     it('isolates old and current SDK negotiations while sharing the same document lifecycle', async () => {
         const harness = createRealm();
         expect(installHostedWebPluginUiHostApiClientBootstrap(harness.realm)).toBe(true);
@@ -293,14 +340,24 @@ describe('hosted-web UI client bootstrap', () => {
 
     it('caller presentation applies context themes, reports resizing and retires native observers and links', async () => {
         const harness = createRealm();
-        const surface = createSurfaceContextFixture();
+        const baseSurface = createSurfaceContextFixture();
+        const css = '[data-surface="composer"] { border-radius: 3px; }';
+        const surface = { ...baseSurface, theme: { ...baseSurface.theme, sanitizedCss: css } };
         const properties = new Map<string, string>();
         const clicks = new Set<(event: unknown) => void>();
+        const sheets = createStylesheetDocument();
+        const { styles } = sheets;
         let height = 137;
+        let darkMode = false;
         let resized = () => {};
         const observer = { observe: vi.fn(), disconnect: vi.fn() };
         Object.defineProperty(harness.realm, 'document', { value: {
-            documentElement: { style: { setProperty: (key: string, value: string) => properties.set(key, value) }, getBoundingClientRect: () => ({ height }) },
+            ...sheets.document,
+            documentElement: {
+                style: { setProperty: (key: string, value: string) => properties.set(key, value) },
+                getBoundingClientRect: () => ({ height }),
+                classList: { toggle: (_token: string, force: boolean) => { darkMode = force; return force; } },
+            },
             body: { get scrollHeight() { return height; } },
             addEventListener: (_type: string, listener: (event: unknown) => void) => clicks.add(listener),
             removeEventListener: (_type: string, listener: (event: unknown) => void) => clicks.delete(listener),
@@ -329,8 +386,25 @@ describe('hosted-web UI client bootstrap', () => {
         await vi.waitFor(() => expect(properties.get('--happier-plugin-color-text')).toBe('#f0f0f0'));
         // Unstyled caller HTML inherits the theme's text colour rather than the browser's black.
         expect(properties.get('color')).toBe('#f0f0f0');
+        expect(darkMode).toBe(true);
         await vi.waitFor(() => expect(subscriptionId).not.toBe(''));
         expect(sent).toContainEqual(expect.objectContaining({ kind: 'heightChanged', payload: { height: 137 } }));
+        const themed = { surface: { ...surface, theme: { ...surface.theme, sanitizedCss: css } }, activity: { active: true } };
+        push('hostApi', { wireVersion: 1, identity, kind: 'subscription', subscriptionId, event: themed });
+        expect([...styles].map(style => style.textContent)).toEqual([css]);
+        push('hostApi', { wireVersion: 1, identity, kind: 'subscription', subscriptionId, event: themed });
+        expect(sheets.writes).toBe(1);
+        const replacementCss = '[data-surface="composer"] { border-radius: 7px; }';
+        push('hostApi', { wireVersion: 1, identity, kind: 'subscription', subscriptionId,
+            event: { ...themed, surface: { ...surface, colorScheme: 'light', theme: { ...surface.theme, sanitizedCss: replacementCss } } } });
+        expect([...styles].map(style => style.textContent)).toEqual([replacementCss]);
+        expect(sheets.writes).toBe(2);
+        expect(darkMode).toBe(false);
+        push('hostApi', { wireVersion: 1, identity, kind: 'subscription', subscriptionId, event: themed });
+        expect(darkMode).toBe(true);
+        push('hostApi', { wireVersion: 1, identity, kind: 'subscription', subscriptionId, event: { surface: baseSurface, activity: { active: true } } });
+        expect(styles.size).toBe(0);
+        expect(darkMode).toBe(false);
         push('hostApi', { wireVersion: 1, identity, kind: 'subscription', subscriptionId, event: { surface: { ...surface, theme: { ...surface.theme, colors: { ...surface.theme.colors, text: '#123456' } } }, activity: { active: true } } });
         expect(properties.get('--happier-plugin-color-text')).toBe('#123456');
         expect(properties.get('color')).toBe('#123456');
@@ -346,6 +420,7 @@ describe('hosted-web UI client bootstrap', () => {
         expect(preventNativeNavigation).toHaveBeenCalledOnce();
         push('hostApi', { wireVersion: 1, identity, kind: 'disconnected', reason: 'retired' });
         expect(observer.disconnect).toHaveBeenCalled();
+        expect(styles.size).toBe(0);
         expect(clicks.size).toBe(0);
         const before = sent.length; height = 333; resized();
         expect(sent.length).toBe(before);
