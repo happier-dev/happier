@@ -255,7 +255,7 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
         const usesBuildSecret = options.buildSecret !== false;
         const model = { services: {
             app: { image: 'example/app:reviewed', ...(sourceBuildServices.includes('app') ? {
-                build: { context: '.', ...(options.secretBuildArgument ? { args: { CANARY: '${BUILD_TOKEN}' } } : {}), ...(usesBuildSecret ? { secrets: ['token'] } : {}) } } : {}),
+                build: { context: '.', ...(usesBuildSecret ? { secrets: ['token'] } : {}) } } : {}),
                 environment: { RUNTIME_TOKEN: '${RUNTIME_TOKEN:?required}' },
                 ...(options.mode === 'closure' ? { depends_on: ['worker'] } : {}) },
             worker: { image: 'example/worker:reviewed', ...(sourceBuildServices.includes('worker') ? { build: { context: '.' } } : {}) },
