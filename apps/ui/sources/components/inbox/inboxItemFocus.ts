@@ -37,7 +37,7 @@ export type InboxItemFocus = Readonly<{ serverId: string; id: string } & (
 )>;
 
 export type InboxItemDetailContext = Readonly<{ notice?: AccountNoticeArtifactHeaderV1 | UsageNoticeArtifactHeaderV1 | null }>;
-type InboxNoticePageSource = Pick<AccountNoticeArtifactHeaderV1, 'kind' | 'source' | 'page' | 'notice'> & Partial<Pick<AccountNoticeArtifactHeaderV1, 'recoveryChoices'>>
+type InboxNoticePageSource = Pick<AccountNoticeArtifactHeaderV1, 'kind' | 'source' | 'page' | 'notice'>
     | Pick<UsageNoticeArtifactHeaderV1, 'kind' | 'notice'>;
 
 /** Source kinds choose one detail adapter and their real page here; plugins use the existing page host. */
@@ -72,25 +72,33 @@ export const INBOX_ITEM_DETAIL_REGISTRY = {
  * same selected notice the wide pane shows, never the stored document page with its JSON.
  */
 export function resolveInboxNoticePageRoute(id: string, notice?: InboxNoticePageSource | null, serverId?: string): string {
-    return (inboxHostsNoticePage(notice, serverId) ? null : resolveInboxNoticeOwnPageRoute(notice, serverId))
+    return resolveInboxNoticeOwnPageRoute(notice, serverId)
         ?? `/inbox?item=${encodeURIComponent(inboxNoticeFocusKeyV1(serverId ?? '', id))}`;
 }
 
+/** The deployment receipt a host notice points at (a failed deploy), or null. */
+function readInboxNoticeDeploymentId(notice?: InboxNoticePageSource | null): string | null {
+    return notice?.kind === 'account_notice.v1' && notice.source.kind === 'host' && notice.page
+        && 'kind' in notice.page && notice.page.page === 'environment' && notice.page.deploymentId
+        ? notice.page.deploymentId : null;
+}
+
 /**
- * Whether the Inbox shows this notice itself where the list is the whole page (a phone): it points nowhere, or it
- * offers recovery choices, which travel with the Inbox's controls into the page it hosts (a failed deploy's receipt
- * with "Roll back to …"). Otherwise a phone opens the notice's own page.
+ * The notice whose recovery choices belong on this deployment's receipt: it points at that receipt and offers choices.
+ * The receipt is the notice's one page, so its header draws them for every way in (Inbox row, push, link).
  */
-export function inboxHostsNoticePage(notice?: InboxNoticePageSource | null, serverId?: string): boolean {
-    return resolveInboxNoticeOwnPageRoute(notice, serverId) === null
-        || (notice?.kind === 'account_notice.v1' && (notice.recoveryChoices?.length ?? 0) > 0);
+export function findInboxDeploymentNotice<T extends Readonly<{ header: AccountNoticeArtifactHeaderV1 }>>(
+    notices: readonly T[], deploymentId: string,
+): T | null {
+    return notices.find(entry => readInboxNoticeDeploymentId(entry.header) === deploymentId
+        && (entry.header.recoveryChoices?.length ?? 0) > 0) ?? null;
 }
 
 /** The page a notice points at (a plugin page, usage or a machine), or null when the notice is its own content. */
 export function resolveInboxNoticeOwnPageRoute(notice?: InboxNoticePageSource | null, serverId?: string): string | null {
-    if (notice?.kind === 'account_notice.v1' && notice.source.kind === 'host' && notice.page
-        && 'kind' in notice.page && notice.page.page === 'environment' && notice.page.deploymentId) {
-        return buildDeploymentEnvironmentHref({ ...notice.page.environment, deploymentId: notice.page.deploymentId });
+    const deploymentId = readInboxNoticeDeploymentId(notice);
+    if (deploymentId && notice?.kind === 'account_notice.v1' && notice.page && 'kind' in notice.page && notice.page.page === 'environment') {
+        return buildDeploymentEnvironmentHref({ ...notice.page.environment, deploymentId });
     }
     if (notice?.kind === 'account_notice.v1' && notice.source.kind === 'plugin' && notice.page && !('kind' in notice.page)) {
         return buildPluginAppPageRoutePath({ pluginId: notice.source.pluginId, localId: notice.page.pageId,

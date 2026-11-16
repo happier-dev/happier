@@ -3,7 +3,10 @@ import { OfferedChoices } from '@happier-dev/plugin-ui/presentation';
 import { useUnistyles } from 'react-native-unistyles';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import type { createAccountNoticeInvestigation } from '@/hooks/inbox/accountNoticeInvestigation';
-import type { AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
+import { isOpenAccountNotice, type AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
+import { AccountNoticeInvestigationBoundary, useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
+import { InboxArtifactSourceBoundary, useInboxArtifactItems } from '@/hooks/inbox/useInboxArtifactSource';
+import { findInboxDeploymentNotice } from '@/components/inbox/inboxItemFocus';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
@@ -72,3 +75,27 @@ export const AccountNoticeRecoveryChoices = React.memo(
     );
   },
 );
+
+/**
+ * A deployment receipt's notice decision: the open notice that points at this receipt offers its recovery choices
+ * here, the same list its Inbox row offers. The receipt is the notice's one page (Inbox, push and links all land on
+ * it), so its header carries them. Mounts the small Account notice owners a receipt outside the Inbox lacks.
+ */
+export function DeploymentNoticeRecoveryChoices(props: Readonly<{ deploymentId: string; testID: string }>) {
+  return (
+    <AccountNoticeInvestigationBoundary>
+      <InboxArtifactSourceBoundary>
+        <DeploymentNoticeRecoveryBody deploymentId={props.deploymentId} testID={props.testID} />
+      </InboxArtifactSourceBoundary>
+    </AccountNoticeInvestigationBoundary>
+  );
+}
+
+function DeploymentNoticeRecoveryBody(props: Readonly<{ deploymentId: string; testID: string }>) {
+  const { accountNotices } = useInboxArtifactItems();
+  const recovery = useAccountNoticeInvestigation();
+  const entry = React.useMemo(() => findInboxDeploymentNotice(
+    accountNotices.filter(candidate => isOpenAccountNotice(candidate.header)), props.deploymentId,
+  ), [accountNotices, props.deploymentId]);
+  return entry ? <AccountNoticeRecoveryChoices entry={entry} recovery={recovery} testID={props.testID} /> : null;
+}

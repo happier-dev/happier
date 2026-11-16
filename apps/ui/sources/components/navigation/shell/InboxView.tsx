@@ -6,7 +6,7 @@ import { HappierListDetailLayout, useHappierMaterialColorResolver } from '@happi
 
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { InboxContentList, type InboxView as InboxContentView } from '@/components/inbox/InboxContent';
-import { createInboxItemRoute, readInboxView, inboxHostsNoticePage, resolveInboxItemPageRoute, type InboxItemDetailContext, type InboxItemFocus } from '@/components/inbox/inboxItemFocus';
+import { createInboxItemRoute, readInboxView, resolveInboxItemPageRoute, resolveInboxNoticeOwnPageRoute, type InboxItemDetailContext, type InboxItemFocus } from '@/components/inbox/inboxItemFocus';
 import { findInboxItemForFocus, readInboxItemSelectionKey } from '@/components/inbox/inboxItemNavigation';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { countInboxMentions, countInboxNeedsYou, countInboxUpdates } from '@/components/inbox/inboxCounts';
@@ -197,7 +197,7 @@ function FocusedItemPage(props: Readonly<{ focus: InboxItemFocus | null; list: R
     const notice = focus?.kind === 'notice' ? model.accountNotices.find(entry => entry.artifact.id === focus.id)?.header
         ?? model.openUsageNotices.find(entry => entry.artifact.id === focus.id)?.header ?? null : null;
     const hostsNotice = focus?.kind === 'notice' && (notice !== null || !model.isLoading)
-        && inboxHostsNoticePage(notice, focus.serverId);
+        && resolveInboxNoticeOwnPageRoute(notice, focus.serverId) === null;
     if (focus && hostsNotice) {
         return (
             <React.Suspense fallback={<PaneLoadingFallback />}>

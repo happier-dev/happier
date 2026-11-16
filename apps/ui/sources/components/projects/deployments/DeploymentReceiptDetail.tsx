@@ -19,6 +19,7 @@ import {
   type PageHeaderMetaFact,
 } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { DeploymentNoticeRecoveryChoices } from '@/components/inbox/cards/AccountNoticeRecoveryChoices';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
 import { declaredSubjectAgentActions, InvestigationAgentActionButtons, type InvestigationAgentActionButtonModel } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -420,10 +421,15 @@ export const DeploymentReceiptDetail = React.memo(
             }) : undefined}
       />
     );
+    // A failed deploy's notice offers its recovery choices on this, its one page; when the failure card already leads
+    // with the rollback they would repeat, the card's own button is that choice.
+    const noticeRecovery = deployment.state === 'failed' && !recoveryLeads
+      ? <DeploymentNoticeRecoveryChoices deploymentId={deployment.id} testID="project-deployments.receipt.noticeRecovery" /> : null;
     const headerActions = phone ? (
-      rollbackButton || menu ? <View style={styles.headerActions}>{rollbackButton}{menu}</View> : undefined
+      <View style={styles.headerActions}>{noticeRecovery}{rollbackButton}{menu}</View>
     ) : (
       <View style={styles.headerActions}>
+        {noticeRecovery}
         {rollbackButton}
         {cancelButton}
         {bannerAgain ? null : againButton}
@@ -464,7 +470,7 @@ export const DeploymentReceiptDetail = React.memo(
               meta={meta}
               actions={headerActions}
               // A phone's lone ⋯ hangs from the title line (lab d3p); a wider Roll back still wraps beneath.
-              actionsLayout={phone && !rollbackButton ? 'hang' : undefined}
+              actionsLayout={phone && !rollbackButton && !noticeRecovery ? 'hang' : undefined}
               actionsPlacement="page"
             />
             {deploymentInProgressStates().includes(deployment.state)

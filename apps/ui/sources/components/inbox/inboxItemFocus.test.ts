@@ -5,7 +5,7 @@ import { buildInboxWorkGroups } from '@/activity/presentation/buildInboxWorkGrou
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createAccountNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 
-import { createInboxItemRoute, inboxHostsNoticePage, isFocusedInboxWorkItem, readInboxItemFocus, resolveInboxItemPageRoute, resolveInboxNoticeSubjectRoute } from './inboxItemFocus';
+import { createInboxItemRoute, findInboxDeploymentNotice, isFocusedInboxWorkItem, readInboxItemFocus, resolveInboxItemPageRoute, resolveInboxNoticeSubjectRoute } from './inboxItemFocus';
 
 describe('Home-qualified Inbox focus', () => {
     it('links the affected Environment from its service-health notice', () => {
@@ -35,22 +35,25 @@ describe('Home-qualified Inbox focus', () => {
         expect(url.searchParams.get('deploymentEnvironment')).toBe('environment');
     });
     // A phone keeps a failed deploy's recovery choices: the Inbox hosts the receipt, whose header carries them.
-    it('hosts a deployment notice with recovery choices in the Inbox, and opens one without them on its page', () => {
+    // One destination per notice: a failed deploy's notice opens its receipt, whose header carries its recovery choices.
+    it('opens a deployment notice on its receipt whether or not it offers recovery choices, and finds it by deployment', () => {
         const page = { kind: 'host', page: 'environment', targetLinkId: 'runtime', deploymentId: 'failed',
             environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' } } as const;
         const source = { kind: 'host', topic: 'service_health', subject: { kind: 'environment',
             environmentId: 'environment', targetLinkId: 'runtime', condition: 'deployment_failed' } } as const;
-        const bare = createAccountNoticeArtifactFixture({ header: { source, healthPhase: 'open', page } }).header;
+        const bare = createAccountNoticeArtifactFixture({ header: { source, healthPhase: 'open', page } });
         const withChoices = createAccountNoticeArtifactFixture({ header: { source, healthPhase: 'open', page,
             recoveryChoices: [{ actionId: 'deployments.rollback', label: 'Roll back to 309dea9', input: { serverId: 'home',
                 environmentId: 'environment', expectedRevision: 1, requestKey: 'recover', targetLinkId: 'runtime',
                 expectedTargetLinkRevision: 1, deploymentId: 'good', contentArtifactId: 'content', contentHeaderVersion: 1,
-                contentBodyVersion: 1 } }] } }).header;
-        expect(inboxHostsNoticePage(bare, 'home')).toBe(false);
-        expect(inboxHostsNoticePage(withChoices, 'home')).toBe(true);
-        expect(resolveInboxItemPageRoute({ kind: 'notice', serverId: 'home', id: 'notice' }, { notice: withChoices }))
-            .toBe(createInboxItemRoute({ kind: 'notice', serverId: 'home', id: 'notice' }).pathname
-                + `?item=${encodeURIComponent(createInboxItemRoute({ kind: 'notice', serverId: 'home', id: 'notice' }).params.item)}`);
+                contentBodyVersion: 1 } }] } });
+        const focus = { kind: 'notice', serverId: 'home', id: 'notice' } as const;
+        const receipt = resolveInboxItemPageRoute(focus, { notice: bare.header });
+        expect(new URL(receipt, 'https://happier.test').searchParams.get('deployment')).toBe('failed');
+        expect(resolveInboxItemPageRoute(focus, { notice: withChoices.header })).toBe(receipt);
+        expect(findInboxDeploymentNotice([bare, withChoices], 'failed')).toBe(withChoices);
+        expect(findInboxDeploymentNotice([bare], 'failed')).toBeNull();
+        expect(findInboxDeploymentNotice([withChoices], 'other')).toBeNull();
     });
     it('opens a managed Machine on its exact Home through the existing page presenter', () => {
         const focus = { kind: 'managed_machine', serverId: 'home:b', id: 'box/one' } as const;

@@ -81,24 +81,13 @@ export const InboxItemDetail = React.memo(function InboxItemDetail(
   const notice = focus.kind === 'notice'
     ? model?.accountNotices.find(entry => entry.artifact.id === focus.id)?.header
       ?? model?.openUsageNotices.find(entry => entry.artifact.id === focus.id)?.header : null;
-  // The page this pane hosts and opens: a notice's own page even when the Inbox is where that notice lives (it hosts
-  // the page with the notice's recovery choices, `inboxHostsNoticePage`).
-  const pageRoute = (focus.kind === 'notice' ? resolveInboxNoticeOwnPageRoute(notice, focus.serverId) : null)
-    ?? resolveInboxItemPageRoute(focus, { notice });
+  const pageRoute = resolveInboxItemPageRoute(focus, { notice });
   // A notice that points nowhere is its own content: the pane is its page, so there is nothing to open.
   const hasOwnPage = focus.kind !== 'notice' || resolveInboxNoticeOwnPageRoute(notice, focus.serverId) !== null;
   const openLabel = describeOpenPage(focus);
-  // A notice shown on its own page (a failed deploy's receipt) offers the same recovery choices as its row: lent with
-  // the pane's controls, the page's own header draws them beside its title, so they read as part of that page.
-  const noticeEntry = focus.kind === 'notice' && hasOwnPage ? model?.accountNotices.find(entry => entry.artifact.id === focus.id) : undefined;
-  const noticeRecovery = model?.noticeInvestigation;
-  const lendsRecovery = noticeEntry !== undefined && noticeRecovery !== undefined && noticeRecovery.readRecoveryChoices(noticeEntry).length > 0;
   const renderControls = React.useCallback(
     () => (
       <>
-        {lendsRecovery && noticeEntry && noticeRecovery ? (
-          <AccountNoticeRecoveryChoices entry={noticeEntry} recovery={noticeRecovery} testID="inbox.notice.recovery" />
-        ) : null}
         {hasOwnPage ? <IconButton
           testID="inbox.detail.open"
           variant="plain"
@@ -117,7 +106,7 @@ export const InboxItemDetail = React.memo(function InboxItemDetail(
         />
       </>
     ),
-    [hasOwnPage, lendsRecovery, noticeEntry, noticeRecovery, onClose, openLabel, pageRoute, router],
+    [hasOwnPage, onClose, openLabel, pageRoute, router],
   );
   useStackHeaderActionsPublisher(scopeKey, renderControls);
   const controlsInHeader = useStackHeaderActionsClaimed(scopeKey);
@@ -202,8 +191,8 @@ function NoticeDetailAdapter(props: DetailBodyProps) {
   const subject = readNoticeInvestigationSubject(entry.header, model.noticeInvestigation.isEligible(entry));
   const plugin = entry.header.source.kind === 'plugin'
     ? { id: entry.header.source.pluginId, name: item?.source.displayName ?? entry.header.source.pluginId } : undefined;
-  // A notice with its own page (a failed deploy's receipt): its recovery choices travel with the pane's controls into
-  // that page's header (`InboxItemDetail`), so the page shows one header with the notice's decision in it.
+  // A notice with its own page (a failed deploy's receipt) shows that page; the page draws the notice's recovery
+  // choices itself (`DeploymentNoticeRecoveryChoices`), so every way in lands on the same choices.
   const content = ownPage ? <PageDetailAdapter {...props} plugin={plugin} /> : <InboxNoticeDetail title={item?.title ?? entry.header.title} body={item?.excerpt ?? entry.header.body ?? null}
     source={item?.source.displayName ?? null} createdAt={item?.createdAt ?? entry.artifact.createdAt}
     serverId={props.focus.serverId} subject={subject} investigation={investigation}

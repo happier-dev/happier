@@ -10,10 +10,12 @@ import {
   type CollectionRowActions,
   type HappierCollectionModel,
 } from '@happier-dev/plugin-ui';
+import { HAPPIER_PAGE_METRICS, HappierColumnEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
@@ -347,7 +349,12 @@ export function ServicesPageList<Item>(props: Readonly<{
   /** A row's ⋯ (Collection `useRowActions`: one stable module-level hook). */
   useRowActions?: (item: Item) => CollectionRowActions;
 }>) {
+  // Inside a page section's body (an Environment's Domains under "1 domain") the section already stands its content on
+  // the sheet edge, so the list's sheet takes that edge instead of adding its own inset; on the Services page it insets.
+  const inSection = useItemGroupRowPosition() !== null;
+  const enclosingEdgePx = React.useContext(HappierColumnEdgeContext);
   return (
+    <HappierColumnEdgeContext.Provider value={inSection ? HAPPIER_PAGE_METRICS.sheetInsetPx : enclosingEdgePx}>
     <ListPresentationProvider value="page" pageInsets="contained">
       <ItemGroup header="none" surface="none" testID={props.testID}>
         <CoreCollectionScope>
@@ -368,6 +375,7 @@ export function ServicesPageList<Item>(props: Readonly<{
         </CoreCollectionScope>
       </ItemGroup>
     </ListPresentationProvider>
+    </HappierColumnEdgeContext.Provider>
   );
 }
 
