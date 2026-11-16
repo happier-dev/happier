@@ -12,6 +12,7 @@ import { WidgetFlowHeightBoundContext } from '@/components/widgets/flow/WidgetFl
 import { Popover } from '@/components/ui/popover';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { BaseModal } from '@/modal/components/BaseModal';
+import { useRetainedPlacement } from '@/modal/components/RetainedModalFrame';
 import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
@@ -187,14 +188,23 @@ export function WidgetFlowShell(props: Readonly<{
     children: React.ReactNode;
 }>): React.ReactElement {
     const phone = useDeviceType() === 'phone';
-    return phone ? (
-        <WidgetSheetShell title={props.title} onRequestClose={props.onRequestClose} testID={`${props.testID}.sheet`}>{props.children}</WidgetSheetShell>
-    ) : (
-        <AnchoredWidgetShell anchorRef={props.anchorRef} placement={props.placement} width={props.width ?? WIDGET_FLOW_WIDTH_PX.panel}
-            onRequestClose={props.onRequestClose}>
-            {props.children}
-        </AnchoredWidgetShell>
-    );
+    const retained = useRetainedPlacement<number | null>(height => (
+        <WidgetFlowHeightBoundContext.Provider value={height}>{props.children}</WidgetFlowHeightBoundContext.Provider>
+    ));
+    const body = <WidgetFlowBodySlot mount={retained.mount} />;
+    return <>
+        {phone ? (
+            <WidgetSheetShell title={props.title} onRequestClose={props.onRequestClose} testID={`${props.testID}.sheet`}>{body}</WidgetSheetShell>
+        ) : (
+            <AnchoredWidgetShell anchorRef={props.anchorRef} placement={props.placement} width={props.width ?? WIDGET_FLOW_WIDTH_PX.panel}
+                onRequestClose={props.onRequestClose}>{body}</AnchoredWidgetShell>
+        )}
+        {retained.body}
+    </>;
+}
+
+function WidgetFlowBodySlot(props: Readonly<{ mount: (height: number | null) => React.ReactElement }>): React.ReactElement {
+    return props.mount(React.useContext(WidgetFlowHeightBoundContext));
 }
 
 /**

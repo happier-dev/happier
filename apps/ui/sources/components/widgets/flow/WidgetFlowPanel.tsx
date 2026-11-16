@@ -12,6 +12,7 @@ import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useRetainedPlacement } from '@/modal/components/RetainedModalFrame';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
@@ -120,9 +121,11 @@ export function WidgetFlowPanel(props: Readonly<{
     const hasFooter = props.primary || props.onCancel || props.footerStart || message;
     const heightBound = React.useContext(WidgetFlowHeightBoundContext);
     const bounded = heightBound !== null && !props.fill;
+    const retainedBody = useRetainedPlacement<null>(() => props.children);
     return (
         <View testID={props.testID} accessibilityLabel={props.title}
             style={[styles.root, phone ? styles.rootPhone : null, props.fill ? styles.rootFill : null, bounded ? { maxHeight: heightBound } : null]}>
+            {retainedBody.body}
             {phone && props.onBack && props.backLabel ? (
                 <HappierPressable
                     testID={`${props.testID}.back`}
@@ -160,10 +163,10 @@ export function WidgetFlowPanel(props: Readonly<{
             {bounded ? (
                 <ScrollView style={styles.bodyScroll} contentContainerStyle={styles.body} keyboardShouldPersistTaps="always"
                     testID={`${props.testID}.body`}>
-                    {props.children}
+                    {retainedBody.mount(null)}
                 </ScrollView>
             ) : (
-                <View style={[styles.body, props.fill ? styles.bodyFill : null]}>{props.children}</View>
+                <View style={[styles.body, props.fill ? styles.bodyFill : null]}>{retainedBody.mount(null)}</View>
             )}
             {hasFooter ? (
                 phone ? (

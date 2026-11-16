@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { View } from 'react-native';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
-import { AnchoredWidgetShell, WIDGET_FLOW_WIDTH_PX, WidgetSheetShell } from '@/components/widgets/flow/WidgetFlowShell';
+import { WIDGET_FLOW_WIDTH_PX, WidgetFlowShell } from '@/components/widgets/flow/WidgetFlowShell';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 import { WidgetSetupStep } from './WidgetSetupStep';
@@ -50,11 +50,9 @@ function OpenWidgetSetupPopover(props: React.ComponentProps<typeof WidgetSetupPo
             testID={props.testID}
         />
     );
-    return props.phone ? (
-        <WidgetSheetShell title={setup.title} onRequestClose={props.onRequestClose} testID={`${props.testID}.sheet`}>{step}</WidgetSheetShell>
-    ) : (
-        <AnchoredWidgetShell anchorRef={props.anchorRef} placement={props.placement} width={WIDGET_FLOW_WIDTH_PX.setup} onRequestClose={props.onRequestClose}>
+    return (
+        <WidgetFlowShell title={setup.title} testID={props.testID} anchorRef={props.anchorRef} placement={props.placement} width={WIDGET_FLOW_WIDTH_PX.setup} onRequestClose={props.onRequestClose}>
             {step}
-        </AnchoredWidgetShell>
+        </WidgetFlowShell>
     );
 }

@@ -18,6 +18,7 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { Text } from '@/components/ui/text/Text';
 import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
 import { Typography } from '@/constants/Typography';
+import { useRetainedPlacement } from '@/modal/components/RetainedModalFrame';
 import { t } from '@/text';
 import { WidgetPreviewWell, WidgetFlowPanel } from '@/components/widgets/flow/WidgetFlowPanel';
 import { WidgetPreviewStage } from '@/components/widgets/flow/WidgetPreviewStage';
@@ -357,12 +358,13 @@ export function WidgetSetupStep(props: Readonly<{
             }}
         />
     ) : null;
+    const retainedPreview = useRetainedPlacement<null>(() => card);
     const preview = card ? (
         pane && !props.phone ? (
             // A mounted preview can still be loading or refused. Its body owns the read state.
             <WidgetPreviewStage testID={`${props.testID}.preview`} surface={sizes?.surface ?? null} size={draft.size}
                 {...(widths && draft.width ? { footprint: widthFootprint(draft.width), alone: true } : {})}
-                caption={t('widgetAdd.preview')} accessibilityLabel={widgetTitle}>{card}</WidgetPreviewStage>
+                caption={t('widgetAdd.preview')} accessibilityLabel={widgetTitle}>{retainedPreview.mount(null)}</WidgetPreviewStage>
         ) : (
             <WidgetPreviewWell
                 testID={`${props.testID}.preview`}
@@ -372,7 +374,7 @@ export function WidgetSetupStep(props: Readonly<{
                 // The Add pane on a phone shows the whole compact card; Edit inputs keeps its fixed room.
                 {...(props.phone ? (pane ? {} : { height: PHONE_PREVIEW_HEIGHT_PX }) : { minHeight: PREVIEW_MIN_HEIGHT_PX })}
             >
-                {card}
+                {retainedPreview.mount(null)}
             </WidgetPreviewWell>
         )
     ) : null;
@@ -410,40 +412,25 @@ export function WidgetSetupStep(props: Readonly<{
         // Inputs first, then the stage with the size under the card (lab wsplit A1/A2).
         return (
             <WidgetFlowPanel {...panel}>
-                {props.phone ? (
-                    <View style={styles.bodyPhone}>
-                        {setup.fields.length > 0 ? inputs : null}
-                        {preview}
-                        {sizePicker}
-                    </View>
-                ) : (
-                    // One scroller for the pane: every input is whole, the stage keeps its room, and
-                    // more inputs than fit scroll with the preview instead of being cut (lab wsplit A).
-                    <ScrollView style={styles.paneScroll} contentContainerStyle={styles.paneBody} keyboardShouldPersistTaps="always"
-                        testID={`${props.testID}.scroll`}>
-                        {setup.fields.length > 0 ? inputs : null}
-                        {preview}
-                        {sizePicker ? <View style={styles.paneSize}>{sizePicker}</View> : null}
-                    </ScrollView>
-                )}
+                {retainedPreview.body}
+                <ScrollView style={styles.paneScroll} contentContainerStyle={props.phone ? styles.bodyPhone : styles.paneBody}
+                    keyboardShouldPersistTaps="always" testID={`${props.testID}.scroll`}>
+                    {setup.fields.length > 0 ? inputs : null}
+                    {preview}
+                    {sizePicker ? <View style={props.phone ? undefined : styles.paneSize}>{sizePicker}</View> : null}
+                </ScrollView>
             </WidgetFlowPanel>
         );
     }
     const aside = preview && sizePicker ? <View style={{ gap: theme.space.s12 }}>{preview}{sizePicker}</View> : preview ?? sizePicker;
     return (
         <WidgetFlowPanel {...panel}>
-            {/* A copy that asks for nothing is its preview and size alone: no empty inputs column beside or above them. */}
-            {stacked || setup.fields.length === 0 ? (
-                <View style={styles.bodyPhone} onLayout={(event) => setBodyWidth(Math.round(event.nativeEvent.layout.width))}>
-                    {setup.fields.length > 0 ? inputs : null}
-                    {aside}
-                </View>
-            ) : aside ? (
-                <View style={styles.body} onLayout={(event) => setBodyWidth(Math.round(event.nativeEvent.layout.width))}>
-                    <View style={styles.inputs}>{inputs}</View>
-                    <View style={styles.previewColumn}>{aside}</View>
-                </View>
-            ) : inputs}
+            {retainedPreview.body}
+            <View style={stacked || setup.fields.length === 0 || !aside ? styles.bodyPhone : styles.body}
+                onLayout={(event) => setBodyWidth(Math.round(event.nativeEvent.layout.width))}>
+                {setup.fields.length > 0 ? <View style={stacked || !aside ? undefined : styles.inputs}>{inputs}</View> : null}
+                {aside ? <View style={stacked || setup.fields.length === 0 ? undefined : styles.previewColumn}>{aside}</View> : null}
+            </View>
         </WidgetFlowPanel>
     );
 }

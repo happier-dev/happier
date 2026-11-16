@@ -32,6 +32,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useRetainedPlacement } from '@/modal/components/RetainedModalFrame';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { WidgetFlowHeightBoundContext, WidgetFlowPanel, WidgetPreviewWell } from '@/components/widgets/flow/WidgetFlowPanel';
@@ -152,14 +153,37 @@ export function WidgetAddSurface(props: Omit<WidgetAddPanelProps, 'composition' 
 }>): React.ReactElement | null {
     const phone = useDeviceType() === 'phone';
     if (!props.open) return null;
-    const { open: _open, anchorRef, regionRef, placement, ...panel } = props;
-    if (phone) {
-        return (
+    return <OpenWidgetAddSurface {...props} phone={phone} />;
+}
+
+function OpenWidgetAddSurface(props: React.ComponentProps<typeof WidgetAddSurface> & Readonly<{ phone: boolean }>): React.ReactElement {
+    const { open: _open, anchorRef, regionRef, placement, phone, ...panel } = props;
+    const retained = useRetainedPlacement<Readonly<{ height: number | null; composition: 'split' | 'push' }>>(args => (
+        <WidgetFlowHeightBoundContext.Provider value={args.height}>
+            <WidgetAddPanel {...panel} composition={args.composition} phone={phone} />
+        </WidgetFlowHeightBoundContext.Provider>
+    ));
+    return <>
+        {phone ? (
             <WidgetSheetShell title={props.title} onRequestClose={props.onRequestClose} testID={`${props.testID}.sheet`}>
-                <WidgetAddPanel {...panel} composition="push" phone />
+                <WidgetAddBodySlot mount={retained.mount} composition="push" />
             </WidgetSheetShell>
-        );
-    }
+        ) : <AnchoredWidgetAddSurface {...props} renderPanel={composition => <WidgetAddBodySlot mount={retained.mount} composition={composition} />} />}
+        {retained.body}
+    </>;
+}
+
+function WidgetAddBodySlot(props: Readonly<{
+    mount: (args: Readonly<{ height: number | null; composition: 'split' | 'push' }>) => React.ReactElement;
+    composition: 'split' | 'push';
+}>): React.ReactElement {
+    return props.mount({ height: React.useContext(WidgetFlowHeightBoundContext), composition: props.composition });
+}
+
+function AnchoredWidgetAddSurface(props: React.ComponentProps<typeof WidgetAddSurface> & Readonly<{
+    renderPanel: (composition: 'split' | 'push') => React.ReactElement;
+}>): React.ReactElement {
+    const { anchorRef, regionRef, placement } = props;
     return (
         <Popover
             open
@@ -169,20 +193,14 @@ export function WidgetAddSurface(props: Omit<WidgetAddPanelProps, 'composition' 
             gap={8}
             maxHeightCap={WIDGET_ADD_SURFACE_PX.height}
             maxWidthCap={WIDGET_ADD_SURFACE_PX.width}
-            // The surface is a designed panel, not a menu: it keeps its size and calm margins, centred on
-            // the control that opened it and slid inside the window (over that control if it must)
-            // rather than squeezed into whatever room is left on one side of it (lab wsplit A).
             fit="shift"
             edgePadding={{ vertical: WIDGET_ADD_SURFACE_PX.marginY, horizontal: WIDGET_ADD_SURFACE_PX.marginX }}
-            // The margin is kept once, from the boundary's edge: the surface carries no transparent gutter
-            // of its own, so the whole room inside the margins counts toward the split (a Home pane beside
-            // the sidebar at 1440 splits, lab wsplit A2).
             containerStyle={{ paddingHorizontal: 0 }}
             portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlign: 'center' }}
             onRequestClose={props.onRequestClose}
             backdrop={{ effect: 'none', closeOnPan: true }}
         >
-            {({ maxHeight, maxWidth }) => <AnchoredWidgetAddContent panel={panel} maxHeight={maxHeight} maxWidth={maxWidth} />}
+            {({ maxHeight, maxWidth }) => <AnchoredWidgetAddContent panel={props.renderPanel} maxHeight={maxHeight} maxWidth={maxWidth} />}
         </Popover>
     );
 }
@@ -193,7 +211,7 @@ export function WidgetAddSurface(props: Omit<WidgetAddPanelProps, 'composition' 
  * remeasure cannot move the selected widget's pane (and its draft) to another place in the tree.
  */
 function AnchoredWidgetAddContent(props: Readonly<{
-    panel: Omit<WidgetAddPanelProps, 'composition' | 'phone'>;
+    panel: (composition: 'split' | 'push') => React.ReactElement;
     maxHeight: number;
     maxWidth: number;
 }>): React.ReactElement {
@@ -211,7 +229,7 @@ function AnchoredWidgetAddContent(props: Readonly<{
         <View style={{ alignSelf: 'center', width }}>
             <FloatingOverlay maxHeight={height} scrollEnabled={false} keyboardShouldPersistTaps="always">
                 <View style={{ height }}>
-                    <WidgetAddPanel {...props.panel} composition={split ? 'split' : 'push'} />
+                    {props.panel(split ? 'split' : 'push')}
                 </View>
             </FloatingOverlay>
         </View>
@@ -371,6 +389,7 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
             testID={`${props.testID}.detail`}
         />
     );
+    const retainedDetail = useRetainedPlacement<null>(() => detail, { retireWithoutShell: true });
     return (
         <View
             testID={props.testID}
@@ -388,13 +407,14 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
                 transitionKey={`selection:${activeId ?? ''}`}
                 announcement={activeId !== null && selected ? widgetAddEntryAccessibilityLabel(selected) : ''}
             /> : null}
+            {retainedDetail.body}
             {split ? (
                 <>
                     <View style={styles.listColumn}>{list}</View>
-                    <View style={styles.detailColumn}>{detail}</View>
+                    <View style={styles.detailColumn}>{retainedDetail.mount(null)}</View>
                 </>
             ) : pushed && selected ? (
-                <WidgetFlowStep key={`detail:${selected.id}`} direction={direction} fill={fill}>{detail}</WidgetFlowStep>
+                <WidgetFlowStep key={`detail:${selected.id}`} direction={direction} fill={fill}>{retainedDetail.mount(null)}</WidgetFlowStep>
             ) : (
                 <WidgetFlowStep key="list" direction={direction} fill={fill}>{list}</WidgetFlowStep>
             )}
