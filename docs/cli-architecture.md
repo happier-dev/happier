@@ -3171,6 +3171,22 @@ editor or the complete live journey has been verified.
 
 #### Machine setup and bootstrap ownership
 
+Bound-target Setup reports use the existing managed resource identity and controller
+installation, without an enrolled guest Machine. The existing Setup report owner
+retains lifecycle state and operation identity. Retry source facts belong to the
+admitted preset's private content and use its existing Account-mode envelope and
+recipient keys. `prepareBoundSetupReport` seals those facts before reporting;
+the preset hydrator restores them only into the local target view. Home rejects
+plaintext facts for opaque targets and mode-mismatched content; no fallback or
+separate completion ledger is used.
+
+After Session birth, `target.sessionId` is the actual committed Session ID,
+separate from the holder key. The original spawn authorization reports only to
+that active Session's existing managed-resource association. Installation-only
+completion reports retain the existing `bootstrapInstalled` admission fact even
+when the preset has no Setup; they do not create Setup progress or change the
+private preset snapshot.
+
 In 0.3 development, controller-held, unenrolled targets use
 `apps/cli/src/machines/setup/boundMachineSetup.ts#applyBoundMachineSetup`.
 It runs the existing Setup interpreter with the controller's admitted operation,
@@ -3181,6 +3197,15 @@ this stage. Nested recipe and script steps inherit that decision. Existing
 Setup progress and typed failures remain available to the containing operation
 for Retry; the caller publishes Ready only after Setup succeeds. Happier CLI
 installation remains with the managed guest CLI supplier, separate from Setup.
+
+Bound recipe planning uses `prepareBoundMachineSetupRecipePlans`: the controller
+resolves the admitted recipe selections, and native Check observes and compiles
+them on the target through `machine effect-internal`. The resulting multi-recipe
+plans carry the existing managed resource, committed Session and operation IDs
+as a `boundSetup` basis. `prepareMachineSetupStages` and `applyMachineSetup`
+consume that association under the original controller admission. The installed
+CLI path and bound transport suffice; no enrolled guest identity or admission
+digest is manufactured. Missing Machine-only facts remain typed unavailable.
 
 Enrollment is a bootstrap flow owned by
 `packages/cli-common/src/systemTasks/flows/enrollMachineFlow.ts#runEnrollMachineFlow`
