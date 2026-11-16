@@ -3,6 +3,7 @@ import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentDomainRemoveAdmiss
     DeploymentDomainGetInputV1Schema, DeploymentDomainListInputV1Schema, DeploymentDomainTransitionInputV1Schema,
     DeploymentDomainMutationResultV1Schema, DeploymentDomainListResultV1Schema, DeploymentDomainPreparedContentInputV1Schema } from '@happier-dev/protocol';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
+import { deploymentWriteIsolationLevel } from '@/app/deployments/deploymentEnvironmentService';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import { createDeploymentDomainInTx, removeDeploymentDomainInTx, readDeploymentDomainInTx,
     listDeploymentDomainsInTx, transitionDeploymentDomainInTx, prepareDeploymentDomainContentInTx } from '@/app/deployments/deploymentDomainService';
@@ -32,7 +33,7 @@ export function registerDeploymentDomainRoutes(app: Fastify): void {
         if (request.validationError || request.params.environmentId !== request.body.environmentId) return reply.code(400).send(invalid);
         const execution = readDeploymentExecutionEffectFromRequest(request);
         const value = await inTx(tx => createDeploymentDomainInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request), execution?.binding, execution?.actionId), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request), execution?.binding, execution?.actionId), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code(status(value)).send(value);
     });
     app.post('/v1/deployments/environments/:environmentId/domains/:domainId/remove', {
@@ -43,7 +44,7 @@ export function registerDeploymentDomainRoutes(app: Fastify): void {
         if (request.validationError || request.params.environmentId !== request.body.environmentId
             || request.params.domainId !== request.body.domainId) return reply.code(400).send(invalid);
         const value = await inTx(tx => removeDeploymentDomainInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code(status(value)).send(value);
     });
     app.get('/v1/deployments/environments/:environmentId/domains/:domainId', {
@@ -76,7 +77,7 @@ export function registerDeploymentDomainRoutes(app: Fastify): void {
         if (request.validationError || request.params.environmentId !== request.body.environmentId
             || request.params.domainId !== request.body.domainId) return reply.code(400).send(invalid);
         const value = await inTx(tx => prepareDeploymentDomainContentInTx(tx, request.userId, request.body,
-            readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: 'Serializable' });
+            readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code(status(value)).send(value);
     });
     app.post('/v1/deployments/environments/:environmentId/domains/:domainId/transitions', {
@@ -86,7 +87,7 @@ export function registerDeploymentDomainRoutes(app: Fastify): void {
     }, async (request, reply) => {
         if (request.validationError || request.params.environmentId !== request.body.environmentId
             || request.params.domainId !== request.body.domainId) return reply.code(400).send(invalid);
-        const value = await inTx(tx => transitionDeploymentDomainInTx(tx, request.body), { isolationLevel: 'Serializable' });
+        const value = await inTx(tx => transitionDeploymentDomainInTx(tx, request.body), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code(status(value)).send(value);
     });
 }

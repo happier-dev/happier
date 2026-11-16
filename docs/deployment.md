@@ -476,10 +476,12 @@ recorded `controllerMachineId` as its required fact, and a remedy to run on that
 Machine or make it reachable. The existing Action failure fields carry this
 refusal through HTTP; admission never substitutes a controller.
 
-Receipt teardown admission holds the Environment row lock and revision CAS under
-Read Committed isolation. This excludes competing teardown admissions while
-allowing unrelated Account cursor publication; detach keeps its existing
-Serializable transaction. A confirmed Home rollback reports the missing
+In 0.3 development, Environment and Domain writes use the deployment isolation
+owner: Read Committed on PostgreSQL and Serializable on other providers. The
+Environment row lock and revision CAS exclude competing writes while allowing
+unrelated Account cursor publication; creation uses its existing intent lock.
+Delete, unlink, explicit detach and signed receipt transitions retain their
+Read Committed transactions. A confirmed Home rollback reports the missing
 transaction commit, a retry remedy, and a sanitized database cause before native
 dispatch, without increasing retries.
 

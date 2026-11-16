@@ -50,6 +50,11 @@ export class DeploymentEnvironmentCreationError extends Error {
     }
 }
 
+/** Environment row/revision and creation-intent locks own write exclusion, independently of Account publication. */
+export function deploymentWriteIsolationLevel(): 'ReadCommitted' | 'Serializable' {
+    return getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable';
+}
+
 /** One Environment row serializes receipt admission across every supported database provider. */
 export async function lockDeploymentEnvironmentInTx(tx: Tx, environmentId: string): Promise<void> {
     const provider = getDbProviderFromEnv(process.env, 'postgres');

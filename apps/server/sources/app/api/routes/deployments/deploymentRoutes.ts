@@ -18,11 +18,10 @@ import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentTemplat
     DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import { MachineDeploymentReferencesInputV1Schema, MachineDeploymentReferencesPageV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
-import { getDbProviderFromEnv } from '@/storage/prisma';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx,
     setDeploymentEnvironmentBindingsInTx, setDeploymentEnvironmentTemplateInTx, setDeploymentEnvironmentBackupInTx,
-    DeploymentEnvironmentCreationError } from '@/app/deployments/deploymentEnvironmentService';
+    DeploymentEnvironmentCreationError, deploymentWriteIsolationLevel } from '@/app/deployments/deploymentEnvironmentService';
 import { linkDeploymentTargetInTx } from '@/app/deployments/deploymentTargetLinkService';
 import { unlinkDeploymentTargetInTx, deleteDeploymentEnvironmentInTx } from '@/app/deployments/deploymentDispositionService';
 import { setDeploymentEnvironmentControllerInTx } from '@/app/deployments/deploymentControllerService';
@@ -112,7 +111,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         if (request.validationError) return reply.code(400).send(invalid);
         const binding = readDeploymentExecutionBindingFromRequest(request);
         const result = await inTx(tx => cancelDeploymentPendingOperationInTx(tx, request.userId, request.body, binding ?? undefined,
-            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code('kind' in result ? 200 : status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/pending/cancel', {
@@ -123,7 +122,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         if (request.validationError || request.params.environmentId !== request.body.environmentId) return reply.code(400).send(invalid);
         const binding = readDeploymentExecutionBindingFromRequest(request);
         const result = await inTx(tx => cancelDeploymentPendingInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request), binding ?? undefined), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request), binding ?? undefined), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/access', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,
@@ -161,7 +160,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         const execution = readDeploymentExecutionEffectFromRequest(request);
         const result = await inTx(tx => updateDeploymentEnvironmentInTx(tx, request.userId, request.body,
             readTeamOperationAuthenticationFromRequest(request), 'environment', undefined, undefined,
-            execution?.binding), { isolationLevel: 'Serializable' });
+            execution?.binding), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/controller', {
@@ -171,7 +170,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
     }, async (request, reply) => {
         if (request.validationError || request.params.environmentId !== request.body.environmentId) return reply.code(400).send(invalid);
         const result = await inTx(tx => setDeploymentEnvironmentControllerInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/bindings', {
@@ -183,7 +182,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         // The Environment lock and revision CAS serialize this write, independently of Account publication.
         const result = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, request.userId, request.body,
             readTeamOperationAuthenticationFromRequest(request)), {
-                isolationLevel: getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable',
+                isolationLevel: deploymentWriteIsolationLevel(),
             });
         return reply.code(status(result)).send(result);
     });
@@ -194,7 +193,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
     }, async (request, reply) => {
         if (request.validationError || request.params.environmentId !== request.body.environmentId) return reply.code(400).send(invalid);
         const result = await inTx(tx => setDeploymentEnvironmentTemplateInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/backup', {
@@ -204,7 +203,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
     }, async (request, reply) => {
         if (request.validationError || request.params.environmentId !== request.body.environmentId) return reply.code(400).send(invalid);
         const result = await inTx(tx => setDeploymentEnvironmentBackupInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments', { preHandler: [app.authenticate, deploymentNewWorkFeatureGate], config: { allowApiToken: true }, attachValidation: true,
@@ -214,7 +213,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         const result = await inTx(tx => createDeploymentEnvironmentInTx(tx, request.userId, request.body,
             readTeamOperationAuthenticationFromRequest(request)), {
                 // PostgreSQL intent locks preserve repeat-key exclusion without a stale Account snapshot.
-                isolationLevel: getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable',
+                isolationLevel: deploymentWriteIsolationLevel(),
             }).catch((error: unknown) => {
                 if (error instanceof DeploymentEnvironmentCreationError) return error.failure;
                 throw error;
@@ -270,7 +269,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
             'target_link.associate', request.validationError ? request.validationError.validation
                 : [{ instancePath: '/environmentId', keyword: 'path_mismatch' }], DeploymentTargetLinkInputV1Schema.shape));
         const result = await inTx(tx => linkDeploymentTargetInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/deploy', { preHandler: [app.authenticate, deploymentNewWorkFeatureGate], config: { allowApiToken: true }, attachValidation: true,
@@ -279,7 +278,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         if (request.validationError || request.body.environmentId !== request.params.environmentId) return reply.code(400).send(invalid);
         const result = await inTx(tx => createDeploymentInTx(tx, request.userId, request.body, 'deploy',
             readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), {
-                isolationLevel: getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable',
+                isolationLevel: deploymentWriteIsolationLevel(),
             });
         return reply.code(status(result)).send(result);
     });
@@ -315,7 +314,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
             readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), {
                 // The Environment row lock and revision CAS own receipt exclusion, as for deploy.
                 // A Serializable snapshot conflicts with unrelated Account cursor publication.
-                isolationLevel: getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable',
+                isolationLevel: deploymentWriteIsolationLevel(),
             });
         return reply.code(status(result)).send(result);
     });
@@ -324,7 +323,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
     }, async (request, reply) => {
         if (request.validationError || request.body.environmentId !== request.params.environmentId) return reply.code(400).send(invalid);
         const result = await inTx(tx => promoteDeploymentInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: deploymentWriteIsolationLevel() });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/deployments/:deploymentId/transitions', {
