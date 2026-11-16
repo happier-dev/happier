@@ -774,106 +774,118 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
       ...(params.serverExtraEnv ?? {}),
     },
   });
-  const homeRequests = params.recordHomeRequests
-    ? await startHttpRequestRecordingProxy({ targetBaseUrl: server.baseUrl, captureRequestBody: true })
-    : undefined;
-  const serverBaseUrl = homeRequests?.baseUrl ?? server.baseUrl;
-  const auth = await createTestAuth(serverBaseUrl);
-  const daemonHomeDir = resolve(join(params.testDir, 'daemon-home'));
-  const workspaceDir = resolve(join(params.testDir, 'workspace'));
-  await mkdir(daemonHomeDir, { recursive: true });
-  await mkdir(workspaceDir, { recursive: true });
+  let homeRequests: HttpRequestRecordingProxy | undefined;
+  let daemon: StartedDaemon | undefined;
+  // Until the fixture is returned, setup owns every acquired resource.
+  try {
+    homeRequests = params.recordHomeRequests
+      ? await startHttpRequestRecordingProxy({ targetBaseUrl: server.baseUrl, captureRequestBody: true })
+      : undefined;
+    const serverBaseUrl = homeRequests?.baseUrl ?? server.baseUrl;
+    const auth = await createTestAuth(serverBaseUrl);
+    const daemonHomeDir = resolve(join(params.testDir, 'daemon-home'));
+    const workspaceDir = resolve(join(params.testDir, 'workspace'));
+    await mkdir(daemonHomeDir, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
 
-  const secret = auth.accountSigningSeed;
-  const daemonAuth = params.terminalCredential ? await createTestTerminalAuth(serverBaseUrl, auth) : auth;
-  const { serverId } = await seedCliAuthForTestAccount({
-    cliHome: daemonHomeDir,
-    serverUrl: serverBaseUrl,
-    auth: daemonAuth,
-    mode: 'legacy',
-  });
+    const secret = auth.accountSigningSeed;
+    const daemonAuth = params.terminalCredential ? await createTestTerminalAuth(serverBaseUrl, auth) : auth;
+    const { serverId } = await seedCliAuthForTestAccount({
+      cliHome: daemonHomeDir,
+      serverUrl: serverBaseUrl,
+      auth: daemonAuth,
+      mode: 'legacy',
+    });
 
-  await upsertEncryptedAccountSettingsV2({
-    baseUrl: serverBaseUrl,
-    token: auth.token,
-    secret,
-    settings: {
-      claudeUnifiedTerminalEnabled: true,
-      claudeUnifiedTerminalHost: 'auto',
-      claudeRemoteAgentSdkEnabled: true,
-      claudeRemoteSettingSourcesV2: ['user', 'project', 'local'],
-      ...(params.accountSettings ?? {}),
-    },
-  });
+    await upsertEncryptedAccountSettingsV2({
+      baseUrl: serverBaseUrl,
+      token: auth.token,
+      secret,
+      settings: {
+        claudeUnifiedTerminalEnabled: true,
+        claudeUnifiedTerminalHost: 'auto',
+        claudeRemoteAgentSdkEnabled: true,
+        claudeRemoteSettingSourcesV2: ['user', 'project', 'local'],
+        ...(params.accountSettings ?? {}),
+      },
+    });
 
-  writeTestManifestForServer({
-    testDir: params.testDir,
-    server,
-    startedAt,
-    runId: params.testName,
-    testName: params.testName,
-    sessionIds: [],
-    env: {
-      CI: process.env.CI,
+    writeTestManifestForServer({
+      testDir: params.testDir,
+      server,
+      startedAt,
+      runId: params.testName,
+      testName: params.testName,
+      sessionIds: [],
+      env: {
+        CI: process.env.CI,
+        HAPPIER_HOME_DIR: daemonHomeDir,
+        HAPPIER_SERVER_URL: serverBaseUrl,
+        HAPPIER_WEBAPP_URL: serverBaseUrl,
+      },
+    });
+
+    const daemonEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      CI: '1',
+      HAPPIER_VARIANT: 'dev',
+      HAPPIER_DISABLE_CAFFEINATE: '1',
       HAPPIER_HOME_DIR: daemonHomeDir,
       HAPPIER_SERVER_URL: serverBaseUrl,
       HAPPIER_WEBAPP_URL: serverBaseUrl,
-    },
-  });
+      HAPPIER_CLAUDE_PATH: params.fakeClaudePath,
+      HAPPIER_E2E_FAKE_CLAUDE_LOG: params.fakeClaudeLogPath,
+      HAPPIER_E2E_FAKE_CLAUDE_REQUIRE_NATIVE_OAUTH: '1',
+      ...(params.fakeClaudeScenario ? { HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: params.fakeClaudeScenario } : {}),
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+      HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '1',
+      HAPPIER_CONNECTED_SERVICES_REFRESH_TICK_MS: '300000',
+      HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_RESTART_SIGNAL_DELAY_MS: '0',
+      HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL: params.tokenUrl,
+      HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID: 'happier-e2e-claude-client',
+      ...(params.extraEnv ?? {}),
+    };
 
-  const daemonEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    CI: '1',
-    HAPPIER_VARIANT: 'dev',
-    HAPPIER_DISABLE_CAFFEINATE: '1',
-    HAPPIER_HOME_DIR: daemonHomeDir,
-    HAPPIER_SERVER_URL: serverBaseUrl,
-    HAPPIER_WEBAPP_URL: serverBaseUrl,
-    HAPPIER_CLAUDE_PATH: params.fakeClaudePath,
-    HAPPIER_E2E_FAKE_CLAUDE_LOG: params.fakeClaudeLogPath,
-    HAPPIER_E2E_FAKE_CLAUDE_REQUIRE_NATIVE_OAUTH: '1',
-    ...(params.fakeClaudeScenario ? { HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: params.fakeClaudeScenario } : {}),
-    HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-    HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '1',
-    HAPPIER_CONNECTED_SERVICES_REFRESH_TICK_MS: '300000',
-    HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_RESTART_SIGNAL_DELAY_MS: '0',
-    HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL: params.tokenUrl,
-    HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID: 'happier-e2e-claude-client',
-    ...(params.extraEnv ?? {}),
-  };
+    if (shouldUseCliSourceEntrypoint(daemonEnv)) {
+      // Prepare before daemon startup and the bounded spawn request, including
+      // when build-skip flags assume the shared publisher already ran.
+      await ensureCliSourceDevSharedDepsCurrent({ testDir: params.testDir, env: daemonEnv }, { prepare: true });
+    }
+    await ensureCliSharedDepsBuilt({ testDir: params.testDir, env: daemonEnv });
+    daemon = await startTestDaemon({
+      testDir: params.testDir,
+      happyHomeDir: daemonHomeDir,
+      env: daemonEnv,
+      startupTimeoutMs: 120_000,
+    });
+    await waitForDaemonControlList({
+      daemonPort: daemon.state.httpPort,
+      controlToken: daemon.state.controlToken,
+    });
 
-  if (shouldUseCliSourceEntrypoint(daemonEnv)) {
-    // Prepare before daemon startup and the bounded spawn request, including
-    // when build-skip flags assume the shared publisher already ran.
-    await ensureCliSourceDevSharedDepsCurrent({ testDir: params.testDir, env: daemonEnv }, { prepare: true });
+    return {
+      server,
+      serverBaseUrl,
+      auth,
+      accountSecret: secret,
+      daemon,
+      daemonHomeDir,
+      workspaceDir,
+      serverId,
+      daemonPort: daemon.state.httpPort,
+      controlToken: daemon.state.controlToken,
+      fakeClaudeLogPath: params.fakeClaudeLogPath,
+      fakeClaudeScenario: params.fakeClaudeScenario ?? null,
+      ...(homeRequests ? { homeRequests } : {}),
+    };
+  } catch (error) {
+    const errors: unknown[] = [error];
+    for (const cleanup of [() => daemon?.stop(), () => homeRequests?.stop(), () => server.stop()]) {
+      try { await cleanup(); } catch (cleanupError) { errors.push(cleanupError); }
+    }
+    if (errors.length > 1) throw new AggregateError(errors, 'Connected-services Claude setup and cleanup failed');
+    throw error;
   }
-  await ensureCliSharedDepsBuilt({ testDir: params.testDir, env: daemonEnv });
-  const daemon = await startTestDaemon({
-    testDir: params.testDir,
-    happyHomeDir: daemonHomeDir,
-    env: daemonEnv,
-    startupTimeoutMs: 120_000,
-  });
-  await waitForDaemonControlList({
-    daemonPort: daemon.state.httpPort,
-    controlToken: daemon.state.controlToken,
-  });
-
-  return {
-    server,
-    serverBaseUrl,
-    auth,
-    accountSecret: secret,
-    daemon,
-    daemonHomeDir,
-    workspaceDir,
-    serverId,
-    daemonPort: daemon.state.httpPort,
-    controlToken: daemon.state.controlToken,
-    fakeClaudeLogPath: params.fakeClaudeLogPath,
-    fakeClaudeScenario: params.fakeClaudeScenario ?? null,
-    ...(homeRequests ? { homeRequests } : {}),
-  };
 }
 
 async function waitForDaemonControlList(params: Readonly<{

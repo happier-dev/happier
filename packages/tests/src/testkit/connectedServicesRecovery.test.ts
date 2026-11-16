@@ -1,11 +1,17 @@
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { createServer, Server } from 'node:http';
 import { connect, type Socket } from 'node:net';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const { startServerLight } = vi.hoisted(() => ({ startServerLight: vi.fn() }));
+
+// Substitute only the Home process boundary; auth and the recording proxy stay real.
+vi.mock('./process/serverLight', () => ({ startServerLight }));
 
 import {
   isRuntimeAuthRecoveryAwaitingProviderOutcomeProof,
+  startConnectedServicesClaudeDaemon,
   startConnectedServiceRecoveryProxy,
 } from './connectedServicesRecovery';
 import { withTimeoutMs } from './timing/withTimeout';
@@ -111,5 +117,53 @@ describe('connected-services recovery proof-wait matchers', () => {
       status: 'waiting',
       lastError: 'recovery_unproven_awaiting_provider_outcome',
     })).toBe(false);
+  });
+});
+
+describe('startConnectedServicesClaudeDaemon setup cleanup', () => {
+  it.each([true, false])('releases acquired listeners when Home auth fails (recording=%s)', async (recording) => {
+    const listen = vi.spyOn(Server.prototype, 'listen');
+    const home = createServer((_req, res) => {
+      res.writeHead(503, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'unavailable' }));
+    });
+    home.listen(0, '127.0.0.1');
+    await once(home, 'listening');
+    const address = home.address();
+    if (!address || typeof address === 'string') throw new Error('missing Home address');
+    startServerLight.mockResolvedValue({
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      stop: () => new Promise<void>((resolve, reject) => {
+        home.close((error) => error ? reject(error) : resolve());
+        home.closeAllConnections();
+      }),
+    });
+
+    try {
+      await expect(startConnectedServicesClaudeDaemon({
+        testDir: 'unused-before-auth',
+        testName: 'setup-auth-failure',
+        tokenUrl: 'http://unused.invalid/token',
+        fakeClaudePath: 'unused-before-auth',
+        fakeClaudeLogPath: 'unused-before-auth',
+        ...(recording ? { recordHomeRequests: true } : {}),
+      })).rejects.toThrow('Failed to create test auth token (status=503)');
+
+      const listeners = listen.mock.contexts.filter((server): server is Server => server instanceof Server);
+      const proxy = listeners.find((server) => server !== home);
+      if (recording) {
+        expect(proxy).toBeDefined();
+        expect(proxy?.listening).toBe(false);
+      }
+      expect(home.listening).toBe(false);
+    } finally {
+      // Also release the deliberately leaked listeners during the RED run.
+      const listeners = listen.mock.contexts.filter((server): server is Server => server instanceof Server);
+      listen.mockRestore();
+      await Promise.all(listeners.filter((server) => server.listening).map((server) => new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections();
+      })));
+    }
   });
 });
