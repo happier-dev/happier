@@ -4,11 +4,29 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { AgentProviderRequirementsV1Schema, ProviderContributionV1Schema } from '@happier-dev/protocol';
 import * as pi from '../../../../../packages/plugins/pi/src/index';
 import * as omp from '../../../../../packages/plugins/ohmypi/src/index';
+import { PLUGIN_MANIFEST as CLAUDE_PLUGIN_MANIFEST } from '../../../../../packages/plugins/claude/src/manifest';
+import { buildClaudeEffortCliArgs } from '../../../../../packages/plugins/claude/src/agent/runtime/reasoningEffort';
 // Composed source test: consume the actual catalog producer, independent of
 // an installed plugin artifact that the release publisher rebuilds separately.
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/cliproxyapi/src/provider/contribution';
 
 describe('gateway SDK effort facts at Agent admission', () => {
+  it('offers Claude-applicable Muse effort and serializes every offered tier at native launch', () => {
+    const provider = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
+    const source = provider.managedRuntime?.connectedAccounts?.find(row => row.purpose === 'meta-upstream')
+      ?.staticModels?.find(row => row.id === 'muse-spark-1.3-contributor');
+    if (!source) throw new Error('Missing real gateway Muse model');
+    const support = AgentProviderRequirementsV1Schema.parse(CLAUDE_PLUGIN_MANIFEST.contributes.agents[0]!.providerRequirements);
+    const model = projectProviderModelReasoningForAgent(source, support);
+    const effort = readProviderReasoningEffortOption(model);
+    expect(effort?.options?.map(row => row.value)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(effort?.currentValue).toBe('low');
+    for (const option of effort?.options ?? []) {
+      expect(buildClaudeEffortCliArgs({ modelId: model.id, effort: option.value, providerModel: model }))
+        .toEqual(['--effort', option.value]);
+    }
+    expect(readProviderReasoningEffortOption(source)?.currentValue).toBe('minimal');
+  });
   it.each(['pi', 'ohMyPi'] as const)('preserves Meta minimal effort for %s and materializes native reasoning support', async agentId => {
     const plugin = agentId === 'pi' ? pi : omp;
     const localId = agentId === 'pi' ? 'pi' : 'ohmypi';

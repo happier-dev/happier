@@ -56,7 +56,7 @@ import type {
 import { projectProviderRuntimeBindingBasis } from './runtimeBindingBasis';
 import { isRemoteProviderGatewayPlacement } from '../managed/gatewayPlacement';
 import { readProviderModelNameCatalog } from '../registry/contributions';
-import { readProviderReasoningEffortOption, projectProviderModelReasoningForAgent } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import { canAgentApplyProviderReasoningEffort, readProviderReasoningEffortOption, projectProviderModelReasoningForAgent } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 
 export function selectProviderSpawnRoleModels(input: Readonly<{
@@ -1041,7 +1041,7 @@ export function resolveProviderSpawnSelection(
   // Missing model facts are unknown, not a declaration that effort is unsupported.
   // Preserve the requested override for the Agent when the source has no exact list.
   if (requestedEffort != null && (
-    adapter.support.supportsReasoningEffort !== true
+    !canAgentApplyProviderReasoningEffort(adapter.support, requestedEffort)
     || model.capabilities?.reasoningControls === 'unsupported'
     || effortOption !== null && !effortOption.options?.some(option => option.value === requestedEffort)
   )) {

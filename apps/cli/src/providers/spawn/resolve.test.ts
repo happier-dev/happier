@@ -441,13 +441,15 @@ function lease(
   consumesRoleModels = false,
   credentialSupport?: AgentProviderRequirementsV1['credentialSupport'],
   acceptsProtocols?: AgentProviderRequirementsV1['acceptsProtocols'],
+  reasoningEffortValues?: readonly string[],
 ): PluginRuntimeRegistryLease {
   const defaults = agentProviderSupport(
     supportsFreeformModelIds,
     applyPolicy,
     supportsNoAuth,
   );
-  const support = { ...defaults, ...(credentialSupport ? { credentialSupport } : {}), ...(acceptsProtocols ? { acceptsProtocols } : {}) };
+  const support = { ...defaults, ...(credentialSupport ? { credentialSupport } : {}), ...(acceptsProtocols ? { acceptsProtocols } : {}),
+    ...(reasoningEffortValues ? { reasoningEffortValues } : {}) };
   const registryRuntime = {
     contributes: {
       agentDefinitionsById: new Map([['codex', {
@@ -1822,6 +1824,9 @@ describe('provider spawn authorization resolver', () => {
   });
 
   it.each([
+    { requested: 'minimal', allowed: false, declared: false, agentValues: ['low', 'high'] },
+    { requested: 'minimal', allowed: false, declared: true, agentValues: ['low', 'high'] },
+    { requested: 'low', allowed: true, declared: true, agentValues: ['low', 'high'] },
     { requested: 'ultra', allowed: false, declared: true },
     { requested: 'medium', allowed: false, declared: true },
     { requested: 'high', allowed: true, declared: true },
@@ -1833,7 +1838,7 @@ describe('provider spawn authorization resolver', () => {
     { requested: 'minimal', allowed: true, declared: false, controls: 'unknown' as const },
     { requested: 'minimal', allowed: true, declared: false, controls: 'supported' as const },
     { requested: undefined, allowed: true, declared: false },
-  ])('admits explicit effort against the selected Provider model ($requested, declared=$declared)', ({ requested, allowed, declared, controls }) => {
+  ])('admits explicit effort against the selected Provider model ($requested, declared=$declared)', ({ requested, allowed, declared, controls, agentValues }) => {
     const modelId = controls ? 'observed-model' : 'model-a';
     const settings = ProviderSettingsV1Schema.parse({ ...grantedSettings(), manualModelsByConnectionId: {
       [connectionId]: [{ id: 'model-a', addedAt: 1, ...(declared ? { reasoningEffortLevels: ['low', 'high'] } : {}) }],
@@ -1844,7 +1849,8 @@ describe('provider spawn authorization resolver', () => {
         providerConnectionId: connectionId, modelId } },
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
       accountSettings: accountSettings(settings), providerSettings: settings, registry,
-      dnsEvidenceByEndpointUrl: dns, lease: lease(prepare),
+      dnsEvidenceByEndpointUrl: dns, lease: lease(prepare, true, 'restart_session', registry.providersByContributionKey,
+        false, () => true, false, undefined, undefined, agentValues),
       ...(controls ? { runtimeModelDescriptor: { id: modelId, name: modelId,
         capabilities: { reasoningControls: controls, toolRoundTrips: 'supported' as const } } } : {}),
       ...(requested !== undefined ? { sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 1,
