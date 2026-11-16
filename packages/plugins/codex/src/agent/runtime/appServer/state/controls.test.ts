@@ -88,6 +88,7 @@ describe('Codex app-server session controls', () => {
                 {
                     id: 'gpt-5.5',
                     name: 'GPT-5.5',
+                    capabilities: { reasoningControls: 'supported' },
                     modelOptions: [
                         {
                             id: 'reasoning_effort',
@@ -151,6 +152,7 @@ describe('Codex app-server session controls', () => {
                 id: 'gpt-5.6-sol',
                 name: 'GPT-5.6-Sol',
                 costTier: 'standard',
+                capabilities: { reasoningControls: 'supported' },
                 modelOptions: [
                     {
                         id: 'reasoning_effort',

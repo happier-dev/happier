@@ -1,4 +1,5 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { AgentSessionModel } from '@happier-dev/plugin-sdk/agents/runtime';
 import { resolveModelDisplayName } from '@happier-dev/plugin-sdk/agents';
 import { formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
@@ -35,7 +36,7 @@ type SessionConfigOption = {
 
 type CodexModelCostTier = NonNullable<ReturnType<typeof resolveCodexModelCostTier>>;
 
-type SessionModelOption = SessionControlOption & Readonly<{
+type SessionModelOption = SessionControlOption & Pick<AgentSessionModel, 'capabilities'> & Readonly<{
     modelOptions?: SessionConfigOption[];
     costTier?: CodexModelCostTier;
 }>;
@@ -290,6 +291,7 @@ function normalizeSessionModelMasks(params: Readonly<{
             name,
             ...(description ? { description } : {}),
             ...(modelOptions.length > 0 ? { modelOptions } : {}),
+            ...(reasoningOption ? { capabilities: { reasoningControls: 'supported' as const } } : {}),
             ...(costTier ? { costTier } : {}),
             isDefault: record.default === true || record.isDefault === true || record.selected === true || record.current === true,
         });
