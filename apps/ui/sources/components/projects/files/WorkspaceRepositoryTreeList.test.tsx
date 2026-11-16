@@ -183,6 +183,33 @@ describe('WorkspaceRepositoryTreeList', () => {
         expect(readmeRows).toHaveLength(1);
     });
 
+    it('mounts no wrapper host per row concern around the browser row (scrolling mounts each row anew)', async () => {
+        const screen = await renderScreen(
+            <WorkspaceRepositoryTreeList
+                theme={theme}
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
+                expandedPaths={[]}
+                onExpandedPathsChange={() => {}}
+                onOpenFile={() => {}}
+                webFileDropEnabled
+            />,
+        );
+        const wrapperHosts = (path: string) => {
+            const row = screen.findAllByTestId(`repository-tree-row-${toTestIdSafeValue(path)}`)
+                .find((node) => String(node.type) === 'FilesystemBrowserRow');
+            if (!row) throw new Error(`row ${path} was not rendered`);
+            const hosts: string[] = [];
+            for (let node = row.parent; node && node.props.testID !== 'workspace-repository-tree-list'; node = node.parent) {
+                if (typeof node.type === 'string') hosts.push(node.type);
+            }
+            return hosts;
+        };
+        // The drop target owns file drops (and the destination, when the row has one, its gestures and
+        // proposal emphasis). No separate host exists per concern.
+        expect(wrapperHosts('README.md')).toEqual(['WebDropTargetView']);
+        expect(wrapperHosts('src')).toEqual(['WebDropTargetView']);
+    });
+
     it('reports root loading and can suppress the inline loading header while rows stay mounted', async () => {
         repositoryTreeBrowserState.rootLoading = true;
         const onRootLoadingChange = vi.fn();

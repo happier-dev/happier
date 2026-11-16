@@ -602,10 +602,11 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                     entryKind: node.type,
                     machineId: rowState.workspaceScope.machineId,
                     path: resolveMachineAbsolutePath({ rootPath: rowState.workspaceScope.rootPath, requestPath: node.path }),
-                } : null}>
-            <View style={proposalEmphasis === 'in'
-                ? { backgroundColor: rowState.theme.colors.state.active.background }
-                : proposalEmphasis === 'out' ? { opacity: 0.42 } : null}>
+                } : null}
+                // Every row mounts again as it scrolls in: the emphasis rides the destination's own host.
+                style={proposalEmphasis === 'in'
+                    ? { backgroundColor: rowState.theme.colors.state.active.background }
+                    : proposalEmphasis === 'out' ? { opacity: 0.42 } : undefined}>
             {proposalEmphasis === 'in' ? (
                 <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 3, bottom: 3, width: 3, borderRadius: 2, zIndex: 1, backgroundColor: rowState.theme.colors.state.active.foreground }} />
             ) : null}
@@ -687,26 +688,13 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                 }}
                 wrapContent={
                     Platform.OS === 'web'
-                        ? ({ content }) => {
-                            const shouldWrapDropTarget =
-                                (node.type === 'directory' || node.type === 'file')
-                                && rowState.webFileDropEnabled === true;
-                            const wrappedContent = shouldWrapDropTarget
-                                ? (
-                                    <WebDropTargetView
-                                        repositoryFileDropTarget={buildWebDropTarget(node)}
-                                    >
-                                        {content}
-                                    </WebDropTargetView>
-                                )
-                                : content;
-
-                            return (
-                                <View testID={`${rowTestId}-drop-target`}>
-                                    {wrappedContent}
-                                </View>
-                            );
-                        }
+                        ? ({ content }) => (node.type === 'directory' || node.type === 'file') && rowState.webFileDropEnabled === true
+                            ? (
+                                <WebDropTargetView testID={`${rowTestId}-drop-target`} repositoryFileDropTarget={buildWebDropTarget(node)}>
+                                    {content}
+                                </WebDropTargetView>
+                            )
+                            : <View testID={`${rowTestId}-drop-target`}>{content}</View>
                         : null
                 }
             />
@@ -714,7 +702,6 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
             </FilesystemTreeRowActive>
             )}
             </RepositoryTreeRowSelection>
-            </View>
             </WorkspaceDestinationRow>
             </TreeRowArrival>
         );
