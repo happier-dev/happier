@@ -2996,6 +2996,9 @@ importers:
       '@happier-dev/plugin-ui':
         specifier: 0.0.0
         version: link:../../plugin-ui
+      '@happier-dev/protocol':
+        specifier: 0.0.0
+        version: link:../../protocol
       mysql2:
         specifier: 3.24.6
         version: 3.24.6(@types/node@25.1.0)
