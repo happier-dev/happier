@@ -152,6 +152,45 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         } finally { await db.account.delete({ where: { id: account.id } }); }
     });
 
+    it("rolls back and releases the backend while a callback still awaits an external call past its timeout", async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        let release!: () => void;
+        const external = new Promise<void>(resolve => { release = resolve; });
+        let entered!: () => void;
+        const callbackEntered = new Promise<void>(resolve => { entered = resolve; });
+        const published = vi.fn();
+        try {
+            // The callback takes a row lock, then awaits an unsettled
+            // network/RPC-shaped promise: the shape that would otherwise leave
+            // a PostgreSQL backend "idle in transaction" holding the lock.
+            const outcome = inTx(async tx => {
+                afterTx(tx, published);
+                await tx.account.update({ where: { id: account.id }, data: { seq: { increment: 1 } } });
+                entered();
+                await external;
+                return await tx.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } });
+            }, { maxWaitMs: 200, timeoutMs: 400, transactionClass: "test-awaited-external-call" })
+                .then(value => ({ value }), error => ({ error }));
+            await callbackEntered;
+            await new Promise(resolve => setTimeout(resolve, 900));
+            const idleInTransaction = await db.$queryRaw<Array<{ count: number }>>`
+                SELECT count(*)::int AS count FROM pg_stat_activity
+                WHERE datname = current_database() AND pid <> pg_backend_pid()
+                  AND state IN ('idle in transaction', 'idle in transaction (aborted)')`;
+            expect(idleInTransaction).toEqual([{ count: 0 }]);
+            // The row lock is gone while the callback is still pending.
+            await inTx(tx => tx.account.update({ where: { id: account.id }, data: { seq: { increment: 10 } } }),
+                { maxWaitMs: 200, timeoutMs: 400, transactionClass: "test-awaited-external-call-follower" });
+            release();
+            expect(await outcome).toMatchObject({ error: { name: "TransactionDeadlineExceededError" } });
+            expect(published).not.toHaveBeenCalled();
+            expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).toEqual({ seq: 10 });
+        } finally {
+            release();
+            await db.account.delete({ where: { id: account.id } });
+        }
+    });
+
     it("retries a genuine serialization abort and delivers exactly the committed afterTx effect", async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         let attempts = 0;
