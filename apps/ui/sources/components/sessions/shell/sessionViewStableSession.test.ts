@@ -557,6 +557,32 @@ describe('useSessionViewShellSession', () => {
         }
     });
 
+    it('keeps the shell Session through arriving messages while the runtime source carries their activity', async () => {
+        const previousState = storage.getState();
+        const base = createSessionFixture({ id: 'arrivals-session', serverId: 'arrivals-home', seq: 40, updatedAt: 100, meaningfulActivityAt: 100 });
+        let unmount: (() => Promise<void>) | null = null;
+        try {
+            storage.getState().applySessions([base]);
+            const hook = await renderHook(() => {
+                const shell = useSessionViewShellSession(base.id, base.serverId);
+                return { shell, runtime: useSessionRuntimeStatusSource(shell) };
+            });
+            unmount = hook.unmount;
+            const published = new Set([hook.getCurrent().shell]);
+            // Each arriving agent message advances seq, updatedAt and meaningfulActivityAt.
+            for (let index = 1; index <= 3; index += 1) {
+                await act(async () => storage.getState().applySessions([{ ...storage.getState().sessions[base.id],
+                    seq: 40 + index, updatedAt: 100 + index, meaningfulActivityAt: 100 + index }]));
+                published.add(hook.getCurrent().shell);
+            }
+            expect(published.size).toBe(1);
+            expect(hook.getCurrent().runtime?.meaningfulActivityAt).toBe(103);
+        } finally {
+            await unmount?.();
+            storage.setState(previousState);
+        }
+    });
+
     it('retains unchanged turn references and ignores unrelated Session and transcript updates', async () => {
         const previousState = storage.getState();
         const base = createSessionFixture({ id: 'stable-turn-session', serverId: 'stable-turn-home', seq: 33, meaningfulActivityAt: 1 });

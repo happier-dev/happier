@@ -1648,6 +1648,40 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         await screen.unmount();
     });
 
+    it('re-renders neither the layout nor the composer for new messages arriving in a non-empty transcript', async () => {
+        const screen = await renderSessionView();
+        await act(async () => {
+            shellStorage.getState().applyMessages('s1', Array.from({ length: 1_000 }, (_, index): NormalizedMessage => ({
+                id: `history-${index}`, seq: 1, localId: null, createdAt: 1,
+                role: 'agent', isSidechain: false,
+                content: [{ type: 'text', text: `Earlier paragraph ${index}`, uuid: `history-${index}`, parentUUID: null }],
+            })));
+        });
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        const { SessionViewLayout } = await import('./view/SessionViewLayout');
+        // The layout's props are rebuilt only when its owner renders: equal identity means no layout render.
+        const layoutProps = screen.root.findByType(SessionViewLayout).props;
+        appPaneScopeHostRenderSpy.mockClear();
+        agentInputRenderSpy.mockClear();
+        chatListRenderSpy.mockClear();
+        for (let index = 0; index < 5; index += 1) {
+            await act(async () => {
+                shellStorage.getState().applyMessages('s1', [{
+                    id: `arrival-${index}`, seq: 2 + index, localId: null, createdAt: 2 + index,
+                    role: 'agent', isSidechain: false,
+                    content: [{ type: 'text', text: `Arrival ${index}`, uuid: `arrival-${index}`, parentUUID: null }],
+                }]);
+            });
+        }
+        await flushHookEffects({ cycles: 2, turns: 1 });
+        expect(shellStorage.getState().sessionMessages.s1!.messageIdsOldestFirst).toHaveLength(1_005);
+        expect(chatListRenderSpy).toHaveBeenCalled();
+        expect(screen.root.findByType(SessionViewLayout).props).toBe(layoutProps);
+        expect(appPaneScopeHostRenderSpy).not.toHaveBeenCalled();
+        expect(agentInputRenderSpy).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+
     it('uses the supplied activity Session without subscribing to an unused live Session', async () => {
         const { useSessionAgentActivity } = await import('@/hooks/session/useSessionAgentActivity');
         let suppliedSession: ReturnType<typeof readMountedSessionForTest> | null | undefined = readMountedSessionForTest();

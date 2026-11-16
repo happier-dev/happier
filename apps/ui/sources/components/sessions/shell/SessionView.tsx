@@ -49,7 +49,7 @@ import { useSessionExecutionRunsSupported } from "@/hooks/server/useSessionExecu
 import { useEventCallback } from "@/hooks/ui/useEventCallback";
 import { Modal } from "@/modal";
 import { COMPOSER_SETTLED_APPROVAL_PRESENTATIONS, TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS } from "@/components/tools/shell/approvals/transcriptSettledApprovalPresentations";
-import { useWorkspaceRefs, storage, useEnabledAutomationsCountForSession, useComposerApprovalArtifactsForSession, useEndpointConnectivity, useIsDataReady, useLocalSetting, useTranscriptApprovalArtifactsForSession, useSessionPendingMessages, useSessionTranscriptIds, useSessionVisibleReadSeq, useServerScopedMachineLabel, useSetting, useSyncError } from "@/sync/domains/state/storage";
+import { useWorkspaceRefs, storage, useEnabledAutomationsCountForSession, useComposerApprovalArtifactsForSession, useEndpointConnectivity, useIsDataReady, useLocalSetting, useTranscriptApprovalArtifactsForSession, useSessionPendingMessages, useSessionTranscriptCommittedPresence, useSessionTranscriptIds, useSessionVisibleReadSeq, useServerScopedMachineLabel, useSetting, useSyncError } from "@/sync/domains/state/storage";
 import type { SessionRouteHydrationState } from "@/sync/domains/session/sessionRouteHydrationState";
 import { readSessionContentAvailability } from "@/sync/domains/session/encryptedContentAvailability";
 import { appendSessionDraftText } from "@/components/sessions/composer/sessionDraftAppendAction";
@@ -353,23 +353,22 @@ type SessionTranscriptRenderStateInput = Readonly<{
     pendingMessagesCount: number;
 }>;
 
-function useSessionTranscriptRenderState({
-    sessionId,
+function resolveSessionTranscriptTimeline({
     session,
     isEncryptedSessionLocked,
     isForkedSessionV1,
     isLocallyAttached,
     pendingMessagesCount,
-}: SessionTranscriptRenderStateInput) {
-    const { ids: committedMessageIds, isLoaded } = useSessionTranscriptIds(sessionId);
+    committedMessagesCount,
+}: Omit<SessionTranscriptRenderStateInput, 'sessionId'> & Readonly<{ committedMessagesCount: number }>) {
     const shouldForceRenderTranscriptFooter =
         isForkedSessionV1
         || readExternalSessionLink(readSessionOwnerMetadataView(session)) !== null
         || readExternalSessionOperationPresentationFromMetadata(session.metadata) !== null
-        || ((session.seq ?? 0) > 0 && committedMessageIds.length === 0);
+        || ((session.seq ?? 0) > 0 && committedMessagesCount === 0);
     const shouldRenderChatTimeline = !isEncryptedSessionLocked
         && shouldRenderChatTimelineForSession({
-            committedMessagesCount: committedMessageIds.length,
+            committedMessagesCount,
             pendingMessagesCount,
             controlledByUser: isLocallyAttached,
             // Some sessions can have a non-zero committed transcript seq but end up with 0 visible
@@ -377,7 +376,23 @@ function useSessionTranscriptRenderState({
             // still render the transcript so it can page backwards to find visible messages.
             forceRenderFooter: shouldForceRenderTranscriptFooter,
         });
+    return { shouldForceRenderTranscriptFooter, shouldRenderChatTimeline };
+}
 
+/** The timeline-or-placeholder decision only: it depends on emptiness, so arriving messages do not re-render it. */
+function useSessionTranscriptTimelineDecision({ sessionId, ...input }: SessionTranscriptRenderStateInput) {
+    const { hasCommittedMessages } = useSessionTranscriptCommittedPresence(sessionId);
+    return resolveSessionTranscriptTimeline({ ...input, committedMessagesCount: hasCommittedMessages ? 1 : 0 });
+}
+
+function useSessionTranscriptRenderState({
+    sessionId,
+    ...input
+}: SessionTranscriptRenderStateInput) {
+    const { ids: committedMessageIds, isLoaded } = useSessionTranscriptIds(sessionId);
+    const { shouldForceRenderTranscriptFooter, shouldRenderChatTimeline } = resolveSessionTranscriptTimeline({
+        ...input, committedMessagesCount: committedMessageIds.length,
+    });
     return {
         committedMessagesCount: committedMessageIds.length,
         isLoaded,
@@ -398,7 +413,7 @@ const SessionTranscriptViewLayout = React.memo(function SessionTranscriptViewLay
     placeholder,
     ...layoutProps
 }: SessionTranscriptViewLayoutProps) {
-    const { shouldRenderChatTimeline } = useSessionTranscriptRenderState({
+    const { shouldRenderChatTimeline } = useSessionTranscriptTimelineDecision({
         sessionId,
         session,
         isEncryptedSessionLocked,
@@ -431,7 +446,7 @@ const SessionEmbeddedPartsPublisher = React.memo(function SessionEmbeddedPartsPu
     placeholder: React.ReactNode;
     arrangement: React.ReactNode | undefined;
 }>) {
-    const { shouldRenderChatTimeline } = useSessionTranscriptRenderState(renderStateInput);
+    const { shouldRenderChatTimeline } = useSessionTranscriptTimelineDecision(renderStateInput);
     const parts = React.useMemo<EmbeddedSessionPartsValue>(() => ({
         transcript,
         placeholder: shouldRenderChatTimeline ? null : placeholder,

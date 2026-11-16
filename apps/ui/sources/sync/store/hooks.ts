@@ -1727,6 +1727,24 @@ export function useSessionTranscriptIds(sessionId: string, enabled: boolean = tr
   );
 }
 
+/**
+ * Whether the Session's transcript holds committed messages, and whether it has loaded. A reader that decides only
+ * on emptiness (show the timeline or a placeholder) subscribes here, so a message arriving in a non-empty transcript
+ * publishes nothing to it; `useSessionTranscriptIds` re-publishes on every arrival.
+ */
+export function useSessionTranscriptCommittedPresence(sessionId: string): Readonly<{ hasCommittedMessages: boolean; isLoaded: boolean }> {
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  return getStorage()(
+    useShallow((state) => {
+      const session = state.sessionMessages[normalizedSessionId];
+      return {
+        hasCommittedMessages: (session?.messageIdsOldestFirst?.length ?? 0) > 0,
+        isLoaded: session?.isLoaded ?? false,
+      };
+    }), { sessionMessages: [normalizedSessionId] }
+  );
+}
+
 export function useForkedTranscriptSnapshot(sessionId: string, options?: Readonly<{ textUpdates?: boolean }>): ForkedTranscriptSnapshot | null {
   const normalizedSessionId = normalizeSessionId(sessionId);
   return getStorage()(

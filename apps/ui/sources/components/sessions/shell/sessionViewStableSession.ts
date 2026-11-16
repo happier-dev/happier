@@ -143,7 +143,8 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         optimisticThinkingAt: session.thinking ? null : session.optimisticThinkingAt ?? null,
         latestTurnStatus: session.latestTurnStatus ?? null,
         latestReadyEventAt: session.latestReadyEventAt ?? null,
-        meaningfulActivityAt: session.meaningfulActivityAt ?? null,
+        // meaningfulActivityAt moves with every arriving message; its readers take it from the live runtime source
+        // (useSessionRuntimeStatusSource), so it is not a shell fact and must not re-render the whole Session view.
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,
         owner: session.owner ?? null,
         access: session.access ?? null,
