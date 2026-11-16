@@ -223,6 +223,8 @@ describe('streaming transcript render cost', () => {
                 rowChrome: measured.rendersFor(ChatListMessageRow) + measured.rendersFor(MessageViewWithSessionCommon)
                     + measured.rendersFor(CommittedMessageActions),
                 cells: measured.rendersFor(TranscriptRowShell),
+                // Legend's own per-cell components: they redraw only for a cell whose item or element moved.
+                legendCells: (measured.renders.get('Container2') ?? 0) + (measured.renders.get('PositionViewState2') ?? 0),
                 textLeaf: measured.rendersFor(StreamingTextContent) };
         };
         const apply = (message: NormalizedMessage) => storage.getState().applyMessages(session.id, [message]);
@@ -291,6 +293,12 @@ describe('streaming transcript render cost', () => {
         // Measured: the tool and result steps redraw 5 cell wrappers, the turn end 3 (before: 2,009 and 1,005).
         expect(toolFinished.cells).toBeLessThanOrEqual(6);
         expect(endFinished.cells).toBeLessThanOrEqual(4);
+        // The row renderer's new identity reaches mounted cells through their own subscription, not through
+        // Legend's list-wide extraData, so Legend's Container/PositionView redraw only around changed cells.
+        // (The new tool row's own cell does draw, so the count is not vacuous.)
+        expect(toolFinished.legendCells).toBeGreaterThan(0);
+        expect(toolFinished.legendCells).toBeLessThanOrEqual(12);
+        expect(endFinished.legendCells).toBeLessThanOrEqual(8);
         // The segment's end is a structural change: it reaches the row the deltas did not.
         expect(endFinished.rowChrome).toBeGreaterThan(0);
     });

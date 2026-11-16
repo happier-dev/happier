@@ -180,7 +180,9 @@ describe('ChatList composed Legend affordances', () => {
         ]));
         expect(after.data).toBe(before.data);
         expect(after.renderItem).not.toBe(before.renderItem);
-        expect(after.extraData).not.toBe(before.extraData);
+        // The new row renderer reaches mounted cells through the renderer's per-cell subscription, not by
+        // invalidating the list-wide extraData (which would redraw every mounted cell).
+        expect(after.extraData).toBe(before.extraData);
 
         await screen.unmount();
     });

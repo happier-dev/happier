@@ -1553,9 +1553,11 @@ export const ChatListInternal = React.memo(function ChatListInternal(props: Chat
         toolTimelineChromeMode,
     });
     const { renderItem, renderTranscriptItemAtIndex } = itemRenderer;
+    // The row renderer reaches mounted cells through the renderer's per-cell subscription; only the selection
+    // version is list-wide. (An array, not the bare number, which the renderer would read as a data version.)
     const transcriptListExtraData = React.useMemo(
-        () => [renderItem, transcriptMessageSelection.selectionVersion] as const,
-        [renderItem, transcriptMessageSelection.selectionVersion],
+        () => [transcriptMessageSelection.selectionVersion] as const,
+        [transcriptMessageSelection.selectionVersion],
     );
     const viewportAnchorCaptureHost = useTranscriptViewportAnchorCaptureHost({
         cancelScheduledViewportAnchorCapture,

@@ -70,7 +70,7 @@ import { useLegendHeldIntent } from './legend/useLegendHeldIntent';
 import { useLegendRevealRevalidation } from './legend/useLegendRevealRevalidation';
 import { usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
 import { usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { areReactNodesStructurallyEqual } from '@/utils/react/areReactNodesStructurallyEqual';
+import { createTranscriptCellStore, TranscriptLegendCell, type TranscriptCellSource } from './legend/cellStore';
 
 export { resolveLegendRendererAtEndStateFromWebMetrics } from './legend/atEnd';
 
@@ -1406,31 +1406,33 @@ function LegendListTranscriptRendererInner<TItem>(
         return () => { cancelled = true; };
     }, [isWebFrame]);
 
-    // The row host keeps an unchanged cell's element; the wrapper keeps its own element around it, so
-    // a list-wide re-render (new data, a new row renderer) draws only the cells that changed.
-    const cellElementsRef = React.useRef(new Map<string, React.ReactElement>());
-    React.useEffect(() => {
-        const liveKeys = new Set(props.data.map((item, index) => props.keyExtractor(item, index)));
-        for (const key of cellElementsRef.current.keys()) if (!liveKeys.has(key)) cellElementsRef.current.delete(key);
-    }, [props.data, props.keyExtractor]);
-    const renderItem: LegendListProps<TItem>['renderItem'] = (info) => {
-        const sourceIndex = toSourceIndex(info.index, dataLength, projectChronologicalIndex);
-        const itemKey = props.keyExtractor(info.item, sourceIndex);
-        const next = (
+    // Each mounted cell subscribes to its own element (legend/cellStore): a new row renderer or new data
+    // redraws only the cells whose element changed, never Legend's Container/PositionView of the rest.
+    const [cellStore] = React.useState(() => createTranscriptCellStore<TItem>());
+    const cellSource = React.useMemo<TranscriptCellSource<TItem>>(() => ({
+        data: props.data,
+        keyExtractor: props.keyExtractor,
+        renderCell: (item, sourceIndex, itemKey) => (
             <TranscriptRendererRowContentDemandProvider itemKey={itemKey}>
               <TranscriptNativeItemRevealProvider index={sourceIndex} reveal={revealNativeItem}>
                 {props.renderItem({
-                    item: info.item,
+                    item,
                     index: sourceIndex,
                     separators: TRANSCRIPT_ROW_SEPARATORS,
                 })}
               </TranscriptNativeItemRevealProvider>
             </TranscriptRendererRowContentDemandProvider>
-        );
-        const previous = cellElementsRef.current.get(itemKey);
-        if (previous !== undefined && areReactNodesStructurallyEqual(previous, next)) return previous;
-        cellElementsRef.current.set(itemKey, next);
-        return next;
+        ),
+        inputs: [props.renderItem, revealNativeItem],
+    }), [props.data, props.keyExtractor, props.renderItem, revealNativeItem]);
+    // A hidden retained tab keeps its last presented source, so its mounted cells do no work.
+    cellStore.update(usePresentedValue(cellSource));
+    React.useLayoutEffect(() => { cellStore.publish(); });
+    const renderItem: LegendListProps<TItem>['renderItem'] = (info) => {
+        const sourceIndex = toSourceIndex(info.index, dataLength, projectChronologicalIndex);
+        const itemKey = props.keyExtractor(info.item, sourceIndex);
+        cellStore.noteIndex(itemKey, sourceIndex);
+        return <TranscriptLegendCell store={cellStore} itemKey={itemKey} />;
     };
     const handleLegendViewableItemsChanged = React.useCallback<NonNullable<LegendListProps<TItem>['onViewableItemsChanged']>>((info) => {
         contentDemand.publish(info.viewableItems.filter((token) => token.isViewable).map((token) => token.key));

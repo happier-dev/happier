@@ -61,6 +61,7 @@ import {
     type EntryPresentationPlatform,
 } from '@/components/sessions/transcript/viewport/entryRestore/entryPresentation';
 import { useCommittedTranscriptProjectionSnapshot } from '@/components/sessions/transcript/items/useCommittedTranscriptProjectionSnapshot';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 type Ref<T> = { current: T };
 
@@ -159,8 +160,11 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
 
     const findActive = useTranscriptFindActive();
     const quietWorkflowTurnIds = useQuietWorkflowTurnIds(items, getTurnMessageById, { findActive, jumpToSeq });
+    // Turn units are rebuilt on each list change; an unchanged unit keeps its identity, so the list and its
+    // cells see only the rows that actually changed.
+    const previousDecomposedItemsRef = React.useRef<readonly ChatTranscriptListItem[] | null>(null);
     const decomposedItems = React.useMemo<ChatTranscriptListItem[]>(() => {
-        return buildTranscriptTurnUnits({
+        const rebuilt = buildTranscriptTurnUnits({
             // Window gaps are projection output, never turn-decomposition input.
             items: items.filter((item) => item.kind !== 'transcript-window-gap'),
             getMessageById: getTurnMessageById,
@@ -169,6 +173,9 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
             collapsedPreviewCount: showToolCalls === false ? 0 : resolveTranscriptToolCallsCollapsedPreviewCount(transcriptToolCallsCollapsedPreviewCountSetting),
             quietWorkflowTurnIds,
         });
+        const retained = retainKeyedRows(previousDecomposedItemsRef.current, rebuilt, (item) => item.id, { freeze: false });
+        previousDecomposedItemsRef.current = retained;
+        return retained as ChatTranscriptListItem[];
     }, [
         expandedToolCallsAnchorMessageIds,
         forkMessageMetadataById,

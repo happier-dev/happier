@@ -241,7 +241,9 @@ describe('ChatList rollback action', () => {
         const after = requireCapturedLegendListProps();
         expect(after.data).toBe(before.data);
         expect(after.renderItem).not.toBe(before.renderItem);
-        expect(after.extraData).not.toBe(before.extraData);
+        // The new row renderer reaches mounted cells through the renderer's per-cell subscription, not by
+        // invalidating the list-wide extraData (which would redraw every mounted cell).
+        expect(after.extraData).toBe(before.extraData);
         const updatedUserRow = [...capturedMessageViewProps]
             .reverse()
             .find((rowProps) => rowProps.message.id === 'u1');
