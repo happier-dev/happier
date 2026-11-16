@@ -272,6 +272,54 @@ describe('private catalog Account-change admission', () => {
             expect(publications).not.toContain('unavailable');
         } finally { stopRecording(); releaseSkillReply(); release(); }
     });
+    it('serves repeated prompt-library uses from the held row and re-reads only after a row wake', async () => {
+        const accountId = 'catalog-held-prompt-uses';
+        const reads = new Map<string, number>();
+        let invocationsRevision = 1;
+        setRuntimeFetch(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            const counted = path.startsWith('/v1/account/entity-rows/') || path.startsWith('/v2/account/settings')
+                || path === '/v1/account/encryption/currentness';
+            if (counted && (init?.method ?? 'GET') === 'GET') reads.set(path, (reads.get(path) ?? 0) + 1);
+            if (path === '/health' || path === '/v1/auth/ping') return Response.json({ ok: true });
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 7 }));
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v2/account/settings') return Response.json({ version: 7, content: { t: 'plain', v: {} } });
+            if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
+            if (path === '/v1/artifacts') return Response.json([]);
+            if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: [] });
+            if (path === '/v1/account/entity-rows/prompt-library') return Response.json({ status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options
+                .map(key => ({ key, revision: key === 'invocations' ? invocationsRevision : 1, content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })) });
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        await disconnectActiveServerConnection();
+        const home = await upsertAndActivateServer({ serverUrl: 'https://held-prompt-uses.example.test', name: 'held-prompt-uses' });
+        const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature` };
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, credentials);
+        await restoreConnectionToActiveServer(credentials);
+        await getSyncSingleton().awaitBootstrapForegroundAcquisition();
+        const scope = { serverId: home.id, accountId };
+        getStorage().setState({ profileScope: scope, settingsScope: scope });
+        await vi.waitFor(() => expect(getStorage().getState().settingsVersion).toBe(7));
+        const { getCommandSuggestions } = await import('@/components/autocomplete/commandSuggestions');
+        const settle = async () => { await new Promise<void>(resolve => setImmediate(resolve)); };
+        const total = () => [...reads.values()].reduce((sum, count) => sum + count, 0);
+        await getCommandSuggestions(null, '/', { serverId: home.id });
+        await vi.waitFor(() => expect(getPromptLibraryCatalogSnapshot(scope)).toMatchObject({ catalog: { status: 'ready', cleanup: { status: 'complete' } } }));
+        await settle();
+        const baseline = total();
+        for (let use = 0; use < 3; use++) await getCommandSuggestions(null, '/re', { serverId: home.id });
+        await settle();
+        // The held catalog is current: each use reads nothing, including Settings maintenance.
+        expect(total() - baseline).toBe(0);
+        invocationsRevision = 2;
+        const invocationsKey = buildPromptLibraryPhysicalKeyV1('invocations');
+        publishHomeAccountChange(home.id, [invocationsKey], { entityRevisions: { [invocationsKey]: 2 } });
+        await getCommandSuggestions(null, '/re', { serverId: home.id });
+        expect(reads.get('/v1/account/entity-rows/prompt-library')).toBe(2);
+        expect(getAcknowledgedPromptLibraryCatalogValue(scope, 'invocations').revision).toBe(2);
+    });
     it.each(['providers', 'configurations', 'purposes', 'metadata', 'remote-hosts', 'acp'] as const)(
         '%s retains admitted authority for unrelated changes, but revalidates its own rows and Account source', async domain => {
             const accountId = `catalog-wakes-${domain}`;

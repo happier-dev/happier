@@ -12,8 +12,7 @@ import { isEmbedWindowContext } from "@/embed/isEmbedWindowContext";
 import { SessionModelDiscoveryDetail, type SessionModelDiscoveryContext } from "@/components/sessions/modelPicker/SessionModelDiscoveryDetail";
 import { getActiveServerAccountScope, selectActiveServerAccountScopeForServer } from "@/sync/domains/scope/activeServerAccountScope";
 import { createWorkflowRunRoute } from "@/sync/domains/workflows/workflowRunRoute";
-import { getPromptLibraryCatalogValue } from "@/sync/store/settings/promptLibraryCatalogSnapshot";
-import { refreshPromptLibraryCatalog } from "@/sync/engine/settings/promptLibraryCatalogEngine";
+import { readCurrentPromptLibraryCatalogValue } from "@/sync/engine/settings/promptLibraryCatalogEngine";
 import { areServerAccountScopesEqual } from "@/sync/domains/scope/serverAccountScope";
 import { mergeOptionPickerProbes } from "@/components/sessions/pickers/mergeOptionPickerProbes";
 import { buildSessionModelDiscoveryContext } from "@/sync/ops/sessionModelDiscovery";
@@ -142,7 +141,7 @@ import { buildReviewCommentsOutboundMessage } from "@/sync/domains/input/reviewC
 import { buildReviewCommentsV1MetaPayload } from "@happier-dev/protocol/messages/structured/reviewCommentsInput";
 import { parseReviewCommentsV1 } from "@/sync/domains/input/reviewComments/reviewCommentMeta";
 import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
-import { resolveSessionComposerSend } from "@/sync/domains/input/slashCommands/resolveSessionComposerSend";
+import { canInvokePromptTemplate, resolveSessionComposerSend } from "@/sync/domains/input/slashCommands/resolveSessionComposerSend";
 import { expandPromptTemplateInvocation } from "@/sync/domains/input/slashCommands/expandPromptTemplateInvocation";
 import { resolvePromptInvocationComposerSendAction } from "@/sync/domains/input/slashCommands/promptInvocationBehavior";
 import type { SessionArmedAgentContinuationSubmission, SessionDraftValueFieldId } from "@/sync/domains/input/draftValues/sessionDraftValueTypes";
@@ -7757,10 +7756,11 @@ export function useSessionComposerController({
                         return;
                     }
                     const invocationScope = selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), sessionRouteServerId);
-                    if (invocationScope) await refreshPromptLibraryCatalog(invocationScope);
+                    // Only a `/token` message reads invocations; the held row serves it until a wake marks it stale.
+                    const invocationCatalog = invocationScope && canInvokePromptTemplate(messageForResolution)
+                        ? await readCurrentPromptLibraryCatalogValue(invocationScope, 'invocations') : null;
                     if (invocationScope && !areServerAccountScopesEqual(invocationScope, getActiveServerAccountScope())) return;
-                    const invocationCatalog = getPromptLibraryCatalogValue(invocationScope, 'invocations');
-                    const promptInvocationsV1 = invocationCatalog.status === 'ready' && !invocationCatalog.stale ? invocationCatalog.value : null;
+                    const promptInvocationsV1 = invocationCatalog?.status === 'ready' && !invocationCatalog.stale ? invocationCatalog.value : null;
                     const resolved = resolveSessionComposerSend({
                         input: messageForResolution,
                         emptyInputFallback: armedContinuationTarget !== null

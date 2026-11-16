@@ -7,7 +7,8 @@ import { subscribeAccountCatalogInvalidation } from './accountCatalogInvalidatio
 import { homeAccountChangeAffectsPrivateAccountRows } from '@/sync/runtime/orchestration/changesPlanner';
 import { applyPromptLibraryCatalogSnapshot, beginPromptLibraryCatalogLoad, getPromptLibraryCatalogSnapshot,
     applyPromptLibraryCatalogRowsSnapshot, beginPromptLibraryCatalogRowsLoad, getAcknowledgedPromptLibraryCatalogValue,
-    invalidatePromptLibraryCatalogsForServer, getPromptLibraryCatalogValue, type PromptLibraryCatalogProjection } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
+    invalidatePromptLibraryCatalogsForServer, getPromptLibraryCatalogValue, type PromptLibraryCatalogProjection,
+    type PromptLibraryCatalogValueSnapshot } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { withActionAccountRequestSignal } from '@/sync/ops/actions/actionAccountContext';
 type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope; finite?: true }>;
@@ -122,10 +123,7 @@ export async function readPromptLibraryCatalogInCapturedAccount(account: PromptL
         throwIfAborted(signal);
         account.assertCurrent();
         const scope = { serverId: account.serverId, accountId: account.accountId };
-        const row = getPromptLibraryCatalogValue(scope, key);
-        if (row.status !== 'ready' || row.stale) {
-            await loader.refresh({ ...targetFor(scope), finite: true }, signal);
-        }
+        if (!isPromptLibraryCatalogRowHeldCurrent(scope, key)) await loader.refresh({ ...targetFor(scope), finite: true }, signal);
         throwIfAborted(signal);
         account.assertCurrent();
         const projection = getPromptLibraryCatalogSnapshot(scope);
@@ -133,6 +131,21 @@ export async function readPromptLibraryCatalogInCapturedAccount(account: PromptL
         return projection;
     });
 }
+/**
+ * A held row stays current until its retained wake, credential or observer-gap
+ * invalidation marks it stale, so a use of the catalog never re-reads it.
+ */
+function isPromptLibraryCatalogRowHeldCurrent(scope: ServerAccountScope, key: PromptLibraryCatalogKeyV1): boolean {
+    const row = getPromptLibraryCatalogValue(scope, key);
+    return row.status === 'ready' && !row.stale;
+}
+/** A use (Send, slash suggestions, launch) reads the held row and acquires the catalog only when it is not current. */
+export async function readCurrentPromptLibraryCatalogValue<K extends PromptLibraryCatalogKeyV1>(scope: ServerAccountScope,
+    key: K): Promise<PromptLibraryCatalogValueSnapshot<K>> {
+    if (!isPromptLibraryCatalogRowHeldCurrent(scope, key)) await loader.refresh(targetFor(scope));
+    return getPromptLibraryCatalogValue(scope, key);
+}
+/** Explicit retry and post-acknowledgement settlement: always reads. */
 export function refreshPromptLibraryCatalog(scope: ServerAccountScope): Promise<void> { return loader.refresh(targetFor(scope)); }
 export function invalidatePromptLibraryCatalogProjection(scope: ServerAccountScope): Promise<void> {
     const target = targetFor(scope);

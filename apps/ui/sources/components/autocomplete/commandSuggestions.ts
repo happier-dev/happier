@@ -4,8 +4,7 @@ import type { PluginContributedActionDescriptor } from '@/components/plugins/act
 import type { AutocompleteSuggestion } from './autocompleteTypes';
 import { COMMAND_SUGGESTION_ROW_HEIGHT } from './commandSuggestionConstants';
 import { getActiveServerAccountScope, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
-import { getPromptLibraryCatalogValue } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
-import { refreshPromptLibraryCatalog } from '@/sync/engine/settings/promptLibraryCatalogEngine';
+import { readCurrentPromptLibraryCatalogValue } from '@/sync/engine/settings/promptLibraryCatalogEngine';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 
 export async function getCommandSuggestions(
@@ -23,10 +22,8 @@ export async function getCommandSuggestions(
 ): Promise<AutocompleteSuggestion[]> {
     const searchTerm = query.startsWith('/') ? query.slice(1) : query;
     const scope = selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), options?.serverId ?? null);
-    if (scope) {
-        await refreshPromptLibraryCatalog(scope);
-        if (!areServerAccountScopesEqual(scope, getActiveServerAccountScope())) return [];
-    }
+    const invocations = scope ? (await readCurrentPromptLibraryCatalogValue(scope, 'invocations')).value : undefined;
+    if (scope && !areServerAccountScopesEqual(scope, getActiveServerAccountScope())) return [];
 
     // Failures propagate. A `catch { return [] }` here made a rejected command-search
     // RPC indistinguishable from "no command matches that prefix" — the same silent
@@ -34,7 +31,7 @@ export async function getCommandSuggestions(
     // dispatcher already turns a rejected kind into "no rows plus one diagnostic"
     // (`suggestions.ts`), and it is the single place that decision belongs.
     const commands = await searchCommands(sessionId, searchTerm, {
-        ...(scope ? { invocations: getPromptLibraryCatalogValue(scope, 'invocations').value } : {}),
+        ...(scope ? { invocations } : {}),
         limit: options?.limit ?? 8,
         contributedActions: options?.contributedActions,
         ...(options?.compaction !== undefined ? { compaction: options.compaction } : {}),

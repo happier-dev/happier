@@ -32,7 +32,7 @@ import type { SavedSecretReferenceResolution } from '@/sync/store/settings/saved
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { getPromptLibraryCatalogValue } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
-import { refreshPromptLibraryCatalog } from '@/sync/engine/settings/promptLibraryCatalogEngine';
+import { readCurrentPromptLibraryCatalogValue } from '@/sync/engine/settings/promptLibraryCatalogEngine';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -1361,7 +1361,7 @@ export function useCreateNewSession(params: Readonly<{
             const shouldPrepareInitialMessage = shouldSendInitialMessage && sessionPrompt.trim();
             const invocationScope = current.draftScope ?? selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), resolvedTargetServerId);
             // Only a `/token` prompt reads the catalog, so any other launch never waits on it.
-            if (shouldPrepareInitialMessage && invocationScope && canInvokePromptTemplate(sessionPrompt)) await refreshPromptLibraryCatalog(invocationScope);
+            if (shouldPrepareInitialMessage && invocationScope && canInvokePromptTemplate(sessionPrompt)) await readCurrentPromptLibraryCatalogValue(invocationScope, 'invocations');
             if (!isLaunchScopeStillActive() || (invocationScope && !areServerAccountScopesEqual(invocationScope,
                 latestParamsRef.current.draftScope ?? selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), resolvedTargetServerId)))) return;
             const inventoryLifetime = capturedOrdinaryTargetAccount?.accountLifetime
