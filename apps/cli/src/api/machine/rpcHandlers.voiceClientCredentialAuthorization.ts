@@ -6,8 +6,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isDeepStrictEqual } from 'node:util';
 
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
-import { readPluginManifest, type ReadPluginManifestResult } from '@/plugins/manifest/read';
-import { pluginSourceProvenanceForKind } from '@/plugins/manifest/sourceProvenance';
+import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { ResolvedVoiceProviderContribution } from '@/plugins/projection/registry/types';
 import {
   createDaemonPluginRawCredentialMaterializer,
@@ -52,7 +51,6 @@ export type MachineVoiceClientCredentialAuthorizationService = Readonly<{
 type AuthorizationServiceDependencies = Readonly<{
   machineId: string | null;
   acquireRuntimeLease?: typeof acquireAuthoritativePluginRuntimeRegistryLease;
-  readManifest?: (input: Readonly<{ manifestPath: string }>) => Promise<ReadPluginManifestResult>;
   currentInstallReviewPrincipal?: CurrentPluginInstallReviewPrincipalReader;
   readCurrentGrantAuthoritySource?: CurrentPluginPermissionGrantAuthoritySourceReader;
   readStoredCredentials?: () => Promise<StoredCredentials | null>;
@@ -92,20 +90,21 @@ function contributionMatches(
 
 function reviewPresentation(
   provider: ResolvedVoiceProviderContribution,
-  manifest: ReadPluginManifestResult & Readonly<{ ok: true }>,
-  principal: CurrentPluginInstallReviewPrincipal,
+  manifest: CanonicalPluginManifest,
+  principal: CurrentPluginInstallReviewPrincipal | null,
 ): DaemonVoiceClientRawCredentialReviewV1 {
   const credentials = provider.definition.credentials;
   if (!credentials) throw credentialUnavailable();
-  const presentation = principal.presentation
+  const isBundledFirstParty = provider.provenance === 'first_party'
+    && provider.source.kind === 'bundled';
+  if (!principal && !isBundledFirstParty) throw credentialUnavailable();
+  const presentation = principal?.presentation
     && pluginInstallReviewPrincipalPresentationMatchesDigest(principal.digest, principal.presentation)
     ? principal.presentation
     : null;
   if (presentation && presentation.packageIdentity.pluginId !== provider.pluginId) {
     throw credentialUnavailable();
   }
-  const isBundledFirstParty = provider.provenance === 'first_party'
-    && provider.source.kind === 'bundled';
   const publisher = isBundledFirstParty
     ? Object.freeze({ status: 'bundled_first_party' as const, identity: 'Happier' as const })
     : Object.freeze({ status: 'unavailable' as const });
@@ -121,8 +120,8 @@ function reviewPresentation(
   return Object.freeze({
     plugin: Object.freeze({
       id: provider.pluginId,
-      name: localizedFallback(manifest.manifest.displayName),
-      version: manifest.manifest.version,
+      name: localizedFallback(manifest.displayName),
+      version: manifest.version,
     }),
     package: Object.freeze({
       identity: presentation?.packageIdentity.packageName ?? provider.pluginId,
@@ -170,7 +169,6 @@ export function createMachineVoiceClientCredentialAuthorizationService(
 ): MachineVoiceClientCredentialAuthorizationService {
   const acquireRuntimeLease = dependencies.acquireRuntimeLease
     ?? acquireAuthoritativePluginRuntimeRegistryLease;
-  const readManifest = dependencies.readManifest ?? readPluginManifest;
   const readCredentials = dependencies.readStoredCredentials ?? readStoredCredentials;
   const createGrantRequester = dependencies.createGrantRequester
     ?? createServerPluginPermissionGrantRequester;
@@ -200,29 +198,14 @@ export function createMachineVoiceClientCredentialAuthorizationService(
       ) ?? null;
       if (!lifecycle?.isCurrent()) throw credentialUnavailable();
       const connectedAccounts = lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
-      const manifest = await readManifest({
-        manifestPath: provider.manifestPath,
-        sourceProvenance: pluginSourceProvenanceForKind(provider.sourceSpec?.kind),
-      });
-      signal.throwIfAborted();
-      const manifestProvider = manifest.ok
-        ? manifest.manifest.contributes.voiceProviders?.find((candidate) => (
-            candidate.id === provider.identity.localId
-          ))
-        : null;
-      if (
-        !manifest.ok
-        || manifest.manifest.id !== provider.pluginId
-        || !manifestProvider
-        || !isDeepStrictEqual(manifestProvider, provider.definition)
-        || !lifecycle.isCurrent()
-      ) {
-        throw credentialUnavailable();
-      }
+      const manifest = lease.registry.contributes.pluginDeclarations?.find(
+        (declaration) => declaration.pluginId === provider.pluginId,
+      )?.manifest;
+      if (!manifest) throw credentialUnavailable();
       const inspector = createDaemonPluginRawCredentialMaterializer({
         mode: 'authorization',
         binding: {
-          manifest: manifest.manifest,
+          manifest,
           contribution: input.contribution,
           realm: rawGrant.realm,
           phase: rawGrant.phase,
@@ -247,10 +230,7 @@ export function createMachineVoiceClientCredentialAuthorizationService(
         pluginId: provider.pluginId,
         signal,
       });
-      if (
-        !principal
-        || authorization.subject.kind !== 'credential_access_disclosure'
-      ) {
+      if (authorization.subject.kind !== 'credential_access_disclosure') {
         throw credentialUnavailable();
       }
       const review = reviewPresentation(provider, manifest, principal);

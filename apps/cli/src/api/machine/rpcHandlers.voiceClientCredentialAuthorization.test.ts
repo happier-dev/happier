@@ -18,9 +18,10 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { updateSettings, writeCredentialsTokenOnlyForServerId } from '@/persistence';
 import { resolveCurrentPluginPermissionGrantAuthoritySource } from '@/daemon/identity/currentMachineInstallation';
-import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createRegistryInstallReviewPrincipalReader } from '@/plugins/runtime/credentials/registryInstallReviewPrincipalReader';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { persistInstallationStateRevision, readInstallationStateRevision } from '@/plugins/store/registry/generationStore';
 import { replacePluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
@@ -162,6 +163,7 @@ async function createHarness(overrides: Readonly<{
   retireBeforeInspection?: boolean;
   materializationUnavailable?: boolean;
   rejectedPrincipalSnapshot?: typeof principalSnapshot;
+  omitPrincipal?: boolean;
   accountSettingsSnapshot?: ActiveAccountSettingsSnapshot | null;
   mediatedOnly?: boolean;
 }> = {}) {
@@ -183,8 +185,8 @@ async function createHarness(overrides: Readonly<{
   const reviewed = overrides.rejectedPrincipalSnapshot ?? principalSnapshot;
   const nextState = (includePresentation: boolean) => ({ ...state, revisionId: `state-${randomUUID()}`,
     createdAtMs: Date.now(), plugins: { ...state.plugins, [contribution.pluginId]: { ...installation,
-      installReviewPrincipalDigest: reviewed.digest,
-      ...(includePresentation ? { installReviewPrincipalPresentation: reviewed.presentation } : {}),
+      installReviewPrincipalDigest: overrides.omitPrincipal ? undefined : reviewed.digest,
+      ...(includePresentation ? { installReviewPrincipalPresentation: overrides.omitPrincipal ? undefined : reviewed.presentation } : {}),
     } },
   });
   if (overrides.rejectedPrincipalSnapshot) {
@@ -342,6 +344,72 @@ describe('Voice client raw credential authorization RPC', () => {
     expect(JSON.stringify(inspected)).not.toContain('password');
     expect(JSON.stringify(inspected)).not.toContain('token=secret');
     expect(fixture.registry.resolveVoiceProviderRuntimeLifecycle?.(contribution)?.isCurrent()).toBe(true);
+  });
+
+  it('reviews bundled Google speech credentials without an installed-package principal', async () => {
+    const fixture = await createAdmittedPluginRuntimeFixture({
+      happyHomeDir: home,
+      controller: pluginReloadController,
+      runtimeOptions: {
+        pluginIds: ['happier.voice.google'],
+        // Account census transport is outside this install-review regression;
+        // use the canonical bundled declaration projection, with real admission.
+        contributes: getResolvedContributionRegistry(),
+        resolveCurrentMachineId: () => 'machine-1',
+      },
+    });
+    try {
+      const principalReader = createRegistryInstallReviewPrincipalReader({ happyHomeDir: home });
+      await expect(principalReader.readCurrent({ pluginId: 'happier.voice.google',
+        signal: new AbortController().signal })).resolves.toBeNull();
+      const contributions = fixture.registry.contributes.voiceProviders.filter(
+        (provider) => provider.pluginId === 'happier.voice.google',
+      );
+      expect(contributions.map((provider) => provider.identity.localId).sort()).toEqual(['gemini-stt', 'google-cloud-tts']);
+      const resourceId = randomUUID();
+      const secretRef = `happier:shared-secret:v1:${resourceId}`;
+      const service = createMachineVoiceClientCredentialAuthorizationService({
+        machineId: 'machine-1',
+        currentInstallReviewPrincipal: principalReader,
+        getAccountSettingsSnapshot: () => ({
+          source: 'network', scopeKey: 'account-scope', settingsVersion: 1, loadedAtMs: 1,
+          settingsSecretsReadKeys: [], savedSecretCatalogState: 'ready',
+          connectedPurposeCatalog: { status: 'ready', revision: 1, record: {
+            key: 'purposes', value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }),
+          } },
+          savedSecretResources: [{ resourceId, ownerAccountId: 'custodian', relationship: 'recipient',
+            capabilities: { use: true }, displayName: 'Google credential', kind: 'apiKey',
+            encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
+            storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+              content: { v: 1, name: 'Google credential', kind: 'apiKey', value: 'never-disclosed' } }) }],
+          settings: accountSettingsParse({ voiceSettingsV1: { credentialBindings: contributions.map((provider) => ({
+            contribution: provider.identity, credentialSlotId: 'api_key', credentialSource: { kind: 'savedSecret' },
+            credentialBindings: { account: { api_key: secretRef } },
+          })) } }),
+        }),
+      });
+      for (const provider of contributions) {
+        await fixture.registry.activateContributionsOnDemand([{
+          pluginId: provider.pluginId, family: 'voiceProviders', localId: provider.identity.localId,
+        }]);
+        const rawGrant = provider.definition.credentials?.sources[0]?.rawGrants?.[0];
+        if (!rawGrant) throw new Error('Google speech must declare its raw credential tuple');
+        await expect(service.inspect({ contribution: provider.identity, rawGrant })).resolves.toMatchObject({
+          authorization: { grantRequirement: 'approval_required', subject: { contribution: provider.identity } },
+          review: { plugin: { id: provider.pluginId }, distribution: { kind: 'bundled' },
+            publisher: { status: 'bundled_first_party', identity: 'Happier' } },
+        });
+      }
+    } finally {
+      await fixture.lease.release();
+      await fixture.dispose();
+    }
+  });
+
+  it('refuses an external installation whose install-review principal is absent', async () => {
+    const { service } = await createHarness({ omitPrincipal: true });
+    await expect(service.inspect({ contribution, rawGrant: webConnectionAuthorizationGrant }))
+      .rejects.toMatchObject({ code: 'plugin_voice_credential_access_unavailable' });
   });
 
   it('requests only the exact daemon-derived subject for the current installed contribution', async () => {
