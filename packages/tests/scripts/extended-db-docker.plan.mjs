@@ -119,7 +119,7 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
   if (!databaseUrl || !String(databaseUrl).trim()) {
     throw new Error('Missing databaseUrl');
   }
-  if (contractFile !== undefined && (mode === 'e2e' || typeof contractFile !== 'string' || !contractFile.trim() || contractFile.startsWith('-'))) {
+  if (contractFile !== undefined && (mode === 'e2e' || mode === 'ui' || typeof contractFile !== 'string' || !contractFile.trim() || contractFile.startsWith('-'))) {
     throw new Error('A contract file filter requires contract or extended mode and a test file path');
   }
   if (uiFile !== undefined && (mode !== 'ui' || typeof uiFile !== 'string' || !uiFile.trim() || uiFile.startsWith('-'))) {

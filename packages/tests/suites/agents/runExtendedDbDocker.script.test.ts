@@ -72,6 +72,12 @@ describe('extended-db container ownership', () => {
 });
 
 describe('extended-db docker script args', () => {
+  it('rejects a contract-file selector in browser mode instead of running a different suite', () => {
+    expect(() => buildExtendedDbCommandPlan({ db: 'postgres', mode: 'ui', databaseUrl: 'postgresql://fixture',
+      contractFile: 'sources/app/automations/selected.postgres.dbcontract.spec.ts' }))
+      .toThrow(/contract file filter/);
+  });
+
   it('loads selected browser suites from workspace source before their fixtures start', () => {
     const steps = buildExtendedDbCommandPlan({ db: 'postgres', mode: 'ui', databaseUrl: 'postgresql://fixture',
       uiFile: 'suites/ui-e2e/automations.authoring.feat.automations.spec.ts', uiGrep: 'P04\\.',
