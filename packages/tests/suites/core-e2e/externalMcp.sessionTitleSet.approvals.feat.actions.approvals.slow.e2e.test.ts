@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
@@ -80,6 +81,7 @@ async function createScenario(): Promise<{
   client: ExternalMcpClient;
   cliHome: string;
   secret: Uint8Array;
+  person: Awaited<ReturnType<typeof connectUiPersonActionClient>>;
   server: StartedServer;
   serverBaseUrl: string;
   sessionId: string;
@@ -97,7 +99,7 @@ async function createScenario(): Promise<{
   await mkdir(cliHome, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
 
-  const secret = Uint8Array.from(randomBytes(32));
+  const secret = auth.accountSigningSeed;
   await seedCliAuthForTestAccount({ cliHome, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
   await upsertEncryptedAccountSettingsV2({
@@ -144,7 +146,10 @@ async function createScenario(): Promise<{
     serverBaseUrl,
   });
 
+  const person = await connectUiPersonActionClient({ serverUrl: serverBaseUrl, accountSecret: secret });
+
   return {
+    person,
     authToken: auth.token,
     client,
     cliHome,
@@ -192,14 +197,12 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
       expect(snapAfterRename.metadataVersion).toBe(beforeMetadataVersion);
       expect(snapAfterRename.metadata).toBe(beforeMetadataCiphertext);
 
-      const decideCall = await scenario.client.callTool({
-        name: 'action_execute',
-        arguments: {
-          actionId: 'approval.request.decide',
-          input: { artifactId: titlePayload.artifactId, decision: 'approve' },
-        },
+      const decideCall = await scenario.person.executeConfirmed('approval.request.decide', { artifactId: titlePayload.artifactId, decision: 'approve' }, {
+        surface: 'ui', authority: 'present_user', serverId: scenario.person.serverId, actionCaller: { kind: 'host' },
       });
-      const decidePayload = parseToolJson(decideCall);
+      expect(decideCall.ok).toBe(true);
+      if (!decideCall.ok) throw new Error(`Person approval refused (${decideCall.errorCode})`);
+      const decidePayload = decideCall.result;
       expect(decidePayload).toEqual(expect.objectContaining({
         ok: true,
         status: 'executed',
@@ -216,6 +219,7 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
       const stderrDump = scenario.stderrLines.join('');
       throw Object.assign(new Error(`external mcp stdio server failed (stderr follows)\n\n${stderrDump}`), { cause: error });
     } finally {
+      await scenario.person.close();
       await scenario.transport.close().catch(() => {});
       await scenario.client.close().catch(() => {});
     }
@@ -248,14 +252,12 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
       expect(snapAfterRename.metadataVersion).toBe(beforeMetadataVersion);
       expect(snapAfterRename.metadata).toBe(beforeMetadataCiphertext);
 
-      const decideCall = await scenario.client.callTool({
-        name: 'action_execute',
-        arguments: {
-          actionId: 'approval.request.decide',
-          input: { artifactId: actionPayload.artifactId, decision: 'approve' },
-        },
+      const decideCall = await scenario.person.executeConfirmed('approval.request.decide', { artifactId: actionPayload.artifactId, decision: 'approve' }, {
+        surface: 'ui', authority: 'present_user', serverId: scenario.person.serverId, actionCaller: { kind: 'host' },
       });
-      const decidePayload = parseToolJson(decideCall);
+      expect(decideCall.ok).toBe(true);
+      if (!decideCall.ok) throw new Error(`Person approval refused (${decideCall.errorCode})`);
+      const decidePayload = decideCall.result;
       expect(decidePayload).toEqual(expect.objectContaining({
         ok: true,
         status: 'executed',
@@ -272,6 +274,7 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
       const stderrDump = scenario.stderrLines.join('');
       throw Object.assign(new Error(`external mcp stdio server failed (stderr follows)\n\n${stderrDump}`), { cause: error });
     } finally {
+      await scenario.person.close();
       await scenario.transport.close().catch(() => {});
       await scenario.client.close().catch(() => {});
     }
