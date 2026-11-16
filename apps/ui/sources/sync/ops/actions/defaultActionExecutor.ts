@@ -3701,7 +3701,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           ]);
           await openWorkspaceHrefOrElse(path, () => router.replace(path as never));
         }
-      }) } : {}),
+      })(args)) } : {}),
     ...(opts?.workspaceSyncConflictResolve ? { workspaceSyncConflictResolve: opts.workspaceSyncConflictResolve } : {}),
     ...(accountContext ? { managedMachineReferences: createUiManagedMachineReferenceReader(accountContext),
       machineRebootReferences: async ({ input, cursor, signal }) => {
