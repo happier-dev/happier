@@ -38,7 +38,7 @@ async function harness(options: { lostCreateReply?: boolean; cleanupFailure?: 'r
     await CUA_PLUGIN.activate({ actions: { register(id: string, handler: ActionHandler) { actions.set(id, handler); return { dispose() {} }; } },
         connectedAccounts: { register() { return { dispose() {} }; } } } as unknown as PluginApi);
     const context = { invokedAtMs: Date.parse('2026-10-09T00:30:00Z'), signal: new AbortController().signal, services: {
-        managedServices: { dependencies: { status: async () => options.cliMissing ? { state: 'missing' } : options.cliStatusFailed ? { state: 'failed', code: 'timed_out' } : ({ state: 'ready', version: options.cliVersion ?? '0.5.0', executable: { kind: 'managedDependency', id: { pluginId: CUA_PLUGIN.manifest.id, localId: 'cua-cli' } } }) } },
+        managedServices: { dependencies: { status: async () => options.cliMissing ? { state: 'missing' } : options.cliStatusFailed ? { state: 'failed', code: 'timed_out' } : ({ state: 'ready', version: options.cliVersion ?? '0.27.5', executable: { kind: 'managedDependency', id: { pluginId: CUA_PLUGIN.manifest.id, localId: 'cua-cli' } } }) } },
         connectedAccounts: {
             async materialize(purpose: string, request: { kind: string; keys?: readonly string[] }) {
                 purposes.push(purpose);
@@ -160,11 +160,6 @@ describe('activated Cua remote contributions', () => {
             const title = CUA_PLUGIN.manifest.contributes.connectedAccountDescriptors?.find(entry => entry.id === declared[kind])?.title;
             expect(await connectedAccountRuntime(kind).status(context)).toMatchObject({ status: 'connected', displayName: title });
         }
-    });
-    it('fails BYOC check for a cua CLI older than the first release with every flag called, before any native call', async () => {
-        const h = await harness({ cliVersion: '0.2.9' });
-        expect(await h.invoke('byoc-check', {})).toMatchObject({ available: false, code: 'cua_native_outdated' });
-        expect(h.processRequests).toEqual([]);
     });
     it('tells BYOC check apart: no account to connect, cua missing, cloud not connected, status unreadable, and a usable account', async () => {
         const check = async (options: Parameters<typeof harness>[0]) => {

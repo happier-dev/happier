@@ -1,4 +1,21 @@
 # Plugin platform and SDK ownership
+## Managed executable qualification (unreleased 0.3)
+
+A managed dependency's `system` source may declare `minimumVersion` together
+with `versionArguments`. The managed-dependency source resolver qualifies the
+adapter's native version with the shared semantic-version comparator before
+selecting it for launch.
+An older, unreadable or failed version probe leaves that source unavailable;
+the existing source resolver can select the installed managed source instead.
+Sources without a minimum retain their existing behavior, and compatible
+system installations retain priority. Cua's local and remote operations share
+the declared 0.27.5 prerequisite and its managed installation path.
+
+Matching Protocol, SDK projection, plugin declaration and daemon readers reload
+together under the unpublished 0.3 direct cut. Older strict development readers
+reject the new executable-declaration field; existing declarations can omit it.
+This changes no persisted format, service ABI or released wire epoch.
+
 ## Action refusal diagnostics (unreleased 0.3)
 
 The Action failure-cause owner keeps provider-authored `nativeErrorCode` separate

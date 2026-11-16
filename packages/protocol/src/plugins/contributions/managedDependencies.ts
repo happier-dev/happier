@@ -9,6 +9,7 @@ import {
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginJsonValueV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
+import { compareSemVer } from '../../updates/semverComparison.js';
 
 const PluginManagedPypiWheelAssetSourceV2Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ManagedPypiWheelAssetInstallableSourceSchema, {
     kind: true,
@@ -37,7 +38,10 @@ const PluginManagedDependencySourceV2Schema = lazyZodSchema(() => z.discriminate
     packageName: z.string().check(z.regex(/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/)),
     version: z.string().check(z.regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/)),
   }),
-  z.strictObject({ kind: z.literal('system'), executableNames: z.array(z.string().check(z.trim(), z.minLength(1))).check(z.minLength(1)), versionArguments: z.optional(z.array(z.string())) }),
+  z.strictObject({ kind: z.literal('system'), executableNames: z.array(z.string().check(z.trim(), z.minLength(1))).check(z.minLength(1)),
+    versionArguments: z.optional(z.array(z.string())),
+    minimumVersion: z.optional(z.string().check(z.trim(), z.refine(value => compareSemVer(value, value) === 0, 'Expected a semantic version'))),
+  }).check(z.refine(source => source.minimumVersion === undefined || source.versionArguments !== undefined, 'A minimum version requires native version arguments')),
   z.strictObject({ kind: z.literal('vendorRecipe'), recipeId: z.string().check(z.trim(), z.minLength(1)) }),
   z.strictObject({ kind: z.literal('manual'), instructions: PluginLocalizedStringV2Schema }),
 ]));

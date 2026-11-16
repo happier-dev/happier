@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { PluginManagedDependencyContributionV2Schema } from './managedDependencies.js';
 
 describe('PluginManagedDependencyContributionV2Schema', () => {
+  it('admits an optional system minimum only with a native version probe and a concrete semantic version', () => {
+    const dependency = { id: 'cua', title: 'Cua', executable: 'cua', sources: [{ kind: 'system', executableNames: ['cua'], versionArguments: ['--version'], minimumVersion: '0.27.5' }] };
+    expect(PluginManagedDependencyContributionV2Schema.parse(dependency)).toEqual(dependency);
+    for (const source of [{ ...dependency.sources[0], versionArguments: undefined }, { ...dependency.sources[0], minimumVersion: 'latest' }]) {
+      expect(PluginManagedDependencyContributionV2Schema.safeParse({ ...dependency, sources: [source] }).success).toBe(false);
+    }
+  });
   it('admits pinned managed JavaScript packages and refuses ranges, paths and undeclared executables', () => {
     const source = { kind: 'managedJavaScriptPackage', installId: 'dep.acme.json', packageName: '@acme/languages', version: '4.10.0' };
     const dependency = { id: 'json', title: 'JSON', executable: 'json-server', sources: [source] };

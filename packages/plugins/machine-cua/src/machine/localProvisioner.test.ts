@@ -723,20 +723,6 @@ describe('consumed Cua local provisioner roles', () => {
         await expect(h.action('sandbox-exec')({ resource: { ...resource, runtimeId: 'gvisor' }, argv: ['true'], processConfig }, h.context))
             .rejects.toMatchObject({ code: 'cua_guest_daemon_hold_unavailable' });
     });
-    it('qualifies local Sessions against the reviewed native streaming release before any effect', async () => {
-        // Local Session placement needs the released non-PTY `sandbox exec -i` carrier.
-        const old = await activated(true, undefined, undefined, '0.27.4');
-        expect(await old.action('sandbox-check')({}, old.context)).toMatchObject({ available: false, code: 'cua_native_outdated',
-            status: { key: 'machineCua.presentation.cua_native_outdated' } });
-        expect(await old.action('sandbox-acquire')({ launch, managedId }, old.context)).toEqual({ kind: 'rejected', code: 'provider_unavailable' });
-        expect(old.requests).toEqual([]);
-        for (const version of ['0.27.5', '0.28.0']) {
-            const current = await activated(true, undefined, undefined, version);
-            expect(await current.action('sandbox-check')({}, current.context)).toMatchObject({ available: true });
-        }
-        const unreadable = await activated(true, undefined, undefined, 'unknown');
-        expect(await unreadable.action('space-check')({}, unreadable.context)).toMatchObject({ available: false, code: 'cua_native_outdated' });
-    });
     it('rejects unavailable native setup before acquisition without inventing a recovery resource', async () => {
         const h = await activated(false);
         expect(await h.action('sandbox-acquire')({ launch, managedId }, h.context)).toEqual({ kind: 'rejected', code: 'provider_unavailable' });

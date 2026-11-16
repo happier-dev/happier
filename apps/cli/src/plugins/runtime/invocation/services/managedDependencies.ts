@@ -12,6 +12,7 @@ import type {
     InstallablesRegistry,
 } from '@happier-dev/protocol/installables';
 import { resolveEffectiveInstallablePolicy } from '@happier-dev/protocol/installablesPolicy';
+import { compareSemVer } from '@happier-dev/protocol/updates/semverComparison';
 import type {
     ManagedDependencyReady,
     ManagedDependencyStatus,
@@ -769,6 +770,17 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
         return descriptor.binary.systemFirst === false ? 'managed-first' : 'system-first';
     }
 
+    async function sourceVersionQualifies(candidate: ResolvedOwnerAdapter, observation?: Readonly<{ capabilityStatus: unknown }>): Promise<boolean> {
+        const declaration = candidate.source?.declaration;
+        if (declaration?.kind !== 'system' || declaration.minimumVersion === undefined) return true;
+        const observed = observation === undefined
+            ? await candidate.adapter.detectCapabilityStatus?.({ env: params.env, onlyIfInstalled: true })
+            : observation.capabilityStatus;
+        const version = readVersion(observed, 'version', 'installedVersion');
+        const comparison = version === null ? null : compareSemVer(version, declaration.minimumVersion);
+        return comparison !== null && comparison >= 0;
+    }
+
     async function inspect(owner: DescriptorOwner, publicId: string, signal?: AbortSignal): Promise<ManagedDependencyStatus> {
         assertNotAborted(signal);
         assertV2Current(owner);
@@ -812,6 +824,10 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                 const capabilityStatus = adapter.detectCapabilityStatus
                     ? await adapter.detectCapabilityStatus({ env: params.env, includeLatestVersion: true, onlyIfInstalled: true })
                     : null;
+                if (!await sourceVersionQualifies(resolvedAdapter, { capabilityStatus })) {
+                    sawMissing = true;
+                    continue;
+                }
                 const version = readVersion(capabilityStatus, 'version', 'installedVersion') ?? UNKNOWN_VERSION;
                 const availableVersion = readVersion(capabilityStatus, 'availableVersion', 'latestVersion');
                 const executable = Object.freeze({ kind: 'managedDependency' as const, id: publicId });
@@ -1069,6 +1085,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                 for (const resolvedAdapter of await adapterCandidatesFor(owner)) {
                     if (!resolvedAdapter.adapter.resolveLaunchCommand) continue;
                     try {
+                        if (!await sourceVersionQualifies(resolvedAdapter)) continue;
                         const launch = await resolvedAdapter.adapter.resolveLaunchCommand({
                             env: params.env,
                             sourcePreference: owner.kind === 'legacy'

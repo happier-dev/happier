@@ -1092,6 +1092,20 @@ describe('stable plugin managed dependencies host', () => {
         expect(removeManagedInstall).not.toHaveBeenCalled();
     });
 
+    it('does not repeat a native capability probe that settled without a status', async () => {
+        // Native detection is the boundary; the real source model and selection owner must
+        // consume its null observation rather than turning it into another process probe.
+        const detectCapabilityStatus = vi.fn(async () => null);
+        const host = v2Host({
+            contributions: [v2Contribution('acme.plugin', 'tool', [
+                { kind: 'system', executableNames: ['tool'], versionArguments: ['--version'], minimumVersion: '0.27.5' },
+            ])],
+            resolveSourceAdapter: async () => adapter('system-tool', { detectCapabilityStatus }),
+        });
+        expect(await host.bind('acme.plugin').status('tool')).toMatchObject({ state: 'missing' });
+        expect(detectCapabilityStatus).toHaveBeenCalledTimes(1);
+    });
+
     it('reports the first declared manual fallback when executable sources are missing', async () => {
         const host = v2Host({
             contributions: [v2Contribution('acme.plugin', 'tool', [

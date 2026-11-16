@@ -10,7 +10,7 @@ import { CuaLocalLaunchV1Schema, CuaLocalOptionsQueryV1Schema, CuaLocalResourceV
     type CuaLocalLaunchV1, type CuaLocalResourceV1, type CuaLocalOptionsQueryV1 } from './machine/schemas.js';
 import type { CuaLocalProvisionerId } from './machine/localProvisioner.js';
 import { remoteAccounts, remoteProvisioner, remoteRoles } from './machine/remoteDeclarations.js';
-import { CUA_DEPENDENCY_ID as dependencyId, CUA_CLI_LOCAL_MINIMUM_VERSION, resolveCuaExecutable } from './machine/nativeDependency.js';
+import { CUA_DEPENDENCY_ID as dependencyId, CUA_CLI_MINIMUM_VERSION, resolveCuaExecutable } from './machine/nativeDependency.js';
 import { CUA_CLI_ARCHIVE_SOURCE } from './machine/nativeInstall.js';
 import { defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
 import { CuaPreparationInput, CuaPreparationReference, CuaPreparationSchemas, createCuaPreparation } from './machine/preparation.js';
@@ -20,7 +20,7 @@ const processAccess = 'cua-native-process';
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess] } as const;
 
 async function nativeClient(context: PluginInvocationContext) {
-    const executable = await resolveCuaExecutable(context, CUA_CLI_LOCAL_MINIMUM_VERSION);
+    const executable = await resolveCuaExecutable(context);
     const { createCuaNativeClient } = await import('./machine/nativeClient.js');
     return createCuaNativeClient({ exec: context.services.exec, executable });
 }
@@ -217,7 +217,7 @@ export const CUA_PLUGIN = definePlugin({
     connectedAccountDescriptors: remoteAccounts,
     managedDependencies: { [dependencyId]: { id: dependencyId, title: 'Cua', executable: 'cua',
         description: 'Native Cua CLI; native components retain their own license and runtime prerequisites.',
-        sources: [{ kind: 'system', executableNames: ['cua'], versionArguments: ['--version'] }, CUA_CLI_ARCHIVE_SOURCE] } },
+        sources: [{ kind: 'system', executableNames: ['cua'], versionArguments: ['--version'], minimumVersion: CUA_CLI_MINIMUM_VERSION }, CUA_CLI_ARCHIVE_SOURCE] } },
     ui: { translations: [
       { locale: "en", resourceId: "i18n-en" },
       { locale: "de", resourceId: "i18n-de" },

@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import { resolveInstallablesRegistry } from '@happier-dev/protocol/installables';
+import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
 
 import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
 import { resolveExecutableManagedDependenciesRegistry } from '@/plugins/projection/registry/managedDependencyExecutables';
@@ -23,7 +25,7 @@ vi.mock('@happier-dev/cli-common/process', async (importOriginal) => ({
 }));
 
 const systemEnvironment = { PATH: dirname(process.execPath), PATHEXT: '.EXE;.CMD;.BAT', C55_SELECTED: 'selected' };
-function systemHost(versionArguments?: string[]) {
+function systemHost(versionArguments?: string[], minimumVersion?: string) {
     const sourceModel = createV2ManagedDependencySourceModel({
         platform: process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux',
         architecture: process.arch,
@@ -31,7 +33,8 @@ function systemHost(versionArguments?: string[]) {
             ...antigravityContribution(),
             definition: { id: 'system-tool', title: 'System tool', executable: basename(process.execPath),
                 sources: [{ kind: 'system', executableNames: [basename(process.execPath)],
-                    ...(versionArguments === undefined ? {} : { versionArguments }) }],
+                    ...(versionArguments === undefined ? {} : { versionArguments }),
+                    ...(minimumVersion === undefined ? {} : { minimumVersion }) }],
             },
         }],
     });
@@ -230,6 +233,64 @@ describe('createProductionManagedDependencySourceAdapter', () => {
         processBoundary.execFile.mockClear();
         expect(await systemHost().status('system-tool')).toMatchObject({ state: 'ready', version: 'unknown' });
         expect(processBoundary.execFile).not.toHaveBeenCalled();
+    });
+
+    it.each(['0.5.0', '0.27.5-rc.1', 'unreadable'])('does not qualify system version %s below its declared prerequisite', async (version) => {
+        processBoundary.execFile.mockReset().mockResolvedValue({ stdout: `${basename(process.execPath)} ${version}\n`, stderr: '' });
+        expect(await systemHost(['--version'], '0.27.5').status('system-tool')).toMatchObject({ state: 'missing' });
+        expect(processBoundary.execFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('retains compatible system installs ahead of managed acquisition', async () => {
+        processBoundary.execFile.mockReset().mockResolvedValue({ stdout: `${basename(process.execPath)} 0.27.5\n`, stderr: '' });
+        expect(await systemHost(['--version'], '0.27.5').status('system-tool')).toMatchObject({ state: 'ready', version: '0.27.5' });
+        expect(processBoundary.execFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not qualify failed version probes even if their failed output contains a compatible version', async () => {
+        processBoundary.execFile.mockReset().mockRejectedValue(Object.assign(new Error('Probe failed'), {
+            exitCode: 1, stdout: `${basename(process.execPath)} 0.28.0\n`, stderr: '',
+        }));
+        expect(await systemHost(['--version'], '0.27.5').status('system-tool')).toMatchObject({ state: 'missing' });
+    });
+
+    it('uses the installed managed pin after upgrade when PATH still contains the outdated system tool', async () => {
+        const root = createTempDirSync('happier-qualified-system-');
+        try {
+            const env = { ...systemEnvironment, HAPPIER_HOME_DIR: root };
+            const original = antigravityPinnedContribution({ version: '0.27.5', sha256: 'a'.repeat(64) });
+            const contribution = { ...original, definition: {
+                ...original.definition,
+                sources: [{ kind: 'system' as const, executableNames: [basename(process.execPath)],
+                    versionArguments: ['--version'], minimumVersion: '0.27.5' },
+                    ...('sources' in original.definition ? original.definition.sources : [])],
+            } };
+            const sourceModel = createV2ManagedDependencySourceModel({ platform: 'linux', architecture: 'x64', contributions: [contribution] });
+            const installablesRegistry = resolveExecutableManagedDependenciesRegistry([contribution]);
+            const host = createStablePluginManagedDependenciesHost({
+                sourceModel, installablesRegistry, env, getSettings: () => ({}),
+                resolveAdapter: async () => { throw new Error('Unexpected legacy source'); },
+                resolveSourceAdapter: input => createProductionManagedDependencySourceAdapter({ ...input, env, platform: 'linux', architecture: 'x64' }),
+                removeManagedInstall: async () => {}, removeManagedSource: async () => {},
+            });
+            const bound = host.bind('happier.agent.antigravity');
+            processBoundary.execFile.mockReset().mockResolvedValue({ stdout: 'agy_acp_server 0.5.0\n', stderr: '' });
+            expect(await bound.status(PINNED_IDENTITY.localId)).toMatchObject({ state: 'missing' });
+            // Native installer effect: exact executable plus the install owner's version/digest receipts.
+            const current = join(resolveManagedToolsRoot(env), PINNED_IDENTITY.installId, 'current');
+            mkdirSync(current, { recursive: true });
+            const contents = '#!/bin/sh\nexit 0\n';
+            const command = join(current, 'agy_acp_server.par');
+            writeFileSync(command, contents, { mode: 0o755 });
+            writeFileSync(join(current, '.happier-managed-version'), '0.27.5');
+            writeFileSync(join(current, '.happier-managed-executable-sha256'), `sha256:${createHash('sha256').update(contents).digest('hex')}`);
+            expect(await bound.status(PINNED_IDENTITY.localId)).toMatchObject({ state: 'ready', version: '0.27.5' });
+            const lease = await host.resolveExecutable({ kind: 'managedDependency', id: PINNED_IDENTITY.localId }, 'happier.agent.antigravity', { requireReady: true });
+            expect(lease.command).toBe(command);
+            lease.release();
+            processBoundary.execFile.mockResolvedValue({ stdout: 'agy_acp_server 0.28.0\n', stderr: '' });
+            expect(await bound.status(PINNED_IDENTITY.localId)).toMatchObject({ state: 'ready', version: '0.28.0' });
+        } finally { removeTempDirSync(root); }
     });
 
     it('refuses a managed PyPI source without its canonical source-acquisition installable', async () => {
