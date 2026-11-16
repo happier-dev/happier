@@ -26,6 +26,12 @@ export type BrandPaneTokens = Readonly<{
     foregroundSoft: string;
     /** Transparent variant of `background`, useful as the start stop of fades. */
     backgroundTransparent: string;
+    /**
+     * `background` dimmed over the planet behind phone Welcome copy, so secondary body text keeps at
+     * least 4.5:1 where it crosses the orb and digit texture (measured: orb luminance up to 0.29
+     * dark, down to 0.38 light, behind the intro at 320).
+     */
+    scrim: string;
 }>;
 
 // Background colors are sampled from the TOP edge of the planet JPGs
@@ -42,6 +48,7 @@ const DARK_TOKENS: BrandPaneTokens = {
     foregroundMuted: 'rgba(255, 255, 255, 0.55)',
     foregroundSoft: 'rgba(255, 255, 255, 0.72)',
     backgroundTransparent: 'rgba(4, 4, 8, 0)',
+    scrim: 'rgba(4, 4, 8, 0.82)',
 };
 
 const LIGHT_TOKENS: BrandPaneTokens = {
@@ -53,6 +60,7 @@ const LIGHT_TOKENS: BrandPaneTokens = {
     foregroundMuted: 'rgba(10, 10, 10, 0.55)',
     foregroundSoft: 'rgba(10, 10, 10, 0.72)',
     backgroundTransparent: 'rgba(251, 250, 249, 0)',
+    scrim: 'rgba(251, 250, 249, 0.88)',
 };
 
 /**

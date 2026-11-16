@@ -45,6 +45,14 @@ const WORKFLOW_CARD_WIDTH_HINT = 500;
 const WORKFLOW_MOBILE_TOP_PADDING = 28;
 const WORKFLOW_MOBILE_HORIZONTAL_PADDING = 24;
 const WORKFLOW_MOBILE_BOTTOM_PADDING = 28;
+/**
+ * The phone Welcome copy scrim fades in across the heading's two 44px hero lines, so the heading keeps
+ * the planet behind it and the body copy beneath always sits on the full scrim.
+ */
+const WELCOME_SCRIM_FADE_PX = 88;
+const WELCOME_SCRIM_FADE_START = { x: 0, y: 0 } as const;
+const WELCOME_SCRIM_FADE_END = { x: 0, y: 1 } as const;
+const WELCOME_SCRIM_FADE_STYLE: ViewStyle = { height: WELCOME_SCRIM_FADE_PX };
 
 /**
  * The desktop horizontal padding that sits inside the pane's `maxWidth`. The
@@ -267,22 +275,45 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     isMobile ? (
                         <>
                             <View style={styles.footerSpacer} />
-                            <StepTransitionFrame
-                                testID="unauth-shell-step-transition"
-                                transitionKey={props.transitionKey}
-                                direction={props.transitionDirection}
-                                style={STEP_TRANSITION_NATURAL_STYLE}
-                                contentStyle={STEP_TRANSITION_NATURAL_STYLE}
-                            >
-                                <View style={STEP_TRANSITION_NATURAL_STYLE}>
-                                    {props.children}
+                            <View>
+                                {/*
+                                  * The copy column dims the planet behind it, edge to edge and down to the
+                                  * screen bottom, fading in across the heading: on a short phone the column
+                                  * climbs over the orb, where secondary text would lose its contrast.
+                                  */}
+                                <View
+                                    pointerEvents="none"
+                                    style={[styles.welcomeScrim, {
+                                        left: -(WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.left),
+                                        right: -(WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.right),
+                                        bottom: -(WORKFLOW_MOBILE_BOTTOM_PADDING + safeAreaInsets.bottom),
+                                    }]}
+                                >
+                                    <LinearGradient
+                                        colors={[brandPaneTokens.backgroundTransparent, brandPaneTokens.scrim]}
+                                        start={WELCOME_SCRIM_FADE_START}
+                                        end={WELCOME_SCRIM_FADE_END}
+                                        style={WELCOME_SCRIM_FADE_STYLE}
+                                    />
+                                    <View style={[styles.welcomeScrimFill, { backgroundColor: brandPaneTokens.scrim }]} />
                                 </View>
-                            </StepTransitionFrame>
-                            <WelcomeFooterLinks
-                                variant="mobile"
-                                retentionDisclosure={props.retentionDisclosure}
-                                trailing={props.footerAccessory}
-                            />
+                                <StepTransitionFrame
+                                    testID="unauth-shell-step-transition"
+                                    transitionKey={props.transitionKey}
+                                    direction={props.transitionDirection}
+                                    style={STEP_TRANSITION_NATURAL_STYLE}
+                                    contentStyle={STEP_TRANSITION_NATURAL_STYLE}
+                                >
+                                    <View style={STEP_TRANSITION_NATURAL_STYLE}>
+                                        {props.children}
+                                    </View>
+                                </StepTransitionFrame>
+                                <WelcomeFooterLinks
+                                    variant="mobile"
+                                    retentionDisclosure={props.retentionDisclosure}
+                                    trailing={props.footerAccessory}
+                                />
+                            </View>
                         </>
                     ) : (
                         <>
@@ -410,6 +441,13 @@ const stylesheet = StyleSheet.create(() => ({
         position: 'absolute',
         // top + left are applied inline alongside the safe-area insets.
         zIndex: 1,
+    },
+    welcomeScrim: {
+        position: 'absolute',
+        top: 0,
+    },
+    welcomeScrimFill: {
+        flex: 1,
     },
     // Mirrors BrandPanel's bottomFadeMobile so the welcome-step planet fades
     // to the canvas color over the bottom 60% exactly like the brand hero.
