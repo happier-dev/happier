@@ -67,7 +67,7 @@ describe('CLI source entry ownership', () => {
         join(cli, 'src/cli/actions'), join(cli, 'src/cli/commands/shared'), join(ui, 'sources'), join(ui, 'scripts')]) {
         await mkdir(directory, { recursive: true });
       }
-      for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'sourceRuntimeDependencies.mjs', 'cliRuntimeSidecars.mjs', 'cliSourceLoader.mjs']) {
+      for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'sourceRuntimeDependencies.mjs', 'packageExportMatch.cjs', 'cliRuntimeSidecars.mjs', 'cliSourceLoader.mjs']) {
         await cp(join(repoDir, 'packages/cli-common', name), join(common, name));
       }
       await symlink(join(repoDir, 'node_modules'), join(fixture, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
@@ -120,7 +120,7 @@ finally { await loader.unregister(); }`);
       const ui = join(fixture, 'apps/ui');
       await mkdir(common, { recursive: true });
       await mkdir(ui, { recursive: true });
-      for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'sourceRuntimeDependencies.mjs', 'cliRuntimeSidecars.mjs']) {
+      for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'sourceRuntimeDependencies.mjs', 'packageExportMatch.cjs', 'cliRuntimeSidecars.mjs']) {
         await cp(join(repoDir, 'packages/cli-common', name), join(common, name));
       }
       await symlink(join(repoDir, 'node_modules'), join(fixture, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
