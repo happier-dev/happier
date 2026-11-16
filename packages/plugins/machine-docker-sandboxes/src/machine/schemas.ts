@@ -20,6 +20,25 @@ export const DockerSandboxesResourceV1Schema = defineProtocolObject({
   sandboxName: DockerSandboxesNameSchema,
 }, { policy: 'closed' });
 
+export const DOCKER_SANDBOXES_PREPARATION_BUILDER_PREFIX = 'happier-prepared-';
+export const DOCKER_SANDBOXES_PREPARATION_TEMPLATE_PREFIX = 'happier-prepared:';
+const operationIdPattern = '[a-z0-9](?:[a-z0-9-]*[a-z0-9])?';
+// sbx 0.53.0 create --help: native sandbox names have at most 63 characters.
+const operationIdMaxLength = 63 - DOCKER_SANDBOXES_PREPARATION_BUILDER_PREFIX.length;
+export const DockerSandboxesPreparationOperationSchema = defineProtocolObject({
+  operationId: defineProtocolString({ pattern: `^${operationIdPattern}$`, maxLength: operationIdMaxLength }),
+}, { policy: 'closed' });
+export const DockerSandboxesPreparationInputSchema = defineProtocolObject({
+  templateId: defineProtocolString({ minLength: 1 }), setupScript: defineProtocolString({ minLength: 1 }),
+}, { policy: 'closed' });
+export const DockerSandboxesPreparedArtifactSchema = defineProtocolObject({
+  templateId: defineProtocolString({ pattern: `^${DOCKER_SANDBOXES_PREPARATION_TEMPLATE_PREFIX}${operationIdPattern}$`,
+    maxLength: DOCKER_SANDBOXES_PREPARATION_TEMPLATE_PREFIX.length + operationIdMaxLength }),
+}, { policy: 'closed' });
+export function isDockerSandboxesPreparedTemplateId(templateId: string) {
+  return DockerSandboxesPreparedArtifactSchema.safeParse({ templateId }).success;
+}
+
 export const DOCKER_SANDBOXES_ROLE_SCHEMAS = defineMachineProvisionerSchemas({
   launch: DockerSandboxesLaunchV1Schema, resource: DockerSandboxesResourceV1Schema,
 });

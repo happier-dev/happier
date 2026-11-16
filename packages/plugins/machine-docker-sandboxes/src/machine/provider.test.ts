@@ -16,6 +16,24 @@ const inventory = (...names: string[]) => JSON.stringify({ sandboxes: names.map(
 describe('Docker Sandboxes managed provisioner roles', () => {
   const resource = { sandboxName: 'happier-managed-row-1' };
   const launch = { name: 'happier', templateId: 'docker.io/example/template:1' };
+  it('opens a non-PTY invocation channel and keeps channel exit separate from guest power', async () => {
+    const termination = { observed: { kind: 'signal' as const, signal: 'SIGTERM' }, requestedBy: { kind: 'abort' as const } };
+    const channel = { waitForExit: async () => termination, dispose: async () => undefined } as unknown as Awaited<ReturnType<ExecService['spawn']>>;
+    const spawn = vi.fn<ExecService['spawn']>(async () => channel);
+    const run = vi.fn<ExecService['run']>(async () => result(0, inventory(resource.sandboxName)));
+    const signal = new AbortController().signal;
+    const provider = nativeModule.createDockerSandboxesProvider({ run, spawn }, executable, 123, signal);
+    const opened = await provider.stream(resource, ['hshim', 'attach', '--socket', '/tmp/private.sock']);
+    expect(opened).toBe(channel);
+    expect(spawn).toHaveBeenCalledWith({ executable, args: ['exec', '--interactive', '--', resource.sandboxName,
+      'hshim', 'attach', '--socket', '/tmp/private.sock'] }, { signal, outputDelivery: 'invocation' });
+    expect(await opened.waitForExit()).toEqual(termination);
+    expect(await provider.inspect(resource)).toMatchObject({ power: 'running', storage: 'retained' });
+    spawn.mockClear();
+    await expect(provider.stream(resource, [])).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it('preserves authored failure details across native reads and effects', async () => {
     const refusal = new PluginError({ code: 'host_access_denied', message: 'Allow the native process', details: { phase: 'admission' } });
     const native = createDockerSandboxesNativeClient({ run: async request => {

@@ -2,9 +2,18 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPluginClientTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginClientActionContext } from '@happier-dev/plugin-sdk/actions';
 import { DOCKER_SANDBOXES_PLUGIN } from '../manifest.js';
-import { activate, DOCKER_SANDBOXES_INSTALL_URL } from './installAction.js';
+import { activate, DOCKER_SANDBOXES_INSTALL_URL } from '@happier-dev/plugins-machine-docker-sandboxes/happier-plugin-ui/docker-sandboxes-machine-native';
 
 describe('Docker Sandboxes prerequisite repair', () => {
+  it('leaves sandbox navigation to the core host page while keeping client repair available', async () => {
+    expect(DOCKER_SANDBOXES_PLUGIN.manifest.contributes.ui?.views ?? []).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ container: 'appPage', target: { kind: 'machine' } }),
+    ]));
+    const kit = await createPluginClientTestkit({ manifest: DOCKER_SANDBOXES_PLUGIN.manifest,
+      target: { artifactId: 'docker-sandboxes-machine-native', exportName: 'activate', platform: 'web' }, activate });
+    try { expect(kit.registration('actions', 'install-docs')).toBeDefined(); }
+    finally { await kit.dispose(); }
+  });
   it('opens installation instructions on the answering client and preserves an opener failure', async () => {
     const kit = await createPluginClientTestkit({ manifest: DOCKER_SANDBOXES_PLUGIN.manifest,
       target: { artifactId: 'docker-sandboxes-machine-native', exportName: 'activate', platform: 'web' }, activate });

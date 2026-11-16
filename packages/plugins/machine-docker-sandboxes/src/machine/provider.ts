@@ -3,6 +3,7 @@ import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-servi
 import type { MachineProvisionerNativeIntentV1, MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDockerSandboxesNativeClient } from './nativeClient.js';
+import { createDockerSandboxesPreparation } from './preparation.js';
 import { DockerSandboxesLaunchV1Schema, DockerSandboxesResourceV1Schema, DOCKER_SANDBOXES_RECONCILIATION_SCHEMAS } from './schemas.js';
 import type { DockerSandboxesLaunchV1, DockerSandboxesResourceV1 } from './schemas.js';
 
@@ -19,9 +20,10 @@ function acquisitionResource(launch: DockerSandboxesLaunchV1, managedId: string)
   return DockerSandboxesResourceV1Schema.safeParse({ sandboxName: `${launch.name}-${managedId}` });
 }
 
-export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, executable: ManagedExecutableRef,
+export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'> & Partial<Pick<ExecService, 'spawn'>>, executable: ManagedExecutableRef,
   observedAt: number, signal?: AbortSignal) {
   const native = createDockerSandboxesNativeClient(exec, executable);
+  const preparation = createDockerSandboxesPreparation(exec, executable, contributionRef, signal);
   const pending = (resource: DockerSandboxesResourceV1, nativeCause?: MachineProvisionerNativeCauseV1) => ({ kind: 'pending' as const,
     nativeOperationRef: { contributionRef, schemaVersion: 1, value: resource }, ...(nativeCause ? { nativeCause } : {}) });
   async function requirePresent(raw: DockerSandboxesResourceV1) {
@@ -33,9 +35,17 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, ex
     return resource;
   }
   return {
+    buildPreparation: preparation.build,
+    inspectPreparation: preparation.inspect,
+    destroyPreparation: preparation.destroy,
+    async stream(resource: DockerSandboxesResourceV1, argv: readonly string[]) {
+      return native.stream(await requirePresent(resource), argv, signal);
+    },
     async check() {
       const probe = await native.probe(signal);
-      return probe.status === 'available' ? { available: true } : { available: false, code: 'docker_sandbox_unavailable' };
+      if (probe.status !== 'available') return { available: false, code: 'docker_sandbox_unavailable' };
+      const catalog = await native.templates(signal);
+      return catalog.status === 'available' ? { available: true } : { available: false, code: 'docker_sandbox_options_unavailable' };
     },
     async options() {
       const catalog = await native.templates(signal);

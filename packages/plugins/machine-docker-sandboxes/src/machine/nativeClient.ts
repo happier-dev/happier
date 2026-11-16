@@ -2,7 +2,7 @@ import { PluginError, projectPluginFailureText } from '@happier-dev/plugin-sdk';
 import { projectMachineProvisionerActionFailure, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
-import { DockerSandboxesLaunchV1Schema, DockerSandboxesNameSchema, DockerSandboxesResourceV1Schema } from './schemas.js';
+import { DockerSandboxesLaunchV1Schema, DockerSandboxesNameSchema, DockerSandboxesResourceV1Schema, isDockerSandboxesPreparedTemplateId } from './schemas.js';
 import type { DockerSandboxesLaunchV1 } from './schemas.js';
 import type { DockerSandboxesResourceV1 as SandboxLocator } from './schemas.js';
 
@@ -24,8 +24,18 @@ function completed(result: PluginProcessResult) {
 const invalidName = () => ({ status: 'refused', code: 'docker_sandbox_name_invalid' } as const);
 const invalidResource = () => ({ status: 'refused', code: 'docker_sandbox_resource_invalid' } as const);
 
+function execArguments(resource: SandboxLocator, command: readonly string[], interactive: boolean) {
+  if (!DockerSandboxesResourceV1Schema.safeParse(resource).success) {
+    throw Object.assign(new Error('invalid native resource'), { code: 'docker_sandbox_resource_invalid' });
+  }
+  if (command.length === 0 || command.some(argument => argument.includes('\0'))) {
+    throw Object.assign(new Error('invalid native command'), { code: 'invalid_request' });
+  }
+  return ['exec', ...(interactive ? ['--interactive'] : []), '--', resource.sandboxName, ...command];
+}
+
 /** Native evidence only. Registration, enrollment and lifecycle policy stay with the host. */
-export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>, executable: ManagedExecutableRef) {
+export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'> & Partial<Pick<ExecService, 'spawn'>>, executable: ManagedExecutableRef) {
   const run = (args: readonly string[], signal?: AbortSignal, stdin?: Uint8Array) => {
     signal?.throwIfAborted();
     return exec.run({ executable, args, ...(stdin === undefined ? {} : { stdin }) }, { signal });
@@ -40,13 +50,24 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
     } satisfies MachineProvisionerNativeCauseV1;
   }
   const client = {
+    async stream(resource: SandboxLocator, command: readonly string[], signal?: AbortSignal) {
+      const args = execArguments(resource, command, true);
+      signal?.throwIfAborted();
+      if (!exec.spawn) throw new PluginError({ code: 'plugin_service_unavailable' });
+      // sbx 0.53.0: -i keeps stdin open; omitting -t preserves binary bytes.
+      // Exec owns channel delivery/cancellation. Its exit says nothing about
+      // the retained guest's power; inspect remains the native power owner.
+      return exec.spawn({ executable, args },
+        { signal, outputDelivery: 'invocation' });
+    },
     async create(input: DockerSandboxesLaunchV1, signal?: AbortSignal) {
       const launch = DockerSandboxesLaunchV1Schema.safeParse(input);
       if (!launch.success) return { status: 'refused', code: 'docker_sandbox_launch_invalid' } as const;
       const resource = { sandboxName: launch.data.name };
       let failed: PluginProcessResult | undefined;
       try {
-        const result = await run(['create', '--name', launch.data.name, '--template', launch.data.templateId, 'shell'], signal);
+        const result = await run(['create', '--name', launch.data.name, '--template', launch.data.templateId,
+          ...(isDockerSandboxesPreparedTemplateId(launch.data.templateId) ? ['--pull', 'never'] : []), 'shell'], signal);
         if (completed(result)) return { status: 'allocated', resource, readiness: 'unqualified' } as const;
         failed = result;
       } catch (error) {
@@ -119,17 +140,10 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
       return 'presence' in observation && observation.presence === 'present' ? observation.power : 'unknown';
     },
     async exec(resource: SandboxLocator, command: readonly string[], signal?: AbortSignal, input?: Uint8Array) {
-      if (!DockerSandboxesResourceV1Schema.safeParse(resource).success) {
-        throw Object.assign(new Error('invalid native resource'), { code: 'docker_sandbox_resource_invalid' });
-      }
-      if (command.length === 0 || command.some(argument => argument.includes('\0'))) {
-        throw Object.assign(new Error('invalid native command'), { code: 'invalid_request' });
-      }
-      const locator = readLocator(resource);
       // No TTY, environment variable, uploaded script or public command argument
       // carries private bytes. Native stdin and buffered binary output remain
       // with the admitted invocation's existing ExecService owner.
-      return run(['exec', ...(input === undefined ? [] : ['--interactive']), '--', locator.sandboxName, ...command], signal, input);
+      return run(execArguments(resource, command, input !== undefined), signal, input);
     },
     async start(resource: SandboxLocator, signal?: AbortSignal) {
       const observation = await client.inspect(resource, signal);

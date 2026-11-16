@@ -1,19 +1,24 @@
 import { Buffer } from 'node:buffer';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import {
   observeMachineProvisionerNativeRead,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
-  MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema,
+  MachineProvisionerNativeExecResultV1Schema, MachineProvisionerNativeStreamResultV1Schema, MachineProvisionerObservationV1Schema,
   MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema,
   projectMachineProvisionerActionFailure,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDockerSandboxesProvider, DOCKER_SANDBOXES_DEPENDENCY_ID, DOCKER_SANDBOXES_PLUGIN_ID,
   DOCKER_SANDBOXES_PROVISIONER_ID } from './machine/provider.js';
-import { DOCKER_SANDBOXES_ROLE_SCHEMAS, DOCKER_SANDBOXES_RECONCILIATION_SCHEMAS, DockerSandboxesLaunchV1Schema, DockerSandboxesResourceV1Schema } from './machine/schemas.js';
+import { DOCKER_SANDBOXES_ROLE_SCHEMAS, DOCKER_SANDBOXES_RECONCILIATION_SCHEMAS,
+  DockerSandboxesLaunchV1Schema, DockerSandboxesResourceV1Schema } from './machine/schemas.js';
+import { DOCKER_ACCOUNT_DESCRIPTOR, DOCKER_ACCOUNT_SERVICE, DOCKER_ACCOUNT_PURPOSE, prepareDockerAccount } from './machine/dockerAccount.js';
+import { DOCKER_CLOUD_PROVISIONER } from './cloud/contribution.js';
+import { createCloudClient, cloudCode, cloudFailure } from './cloud/nativeClient.js';
+import { ColdLaunchSchema as CloudLaunchSchema, ROLE as CLOUD_ROLE, RECONCILIATION as CLOUD_RECONCILIATION, RETENTION as CLOUD_RETENTION } from './cloud/schemas.js';
 
 const processAccess = 'docker-sandboxes-process';
 const actionDefaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess] } as const;
@@ -24,14 +29,17 @@ function errorCode(error: unknown) {
 class MissingDockerSandboxesDependency extends Error {
   readonly code = 'docker_sandbox_unavailable';
 }
-async function provider(context: PluginInvocationContext) {
+async function nativeExecutable(context: PluginInvocationContext) {
   // A system declaration uses the shared dependency owner. No vendor download,
   // license grant, install or native daemon effect occurs during discovery.
   const status = await context.services.managedServices.dependencies.status(DOCKER_SANDBOXES_DEPENDENCY_ID, { signal: context.signal });
   if ((status.state !== 'ready' && status.state !== 'updateAvailable') || !status.executable) {
     throw new MissingDockerSandboxesDependency('native Docker Sandboxes executable unavailable');
   }
-  return createDockerSandboxesProvider(context.services.exec, status.executable, context.invokedAtMs, context.signal);
+  return status.executable;
+}
+async function provider(context: PluginInvocationContext) {
+  return createDockerSandboxesProvider(context.services.exec, await nativeExecutable(context), context.invokedAtMs, context.signal);
 }
 function privateBytes(value: string) {
   return Buffer.from(value, 'base64');
@@ -40,12 +48,13 @@ function privateBytes(value: string) {
 export const DOCKER_SANDBOXES_MACHINE_PROVISIONER = {
   title: 'Docker Sandboxes', icon: 'cube', resourceKind: 'docker-sandbox', schemaVersion: 1,
   enrollmentRole: 'sandbox',
+  sessionPlacement: { kind: 'controller-local', supportsAgentNativeSandbox: false },
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: DockerSandboxesLaunchV1Schema.jsonSchema, resourceSchema: DockerSandboxesResourceV1Schema.jsonSchema, resourceIdPath: 'sandboxName',
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'managedDependency', id: DOCKER_SANDBOXES_DEPENDENCY_ID }],
   billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
-  bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
+  bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file', stream: 'stream' },
   reconciliation: { nativeOperationSchema: DockerSandboxesResourceV1Schema.jsonSchema, action: 'reconcile' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
@@ -67,24 +76,21 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
     "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  description: 'Native local Docker Sandboxes with retained names and private bootstrap IO.', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
+  description: 'Local and remote Docker sandboxes with retained identities and private bootstrap IO.', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [{ id: processAccess, capability: 'process', reason: 'Operate the exact reviewed Docker Sandbox.',
     scope: { executables: [{ kind: 'managedDependency', id: DOCKER_SANDBOXES_DEPENDENCY_ID }] },
+  }, { id: DOCKER_ACCOUNT_PURPOSE, capability: 'connectedAccounts', reason: 'Use the selected Docker account for native sign-in and Docker cloud.',
+    scope: { serviceRefs: [DOCKER_ACCOUNT_SERVICE.localId], operations: ['select', 'use'], materializationKinds: ['environment'] },
+  }, { id: 'docker-cloud-api', capability: 'network', reason: 'Manage Docker cloud sandboxes and use their scoped private process/file endpoints.',
+    scope: { targets: [{ kind: 'httpsHostSuffix', hostSuffix: 'docker.com' }], methods: ['GET', 'POST', 'PUT', 'DELETE'] },
   }], optional: [] },
+  connectedAccountDescriptors: { [DOCKER_ACCOUNT_SERVICE.localId]: DOCKER_ACCOUNT_DESCRIPTOR },
   managedDependencies: { [DOCKER_SANDBOXES_DEPENDENCY_ID]: {
     id: DOCKER_SANDBOXES_DEPENDENCY_ID, title: 'Docker Sandboxes', executable: 'sbx',
     description: 'User-installed sbx under the Docker subscription license.',
     sources: [{ kind: 'system', executableNames: ['sbx'], versionArguments: ['version'] }],
   } },
   ui: {
-    // The one Machine-page placement (plan 30 §3.7 `appPage × machine`): the sandboxes this Machine runs.
-    views: [{
-      id: 'sandboxes', container: 'appPage', target: { kind: 'machine' }, renderer: 'sandboxes-machine-native',
-      title: { key: 'machineDocker.page.title', fallback: 'Sandboxes' },
-      description: { key: 'machineDocker.page.description', fallback: 'Isolated machines for agent sessions on this machine.' },
-      instancePolicy: 'singleton',
-    }],
-    renderers: [{ id: 'sandboxes-machine-native', kind: 'reactNative', artifact: 'docker-sandboxes-machine-native', requiredHostMethods: ['executeAction'] }],
     translations: [
     { locale: "en", resourceId: "i18n-en" },
     { locale: "de", resourceId: "i18n-de" },
@@ -99,8 +105,70 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
     { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
     { locale: "ja", resourceId: "i18n-ja" },
   ] },
-  machineProvisioners: { [DOCKER_SANDBOXES_PROVISIONER_ID]: DOCKER_SANDBOXES_MACHINE_PROVISIONER },
+  machineProvisioners: { [DOCKER_SANDBOXES_PROVISIONER_ID]: DOCKER_SANDBOXES_MACHINE_PROVISIONER, 'docker-cloud': DOCKER_CLOUD_PROVISIONER },
   actions: {
+    'cloud-check': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Check Docker cloud', dangerLevel: 'safe',
+      inputSchema: CLOUD_ROLE.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
+      async run(_input, context) { return createCloudClient(context).check(); } },
+    'cloud-options': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Docker cloud image', dangerLevel: 'safe',
+      inputSchema: CloudLaunchSchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
+      inputHints: { fields: [{ path: 'imageRef', title: 'OCI image', widget: 'text', required: true, defaultValue: 'ubuntu:24.04' },
+        { path: 'timeoutSeconds', title: 'Native lifetime (seconds)', widget: 'integer', description: 'Docker applies this lifetime. Omit to use the service policy.' }] },
+      async run(launch) { return { base: { launch, guestPlatform: 'linux', retention: CLOUD_RETENTION },
+        dimensions: { size: [], location: [], network: [], duration: [], image: [{ id: launch.imageRef,
+          title: launch.imageRef, assignments: [], guestPlatform: 'linux' }] } }; } },
+    'cloud-acquire': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Create Docker cloud sandbox', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Create Docker cloud sandbox', body: 'Docker may bill running compute and retained storage.', confirmLabel: 'Create' },
+      inputSchema: CLOUD_ROLE.acquireInput, resultSchema: CLOUD_RECONCILIATION.result,
+      async run(input, context) { if (!input.managedId) return { kind: 'rejected', code: 'invalid_request' }; return createCloudClient(context).acquire(input.launch, input.managedId); } },
+    'cloud-reconcile': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Recover Docker cloud creation', dangerLevel: 'safe',
+      inputSchema: CLOUD_RECONCILIATION.input, resultSchema: CLOUD_RECONCILIATION.result,
+      async run(input, context) { return createCloudClient(context).recover('nativeOperation' in input ? input.nativeOperation : input.correlation); } },
+    'cloud-bootstrap': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Prepare Docker cloud bootstrap', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Prepare Docker cloud bootstrap' }, inputSchema: CLOUD_ROLE.bootstrapInput, resultSchema: MachineProvisionerBootstrapCarrierV1Schema,
+      async run(input, context) { try { return await createCloudClient(context).bootstrap(input.resource); } catch (error) { return cloudFailure(error); } } },
+    'cloud-inspect': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Inspect Docker cloud sandbox', dangerLevel: 'safe',
+      inputSchema: CLOUD_ROLE.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
+      async run(input, context) { return createCloudClient(context).inspect(input.resource); } },
+    'cloud-power': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Start or stop Docker cloud sandbox', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Change Docker cloud sandbox power', body: 'Retained cloud storage may remain billed.' },
+      inputSchema: CLOUD_ROLE.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
+      async run(input, context) { try { return await createCloudClient(context).power(input.resource, input.intent); } catch (error) { return { kind: 'unknown', code: cloudCode(error) }; } } },
+    'cloud-destroy': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Delete Docker cloud sandbox', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete Docker cloud sandbox', body: 'Permanently deletes its retained files.', confirmLabel: 'Delete' },
+      inputSchema: CLOUD_RECONCILIATION.destroyInput, resultSchema: CLOUD_RECONCILIATION.destroyResult,
+      async run(input, context) { const client = createCloudClient(context);
+        if ('resource' in input) return client.destroy(input.resource);
+        try { const found = await client.locate(input.nativeOperation);
+          return found ? client.destroy({ sandboxName: found.name }) : { kind: 'unknown', code: 'docker_cloud_identity_unconfirmed' }; }
+        catch (error) { return { kind: 'unknown', code: cloudCode(error) }; } } },
+    'cloud-exec': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Execute private Docker cloud bootstrap', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Execute Docker cloud bootstrap' }, inputSchema: CLOUD_ROLE.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
+      async run(input, context) { try { return await createCloudClient(context).exec(input); } catch (error) { return cloudFailure(error); } } },
+    'cloud-put-file': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Upload private Docker cloud bootstrap file', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Upload Docker cloud bootstrap file' }, inputSchema: CLOUD_ROLE.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,
+      async run(input, context) { try { return await createCloudClient(context).putFile(input.resource, input.guestPath, privateBytes(input.bytesBase64), input.mode); }
+        catch (error) { return { kind: 'unknown', code: cloudCode(error) }; } } },
+    'sign-in': { ...actionDefaults, title: 'Sign in to Docker', dangerLevel: 'writesLocal',
+      hostAccess: [processAccess, DOCKER_ACCOUNT_PURPOSE],
+      confirmation: { title: 'Sign in to Docker', body: 'Docker stores this login in its native credential store on this Machine. Use sbx logout to remove the native login.', confirmLabel: 'Sign in' },
+      inputSchema: defineProtocolObject({}, { policy: 'closed' }), resultSchema: defineProtocolLiteral(null),
+      async run(_input, context) {
+        // Dependency resolution precedes secret acquisition. Only stdin carries
+        // the PAT; captured vendor output is never returned as an Action result.
+        const executable = await nativeExecutable(context);
+        const selected = await prepareDockerAccount(context.services.connectedAccounts, context.signal);
+        const result = await context.services.exec.run({ executable,
+          args: ['login', '--username', selected.username, '--password-stdin'], stdin: new TextEncoder().encode(selected.token + '\n') }, { signal: context.signal });
+        if (result.termination.requestedBy.kind !== 'none') throw new PluginError({ code: 'action_failed',
+          details: { phase: 'native_login', termination: result.termination } });
+        if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 0) throw new PluginError({
+          code: 'credential_unavailable', message: 'Docker native sign-in failed.',
+          details: { phase: 'native_login', termination: result.termination },
+        });
+        return null;
+      },
+    },
     'install-docs': { title: { key: 'machineDocker.page.getApp', fallback: 'Get Docker Sandboxes' },
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], dangerLevel: 'safe',
       execution: { target: 'client', client: { artifactId: 'docker-sandboxes-machine-native', exportName: 'activate' },
@@ -109,10 +177,19 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
       resultSchema: defineProtocolUnion([defineProtocolLiteral(null), defineProtocolObject({ url: defineProtocolString() }, { policy: 'closed' })]),
     },
     check: { ...actionDefaults, title: 'Check Docker Sandboxes', dangerLevel: 'safe',
+      hostAccess: [processAccess, DOCKER_ACCOUNT_PURPOSE],
       inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
         try { return machineCheckPresentation(await (await provider(context)).check()); }
-        catch (error) { return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: errorCode(error),
+        catch (error) {
+          if (error instanceof PluginError && error.code === 'credential_unavailable') return {
+            available: false, code: error.code, status: 'Sign in to Docker', prerequisites: [{
+              requirement: { kind: 'managedDependency' as const, id: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID } },
+              status: 'unavailable' as const, reason: 'Docker Sandboxes is installed but needs native sign-in.',
+              repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: 'sign-in' }, input: {} },
+            }],
+          };
+          return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: errorCode(error),
           ...(error instanceof MissingDockerSandboxesDependency ? { prerequisites: [{ requirement: { kind: 'managedDependency' as const,
             id: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID } }, status: 'unavailable' as const,
             repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: 'install-docs' }, input: {} } }] } : {}),
@@ -176,6 +253,14 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
           input.inputBase64 === undefined ? undefined : privateBytes(input.inputBase64));
         return { termination: result.termination, stdoutBase64: Buffer.from(result.stdout).toString('base64'),
           stderrBase64: Buffer.from(result.stderr).toString('base64'), stdoutTruncated: result.stdoutTruncated, stderrTruncated: result.stderrTruncated };
+      },
+    },
+    stream: { ...actionDefaults, title: 'Open a private Docker Sandbox channel', dangerLevel: 'writesLocal',
+      confirmation: { title: 'Open a Docker Sandbox channel' },
+      inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.streamInput, resultSchema: MachineProvisionerNativeStreamResultV1Schema,
+      async run(input, context) {
+        const channel = await (await provider(context)).stream(input.resource, input.argv);
+        try { return { termination: await channel.waitForExit() }; } finally { await channel.dispose(); }
       },
     },
     'put-file': { ...actionDefaults, title: 'Write private Docker Sandbox bootstrap file', dangerLevel: 'writesLocal',

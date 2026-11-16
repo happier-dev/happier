@@ -57,6 +57,46 @@ describe('activated Docker Sandboxes public role boundary', () => {
     } finally { await kit.dispose(); }
   });
 
+  it('offers native sign-in repair when sbx is installed but signed out without attempting login', async () => {
+    const run = vi.fn<ExecService['run']>(async request => request.args?.[0] === 'template'
+      ? { ...exited(new Uint8Array(), new TextEncoder().encode('not signed in to Docker')),
+        termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } } }
+      : exited(new Uint8Array()));
+    const boundary = fixture(run);
+    const kit = await createPluginTestkit({ manifest: DOCKER_SANDBOXES_PLUGIN.manifest, module: DOCKER_SANDBOXES_PLUGIN, services: boundary.services });
+    try {
+      expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: false, code: 'credential_unavailable',
+        prerequisites: [{ repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'sign-in' } } }] });
+      expect(run.mock.calls.some(([request]) => request.args?.[0] === 'login')).toBe(false);
+    } finally { await kit.dispose(); }
+  });
+
+  it('materializes Docker PAT only into login stdin and refuses failed login without disclosing output', async () => {
+    const token = 'qa-private-pat';
+    const run = vi.fn<ExecService['run']>(async request => request.args?.[0] === 'login'
+      ? { ...exited(new TextEncoder().encode(token), new TextEncoder().encode(token)),
+        termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } } }
+      : exited(new Uint8Array()));
+    const boundary = fixture(run);
+    const account = { service: { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'docker' }, accountId: 'qa' };
+    const services = { ...boundary.services, connectedAccounts: {
+      getBinding: async () => ({ account }), materialize: async () => ({ kind: 'environment', env: { DOCKER_ID: 'qa-user', DOCKER_PAT: token } }),
+    } } as unknown as PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: DOCKER_SANDBOXES_PLUGIN.manifest, module: DOCKER_SANDBOXES_PLUGIN, services });
+    try {
+      const failure = await kit.invokeAction('sign-in', {}, { surface: 'plugin' }).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: 'credential_unavailable', details: { phase: 'native_login', termination: { observed: { kind: 'exit', exitCode: 1 } } } });
+      expect(String(failure)).not.toContain(token);
+      expect(JSON.stringify(failure)).not.toContain(token);
+      const request = run.mock.calls.find(([request]) => request.args?.[0] === 'login')?.[0];
+      expect(request?.args).toEqual(['login', '--username', 'qa-user', '--password-stdin']);
+      expect(new TextDecoder().decode(request?.stdin)).toBe(token + '\n');
+      expect(JSON.stringify(request?.args)).not.toContain(token);
+      run.mockImplementation(async () => exited(new Uint8Array()));
+      expect(await kit.invokeAction('sign-in', {}, { surface: 'plugin' })).toBeNull();
+    } finally { await kit.dispose(); }
+  });
+
   it('qualifies every native template offered by options through the registered acquire role', async () => {
     const templates = ['docker.io/example/first:1', 'docker.io/example/second:2'];
     const run = vi.fn<ExecService['run']>(async request => exited(new TextEncoder().encode(
