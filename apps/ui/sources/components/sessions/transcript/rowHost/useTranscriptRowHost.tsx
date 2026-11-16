@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { TranscriptOriginSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
 import type { ExternalSessionOperationSharedPresentationV1 } from '@happier-dev/protocol/sessions/external/operationV1';
@@ -219,9 +219,10 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         externalSessionOperationOwnerTarget?.machineId ?? null;
     const operationServerId =
         externalSessionOperationOwnerTarget?.serverId ?? null;
-    const presentationActive = useLayoutPresentationActive();
+    // Presentation only retires this caller: followed by subscription, so a hide or show does not render the list.
+    const presentation = useLayoutPresentationSignal();
     const operationControllerRef = React.useRef<AbortController | null>(null);
-    React.useEffect(() => {
+    React.useEffect(() => followSignal(presentation, (presentationActive) => {
         const controller = new AbortController();
         operationControllerRef.current = controller;
         const retirement = captureActiveServerAccountScopeCurrentness().onRetire(() => controller.abort());
@@ -231,7 +232,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
             controller.abort();
             retirement.dispose();
         };
-    }, [operationMachineId, operationServerId, presentationActive, sessionId]);
+    }), [operationMachineId, operationServerId, presentation, sessionId]);
     const operationRowCapabilities = React.useMemo(
         () => resolveExternalSessionOperationRowCapabilities({
             canSendMessages: transcriptInteraction.canSendMessages,

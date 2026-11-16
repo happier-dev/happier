@@ -131,7 +131,7 @@ describe('MessageView tool Find identity', () => {
             items = projected;
             const common = createTranscriptSessionCommonPropsFixture({ toolChromeCommon: { toolViewTimelineChromeMode: 'activity_feed' } });
             return <TranscriptFindSurface model={model} source={source} sessionId={sessionId} serverId={null}
-                focused viewportRef={viewportRef} loadedMessages={[]} items={projected}
+                viewportRef={viewportRef} loadedMessages={[]} items={projected}
                 publishCorpus={publishCorpus} measureMessage={measureMessage} contentHeight={0}>
                 {projected.map(item => item.kind === 'message'
                     ? <MessageView key={item.id} message={messagesById[item.messageId]} metadata={null} sessionId={sessionId} />

@@ -157,14 +157,45 @@ export function useLayoutPresentationSignal(): LayoutPresentationSignal {
 }
 
 /**
+ * Runs `start` with the signal's value now and again each time the value changes, ending the previous
+ * run first; returns the cleanup. Call it from an effect so work follows presentation or focus without
+ * rendering its owner.
+ */
+export function followSignal<T>(
+    signal: Readonly<{ get: () => T; subscribe: (listener: () => void) => () => void }>,
+    start: (value: T) => void | (() => void),
+): () => void {
+    let current = signal.get();
+    let stop = start(current);
+    const unsubscribe = signal.subscribe(() => {
+        const next = signal.get();
+        if (Object.is(next, current)) return;
+        current = next;
+        stop?.();
+        stop = start(next);
+    });
+    return () => { unsubscribe(); stop?.(); };
+}
+
+/**
  * `value` as this subtree last presented it. While a retained surface is hidden its consumers keep what
  * they last showed (built bodies, measured props), so a hide does no teardown and a show rebuilds
  * nothing; the current value flows in on the render that presents the surface again. Live demand still
  * withdraws through `useLayoutPresentationActive`, which this does not touch.
  */
 export function usePresentedValue<T>(value: T): T {
-    const presented = useLayoutPresentationActive();
+    // Presentation is read by subscription: a hide, or a show with nothing new to present, renders nothing
+    // here. Only a value that changed while hidden asks for the render that presents it.
+    const presentation = useLayoutPresentationSignal();
     const presentedValue = React.useRef(value);
-    if (presented) presentedValue.current = value;
+    if (presentation.get()) presentedValue.current = value;
+    const pending = presentedValue.current !== value;
+    const [, presentPending] = React.useReducer((count: number) => count + 1, 0);
+    React.useEffect(() => {
+        if (!pending) return undefined;
+        const unsubscribe = presentation.subscribe(() => { if (presentation.get()) presentPending(); });
+        if (presentation.get()) presentPending();
+        return unsubscribe;
+    }, [pending, presentation]);
     return presentedValue.current;
 }

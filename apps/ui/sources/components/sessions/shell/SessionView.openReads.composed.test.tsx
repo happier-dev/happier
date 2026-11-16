@@ -18,6 +18,7 @@ import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema } 
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 import { ChatList } from '@/components/sessions/transcript/ChatList';
+import { ChatListInternal } from '@/components/sessions/transcript/ChatListInternal';
 import { createCommittedFiberRenderCounter, readTestRendererRoot } from '@/dev/testkit/performance/committedFiberCounts';
 import type { Socket } from 'socket.io-client';
 
@@ -203,8 +204,13 @@ it('renders only its focus readers when its retained Session tab is hidden and s
         expect(renders.get('SessionViewLoaded') ?? 0, summary).toBe(0);
         expect(renders.get('RightSidebarActionRailView') ?? 0, summary).toBe(0);
         expect(renders.get('SessionCockpitPanePresentationBoundary') ?? 0, summary).toBe(0);
-        // HEAD before W5: ~564 (A/B arm); after: 434, the remaining readers listed in P03-WEB-TAB-SWITCH (Round 3).
-        expect(total, summary).toBeLessThan(460);
+        // The transcript list draws nothing from focus: only its focus-reading leaves (Find, Next landing, row
+        // content demand) render, never the list or its renderer.
+        expect(counts.read().commitsFor(ChatListInternal), summary).toBe(0);
+        expect(renders.get('LegendListTranscriptRendererInner') ?? 0, summary).toBe(0);
+        // HEAD before W5: ~564 (A/B arm); W5: 434; transcript list off the switch: 393. The remaining readers
+        // are listed in P03-SESSION-CONTENT-READERS.
+        expect(total, summary).toBeLessThan(400);
     } finally {
         await screen.unmount();
     }

@@ -70,6 +70,10 @@ export function installChatListHarnessCommonModuleMocks(
                 subscribeChatListHarnessSessionScreenFocus,
                 () => chatListHarnessState.sessionScreenIsFocused !== false,
             ),
+            useSessionScreenFocusSignal: () => React.useMemo(() => ({
+                get: () => chatListHarnessState.sessionScreenIsFocused !== false,
+                subscribe: subscribeChatListHarnessSessionScreenFocus,
+            }), []),
         };
     });
 

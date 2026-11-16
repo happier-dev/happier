@@ -78,7 +78,7 @@ describe('web Find reveal through the real jump owner', () => {
             return <KeyboardShortcutProvider handlers={{}}><PluginSurfaceFocusEligibilityProvider active><FindComposerSlotProvider>
                 <View testID="session-view-retained-surface:s1">
                     <View ref={viewport}><TranscriptFindSurface model={model} source={source} sessionId="s1" serverId={null}
-                        focused viewportRef={viewport} items={items} loadedMessages={messages}
+                        viewportRef={viewport} items={items} loadedMessages={messages}
                         publishCorpus={next => { corpus = next; }} measureMessage={() => null} contentHeight={200}>
                         <View />
                     </TranscriptFindSurface></View>
@@ -339,7 +339,7 @@ describe('web Find reveal through the real jump owner', () => {
                 jumpToTarget: hook.getCurrent().jumpToTranscriptTarget }, context),
         });
         const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active><TranscriptFindSurface model={model} source={source} sessionId="s1" serverId={null}
-            focused viewportRef={React.createRef()} items={items} loadedMessages={[]} publishCorpus={next => { corpus = next; }}
+            viewportRef={React.createRef()} items={items} loadedMessages={[]} publishCorpus={next => { corpus = next; }}
             measureMessage={() => null} contentHeight={2000} onClearanceChange={value => { clearance = value; }}><></></TranscriptFindSurface></PluginSurfaceFocusEligibilityProvider>);
         try {
             await act(async () => { model.setQuery('remount'); await model.settled(); });
@@ -408,7 +408,7 @@ describe('web Find reveal through the real jump owner', () => {
                 readClearancePx: () => clearance, jumpToTarget: hook.getCurrent().jumpToTranscriptTarget }, context),
         });
         const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active><TranscriptFindSurface
-            model={model} source={source} sessionId="s1" serverId={null} focused viewportRef={React.createRef()}
+            model={model} source={source} sessionId="s1" serverId={null} viewportRef={React.createRef()}
             items={items} loadedMessages={messages} publishCorpus={next => { corpus = next; }} measureMessage={() => null}
             contentHeight={2000} onClearanceChange={value => { clearance = value; }}><></></TranscriptFindSurface></PluginSurfaceFocusEligibilityProvider>);
         try {

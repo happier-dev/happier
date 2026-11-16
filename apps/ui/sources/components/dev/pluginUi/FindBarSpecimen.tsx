@@ -190,7 +190,7 @@ function OlderLoadFailedFind(props: Readonly<{ findOpen: boolean }>) {
     }, [model, props.findOpen]);
     return (
         <View ref={viewportRef} style={styles.fill}>
-            <TranscriptFindSurface model={model} source={source} sessionId="specimen" serverId={null} focused={false}
+            <TranscriptFindSurface model={model} source={source} sessionId="specimen" serverId={null}
                 viewportRef={viewportRef} items={[]} loadedMessages={FAILED_MESSAGES} publishCorpus={noop}
                 measureMessage={() => null} contentHeight={0} olderLoadFailed onRetryOlderLoad={noop}>
                 <ChatSample />

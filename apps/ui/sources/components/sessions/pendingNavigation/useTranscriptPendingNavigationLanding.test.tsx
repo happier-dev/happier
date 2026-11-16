@@ -38,7 +38,7 @@ describe('Next landing through the mounted transcript jump host', () => {
         function Boundary() {
             const jump = harness.useOwner(harness.props());
             return <React.Profiler id="landing" onRender={() => { commits++; }}>
-                <TranscriptPendingNavigationLanding address={address} isLoaded focused hasOlder={false} loadOlder={null}
+                <TranscriptPendingNavigationLanding address={address} isLoaded hasOlder={false} loadOlder={null}
                     messagesById={{}} items={[]} setToolCallsGroupExpanded={() => {}}
                     waitForVisualUpdate={async () => {}} jumpToTarget={jump.jumpToTranscriptTarget} />
             </React.Profiler>;

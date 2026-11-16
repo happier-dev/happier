@@ -9,6 +9,7 @@ import { useFindSurfaceFocusReturn } from '@/components/ui/find/useFindSurfaceFo
 import { useFindComposerSlotReplacing } from '@/components/ui/find/FindComposerSlot';
 import { ChatFindSeedHost } from '@/components/appShell/panes/fileFindSeedHost';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useSessionScreenIsFocused } from '@/components/sessions/shell/useSessionScreenIsFocused';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
 import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { t } from '@/text';
@@ -33,7 +34,6 @@ type Props = Readonly<{
     source: SessionTranscriptSource;
     sessionId: string;
     serverId: string | null;
-    focused: boolean;
     viewportRef: React.RefObject<React.ElementRef<typeof View> | null>;
     /** Canonical list items before viewport windowing, including collapsed groups. */
     items: readonly ChatTranscriptListItem[];
@@ -57,7 +57,9 @@ type Props = Readonly<{
 export function TranscriptFindSurface(props: Props) {
     const { model } = props;
     const open = React.useSyncExternalStore(model.subscribe, () => model.getSnapshot().open, () => false);
-    const eligible = usePluginSurfaceFocusEligibility() && props.focused;
+    // Find belongs to the focused Session screen; this surface reads that itself, so the list it wraps
+    // does not render when focus moves.
+    const eligible = usePluginSurfaceFocusEligibility() && useSessionScreenIsFocused();
     const input = React.useRef<TextInput | null>(null);
     const [inputFocused, setInputFocused] = React.useState(false);
     const focusReturn = useFindSurfaceFocusReturn();

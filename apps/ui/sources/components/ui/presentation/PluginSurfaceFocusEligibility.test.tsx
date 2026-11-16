@@ -6,6 +6,7 @@ import {
     PluginSurfaceFocusEligibilityProvider,
     usePluginSurfaceCurrentUiContextEligibility,
     usePluginSurfaceFocusEligibility,
+    usePresentedValue,
 } from './PluginSurfaceFocusEligibility';
 
 function FocusEligibilityProbe(props: Readonly<{ testID: string }>): React.ReactElement {
@@ -67,5 +68,29 @@ describe('PluginSurfaceFocusEligibility', () => {
         expect(screen.findByTestId('current-ui-context-explicit-root')?.props.eligible).toBe(true);
         expect(screen.findByTestId('current-ui-context-explicit-root')?.props.currentUiContextEligible).toBe(true);
         expect(screen.findByTestId('current-ui-context-hidden-child')?.props.currentUiContextEligible).toBe(false);
+    });
+    it('presents a value without rendering for a hide or show, and presents a value changed while hidden when shown', async () => {
+        const values: string[] = [];
+        const Presented = React.memo(function Presented(props: Readonly<{ source: { value: string } }>) {
+            const value = usePresentedValue(props.source.value);
+            values.push(value);
+            return React.createElement('PresentedProbe', { value });
+        });
+        const first = { value: 'first' };
+        const tree = (presented: boolean, source: { value: string }) => <PluginSurfaceFocusEligibilityProvider active={presented}>
+            <Presented source={source} />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(tree(true, first));
+        expect(values).toEqual(['first']);
+        // A retained surface hidden and shown again draws nothing new: the reader does not render.
+        await screen.update(tree(false, first));
+        await screen.update(tree(true, first));
+        expect(values).toEqual(['first']);
+        // A value that changes while hidden keeps what was last presented, and is presented on show.
+        await screen.update(tree(false, first));
+        await screen.update(tree(false, { value: 'second' }));
+        expect(screen.findByType('PresentedProbe').props.value).toBe('first');
+        await screen.update(tree(true, { value: 'second' }));
+        expect(screen.findByType('PresentedProbe').props.value).toBe('second');
     });
 });

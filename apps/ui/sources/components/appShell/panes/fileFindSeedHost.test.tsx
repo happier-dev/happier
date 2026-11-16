@@ -156,7 +156,7 @@ describe('file Find destination memory', () => {
             model = useTranscriptFind({ readCorpus: () => corpus, loadPage: null,
                 jumpToTarget: async target => ({ status: 'scrolled', target }), reveal: async () => {} });
             return <TranscriptFindSurface model={model} source={source} sessionId="linked-chat" serverId={serverId}
-                focused viewportRef={{ current: null }} items={buildChatListItems({ messageIdsOldestFirst: [message.id], messagesById: { [message.id]: message }, pendingMessages: [] })} loadedMessages={[message]}
+                viewportRef={{ current: null }} items={buildChatListItems({ messageIdsOldestFirst: [message.id], messagesById: { [message.id]: message }, pendingMessages: [] })} loadedMessages={[message]}
                 publishCorpus={next => { corpus = next; }} measureMessage={() => null} contentHeight={0}>
                 <HydratingRows />
             </TranscriptFindSurface>;

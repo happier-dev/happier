@@ -11,6 +11,7 @@ import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions
 import { markPendingNavigationTranscriptReady, usePendingNavigationLanding } from '@/activity/source/pendingNavigationRuntime';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { useSessionScreenIsFocused } from '@/components/sessions/shell/useSessionScreenIsFocused';
 
 export type TranscriptPendingNavigationLandingInput = Readonly<{
     address: SessionAddress | null;
@@ -26,17 +27,19 @@ export type TranscriptPendingNavigationLandingInput = Readonly<{
     jumpToTarget(target: TranscriptJumpTarget, options: Readonly<{ signal: AbortSignal; preferTargetWindow: boolean }>): Promise<TranscriptJumpResult>;
 }>;
 
-type TranscriptPendingNavigationLandingProps = Omit<TranscriptPendingNavigationLandingInput, 'reducerState' | 'messagesById'> & Readonly<{
+type TranscriptPendingNavigationLandingProps = Omit<TranscriptPendingNavigationLandingInput, 'reducerState' | 'messagesById' | 'focused'> & Readonly<{
     messagesById?: TranscriptPendingNavigationLandingInput['messagesById'];
 }>;
 
+/** Lands only on the focused Session screen; it reads that focus here, so its list does not render for it. */
 export function TranscriptPendingNavigationLanding(input: TranscriptPendingNavigationLandingProps): React.ReactElement | null {
     const landing = usePendingNavigationLanding(input.address);
-    return landing?.state === 'pending' && input.focused
-        ? React.createElement(ActiveTranscriptPendingNavigationLanding, { input }) : null;
+    const focused = useSessionScreenIsFocused();
+    return landing?.state === 'pending' && focused
+        ? React.createElement(ActiveTranscriptPendingNavigationLanding, { input: { ...input, focused } }) : null;
 }
 
-function ActiveTranscriptPendingNavigationLanding(props: Readonly<{ input: TranscriptPendingNavigationLandingProps }>): null {
+function ActiveTranscriptPendingNavigationLanding(props: Readonly<{ input: TranscriptPendingNavigationLandingProps & Readonly<{ focused: boolean }> }>): null {
     const source = useSessionTranscriptSource();
     const reducerState = source.useReducerState();
     // Ordinary list hosts omit message detail to keep subscriptions row-local.

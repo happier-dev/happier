@@ -9,7 +9,7 @@ import { useCallback } from 'react';
 import { buildMessageRouteId, type Message } from "@happier-dev/session-core/messages";
 import { sync, type SessionViewportAnchorSnapshot } from '@/sync/sync';
 import { useSessionCatchingUpNewer, useSessionTailContiguousBoundary } from '@/sync/store/hooks';
-import { useSessionScreenIsFocused } from '@/components/sessions/shell/useSessionScreenIsFocused';
+import { useSessionScreenFocusSignal, useSessionScreenIsFocused } from '@/components/sessions/shell/useSessionScreenIsFocused';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useTranscriptMotionConfig } from '@/components/sessions/transcript/motion/useTranscriptMotionConfig';
 import {
@@ -229,7 +229,12 @@ export type { TranscriptViewportChangeState } from '@/components/sessions/transc
 type ExplicitJumpTakeoverApplyEffect = TranscriptLifecycleHostExplicitJumpPlan['explicitJumpTakeoverEffects'][number];
 type FollowBottomIntentTakeoverApplyEffect = TranscriptLifecycleHostFollowBottomIntentPlan['followBottomIntentTakeoverEffects'][number];
 const TRANSCRIPT_SCROLL_USER_INTENT_RECENT_MS = 500;
-export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
+/** Rows demand their content while this Session's screen is focused; only this provider follows focus. */
+function TranscriptScreenContentDemand(props: Readonly<{ children: React.ReactNode }>) {
+    return <TranscriptContentDemandProvider enabled={useSessionScreenIsFocused()}>{props.children}</TranscriptContentDemandProvider>;
+}
+
+export const ChatListInternal = React.memo(function ChatListInternal(props: ChatListInternalProps) {
     const transcriptSource = useSessionTranscriptSource();
     // Historical Agent attribution, resolved once for the whole transcript.
     // A Session can change Agent without changing identity, and every tool row
@@ -1480,17 +1485,21 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     // persistent blank region only the user's first swipe healed. On focus-return, ask the
     // renderer to re-observe the natively displayed offset (Legend-only seam; FlashList and
     // web never implement it).
-    const sessionScreenFocused = useSessionScreenIsFocused();
-    const sessionScreenWasBlurredRef = React.useRef(false);
+    // Focus only starts this re-observation, so the list follows it by subscription: a tab switch
+    // does not render the list (its focus-drawn leaves read focus themselves).
+    const sessionScreenFocus = useSessionScreenFocusSignal();
     React.useEffect(() => {
-        if (!sessionScreenFocused) {
-            sessionScreenWasBlurredRef.current = true;
-            return;
-        }
-        if (!sessionScreenWasBlurredRef.current) return;
-        sessionScreenWasBlurredRef.current = false;
-        revalidateViewportAfterReveal();
-    }, [revalidateViewportAfterReveal, sessionScreenFocused]);
+        let wasBlurred = !sessionScreenFocus.get();
+        return sessionScreenFocus.subscribe(() => {
+            if (!sessionScreenFocus.get()) {
+                wasBlurred = true;
+                return;
+            }
+            if (!wasBlurred) return;
+            wasBlurred = false;
+            revalidateViewportAfterReveal();
+        });
+    }, [revalidateViewportAfterReveal, sessionScreenFocus]);
     // Row-local toggles (tool ROW inline expand/collapse, thinking) commit giant in-viewport
     // height changes without passing the group-toggle choke point. Under renderer-owned
     // local height restore (default Legend) this notification is the pre-commit seam that
@@ -2142,7 +2151,6 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
             <TranscriptPendingNavigationLanding
                 address={normalizeSessionAddress(props.sessionServerId ?? transcriptSource.serverId, props.sessionId)}
                 isLoaded={props.isLoaded}
-                focused={sessionScreenFocused}
                 hasOlder={hasMoreOlderRef.current !== false}
                 loadOlder={transcriptSource.history.loadOlder}
                 messagesById={props.forkedTranscriptEnabled ? props.messagesById : undefined}
@@ -2157,12 +2165,12 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
                 style={{ flex: 1 }}
               >
                 <TranscriptFindSurface model={transcriptFind} source={transcriptSource} sessionId={props.sessionId}
-                    serverId={props.sessionServerId ?? transcriptSource.serverId} focused={sessionScreenFocused}
+                    serverId={props.sessionServerId ?? transcriptSource.serverId}
                     viewportRef={transcriptViewportFocusRef} items={props.items} loadedMessages={findLoadedMessages} publishCorpus={publishFindCorpus}
                     measureMessage={measureFindMessage} contentHeight={listContentHeight}
                     onClearanceChange={handleFindClearanceChange}
                     olderLoadFailed={olderPagination.loadFailed} onRetryOlderLoad={olderPagination.retryLoad}>
-                <TranscriptContentDemandProvider enabled={sessionScreenFocused}>
+                <TranscriptScreenContentDemand>
                 <TranscriptListShell<ChatTranscriptListItem>
                     ref={commitListRef}
                     onRevealNativeItem={handleRevealNativeItem}
@@ -2220,7 +2228,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
                 {showFirstPaintPlaceholder ? (
                     <TranscriptFirstPaintPlaceholder reducedMotion={reducedMotionPreferred} />
                 ) : null}
-                </TranscriptContentDemandProvider>
+                </TranscriptScreenContentDemand>
                 </TranscriptFindSurface>
               </View>
             </InitialPresentationReadinessProvider>

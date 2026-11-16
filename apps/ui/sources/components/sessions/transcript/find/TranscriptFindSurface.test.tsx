@@ -10,6 +10,7 @@ import { executeFindAction, registerFindActionRuntime } from '@/keyboard/findAct
 import { createFindSurfaceRegistry } from '@/keyboard/findSurfaceRegistry';
 import { NO_KEYBOARD_SHORTCUT_LABELS } from '@/keyboard/shortcutLabels';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { createReadOnlySessionTranscriptSource } from '../source/readOnlySessionTranscriptSource';
 import type { TranscriptJumpResult, TranscriptJumpTarget } from '../viewport/jump/transcriptJumpTargetTypes';
 import { TranscriptFindSurface } from './TranscriptFindSurface';
@@ -72,21 +73,25 @@ describe('transcript Find surface registration', () => {
         const viewportRef = React.createRef<React.ElementRef<typeof View>>();
         const publishCorpus = (next: TranscriptFindCorpus) => { corpus = next; };
         const measureMessage = () => null;
-        function SourceSurface({ focused }: Readonly<{ focused: boolean }>) {
+        function SourceSurface() {
             const ids = source.useMessageIdsOldestFirst();
             const byId = source.useMessagesById();
             const items = React.useMemo(() => buildChatListItems({
                 messageIdsOldestFirst: ids, messagesById: byId, pendingMessages: [],
             }), [ids, byId]);
             return <TranscriptFindSurface model={model} source={source} sessionId="session" serverId="home"
-                focused={focused} viewportRef={viewportRef} items={items} loadedMessages={[]}
+                viewportRef={viewportRef} items={items} loadedMessages={[]}
                 publishCorpus={publishCorpus} measureMessage={measureMessage} contentHeight={0}>
                 <View testID="retained-transcript" />
             </TranscriptFindSurface>;
         }
         const render = (eligible: boolean, focused = true) => <KeyboardShortcutContextBridge snapshot={keyboard}>
             <PluginSurfaceFocusEligibilityProvider active={eligible}>
-                <SourceSurface focused={focused} />
+                {/* The hosting tab's own focus, from its destination owner. */}
+                <DestinationInstanceHost tabId="transcript" ref={{ kind: 'project', params: { workspaceRefId: 'project-a' } }}
+                    pathname="/projects/project-a" focused={focused} visible navigation={{ push() {}, replace() {}, back() {} }}>
+                    <SourceSurface />
+                </DestinationInstanceHost>
             </PluginSurfaceFocusEligibilityProvider>
         </KeyboardShortcutContextBridge>;
         const execute = (input: unknown) => executeFindAction({
@@ -175,7 +180,7 @@ describe('transcript older-load failure notice beside Find', () => {
         const retryOlder = vi.fn();
         const viewportRef = React.createRef<React.ElementRef<typeof View>>();
         const screen = await renderScreen(<TranscriptFindSurface model={model} source={source} sessionId="session"
-            serverId="home" focused={false} viewportRef={viewportRef} items={[]} loadedMessages={[]}
+            serverId="home" viewportRef={viewportRef} items={[]} loadedMessages={[]}
             publishCorpus={() => {}} measureMessage={() => null} contentHeight={0}
             olderLoadFailed onRetryOlderLoad={retryOlder}>
             <OlderLoadRetryOverlay onRetry={retryOlder} />
