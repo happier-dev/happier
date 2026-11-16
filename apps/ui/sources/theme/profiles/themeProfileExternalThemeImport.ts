@@ -1,19 +1,8 @@
 import type { ThemeProfileV1 } from './themeProfileTypes';
 import { VS_CODE_THEME_IMPORT_ADAPTER } from './themeProfileExternalThemeImportVsCode';
 
-export type ThemeProfileExternalImportOptions = Readonly<{
-    now: string;
-    existingProfileIds?: ReadonlySet<string>;
-    generateId?: () => string;
-}>;
-
-export type ThemeProfileExternalImportAdapter = Readonly<{
-    id: string;
-    label: string;
-    description: string;
-    detect: (value: unknown) => number;
-    parse: (value: Record<string, unknown>, options: ThemeProfileExternalImportOptions) => ThemeProfileV1 | null;
-}>;
+import type { ThemeProfileExternalImportAdapter, ThemeProfileExternalImportOptions } from '@happier-dev/protocol/account/settings/themeProfileExternalThemeImportVsCode';
+export type { ThemeProfileExternalImportAdapter, ThemeProfileExternalImportOptions } from '@happier-dev/protocol/account/settings/themeProfileExternalThemeImportVsCode';
 
 export type ThemeProfileImportFormatSummary = Readonly<{
     id: string;
