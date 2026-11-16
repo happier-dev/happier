@@ -19,7 +19,7 @@ const row = (
 });
 
 describe('deploymentEnvironmentBands (Services → Apps, lab envList)', () => {
-  it('bands each Project in the page order, leads with the Projects their one Environment already names, and keeps unnamed last', () => {
+  it('bands each Project with several Environments in the page order, leads with every one-Environment Project, and keeps unnamed last', () => {
     const rows = [
       row('source-shop', 'storefront', 'Staging', 'danger'),
       row('source-gone', null, 'Demo'),
@@ -28,10 +28,10 @@ describe('deploymentEnvironmentBands (Services → Apps, lab envList)', () => {
       row('source-api', 'payments-api', 'Production API', null),
     ];
     const bands = deploymentEnvironmentBands(rows);
+    // One rule (UI refinements 11-16): a Project with one Environment never gets a heading, whatever its names.
     expect(bands.axis.map((band) => [band.key, band.title])).toEqual([
       ['single', ''],
       ['source-shop', 'storefront'],
-      ['source-api', 'payments-api'],
       ['other', expect.any(String)],
     ]);
     expect(
@@ -41,7 +41,7 @@ describe('deploymentEnvironmentBands (Services → Apps, lab envList)', () => {
       ['source-gone:Demo', 'other'],
       ['source-maria:maria-db', 'single'],
       ['source-shop:Production', 'source-shop'],
-      ['source-api:Production API', 'source-api'],
+      ['source-api:Production API', 'single'],
     ]);
     // Every band stands on the one sheet.
     expect(new Set(bands.axis.map((band) => band.section.key)).size).toBe(1);
@@ -53,6 +53,7 @@ describe('deploymentEnvironmentBands (Services → Apps, lab envList)', () => {
       row('source-shop', 'storefront', 'Production', 'warning'),
       row('source-shop', 'storefront', 'Preview', null),
       row('source-api', 'payments-api', 'Production', null),
+      row('source-api', 'payments-api', 'Staging', null),
     ]);
     const shop = bands.axis.find((band) => band.key === 'source-shop')!;
     const api = bands.axis.find((band) => band.key === 'source-api')!;
@@ -107,5 +108,17 @@ describe('deploymentEnvironmentBands sentences (lab band lines)', () => {
       { projectSourceId: 'shop', projectName: 'billing-api', title: 'Staging', state: { tone: 'danger' as const, text: 'Failed' } },
     ]);
     expect((several.axis.find((group) => group.key === 'shop') as { description?: string }).description).not.toContain('Staging');
+  });
+});
+
+describe('deploymentEnvironmentRowLine folds the address and a collapsed Project (UI refinements 11-16)', () => {
+  it('leads line 2 with the Project of a one-Environment row named otherwise, then where it answers', async () => {
+    const { deploymentEnvironmentRowLine } = await import('./DeploymentEnvironmentRows');
+    const row = { deploymentTitle: 'fix: cart', runsOn: 'vps-ams', lastDeploy: '2h', steps: null, stepCaption: null,
+      liveAddress: 'https://shop.example.com' };
+    expect(deploymentEnvironmentRowLine(row, 'Ana', { columns: true, hereMachine: false, project: 'storefront' }))
+      .toBe('storefront · shop.example.com · fix: cart · Ana');
+    expect(deploymentEnvironmentRowLine({ ...row, liveAddress: null }, null, { columns: true, hereMachine: false }))
+      .toBe('fix: cart');
   });
 });

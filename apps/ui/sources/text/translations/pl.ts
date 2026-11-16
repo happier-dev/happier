@@ -18468,7 +18468,6 @@ settingsSession: {
           backupChecking: "Sprawdzanie…",
           backupUnchecked: "Nie udało się sprawdzić",
           columnEvery: "Co",
-          columnAddress: "Adres",
           countChecks: ({ count }: { count: number }) => `Kontrole: ${count}`,
           countFailing: ({ count }: { count: number }) => `Nieudane: ${count}`,
           countWatched: ({ services, machines }: { services: number; machines: number }) => `Usługi: ${services} · maszyny: ${machines}`,

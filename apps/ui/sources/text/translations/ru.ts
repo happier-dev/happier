@@ -18596,7 +18596,6 @@ settingsSession: {
           backupChecking: "Проверка…",
           backupUnchecked: "Не удалось проверить",
           columnEvery: "Интервал",
-          columnAddress: "Адрес",
           countChecks: ({ count }: { count: number }) => `Проверок: ${count}`,
           countFailing: ({ count }: { count: number }) => `Не проходят: ${count}`,
           countWatched: ({ services, machines }: { services: number; machines: number }) => `Сервисов: ${services} · машин: ${machines}`,

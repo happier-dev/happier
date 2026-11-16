@@ -18645,7 +18645,6 @@ settingsSession: {
           backupChecking: "Verifica…",
           backupUnchecked: "Impossibile verificare",
           columnEvery: "Ogni",
-          columnAddress: "Indirizzo",
           countChecks: ({ count }: { count: number }) => (count === 1 ? '1 controllo' : `${count} controlli`),
           countFailing: ({ count }: { count: number }) => `${count} in errore`,
           countWatched: ({ services, machines }: { services: number; machines: number }) => `${services === 1 ? '1 servizio' : `${services} servizi`} su ${machines === 1 ? '1 Macchina' : `${machines} Macchine`}`,

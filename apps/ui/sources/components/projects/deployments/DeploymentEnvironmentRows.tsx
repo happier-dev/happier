@@ -60,7 +60,9 @@ export function deploymentEnvironmentBands<T extends BandRow>(rows: readonly T[]
   const single = new Set<string>();
   const banded: { key: string; title: string; rows: readonly T[] }[] = [];
   for (const group of named) {
-    if (group.rows.length === 1 && isSameDeploymentName(group.rows[0]!.title, group.title)) single.add(group.key);
+    // One rule (UI refinements 11-16): a Project with one Environment stands in the lead group without a heading; the
+    // row names its Project when the two names differ (deploymentEnvironmentRowLine `project`).
+    if (group.rows.length === 1) single.add(group.key);
     else banded.push(group);
   }
   if (unnamed.length > 0) banded.push({ key: OTHER_PROJECT, title: t('projects.deployments.allOtherProject'), rows: unnamed });
@@ -163,9 +165,6 @@ export function DeploymentEnvironmentRows(
     onOpenChange: open,
   });
   const hereMachine = props.hereMachine === true;
-  // The Address column stands only when an address is known on this page. Which columns fit the row at the reader's
-  // text size is the Collection's to decide (lowest priority first): Address gives way before Runs on.
-  const hasAddress = React.useMemo(() => rows.some((row) => Boolean(row.liveAddress)), [rows]);
   const anatomy = React.useMemo<CollectionAnatomy<Row>>(() => {
     const meta = {
       ...Typography.variant('meta'),
@@ -197,19 +196,6 @@ export function DeploymentEnvironmentRows(
             row.lastDeploy
           ),
       },
-      // Where it answers (the collection's resolved live address), drawn as its host; the first column to give way.
-      ...(!hasAddress ? [] : [{
-        key: 'address',
-        title: t('projects.deployments.services.columnAddress'),
-        minWidth: 128,
-        priority: 2,
-        listColumn: true,
-        render: (row: Row) => row.liveAddress ? (
-          <Text style={{ ...meta, ...Typography.mono() }} numberOfLines={1}>
-            {formatDeploymentLiveAddress(row.liveAddress)}
-          </Text>
-        ) : null,
-      }]),
       ...(hereMachine
         ? []
         : [
@@ -240,8 +226,9 @@ export function DeploymentEnvironmentRows(
       // Line 2 (lab envRow): what was deployed and who asked; a phone folds the columns in (deploymentEnvironmentRowLine).
       // A phone row (no columns) leads line 2 with the state that speaks, so the name keeps line 1 whole (DESIGN
       // "Phones recompose"); wide, the State column says it.
-      byline: (row, layout) =>
-        deploymentEnvironmentRowLine(row, row.author, { columns: layout?.fieldColumns === true, hereMachine }),
+      byline: (row, layout) => deploymentEnvironmentRowLine(row, row.author, { columns: layout?.fieldColumns === true, hereMachine,
+        project: groups.groupOf(row) === SINGLE_PROJECTS && row.projectName && !isSameDeploymentName(row.title, row.projectName)
+          ? row.projectName : null }),
       bylineLead: (row, layout) =>
         deploymentEnvironmentRowLeadState(row, { columns: layout?.fieldColumns === true }) ? <EnvironmentStateWord row={row} /> : null,
       fields,
@@ -260,7 +247,7 @@ export function DeploymentEnvironmentRows(
         title: t('projects.deployments.services.columnEnvironment'),
       },
     };
-  }, [hasAddress, hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2]);
+  }, [groups, hereMachine, props.testID, theme.colors.text.secondary, theme.space.s2]);
   return (
     <EnvironmentRowMenuContext.Provider value={openTab}>
       <ServicesPageList<Row>
@@ -316,7 +303,7 @@ function useAuthoredRows(parts: readonly RowParts[], presentations: readonly Dep
   }, [accountId, parts, presentations]);
 }
 
-type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'lastDeploy' | 'steps' | 'stepCaption'>;
+type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'lastDeploy' | 'steps' | 'stepCaption' | 'liveAddress'>;
 
 /**
  * An Environment row's second line (lab envRow): what was deployed and who asked for it. Where the columns are not
@@ -324,11 +311,14 @@ type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'lastDeploy' | 'steps' |
  * ("Compose") is never the line; nothing known draws no line.
  */
 export function deploymentEnvironmentRowLine(row: LineRow, author: string | null,
-  layout: Readonly<{ columns: boolean; hereMachine: boolean }>): string | null {
+  layout: Readonly<{ columns: boolean; hereMachine: boolean; project?: string | null }>): string | null {
+  // A one-Environment Project's row (no heading) names its Project first when the names differ; where it answers
+  // (its live address's host) follows: no Address column is drawn for the few rows that have one (UI refinements 11-16).
+  const address = row.liveAddress ? formatDeploymentLiveAddress(row.liveAddress) : null;
   const facts = layout.columns
-    ? [row.deploymentTitle, author]
-    : [row.steps ? row.stepCaption : null, row.deploymentTitle, author, layout.hereMachine ? null : row.runsOn,
-        row.steps ? null : row.lastDeploy];
+    ? [layout.project, address, row.deploymentTitle, author]
+    : [row.steps ? row.stepCaption : null, layout.project, address, row.deploymentTitle, author,
+        layout.hereMachine ? null : row.runsOn, row.steps ? null : row.lastDeploy];
   const line = facts.filter(Boolean).join(' · ');
   return line === '' ? null : line;
 }

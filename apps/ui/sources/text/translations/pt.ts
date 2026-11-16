@@ -18749,7 +18749,6 @@ settingsSession: {
           backupChecking: "Verificando…",
           backupUnchecked: "Não foi possível verificar",
           columnEvery: "A cada",
-          columnAddress: "Endereço",
           countChecks: ({ count }: { count: number }) => (count === 1 ? '1 verificação' : `${count} verificações`),
           countFailing: ({ count }: { count: number }) => `${count} falhando`,
           countWatched: ({ services, machines }: { services: number; machines: number }) => `${services === 1 ? '1 serviço' : `${services} serviços`} em ${machines === 1 ? '1 Máquina' : `${machines} Máquinas`}`,

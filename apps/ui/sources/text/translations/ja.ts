@@ -18557,7 +18557,6 @@ settingsSession: {
           backupChecking: "確認中…",
           backupUnchecked: "確認できません",
           columnEvery: "間隔",
-          columnAddress: "アドレス",
           countChecks: ({ count }: { count: number }) => `${count} 件のチェック`,
           countFailing: ({ count }: { count: number }) => `${count} 件失敗中`,
           countWatched: ({ services, machines }: { services: number; machines: number }) => `${machines} 台のマシン上の ${services} サービス`,

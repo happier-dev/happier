@@ -18262,7 +18262,6 @@ settingsSession: {
           backupChecking: "正在检查…",
           backupUnchecked: "无法检查",
           columnEvery: "间隔",
-          columnAddress: "地址",
           countChecks: ({ count }: { count: number }) => `${count} 项检查`,
           countFailing: ({ count }: { count: number }) => `${count} 项失败`,
           countWatched: ({ services, machines }: { services: number; machines: number }) => `${machines} 台机器上的 ${services} 个服务`,
