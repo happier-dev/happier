@@ -386,9 +386,10 @@ export async function createMemoryIndexer(params: Readonly<{
   const observeSessions = async (sessionIds: readonly string[], signal?: AbortSignal): Promise<void> => {
     const newlyObserved = await params.host.observeSessions(sessionIds);
     signal?.throwIfAborted();
-    // Revalidate retained content on first observation after startup. Subsequent
-    // edits come from the durable transcript-change feed, not Session updatedAt
-    // (which also changes for metadata without any transcript change).
+    // Revalidate retained content the host reports as possibly holding an unapplied
+    // revision on first observation. Subsequent edits come from the durable
+    // transcript-change feed, not Session updatedAt (which also changes for
+    // metadata without any transcript change).
     for (const sessionId of newlyObserved) {
       const cursors = tier1?.getSessionCursors({ sessionId, nowMs: Date.now(), readOnly: true });
       if ((cursors?.lastHintedSeq ?? 0) > 0 || (cursors?.lastDeepIndexedSeq ?? 0) > 0) {

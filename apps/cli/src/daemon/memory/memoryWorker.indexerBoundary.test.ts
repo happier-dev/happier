@@ -80,7 +80,7 @@ describe('Memory daemon/indexer boundary', () => {
       deps: { fetchDecryptedTranscriptPageAfterSeq: async () => [], connectIndexer } });
     workers.push(worker);
     return { worker, requests, publish, readExternalSources: (signal: AbortSignal) => host.readExternalSources(false, signal),
-      observeSessions: (ids: readonly string[]) => host.observeSessions(ids), enable: async (changes: Partial<MemorySettingsV1> = {}) => {
+      observeSessions: (ids: readonly string[]) => host.observeSessions(ids), settled: () => host.settled?.(), enable: async (changes: Partial<MemorySettingsV1> = {}) => {
       await writeMemorySettingsToDisk({ ...saved, ...changes, enabled: true });
       await worker.reloadSettings();
     } };
@@ -707,6 +707,28 @@ export function activate(api) { api.agents.register('fixture', createFixtureAgen
     } finally { release.resolve(); await refreshing; }
   });
 
+  it('revalidates a retained Session on first sight only when a revision may not have been applied', async () => {
+    await seedSession('retained', 'chunk');
+    await seedSession('revised', 'chunk');
+    const firstSightRevalidations: string[][] = [];
+    const run = async (during?: (worker: Awaited<ReturnType<typeof setup>>['worker']) => Promise<void>) => {
+      const started = await setup();
+      await started.enable({ backfillPolicy: 'all_history' });
+      started.publish('idle', true, [], { candidateSessionIds: [] });
+      firstSightRevalidations.push([...await started.observeSessions(['retained', 'revised'])]);
+      started.settled();
+      await during?.(started.worker);
+      await workers.splice(workers.indexOf(started.worker), 1)[0]!.stop();
+    };
+    // No earlier record of applied revisions: every retained Session revalidates once.
+    await run();
+    // Nothing was revised since: a restarted daemon rereads nothing.
+    await run(async worker => { await worker.noteSessionTranscriptRevised!({ sessionId: 'revised', seq: 1 }); });
+    // That revision was received but never applied before the stop: only its Session revalidates.
+    await run();
+    expect(firstSightRevalidations).toEqual([['retained', 'revised'], [], ['revised']]);
+  });
+
   it('purges only Sessions held by pending observations, admitted projections or published writers in one mixed batch', async () => {
     const { createSessionRecordFixture } = await import('@/testkit/backends/sessionFixtures');
     const { createTestMetadata } = await import('@/testkit/backends/sessionMetadata');
@@ -826,6 +848,7 @@ export function activate(api) { api.agents.register('fixture', createFixtureAgen
   });
 
   it('re-admits retained snapshot validation after an observed refresh is cancelled', async () => {
+    await seedSession('retained', 'chunk');
     const entered = deferred();
     const seen: (readonly string[])[] = [];
     let observe!: (ids: readonly string[]) => Promise<readonly string[]>;

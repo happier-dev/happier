@@ -107,6 +107,7 @@ export type MemoryIndexerHost = Readonly<{
   failed(error: unknown): void;
   settled?(): void;
   readExternalSources(refresh: boolean, signal: AbortSignal): Promise<MemoryExternalTranscriptSourcesSnapshot>;
+  /** The Sessions first seen in this daemon lifetime that may hold a revision not yet applied to the index. */
   observeSessions(sessionIds: readonly string[]): Promise<readonly string[]>;
   runHint(request: MemoryHintRun, signal?: AbortSignal): Promise<string>;
   commitHint(request: MemoryHintCommit, signal?: AbortSignal): Promise<void>;

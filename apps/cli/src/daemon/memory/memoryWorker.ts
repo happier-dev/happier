@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { AgentExternalSessionsTranscriptPage } from '@happier-dev/plugin-sdk/sessions/external';
 import type { MemoryExternalTranscriptSourceV1, MemorySearchQueryV1 } from '@happier-dev/protocol/memory/memorySearch';
 import type { MemoryIndexSourceStatusV1, MemoryWorkerStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
@@ -22,6 +23,7 @@ import { readCliProjectPromptStackContext } from '@/agent/prompting/coding/sessi
 import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 import { logger } from '@/ui/logger';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
+import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 import { resolveMemoryIndexPaths } from './memoryIndexPaths';
 import { openSummaryShardIndexReader, type SummaryShardIndexReader } from './summaryShardIndexDb';
@@ -129,6 +131,20 @@ export async function prepareMemoryWorker(params: Readonly<{
   // Retained rows predate this worker's volatile admissions. Read their identities
   // once at startup; subsequent writers are represented by the indexer projection.
   const startupRetainedSessionIds = new Set<string>();
+  // Retained Sessions whose transcript revision may not have reached the index. The Account
+  // cursor advances once a revision is received, so a revision still unapplied at a stop survives
+  // only here. On first sight only these Sessions revalidate; the others are current up to the
+  // cursor, and later revisions arrive through the feed. Without this record (first start of a
+  // retained index) every retained Session is in it.
+  const unappliedRevisionsPath = join(paths.memoryDir, 'unapplied-revisions.json');
+  const unappliedRevisionSessionIds = new Set<string>();
+  let unappliedRevisionsWrite: Promise<void> = Promise.resolve();
+  const persistUnappliedRevisions = () => {
+    const sessionIds = [...unappliedRevisionSessionIds].sort();
+    const write = unappliedRevisionsWrite.catch(() => {}).then(() => writeJsonAtomic(unappliedRevisionsPath, { v: 1, sessionIds }));
+    unappliedRevisionsWrite = write;
+    return write;
+  };
   // Exact requests are owned here before their first await or child publication.
   const activeSessionRequests = new Set<{ sessionId: string; removed: boolean }>();
   const pendingRevisions = new Map<string, Readonly<{
@@ -158,6 +174,17 @@ export async function prepareMemoryWorker(params: Readonly<{
     failed: markFailure,
     settled: () => {
       if (snapshot.worker.state === 'error') return;
+      // A drained child has applied every revision of the Sessions it observed and holds no edit for.
+      let applied = false;
+      for (const id of unappliedRevisionSessionIds) {
+        if (!observedSessionIds.has(id) || pendingRevisions.has(id) || snapshot.editedSessionIds.includes(id)) continue;
+        unappliedRevisionSessionIds.delete(id);
+        applied = true;
+      }
+      if (applied) void persistUnappliedRevisions().catch(error => {
+        // The larger record on disk only revalidates those Sessions again.
+        logger.warn('[memoryWorker] Applied revision record could not be written', error);
+      });
       snapshot = { ...snapshot, worker: { ...snapshot.worker, state: desired.enabled ? 'idle' : 'disabled',
         currentSessionId: null, currentPhase: null, idleGraceUntilMs: null, activeOperations: [] },
         embeddings: snapshot.embeddings.runtimeState === 'ready' || snapshot.embeddings.runtimeState === 'downloading'
@@ -166,7 +193,7 @@ export async function prepareMemoryWorker(params: Readonly<{
     observeSessions: async ids => {
       const unseen = ids.filter(id => !observedSessionIds.has(id));
       for (const id of unseen) observedSessionIds.add(id);
-      return unseen;
+      return unseen.filter(id => unappliedRevisionSessionIds.has(id));
     },
     readExternalSources: async (refresh, signal) => {
       if (refresh || externalNeedsRefresh) {
@@ -496,6 +523,10 @@ export async function prepareMemoryWorker(params: Readonly<{
     const initialSettings = await timeWebLatencyPhase('memory.startup.settingsRead', readMemorySettingsFromDisk);
     if (stopped) return;
     for (const id of withReaders(retainedIds)) startupRetainedSessionIds.add(id);
+    const record = await readFile(unappliedRevisionsPath, 'utf8').then(text => JSON.parse(text) as unknown, () => null);
+    const recorded = record && typeof record === 'object' && 'v' in record && record.v === 1 && 'sessionIds' in record
+      && Array.isArray(record.sessionIds) && record.sessionIds.every(id => typeof id === 'string') ? record.sessionIds as string[] : null;
+    for (const id of recorded ?? startupRetainedSessionIds) unappliedRevisionSessionIds.add(id);
     snapshot = { ...snapshot, settings: initialSettings,
       embeddings: buildUnavailableMemoryEmbeddingsDiagnostics(initialSettings.embeddings),
       worker: { ...snapshot.worker, state: initialSettings.enabled ? 'indexing' : 'disabled' } };
@@ -518,7 +549,7 @@ export async function prepareMemoryWorker(params: Readonly<{
         // Join failed/cancelled admission too; it must not skip physical cleanup.
         await Promise.allSettled([settingsOperation]);
         try { await retireIndexer(); }
-        finally { await observation.dispose(); }
+        finally { await Promise.allSettled([unappliedRevisionsWrite]); await observation.dispose(); }
       })();
       return stopPromise;
     },
@@ -649,6 +680,11 @@ export async function prepareMemoryWorker(params: Readonly<{
       // Append hints are cursor-blocking and must never open SQLite readers.
       // A never-admitted Session reads current content on its first normal admission.
       if (!startupRetainedSessionIds.has(change.sessionId) && !hasAdmittedSessionWork(change.sessionId)) return;
+      // Durable before the Account cursor can advance past this revision.
+      if (!unappliedRevisionSessionIds.has(change.sessionId)) {
+        unappliedRevisionSessionIds.add(change.sessionId);
+        await persistUnappliedRevisions();
+      }
       pendingRevisions.set(change.sessionId, { ...pendingRevisions.get(change.sessionId), ...change, revised: true });
       // Receipt must not hold the Account change stream behind transcript IO.
       // The incumbent single-flight work pump carries this fact to the child.
@@ -689,6 +725,9 @@ export async function prepareMemoryWorker(params: Readonly<{
       }, withdrawal).finally(() => { if (!stopped && desired.enabled && workLoop === loop) loop?.resume(); });
     },
     reconcileRetainedSessionAccess: () => serializeSettings(async () => {
+      // Cursor loss also loses revisions: every retained Session revalidates on first sight.
+      for (const id of withReaders(retainedIds)) unappliedRevisionSessionIds.add(id);
+      await persistUnappliedRevisions();
       // Drain already-admitted work before requalifying after cursor loss.
       snapshot = { ...snapshot, indexesQualified: false };
       discardPendingEligibility();
