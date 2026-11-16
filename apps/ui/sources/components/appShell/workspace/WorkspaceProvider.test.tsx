@@ -2768,6 +2768,40 @@ describe('consumed workspace navigation owner', () => {
         expect(currentHref()).toBe('/session/A1?serverId=home-a');
         expect(disposals).toBe(1);
     });
+    it('releases a pending Account URL when sign-out withdraws workspace hosting', async () => {
+        boundary.platform = 'web';
+        boundary.pathname = '/';
+        boundary.params = {};
+        const location = { pathname: '/settings/account', search: '', hash: '' };
+        const history = { state: null as unknown,
+            replaceState: (state: unknown, _unused: string, href?: string | URL | null) => {
+                history.state = state;
+                if (!href) return;
+                const next = new URL(href, 'https://happier.test');
+                location.pathname = next.pathname; location.search = next.search; location.hash = next.hash;
+            },
+            pushState: (state: unknown, unused: string, href: string) => history.replaceState(state, unused, href), go: () => {},
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        function CurrentLocation() {
+            return React.createElement('CurrentLocation', { pathname: useCurrentRoutePathname() });
+        }
+        const element = (enabled: boolean) => <WorkspaceProvider enabled={enabled} catalog={catalog}>
+            <CurrentLocation />
+        </WorkspaceProvider>;
+        const screen = await renderScreen(element(true));
+        try {
+            expect(location.pathname).toBe('/settings/account');
+            await screen.update(element(false));
+            // Auth retires the signed-in route to welcome while Expo may still mirror its root.
+            await act(async () => { history.replaceState(history.state, '', '/'); });
+            expect(location.pathname).toBe('/');
+            expect(screen.root.findByType('CurrentLocation').props.pathname).toBe('/');
+        } finally { await screen.unmount(); }
+    });
     it('admits the current browser location when readiness arrives before the Expo URL mirror', async () => {
         boundary.platform = 'web';
         boundary.pathname = '/session/A1';

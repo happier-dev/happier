@@ -487,6 +487,11 @@ export function WorkspaceProvider(props: Readonly<{
         props.appWindow?.record.layoutId, nativeWindows?.kind, paneSubscription, requestAppWindowOpen, runtime, scopeKey]);
 
     React.useLayoutEffect(() => {
+        if (!hostsRoute) {
+            runtime.projectedHref = null;
+            setMirrorLead(null);
+            return;
+        }
         // A nested Expo navigator can briefly mirror its parent while mounting
         // the requested child. Keep the workspace's explicit URL until Expo
         // acknowledges that child; our own browser write is not that acknowledgement.
@@ -508,7 +513,7 @@ export function WorkspaceProvider(props: Readonly<{
             }
             if (routeHref !== projectedHref) runtime.projectedHref = null;
         }
-        if (!hostsRoute || !owner.isReady || !eligible) return;
+        if (!owner.isReady || !eligible) return;
         if (!runtime.initialized) {
             // A Home window has no addressed destination; its restored layout owns the selection.
             const state = owner.getState();
