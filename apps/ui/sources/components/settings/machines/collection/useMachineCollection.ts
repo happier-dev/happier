@@ -8,13 +8,46 @@ import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { selectMachineFleet } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { partitionMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { actionOperationSelectors, type ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
+import { readManagedInstallationPrompt } from '../managed/managedCreationPresentation';
 
-import { buildMachineCollection, reconcileMachineCollection, machineCollectionRowKey, type MachineCollection, type MachineCollectionRow } from './machineCollectionModel';
+import { buildMachineCollection, reconcileMachineCollection, managedMachineConsentKey, machineCollectionRowKey, type MachineCollection, type MachineCollectionRow } from './machineCollectionModel';
 
 /** Structural inventory changes rebuild the collection; presence belongs to its visible leaves. */
-export function useMachineCollection(input: Omit<Parameters<typeof buildMachineCollection>[0], 'nowMs'>): MachineCollection {
+export function useMachineCollection(input: Omit<Parameters<typeof buildMachineCollection>[0], 'nowMs' | 'creationOperations' | 'awaitingConsent'>): MachineCollection {
     const language = usePreferredLanguage();
-    const { groups, groupedByHome, query, managedByServerId, managedFirstAnswerPending, presetsByServerId, teamNamesByServerId, awaitingConsent, creationOperations } = input;
+    const { groups, groupedByHome, query, managedByServerId, managedFirstAnswerPending, presetsByServerId, teamNamesByServerId } = input;
+    // Every collection reads the same qualified lifecycle selection as managed detail, including joined setup
+    // attachments and terminal diagnostics. Stable owner projections keep unrelated operations out of the list.
+    const readOperations = React.useMemo(() => {
+        let previous: Readonly<Record<string, ActionOperationProjection | null>> | undefined;
+        return () => {
+            const state = actionOperationStore.getSnapshot();
+            const next: Record<string, ActionOperationProjection | null> = {};
+            for (const group of groups) for (const machine of managedByServerId?.[group.serverId] ?? []) {
+                next[managedMachineConsentKey(group.serverId, machine.id)] = actionOperationSelectors.selectForManagedMachine(state, {
+                    serverId: group.serverId, accountId: group.accountScope?.accountId ?? null,
+                    machineId: machine.controller?.machineId ?? '', managedId: machine.id, managedMachine: machine,
+                    homeId: machine.homeId, enrolledMachineId: machine.enrolledMachineId,
+                });
+            }
+            previous = retainShallow(previous, next);
+            return previous;
+        };
+    }, [groups, managedByServerId]);
+    const operations = React.useSyncExternalStore(actionOperationStore.subscribe, readOperations, readOperations);
+    const { creationOperations, awaitingConsent } = React.useMemo(() => {
+        const creationOperations = new Map<string, ActionOperationProjection>();
+        const awaitingConsent = new Set<string>();
+        for (const [key, operation] of Object.entries(operations)) {
+            if (!operation) continue;
+            creationOperations.set(key, operation);
+            if (readManagedInstallationPrompt(operation)) awaitingConsent.add(key);
+        }
+        return { creationOperations, awaitingConsent };
+    }, [operations]);
     const published = React.useRef<MachineCollection | null>(null);
     // The collection is rebuilt from its inputs; rows are reconciled by key against the one published last,
     // so every consumer (index, rail, popover) sees one new row for one changed Machine.
