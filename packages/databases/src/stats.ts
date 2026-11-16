@@ -1,8 +1,8 @@
-import { DatabaseStatsObservationV1Schema, type DatabaseStatsIntervalBasisV1, type DatabaseStatsObservationV1, type DatabaseStatsReadV1, type DatabaseStatsReasonV1, type DatabaseTargetV1 } from '@happier-dev/database-protocol';
+import { DatabaseStatsObservationV1Schema, type DatabaseStatsIntervalBasisV1, type DatabaseStatsObservationV1, type DatabaseStatsReadV1, type DatabaseStatsReasonV1 } from '@happier-dev/database-protocol';
 
 export type DatabaseStatsSqlStatementV1 = Readonly<{ sql: string; parameters: readonly (string | number)[] }>;
 export type DatabaseStatsDecodeContextV1 = Readonly<{
-    target: DatabaseTargetV1; observedAtMs: number; database: string; intervalBasis: DatabaseStatsIntervalBasisV1;
+    observedAtMs: number; database: string; intervalBasis: DatabaseStatsIntervalBasisV1;
 }>;
 export type DatabaseStatsNativeRowV1 = Readonly<Record<string, unknown>>;
 export type DatabaseStatsSqlPlanV1 = Readonly<{
@@ -91,7 +91,7 @@ export function statsSqlPlan(engineId: string, operation: DatabaseStatsReadV1, s
             intervalBasis: { ...intervalBasis, ...(Object.keys(rowResetMarkers).length ? { rowResetMarkers } : {}) },
             coverage: coverageReasons.length ? { status: 'partial', reasons: [...new Set(coverageReasons)] } : { status: 'complete' },
             completeness: hasNext && demanded ? { complete: false, reason: 'page', continuation: {
-                kind: 'stats', input: { operation: 'stats.read', target: context.target, request: operation }, offset: (demanded.offset ?? 0) + demanded.rows,
+                kind: 'stats', offset: (demanded.offset ?? 0) + demanded.rows,
             } } : { complete: true },
             data: decode(retained) });
     } };
