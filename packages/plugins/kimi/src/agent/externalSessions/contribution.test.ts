@@ -1,6 +1,6 @@
 import { appendFile, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentExternalSessionTranscriptRawRecordSchema, type AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
 import { activate } from '../../activate.js';
@@ -36,9 +36,13 @@ describe('registered Kimi Code protocol 1.4 history reader', () => {
     expect(PLUGIN_MANIFEST.contributes.agents[0]?.surfaces?.externalSession?.sources)
       .toContainEqual(expect.objectContaining({ sourceKind: 'kimiCodeHome', contentSearch: true }));
   });
-  it('finds full decoded assistant bodies, excludes injection and tool-input metadata, and pages exact locators', async () => {
-    const { reader, request, runtime } = await setup();
+  it.each([false, true])('finds full decoded assistant bodies and exact locators after launch-home relocation: %s', async relocated => {
+    const { reader, request, runtime, home, files } = await setup();
     try {
+      if (relocated) await writeFile(join(home, 'session_index.jsonl'), kimiWire([{
+        sessionId: 'session_fixture', workDir: '/fixture',
+        sessionDir: join(home, 'removed-launch-home', 'sessions', 'wd_fixture_123', basename(files.sessionDir)),
+      }]));
       for (const query of ['body-only phrase', '你好 café\n"quoted"']) {
         const result = await reader.listCandidates({ ...request, searchTarget: 'content', searchTerm: query });
         expect(result).toMatchObject({ ok: true, value: { contentCoverage: 'complete', candidates: [
@@ -62,6 +66,18 @@ describe('registered Kimi Code protocol 1.4 history reader', () => {
       if (!latest.ok || !latest.value.nextCursor) throw new Error('Expected older cursor');
       const older = await reader.pageTranscript({ ...request, remoteSessionId: 'session_fixture', direction: 'older', cursor: latest.value.nextCursor });
       expect(older.ok && older.value.items.every(item => item.id !== latest.value.items[0]?.id)).toBe(true);
+    } finally { await runtime.dispose(); }
+  });
+
+  it('lists valid retained history when another index entry is outside session storage', async () => {
+    const { reader, request, runtime, home } = await setup();
+    try {
+      await appendFile(join(home, 'session_index.jsonl'), kimiWire([{
+        sessionId: 'malformed', sessionDir: join(home, 'outside', 'malformed'), workDir: '/fixture',
+      }]));
+      expect(await reader.listCandidates(request)).toMatchObject({ ok: true, value: {
+        candidates: [{ remoteSessionId: 'session_fixture', cwd: '/fixture' }], searchIncomplete: true,
+      } });
     } finally { await runtime.dispose(); }
   });
 

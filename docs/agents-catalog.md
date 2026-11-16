@@ -83,6 +83,12 @@ calls retain Agent automation authority.
 
 ## Kimi background continuations (0.3 development)
 
+Kimi's session-directory owner resolves indexed `sessions/<workspace>/<session>`
+locations against the current native home. Journal attachment and external history
+share that resolution, so an index written through a removed launch-home alias
+still reaches retained state. The actual journal must remain inside current
+session storage; a missing directory still reports the typed continuity cause.
+
 Kimi's custom runtime leaf composes the shared ACP runtime with the host's
 existing file-follow service through an exact journal-path grant scoped to the
 active ACP source lifetime. ACP remains the execution, filesystem, and

@@ -19,6 +19,8 @@ import { AGENT_STATE_SHARING_DESCRIPTOR as CODEX_STATE_SHARING } from '../../../
 import { AGENT_STATE_SHARING_DESCRIPTOR as CLAUDE_STATE_SHARING } from '../../../../../packages/plugins/claude/src/agent/definition';
 import { geminiConnectedServiceStateSharingDescriptor as GEMINI_STATE_SHARING } from '../../../../../packages/plugins/gemini/src/agent/connectedServices/descriptor';
 import { KIMI_CONNECTED_ACCOUNT_LAUNCH } from '../../../../../packages/plugins/kimi/src/agent/connectedAccount';
+import { createKimiWireSource } from '../../../../../packages/plugins/kimi/src/agent/acp/wireSource';
+import { createAcpProviderJournalFollower } from '@/plugins/runtime/context/transcripts/acpProviderJournal';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
@@ -72,7 +74,7 @@ describe('provider binding host materialization', () => {
     }
   });
 
-  it('retains a first Kimi session index across Stop and resume without truncating it', async () => {
+  it('reattaches the retained Kimi journal after Stop removes the indexed launch home', async () => {
     const base = await mkdtemp(join(tmpdir(), 'happier-kimi-provider-resume-'));
     const compose = () => composeProviderBindingMaterialization({
       materialization: { v: 1, kind: 'configFile', nativeHome: true, env: [],
@@ -85,12 +87,39 @@ describe('provider binding host materialization', () => {
       const initial = await compose();
       if (initial.launchMaterialization.kind !== 'configFile') throw new Error('Expected native home');
       const index = 'session_index.jsonl';
-      await writeFile(join(initial.launchMaterialization.rootPath, index), 'native session index\n');
+      const sessionId = 'native-session';
+      const sessionDir = join(initial.launchMaterialization.rootPath, 'sessions', 'wd_fixture', sessionId);
+      await mkdir(join(sessionDir, 'agents', 'main'), { recursive: true });
+      await writeFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'),
+        JSON.stringify({ type: 'metadata', protocol_version: '1.5' }) + '\n');
+      // Kimi writes the launch-home alias on create and does not rewrite it on load.
+      const indexed = JSON.stringify({ sessionId, sessionDir, workDir: base }) + '\n';
+      await writeFile(join(initial.launchMaterialization.rootPath, index), indexed);
       initial.cleanup?.();
+      await expect(stat(sessionDir)).rejects.toMatchObject({ code: 'ENOENT' });
       const resumed = await compose();
       try {
         if (resumed.launchMaterialization.kind !== 'configFile') throw new Error('Expected native home');
-        expect(await readFile(join(resumed.launchMaterialization.rootPath, index), 'utf8')).toBe('native session index\n');
+        const home = resumed.launchMaterialization.rootPath;
+        expect(await readFile(join(home, index), 'utf8')).toBe(indexed);
+        const lifetime = new AbortController();
+        const follow = createAcpProviderJournalFollower({ pluginId: 'fixture', runtimeId: 'runtime',
+          scope: { kind: 'session', sessionId: 'public' } });
+        const open = () => createKimiWireSource()({
+          sessionId, cwd: base, env: { KIMI_CODE_HOME: home }, signal: lifetime.signal,
+          followJournal: input => follow({ providerSessionId: sessionId, signal: lifetime.signal }, input),
+          registerContinuation: () => false, beginContinuation: () => null, releaseToolCalls() {},
+          fail(error) { throw error; },
+        });
+        const source = await open();
+        try { await source.catchUp({ foregroundActive: false }); }
+        finally { await source.dispose(); }
+        // A retained index must never disguise genuinely missing native state.
+        await rm(join(home, 'sessions', 'wd_fixture', sessionId), { recursive: true });
+        await expect(open()).rejects.toMatchObject({
+          code: 'provider_session_state_unavailable_for_resume',
+        });
+        lifetime.abort();
       } finally { resumed.cleanup?.(); }
     } finally { await rm(base, { recursive: true, force: true }); }
   });

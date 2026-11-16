@@ -197,11 +197,11 @@ describe('selected Kimi native Account through the spawn materializer', () => {
     const networkRequests: Array<{ url: string; authorization: string | undefined }> = [];
     const credentialReads: string[] = [];
     try {
-      await mkdir(join(nativeHome, 'sessions', 'native-session'), { recursive: true });
+      await mkdir(join(nativeHome, 'sessions', 'wd_fixture', 'native-session'), { recursive: true });
       await mkdir(join(nativeHome, 'credentials'));
-      await writeFile(join(nativeHome, 'sessions', 'native-session', 'state.json'), JSON.stringify({ sessionId: 'native-session' }));
+      await writeFile(join(nativeHome, 'sessions', 'wd_fixture', 'native-session', 'state.json'), JSON.stringify({ sessionId: 'native-session' }));
       await writeFile(join(nativeHome, 'session_index.jsonl'), JSON.stringify({ sessionId: 'native-session',
-        sessionDir: join(nativeHome, 'sessions', 'native-session'), workDir: root,
+        sessionDir: join(nativeHome, 'sessions', 'wd_fixture', 'native-session'), workDir: root,
       }) + '\n');
       const nativeConfig = [
         'default_model = "native-A"',

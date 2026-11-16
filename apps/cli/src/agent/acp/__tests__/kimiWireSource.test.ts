@@ -123,7 +123,7 @@ it.each(['cwd', 'storage', 'version', 'replay', 'truncated', 'foreign'] as const
   'fails closed for invalid native journal evidence (%s) without inventing a continuation', async fault => {
     await withTempDir('kimi-wire-evidence-', async directory => {
       const sessionId = 'native';
-      const sessionDir = join(directory, 'sessions', sessionId);
+      const sessionDir = join(directory, 'sessions', 'workspace-fixture', sessionId);
       const agentDir = join(sessionDir, 'agents', 'main');
       const other = join(directory, 'other');
       await mkdir(agentDir, { recursive: true });

@@ -10,6 +10,7 @@ import type {
   AgentAcpProviderTurnSink as AcpProviderTurnSink,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { decodeKimiWireRecord } from './wireEvents.js';
+import { resolveKimiSessionDirectory } from '../sessionDirectory.js';
 type SessionUpdate = Record<string, unknown>;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -48,7 +49,7 @@ async function sessionWirePath(home: string, cwd: string, sessionId: string): Pr
                 || await realpath(entry.workDir) !== await realpath(cwd)) {
                 throw new Error('Kimi session index does not match the active workspace');
             }
-            directory = entry.sessionDir;
+            directory = resolveKimiSessionDirectory(home, entry.sessionDir, sessionId);
         }
     } finally { lines.close(); input.destroy(); }
     if (!directory) throw missingSessionState();

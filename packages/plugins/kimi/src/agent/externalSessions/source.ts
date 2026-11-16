@@ -3,6 +3,7 @@ import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import type { AgentExternalSessionSource, AgentExternalSessionsFailureCode } from '@happier-dev/plugin-sdk/sessions/external';
+import { resolveKimiSessionDirectory } from '../sessionDirectory.js';
 
 export class KimiStoreError extends Error {
   constructor(readonly code: AgentExternalSessionsFailureCode) { super(`Kimi Code history: ${code}.`); }
@@ -72,7 +73,7 @@ export async function listKimiSessions(store: KimiStore, signal: AbortSignal): P
         const entry: unknown = JSON.parse(line);
         if (!record(entry) || typeof entry.sessionId !== 'string' || typeof entry.sessionDir !== 'string'
           || typeof entry.workDir !== 'string' || !isAbsolute(entry.sessionDir) || !isAbsolute(entry.workDir)) { partial = true; continue; }
-        index.set(entry.sessionId, { directory: resolve(entry.sessionDir), cwd: entry.workDir });
+        index.set(entry.sessionId, { directory: resolveKimiSessionDirectory(store.root, entry.sessionDir, entry.sessionId), cwd: entry.workDir });
       } catch { partial = true; }
     }
   } catch (error) { if (!record(error) || error.code !== 'ENOENT') throw error; }

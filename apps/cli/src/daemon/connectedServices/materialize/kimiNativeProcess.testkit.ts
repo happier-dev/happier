@@ -42,11 +42,12 @@ export function writeKimiNativeProcessFixture(directory: string, route: string, 
           continue;
         }
         sessionId = request.method === 'session/load' ? request.params.sessionId : sessionId;
-        const sessionDir = join(home, 'sessions', sessionId);
+        const sessionDir = join(home, 'sessions', 'wd_fixture', sessionId);
         mkdirSync(join(sessionDir, 'agents', 'main'), { recursive: true });
         writeFileSync(join(sessionDir, 'state.json'), JSON.stringify({ sessionId }));
         writeFileSync(join(sessionDir, 'agents', 'main', 'wire.jsonl'), JSON.stringify({ type: 'metadata', protocol_version: '1.5' }) + '\\n');
-        appendFileSync(join(home, 'session_index.jsonl'), JSON.stringify({ sessionId, sessionDir, workDir: request.params.cwd }) + '\\n');
+        if (request.method === 'session/new') appendFileSync(join(home, 'session_index.jsonl'),
+          JSON.stringify({ sessionId, sessionDir, workDir: request.params.cwd }) + '\\n');
         result = { ...(request.method === 'session/new' ? { sessionId } : {}), models: {
           currentModelId, availableModels: modelIds.map(modelId => ({ modelId, name: modelId })),
         }, configOptions: configOptions(), modes: { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }] } };
