@@ -388,6 +388,11 @@ export type HappierCollectionTableRowFacts = Readonly<{
    * rowInset in from the list's edges with the catalog row radius, so rows part by air.
    */
   insetFill?: boolean;
+  /**
+   * That fill's distance from the list's edges when it is not `rowInset`: a page directory's fill reaches past its
+   * section's text edges (negative) so the row's content can stand on them.
+   */
+  fillInsetPx?: number;
   /** The row ends its group and the next group's band follows: the band parts them, so the row draws no hairline. */
   beforeBand?: boolean;
   /** A list row: its content draws the one list-row rule from its text column, so the frame draws no full-bleed line. */

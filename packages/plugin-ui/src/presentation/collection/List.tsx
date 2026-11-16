@@ -1357,6 +1357,8 @@ export function HappierListItem({
         // A filled surface takes the one radius base, as the group band above the rows does (owner 2026-11-10).
         borderRadius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
         ...(collectionItem?.insetFill === true ? CATALOG_INSET_FILL_STYLE : null),
+        ...(collectionItem?.insetFill === true && collectionItem.fillInsetPx !== undefined
+          ? { marginHorizontal: collectionItem.fillInsetPx } : null),
       } : undefined]}
     >
       {rowContent}

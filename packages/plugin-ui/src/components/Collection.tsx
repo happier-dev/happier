@@ -750,6 +750,8 @@ type CollectionStage<Item> = Readonly<{
   pageSections: boolean;
   /** A page of catalog rows laid out as a directory: one row anatomy at every column count (a resize never remounts). */
   catalogDirectory: boolean;
+  /** A directory row's facts: its fill reaching the page row's inset past the section's text edges (else null). */
+  directoryRow: HappierCollectionTableRowFacts | null;
   useRowActions: ((item: Item) => CollectionRowActions) | undefined;
   useRowItem: ((item: Item) => Item) | undefined;
   expandable: boolean;
@@ -810,6 +812,18 @@ const CATALOG_SIDE_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairlin
 const CATALOG_SIDE_INSET = 20;
 /** The catalog side row's content inset: its mark on the side list's edge, inside its inset fill. */
 const catalogSideRowContentStyle: HappierPortableStyle = { paddingLeft: CATALOG_SIDE_INSET - 1 - HAPPIER_COLLECTION_LIST_METRICS.rowInset };
+/**
+ * A page directory's row (Store Discover, kind pages, Installed) stands on its section's edges (owner A9): its mark starts
+ * on the section title's edge and its trailing control's glyph ends on the "All ›" edge. Its fill keeps the page row's
+ * inset around that content, so the fill reaches past the section's text edges by that inset rather than pinching it.
+ */
+const DIRECTORY_ROW_INSET = HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
+/** The directory row's content from its fill's leading edge (the row's 1 pt press edge is part of it). */
+const catalogDirectoryRowContentStyle: HappierPortableStyle = { paddingLeft: DIRECTORY_ROW_INSET - 1 };
+/** With no trailing control the content itself ends on the section's edge. */
+const catalogDirectoryRowTrailingStyle: HappierPortableStyle = { ...catalogDirectoryRowContentStyle, paddingRight: DIRECTORY_ROW_INSET - 1 };
+/** The trailing icon button's own hit padding: its glyph, not its box, ends on the section's edge. */
+const DIRECTORY_ACTION_HIT_PAD = 4;
 const NO_CELLS: readonly never[] = Object.freeze([]);
 const CollectionStageContext = createContext<CollectionStage<unknown> | null>(null);
 
@@ -1106,6 +1120,8 @@ const glyphStyle: HappierPortableStyle = { width: TABLE.glyphWidth - TABLE.gap, 
  */
 const catalogMarkStyle: HappierPortableStyle = { width: CATALOG_ROW.markBox, height: CATALOG_ROW.markBox, alignItems: 'center', justifyContent: 'center' };
 const catalogRowContentStyle: HappierPortableStyle = { alignItems: 'center' };
+/** A directory's mark leads its column, so whatever its width it starts on the section title's edge (owner A9). */
+const catalogDirectoryMarkStyle: HappierPortableStyle = { ...catalogMarkStyle, alignItems: 'flex-start' };
 const catalogTitleLineStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'baseline', gap: 8, minWidth: 0 };
 /** The kind word inside the name's line: the name's baseline, the meta step's size and ink. */
 const catalogKindWordStyle: HappierPortableStyle = { fontWeight: '400' };
@@ -1461,6 +1477,8 @@ function ListCells<Item>(props: Readonly<{
   listColumns: readonly CollectionField<Item>[];
   /** The row draws the one list-row rule under it (every list row but a page sheet's, whose sheet divides its rows). */
   rule: boolean;
+  /** A page directory's row: its mark stands on its section title's edge (`catalogDirectoryRowContentStyle`). */
+  directory: boolean;
 }>): ReactElement {
   const { item, anatomy, AnimatedView } = props;
   const typography = useOptionalHappierUiTypography();
@@ -1570,9 +1588,10 @@ function ListCells<Item>(props: Readonly<{
       props.wrapTitle && !page ? (props.ruledInsetPx !== null
         ? ruledStyle
         : (props.ownsTrailingInset ? restingListTrailingStyle : restingListContentStyle)) : null,
+      props.directory ? (props.ownsTrailingInset ? catalogDirectoryRowTrailingStyle : catalogDirectoryRowContentStyle) : null,
       singleLine ? singleLineRowContentStyle : null]}>
       {leadingControl === null ? null : (
-        <View pointerEvents={layer?.control} style={catalog ? catalogMarkStyle : [glyphStyle, { justifyContent: 'flex-start' }, page || restingFlat ? pageRowGlyphStyle : null]}>
+        <View pointerEvents={layer?.control} style={catalog ? (props.directory ? catalogDirectoryMarkStyle : catalogMarkStyle) : [glyphStyle, { justifyContent: 'flex-start' }, page || restingFlat ? pageRowGlyphStyle : null]}>
           {/* A control in the glyph's place wears the glyph's badge; a second leading column would push the title off its edge. */}
           {badge === null ? leadingControl : (
             <View style={glyphWithBadgeStyle}>
@@ -1583,7 +1602,7 @@ function ListCells<Item>(props: Readonly<{
         </View>
       )}
       {leadingControl !== null || (glyph === null && badge === null) ? null : (
-        <View pointerEvents={layer?.leaf} style={catalog ? catalogMarkStyle : [glyphStyle, { justifyContent: 'flex-start' }, page || restingFlat ? pageRowGlyphStyle : null]}>
+        <View pointerEvents={layer?.leaf} style={catalog ? (props.directory ? catalogDirectoryMarkStyle : catalogMarkStyle) : [glyphStyle, { justifyContent: 'flex-start' }, page || restingFlat ? pageRowGlyphStyle : null]}>
           {badge === null ? glyph : (
             <View style={glyphWithBadgeStyle}>
               {glyph}
@@ -1675,6 +1694,7 @@ function ListCells<Item>(props: Readonly<{
         <CollectionListRowRule
           // The row's text column: its content inset, then its glyph column and gap when it leads with one.
           startPx={(page ? pageRowInsetPx - 1
+            : props.directory ? DIRECTORY_ROW_INSET - 1
             : props.wrapTitle ? (props.ruledInsetPx !== null ? ruledPaddingPx : HAPPIER_PAGE_METRICS.headingOpticalInsetPx - 1)
             : catalog ? CATALOG_SIDE_INSET - 1 - HAPPIER_COLLECTION_LIST_METRICS.rowInset
             : TABLE.insetStart - 1)
@@ -1786,7 +1806,10 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
   const accessory = (rowAccessory === undefined && anatomy.peek === undefined && anatomy.action === undefined)
     || (stage.wrapTitles && rowAccessory === undefined && chevron === null && listAction === null) ? null : (
     <View style={lineStyle}>
-      {listAction === null ? null : <View style={stage.ruledInsetPx === null ? listActionStyle : { marginRight: stage.ruledInsetPx - theme.spacing.medium }}>{listAction}</View>}
+      {listAction === null ? null : <View style={stage.directoryRow !== null
+        // A directory's action: the accessory cell's end and the button's own hit padding make up the row's inset.
+        ? { marginRight: DIRECTORY_ROW_INSET - theme.spacing.medium - DIRECTORY_ACTION_HIT_PAD }
+        : stage.ruledInsetPx === null ? listActionStyle : { marginRight: stage.ruledInsetPx - theme.spacing.medium }}>{listAction}</View>}
       {beneath === null ? rowAccessory : null}{chevron}
     </View>
   );
@@ -1844,6 +1867,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
         beneath={beneath}
         listColumns={stage.listColumns}
         rule={stage.dividedKeys === null}
+        directory={stage.directoryRow !== null}
       />
       {travel === null ? null : (
         // The table's other columns, fading where they stood while the rows travel.
@@ -1902,7 +1926,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
   // Page rows and virtualizer overscan stay mounted offscreen; the highlight reads physical visibility.
   const needsYou = anatomy.needsYou?.(item) ?? null;
   const destinationRow = (
-    <HappierCollectionTableRowContext.Provider value={stage.catalogDirectory && geometry === 'list' ? CATALOG_SIDE_ROW
+    <HappierCollectionTableRowContext.Provider value={stage.directoryRow !== null && geometry === 'list' ? stage.directoryRow
       : stage.wrapTitles && !stage.restingRuled ? RESTING_LIST_ROW
       : catalog && geometry === 'list' && !stage.wrapTitles ? CATALOG_SIDE_ROW
       : props.beforeBand ? RULED_ROW_BEFORE_BAND
@@ -2335,6 +2359,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const wrapTitles = composition === 'list' && transition === null && !besideDetail && directoryColumns === 1;
   // A directory's section titles stand on the page text edge, with the page title and the rows' marks.
   const directoryHeadingInsetPx = HAPPIER_PAGE_METRICS.pageTextInsetPx - useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx);
+  // Its rows' content stands on that same edge at both ends, inside a fill that keeps the page row's inset around it.
+  const directoryRow = useMemo<HappierCollectionTableRowFacts | null>(() => (catalogDirectory
+    ? { hairline: true, insetFill: true, fillInsetPx: directoryHeadingInsetPx - DIRECTORY_ROW_INSET } : null),
+  [catalogDirectory, directoryHeadingInsetPx]);
   const restingRows = useContext(HappierCollectionRestingRowsContext);
   const ruledInsetPx = wrapTitles && restingRows !== 'air' ? ruledRowInset(theme, restingRows) : null;
   const restingRuled = wrapTitles && restingRows === 'ruled';
@@ -2571,13 +2599,14 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     // A directory's rows are catalog rows on the page, not rows on a section's sheet.
     pageSections: pageSections && !catalogDirectory,
     catalogDirectory,
+    directoryRow,
     useRowActions: props.useRowActions,
     useRowItem: props.useRowItem,
     expandable,
     dividedKeys,
     onPeekHeight,
     onPeekSettled,
-  }), [anatomy, rowRole, columns, composition, dividedKeys, expandable, model.useExpanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, narrowRows, listColumns, ruledInsetPx, restingRuled, pageSections, catalogDirectory, onPeekHeight, onPeekSettled, progress, props.useRowActions, props.useRowItem, rowGeometry, transition]);
+  }), [anatomy, rowRole, columns, composition, dividedKeys, expandable, model.useExpanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, narrowRows, listColumns, ruledInsetPx, restingRuled, pageSections, catalogDirectory, directoryRow, onPeekHeight, onPeekSettled, progress, props.useRowActions, props.useRowItem, rowGeometry, transition]);
 
   // ---- the List engine's Collection facts ----
   const authorMultiple: NonNullable<CollectionProps<Item>['selection']>['multiple'] = props.selection?.multiple
