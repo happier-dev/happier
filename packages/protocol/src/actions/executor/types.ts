@@ -1910,6 +1910,11 @@ export type ActionExecutorDeps = Readonly<{
     serverId?: string | null;
     signal?: AbortSignal;
   }>) => Promise<SessionRestoreResultV1 | unknown>;
+  sessionWorkspaceReturn?: (args: Readonly<{
+    actionId: import('../specs/session/projectFilesReturn.js').SessionWorkspaceReturnActionIdV1;
+    input: import('../specs/session/projectFilesReturn.js').SessionWorkspaceReturnInputV1;
+    context: ActionExecutorContext;
+  }>) => Promise<unknown>;
   sessionHandoffStart?: (args: Readonly<{
     sessionId: string;
     targetMachineId: string;

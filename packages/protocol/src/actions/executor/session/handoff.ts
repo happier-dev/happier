@@ -1,4 +1,6 @@
 import { resolveSessionIdFromInput, resolveServerIdForSession } from '../sessionScope.js';
+import { isSessionWorkspaceReturnActionIdV1 } from '../../actionIds.js';
+import type { SessionWorkspaceReturnInputV1 } from '../../specs/session/projectFilesReturn.js';
 import { normalizeId } from '../inputReading.js';
 import { type HandoffWorkspaceActionV1 } from '../../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { completeActionResult, completeSessionHandoffActionResult } from '../resultProjection.js';
@@ -10,6 +12,10 @@ import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } f
 
 export async function dispatchSessionHandoff(inv: Pick<CoreInvocation, 'actionId' | 'parsed' | 'ctx' | 'data' | 'deps'>): Promise<ActionExecuteResult | null> {
   const { actionId, parsed, ctx, data, deps } = inv;
+  if (isSessionWorkspaceReturnActionIdV1(actionId)) {
+    if (!deps.sessionWorkspaceReturn) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+    return completeActionResult(await deps.sessionWorkspaceReturn({ actionId, input: parsed.data as SessionWorkspaceReturnInputV1, context: ctx }));
+  }
 
         if (actionId === 'session.handoff') {
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);

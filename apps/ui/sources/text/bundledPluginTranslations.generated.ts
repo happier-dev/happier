@@ -31551,9 +31551,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.openTitle": "Claude サブエージェントのオプション",
     "subAgentGuidance.settings.agents.claude.title": "Claude チームエージェント"
   },
-    "machineFly.presentation.customSize": "Własny rozmiar",
-    "machineModal.presentation.customSize": "Własny rozmiar",
-    "machineVercel.customSize": "Własny rozmiar",
   "pl": {
     "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
@@ -31710,6 +31707,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineFly.configure.volumeId": "ID woluminu",
     "machineFly.configure.volumeKind": "Trwały wolumin",
     "machineFly.configure.volumeSize": "Rozmiar woluminu (GB)",
+    "machineFly.presentation.customSize": "Własny rozmiar",
     "machineFly.presentation.description": "Maszyny z trwałym woluminem. Obliczenia i przechowywanie danych są rozliczane oddzielnie.",
     "machineFly.presentation.kind": "VM",
     "machineFly.presentation.ready": "Konto połączone",
@@ -31777,6 +31775,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineModal.configure.memoryMb": "Pamięć (MiB)",
     "machineModal.configure.timeoutDescription": "Pełne sekundy, od 1 sekundy do 24 godzin.",
     "machineModal.configure.timeoutMs": "Natywny czas życia (ms)",
+    "machineModal.presentation.customSize": "Własny rozmiar",
     "machineModal.presentation.description": "Piaskownice w chmurze na żądanie z natywnym czasem działania.",
     "machineModal.presentation.kind": "piaskownica",
     "machineModal.presentation.ready": "Konto połączone",
@@ -31863,6 +31862,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.checkUnavailable": "Konto Vercel jest niedostępne. Sprawdź token, zespół i projekt.",
     "machineVercel.confirmBody": "Vercel nalicza opłaty za działające zasoby obliczeniowe i zachowane migawki. Pliki mogą przetrwać kolejne uruchomienia, ale pamięć procesów nie.",
     "machineVercel.confirmTitle": "Utworzyć środowisko izolowane Vercel?",
+    "machineVercel.customSize": "Własny rozmiar",
     "machineVercel.deleteBody": "Usuwa to środowisko i należące do niego migawki. Jego plików nie będzie można odzyskać.",
     "machineVercel.deleteTitle": "Usunąć to środowisko?",
     "machineVercel.description": "Środowiska izolowane, które zachowują pliki między uruchomieniami.",
@@ -36057,9 +36057,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.openTitle": "Opcje podagentów Claude",
     "subAgentGuidance.settings.agents.claude.title": "Agenci zespołowi Claude"
   },
-    "machineFly.presentation.customSize": "Tamanho personalizado",
-    "machineModal.presentation.customSize": "Tamanho personalizado",
-    "machineVercel.customSize": "Tamanho personalizado",
   "pt": {
     "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
@@ -36216,6 +36213,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineFly.configure.volumeId": "ID do volume",
     "machineFly.configure.volumeKind": "Volume persistente",
     "machineFly.configure.volumeSize": "Tamanho do volume (GB)",
+    "machineFly.presentation.customSize": "Tamanho personalizado",
     "machineFly.presentation.description": "Máquinas com volume persistente. Computação e armazenamento mantido são cobrados separadamente.",
     "machineFly.presentation.kind": "VM",
     "machineFly.presentation.ready": "Conta conectada",
@@ -36283,6 +36281,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineModal.configure.memoryMb": "Memória (MiB)",
     "machineModal.configure.timeoutDescription": "Segundos inteiros, de 1 segundo a 24 horas.",
     "machineModal.configure.timeoutMs": "Duração nativa (ms)",
+    "machineModal.presentation.customSize": "Tamanho personalizado",
     "machineModal.presentation.description": "Sandboxes na nuvem sob demanda com duração nativa.",
     "machineModal.presentation.kind": "sandbox",
     "machineModal.presentation.ready": "Conta conectada",
@@ -36369,6 +36368,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.checkUnavailable": "Conta Vercel indisponível. Verifique o token, a equipe e o projeto.",
     "machineVercel.confirmBody": "A Vercel cobra pelos recursos em execução e pelos snapshots retidos. Os arquivos podem persistir entre execuções; a memória dos processos não.",
     "machineVercel.confirmTitle": "Criar um ambiente isolado Vercel?",
+    "machineVercel.customSize": "Tamanho personalizado",
     "machineVercel.deleteBody": "Exclui este ambiente e os snapshots que pertencem a ele. Seus arquivos não poderão ser recuperados.",
     "machineVercel.deleteTitle": "Excluir este ambiente?",
     "machineVercel.description": "Ambientes isolados que mantêm os arquivos entre execuções.",
@@ -40563,9 +40563,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.openTitle": "Opções dos subagentes Claude",
     "subAgentGuidance.settings.agents.claude.title": "Agentes de equipa Claude"
   },
-    "machineFly.presentation.customSize": "Свой размер",
-    "machineModal.presentation.customSize": "Свой размер",
-    "machineVercel.customSize": "Свой размер",
   "ru": {
     "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
@@ -40722,6 +40719,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineFly.configure.volumeId": "ID тома",
     "machineFly.configure.volumeKind": "Постоянный том",
     "machineFly.configure.volumeSize": "Размер тома (ГБ)",
+    "machineFly.presentation.customSize": "Свой размер",
     "machineFly.presentation.description": "Машины с постоянным томом. Вычисления и хранение данных оплачиваются отдельно.",
     "machineFly.presentation.kind": "ВМ",
     "machineFly.presentation.ready": "Аккаунт подключён",
@@ -40789,6 +40787,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineModal.configure.memoryMb": "Память (MiB)",
     "machineModal.configure.timeoutDescription": "Целые секунды, от 1 секунды до 24 часов.",
     "machineModal.configure.timeoutMs": "Нативное время жизни (ms)",
+    "machineModal.presentation.customSize": "Свой размер",
     "machineModal.presentation.description": "Облачные песочницы по запросу с нативным сроком работы.",
     "machineModal.presentation.kind": "песочница",
     "machineModal.presentation.ready": "Аккаунт подключён",
@@ -40875,6 +40874,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.checkUnavailable": "Аккаунт Vercel недоступен. Проверьте токен, команду и проект.",
     "machineVercel.confirmBody": "Vercel взимает плату за работающие вычислительные ресурсы и сохранённые снимки. Файлы могут сохраняться между запусками, но память процессов — нет.",
     "machineVercel.confirmTitle": "Создать песочницу Vercel?",
+    "machineVercel.customSize": "Свой размер",
     "machineVercel.deleteBody": "Удаляет эту песочницу и принадлежащие ей снимки. Её файлы нельзя будет восстановить.",
     "machineVercel.deleteTitle": "Удалить эту песочницу?",
     "machineVercel.description": "Песочницы, которые сохраняют файлы между запусками.",
@@ -45069,9 +45069,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.openTitle": "Параметры субагентов Claude",
     "subAgentGuidance.settings.agents.claude.title": "Командные агенты Claude"
   },
-    "machineFly.presentation.customSize": "自定义规格",
-    "machineModal.presentation.customSize": "自定义规格",
-    "machineVercel.customSize": "自定义规格",
   "zh-Hans": {
     "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
@@ -45228,6 +45225,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineFly.configure.volumeId": "卷 ID",
     "machineFly.configure.volumeKind": "持久卷",
     "machineFly.configure.volumeSize": "卷大小（GB）",
+    "machineFly.presentation.customSize": "自定义规格",
     "machineFly.presentation.description": "带持久卷的机器。计算和保留存储分别计费。",
     "machineFly.presentation.kind": "虚拟机",
     "machineFly.presentation.ready": "账户已连接",
@@ -45295,6 +45293,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineModal.configure.memoryMb": "内存（MiB）",
     "machineModal.configure.timeoutDescription": "以整秒为单位，从 1 秒到 24 小时。",
     "machineModal.configure.timeoutMs": "原生运行时长（ms）",
+    "machineModal.presentation.customSize": "自定义规格",
     "machineModal.presentation.description": "按需提供并遵循原生运行期限的云沙盒。",
     "machineModal.presentation.kind": "沙盒",
     "machineModal.presentation.ready": "账户已连接",
@@ -45381,6 +45380,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.checkUnavailable": "Vercel 账户不可用。请检查令牌、团队和项目。",
     "machineVercel.confirmBody": "Vercel 会对运行中的计算资源和保留的快照计费。文件可在多次运行之间保留，但进程内存不能。",
     "machineVercel.confirmTitle": "创建 Vercel 沙箱？",
+    "machineVercel.customSize": "自定义规格",
     "machineVercel.deleteBody": "删除此沙箱及其拥有的快照。删除后将无法恢复其中的文件。",
     "machineVercel.deleteTitle": "删除此沙箱？",
     "machineVercel.description": "会在多次运行之间保留文件的沙箱。",
@@ -49575,9 +49575,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.openTitle": "Claude 子代理选项",
     "subAgentGuidance.settings.agents.claude.title": "Claude 团队代理"
   },
-    "machineFly.presentation.customSize": "自訂規格",
-    "machineModal.presentation.customSize": "自訂規格",
-    "machineVercel.customSize": "自訂規格",
   "zh-Hant": {
     "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
@@ -49734,6 +49731,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineFly.configure.volumeId": "磁碟區 ID",
     "machineFly.configure.volumeKind": "持久磁碟區",
     "machineFly.configure.volumeSize": "磁碟區大小（GB）",
+    "machineFly.presentation.customSize": "自訂規格",
     "machineFly.presentation.description": "附持久磁碟區的機器。運算和保留的儲存空間分別計費。",
     "machineFly.presentation.kind": "虛擬機",
     "machineFly.presentation.ready": "帳戶已連接",
@@ -49801,6 +49799,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineModal.configure.memoryMb": "記憶體（MiB）",
     "machineModal.configure.timeoutDescription": "以整秒為單位，從 1 秒到 24 小時。",
     "machineModal.configure.timeoutMs": "原生執行時間（ms）",
+    "machineModal.presentation.customSize": "自訂規格",
     "machineModal.presentation.description": "隨需提供並遵循原生執行期限的雲端沙盒。",
     "machineModal.presentation.kind": "沙盒",
     "machineModal.presentation.ready": "帳戶已連接",
@@ -49887,6 +49886,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.checkUnavailable": "Vercel 帳戶無法使用。請檢查權杖、團隊和專案。",
     "machineVercel.confirmBody": "Vercel 會對執行中的運算資源和保留的快照計費。檔案可在多次執行之間保留，但處理程序的記憶體無法保留。",
     "machineVercel.confirmTitle": "建立 Vercel 沙箱？",
+    "machineVercel.customSize": "自訂規格",
     "machineVercel.deleteBody": "刪除此沙箱及其擁有的快照。刪除後將無法復原其中的檔案。",
     "machineVercel.deleteTitle": "刪除此沙箱？",
     "machineVercel.description": "會在多次執行之間保留檔案的沙箱。",
@@ -54239,6 +54239,7 @@ export type BundledPluginTranslationKey =
     | 'machineFly.configure.volumeId'
     | 'machineFly.configure.volumeKind'
     | 'machineFly.configure.volumeSize'
+    | 'machineFly.presentation.customSize'
     | 'machineFly.presentation.description'
     | 'machineFly.presentation.kind'
     | 'machineFly.presentation.ready'
@@ -54306,6 +54307,7 @@ export type BundledPluginTranslationKey =
     | 'machineModal.configure.memoryMb'
     | 'machineModal.configure.timeoutDescription'
     | 'machineModal.configure.timeoutMs'
+    | 'machineModal.presentation.customSize'
     | 'machineModal.presentation.description'
     | 'machineModal.presentation.kind'
     | 'machineModal.presentation.ready'
@@ -54392,6 +54394,7 @@ export type BundledPluginTranslationKey =
     | 'machineVercel.checkUnavailable'
     | 'machineVercel.confirmBody'
     | 'machineVercel.confirmTitle'
+    | 'machineVercel.customSize'
     | 'machineVercel.deleteBody'
     | 'machineVercel.deleteTitle'
     | 'machineVercel.description'

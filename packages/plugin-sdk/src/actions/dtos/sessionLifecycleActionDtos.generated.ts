@@ -5,6 +5,21 @@ import type { JsonValue } from '../../identity.js';
 import type { ActionFailureCauseV1, PluginActionWorkflowBlockV1, SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SessionLifecycleActionInputById = {
+    readonly "session.workspace.return.prepare": {
+        sessionId: string;
+        machineId: string;
+    };
+    readonly "session.workspace.return.apply": {
+        sessionId: string;
+        machineId: string;
+        returnId: string;
+        paths: string[];
+        replaceConflictPaths?: string[] | undefined;
+    };
+    readonly "session.workspace.return.capture": {
+        sessionId: string;
+        machineId: string;
+    };
     readonly "session.open": {
         presentation?: 'main' | 'overlay' | 'window' | undefined;
         tabId?: string | undefined;
@@ -2531,6 +2546,99 @@ export type SessionLifecycleActionInputById = {
     };
 };
 export type SessionLifecycleActionResultById = {
+    readonly "session.workspace.return.prepare": {
+        returnId: string;
+        sessionId: string;
+        repositoryRootPath: string;
+        paths: {
+            path: string;
+            files: {
+                path: string;
+                changeKind: string;
+                binary: boolean | null;
+                generated: boolean;
+                lockfile: boolean;
+                evidence: {
+                    state: 'available';
+                    unifiedDiff: string;
+                } | {
+                    state: 'deferred';
+                    reason: string;
+                    unifiedDiff?: undefined;
+                } | {
+                    state: 'unavailable';
+                    reason: string;
+                    unifiedDiff?: string | undefined;
+                };
+                occurrences: {
+                    id: string;
+                    alias: string;
+                    path: string;
+                    before: {
+                        startLine: number;
+                        lineCount: number;
+                    };
+                    after: {
+                        startLine: number;
+                        lineCount: number;
+                    };
+                    position: number;
+                    previousPath?: string | undefined;
+                    beforeBlobId?: string | undefined;
+                    afterBlobId?: string | undefined;
+                    layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                    evidence?: undefined | {
+                        state: 'available';
+                    } | {
+                        state: 'unavailable';
+                        reason: string;
+                    };
+                }[];
+                previousPath?: string | undefined;
+                beforeBlobId?: string | undefined;
+                afterBlobId?: string | undefined;
+                linesAdded?: number | undefined;
+                linesRemoved?: number | undefined;
+            }[];
+            conflicts: {
+                path: string;
+                code: 'both_changed';
+            }[];
+        }[];
+        applyUnavailableReason?: 'baseline_unavailable' | undefined;
+    };
+    readonly "session.workspace.return.apply": {
+        appliedPaths: string[];
+        conflicts: {
+            path: string;
+            code: 'both_changed';
+        }[];
+    };
+    readonly "session.workspace.return.capture": {
+        workspace: {
+            serverId: string;
+            workspaceId: string;
+            machineId: string;
+            rootPath: string;
+        };
+        baseline?: undefined | {
+            entries: ({
+                relativePath: string;
+                kind: 'directory';
+            } | {
+                relativePath: string;
+                kind: 'file';
+                digest: string;
+                sizeBytes: number;
+                executable: boolean;
+            } | {
+                relativePath: string;
+                kind: 'symlink';
+                target: string;
+            })[];
+            fingerprint?: string | undefined;
+        };
+    };
     readonly "session.open": JsonValue;
     readonly "session.fork": JsonValue;
     readonly "session.continue_with_replay": JsonValue;

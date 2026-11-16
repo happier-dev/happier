@@ -52,6 +52,8 @@ export function isDeploymentPrepareSessionMessageEffectV1(rootActionId: string, 
   return rootActionId === DEPLOYMENT_PREPARE_ACTION_ID_V1 && effectActionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;
 }
 export const SESSION_COMPACT_ACTION_ID_V1 = 'session.compact' as const;
+import { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1 } from './sessionWorkspaceReturnActionIdsV1.js';
+export { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1, isSessionWorkspaceReturnActionIdV1 } from './sessionWorkspaceReturnActionIdsV1.js';
 
 /** Native Service Stop consumes only its exact handle; Ask stays with the original Account. */
 export function isLocalServiceStopActionIdV1(actionId: unknown): actionId is 'localServices.actions.stopManaged' {
@@ -398,6 +400,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.public_link.remove',
   ],
   session_lifecycle: [
+    ...SESSION_WORKSPACE_RETURN_ACTION_IDS_V1,
     SESSION_OPEN_ACTION_ID_V1,
     'session.fork',
     'session.continue_with_replay',

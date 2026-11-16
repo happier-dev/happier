@@ -330,6 +330,8 @@ import { DISCUSSION_ACTION_SPECS_V1 } from './specs/discussions.js';
 import { ARTIFACT_ACCESS_ACTION_SPECS, ARTIFACT_ACTION_SPECS } from './specs/artifacts.js';
 import { WORKFLOW_ACTION_SPECS_V1 } from './specs/workflows.js';
 import { SESSION_LIFECYCLE_ACTION_SPECS } from './specs/session/lifecycle.js';
+import { SESSION_WORKSPACE_RETURN_INPUT_SCHEMAS_V1, SESSION_WORKSPACE_RETURN_OUTPUT_SCHEMAS_V1,
+  type SessionWorkspaceReturnActionIdV1 } from './specs/session/projectFilesReturn.js';
 export { SESSION_LIFECYCLE_ACTION_SPECS };
 export { projectSessionSpawnNewApiRequest } from './specs/session/lifecycle.js';
 import { EXECUTION_RUN_ACTION_SPECS } from './specs/executionRuns.js';
@@ -1250,7 +1252,7 @@ type NonRuntimeActionSpecDefinition<TSpec> = TSpec extends Readonly<{
 }>
   // These families have exact per-ID schema definitions below. Their generic
   // row factories must not reintroduce widened schema unions into the catalog.
-  ? TActionId extends RuntimeActionIdV1 | SessionTerminalActionId | SessionAgentTransitionActionId | ThemeActionId | MachineTerminalActionId | WorkspaceActionId | ProjectDefinitionActionId
+  ? TActionId extends RuntimeActionIdV1 | SessionTerminalActionId | SessionAgentTransitionActionId | SessionWorkspaceReturnActionIdV1 | ThemeActionId | MachineTerminalActionId | WorkspaceActionId | ProjectDefinitionActionId
     | WidgetInstanceActionIdV1 | WidgetDefinitionActionIdV1 | WidgetLayoutFragmentActionIdV1
     | ArtifactFolderActionIdV1 | ProfileActionIdV1 | ProviderActionIdV1 | RemoteHostActionIdV1 | HomeRuntimeActionIdV1 | ProjectActionIdV1 | WorkflowEffectActionIdV1 | UsageSourceActionId | AutomationOccurrenceActionId
     ? never
@@ -1680,6 +1682,9 @@ export type CanonicalActionSpecDefinition =
       (typeof ThemeActionInputSchemas)[Id], (typeof ThemeActionOutputSchemas)[Id], never, 'account_automation'>
     }[ThemeActionId]
   | SessionTerminalActionSpecDefinition
+  | { [Id in SessionWorkspaceReturnActionIdV1]: CanonicalActionSchemaDefinition<Id,
+      (typeof SESSION_WORKSPACE_RETURN_INPUT_SCHEMAS_V1)[Id], (typeof SESSION_WORKSPACE_RETURN_OUTPUT_SCHEMAS_V1)[Id]>
+    }[SessionWorkspaceReturnActionIdV1]
   | { [Id in SessionAgentTransitionActionId]: CanonicalActionSchemaDefinition<Id,
       (typeof SESSION_AGENT_TRANSITION_ACTION_INPUT_SCHEMAS)[Id], (typeof SESSION_AGENT_TRANSITION_ACTION_OUTPUT_SCHEMAS)[Id]>
     }[SessionAgentTransitionActionId]

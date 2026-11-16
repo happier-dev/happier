@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
+import { SESSION_WORKSPACE_RETURN_ACTION_SPECS_V1 } from './projectFilesReturn.js';
 import { selectTeamCredentialSourcesForApproval } from '../teamCredentialApproval.js';
 import { projectSessionSpawnNewActionInputV2 } from '../../../sessions/creation/sessionSpawnNewInputV2.js';
 import { SessionSpawnNewResultV1Schema, SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '../../../sessions/creation/sessionSpawnNewResultV1.js';
@@ -225,6 +226,7 @@ export const CHECKPOINT_SOURCE_INPUT_OPTIONS: ActionInputOption[] = [
 
 function createSessionLifecycleActionSpecs() {
   return Object.freeze([
+  ...SESSION_WORKSPACE_RETURN_ACTION_SPECS_V1,
   {
     id: 'session.open', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     machineRuntimeDemandForInput: (input, context) => {
