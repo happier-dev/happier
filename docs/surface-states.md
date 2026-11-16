@@ -418,12 +418,6 @@ runtime before its first read. That pending read is loading, not an empty
 result. The Resource owner awaits preparation and exposes its failure through
 the existing read/retry path; presentation adds no preparation timeout.
 
-Usage's Account reconnect observation replaces an interrupted Resource read
-through the shared Resource owner's existing supersede path. Its host-private
-invalidation keeps admitted content and transient-read recovery; ordinary data
-pushes still coalesce behind admitted work. This is in-process recovery in
-unreleased 0.3 source and changes no plugin wire event or Account authority.
-
 [`SurfaceFreshnessLine`](../apps/ui/sources/components/ui/surfaces/SurfaceFreshnessLine.tsx) presents the retained observation's time, refresh/reconnect reason and optional recovery action. Show it alongside retained content, under the header; when there is no retained content, show the appropriate loading/error/unavailable card instead. It and the public Plugin UI freshness component consume the same `HappierFreshnessLine` renderer and freshness-text formatter. Domain adapters still own observation timestamps and recovery actions.
 
 Loading narration and diagnostic disclosure belong to the composition. The card does not own retries, availability, permissions or the underlying request lifecycle. Supply truthful state from that domain's owner, stop live activity at its terminal outcome and keep technical codes behind details. Avoid a second consumer-local spinner/error parser or timer for the same work.
