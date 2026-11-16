@@ -991,6 +991,11 @@ export class SessionDraftRepository {
     private readonly listeners = new Map<string, Set<Listener>>();
     private readonly listListeners = new Map<string, Set<Listener>>();
     private readonly flushInFlight = new Map<string, Promise<SessionDraftFlushResult>>();
+    /**
+     * Drafts whose writer asked for a flush while one was already on the wire. Only those make the in-flight flush
+     * send again; an edit written without a flush request (a keystroke) waits for its writer's own next flush.
+     */
+    private readonly flushRequestedDuringFlight = new Set<string>();
     private readonly exactReadInFlight = new Map<string, Readonly<{ runtime: RepositoryRuntime; invalidationRevision?: number; promise: Promise<void> }>>();
     private readonly observedTombstoneRevisions = new Map<string, number>();
     /**
@@ -1088,6 +1093,7 @@ export class SessionDraftRepository {
         this.listeners.clear();
         this.listListeners.clear();
         this.flushInFlight.clear();
+        this.flushRequestedDuringFlight.clear();
         this.exactReadInFlight.clear();
         this.observedTombstoneRevisions.clear();
         this.snapshotGaps.clear();
@@ -2243,12 +2249,12 @@ export class SessionDraftRepository {
             address: params.address, ...params.scoped });
         const key = this.replicaListenerKey(params.scope, params.address);
         const existing = this.flushInFlight.get(key);
-        if (existing) return existing;
+        if (existing) { this.flushRequestedDuringFlight.add(key); return existing; }
         const promise = this.flushLoop(params).then(async (result) => {
             await this.awaitDraftRemovalCleanup(params.scope, params.address);
             if (this.storage.flush) await this.flushStorage(params.scope);
             return result;
-        }).finally(() => this.flushInFlight.delete(key));
+        }).finally(() => { this.flushInFlight.delete(key); this.flushRequestedDuringFlight.delete(key); });
         this.flushInFlight.set(key, promise);
         return promise;
     }
@@ -2289,12 +2295,12 @@ export class SessionDraftRepository {
     }>): Promise<SessionDraftFlushResult> {
         const key = this.replicaListenerKey(params.scope, params.address);
         const existing = this.flushInFlight.get(key);
-        if (existing) return existing;
+        if (existing) { this.flushRequestedDuringFlight.add(key); return existing; }
         const promise = this.flushLoop(params, { runtime: params.runtime, isCurrent: params.isCurrent, onTransportError: params.onTransportError }).then(async (result) => {
             await this.awaitDraftRemovalCleanup(params.scope, params.address);
             if (this.storage.flush) await this.flushStorage(params.scope);
             return result;
-        }).finally(() => this.flushInFlight.delete(key));
+        }).finally(() => { this.flushInFlight.delete(key); this.flushRequestedDuringFlight.delete(key); });
         this.flushInFlight.set(key, promise);
         return promise;
     }
@@ -2389,6 +2395,7 @@ export class SessionDraftRepository {
                         deleteWhenEmpty: false,
                     });
                     if (remaining.length === 0) return { status: 'clean' };
+                    if (!this.flushRequestedDuringFlight.delete(this.replicaListenerKey(params.scope, params.address))) return { status: 'pending' };
                     continue;
                 }
                 const latest = this.readReplica(params.scope, params.address) ?? replica;
@@ -2412,6 +2419,8 @@ export class SessionDraftRepository {
                     updatedAt: remaining.length > 0 ? latest.updatedAt : response.record.updatedAt,
                 });
                 if (remaining.length === 0) return { status: 'clean' };
+                // Edits written during this write wait for their writer's next flush, unless one was asked for.
+                if (!this.flushRequestedDuringFlight.delete(this.replicaListenerKey(params.scope, params.address))) return { status: 'pending' };
                 continue;
             }
             const rebased = await this.rebaseConflict(runtime, isCurrent, params.scope, params.address, replica, response.current);

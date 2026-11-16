@@ -2347,6 +2347,63 @@ describe('sessionDraftRepository', () => {
         });
     });
 
+    it('sends what was pending when a flush began and leaves edits typed during its write to their writer', async () => {
+        const remote = createRemote();
+        const held = createDeferred<void>();
+        let mutates = 0;
+        const retry = vi.fn();
+        const repository = createSessionDraftRepository({ storage: createMemoryStorage(), scope, syncEnabled: true,
+            cipher: plainCipher(), onFlushRetryRequested: retry,
+            transport: { ...remote.transport, mutate: async request => {
+                mutates += 1;
+                if (mutates === 1) await held.promise;
+                return remote.transport.mutate(request);
+            } } });
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'h' }, materializationIntent: 'userEdit' });
+        const first = repository.flushSessionDraft({ scope, address: sessionAddress });
+        // Keystrokes while the first write is on the wire: written locally, no flush asked.
+        for (const text of ['he', 'hel', 'hell', 'hello']) {
+            repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text }, materializationIntent: 'userEdit' });
+            await Promise.resolve();
+        }
+        held.resolve();
+        await first;
+        await new Promise<void>(resolve => setImmediate(resolve));
+
+        expect({ mutates, retries: retry.mock.calls.length }).toEqual({ mutates: 1, retries: 0 });
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)).toMatchObject({
+            status: 'pending', document: { composer: { text: { value: 'hello' } } },
+        });
+        // The writer's own next flush (idle, blur, send, background) sends the latest text once.
+        await expect(repository.flushSessionDraft({ scope, address: sessionAddress })).resolves.toEqual({ status: 'clean' });
+        expect(mutates).toBe(2);
+        expect(remote.readCurrent()?.content).toMatchObject({ t: 'plain', v: { document: { composer: { text: { value: 'hello' } } } } });
+    });
+
+    it('still sends an edit whose writer asked for a flush while an earlier write was on the wire', async () => {
+        const remote = createRemote();
+        const held = createDeferred<void>();
+        let mutates = 0;
+        const retry = vi.fn();
+        const repository = createSessionDraftRepository({ storage: createMemoryStorage(), scope, syncEnabled: true,
+            cipher: plainCipher(), onFlushRetryRequested: retry,
+            transport: { ...remote.transport, mutate: async request => {
+                mutates += 1;
+                if (mutates === 1) await held.promise;
+                return remote.transport.mutate(request);
+            } } });
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'first' }, materializationIntent: 'userEdit' });
+        const first = repository.flushSessionDraft({ scope, address: sessionAddress });
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'cleared on send' }, materializationIntent: 'userEdit' });
+        const second = repository.flushSessionDraft({ scope, address: sessionAddress });
+        held.resolve();
+        await expect(Promise.all([first, second])).resolves.toEqual([{ status: 'clean' }, { status: 'clean' }]);
+
+        expect(mutates).toBe(2);
+        expect(retry).not.toHaveBeenCalled();
+        expect(remote.readCurrent()?.content).toMatchObject({ t: 'plain', v: { document: { composer: { text: { value: 'cleared on send' } } } } });
+    });
+
     it('recovers later pending drafts even when the first draft keeps failing', async () => {
         const remote = createRemote();
         const firstAddress = { kind: 'newSession', draftId: uuid(880) } as const;
@@ -2594,6 +2651,8 @@ describe('sessionDraftRepository', () => {
             patch: { text: 'continue' },
             materializationIntent: 'userEdit',
         });
+        // The newer edit's writer asks for its flush; it joins the one on the wire.
+        void repository.flushSessionDraft({ scope, address });
         firstCreateReleased.resolve();
 
         expect(await flush).toEqual({ status: 'clean' });
@@ -2787,6 +2846,7 @@ describe('sessionDraftRepository', () => {
         const flush = repository.flushSessionDraft({ scope, address: sessionAddress });
         await firstSubmitted.promise;
         repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'continue' } });
+        void repository.flushSessionDraft({ scope, address: sessionAddress });
         firstMutationReleased.resolve();
 
         expect(await flush).toEqual({ status: 'pending' });
@@ -2904,6 +2964,7 @@ describe('sessionDraftRepository', () => {
         const flush = repository.flushSessionDraft({ scope, address: sessionAddress });
         await tombstoneSubmitted.promise;
         repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'hello world' } });
+        void repository.flushSessionDraft({ scope, address: sessionAddress });
         tombstoneReleased.resolve();
 
         expect(await flush).toEqual({ status: 'clean' });
