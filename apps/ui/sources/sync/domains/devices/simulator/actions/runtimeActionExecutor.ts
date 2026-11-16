@@ -1,6 +1,7 @@
 import { classifySimulatorRuntimeActionBackingV1, isSimulatorRuntimeActionIdV1, type SimulatorRuntimeActionIdV1 } from '@happier-dev/protocol/devices/simulator/runtimeActionBacking';
 import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isSimulatorDeviceOperationRuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { isBackedSimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
 import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 import type { SimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/sidebandV1';
@@ -18,7 +19,7 @@ type CreateSimulatorPreviewRuntimeActionExecutorInput = Readonly<{
     resolveMachineId: (args: RuntimeActionExecuteArgs) => string | null | undefined;
     fetchSnapshot?: (input: SimulatorPreviewSnapshotClientInput) => Promise<SimulatorPreviewSnapshotClientResult>;
     dispatchAction?: (input: SimulatorPreviewActionClientInput) => Promise<SimulatorPreviewActionClientResult>;
-    createEventId?: (kind: string) => string;
+    executeOnMachine?: RuntimeActionExecute;
     fallback?: RuntimeActionExecute;
 }>;
 
@@ -42,6 +43,12 @@ const machineUnavailableResult = {
     ok: false,
     errorCode: 'runtime_action_disabled',
     error: 'runtime_action_disabled:devices.simulator:simulator_machine_unavailable',
+} as const;
+
+const machineActionUnavailableResult = {
+    ok: false,
+    errorCode: 'runtime_action_disabled',
+    error: 'runtime_action_disabled:devices.simulator:simulator_action_route_unavailable',
 } as const;
 
 const invalidParametersResult = {
@@ -117,10 +124,26 @@ export function createSimulatorPreviewRuntimeActionExecutor(
             return unbackedSimulatorSidebandResult;
         }
 
-        const machineId = normalizeId(input.resolveMachineId(args));
+        const target = args.context.externalActionTarget;
+        const machineId = normalizeId(target?.kind === 'machine' ? target.machineId : input.resolveMachineId(args));
         if (!machineId) {
             return machineUnavailableResult;
         }
+
+        if (isSimulatorDeviceOperationRuntimeActionIdV1(args.actionId)) {
+            if (!input.executeOnMachine) return machineActionUnavailableResult;
+            return await input.executeOnMachine({
+                ...args,
+                input: parsed.input,
+                context: {
+                    ...args.context,
+                    externalActionTarget: target?.kind === 'machine'
+                        ? { ...target, machineId }
+                        : { kind: 'machine', machineId },
+                },
+            });
+        }
+
         const serverId = normalizeId(args.context.serverId);
         const serverScope = { ...(serverId ? { serverId } : {}), signal: args.context.signal };
 

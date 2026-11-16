@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds';
 
 import type {
     RuntimeActionExecuteArgs} from '@happier-dev/protocol/actions/executor/types';
@@ -6,9 +7,11 @@ import type {
     SimulatorPreviewActionResultV1,
     SimulatorPreviewSnapshotV1,
 } from '@happier-dev/protocol/devices/simulator/runtimeV1';
+import type { SimulatorDeviceOperationResultV1 } from '@happier-dev/protocol/devices/simulator/operationsV1';
 
 // Cold transforms belong to collection, outside each action behavior's deadline.
 await import('./runtimeActionExecutor');
+await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
 
 function runtimeArgs(
     args: Omit<RuntimeActionExecuteArgs, 'context'> & Partial<Pick<RuntimeActionExecuteArgs, 'context'>>,
@@ -35,7 +38,79 @@ const acceptedControlResult: SimulatorPreviewActionResultV1 = {
     diagnostics: [],
 };
 
+const screenshotResult: SimulatorDeviceOperationResultV1 = {
+    ok: true,
+    media: { mediaId: 'image_1', mediaKind: 'image', width: 100, height: 200, sizeBytes: 250 },
+};
+
 describe('UI simulator runtime action executor', () => {
+    it('routes a device screenshot through the captured Machine Action transport with its explicit target and context', async () => {
+        const { createSimulatorPreviewRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const result = screenshotResult;
+        const executeOnMachine = vi.fn(async () => result);
+        const dispatchAction = vi.fn(async () => ({ ok: true as const, result: acceptedControlResult }));
+        const execute = createSimulatorPreviewRuntimeActionExecutor({ resolveMachineId: () => 'session_machine', executeOnMachine, dispatchAction });
+        const args = runtimeArgs({
+            actionId: 'devices.simulator.stream.snapshot',
+            input: { operation: 'screenshot', platform: 'ios', deviceId: 'device_1', sessionId: 'session_1' },
+            context: {
+                serverId: 'server_1', expectedAccountId: 'account_1', actionRequestId: 'request_1',
+                externalActionTarget: { kind: 'machine', machineId: 'selected_machine' },
+                signal: new AbortController().signal,
+            },
+        });
+
+        await expect(execute(args)).resolves.toEqual(result);
+        expect(executeOnMachine).toHaveBeenCalledExactlyOnceWith(args);
+        expect(dispatchAction).not.toHaveBeenCalled();
+    });
+
+    it('addresses device operations to the resolved Session Machine when no explicit Machine target is supplied', async () => {
+        const { createSimulatorPreviewRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const result: SimulatorDeviceOperationResultV1 = { ok: false, errorCode: 'simulator_device_unavailable', step: 'screenshot' };
+        const executeOnMachine = vi.fn(async () => result);
+        const execute = createSimulatorPreviewRuntimeActionExecutor({ resolveMachineId: () => 'session_machine', executeOnMachine });
+        const args = runtimeArgs({
+            actionId: SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1.screenshot,
+            input: { operation: 'screenshot', platform: 'android', deviceId: 'emulator-5554', sessionId: 'session_1' },
+            context: { serverId: 'server_1', defaultSessionId: 'session_1', expectedAccountId: 'account_1' },
+        });
+
+        await expect(execute(args)).resolves.toEqual(result);
+        expect(executeOnMachine).toHaveBeenCalledExactlyOnceWith({ ...args, context: {
+            ...args.context, externalActionTarget: { kind: 'machine', machineId: 'session_machine' },
+        } });
+    });
+
+    it('returns a typed disabled result when device operations have no Machine Action transport', async () => {
+        const { createSimulatorPreviewRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const dispatchAction = vi.fn(async () => ({ ok: true as const, result: acceptedControlResult }));
+        const execute = createSimulatorPreviewRuntimeActionExecutor({ resolveMachineId: () => 'machine_1', dispatchAction });
+
+        await expect(execute(runtimeArgs({
+            actionId: 'devices.simulator.stream.snapshot',
+            input: { operation: 'screenshot', platform: 'ios', deviceId: 'device_1', sessionId: 'session_1' },
+        }))).resolves.toEqual({ ok: false, errorCode: 'runtime_action_disabled',
+            error: 'runtime_action_disabled:devices.simulator:simulator_action_route_unavailable' });
+        expect(dispatchAction).not.toHaveBeenCalled();
+    });
+
+    it('keeps the Machine Action transport reachable through the default UI runtime composition', async () => {
+        const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
+        const result = screenshotResult;
+        const executeOnMachine = vi.fn(async () => result);
+        const execute = createDefaultRuntimeActionExecutor({}, undefined, executeOnMachine);
+        const args = runtimeArgs({
+            actionId: SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1.screenshot,
+            input: { operation: 'screenshot', platform: 'ios', deviceId: 'device_1', sessionId: 'session_1' },
+            context: { serverId: 'server_1', expectedAccountId: 'account_1',
+                externalActionTarget: { kind: 'machine', machineId: 'selected_machine' } },
+        });
+
+        await expect(execute(args)).resolves.toEqual(result);
+        expect(executeOnMachine).toHaveBeenCalledExactlyOnceWith(args);
+    });
+
     it('maps devices.simulator.list to the simulator snapshot machine route without exposing raw RPC ids', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 
@@ -245,7 +320,6 @@ describe('UI simulator runtime action executor', () => {
             resolveMachineId: () => 'machine_1',
             fetchSnapshot: vi.fn(async () => ({ ok: true as const, snapshot })),
             dispatchAction,
-            createEventId: () => 'fps_event',
         });
         const disabledResult = {
             ok: false,
@@ -271,16 +345,6 @@ describe('UI simulator runtime action executor', () => {
                         sourceId: 'source_1',
                         eventId: 'keyframe_1',
                     },
-                },
-            }),
-            runtimeArgs({
-                actionId: 'devices.simulator.stream.snapshot',
-                input: {
-                    type: 'simulator.snapshot.request',
-                    simulatorId: 'sim_1',
-                    streamId: 'stream_1',
-                    sourceId: 'source_1',
-                    eventId: 'snapshot_1',
                 },
             }),
             runtimeArgs({
