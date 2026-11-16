@@ -24,6 +24,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { resolveDefaultDirectoryForMachine, resolveMachineHomeDirectory } from '@/utils/sessions/machineDefaultDirectory';
 import { useMachineOwnIsolationStatus } from '@/hooks/machine/useMachineOwnIsolationStatus';
 import { useNewSessionDirectoryPreflight, type NewSessionDirectoryPreflight } from './useNewSessionDirectoryPreflight';
+import { useNewSessionIntent } from './useNewSessionIntent';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { useStableRecentPathsResolver, type RecentPathSessionsInput } from '@/utils/sessions/useStableRecentPathsForMachine';
 import { useNewSessionPlacementSessions } from './useNewSessionPlacementSessions';
@@ -935,6 +936,10 @@ export function useNewSessionMachinePathState(params: Readonly<{
         requesterReady: ownIsolation.status?.protection === 'member_separated',
         path: directoryIntent?.kind === 'path' ? directoryIntent.path : '',
     });
+    // On the person's own Machine, Sessions the daemon hosts itself (not member-separated, not a Machine
+    // still waking) get a session host started while New Session is open on that Machine.
+    useNewSessionIntent({ machineId: scopedSelectedMachineId, binding,
+        enabled: selectedMachine !== null && selectedMachine.isShared !== true && !managedWake && !memberPlacement });
     const directoryPreflight: NewSessionDirectoryPreflight = selectedTargetInCurrentHome
         ? scopedDirectoryPreflight : { ready: false, code: 'unavailable' };
 
