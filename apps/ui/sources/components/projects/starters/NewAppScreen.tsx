@@ -486,8 +486,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   }, [appliedSuggestion, auto.description, create, input, name, scope, startSession, stepAside]);
 
   // Use this setup (journey-deploy F4): the suggestion owner routes it. A starter continues in this flow's review, which
-  // creates through the owner with the plan brief; a catalog app continues where catalog apps deploy today (its Store
-  // listing) until this dialog hosts catalog apps in Where it runs (B2).
+  // creates through the owner with the plan brief; a catalog app continues in this dialog's Where it runs.
   const applyChosenSuggestion = async () => {
     const chosen = auto.chosen;
     if (!chosen || !scope) return;
@@ -495,8 +494,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       catalog: chosen.catalog, description: auto.description });
     const source = chosen.recommendation.source;
     if (applied.kind === 'where') {
-      stepAside();
-      openStoreListing({ type: 'registryItem', kind: 'app', sourceId: applied.app.sourceId, itemId: applied.app.itemId });
+      // A catalog app is a pure deploy: Where it runs in this dialog, its suggested target already chosen.
+      startDeploy({ kind: 'catalogApp', app: applied.app, targetId: applied.targetId });
       return;
     }
     if (applied.kind === 'needsCreateInput' && source.kind === 'starter') {

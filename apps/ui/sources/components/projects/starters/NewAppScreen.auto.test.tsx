@@ -341,12 +341,14 @@ it('a catalog-app card continues in this dialog on Where for that app, not in th
       if (actionId === 'registries.items.read') {
         reads.push(input);
         return { item: { summary, fetchedAt: 1, payload: { kind: 'app', state: 'ready', ref: { kind: 'content', digest },
-          app: { schemaVersion: 1, title: 'Plausible', compose: { document: 'services:\n  web:\n    image: plausible/analytics\n' },
+          app: { schemaVersion: 1, title: 'Plausible', compose: { document: 'services:\n  web:\n    image: plausible/analytics\n', profiles: [], services: ['web'] },
             variables: [], generatedSecrets: [], domains: [], volumes: [] } } } };
       }
       const kind = (input as { kind: string }).kind;
       return { pages: [{ sourceId: kind, status: { state: 'ok', fetchedAt: 1 }, nextCursor: null, items: kind === 'app' ? [summary] : [] }] };
     },
+    // An own server runs Compose and containers, so the stored catalog app fits it.
+    deploymentSuggestionTargets: async () => ({ targets: [{ ...targets[0]!, accepts: ['static', 'compose', 'container'] }], stores: [] }),
     executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [{
       source: { kind: 'catalogApp', appId: '["app","plausible"]' }, targetId: 'own', whatToBuild: 'Self-hosted analytics',
       stack: { framework: 'compose', output: 'container' }, data: { kind: 'none' }, variables: [] }] }) }),
