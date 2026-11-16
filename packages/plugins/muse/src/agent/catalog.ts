@@ -3,6 +3,8 @@ import { formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/
 import type { AgentPreflightSessionControlsContributionV1, AgentSessionModel, AgentSessionModelsSnapshot, AgentSessionModelsSource } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginJsonRpcClient } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
+import { resolveMuseModelCapabilities } from '../modelFacts.js';
+
 import { MUSE_LAUNCH_ENV_KEYS } from './cli.js';
 import { initializeMuseMsp, MUSE_MSP_LAUNCH } from './msp.js';
 
@@ -75,12 +77,8 @@ function parseCatalog(value: unknown): Readonly<{
     }
     const variants = Array.isArray(row.variants) ? row.variants.filter((value): value is string => typeof value === 'string') : [];
     const defaultEffort = text(row.defaultReasoningEffort) ?? null;
-    return {
+    const model: AgentSessionModel = {
       id, name: text(row.displayLabel) ?? modelId,
-      // Meta's JSON-schema contract, verified through CLIProxyAPI v8.0.61
-      // with this contributor model (2026-11-16). Unknown models stay unknown.
-      ...(providerId === 'meta' && modelId === 'muse-spark-1.3-contributor'
-        ? { capabilities: { structuredOutput: 'supported' as const } } : {}),
       ...(text(row.description) ? { description: text(row.description) } : {}),
       ...(contextLimit === undefined ? {} : { contextWindowTokens: contextLimit }),
       ...(variants.length === 0 ? {} : { modelOptions: [{ id: 'reasoning_effort', name: 'Reasoning effort',
@@ -89,6 +87,8 @@ function parseCatalog(value: unknown): Readonly<{
           ...(descriptions.has(value) ? { description: descriptions.get(value) } : {}) })),
       }] }),
     };
+    return providerId === 'meta'
+      ? { ...model, capabilities: resolveMuseModelCapabilities(modelId, model.modelOptions) } : model;
   });
   return { models, nativeModels, currentModelId };
 }

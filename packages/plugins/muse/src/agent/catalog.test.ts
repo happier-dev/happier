@@ -49,6 +49,19 @@ describe('Muse native model catalog', () => {
       expect(models?.[0]?.capabilities?.structuredOutput).toBe('supported');
       expect(models?.[1]?.capabilities?.structuredOutput).toBeUndefined();
       expect(models?.[2]?.capabilities?.structuredOutput).toBeUndefined();
+      expect(models?.[0]?.capabilities).toEqual({ structuredOutput: 'supported', toolRoundTrips: 'unknown', reasoningControls: 'unknown' });
+    } finally { await msp.dispose(); }
+  });
+
+  it('derives reasoning capability from native offered options without inferring tool support', async () => {
+    const { msp, catalog } = await openCatalog(await recordingWithCatalog({ models: [
+      { providerId: 'meta', modelId: 'muse-spark-1.3-contributor', variants: ['minimal', 'low'] },
+    ] }));
+    try {
+      const { models } = await catalog.refresh();
+      expect(models?.[0]?.capabilities).toEqual({
+        structuredOutput: 'supported', toolRoundTrips: 'unknown', reasoningControls: 'supported',
+      });
     } finally { await msp.dispose(); }
   });
 

@@ -58,12 +58,15 @@ brokered route only.
 
 ### Passive managed gateway families (0.3 development)
 
-The Muse native catalog publishes structured JSON output support for
+The Muse-owned model capability projection publishes structured JSON output support for
 `meta/muse-spark-1.3-contributor`. This model was verified through CLIProxyAPI
 v8.0.61 using a schema-constrained bounded Run, alongside Meta's
 [structured-output contract](https://dev.meta.ai/docs/structured-output).
-The managed gateway projects that model evidence into the prepared Provider
-descriptor consumed by structured-analysis admission. Other Muse models remain
+Both the native catalog and the gateway's SDK catalog generator consume that
+one Muse-owned projection: reasoning support derives from offered reasoning options,
+and tool round-trip support remains unknown. Source-specific membership, limits
+and options still come from native model/list or the pinned gateway SDK.
+The prepared Provider descriptor carries these facts to structured-analysis admission. Other Muse models remain
 unknown unless their own descriptor establishes support.
 
 The gateway chooser Action preserves matching passive declarations in
