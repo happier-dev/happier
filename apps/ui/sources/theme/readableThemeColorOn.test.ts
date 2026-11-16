@@ -1,7 +1,7 @@
 import Color from 'color';
 import { describe, expect, it } from 'vitest';
 import { compositeThemeColor, parseThemeColorValue, themeContrastRatio } from '@happier-dev/protocol/account/settings/themeColor';
-import { readableThemeColorOn } from './themeContrast';
+import { readableThemeColorOn, readableThemeColorOnSurfaces } from './themeContrast';
 
 describe('readableThemeColorOn', () => {
     it('fixes translucent ink against its painted surface and verifies the serialized result', () => {
@@ -18,5 +18,16 @@ describe('readableThemeColorOn', () => {
         const fixed = readableThemeColorOn('#713818', '#101010', 7);
         expect(themeContrastRatio(parseThemeColorValue(fixed)!.rgb, parseThemeColorValue('#101010')!.rgb)).toBeGreaterThanOrEqual(7);
         expect(Color(fixed).lightness()).toBeGreaterThan(Color('#713818').lightness());
+    });
+
+    it('finds shared ink when per-surface nearest fixes disagree, including an interval neither black nor white can satisfy', () => {
+        for (const surfaceValues of [['#757575', '#ffffff'], ['#000000', '#ffffff']]) {
+            const surfaces = surfaceValues.map(surface => ({ surface, minContrast: 4.5 }));
+            const fixed = readableThemeColorOnSurfaces('#bbbbbb', surfaces);
+            expect(fixed).not.toBeNull();
+            for (const surface of surfaceValues) {
+                expect(themeContrastRatio(parseThemeColorValue(fixed!)!.rgb, parseThemeColorValue(surface)!.rgb)).toBeGreaterThanOrEqual(4.5);
+            }
+        }
     });
 });
