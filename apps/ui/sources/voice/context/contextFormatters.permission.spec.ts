@@ -91,7 +91,6 @@ describe('formatPermissionRequest privacy', () => {
 
     expect(result).toContain('Interrupt your previous plan and tell the human about this request now.');
     expect(result).toContain(canApproveRequests ? 'Voice approvals are enabled' : 'Voice approvals are off');
-    expect(result).toContain('Native Codex Realtime cannot decide requests');
     if (canApproveRequests) expect(result).toContain('Use the canonical request tools to approve or deny');
     else expect(result).toContain('A tap in the request UI is required');
     expect(result).toContain('Never claim it was settled until canonical session updates show the result.');

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred, createMachineFixture } from '@/dev/testkit';
+import { createDeferred, createHydratedPlainMachineFixture } from '@/dev/testkit';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { VoiceSpeechDiagnosticsConfigureRequestV1Schema, VoiceSpeechDiagnosticsSettingsV1Schema, VoiceSpeechDiagnosticsStatusResponseV1Schema,
   resolveVoiceSpeechDiagnosticsStoragePolicy } from '@happier-dev/protocol/voice/diagnostics';
 
@@ -29,8 +30,8 @@ beforeEach(async () => {
       route: ({ path, method, body }) => createPlainMachineReadHttpResponseFixture(path,
         { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, 'account-a') ?? undefined });
   disconnect = await home.restoreActiveConnection();
-  const machine = createMachineFixture({ id: 'diagnostics-machine', activeAt: Date.now() });
-  storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [home.homes.diagnostics!.id]: [machine] } });
+  const machine = createHydratedPlainMachineFixture({ id: 'diagnostics-machine', accountId: 'account-a', machine: { activeAt: Date.now() } });
+  await publishMachineInventoryForTest({ serverId: home.homes.diagnostics!.id, accountId: 'account-a' }, [machine]);
   storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({ executionMachine: { mode: 'fixed', machineId: machine.id } }) }, storage.getState().settings));
 });
 afterEach(async () => { await disconnect?.(); await home?.dispose(); });
