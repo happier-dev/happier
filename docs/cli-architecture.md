@@ -78,8 +78,9 @@ native text response is truncated, it reads the complete envelope in pages of
 2026-11-14). It never re-executes the guest command to recover output. Full stderr
 therefore reaches the existing redaction owner before diagnostic tail bounding.
 The file is removed on completion, with best effort cleanup after failure or
-cancellation. E2B returns native byte streams and Maritime returns native text
-streams directly; neither uses this text-only binary envelope.
+cancellation. E2B returns native byte streams directly. In 0.3 development,
+Maritime's agent-box, computer and sandbox text APIs use the SDK shell envelope
+to preserve binary output and exit status.
 Payload promotion reports
 `remote_command_failed` with the exit status and a redacted stderr tail using the
 existing command capture budget. Storage exhaustion keeps `remote_storage_full`.
