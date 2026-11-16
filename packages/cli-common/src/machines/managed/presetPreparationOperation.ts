@@ -36,6 +36,8 @@ export type ManagedMachinePresetPreparationOperationInputV1 = Readonly<{
   credentialConfigurations: ManagedMachinePresetPreparedV1['binding']['credentialConfigurations'];
   /** Current canonical supplier metadata; permits adoption without composing archives. */
   cliIdentity?: string;
+  /** Archive removes the incumbent image without composing a replacement. */
+  cleanupOnly?: boolean;
   /** Only a new build needs CLI assets; recovery uses the retained native facts. */
   composeBuild?: (capturedContent: ManagedMachinePresetContentV1) => Promise<ManagedMachinePresetPreparationBuildCompositionV1>;
   custody: ManagedMachinePresetPreparationCustodyV1;
@@ -299,6 +301,13 @@ export async function settleManagedMachinePresetPreparationOperationV1(
       }
     }
   };
+  if (input.cleanupOnly) {
+    if (input.expectedRevision !== initial.preset.revision) {
+      return { kind: 'conflict', currentRevision: initial.preset.revision };
+    }
+    if (!incumbent) return { kind: 'refused', code: 'invalid_request' };
+    return await follow({ ...input, operationId: incumbent.operationId }, true, input.expectedRevision);
+  }
   if (!incumbent || incumbent.operationId === input.operationId
     || incumbent.status === 'cancelled' && !incumbent.artifact && !incumbent.nativeOperationRef) {
     return await follow(input);

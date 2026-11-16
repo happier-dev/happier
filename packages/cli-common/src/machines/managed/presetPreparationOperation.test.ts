@@ -258,6 +258,68 @@ describe('private preset preparation operation', () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it.each(['plain', 'e2ee'] as const)('Archive cleanup follows owned absence and leaves the restorable definition cold in %s', async mode => {
+    vi.useFakeTimers();
+    try {
+      let nonce = 80;
+      const custody: ManagedMachinePresetPreparationCustodyV1 = mode === 'plain' ? { mode }
+        : { mode, accountId: 'owner', accountKey: deriveBoxSecretKeyFromSeed(new Uint8Array(32).fill(71)),
+          randomBytes: length => new Uint8Array(length).fill(nonce++) };
+      const fixture = storageFixture(custody);
+      await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity, custody,
+        composeBuild: async () => ({ input: buildInput }), storage: fixture.storage, native: nativeFixture() });
+      const recipients = fixture.row().recipients;
+      const originalLaunch = fixture.opened().prepared!.binding.configuration.launch;
+      let destroys = 0;
+      const archive = { operationId: 'archive-operation', ...identity, expectedRevision: fixture.row().revision,
+        cleanupOnly: true as const, custody, storage: fixture.storage,
+        native: nativeFixture({ build: async () => { throw new Error('Archive must not build'); },
+          destroy: async (input, root) => {
+            expect(input.artifact).toEqual(artifact);
+            expect(root).toMatchObject({ operationId: 'operation-one', launch: originalLaunch });
+            destroys++;
+            return destroys === 1 ? { kind: 'refused', code: 'provider_unavailable' }
+              : destroys === 2 ? { kind: 'unknown', code: 'outcome_unknown', nativeOperationRef }
+                : { kind: 'confirmed' };
+          } }) };
+      expect(await settleManagedMachinePresetPreparationOperationV1(archive)).toMatchObject({ kind: 'failed',
+        prepared: { operationId: 'operation-one', status: 'cancelled', artifact } });
+      let settled = false;
+      const retry = settleManagedMachinePresetPreparationOperationV1({ ...archive, expectedRevision: fixture.row().revision })
+        .then(result => { settled = true; return result; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      expect(fixture.opened().prepared).toMatchObject({ status: 'cancelled', artifact, nativeOperationRef });
+      await vi.advanceTimersToNextTimerAsync();
+      expect(await retry).toMatchObject({ kind: 'cancelled', revision: fixture.row().revision });
+      const restorable = fixture.opened();
+      expect(restorable.launch).toEqual(definition.launch);
+      expect(restorable.preparation).toEqual({ enabled: true });
+      expect(restorable.prepared).not.toHaveProperty('artifact');
+      expect(restorable.prepared).not.toHaveProperty('nativeOperationRef');
+      expect(readManagedMachinePresetPreparationV1({ content: restorable, ...identity,
+        presetRevision: fixture.row().revision })).toEqual({ kind: 'cold', reason: 'cancelled' });
+      expect(fixture.row().recipients).toEqual(recipients);
+      expect(destroys).toBe(3);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('Archive cleanup rejects a stale revision before native destruction', async () => {
+    const fixture = storageFixture();
+    await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
+      composeBuild: async () => ({ input: buildInput }), custody: { mode: 'plain' }, storage: fixture.storage,
+      native: nativeFixture() });
+    let destroys = 0;
+    const archive = { operationId: 'archive-operation', ...identity, cleanupOnly: true as const,
+      custody: { mode: 'plain' as const }, storage: fixture.storage,
+      native: nativeFixture({ destroy: async () => { destroys++; return { kind: 'confirmed' }; } }) };
+    expect(await settleManagedMachinePresetPreparationOperationV1(archive)).toEqual({ kind: 'conflict',
+      currentRevision: fixture.row().revision });
+    expect(destroys).toBe(0);
+    expect(fixture.opened().prepared).toMatchObject({ status: 'ready', artifact });
+  });
+
   it.each(['artifact', 'nativeOperation'] as const)('reload follows retained cancelled %s cleanup through confirmed absence', async reference => {
     vi.useFakeTimers();
     try {
