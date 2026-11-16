@@ -328,8 +328,11 @@ The Stack placed-daemon launcher forwards this explicit payload-root input to
 the execution target without translating the path; the directory must exist on
 the creating daemon's host. In 0.3 development, source-runtime preparation builds
 the current host's canonical native guest payload when no payload root is configured.
-Configured targets are rebuilt from the daemon bundle's existing captured workspace.
-The replacement payload lives with that retained bundle;
+Configured targets are rebuilt from the daemon's selected sources: its captured
+workspace for bundle reloads, or its revision tree for tree reloads. Both producers
+use `source_guest_payload` and publish the root and metadata in the completed
+`source-bundle.json` record and launch environment (`sourceRuntimeLaunch.env`).
+The replacement payload lives with that retained runtime;
 preparation does not overwrite the operator's input directory. The daemon consumes
 the replacement root, and reload READY records its identity and source capture in
 `identities.daemon.guestPayload` alongside the loaded daemon identity. A payload

@@ -32,7 +32,7 @@ import { resolveDependencyInstallRoot, resolveDependencyRefreshMarkerPath, resol
 import { diagnoseSourceReloadFailure, emitSourceReloadRefusal, parseSourceReloadRefusalLine, recordSourceReloadRefusal } from '../runtime/shared/source_reload_refusal.mjs';
 import { emitSourceAuthorPackages, isFirstPartyBuiltInput } from './source_author_packages.mjs';
 import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
-import { buildSourceGuestPayload, readSourceGuestPayloadTargets } from './source_guest_payload.mjs';
+import { buildSourceGuestPayload, readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 import { resolveRuntimeBuildAuthority } from '../runtime/shared/runtime_build_authority.mjs';
 import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable } from './source_runtime_last_green.mjs';
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
@@ -1336,10 +1336,7 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
     if (guestPayloadTargets) {
       built.guestPayload = await buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir,
         targets: guestPayloadTargets, sourceCapture, env, signal });
-      built.env = { ...built.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: built.guestPayload.root,
-        HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ root: built.guestPayload.root,
-          identity: built.guestPayload.identity,
-          ...(built.guestPayload.targetIdentities ? { targetIdentities: built.guestPayload.targetIdentities } : {}) }) };
+      built.env = { ...built.env, ...sourceGuestPayloadEnvironment(built.guestPayload) };
     }
     const identityStarted = performance.now();
     const inputIdentity = await sourceBundleFingerprint({ repoDir, identityRepoDir: sourceRepoDir,

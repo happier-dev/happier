@@ -80,6 +80,10 @@ async function createRevisionFixture(t) {
   await writeFile(join(repoDir, 'apps/stack/scripts/build/build_daemon_artifact.mjs'), FIXTURE_SUPPORT_OWNER);
   await mkdir(join(repoDir, 'apps/cli/native'), { recursive: true });
   await writeFile(join(repoDir, 'apps/cli/native/version.txt'), 'native-1');
+  // Tree-mechanics fixtures use the supported manual interpreter payload;
+  // build_source_guest_payload.test.mjs exercises native payload production.
+  await mkdir(join(repoDir, 'manual-payload'));
+  await writeFile(join(repoDir, 'manual-payload/happier'), '#!/bin/sh\nexit 0\n');
   // A tracked file outside every component's inputs (like apps/ui for a server/daemon base).
   await mkdir(join(repoDir, 'docs'));
   await writeFile(join(repoDir, 'docs/notes.md'), 'committed notes');
@@ -273,7 +277,7 @@ test('a restart onto a new tree keeps the tree it selected; stop releases only t
   const reload = async () => {
     const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: sourceRevisionTreesRoot(stackBaseDir), rev: 'HEAD', overlay: [],
       outputDir: fixture.path(`descriptors-${described += 1}`) });
-    const { server } = await prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir, descriptorPath: revision.descriptorPath,
+    const { server } = await prepareSourceTreeRuntimeComponents({ repoDir, env: { ...process.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') }, stackBaseDir, descriptorPath: revision.descriptorPath,
       components: [{ component: 'server' }], logger: { error() {} } });
     return server;
   };
@@ -424,7 +428,7 @@ test('daemon source trees expose declared private CLI runtime entries from their
   // A competing checkout edit must never leak through the generated entry.
   await writeFile(join(cli, source), 'export const voiceInferenceRuntimeEngine = { revision: "foreign dirty" };');
   const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
-  const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir: fixture.path('stacks/qa'),
+  const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, env: { ...process.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') }, stackBaseDir: fixture.path('stacks/qa'),
     descriptorPath: revision.descriptorPath, components: [{ component: 'daemon' }], logger: { error() {} } });
   const entry = join(daemon.cliDir, 'package-dist/daemon/voiceInference/runtime/packagedVoiceInferenceRuntime.mjs');
   const sibling = join(daemon.cliDir, 'package-dist/processCensus.mjs');
@@ -449,7 +453,7 @@ test('HEAD moves and the checkout reinstalls: a running tree keeps its packages 
   await gitIn('add', 'apps/cli');
   await gitIn('commit', '--quiet', '-m', 'cli');
   const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
-  const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir: fixture.path('stacks/qa'),
+  const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, env: { ...process.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') }, stackBaseDir: fixture.path('stacks/qa'),
     descriptorPath: revision.descriptorPath, components: [{ component: 'daemon' }], logger: { error() {} } });
   const treeDir = dirname(dirname(daemon.cliDir));
   // HEAD moves, then the dependency owner republishes the installation (files replaced, new identity).

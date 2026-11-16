@@ -33,11 +33,18 @@ export function readSourceGuestPayloadTargets(env) {
   return targets.length ? targets : null;
 }
 
-export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir, targets, sourceCapture, env, signal }) {
+export function sourceGuestPayloadEnvironment(payload) {
+  return { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: payload.root,
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ root: payload.root,
+      identity: payload.identity, ...(payload.targetIdentities ? { targetIdentities: payload.targetIdentities } : {}) }) };
+}
+
+export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependencyRootDir, outputDir, targets, sourceCapture, env, signal }) {
   const root = join(outputDir, 'guest-payload');
-  // The caller owns one graph in an isolated finite worker. Reuse canonical
-  // capture containment for its mounted installed dependencies across awaits.
-  const captureContext = { HAPPIER_STACK_REPO_DIR: repoDir, HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR: sourceRepoDir };
+  // The caller owns these captured inputs. Reuse canonical capture containment
+  // for mounted installed dependencies; tree callers also name their pinned install.
+  const captureContext = { HAPPIER_STACK_REPO_DIR: repoDir,
+    HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR: dependencyRootDir ?? sourceRepoDir };
   const previousContext = Object.fromEntries(Object.keys(captureContext).map(key => [key, process.env[key]]));
   const captureEnv = { ...env, ...captureContext };
   // Vendor tool archives retain their installed-input lifecycle. Every authored

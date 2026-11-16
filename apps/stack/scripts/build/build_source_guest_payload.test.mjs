@@ -1,6 +1,11 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { prepareSourceTreeRuntimeComponents, resolveSourceTreeRevision } from './source_revision_tree.mjs';
+import { resolveCliRuntimeLaunchSpec } from '../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import { readSourceRuntimeBundleRecord, projectRemoteGuestCliPayloadEnvironment } from '../runtime/shared/source_bundle_record.mjs';
 import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -51,6 +56,14 @@ async function createGuestPayloadFixture(t) {
     process.platform === 'win32' ? 'junction' : 'dir');
   await captureBuildInputFiles({ sourceDir: sourceCommon, captureDir: common,
     readPaths: () => readWorkspaceBuildInputs(sourceCommon) });
+  // SEA compilation is an OS/compiler boundary, just like the executable
+  // compiler fixtures below. Keep the real CLI graph, staging and identity owner.
+  await writeFile(join(common, 'src/componentArtifacts/nodeSingleExecutable.ts'), `
+    import { writeFile } from 'node:fs/promises';
+    export async function compileNodeSingleExecutable({ outfile }) {
+      await writeFile(outfile, 'fixture native executable');
+    }
+  `);
   await symlink(join(sourceCommon, 'node_modules'), join(common, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   await mountInstalledNodeModules({ sourceModules: join(sourceCommon, '../../node_modules'), targetModules: join(repoDir, 'node_modules') });
   const sourceRepoDir = join(sourceCommon, '../..');
@@ -302,4 +315,45 @@ test('guest payload and daemon retain the same captured source after live edits 
   assert.ok(defaulted.guestPayload, 'source reloads without an override still produce their native payload');
   assert.equal(defaulted.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT, defaulted.guestPayload.root);
   assert.notEqual(defaulted.guestPayload.root, manualRoot, 'a previous manual override is not inherited');
+});
+
+
+test('tree reload publishes a native guest payload from the selected revision in its completed record', compilerFixtureOptions, async t => {
+  const { fixture, repoDir, cliDir, env } = await createGuestPayloadFixture(t);
+  // Native support acquisition is a process boundary, represented like the tree
+  // tests; guest capture, compilation, staging and record consumption stay real.
+  await writeFile(join(repoDir, 'apps/stack/scripts/build/build_daemon_artifact.mjs'), `
+    export async function ensureDaemonSupportArtifact({ stackBaseDir }) {
+      return { fingerprint: 'fixture', payloadDir: stackBaseDir };
+    }
+  `);
+  // Use physical module directories, as a real checkout does, before snapshotting.
+  const commonModules = join(repoDir, 'packages/cli-common/node_modules');
+  await rm(commonModules);
+  await mountInstalledNodeModules({ sourceModules: new URL('../../../../packages/cli-common/node_modules', import.meta.url).pathname, targetModules: commonModules });
+  const git = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules\n');
+  await git('init', '--quiet');
+  await git('config', 'user.name', 'test');
+  await git('config', 'user.email', 'test@example.invalid');
+  await git('add', '.');
+  await git('commit', '--quiet', '-m', 'guest source fixture');
+  const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'),
+    outputDir: fixture.path('descriptors') });
+  await writeFile(join(cliDir, 'src/index.ts'), 'export const snapshot = "foreign dirty edit";');
+  const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir: fixture.path('stacks/tree-guest'),
+    descriptorPath: revision.descriptorPath, components: [{ component: 'daemon' }], env, logger: { error() {} } });
+  assert.ok(daemon.guestPayload, 'tree reload must produce a payload without an operator root');
+  const record = await readSourceRuntimeBundleRecord(daemon.entrypoint);
+  assert.deepEqual(record.guestPayload, daemon.guestPayload);
+  const launch = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: record });
+  assert.equal(launch.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT, record.guestPayload.root);
+  assert.deepEqual(record.guestPayload.sourceCapture, record.sourceCapture);
+  assert.equal(record.sourceCapture.revision, revision.revision);
+  assert.deepEqual(projectRemoteGuestCliPayloadEnvironment(record.env), {
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: record.guestPayload.root,
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ root: record.guestPayload.root, identity: record.guestPayload.identity }),
+  });
+  assert.equal((await import(pathToFileURL(join(record.guestPayload.root, 'package-dist/index.mjs')))).snapshot, 'captured',
+    'guest payload uses the selected tree, never the moving checkout');
 });

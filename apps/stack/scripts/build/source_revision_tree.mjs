@@ -11,7 +11,8 @@ import { readCliPrivateSourceEntries, readWorkspacePackages } from '../../../../
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isPidAlive } from '../utils/proc/pids.mjs';
-import { resolveSourceRuntimeProducerContext, setBundleReadOnly } from './build_source_runtime.mjs';
+import { captureSourceWebBuildInputs, resolveSourceRuntimeProducerContext, setBundleReadOnly } from './build_source_runtime.mjs';
+import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
@@ -27,8 +28,8 @@ import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKept
  *   dependencies mounted so workspace imports resolve inside the tree. It is
  *   built once under a lock, published by rename and kept read-only.
  * - Each Stack runs a hardlink clone of it with only its declared overlay files
- *   replaced by their verified checkout bytes. Nothing here bundles or compiles,
- *   so it never takes a compiler admission.
+ *   replaced by their verified checkout bytes. The daemon guest payload uses
+ *   the same captured-input and payload owners as a bundle reload.
  * - HEAD moves every few minutes, so a reload at commit X runs the newest base B
  *   that is an ancestor of X, plus X's changes since B as a commit overlay (bytes
  *   from Git, not the checkout). Only a change to the installed-dependency shape
@@ -619,6 +620,31 @@ export async function prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir
       record = { identity, entrypoint, runtimeCommand: entrypoint, args: [], runtimeDir: cliDir, nodeEntrypoint: entrypoint, cliDir,
         env: { HAPPIER_STACK_CLI_ROOT_DIR: cliDir, HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
           HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0', HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '0' } };
+      const targets = readSourceGuestPayloadTargets(env);
+      if (targets) {
+        // Payload staging rewrites copied scripts. Capture writable inputs through
+        // the bundle owner instead of carrying the base's read-only hardlinks.
+        const workspace = join(t, 'guest-workspace');
+        try {
+          const captured = await captureSourceWebBuildInputs({ repoDir: t, component: 'daemon', outputDir: workspace, signal });
+          await setBundleReadOnly(workspace, false);
+          // As in bundle preparation, the finite compiler owns its process env
+          // and loader; tool subprocesses must inherit this host's build inputs.
+          const code = `const { buildSourceGuestPayload } = await import(${JSON.stringify(new URL('./source_guest_payload.mjs', import.meta.url).href)});
+const payload = await buildSourceGuestPayload({ ...JSON.parse(process.argv[1]), env: process.env });
+console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify(payload));`;
+          const output = await runCapture(process.execPath, sourceBuildNodeArgs({ repoDir: t, scriptPath: '--input-type=module',
+            args: ['-e', code, JSON.stringify({ repoDir: captured.repoDir, sourceRepoDir: repoDir,
+              dependencyRootDir: join(treesRoot, INSTALLS, tree.installIdentity), outputDir: t, targets, sourceCapture })] }),
+          { cwd: t, env, signal });
+          const line = String(output).split(/\r?\n/u).find(line => line.startsWith('HSTACK_GUEST_PAYLOAD '));
+          if (!line) throw new Error('[source-tree] guest payload preparation returned no artifact');
+          record.guestPayload = JSON.parse(line.slice('HSTACK_GUEST_PAYLOAD '.length));
+        } finally {
+          await rm(workspace, { recursive: true, force: true });
+        }
+        Object.assign(record.env, sourceGuestPayloadEnvironment(record.guestPayload));
+      }
     } else {
       const serverDir = join(t, 'apps/server');
       const entrypoint = join(serverDir, 'sources/main.mjs');
