@@ -11,7 +11,10 @@ import { MachineProvisionerNativeCauseV1Schema, ManagedNativeOperationReferenceV
 const id = () => z.string().check(z.trim(), z.minLength(1));
 
 export const ManagedMachinePresetPreparationV1Schema = lazyZodSchema(() =>
-  z.strictObject({ enabled: z.boolean() }));
+  z.strictObject({ enabled: z.boolean(),
+    /** Absent means update at start; rebuilding is an explicit author's cost-bearing choice. */
+    whenHappierUpdates: z.optional(z.enum(['update-at-start', 'rebuild-automatically'])),
+  }));
 
 /** Physical execution selected once for an admitted Machine, separate from its authored source. */
 export function createManagedMachinePresetPreparationExecutionV1Schema<Choices extends z.core.$ZodType>(choices: Choices) {

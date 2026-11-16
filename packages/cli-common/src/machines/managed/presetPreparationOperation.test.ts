@@ -717,15 +717,16 @@ describe('private preset preparation operation', () => {
 
   // O-MACH 2026-11-16 07:18: Retry is a new admission inspecting retained
   // native identity; executor correlation/retirement is not part of this flow.
-  it.each(['matching', 'cli-changed', 'config-changed', 'credential-changed'] as const)('new admission inspects interrupted build before %s recovery', async scenario => {
-    const fixture = storageFixture();
+  it.each(['matching', 'cli-changed', 'cli-changed-auto-rebuild', 'config-changed', 'credential-changed'] as const)('new admission inspects interrupted build before %s recovery', async scenario => {
+    const fixture = storageFixture({ mode: 'plain' }, scenario === 'cli-changed-auto-rebuild'
+      ? { ...definition, preparation: { enabled: true, whenHappierUpdates: 'rebuild-automatically' } } : definition);
     await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
       composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
       native: nativeFixture({ build: async () => ({ kind: 'pending', nativeOperationRef }) }) });
     if (scenario === 'config-changed') await editAuthor(fixture, { ...definition,
       launch: { ...definition.launch!, choices: { image: 'new-target' } } });
     const events: string[] = [];
-    const cliIdentity = scenario === 'cli-changed' ? 'new-cli-identity' : buildInput.cli.identity;
+    const cliIdentity = scenario === 'cli-changed' || scenario === 'cli-changed-auto-rebuild' ? 'new-cli-identity' : buildInput.cli.identity;
     const credentialConfigurations = scenario === 'credential-changed' ? [{
       account: { service: { pluginId: 'fixture.compute', localId: 'auth' }, accountId: 'account' }, revision: 'new-configuration',
     }] : [];

@@ -23,14 +23,19 @@ export function createManagedMachinePresetPreparationBindingV1(params: Preparati
     credentialConfigurations: params.credentialConfigurations };
 }
 
+type PreparedImage = Readonly<{ artifact: ManagedNativeOperationReferenceV1; binaryPath: string;
+  bakedSetup?: MachineSetupV1; deferredSetup?: MachineSetupV1 }>;
+
 export type ManagedMachinePresetPreparationDecisionV1 =
-  | Readonly<{ kind: 'warm'; artifact: ManagedNativeOperationReferenceV1; binaryPath: string;
-    updateCli?: true; bakedSetup?: MachineSetupV1; deferredSetup?: MachineSetupV1 }>
+  | PreparedImage & Readonly<{ kind: 'warm'; updateCli?: true }>
+  | PreparedImage & Readonly<{ kind: 'rebuild' }>
   | Readonly<{ kind: 'cold'; reason: 'disabled' | 'unprepared' | 'stale' | 'building' | 'failed' | 'cancelled' }>;
 
-/** Image freshness follows authored configuration; CLI provenance selects an install at start. */
+/** Image freshness follows authored configuration; CLI changes follow the author's update policy. */
 export function readManagedMachinePresetPreparationV1(params: PreparationIdentity & Readonly<{
   content: ManagedMachinePresetContentV1;
+  /** Consume the caller's canonical Manage decision; absence never authorizes a build. */
+  canManagePreset?: boolean;
 }>): ManagedMachinePresetPreparationDecisionV1 {
   const { content } = params;
   if (content.preparation?.enabled !== true) return { kind: 'cold', reason: 'disabled' };
@@ -47,8 +52,12 @@ export function readManagedMachinePresetPreparationV1(params: PreparationIdentit
   const deferredSetup = content.setup === undefined ? undefined
     : splitMachineSetupForPreparationV1(content.setup, prepared.bakedSetup?.items?.length ?? 0).deferredSetup;
   // The private schema establishes that ready always has an artifact.
-  return { kind: 'warm', artifact: prepared.artifact!, binaryPath: prepared.cliBinaryPath,
-    ...(prepared.binding.cliIdentity === params.cliIdentity ? {} : { updateCli: true }),
+  const image = { artifact: prepared.artifact!, binaryPath: prepared.cliBinaryPath,
     ...(prepared.bakedSetup === undefined ? {} : { bakedSetup: prepared.bakedSetup }),
     ...(deferredSetup === undefined ? {} : { deferredSetup }) };
+  const cliChanged = prepared.binding.cliIdentity !== params.cliIdentity;
+  if (cliChanged && content.preparation.whenHappierUpdates === 'rebuild-automatically' && params.canManagePreset === true) {
+    return { kind: 'rebuild', ...image };
+  }
+  return { kind: 'warm', ...image, ...(cliChanged ? { updateCli: true } : {}) };
 }

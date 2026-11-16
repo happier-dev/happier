@@ -23,14 +23,19 @@ describe('preset preparation freshness', () => {
       binding, artifact, cliBinaryPath: binaryPath, bakedSetup };
     const saved = { ...content, preparation: { enabled: true, whenHappierUpdates: 'rebuild-automatically' as const }, prepared };
     const changedCli = { ...current, cliIdentity: 'home:0.3:payload-b' };
-    const decision = readManagedMachinePresetPreparationV1({ content: saved, ...changedCli });
+    const decision = readManagedMachinePresetPreparationV1({ content: saved, ...changedCli, canManagePreset: true });
     expect(decision).toMatchObject({ kind: 'rebuild', artifact, binaryPath, bakedSetup });
     expect(decision).not.toHaveProperty('updateCli');
-    expect(readManagedMachinePresetPreparationV1({ content: saved, ...current }))
+    // An author's setting cannot lend Manage authority to the Session starter.
+    for (const authority of [{}, { canManagePreset: false }]) {
+      expect(readManagedMachinePresetPreparationV1({ content: saved, ...changedCli, ...authority }))
+        .toMatchObject({ kind: 'warm', artifact, updateCli: true });
+    }
+    expect(readManagedMachinePresetPreparationV1({ content: saved, ...current, canManagePreset: true }))
       .toMatchObject({ kind: 'warm', artifact });
-    expect(readManagedMachinePresetPreparationV1({ content: saved, ...current })).not.toHaveProperty('updateCli');
+    expect(readManagedMachinePresetPreparationV1({ content: saved, ...current, canManagePreset: true })).not.toHaveProperty('updateCli');
     expect(readManagedMachinePresetPreparationV1({ content: { ...saved,
-      preparation: { enabled: true, whenHappierUpdates: 'update-at-start' } }, ...changedCli }))
+      preparation: { enabled: true, whenHappierUpdates: 'update-at-start' } }, ...changedCli, canManagePreset: true }))
       .toMatchObject({ kind: 'warm', artifact, updateCli: true });
     for (const changed of [
       { content: { ...saved, setup: { scripts: [{ body: 'echo changed', affects: 'none' as const }] } }, ...changedCli },

@@ -7,7 +7,7 @@ import * as preset from './managedMachinePresetContentV1.js';
 import { MachineProvisionerPreparationBuildResultV1Schema, MachineProvisionerPreparationInspectResultV1Schema,
   MachineProvisionerPreparationDestroyResultV1Schema } from '../../plugins/contributions/machineProvisionerPreparationSchemas.js';
 import { ManagedMachinePresetPreparationBindingV1Schema, ManagedMachinePresetPreparedV1Schema,
-  ManagedMachinePresetPreparationExecutionV1Schema } from './managedMachinePresetPreparationV1.js';
+  ManagedMachinePresetPreparationExecutionV1Schema, ManagedMachinePresetPreparationV1Schema } from './managedMachinePresetPreparationV1.js';
 
 const content = {
   v: 1 as const, name: 'Prepared preset', preparation: { enabled: true },
@@ -26,6 +26,11 @@ const prepared = { operationId: 'prepare-1', binding, status: 'ready' as const, 
   cliBinaryPath: '/opt/happier/cli/current/happier', bakedSetup: content.setup };
 
 describe('private prepared preset content', () => {
+  it('retains a legacy update policy as absent and accepts an explicit startup-update choice', () => {
+    expect(ManagedMachinePresetPreparationV1Schema.parse({ enabled: true })).toEqual({ enabled: true });
+    const explicit = { enabled: true, whenHappierUpdates: 'update-at-start' };
+    expect(ManagedMachinePresetPreparationV1Schema.parse(explicit)).toEqual(explicit);
+  });
   it('reads retained bindings without retaining the retired revision', () => {
     expect(ManagedMachinePresetPreparationBindingV1Schema.parse({ ...binding, presetRevision: 3 })).toEqual(binding);
   });
@@ -194,13 +199,15 @@ describe('private prepared preset content', () => {
   });
 
   it.each(['plain', 'e2ee'] as const)('roundtrips private bindings in %s and rejects an acquire override changing them', mode => {
+    const preparation = { enabled: true, whenHappierUpdates: 'rebuild-automatically' as const };
+    const policyContent = { ...content, preparation };
     const secret = new Uint8Array(32).fill(4);
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(secret).publicKey;
     let nonce = 10;
     const randomBytes = (length: number) => new Uint8Array(length).fill(nonce++);
     const sealed = mode === 'plain'
-      ? preset.sealManagedMachinePresetContentV1({ presetId: 'preset', mode, content })
-      : preset.sealManagedMachinePresetContentV1({ presetId: 'preset', mode, content, randomBytes,
+      ? preset.sealManagedMachinePresetContentV1({ presetId: 'preset', mode, content: policyContent })
+      : preset.sealManagedMachinePresetContentV1({ presetId: 'preset', mode, content: policyContent, randomBytes,
         recipientCensus: [{ account: { kind: 'account', accountId: 'owner', firstName: 'Owner',
           lastName: null, username: 'owner', avatarUrl: null }, readiness: { status: 'available',
           contentPublicKey: encodeBase64(publicKey, 'base64'),
@@ -216,7 +223,7 @@ describe('private prepared preset content', () => {
     expect(next).not.toBeNull();
     expect(next?.prepared).toEqual(writerPrepared);
     const opened = preset.openManagedMachinePresetContentV1({ presetId: 'preset', ...auth, content: next?.content });
-    expect(opened).toEqual({ ...content, prepared: writerPrepared });
+    expect(opened).toEqual({ ...policyContent, prepared: writerPrepared });
     const nativeCause = { httpStatusClass: '5xx' as const, code: 'service_error' as const };
     const { artifact: _failedArtifact, bakedSetup: _failedBakedSetup, ...failedBase } = prepared;
     const failedPrepared = { ...failedBase, status: 'failed' as const, code: 'native_build_failed', nativeCause };
@@ -224,7 +231,7 @@ describe('private prepared preset content', () => {
       ...auth, content: sealed.content, expectedOperationId: null, prepared: failedPrepared });
     expect(failedWrite).not.toBeNull();
     expect(preset.openManagedMachinePresetContentV1({ presetId: 'preset', ...auth, content: failedWrite?.content }))
-      .toEqual({ ...content, prepared: failedPrepared });
+      .toEqual({ ...policyContent, prepared: failedPrepared });
     expect(ManagedMachinePresetPreparedV1Schema.safeParse({ ...failedPrepared,
       nativeCause: { ...nativeCause, message: 'private vendor response' } }).success).toBe(false);
     expect(preset.resolveManagedMachinePresetAcquireOverrideV1({ baseContent: opened,
@@ -240,9 +247,9 @@ describe('private prepared preset content', () => {
     });
     const authorDisabled = mode === 'plain'
       ? preset.replaceManagedMachinePresetAuthorContentV1({ presetId: 'preset', mode, projection,
-        content: { ...content, preparation: { enabled: false } } })
+        content: { ...content, preparation: { ...preparation, enabled: false } } })
       : preset.replaceManagedMachinePresetAuthorContentV1({ presetId: 'preset', mode, projection,
-        content: { ...content, preparation: { enabled: false } }, accountId: 'owner', accountKey: secret,
+        content: { ...content, preparation: { ...preparation, enabled: false } }, accountId: 'owner', accountKey: secret,
         recipientCensus: [{ account: { kind: 'account', accountId: 'owner', firstName: 'Owner',
           lastName: null, username: 'owner', avatarUrl: null }, readiness: { status: 'available',
           contentPublicKey: encodeBase64(publicKey, 'base64'),
@@ -254,7 +261,7 @@ describe('private prepared preset content', () => {
       : preset.openManagedMachinePresetContentV1({ presetId: 'preset', mode,
         content: authorDisabled?.content, recipients: authorDisabled?.recipients ?? [],
         accountId: 'owner', accountKey: secret }))
-      .toEqual({ ...content, preparation: { enabled: false }, prepared: writerPrepared });
+      .toEqual({ ...content, preparation: { ...preparation, enabled: false }, prepared: writerPrepared });
     expect(mode === 'plain'
       ? preset.replaceManagedMachinePresetAuthorContentV1({ presetId: 'preset', mode, projection,
         content: { ...content, prepared: { ...prepared, operationId: 'forged-author-operation' } } })

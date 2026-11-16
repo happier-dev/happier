@@ -339,6 +339,7 @@ export async function settleManagedMachinePresetPreparationOperationV1(
     if (recovered.kind === 'ready' && input.cliIdentity !== undefined
       && readManagedMachinePresetPreparationV1({ content: { ...capturedContent, prepared: recovered.prepared },
         cliIdentity: input.cliIdentity,
+        canManagePreset: true, // This finite Prepare operation already holds admitted Manage authority.
         credentialConfigurations: input.credentialConfigurations }).kind === 'warm') return recovered;
     const observed = await readPreset(input);
     if ('kind' in observed) return observed;
