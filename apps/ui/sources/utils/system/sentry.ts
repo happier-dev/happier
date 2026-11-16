@@ -1,6 +1,16 @@
 import { MMKV } from 'react-native-mmkv';
 import { Platform } from 'react-native';
-import * as Sentry from '@sentry/react-native';
+// Named imports: Metro's inline requires then load the SDK only when crash reporting actually runs.
+import {
+    addBreadcrumb,
+    captureException,
+    close as closeSentry,
+    init as initSentry,
+    mobileReplayIntegration,
+    setContext,
+    setTag,
+    wrap as wrapWithSentry,
+} from '@sentry/react-native';
 import Constants from 'expo-constants';
 import * as Application from 'expo-application';
 import type { ComponentType } from 'react';
@@ -179,7 +189,7 @@ function setSentryTag(key: string, value: unknown): void {
     const tagValue = readStringValue(value);
     if (!tagValue) return;
     try {
-        Sentry.setTag(key, tagValue);
+        setTag(key, tagValue);
     } catch {
         // ignore reporting failures
     }
@@ -196,7 +206,7 @@ function applySentryRuntimeContext(): void {
     setSentryTag('happier.native_build', context.nativeBuildVersion);
 
     try {
-        Sentry.setContext('happier.runtime', context);
+        setContext('happier.runtime', context);
     } catch {
         // ignore reporting failures
     }
@@ -217,7 +227,7 @@ export function initializeSentryOnce(): void {
         resolved.enableReplay
             ? (() => {
                   try {
-                      const integration = Sentry.mobileReplayIntegration();
+                      const integration = mobileReplayIntegration();
                       cachedReplayIntegration = integration;
                       return integration;
                   } catch {
@@ -227,7 +237,7 @@ export function initializeSentryOnce(): void {
               })()
             : null;
 
-    Sentry.init({
+    initSentry({
         dsn: resolved.dsn,
         ...(resolved.environment ? { environment: resolved.environment } : null),
         ...(resolved.release ? { release: resolved.release } : null),
@@ -265,7 +275,7 @@ export function applyCrashReportsOptOut(optOut: boolean): void {
 
     if (optOut) {
         if (globalThis.__HAPPIER_SENTRY_INIT__) {
-            void Sentry.close().catch(() => {});
+            void closeSentry().catch(() => {});
             cachedReplayIntegration = null;
             // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
             delete globalThis.__HAPPIER_SENTRY_INIT__;
@@ -283,7 +293,7 @@ export function wrapWithSentryIfEnabled<T extends ComponentType<any>>(Component:
 
     // Ensure init happens before wrap to avoid Sentry "App Start Span" warnings.
     initializeSentryOnce();
-    return Sentry.wrap(Component) as unknown as T;
+    return wrapWithSentry(Component) as unknown as T;
 }
 
 export function captureExceptionIfEnabled(
@@ -300,13 +310,13 @@ export function captureExceptionIfEnabled(
     initializeSentryOnce();
 
     try {
-        Sentry.captureException(error, context);
+        captureException(error, context);
     } catch {
         // ignore reporting failures
     }
 }
 
-export function addBreadcrumbIfEnabled(breadcrumb: Parameters<typeof Sentry.addBreadcrumb>[0]): void {
+export function addBreadcrumbIfEnabled(breadcrumb: Parameters<typeof addBreadcrumb>[0]): void {
     if (getFeatureBuildPolicyDecision(CRASH_REPORTS_FEATURE_ID) === 'deny') return;
     if (resolveCrashReportsOptOut()) return;
     if (!resolveSentryEnv()) return;
@@ -314,7 +324,7 @@ export function addBreadcrumbIfEnabled(breadcrumb: Parameters<typeof Sentry.addB
     initializeSentryOnce();
 
     try {
-        Sentry.addBreadcrumb(breadcrumb);
+        addBreadcrumb(breadcrumb);
     } catch {
         // ignore reporting failures
     }

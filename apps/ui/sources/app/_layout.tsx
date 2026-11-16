@@ -26,7 +26,6 @@ import { AppPaneModalProvider } from '@/components/appShell/providers/AppPaneMod
 import { CurrentUiContextProvider } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { CurrentUiContextActionHost } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { PostHogProvider } from 'posthog-react-native';
-import * as Sentry from '@sentry/react-native';
 import { tracking } from '@/track/tracking';
 import { SettingsAnalyticsRuntime } from '@/track/settingsAnalytics/SettingsAnalyticsRuntime';
 import { restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
@@ -65,7 +64,7 @@ import { GlassMaterialRuntime } from '@/components/ui/glass/GlassMaterialRuntime
 import { ThemeProfileRuntimeSync } from '@/theme/ThemeProfileRuntimeSync';
 import { useWebRootCanvasPresentation } from '@/theme/useWebRootCanvasPresentation';
 import { GlassNavigationThemeProvider } from '@/components/ui/glass/GlassNavigationThemeProvider';
-import { initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
+import { captureExceptionIfEnabled, initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
 import { t } from '@/text';
 import { preloadTranslations } from '@/text/i18n';
 import { AppCrashRecoveryBoundary } from '@/components/appShell/AppCrashRecoveryBoundary';
@@ -697,13 +696,7 @@ function FullAppRootLayout() {
             <WebCryptoStartupGate>
                 <AppCrashRecoveryBoundary
                     onRestart={onRestart}
-                    onError={(error) => {
-                        try {
-                            (Sentry as any).captureException?.(error);
-                        } catch {
-                            // ignore
-                        }
-                    }}
+                    onError={(error) => captureExceptionIfEnabled(error)}
                 >
                     <AppBoot />
                 </AppCrashRecoveryBoundary>
