@@ -75,7 +75,8 @@ export type RpcErrorCarrier = {
 export class RpcError extends Error {
   readonly rpcErrorCode: RpcErrorCode | string;
   readonly failureCause?: ActionFailureCauseV1;
-  declare readonly details?: MachineAvailabilityDiagnosticV1
+  // No `declare` here: Babel-transformed loads (Metro, Playwright) reject it. Assigned after construction.
+  readonly details?: MachineAvailabilityDiagnosticV1
     | Readonly<{ clients: readonly SocketRpcAnsweringClientCandidateV1[] }>;
 
   constructor(message: string, rpcErrorCode: RpcErrorCode | string, failureCause?: ActionFailureCauseV1) {
