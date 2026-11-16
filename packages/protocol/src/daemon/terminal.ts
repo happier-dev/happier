@@ -113,9 +113,10 @@ export const DaemonTerminalEnsureRequestSchema = lazyZodSchema(() => z.strictObj
 }).check(
   z.refine(value => value.initialCommand === undefined || value.launch === undefined,
     { path: ['initialCommand'], message: 'initialCommand cannot be combined with launch' }),
-  z.refine(value => value.launch?.kind !== 'service_shell'
-    || value.cwd === undefined && value.workspace === undefined && value.sessionId === undefined,
-    { path: ['launch'], message: 'service_shell resolves its target context on the daemon' }),
+  z.refine(value => value.launch?.kind === 'service_shell'
+    ? value.cwd === undefined && value.workspace === undefined && value.sessionId === undefined
+    : value.launch?.kind !== 'agent_login' || value.workspace === undefined && value.sessionId === undefined,
+    { path: ['launch'], message: 'Native machine launches resolve their target context on the daemon' }),
   z.overwrite(value => {
     const { initialCommand, ...request } = value;
     return initialCommand === undefined ? request : {

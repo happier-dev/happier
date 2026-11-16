@@ -18,6 +18,33 @@ import { createSessionNotificationContextFixture } from '@/testkit/backends/sess
 import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 
 describe('machine shell RPC custody', () => {
+  it('keeps native machine login outside Session and Project custody for every launch entry', async () => {
+    await withTempDir('terminal-login-scope-', async root => {
+      const handlers = new Map<string, import('../rpc/types').RpcHandler>();
+      const registration = registerMachineTerminalRpcHandlers({
+        rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+        deps: { serverId: 'home', resolveHostHomeServerIdentityId: async () => 'home',
+          env: {}, workingDirectory: root, accessPolicy: { kind: 'restrictedRoots', roots: [root] } },
+      });
+      try {
+        for (const role of ['use', 'manage'] as const) {
+          const context = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
+            verifyMachineAdmissionCurrent: async () => true,
+            machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+              installationId: 'installation', encryptionMode: 'plain' as const, role } };
+          for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
+            for (const target of [{ sessionId: 'own-session' },
+              { workspace: { serverId: 'home', workspaceId: 'project', machineId: 'machine', rootPath: root } }]) {
+              expect(await handlers.get(method)!({ terminalKey: 'native-login', launch: { kind: 'agent_login',
+                agentId: 'happier.scm.forge.github/gh' }, ...target }, context))
+                .toMatchObject({ ok: false, errorCode: 'terminal_invalid_request' });
+            }
+          }
+        }
+      } finally { registration.dispose(); }
+    });
+  });
+
   it.each(['session', 'project'] as const)('verifies retained %s terminal input once at installed Machine ingress', async kind => {
     const f = await createInstalledFilesystemMachineFixture();
     await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [f.serverId]: {

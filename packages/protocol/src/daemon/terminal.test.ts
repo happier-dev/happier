@@ -21,6 +21,15 @@ describe('daemon terminal listing V1', () => {
 });
 
 describe('DaemonTerminalEnsureRequestSchema', () => {
+  it('keeps machine-native sign-in outside Session and Project target custody', () => {
+    const request = { terminalKey: 'login', launch: { kind: 'agent_login', agentId: 'example/cli' } };
+    expect(DaemonTerminalEnsureRequestSchema.safeParse(request).success).toBe(true);
+    expect(DaemonTerminalEnsureRequestSchema.safeParse({ ...request, cwd: '/repo' }).success).toBe(true);
+    for (const target of [{ sessionId: 'session' },
+      { workspace: { serverId: 'home', machineId: 'machine', rootPath: '/repo' } }]) {
+      expect(DaemonTerminalEnsureRequestSchema.safeParse({ ...request, ...target }).success).toBe(false);
+    }
+  });
   it('admits only an exact daemon-resolved service shell through both terminal front doors', () => {
     const request = { terminalKey: 'service:app', launch: {
       kind: 'service_shell', serviceId: 'environment-instance/app', expectedGeneration: 'generation-a',
