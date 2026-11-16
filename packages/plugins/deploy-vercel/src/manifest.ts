@@ -18,7 +18,8 @@ export const plugin = definePlugin({
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, ...targetOptionsResources },
   inputTypes: targetInputTypes,
-  deploymentTargets: { runtime: { role: 'runtime', title: 'Vercel', targetKind: 'vercel', icon: 'server-outline',
+  // Vercel client getPollingDelay starts at one second; only demanded pending receipts use this cadence.
+  deploymentTargets: { runtime: { statusIntervalMs: 1000, role: 'runtime', title: 'Vercel', targetKind: 'vercel', icon: 'server-outline',
     accepts: ['static', 'server'], needs: ['repository', 'stateless'],
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: projectPrepareResultSchema,
     actions: { inspect: 'targets-inspect-v1', link: 'project-link', create: 'project-create', deploy: 'deploy', uploadDeploy: 'deploy-upload-v1', observe: 'observe', cancel: 'cancel', promote: 'promote', rollback: 'rollback', teardown: 'teardown',

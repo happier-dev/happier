@@ -19,7 +19,7 @@ it.each([
     { periodMs: undefined, failSecond: 'throw' },
     { periodMs: 300000, failSecond: false, retained: true },
 ])('reports the actual enrolled sources when period=$periodMs and second enrollment fails=$failSecond retained=$retained', async ({ periodMs, failSecond, retained }) => {
-    const fixture = createPlatformFailureNoticeFixture(true);
+    const fixture = createPlatformFailureNoticeFixture(true, false, periodMs);
     const environment = await fixture.host.readEnvironment();
     const scope = { serverId: 'home', projectSourceId: environment.environment.projectSourceId, environmentId: environment.environment.id };
     const app = fastify();
@@ -27,11 +27,14 @@ it.each([
     // This HTTP child executor models the remote Action transport; admission, registry and enrollment stay real.
     app.post<{ Body: { actionId: string; input: { action?: { localId: string } } } }>('/child', async request => {
         const { actionId, input } = request.body;
-        if (actionId === 'action.invoke') return { ok: true, result: PluginEventAutomationSetupResultV1Schema.parse({
-            v: 1, sourceContractVersion: 1, sourceInstanceId: input.action?.localId, displayLabel: 'Receipt Event',
-            sourceConfig: { v: 1, serverId: 'home', environmentId: scope.environmentId, targetLinkId: 'target-link',
-                credentialPrincipal: fixture.credentialPrincipal, observingSince: 1, ...(periodMs === undefined ? {} : { periodMs }) },
-        }) };
+        if (actionId === 'action.invoke') {
+            expect(Reflect.get(input, 'input')).toMatchObject({ ...(periodMs === undefined ? {} : { periodMs }) });
+            return { ok: true, result: PluginEventAutomationSetupResultV1Schema.parse({
+                v: 1, sourceContractVersion: 1, sourceInstanceId: input.action?.localId, displayLabel: 'Receipt Event',
+                sourceConfig: { v: 1, serverId: 'home', environmentId: scope.environmentId, targetLinkId: 'target-link',
+                    credentialPrincipal: fixture.credentialPrincipal, observingSince: 1, ...(periodMs === undefined ? {} : { periodMs }) },
+            }) };
+        }
         sequence++;
         if (failSecond && sequence === 2) {
             if (failSecond === 'throw') throw new Error('Second enrollment transport failed');
@@ -160,7 +163,7 @@ it.each(['rpc', 'plugin'] as const)('preserves the canonical %s failureCause thr
     expect(JSON.stringify(result)).not.toMatch(/private rpc body|private plugin body/);
 });
 
-it.each(['reviewed_child_unavailable', 'environment_read', 'setup.credential_scope_denied'] as const)(
+it.each(['reviewed_child_unavailable', 'environment_read', 'reviewed_child.no_plan'] as const)(
     'retains a persisted Link and names the unavailable observer step: %s', async step => {
         const fixture = createPlatformFailureNoticeFixture(true);
         const environment = await fixture.host.readEnvironment();
@@ -169,7 +172,7 @@ it.each(['reviewed_child_unavailable', 'environment_read', 'setup.credential_sco
         const enrollment = createPlatformFailureEnrollmentForHost({ ...fixture.host,
             async acquirePluginRuntimeRegistryLease() {
                 const lease = await fixture.host.acquirePluginRuntimeRegistryLease();
-                return { ...lease, ...(step === 'setup.credential_scope_denied'
+                return { ...lease, ...(step === 'reviewed_child.no_plan'
                     ? { resolveCurrentPluginMaterializationRef: () => fixture.caller } : {}) };
             },
             async readEnvironment() {
@@ -177,7 +180,7 @@ it.each(['reviewed_child_unavailable', 'environment_read', 'setup.credential_sco
                 return environment;
             },
         });
-        const context = step === 'setup.credential_scope_denied'
+        const context = step === 'reviewed_child.no_plan'
             ? { hostReviewedChild: createHostReviewedChildPortV1({ actionId: 'deployments.targets.link', input: {}, context: {},
                 async execute() { throw new Error('a child without an admitted plan cannot execute'); } }) } : {};
         const result = await enrollment.completeLink(linked, { environmentId: environment.environment.id, role: 'runtime',
@@ -185,8 +188,8 @@ it.each(['reviewed_child_unavailable', 'environment_read', 'setup.credential_sco
         expect(result).toEqual({ ...linked, failureObserver: { status: 'unavailable',
             requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/),
             ...(step === 'environment_read' ? {} : { errorCode: 'credential_scope_denied' }), failureCause: {
-            phase: `target_link.failure_observer.${step}`, errorClass: 'Error',
-            errorCode: step === 'setup.credential_scope_denied' ? 'credential_scope_denied' : null,
+            phase: step === 'reviewed_child.no_plan' ? 'deployment.reviewed_child' : `target_link.failure_observer.${step}`, errorClass: 'Error',
+            errorCode: step === 'reviewed_child.no_plan' ? 'no_plan' : null,
             httpStatus: step === 'environment_read' ? 401 : null,
         } } });
         expect(JSON.stringify(result)).not.toContain('private transport body');

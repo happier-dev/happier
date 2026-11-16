@@ -62,7 +62,7 @@ type EnrolledSource = PlatformFailureEnrollmentSourceV1;
 /** Receipt setup owns the baseline; the Account writer owns private source custody and idempotent enrollment. */
 export async function enrollPlatformFailureSource(input: Readonly<{
     serverId: string; environment: DeploymentEnvironmentDetailV1; targetLinkId: string;
-    event: Event; invoke: Invoke;
+    event: Event; invoke: Invoke; statusIntervalMs?: number;
     /** Read after setup: the setup Action is the watcher plugin's activation demand on a fresh controller. */
     resolveWatcherMaterializationRef(): PluginMachineMaterializationRefV1 | null | Promise<PluginMachineMaterializationRefV1 | null>;
 }>): Promise<EnrollmentResult<EnrolledSource>> {
@@ -72,7 +72,7 @@ export async function enrollPlatformFailureSource(input: Readonly<{
     if (!source.supportedObservationTransports.includes('checkpointedPull')) return unavailable('transport_unavailable');
     const scope = { serverId: input.serverId, environmentId: input.environment.environment.id, targetLinkId: input.targetLinkId };
     const setup = childResult(await atStep('setup', () => input.invoke({ action: source.setupActionRef,
-        role: PLATFORM_FAILURE_SETUP_ROLE, input: { v: 1, ...scope } })), 'setup');
+        role: PLATFORM_FAILURE_SETUP_ROLE, input: { v: 1, ...scope, ...(input.statusIntervalMs === undefined ? {} : { periodMs: input.statusIntervalMs }) } })), 'setup');
     if (!setup.ok) return setup;
     const result = PluginEventAutomationSetupResultV1Schema.safeParse(setup.result);
     if (!result.success || result.data.sourceContractVersion !== source.sourceContractVersion
@@ -112,7 +112,7 @@ export function createPlatformFailureEnrollmentForHost(host: Readonly<{
     acquirePluginRuntimeRegistryLease?(): Promise<PlatformFailureEnrollmentLease>;
     readEnvironment(input: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
 }>) {
-    async function withEvents<T>(source: DeploymentTargetV1['source'], run: (events: readonly ResolvedAutomationEligibleEvent[], lease: PlatformFailureEnrollmentLease) => Promise<T>) {
+    async function withEvents<T>(source: DeploymentTargetV1['source'], run: (events: readonly ResolvedAutomationEligibleEvent[], lease: PlatformFailureEnrollmentLease, statusIntervalMs: number | undefined) => Promise<T>) {
         if (source.kind !== 'plugin' || !host.acquirePluginRuntimeRegistryLease) return null;
         const lease = await atStep('lease_acquire', () => host.acquirePluginRuntimeRegistryLease!());
         try {
@@ -126,7 +126,7 @@ export function createPlatformFailureEnrollmentForHost(host: Readonly<{
                 }
                 return event;
             });
-            return await run(events, lease);
+            return await run(events, lease, descriptor.statusIntervalMs);
         } finally { await atStep('lease_release', () => lease.release()); }
     }
     async function enroll(input: LinkEnrollmentInput, context: ActionExecutorContext,
@@ -134,7 +134,7 @@ export function createPlatformFailureEnrollmentForHost(host: Readonly<{
     ) {
         if (input.role !== 'runtime' || input.source?.kind !== 'plugin') return null;
         const { environmentId, targetLinkId } = input;
-        return withEvents(input.source, async (events, lease) => {
+        return withEvents(input.source, async (events, lease, statusIntervalMs) => {
             const environment = await atStep('environment_read', () => host.readEnvironment({ environmentId, context }));
             if (environment.environment.runtimeTargetLinkId !== targetLinkId) return null;
             const row = environment.targetLinks.find(item => item.targetLink.id === targetLinkId);
@@ -155,7 +155,7 @@ export function createPlatformFailureEnrollmentForHost(host: Readonly<{
             };
             for (const event of events) {
                 const result = await enrollPlatformFailureSource({ serverId: host.serverId, environment, targetLinkId,
-                    event: event.event, resolveWatcherMaterializationRef, invoke: context.hostReviewedChild.invoke });
+                    event: event.event, statusIntervalMs, resolveWatcherMaterializationRef, invoke: context.hostReviewedChild.invoke });
                 if (!result.ok) return result;
                 sources.push(result.result);
                 onEnrolled?.(readBack);

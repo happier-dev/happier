@@ -7,7 +7,7 @@ import { PluginLocalizedStringV2Schema } from '@happier-dev/protocol/plugins/con
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { createDeploymentTargetRuntimeActionsV1Schema, createDeploymentTargetDataV1Schema, DeploymentTargetLinkProviderContentV1Schema,
+import { DeploymentTargetStatusIntervalMsV1Schema, createDeploymentTargetRuntimeActionsV1Schema, createDeploymentTargetDataV1Schema, DeploymentTargetLinkProviderContentV1Schema,
     type DeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 export { DeploymentDataParentBranchRefV1Schema, type DeploymentDataParentBranchRefV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 export { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetProviderIdentityV1Schema,
@@ -76,7 +76,7 @@ const normalizedFields = () => ({
 
 /** Both normalized roles consume the declaration owner's closed role grammar. */
 export const DeploymentTargetV1Schema: z.ZodMiniType<DeploymentTargetV1> = z.discriminatedUnion('role', [
-    z.strictObject({ ...normalizedFields(), role: z.literal('runtime'),
+    z.strictObject({ ...normalizedFields(), role: z.literal('runtime'), statusIntervalMs: z.optional(DeploymentTargetStatusIntervalMsV1Schema),
         actions: createDeploymentTargetRuntimeActionsV1Schema(DeploymentActionRefV1Schema) }),
     z.strictObject({ ...normalizedFields(), role: z.literal('data'),
         dataV1: z.optional(createDeploymentTargetDataV1Schema(DeploymentActionRefV1Schema, DeploymentResourceRefV1Schema)) }),

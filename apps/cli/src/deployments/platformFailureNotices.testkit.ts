@@ -14,7 +14,7 @@ import { PLUGIN_MANIFEST } from '../../../../packages/plugins/machine-services/s
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 
-export function createPlatformFailureNoticeFixture(_withEnrollment = false, withCreate = false) {
+export function createPlatformFailureNoticeFixture(_withEnrollment = false, withCreate = false, statusIntervalMs?: number) {
     const pluginId = 'example.deploy';
     const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
     const roles = [...(['inspect', 'link', 'deploy', 'observe'] as const), ...(withCreate ? ['create' as const] : [])];
@@ -24,7 +24,7 @@ export function createPlatformFailureNoticeFixture(_withEnrollment = false, with
                 execution: { target: 'daemon' }, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
                 resultSchema: id === 'create' ? DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
                 dangerLevel: id === 'create' ? 'writesRemote' : id === 'inspect' || id === 'observe' ? 'safe' : 'writesLocal' })),
-            deploymentTargets: [{ id: 'platform', targetKind: 'example', title: 'External target', role: 'runtime', icon: 'server-outline',
+            deploymentTargets: [{ ...(statusIntervalMs === undefined ? {} : { statusIntervalMs }), id: 'platform', targetKind: 'example', title: 'External target', role: 'runtime', icon: 'server-outline',
                 targetSchema: closed, linkSchema: closed,
                 actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', ...(withCreate ? { create: 'create' } : {}) } }],
         } });

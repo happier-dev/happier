@@ -1164,8 +1164,23 @@ it is not inferred from unrelated
 health checks. While a receipt remains pending, the adapter returns
 `nextEligibleAt = now + periodMs` and uses that same period for an unavailable
 pending observation. Once no receipts remain pending it returns `null`, leaving
-zero scheduled idle work. Initial link enrollment has no period to invent:
-pending work without a configured period reports attention until setup is saved.
+zero scheduled idle work. In unreleased 0.3, initial runtime Link enrollment
+seeds `periodMs` from the plugin target's declared `statusIntervalMs`. Vercel,
+Cloudflare Pages and Workers declare one second: Vercel's client starts status
+polling at one second, as does Wrangler Pages' first status wait. Workers uses
+the same Cloudflare plugin declaration. This is a plugin policy, not an API
+minimum or a new global poll loop. The existing failed-receipt source alone
+observes demanded unsettled receipts; sibling outcome sources consume receipt
+invalidation. Terminal success, failure, cancellation and `outcome_unknown` end
+scheduled observation. Settled history never invokes provider observation.
+The person can still edit the saved period. Plugins without a declared interval
+retain attention for pending work without a configured period.
+
+The contribution and normalized catalog remain closed under the unpublished
+0.3 direct cut: update plugin declarations/projections and their host readers
+together. No released 0.2 format, database schema, timer or retry is added.
+Cadence evidence: [Vercel client polling delay](https://github.com/vercel/vercel/blob/main/packages/client/src/utils/get-polling-delay.ts)
+and [Wrangler Pages deployment status wait](https://github.com/cloudflare/workers-sdk/blob/main/packages/wrangler/src/pages/deploy.ts).
 
 The host platform adapter enriches generic committed receipt observations from
 the retained receipt details, provider identity and current Environment

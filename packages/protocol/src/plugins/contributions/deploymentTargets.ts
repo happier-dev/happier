@@ -69,9 +69,12 @@ const descriptorFields = () => ({
     targetSchema: closedSchema, linkSchema: closedSchema,
 });
 
+/** Provider-declared cadence for demanded, unsettled receipts; the receipt observer owns scheduling. */
+export const DeploymentTargetStatusIntervalMsV1Schema = lazyZodSchema(() => z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER)));
+
 /** Runtime and data are closed alternatives; association unlink stays with the host. */
 export const DeploymentTargetContributionV1Schema = lazyZodSchema(() => z.discriminatedUnion('role', [
-    z.strictObject({ ...descriptorFields(), role: z.literal('runtime'), actions: createDeploymentTargetRuntimeActionsV1Schema(local()) }),
+    z.strictObject({ ...descriptorFields(), role: z.literal('runtime'), statusIntervalMs: z.optional(DeploymentTargetStatusIntervalMsV1Schema), actions: createDeploymentTargetRuntimeActionsV1Schema(local()) }),
     z.strictObject({ ...descriptorFields(), role: z.literal('data'), dataV1: z.optional(createDeploymentTargetDataV1Schema(local(), local())) }),
 ]));
 export type DeploymentTargetContributionV1 = z.infer<typeof DeploymentTargetContributionV1Schema>;

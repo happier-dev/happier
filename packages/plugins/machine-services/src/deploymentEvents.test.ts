@@ -3,26 +3,31 @@ import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
 import { createDeploymentReceiptEventSourceAdapter, deploymentEventActions } from './deploymentEvents.js';
 
+import { PLUGIN_MANIFEST as vercel } from '../../deploy-vercel/src/manifest.js';
+import { PLUGIN_MANIFEST as cloudflare } from '../../deploy-cloudflare/src/manifest.js';
+
 const pluginId = 'happier.machine.services';
 const config = { v: 1, serverId: 'home', environmentId: 'environment-a', targetLinkId: 'target-a', observingSince: 1000,
     credentialPrincipal: { kind: 'account', accountId: 'owner',
         purpose: { consumer: { pluginId: 'happier.platform.test', localId: 'deploy' }, purpose: 'deploy.manage' },
         target: { kind: 'account', account: { service: { pluginId: 'happier.platform.test', localId: 'account' }, accountId: 'provider' } } } } as const;
+// Redacted COR4-164/receipts-1.json (#164): deploy/running revision 2 while
+// continuation-provider-deployments.json is READY. Identifiers and times are fixture-local.
 const receipt = { v: 1, id: 'receipt-a', environmentId: config.environmentId, targetLinkId: config.targetLinkId,
-    revision: 1, operation: 'deploy', state: 'running', requestKey: 'request-a', requestedByAccountId: 'owner',
+    revision: 2, operation: 'deploy', state: 'running', requestKey: 'request-a', requestedByAccountId: 'owner',
     actionOperationId: 'operation-a', contentArtifactId: 'artifact-a', contentHeaderVersion: 1, contentBodyVersion: 1,
     requestedAtMs: 1000, startedAtMs: 1001 } as const;
 
 function fixture(periodMs?: number, eventId = 'deployment-failed') {
     let current: Omit<typeof receipt, 'state' | 'revision' | 'operation' | 'targetLinkId'> & {
-        state: 'running' | 'failed' | 'succeeded'; revision: number; settledAtMs?: number;
+        state: 'running' | 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown'; revision: number; settledAtMs?: number;
         operation: 'deploy' | 'rollback' | 'promote' | 'teardown'; targetLinkId: string } = { ...receipt };
     const environment = { id: config.environmentId, runtimeTargetLinkId: config.targetLinkId as string };
     const targetLink = { id: config.targetLinkId, role: 'runtime',
         source: { kind: 'plugin', contribution: { pluginId: 'happier.platform.test', localId: 'runtime' } } };
     let failNextObserve = false;
     let pendingNextObserve = false;
-    let settleNextObserve = false;
+    let settleNextObserve: 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown' | null = null;
     let safe = true;
     const admissions: unknown[] = [];
     const reads: string[] = [];
@@ -57,7 +62,7 @@ function fixture(periodMs?: number, eventId = 'deployment-failed') {
         if (id === 'deployments.receipts.observe') {
             if (failNextObserve) { failNextObserve = false; throw new Error('Provider unavailable'); }
             if (pendingNextObserve) { pendingNextObserve = false; return { ok: true, kind: 'pending', actionOperationId: 'observe-a', environmentId: config.environmentId, revision: 2 }; }
-            if (settleNextObserve) { settle(); settleNextObserve = false; }
+            if (settleNextObserve) { settle(settleNextObserve); settleNextObserve = null; }
             return { ok: true, environmentId: config.environmentId, deploymentId: current.id, revision: 2, deploymentRevision: current.revision, state: current.state };
         }
         throw new Error(`Unexpected Action ${id}`);
@@ -72,7 +77,7 @@ function fixture(periodMs?: number, eventId = 'deployment-failed') {
                 return { dispose() { selected.delete(listener); } };
             },
         } } } } as unknown as BackgroundServiceContext;
-    function settle() { current = { ...current, state: 'failed', revision: 2, settledAtMs: 1100 }; }
+    function settle(state: 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown' = 'failed') { current = { ...current, state, revision: 2, settledAtMs: 1100 }; }
     async function emit(eventId: string, payload: Record<string, unknown>) {
         await Promise.all([...listeners.get(eventId) ?? []].map(listener => listener({ payload })));
     }
@@ -82,7 +87,7 @@ function fixture(periodMs?: number, eventId = 'deployment-failed') {
             return emit('@happier/deployment/receipt-invalidated', { environmentId, deploymentId });
         },
         reconnect() { return emit('@happier/automation/event-sources-invalidated', { reason: 'reconnect', definitionsChanged: false }); },
-        settleOnNextObserve() { settleNextObserve = true; }, deferNextObserve() { pendingNextObserve = true; },
+        settleOnNextObserve(state: 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown' = 'failed') { settleNextObserve = state; }, deferNextObserve() { pendingNextObserve = true; },
         failNextObservation() { failNextObserve = true; }, setSafe(value: boolean) { safe = value; } };
 }
 
@@ -203,4 +208,41 @@ it.each(['deploy', 'rollback', 'promote', 'teardown'] as const)('emits the gener
     if (operation !== 'teardown') expect(h.admissions[0]).toMatchObject({ eventRef: { pluginId, localId: 'deployment-succeeded' },
         payload: { operation, state: 'succeeded' } });
     expect(h.execute.mock.calls.some(([id]) => id === 'deployments.receipts.observe')).toBe(false);
+});
+
+// Provider declarations flow into enrollment's existing periodMs; the runner owns the only clock.
+it.each([vercel, cloudflare].flatMap(manifest => (manifest.contributes.deploymentTargets ?? []).flatMap(target =>
+    (['failed', 'succeeded', 'cancelled', 'outcome_unknown'] as const).map(terminal => ({ target, terminal })))))(
+    'observes demanded $target.targetKind until $terminal, then has zero scheduled work', async ({ target, terminal }) => {
+        const periodMs = Reflect.get(target, 'statusIntervalMs') as number | undefined;
+        const h = fixture(periodMs);
+        let time = 1200;
+        const sleep = vi.fn(async (delay: number) => {
+            expect(delay).toBe(periodMs);
+            time += delay;
+            if (sleep.mock.calls.length === 2) h.settleOnNextObserve(terminal);
+        });
+        const running = runCheckpointedPluginEventObserverV1({ context: h.context,
+            source: createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => time), now: () => time, sleep });
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(h.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.observe')).toHaveLength(3);
+            expect(sleep).toHaveBeenCalledTimes(2);
+            const calls = h.execute.mock.calls.length;
+            time += 100000;
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(h.execute).toHaveBeenCalledTimes(calls);
+        } finally { h.controller.abort(); await running; }
+    });
+
+it('does not observe already settled receipts or their historical siblings', async () => {
+    const h = fixture(1000); h.settle();
+    const sleep = vi.fn();
+    const running = runCheckpointedPluginEventObserverV1({ context: h.context,
+        source: createDeploymentReceiptEventSourceAdapter(h.context.services.events.host), sleep });
+    try {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(h.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.observe')).toHaveLength(0);
+        expect(sleep).not.toHaveBeenCalled();
+    } finally { h.controller.abort(); await running; }
 });
