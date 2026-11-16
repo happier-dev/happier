@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
+import { WorkflowValueReferenceSchema } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import { createWorkflowActionTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { createWorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { listWorkflowConditionValueOptions, resolveWorkflowConditionValueFacts } from './workflowConditionValueOptions';
 
@@ -43,6 +45,29 @@ describe('workflow prompt reference scope', () => {
             { event, payloadSchema: { type: 'object', properties: { state: { type: 'boolean' } } } },
         ] })).toEqual({ type: 'boolean' });
         expect(listWorkflowConditionValueOptions(draft, 'notify').some(option => option.reference.kind === 'trigger_event')).toBe(false);
+    });
+
+    it('offers safe declared Action evidence for both phases without exposing raw operands or results', () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'action-values', name: 'Notify', blocks: [step('notify')] });
+        const triggerEvents = (['before', 'after'] as const).map(createWorkflowActionTriggerEventDeclarationV1);
+        const options = listWorkflowConditionValueOptions(draft, 'notify', undefined, { triggerEvents });
+        const eventOptions = options.filter(option => option.reference.kind === 'trigger_event');
+        const requestOptions = eventOptions.filter(option => option.reference.kind === 'trigger_event'
+            && option.reference.path.length === 1 && option.reference.path[0] === 'requestId');
+        expect(requestOptions.map(option => WorkflowValueReferenceSchema.parse(JSON.parse(JSON.stringify(option.reference)))))
+            .toEqual([
+                { kind: 'trigger_event', event: { kind: 'action', phase: 'before' }, path: ['requestId'] },
+                { kind: 'trigger_event', event: { kind: 'action', phase: 'after' }, path: ['requestId'] },
+            ]);
+        expect(new Set(requestOptions.map(option => option.id)).size).toBe(2);
+        expect(requestOptions.map(option => option.facts)).toEqual([{ type: 'text' }, { type: 'text' }]);
+        expect(resolveWorkflowConditionValueFacts(draft, { kind: 'trigger_event',
+            event: { kind: 'action', phase: 'after' }, path: ['status'] }, { triggerEvents }))
+            .toEqual({ type: 'choice', choices: ['succeeded', 'failed'] });
+        for (const path of ['input', 'output', 'errorMessage']) {
+            expect(eventOptions.some(option => option.reference.kind === 'trigger_event'
+                && option.reference.path[0] === path)).toBe(false);
+        }
     });
 
     it('offers prior results and inputs while explaining later and sibling-lane results', () => {
