@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { t } from '@/text';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   act,
@@ -320,6 +321,29 @@ it('says why a temporary profile has no extensions instead of offering controls 
       ).toBeTruthy(),
     );
     expect(screen.findHostByTestId('profile.extensions.addLink')).toBeFalsy();
+  } finally {
+    await screen.unmount();
+    dispose();
+  }
+});
+
+it('says a failed read once in the shared inline notice and reads again from its Retry', async () => {
+  let lists = 0;
+  const { screen, dispose } = await setup({
+    'browser.extensions.list': () => {
+      lists += 1;
+      return { status: 'unavailable', code: 'managed_browser_required' };
+    },
+  });
+  try {
+    await waitForHomeGovernance(() =>
+      expect(screen.findHostByTestId('profile.extensions.retry')).toBeTruthy(),
+    );
+    expect(screen.findHostByTestId('profile.extensions.unavailable')).toBeTruthy();
+    expect(screen.getTextContent()).toContain(t('capabilities.store.browserExtensionProfile.unavailable'));
+    const before = lists;
+    await screen.pressByTestIdAsync('profile.extensions.retry');
+    await waitForHomeGovernance(() => expect(lists).toBeGreaterThan(before));
   } finally {
     await screen.unmount();
     dispose();

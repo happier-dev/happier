@@ -12,7 +12,7 @@ vi.mock('@/components/ui/popover', async importOriginal =>
     (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal,
         { maxHeight: 600, maxWidth: 400, placement: 'bottom' }));
 
-const { CollectionRequestPeek } = await import('./CollectionRequestPeek');
+const { CollectionRequestPeek, PeekState } = await import('./CollectionRequestPeek');
 
 afterEach(() => { standardCleanup(); vi.unstubAllGlobals(); });
 
@@ -42,5 +42,13 @@ describe('CollectionRequestPeek', () => {
 
         await screen.pressByTestIdAsync('slot');
         expect(screen.findByTestId('slot:peek')).toBeNull();
+    });
+    it('says an unopenable request in the shared inline notice and reads it again from its Retry', async () => {
+        const retry = vi.fn();
+        const screen = await renderScreen(<PeekState state={{ kind: 'unavailable', retry }} onReviewReplacement={vi.fn()} />);
+        expect(screen.findHostByTestId('collection-request-peek.unavailable')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('sessionsList.requestPeekUnavailable');
+        await screen.pressByTestIdAsync('collection-request-peek.retry');
+        expect(retry).toHaveBeenCalledTimes(1);
     });
 });

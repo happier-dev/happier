@@ -244,6 +244,9 @@ describe('SecretsList', () => {
         const onRetrySharedCatalog = vi.fn();
         const { screen } = await renderSecretsList({ sharedCatalogStale: true, onRetrySharedCatalog });
 
+        // What failed leads the notice; Retry is its inline action, not the row's title.
+        expect(screen.findHostByTestId('saved-secret-catalog-failed')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('secrets.catalog.operationFailed');
         await screen.pressByTestIdAsync('saved-secret-catalog-retry');
 
         expect(onRetrySharedCatalog).toHaveBeenCalledOnce();

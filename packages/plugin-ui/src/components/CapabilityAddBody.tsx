@@ -17,9 +17,9 @@ import { resolveHappierViewportClass } from '../presentation/layout/viewportClas
 import { Button } from './Button.js';
 import { Collection } from './Collection.js';
 import { Select } from './Form.js';
-import { Banner } from './Foundation.js';
 import type { IconName } from './Icon.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
+import { SurfaceState } from './State.js';
 import { Text } from './Text.js';
 
 const ADD_KEY = 'happier.plugin-ui.capability.add';
@@ -54,12 +54,13 @@ const PUBLIC_ADD_SLOTS: HappierCapabilityAddHost<IconName> = {
       testID={testID}
     />
   ),
+  // One failed source is the one shared inline notice (OWNER-UI-1115B A2), as in Happier's own Add dialogs.
   SourceFailure: ({ title, retryLabel, onRetry, retryTestID, testID }) => (
-    <Banner
-      tone="warning"
-      presentation="strip"
+    <SurfaceState
+      kind="warning"
+      size="line"
       title={title}
-      action={<Button variant="secondary" size="small" title={retryLabel} onPress={onRetry} testID={retryTestID} />}
+      action={{ label: retryLabel, onPress: onRetry, testID: retryTestID }}
       testID={testID}
     />
   ),

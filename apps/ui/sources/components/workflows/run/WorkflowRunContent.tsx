@@ -52,6 +52,7 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
     canResumeWorkflowRunBoundary,
     isWorkflowAttentionInvocation,
@@ -532,23 +533,22 @@ function WorkflowRunPagingAction(props: Readonly<{
     failed: boolean;
 }>): React.ReactElement {
     if (props.failed) {
+        // The one shared inline notice (OWNER-UI-1115B A2), announced because it appears after the rows.
         return (
-            <View
-                testID={`${props.testIDPrefix}-load-more-error`}
-                accessibilityRole="alert"
-                style={styles.section}
-            >
-                <Text style={styles.sectionLabel}>{t('workflows.loadFailedBody')}</Text>
-                <HappierPressable
-                    testID={`${props.testIDPrefix}-load-more-retry`}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('workflows.retry')}
-                    disabled={props.loading}
-                    onPress={props.onLoadMore}
-                    style={({ pressed }) => [styles.actionTarget, pressed ? styles.pressed : null]}
-                >
-                    <Text style={styles.action}>{t('workflows.retry')}</Text>
-                </HappierPressable>
+            <View style={styles.section}>
+                <SurfaceStateCard
+                    testID={`${props.testIDPrefix}-load-more-error`}
+                    size="line"
+                    kind="error"
+                    title={t('workflows.loadFailedBody')}
+                    accessibilitySemantics="alert"
+                    action={{
+                        label: t('workflows.retry'),
+                        onPress: props.onLoadMore,
+                        disabled: props.loading,
+                        testID: `${props.testIDPrefix}-load-more-retry`,
+                    }}
+                />
             </View>
         );
     }

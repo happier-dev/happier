@@ -3,6 +3,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamPagedList } from '@/hooks/teams/useTeamPagedList';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { TeamDirectoryPeoplePageV1 } from '@happier-dev/protocol/teams';
@@ -56,10 +57,21 @@ export function DirectoryListFailure(props: Readonly<{
     failure: HomeDomainFailure;
     retry: () => Promise<void>;
 }>) {
-    return <>
-        <Item testID={`${props.testID}-error`} title={teamReadFailureLabel(props.failure)} accessibilityLiveRegion="polite" showChevron={false} />
-        {props.failure.retryable ? <Item testID={`${props.testID}-retry`} title={t('common.retry')} onPress={() => void props.retry()} showChevron={false} /> : null}
-    </>;
+    // The one shared inline notice (OWNER-UI-1115B A2): what failed, with Retry inline when asking again can help.
+    return (
+        <SurfaceStateCard
+            testID={`${props.testID}-error`}
+            size="line"
+            kind="error"
+            title={teamReadFailureLabel(props.failure)}
+            accessibilitySemantics="alert"
+            {...(props.failure.retryable ? { action: {
+                label: t('common.retry'),
+                onPress: () => props.retry(),
+                testID: `${props.testID}-retry`,
+            } } : {})}
+        />
+    );
 }
 
 export const DirectoryPeopleList = React.memo(function DirectoryPeopleList(props: Readonly<{

@@ -23,6 +23,7 @@ import type {
 } from '@happier-dev/plugin-ui/data';
 
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -337,42 +338,26 @@ const DeclarativeCollectionListRow = React.memo(function DeclarativeCollectionLi
     && hasSameProjectedRowPresentation(previous.row, next.row, next.projection)
 ));
 
+/** A failed or unavailable read: the one shared inline notice (OWNER-UI-1115B A2), with Retry inline for a failure. */
 function renderNotice(input: Readonly<{
     kind: 'error' | 'unavailable';
     path: string;
-    presentationTheme: HappierUiTheme;
     onRetry: () => void;
 }>): React.ReactElement {
     const isError = input.kind === 'error';
-    const color = isError ? input.presentationTheme.colors.danger : input.presentationTheme.colors.mutedText;
-    const title = isError ? t('common.error') : t('common.unavailable');
     return (
-        <HappierInfoState
+        <SurfaceStateCard
             testID={`plugin-declarative-collection-list:${input.path}:${input.kind}`}
-            accessibilityRole={isError ? 'alert' : undefined}
-            accessibilityLiveRegion="polite"
-            action={isError ? (
-                <HappierPressable
-                    testID={`plugin-declarative-collection-list:${input.path}:retry`}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common.retry')}
-                    onPress={input.onRetry}
-                    style={(state) => ({
-                        ...DECLARATIVE_BUTTON_GEOMETRY,
-                        paddingHorizontal: input.presentationTheme.spacing.medium,
-                        borderRadius: input.presentationTheme.radii.control,
-                        backgroundColor: input.presentationTheme.colors.accent,
-                        opacity: state.disabled ? 0.5 : state.pressed ? motionTokens.press.opacitySubtle : 1,
-                    })}
-                >
-                    <Text style={{ color: input.presentationTheme.colors.onAccent }}>{t('common.retry')}</Text>
-                </HappierPressable>
-            ) : undefined}
-        >
-            <HappierInfoTile
-                title={<Text style={{ color }}>{title}</Text>}
-            />
-        </HappierInfoState>
+            size="line"
+            kind={input.kind}
+            title={isError ? t('common.error') : t('common.unavailable')}
+            accessibilitySemantics={isError ? 'alert' : 'status'}
+            {...(isError ? { action: {
+                label: t('common.retry'),
+                onPress: input.onRetry,
+                testID: `plugin-declarative-collection-list:${input.path}:retry`,
+            } } : {})}
+        />
     );
 }
 
@@ -604,13 +589,11 @@ export function DeclarativeCollectionList(props: Readonly<{
                 {failed ? renderNotice({
                     kind: 'error',
                     path,
-                    presentationTheme: props.presentationTheme,
                     onRetry: retryQuery,
                 }) : null}
                 {unavailable ? renderNotice({
                     kind: 'unavailable',
                     path,
-                    presentationTheme: props.presentationTheme,
                     onRetry: retryQuery,
                 }) : null}
             </>
@@ -649,7 +632,6 @@ export function DeclarativeCollectionList(props: Readonly<{
         return renderNotice({
             kind: 'unavailable',
             path,
-            presentationTheme: props.presentationTheme,
             onRetry: retryQuery,
         });
     }
@@ -657,7 +639,6 @@ export function DeclarativeCollectionList(props: Readonly<{
         return renderNotice({
             kind: 'error',
             path,
-            presentationTheme: props.presentationTheme,
             onRetry: retryQuery,
         });
     }

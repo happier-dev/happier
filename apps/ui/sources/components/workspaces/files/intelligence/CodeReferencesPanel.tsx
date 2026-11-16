@@ -3,9 +3,9 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { LanguageIntelligenceQueryResult } from '@happier-dev/protocol/machines/languageIntelligence';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { CodeIntelligenceController } from '@/sync/domains/workspaces/languageIntelligence/createCodeIntelligenceController';
 import type { CodeIntelligencePosition } from '@/sync/domains/workspaces/languageIntelligence/codeIdentifiers';
 import { t } from '@/text';
@@ -121,21 +121,30 @@ function CodeCallsList(props: Readonly<{
           />
         ) : null}
       </View>
-      <CodeReferencesList
-        rows={rows}
-        textMatches={false}
-        partial={false}
-        searching={checking}
-        progress={failed ? { kind: 'failure', text: t('files.pane.intelligence.noInfo') } : null}
-        emptyMessage={items && items.length > 1 && !item
-          ? t('files.pane.intelligence.chooseCallTarget') : t('files.pane.intelligence.noCalls')}
-        onOpen={props.onOpen}
-      />
       {failed ? (
+        // The one shared inline notice (OWNER-UI-1115B A2): the failed lookup with Retry inline, on the list's edge.
         <View style={styles.controls}>
-          <RoundButton size="small" display="secondary" title={t('common.retry')} onPress={() => setRetry(value => value + 1)} />
+          <SurfaceStateCard
+            testID="code-calls-failed"
+            size="line"
+            kind="error"
+            title={t('files.pane.intelligence.noInfo')}
+            accessibilitySemantics="alert"
+            action={{ label: t('common.retry'), onPress: () => setRetry(value => value + 1), testID: 'code-calls-retry' }}
+          />
         </View>
-      ) : null}
+      ) : (
+        <CodeReferencesList
+          rows={rows}
+          textMatches={false}
+          partial={false}
+          searching={checking}
+          progress={null}
+          emptyMessage={items && items.length > 1 && !item
+            ? t('files.pane.intelligence.chooseCallTarget') : t('files.pane.intelligence.noCalls')}
+          onOpen={props.onOpen}
+        />
+      )}
     </View>
   );
 }

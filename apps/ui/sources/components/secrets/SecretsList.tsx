@@ -6,6 +6,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { t } from '@/text';
@@ -204,22 +205,24 @@ export function SecretsList(props: SecretsListProps) {
                 />
             ) : null}
             <ItemGroup title={groupTitle}>
+                {/* The one shared inline notice (OWNER-UI-1115B A2): what failed leads, Retry sits inline. */}
                 {props.sharedCatalogStale && props.onRetrySharedCatalog ? (
-                    <Item
-                        testID="saved-secret-catalog-retry"
-                        title={t('common.retry')}
-                        subtitle={resolveActionExecutionErrorMessage(props.sharedCatalogError, t('secrets.catalog.operationFailed'), { safeToRetry: true })}
-                        onPress={props.onRetrySharedCatalog}
-                        showChevron={false}
+                    <SurfaceStateCard
+                        testID="saved-secret-catalog-failed"
+                        size="line"
+                        kind="error"
+                        title={resolveActionExecutionErrorMessage(props.sharedCatalogError, t('secrets.catalog.operationFailed'), { safeToRetry: true })}
+                        accessibilitySemantics="alert"
+                        action={{ label: t('common.retry'), onPress: props.onRetrySharedCatalog, testID: 'saved-secret-catalog-retry' }}
                     />
                 ) : null}
                 {homeUnreachable ? (
-                    <Item
+                    <SurfaceStateCard
                         testID="saved-secret-catalog-unreachable"
+                        size="line"
+                        kind="unavailable"
+                        iconName="wifi-slash"
                         title={sharedSecretStatusLabel('temporarily_unavailable')}
-                        icon={<Icon name="wifi-slash" size={29} color={theme.colors.text.secondary} />}
-                        showChevron={false}
-                        showDivider
                     />
                 ) : null}
                 {props.includeNoneRow && (

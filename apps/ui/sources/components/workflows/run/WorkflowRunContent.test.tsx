@@ -5437,10 +5437,12 @@ describe('WorkflowRunContent', () => {
     expect(
       screen.findByTestId('workflow-run-invocations-load-more'),
     ).toBeNull();
+    // The failure is announced: the shared notice sits inside an alert live region.
     expect(
-      screen.findByTestId('workflow-run-invocations-load-more-error')?.props
-        .accessibilityRole,
-    ).toBe('alert');
+      screen.findAll((node) => typeof node.type === 'string'
+        && node.props.accessibilityRole === 'alert'
+        && node.findAll((child) => child.props.testID === 'workflow-run-invocations-load-more-error').length > 0),
+    ).not.toHaveLength(0);
     expect(
       screen.findByTestId('workflow-run-invocations-row-inv-1'),
     ).toBeTruthy();
@@ -5464,10 +5466,12 @@ describe('WorkflowRunContent', () => {
     });
 
     expect(screen.findByTestId('workflow-run-needs-you-load-more')).toBeNull();
+    // The failure is announced: the shared notice sits inside an alert live region.
     expect(
-      screen.findByTestId('workflow-run-needs-you-load-more-error')?.props
-        .accessibilityRole,
-    ).toBe('alert');
+      screen.findAll((node) => typeof node.type === 'string'
+        && node.props.accessibilityRole === 'alert'
+        && node.findAll((child) => child.props.testID === 'workflow-run-needs-you-load-more-error').length > 0),
+    ).not.toHaveLength(0);
     expect(
       screen.findByTestId('workflow-run-needs-you-inv-attention'),
     ).toBeTruthy();

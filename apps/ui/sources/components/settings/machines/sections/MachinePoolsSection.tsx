@@ -6,6 +6,7 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { useMachinePoolProjections } from '@/sync/engine/machines/useMachinePoolProjections';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -115,42 +116,28 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
                 {featurePending ? <ItemLoadStateRows state={FIRST_READ} rows={1} lines={1} shape={rail ? 'list' : undefined}
                     accessibilityLabel={t('machinePools.title')}
                     testID={`settings.machinePools.featureLoading.${group.serverId}`} /> : null}
-                {featureError ? <Item
+                {/* A failed read says so once, with its Retry inline: the one shared inline notice (OWNER-UI-1115B A2). */}
+                {featureError ? <SurfaceStateCard
                     testID={`settings.machinePools.featureFailed.${group.serverId}`}
-                    pressableStyle={rail ? collectionListStyles.row : undefined}
+                    size="line"
+                    kind="error"
                     title={t('machinePools.refreshFailed')}
-                    density={rail ? 'compact' : undefined}
-                    mode="info"
+                    accessibilitySemantics="alert"
+                    action={{ label: t('common.retry'), onPress: retry, testID: `settings.machinePools.featureRetry.${group.serverId}` }}
                 /> : null}
-                {featureError ? <Item
-                    testID={`settings.machinePools.featureRetry.${group.serverId}`}
-                    title={t('common.retry')}
-                    density={rail ? 'compact' : undefined}
-                    pressableStyle={rail ? collectionListStyles.row : undefined}
-                    showChevron={!rail}
-                    onPress={retry}
-                /> : null}
-                {homeOffline ? <Item
+                {homeOffline ? <SurfaceStateCard
                     testID={`settings.machinePools.unavailable.${group.serverId}`}
-                    pressableStyle={rail ? collectionListStyles.row : undefined}
+                    size="line"
+                    kind="unavailable"
                     title={t('machinePools.homeOffline')}
-                    density={rail ? 'compact' : undefined}
-                    mode="info"
                 /> : null}
-                {refreshFailed ? <Item
+                {refreshFailed ? <SurfaceStateCard
                     testID={`settings.machinePools.refreshFailed.${group.serverId}`}
-                    pressableStyle={rail ? collectionListStyles.row : undefined}
+                    size="line"
+                    kind="error"
                     title={t('machinePools.refreshFailed')}
-                    density={rail ? 'compact' : undefined}
-                    mode="info"
-                /> : null}
-                {refreshFailed ? <Item
-                    testID={`settings.machinePools.retry.${group.serverId}`}
-                    title={t('common.retry')}
-                    density={rail ? 'compact' : undefined}
-                    pressableStyle={rail ? collectionListStyles.row : undefined}
-                    showChevron={!rail}
-                    onPress={retry}
+                    accessibilitySemantics="alert"
+                    action={{ label: t('common.retry'), onPress: retry, testID: `settings.machinePools.retry.${group.serverId}` }}
                 /> : null}
             </>;
             const poolRows = rows.map(({ view, memberPreview: preview, identityDetail, accessibilityName }) => {

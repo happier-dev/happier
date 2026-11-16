@@ -10,7 +10,6 @@ import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/plugi
 import { readWebStoreExtensionId, useBrowserExtensionsInventory, type InstalledBrowserExtensionEntryRow } from '@/components/store/catalog/storeBrowserExtensions';
 import { RowMark } from '@/components/store/inventory/ManagedInventoryDirectory';
 import { submitBrowserExtensionMutation } from '@/components/store/submitBrowserExtensionMutation';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemAddRow } from '@/components/ui/lists/ItemAddRow';
@@ -19,6 +18,7 @@ import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -214,26 +214,21 @@ export function BrowserProfileExtensionsSection(
         <SkeletonRows rows={2} testID={`${testID}.loading`} />
       ) : null}
       {failure && !notCreated ? (
-        <Item
+        // The one shared inline notice (OWNER-UI-1115B A2): a temporary profile says why it has none;
+        // a failed read says so with Retry inline.
+        <SurfaceStateCard
           testID={`${testID}.unavailable`}
+          size="line"
+          kind={temporary ? 'unavailable' : 'error'}
           title={
             temporary
               ? t('capabilities.store.browserExtensionProfile.temporary')
               : t('capabilities.store.browserExtensionProfile.unavailable')
           }
-          mode="info"
-          showChevron={false}
-          rightElement={
-            temporary ? undefined : (
-              <RoundButton
-                size="small"
-                display="secondary"
-                title={t('capabilities.store.retry')}
-                testID={`${testID}.retry`}
-                onPress={refresh}
-              />
-            )
-          }
+          {...(temporary ? {} : {
+            accessibilitySemantics: 'alert' as const,
+            action: { label: t('capabilities.store.retry'), onPress: refresh, testID: `${testID}.retry` },
+          })}
         />
       ) : null}
       {usable && coverage !== 'loading' && inventory.rows.length === 0 ? (

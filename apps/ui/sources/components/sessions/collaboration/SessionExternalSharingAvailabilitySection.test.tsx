@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { t } from '@/text';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ExternalSessionSharingAvailability } from '@/components/sessions/external/sharing/useExternalSessionSharingAvailability';
@@ -101,6 +102,8 @@ describe('SessionExternalSharingAvailabilitySection', () => {
             />,
         );
 
+        expect(screen.findHostByTestId('session-external-sharing-failed')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('errors.operationFailed'));
         await screen.pressByTestIdAsync('session-external-sharing-retry');
         expect(retry).toHaveBeenCalledTimes(1);
     });

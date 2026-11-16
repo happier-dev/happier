@@ -7,6 +7,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { ExternalSessionSharingAvailability } from '@/components/sessions/external/sharing/useExternalSessionSharingAvailability';
 import { t } from '@/text';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
@@ -68,13 +69,14 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
     if (snapshot.kind === 'unavailable' || !availability) {
         return (
             <ItemGroup>
-                <Item
-                    testID="session-external-sharing-retry"
+                {/* The one shared inline notice (OWNER-UI-1115B A2): what failed, with Retry inline. */}
+                <SurfaceStateCard
+                    testID="session-external-sharing-failed"
+                    size="line"
+                    kind="error"
                     title={t('errors.operationFailed')}
-                    subtitle={t('common.retry')}
-                    icon={<Icon name="warning-circle" size={ICON_SIZE.lg} color={theme.colors.state.warning.foreground} />}
-                    onPress={snapshot.retry}
-                    showChevron={false}
+                    accessibilitySemantics="alert"
+                    action={{ label: t('common.retry'), onPress: snapshot.retry, testID: 'session-external-sharing-retry' }}
                 />
             </ItemGroup>
         );

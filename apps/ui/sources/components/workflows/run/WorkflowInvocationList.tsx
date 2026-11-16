@@ -15,6 +15,7 @@ import type { WorkflowRunInvocationIndexV1 } from '@happier-dev/protocol/workflo
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Typography } from '@/constants/Typography';
 import { getPreferredLanguage, t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -153,10 +154,6 @@ const styles = StyleSheet.create((theme) => ({
         borderWidth: 1,
         borderColor: 'transparent',
         justifyContent: 'center',
-    },
-    footerError: {
-        alignItems: 'center',
-        gap: theme.space.s4,
     },
     footerAction: {
         ...Typography.variant('label', 'semiBold'),
@@ -313,24 +310,21 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
     const pagingFooter = props.onLoadMore === undefined ? null : (
         <View style={styles.footer}>
             {props.loadMoreFailed === true ? (
-                // The rows above are unaffected; only this page is missing.
-                <View
+                // The rows above are unaffected; only this page is missing. The one shared inline notice
+                // (OWNER-UI-1115B A2), announced because it appears after the rows.
+                <SurfaceStateCard
                     testID={`${testIDPrefix}-load-more-error`}
-                    accessibilityRole="alert"
-                    style={styles.footerError}
-                >
-                    <Text style={styles.footerNote}>{t('workflows.loadFailedBody')}</Text>
-                    <HappierPressable
-                        testID={`${testIDPrefix}-load-more-retry`}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('workflows.retry')}
-                        disabled={props.loadingMore === true}
-                        onPress={props.onLoadMore}
-                        style={(state) => [styles.footerTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
-                    >
-                        <Text style={styles.footerAction}>{t('workflows.retry')}</Text>
-                    </HappierPressable>
-                </View>
+                    size="line"
+                    kind="error"
+                    title={t('workflows.loadFailedBody')}
+                    accessibilitySemantics="alert"
+                    action={{
+                        label: t('workflows.retry'),
+                        onPress: props.onLoadMore,
+                        disabled: props.loadingMore === true,
+                        testID: `${testIDPrefix}-load-more-retry`,
+                    }}
+                />
             ) : props.loadingMore === true ? (
                 <Text testID={`${testIDPrefix}-loading-more`} style={styles.footerNote}>
                     {t('common.loading')}

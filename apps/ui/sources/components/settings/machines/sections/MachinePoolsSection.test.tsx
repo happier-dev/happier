@@ -165,7 +165,8 @@ describe('MachinePoolsSection', () => {
 
         const screen = await renderScreen(<MachinePoolsSection groups={[group('idle')]} />);
 
-        expect(findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.featureFailed.${boundary.serverId}` })).toBeDefined();
+        expect(screen.findByTestId(`settings.machinePools.featureFailed.${boundary.serverId}`)).toBeTruthy();
+        expect(screen.getTextContent()).toContain('machinePools.refreshFailed');
         const retainedRow = findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.row.${boundary.serverId}.${POOL_A.pool.id}` });
         expect(retainedRow?.props.title).toBe('Development');
         expect(retainedRow?.props.disabled).toBe(true);
@@ -210,8 +211,8 @@ describe('MachinePoolsSection', () => {
         const screen = await renderScreen(<MachinePoolsSection groups={[group('idle')]} />);
 
         expect(screen.tree.findAllByType(ItemGroup)).toHaveLength(0);
-        expect(findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.featureFailed.${boundary.serverId}` })).toBeUndefined();
-        expect(findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.featureRetry.${boundary.serverId}` })).toBeUndefined();
+        expect(screen.findByTestId(`settings.machinePools.featureFailed.${boundary.serverId}`)).toBeFalsy();
+        expect(screen.findByTestId(`settings.machinePools.featureRetry.${boundary.serverId}`)).toBeFalsy();
         expect(findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.add.${boundary.serverId}` })).toBeUndefined();
         expect(boundary.requests.some((url) => url.endsWith('/v1/machines/pools/list'))).toBe(false);
     });
@@ -244,7 +245,8 @@ describe('MachinePoolsSection', () => {
         expect(row?.props.disabled).toBe(true);
         expect(row?.props.detail).toContain('machinePools.unavailable');
         expect(row?.props.accessibilityLabel).toContain('machinePools.unavailable');
-        expect(findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.unavailable.${boundary.serverId}` })).toBeDefined();
+        expect(screen.findByTestId(`settings.machinePools.unavailable.${boundary.serverId}`)).toBeTruthy();
+        expect(screen.getTextContent()).toContain('machinePools.homeOffline');
         expect(findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.add.${boundary.serverId}` })?.props.disabled).toBe(true);
     });
 
@@ -258,11 +260,10 @@ describe('MachinePoolsSection', () => {
         const screen = await renderScreen(<MachinePoolsSection groups={[group('idle')]} />);
 
         await vi.waitFor(() => {
-            expect(findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.refreshFailed.${boundary.serverId}` })).toBeDefined();
+            expect(screen.findByTestId(`settings.machinePools.refreshFailed.${boundary.serverId}`)).toBeTruthy();
         });
-        expect(findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.unavailable.${boundary.serverId}` })).toBeUndefined();
-        expect(findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.refreshFailed.${boundary.serverId}` })?.props.title)
-            .toBe('machinePools.refreshFailed');
+        expect(screen.findByTestId(`settings.machinePools.unavailable.${boundary.serverId}`)).toBeFalsy();
+        expect(screen.getTextContent()).toContain('machinePools.refreshFailed');
         // Retained rows stay readable, but their connection summary is not presented as current.
         const row = findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.row.${boundary.serverId}.${POOL_A.pool.id}` });
         expect(row?.props.title).toBe('Development');

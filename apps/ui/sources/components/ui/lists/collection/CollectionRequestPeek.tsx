@@ -3,12 +3,10 @@ import { Platform, View } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { useHoverPreviewPopover } from '@/components/ui/popover/useHoverPreviewPopover';
-import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import {
@@ -192,13 +190,12 @@ export function CollectionRequestPeek(
 }
 
 /** A request that is not answerable here says why, once, and offers the one next step. */
-function PeekState(
+export function PeekState(
   props: Readonly<{
     state: Exclude<CollectionSessionRequestPeekState, { kind: 'current' }>;
     onReviewReplacement: (ref: CollectionRequestRef) => void;
   }>,
 ): React.ReactElement {
-  const { theme } = useUnistyles();
   const state = props.state;
   const replaced = state.kind === 'replaced' ? state.replacement : null;
   const reviewKey = replaced ? `request.reviewReplacement:${collectionRequestRefKey(replaced)}` : '';
@@ -206,49 +203,55 @@ function PeekState(
     key: reviewKey, title: t('sessionsList.requestPeekReviewNew'),
     invoke: () => { props.onReviewReplacement(replaced); },
   }] : [], [props.onReviewReplacement, replaced, reviewKey]));
+  // Every state is the one shared inline notice (OWNER-UI-1115B A2): its sentence, with the one next step inline.
   if (state.kind === 'loading') {
     return (
-      <View style={styles.state} testID="collection-request-peek.loading">
-        <ActivitySpinner size={14} color={theme.colors.text.tertiary} />
-        <Text variant="body" style={styles.stateText}>
-          {t('sessionsList.requestPeekLoading')}
-        </Text>
-      </View>
+      <SurfaceStateCard
+        testID="collection-request-peek.loading"
+        size="line"
+        kind="loading"
+        title={t('sessionsList.requestPeekLoading')}
+      />
     );
   }
   const retry = 'retry' in state ? state.retry : undefined;
-  const message =
-    state.kind === 'settled'
-      ? t('sessionsList.requestPeekAnswered')
-      : replaced
-        ? t('sessionsList.requestPeekReplaced')
-        : t('sessionsList.requestPeekUnavailable');
+  if (replaced) {
+    return (
+      <SurfaceStateCard
+        testID="collection-request-peek.replaced"
+        size="line"
+        kind="warning"
+        title={t('sessionsList.requestPeekReplaced')}
+        action={{
+          label: t('sessionsList.requestPeekReviewNew'),
+          invitation: true,
+          onPress: () => { void commands.invoke(reviewKey); },
+        }}
+      />
+    );
+  }
+  if (state.kind === 'settled') {
+    return (
+      <SurfaceStateCard
+        testID="collection-request-peek.settled"
+        size="line"
+        kind="empty"
+        title={t('sessionsList.requestPeekAnswered')}
+      />
+    );
+  }
   return (
-    <View
-      style={styles.stateColumn}
+    <SurfaceStateCard
       testID={`collection-request-peek.${state.kind}`}
-    >
-      <Text variant="body" style={styles.stateText}>
-        {message}
-      </Text>
-      {replaced ? (
-        <RoundButton
-          size="small"
-          display="secondary"
-          title={t('sessionsList.requestPeekReviewNew')}
-          onPress={() => { void commands.invoke(reviewKey); }}
-        />
-      ) : state.kind === 'unavailable' && retry ? (
-        <RoundButton
-          size="small"
-          display="secondary"
-          title={t('common.retry')}
-          onPress={() => {
-            void retry();
-          }}
-        />
-      ) : null}
-    </View>
+      size="line"
+      kind="unavailable"
+      title={t('sessionsList.requestPeekUnavailable')}
+      {...(state.kind === 'unavailable' && retry ? { action: {
+        label: t('common.retry'),
+        onPress: () => retry(),
+        testID: 'collection-request-peek.retry',
+      } } : {})}
+    />
   );
 }
 
@@ -265,22 +268,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   body: {
     minWidth: 0,
-  },
-  state: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s8,
-    paddingVertical: theme.space.s8,
-    paddingHorizontal: theme.space.s4,
-  },
-  stateColumn: {
-    alignItems: 'flex-start',
-    gap: theme.space.s10,
-    paddingVertical: theme.space.s8,
-    paddingHorizontal: theme.space.s4,
-  },
-  stateText: {
-    color: theme.colors.text.secondary,
-    flexShrink: 1,
   },
 }));
