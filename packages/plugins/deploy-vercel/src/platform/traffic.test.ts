@@ -73,3 +73,21 @@ it.each([
     expect(requests.map(request => [request.method, new URL(request.url).pathname])).toEqual([['GET', '/v9/projects/prj_exact']]);
   } finally { await kit.dispose(); }
 });
+
+it.each(['promote', 'rollback'] as const)('settles %s from the production target when Vercel reports no alias job', async operation => {
+  // Live: COR4B-VERCEL-1115 p-upload-project3.json after a rollback — lastAliasRequest null, production
+  // target already the restored deployment with its aliases assigned; Happier settled outcome_unknown.
+  const production = (id: string) => ({ id, readyState: 'READY', readySubstate: 'PROMOTED', target: 'production',
+    alias: ['cor4b-upload-1115.vercel.app'], aliasAssigned: 1794771640971, aliasError: null });
+  for (const [current, state] of [['dpl_prior', 'succeeded'], ['dpl_current', 'outcome_unknown']] as const) {
+    const http = createPluginHttpFixture({ async request(request) {
+      return { status: request.method === 'POST' ? 201 : 200, headers: {}, body: new TextEncoder().encode(request.method === 'POST' ? '' : JSON.stringify({
+        id: 'prj_exact', accountId: 'team_exact', lastAliasRequest: null, lastRollbackTarget: null,
+        targets: { production: production(current) } })) };
+    } });
+    const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
+    try {
+      await expect(kit.invokeAction(operation, input)).resolves.toMatchObject({ v: 1, state, providerDeploymentId: 'dpl_prior' });
+    } finally { await kit.dispose(); }
+  }
+});

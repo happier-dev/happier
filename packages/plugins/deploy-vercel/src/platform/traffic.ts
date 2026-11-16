@@ -14,7 +14,8 @@ function object(value: unknown): value is Record<string, unknown> { return value
 
 /** Vercel acknowledges the alias job before it settles. Observe that job, never the old build's READY state.
  * openapi.vercel.sh requestPromote (v10), requestRollback (v1), getProject (v9), inspected 2026-11-10.
- * A superseding or missing alias job is unknown; existing receipt recovery owns the next user decision.
+ * A superseding or missing alias job is unknown unless production already serves the deployment;
+ * existing receipt recovery owns the next user decision.
  */
 export async function observeVercelTraffic(input: Selection, operation: Operation, context: VercelPlatformContext): Promise<DeploymentTargetRoleResultV1> {
   if (!input.providerDeploymentId) return fail('outcome_unknown');
@@ -37,6 +38,11 @@ export async function observeVercelTraffic(input: Selection, operation: Operatio
       case 'failed': state = 'failed'; break;
     }
   }
+  // Vercel can clear lastAliasRequest once the job completes (live, 2026-11-15). The project's current
+  // production target, with its aliases assigned and no alias error, is then the settled traffic fact.
+  const production = object(project.targets) ? project.targets.production : undefined;
+  if (state === 'outcome_unknown' && object(production) && production.id === input.providerDeploymentId
+    && (typeof production.aliasAssigned === 'number' || production.aliasAssigned === true) && production.aliasError == null) state = 'succeeded';
   return { v: 1, state, providerDeploymentId: input.providerDeploymentId, observedAtMs: context.now() };
 }
 

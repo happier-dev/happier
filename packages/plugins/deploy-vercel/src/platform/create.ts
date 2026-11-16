@@ -6,7 +6,7 @@ import { normalizeScmBranchSourceRef } from '@happier-dev/plugin-sdk/scm';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginAccountActionContext, PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
-import { vercelEndpoint, vercelRequest } from './operations.js';
+import { githubAppGrantUrl, readVercelGitLink, vercelEndpoint, vercelRequest } from './operations.js';
 import { targetInputHints } from './options.js';
 
 type CreateInput = ReturnType<typeof inputs.create.parse>;
@@ -99,8 +99,16 @@ export const projectCreateAction: AccountAction = {
         }
       }
     }
+    // Vercel links `gitRepository` only through a GitHub integration that can read it and refuses
+    // Create otherwise, so the acknowledged link is the same deployable fact Inspect observes.
+    const gitLink = input.sourceMethod === 'gitIntegration' ? readVercelGitLink(body.link, input.repository!) : null;
     return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal,
       providerIdentity: { providerAccountId: body.accountId, providerResourceId: body.id, providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' }, sourceMethod: input.sourceMethod, preparedNative: { projectName: body.name, ...(productionBranchOutcome ? { productionBranchOutcome } : {}) } });
+      providerEnvironment: { kind: 'production' }, sourceMethod: input.sourceMethod,
+      ...(input.sourceMethod === 'gitIntegration' ? { repositoryAccess: gitLink
+        ? { status: 'ready', repository: input.repository! }
+        : { status: 'needsGitAccess', repository: input.repository!, grantUrl: githubAppGrantUrl } } : {}),
+      preparedNative: { projectName: body.name, ...(productionBranchOutcome ? { productionBranchOutcome } : {}),
+        ...(gitLink ? { gitSource: { type: 'github', repoId: gitLink.repoId } } : {}) } });
   },
 };

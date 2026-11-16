@@ -8,7 +8,7 @@ import type {
 import type { HttpMethod, HttpResponse, HttpService } from '@happier-dev/plugin-sdk/http';
 
 const origin = 'https://api.vercel.com';
-const githubAppGrantUrl = 'https://github.com/apps/vercel/installations/new';
+export const githubAppGrantUrl = 'https://github.com/apps/vercel/installations/new';
 type Repository = DeploymentTargetRepositoryAccessV1['repository'];
 type VercelEnvironment = Exclude<DeploymentTargetProviderEnvironmentV1, { scriptName: string }>;
 type ProjectCoordinates = Pick<DeploymentTargetProviderIdentityV1, 'providerAccountId' | 'providerResourceId'>;
@@ -43,6 +43,16 @@ function failure(code: DeploymentTargetRoleFailureV1['code'], phase: Phase, caug
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+/**
+ * The one reader of a Vercel project's documented GitHub `link` (GET /v9/projects and
+ * POST /v11/projects responses): it names the deployable repository only when it is the selected one.
+ */
+export function readVercelGitLink(link: unknown, repository: Repository): Readonly<{ repo: string; repoId: string }> | null {
+  return record(link) && link.type === 'github' && text(link.org) && text(link.repo)
+    && (text(link.repoId) || typeof link.repoId === 'number' && Number.isSafeInteger(link.repoId))
+    && `${link.org}/${link.repo}`.toLowerCase() === repository.repository ? { repo: link.repo, repoId: String(link.repoId) } : null;
+}
+
 /** Options consume partial drafts; preparation consumes the admitted native-or-complete selection. */
 export function readVercelProjectCoordinates(input: Readonly<{ providerIdentity: ProjectCoordinates }>
   | Readonly<{ providerAccountId: string; projectId: string }>): ProjectCoordinates;
@@ -183,16 +193,14 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
       .filter(Boolean).join(' ');
     return { providerIdentity: identity, providerEnvironment: environment, projectName: project.name, reviewNotice };
   }
-  const linked = record(link) && link.type === 'github' && text(link.org) && text(link.repo)
-    && (text(link.repoId) || typeof link.repoId === 'number' && Number.isSafeInteger(link.repoId))
-    && `${link.org}/${link.repo}`.toLowerCase() === input.repository.repository;
+  const linked = readVercelGitLink(link, input.repository);
   let ready = false;
   if (linked) {
     const url = new URL(endpoint('/v1/integrations/search-repo', project.accountId));
     url.searchParams.set('provider', 'github');
     // Vercel searches repository names; owner/repo can return an empty list.
     // Qualify the identity using the namespace and repository id below.
-    url.searchParams.set('query', String(link.repo));
+    url.searchParams.set('query', linked.repo);
     let access: HttpResponse;
     try { access = await send(context, url.href, 'GET'); }
     catch (error) {
@@ -206,7 +214,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
     if (!record(result)) return failure('provider_response_invalid', 'link');
     if (record(result.error) && result.error.code === 'installation_not_found') ready = false;
     else if (!Array.isArray(result.repos)) return failure('provider_response_invalid', 'link');
-    else ready = result.repos.some(repo => record(repo) && String(repo.id) === String(link.repoId)
+    else ready = result.repos.some(repo => record(repo) && String(repo.id) === linked.repoId
       && repo.provider === 'github' && text(repo.namespace) && text(repo.slug)
       && `${repo.namespace}/${repo.slug}`.toLowerCase() === input.repository.repository);
   }
@@ -219,7 +227,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
     repositoryAccess: ready ? { status: 'ready', repository: input.repository }
       : { status: 'needsGitAccess', repository: input.repository,
         grantUrl: githubAppGrantUrl },
-    ...(ready && linked ? { gitSource: { type: 'github' as const, repoId: String(link.repoId) } } : {}),
+    ...(ready && linked ? { gitSource: { type: 'github' as const, repoId: linked.repoId } } : {}),
   };
 }
 
@@ -319,7 +327,11 @@ async function createVercelDeployment(input: UploadSelection, source: Readonly<R
   const target = environment.kind === 'production' ? { target: 'production' }
     : environment.kind === 'custom' ? { customEnvironmentSlugOrId: environment.id } : {};
   try {
-    const response = await send(context, endpoint('/v13/deployments', input.providerIdentity.providerAccountId), 'POST',
+    // A project's first deployment otherwise needs explicit projectSettings (400 missing_project_settings).
+    // Vercel's documented opt-in keeps its framework auto-detection, as the Vercel CLI does with --yes.
+    const url = new URL(endpoint('/v13/deployments', input.providerIdentity.providerAccountId));
+    url.searchParams.set('skipAutoDetectionConfirmation', '1');
+    const response = await send(context, url.href, 'POST',
       { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({
         name: input.projectName, project: input.providerIdentity.providerResourceId, ...target,
         ...source,

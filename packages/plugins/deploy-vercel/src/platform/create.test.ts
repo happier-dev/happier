@@ -4,6 +4,7 @@ import { resolveEffectiveInputFields } from '@happier-dev/plugin-sdk/actions';
 import { projectCreateAction } from './create.js';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import * as entry from '../index.js';
+import { liveCreatedProjectGitLink, liveMissingProjectSettingsRefusal } from './fixtures/liveProjectCaptures.js';
 
 const credentialRef = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'profile' };
 const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, credentialRef,
@@ -183,4 +184,44 @@ it('offers an optional production branch only in the Git Create form', () => {
   expect(git.find(field => field.path === 'productionBranch')).toMatchObject({ visible: true, required: false });
   const upload = resolveEffectiveInputFields(projectCreateAction, { sourceMethod: 'upload' });
   expect(upload.some(field => field.path === 'productionBranch')).toBe(false);
+});
+
+it('deploys the reviewed commit to a project it created with Git, as the live first deploy requires', async () => {
+  // Live shapes: COR4B-VERCEL-1115 create-git-input.json (Create) → deploy-agent-1.json refused
+  // deployment_content_unavailable; the first native deploy then needs Vercel's documented auto-detection opt-in.
+  const liveRepository = { kind: 'github', deployment: 'https://github.com', repository: 'happier-dev/triage-qa-sandbox' };
+  const requests: HttpRequest[] = [];
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: {
+    http: createPluginHttpFixture({ async request(request) {
+      requests.push(request);
+      const url = new URL(request.url);
+      const json = (status: number, body: unknown) => ({ status, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) });
+      if (request.method === 'POST' && url.pathname === '/v11/projects') return json(200, { id: 'prj_created',
+        accountId: 'team_exact', name: 'cor4b-git-1115', link: liveCreatedProjectGitLink });
+      if (request.method === 'PATCH') return json(200, { id: 'prj_created' });
+      if (request.method === 'POST' && url.pathname === '/v13/deployments') {
+        return url.searchParams.get('skipAutoDetectionConfirmation') === '1'
+          ? json(200, { id: 'dpl_first', projectId: 'prj_created', readyState: 'QUEUED' })
+          : json(400, liveMissingProjectSettingsRefusal);
+      }
+      throw new Error(`Unexpected Vercel request ${request.method} ${url.pathname}`);
+    } }),
+  } });
+  try {
+    const created = await kit.invokeAction('project-create', { ...input, sourceMethod: 'gitIntegration',
+      repository: liveRepository, resourceName: 'cor4b-git-1115', productionBranch: 'qa-live53' });
+    expect(created).toMatchObject({ repositoryAccess: { status: 'ready', repository: liveRepository },
+      preparedNative: { gitSource: { type: 'github', repoId: '1424792902' } } });
+    const { sourceMethod: _method, ...content } = created as Record<string, unknown>;
+    const sha = 'a'.repeat(40);
+    expect(await kit.invokeAction('deploy', { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 2,
+      credentialRef, ...content, targetLinkId: 'link', expectedTargetLinkRevision: 1, deploymentId: 'deployment',
+      expectedDeploymentRevision: 1, actionOperationId: 'operation', sourceMethod: 'gitIntegration',
+      sourceIntent: { kind: 'repository', sha, projectSourceId: 'source', sourceRevision: 1,
+        compose: { path: 'compose.yaml', profiles: [], services: [] } } })).toMatchObject({ state: 'queued',
+      providerDeploymentId: 'dpl_first' });
+    const deployment = requests.find(request => new URL(request.url).pathname === '/v13/deployments')!;
+    expect(JSON.parse(new TextDecoder().decode(deployment.body))).toMatchObject({ project: 'prj_created',
+      gitSource: { type: 'github', repoId: '1424792902', ref: sha, sha } });
+  } finally { await kit.dispose(); }
 });
