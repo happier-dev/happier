@@ -143,6 +143,7 @@ const handoffInputMembers = {
     delivery: selectionMembers.delivery,
 };
 type HandoffInputSchema = ReturnType<typeof defineProtocolObject<typeof handoffInputMembers, typeof closed>>;
+export const TriageSessionHandoffContextV1Schema = handoffInputMembers.context;
 export interface TriageSessionHandoffAuthoredInputV1 extends ProtocolSchemaInput<HandoffInputSchema> {}
 export interface TriageSessionHandoffInputV1 extends ProtocolSchemaOutput<HandoffInputSchema> {}
 export const TriageSessionHandoffInputV1Schema: ProtocolComposableSchema<Readonly<TriageSessionHandoffAuthoredInputV1>, Readonly<TriageSessionHandoffInputV1>> =

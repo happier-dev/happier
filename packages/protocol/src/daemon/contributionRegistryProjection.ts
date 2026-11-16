@@ -8,6 +8,8 @@ import { PluginUiResourceContentV1Schema } from '../plugins/ui/resourceContent.j
 import { readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
 import { PluginActionFailureResponseV1Schema } from '../plugins/actions/failureResponse.js';
 import { PluginUiResourceLinkV1Schema } from '../plugins/contributions/ui/resourceLinks.js';
+import { PluginUiAppPageRouteAliasesV1Schema } from '../plugins/contributions/ui/routeAliases.js';
+import { PluginUiFailureActionsBindingV1Schema } from '../plugins/contributions/ui/failureActions.js';
 import { z } from '../zodRuntimePolicy.js';
 import { PluginProjectionSourceV2Schema, PluginProjectionBrandAssetV2Schema } from './pluginCatalogPresentation.js';
 export { PluginProjectionSourceV2Schema, PluginProjectionBrandAssetV2Schema,
@@ -2170,6 +2172,8 @@ const PluginProjectedUiGenericEntryShapeV2Schema = lazyZodSchema(() => (<T exten
   resourceLinks: z.optional(z.array(PluginUiResourceLinkV1Schema)),
   binding: zMini.optional(PluginUiSurfaceBindingV1Schema),
   widgetAreas: zMini.optional(PluginUiWidgetAreaDeclarationsV1Schema),
+  routeAliases: zMini.optional(PluginUiAppPageRouteAliasesV1Schema),
+  failureActions: zMini.optional(PluginUiFailureActionsBindingV1Schema),
   inputs: zMini.optional(InputHintsSchema),
   inputSchema: zMini.optional(PluginJsonSchemaV2Schema),
   sessionInputPath: zMini.optional(InputPathSchema),
@@ -2209,6 +2213,14 @@ function refineProjectedUiEntry(
   if (value.widgetAreas !== undefined && (value.contributionKind !== 'surfacePlacement'
     || value.binding?.kind !== 'destination' || value.binding.container !== 'appPage')) {
     context.addIssue({ code: 'custom', path: ['widgetAreas'], message: 'Widget areas require an app-page destination placement.' });
+  }
+  if (value.failureActions !== undefined && (value.contributionKind !== 'surfacePlacement'
+    || value.binding?.kind !== 'destination' || value.binding.container !== 'appPage' || value.binding.targetKind !== 'app')) {
+    context.addIssue({ code: 'custom', path: ['failureActions'], message: 'Failure Actions require an app-targeted app page.' });
+  }
+  if (value.routeAliases !== undefined && (value.contributionKind !== 'surfacePlacement'
+    || value.binding?.kind !== 'destination' || value.binding.container !== 'appPage' || value.binding.targetKind !== 'app')) {
+    context.addIssue({ code: 'custom', path: ['routeAliases'], message: 'Route aliases require an app-targeted app page.' });
   }
   const isWidget = value.contributionKind === 'surfacePlacement' && value.binding?.kind === 'inline' && value.binding.role === 'widget';
   if (value.publicPresentation !== undefined && !isWidget) {

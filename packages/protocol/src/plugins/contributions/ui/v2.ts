@@ -1,9 +1,11 @@
 import * as zMini from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
+import { PluginUiFailureActionsBindingV1Schema, type PluginUiFailureActionsBindingV1 } from './failureActions.js';
 import { z } from '../../../zodRuntimePolicy.js';
 import { PluginDefaultPlacementSchema } from './defaultPlacement.js';
 import { PluginListFilterFieldV1Schema } from '../../../collections/filter/pluginListFilterFieldV1.js';
 import { PluginUiWidgetAreaDeclarationsV1Schema, type PluginUiWidgetAreaDeclarationV1 } from './widgetAreas.js';
+import { PluginUiAppPageRouteAliasesV1Schema, type PluginUiAppPageRouteAliasV1 } from './routeAliases.js';
 export { PluginUiWidgetAreaDeclarationV1Schema, PluginUiWidgetAreaDeclarationsV1Schema } from './widgetAreas.js';
 export type { PluginUiWidgetAreaDeclarationV1 } from './widgetAreas.js';
 import { PluginDeclarativeMetricNodeV1Schema, PluginDeclarativeTableNodeV1Schema, PluginDeclarativeRowsNodeV1Schema, PluginDeclarativeChartNodeV1Schema, type PluginDeclarativeDataNodeV1 } from './declarativeDataV1.js';
@@ -534,7 +536,8 @@ function createPluginUiViewBindingSchemaV2() {
         ? { description: zMini.optional(PluginLocalizedStringV2Schema), headerStyle: z.optional(PluginUiAppPageHeaderStyleV1Schema) }
         : {}),
       ...(slot.container === 'appPage' && slot.targetKind === 'app'
-        ? { column: z.optional(PluginUiAppPageColumnV1Schema), widgetAreas: zMini.optional(PluginUiWidgetAreaDeclarationsV1Schema) }
+        ? { column: z.optional(PluginUiAppPageColumnV1Schema), widgetAreas: zMini.optional(PluginUiWidgetAreaDeclarationsV1Schema),
+            routeAliases: z.optional(PluginUiAppPageRouteAliasesV1Schema), failureActions: z.optional(PluginUiFailureActionsBindingV1Schema) }
         : {}),
       ...(slot.container === 'rightSidebarTab' ? {
         defaultPlacement: z.optional(PluginRightSidebarDefaultPlacementSchema),
@@ -679,6 +682,8 @@ export type PluginUiViewDestinationBindingInputV2 = {
     description?: TSlot['container'] extends 'appPage' ? PluginLocalizedStringV2 : never;
     headerStyle?: TSlot['container'] extends 'appPage' ? PluginUiAppPageHeaderStyleV1 : never;
     widgetAreas?: TSlot extends Readonly<{ container: 'appPage'; targetKind: 'app' }> ? PluginUiWidgetAreaDeclarationV1[] : never;
+    routeAliases?: TSlot extends Readonly<{ container: 'appPage'; targetKind: 'app' }> ? PluginUiAppPageRouteAliasV1[] : never;
+    failureActions?: TSlot extends Readonly<{ container: 'appPage'; targetKind: 'app' }> ? PluginUiFailureActionsBindingV1 : never;
   }> & (TSlot['container'] extends 'rightSidebarTab'
     ? Readonly<{ countResourceId?: string; counts?: never }> | Readonly<{ counts: PluginUiCountsBindingV1; countResourceId?: never }>
     : TSlot extends Readonly<{ container: 'appPage'; targetKind: 'project' }>
@@ -736,6 +741,8 @@ export type PluginUiViewDestinationBindingV2 = z.output<typeof PluginUiViewV2Sch
       ? PluginUiAppPageColumnV1
       : never;
     widgetAreas?: TSlot extends Readonly<{ container: 'appPage'; targetKind: 'app' }> ? PluginUiWidgetAreaDeclarationV1[] : never;
+    routeAliases?: TSlot extends Readonly<{ container: 'appPage'; targetKind: 'app' }> ? PluginUiAppPageRouteAliasV1[] : never;
+    failureActions?: TSlot extends Readonly<{ container: 'appPage'; targetKind: 'app' }> ? PluginUiFailureActionsBindingV1 : never;
   }> & (TSlot['container'] extends 'rightSidebarTab'
     ? Readonly<{ countResourceId?: string; counts?: never }> | Readonly<{ counts: PluginUiCountsBindingV1; countResourceId?: never }>
     : TSlot extends Readonly<{ container: 'appPage'; targetKind: 'project' }>

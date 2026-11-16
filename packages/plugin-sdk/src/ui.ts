@@ -23,6 +23,9 @@ import type {
 } from './ui/publicContract.js';
 
 export type {
+    FailureActionPlacement,
+    FailureAgentAction,
+    FailureActionOutcome,
     InboxItemAttentionTypeV1,
     PluginRightSidebarDefaultPlacement,
     PluginRightSidebarCountV1,

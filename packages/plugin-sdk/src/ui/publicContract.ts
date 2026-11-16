@@ -806,3 +806,4 @@ export type PublicToolchainCompatibilityV1 = {
 export type PluginLiveStreamReferenceV1 =
     | Readonly<{ kind: 'plugin'; source: Readonly<{ pluginId: string; localId: string }> }>
     | Readonly<{ kind: 'host'; sourceId: string }>;
+export type { FailureActionPlacement, FailureAgentAction, FailureActionOutcome } from '@happier-dev/protocol/plugins/contributions/ui/failureActionPresentation';

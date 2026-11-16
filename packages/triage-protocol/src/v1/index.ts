@@ -375,7 +375,7 @@ export type {
     TriageContributionSourceLinkSessionCredentialInputAuthoredV1, TriageContributionSourceLinkSessionCredentialInputV1,
     TriageContributionSourceReadSessionLinksCredentialInputAuthoredV1, TriageContributionSourceReadSessionLinksCredentialInputV1,
 } from './contribution.js';
-export { TriageFailureSubjectV1Schema, TriageSessionHandoffInputV1Schema, TriageSessionHandoffEvidenceV1Schema, TriageSessionHandoffResultV1Schema,
+export { TriageFailureSubjectV1Schema, TriageSessionHandoffInputV1Schema, TriageSessionHandoffContextV1Schema, TriageSessionHandoffEvidenceV1Schema, TriageSessionHandoffResultV1Schema,
     TriageConfiguredEntryExecutionStatusV1Schema } from './sessionHandoff.js';
 export type { TriageFailureSubjectV1, TriageSessionHandoffAuthoredInputV1, TriageSessionHandoffInputV1, TriageSessionHandoffEvidenceV1,
     TriageSessionHandoffAuthoredResultV1, TriageSessionHandoffResultV1 } from './sessionHandoff.js';

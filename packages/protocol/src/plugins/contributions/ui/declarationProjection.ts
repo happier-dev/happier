@@ -738,6 +738,8 @@ function projectGeneratedUiViews(
             binding: selectedBinding,
             renderer: effectiveCandidate.projectedRenderer.rendererRef,
             display,
+            ...('failureActions' in view.definition && view.definition.failureActions !== undefined
+                ? { failureActions: view.definition.failureActions } : {}),
             ...('resourceLinks' in view.definition && view.definition.resourceLinks !== undefined
                 ? { resourceLinks: view.definition.resourceLinks } : {}),
             ...(selectedBinding.kind === 'inline' && selectedBinding.role === 'widget'
@@ -781,6 +783,7 @@ function projectGeneratedUiViews(
                 : {}),
             ...(column ? { column } : {}),
             ...('widgetAreas' in view.definition && view.definition.widgetAreas ? { widgetAreas: view.definition.widgetAreas } : {}),
+            ...('routeAliases' in view.definition && view.definition.routeAliases ? { routeAliases: view.definition.routeAliases } : {}),
             actions: Object.freeze([]),
             ...(headerActions.length === 0 ? {} : { headerActions }),
             ...(rightSidebar ? { rightSidebar } : {}),
