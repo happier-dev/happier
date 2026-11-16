@@ -13,6 +13,7 @@ import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/works
 import { DetailsSurfaceHost } from '@/components/appShell/panes/details/surfaces/DetailsSurfaceHost';
 import { createDetailsSurfacePaneCallbacks } from '@/components/appShell/panes/details/surfaces/detailsSurfaceRegistry';
 import { createWorkflowDetailsSurfaceRenderers } from '@/components/workflows/run/WorkflowStartDetails';
+import { createExecutionRunDetailsSurfaceRenderers } from '@/components/sessions/runs/launcher/executionRunDetailsSurfaceRenderers';
 import { DiscussionWorkflowStartDetails } from './DiscussionWorkflowStartDetails';
 import { usePaneActionRailRightPaneHiddenByDetails } from '@/components/appShell/panes/PaneActionRailContext';
 import type { PaneBuiltinAdapter, PaneRightSidebarAdapter } from '@/components/appShell/panes/types';
@@ -51,15 +52,19 @@ const DISCUSSION_WORKFLOW_RENDERERS = createWorkflowDetailsSurfaceRenderers({
 const DISCUSSION_DETAILS_SCOPE = Object.freeze({ kind: 'global' as const });
 
 /** The same Details workspace owns Start placement, retained tabs and in-place Run replacement. */
-function DiscussionDetailsPane(props: Readonly<{ scopeId: string }>) {
+function DiscussionDetailsPane(props: Readonly<{ scopeId: string; serverId?: string | null }>) {
     const pane = useAppPaneScope(props.scopeId);
+    const renderers = React.useMemo(() => [
+        ...DISCUSSION_WORKFLOW_RENDERERS,
+        ...createExecutionRunDetailsSurfaceRenderers({ owner: 'workspace', sessionId: null, serverId: props.serverId }),
+    ], [props.serverId]);
     const callbacks = React.useMemo(() => createDetailsSurfacePaneCallbacks({
         openTab: pane.openDetailsTab, closeTab: pane.closeDetailsTab, replaceTab: pane.replaceDetailsTab,
         pinTab: pane.pinDetailsTab, unpinTab: pane.unpinDetailsTab,
     }), [pane.openDetailsTab, pane.closeDetailsTab, pane.replaceDetailsTab, pane.pinDetailsTab, pane.unpinDetailsTab]);
     return <DetailsSplitWorkspace pane={pane} closeLastTab={pane.closeDetails}
         renderTabContent={(tab, presentation) => <DetailsSurfaceHost tab={tab} active={presentation.active}
-            scope={DISCUSSION_DETAILS_SCOPE} region="details" renderers={DISCUSSION_WORKFLOW_RENDERERS} callbacks={callbacks} />} />;
+            scope={DISCUSSION_DETAILS_SCOPE} region="details" renderers={renderers} callbacks={callbacks} />} />;
 }
 
 function useDiscussionRightSidebarSelection(scopeId: string) {
@@ -174,10 +179,10 @@ export function DiscussionPaneHost(props: Readonly<{
         };
         const details: PaneBuiltinAdapter = {
             destinationIds: ['details'], defaultDestinationId: 'details',
-            render: ({ scopeId }) => <DiscussionDetailsPane scopeId={scopeId} />,
+            render: ({ scopeId }) => <DiscussionDetailsPane scopeId={scopeId} serverId={props.scope?.serverId} />,
         };
         return { sidebar, pane, details };
-    }, [store, navigation, items]);
+    }, [store, navigation, items, props.scope?.serverId]);
     return (
         <DiscussionRightSidebarPanelsContext.Provider value={store}>
             <DiscussionNavigationContext.Provider value={navigation}>

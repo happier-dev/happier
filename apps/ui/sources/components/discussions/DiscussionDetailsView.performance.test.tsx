@@ -1065,6 +1065,60 @@ it('starts a no-input Pattern with the current Discussion draft after its panel 
     await screen.unmount();
 });
 
+it.each([false, true])('reveals the original Session composer after a Discussion selection handoff (standalone=%s)', async standaloneSurface => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { router } = await import('expo-router');
+    const { TranscriptSelectionToolbar } = await import('@/components/sessions/transcript/messageSelection/TranscriptSelectionToolbar');
+    const { getSessionComposerDraftSnapshot, readSessionDiscussionSelectionSourceFromDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    const { buildScopedSessionRouteHref } = await import('@/hooks/session/sessionRouteServerScope');
+    const { serverId, fixture, repository, accountLifetime } = await prepareLongDiscussion();
+    const stored = fixture.stored();
+    if (!stored) throw new Error('Expected the created Discussion boundary record');
+    stored.discussion.anchor = { kind: 'session', sessionId: 'origin-session' };
+    const screen = await renderScreen(<AppPaneProvider><DiscussionDetailsView
+        target={{ kind: 'discussion', address: { serverId }, discussionId: 'committed-thread' }}
+        active standaloneSurface={standaloneSurface} hostSessionAddress={standaloneSurface ? undefined : { serverId, sessionId: 'origin-session' }} /></AppPaneProvider>);
+    await vi.waitFor(() => expect(repository.getSnapshot().threads['committed-thread']?.messages).toHaveLength(300));
+    await act(async () => { storage.getState().applySessions([createSessionFixture({ id: 'origin-session', serverId })]); });
+    const toolbar = () => screen.root.findByType(TranscriptSelectionToolbar);
+    await vi.waitFor(() => expect(toolbar().props.sendToSessionEnabled).toBe(true));
+    const selected = toolbar().props.selectableMessagesInOrder.slice(0, 1);
+    await act(async () => { await toolbar().props.onSendToSession(selected); });
+    const target = { kind: 'session' as const, sessionId: 'origin-session' };
+    expect(getSessionComposerDraftSnapshot(accountLifetime.scope, target).composer?.text.value).toContain('Root');
+    expect(readSessionDiscussionSelectionSourceFromDraft(getSessionDraftSnapshot(accountLifetime.scope, target).document)).toMatchObject({
+        serverId, discussionId: 'committed-thread', messageIds: ['committed-root'],
+    });
+    if (standaloneSurface) expect(router.replace).toHaveBeenCalledWith(buildScopedSessionRouteHref({ serverId, sessionId: 'origin-session' }));
+    else expect(router.replace).not.toHaveBeenCalled();
+    await screen.unmount();
+});
+
+it('opens a Discussion selection conversation in its original Session and Home', async () => {
+    const { DiscussionPaneHost } = await import('./DiscussionRightSidebar');
+    const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+    const { SessionInteractiveExecutionRunDraftView } = await import('@/components/sessions/runs/launcher/SessionInteractiveExecutionRunDraftView');
+    const { createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab } = await import('@/components/sessions/runs/launcher/executionRunLauncherModel');
+    const { serverId, accountLifetime } = await prepareLongDiscussion();
+    const source = { kind: 'discussion' as const, serverId, discussionId: 'committed-thread',
+        messageIds: ['selected-message'], draftCorrelationId: 'selection-draft' };
+    const draft = createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab({ source, sessionId: 'origin-session', initialText: 'Investigate selected evidence' });
+    // A retained resource can already carry its Session: registration must consume it.
+    const tab = { ...draft, resource: { ...draft.resource, sessionId: 'origin-session' } };
+    const paneRef: { current: ReturnType<typeof useAppPaneScope> | null } = { current: null };
+    function ObservePane() {
+        paneRef.current = useAppPaneScope('discussion');
+        return null;
+    }
+    const screen = await renderScreen(<AppPaneProvider><DiscussionPaneHost scope={accountLifetime.scope} main={<ObservePane />} /></AppPaneProvider>);
+    await act(async () => paneRef.current!.openDetailsTab(tab, { intent: 'preview', start: true }));
+    await vi.waitFor(() => expect(screen.root.findAllByType(Reflect.get(SessionInteractiveExecutionRunDraftView, 'type'))).toHaveLength(1));
+    expect(screen.root.findByType(Reflect.get(SessionInteractiveExecutionRunDraftView, 'type')).props).toMatchObject({
+        sessionId: 'origin-session', serverId, initialText: 'Investigate selected evidence', launchOrigin: source,
+    });
+    await screen.unmount();
+});
+
 it.each([false, true])('lets the mounted Workflow Start commit and rejoin its ordinary question before returning the Discussion origin (lost response=%s)', async losePost => {
     const { DiscussionPaneHost } = await import('./DiscussionRightSidebar');
     const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');

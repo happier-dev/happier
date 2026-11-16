@@ -128,6 +128,7 @@ export function createInteractiveExecutionRunDraftDetailsTab(input?: Readonly<{
 
 export function createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab(input: Readonly<{
     source: DiscussionSelectionSourceV1 & Readonly<{ draftCorrelationId: string }>;
+    sessionId: string;
     initialText: string;
 }>): DetailsTab {
     return {
@@ -137,6 +138,7 @@ export function createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab(
         resource: {
             kind: 'executionRunLauncher',
             mode: 'conversation',
+            sessionId: input.sessionId,
             source: input.source,
             initialInstructions: input.initialText,
         },

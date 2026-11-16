@@ -68,9 +68,9 @@ describe('execution Run conversation details resources', () => {
             messageIds: ['message_1'],
             draftCorrelationId: 'draft_1',
         };
-        expect(createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab({ source, initialText: 'Investigate this' })).toMatchObject({
+        expect(createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab({ source, sessionId: 'origin-session', initialText: 'Investigate this' })).toMatchObject({
             key: 'execution-run-conversation-draft:discussion:draft_1',
-            resource: { kind: 'executionRunLauncher', mode: 'conversation', source, initialInstructions: 'Investigate this' },
+            resource: { kind: 'executionRunLauncher', mode: 'conversation', sessionId: 'origin-session', source, initialInstructions: 'Investigate this' },
         });
     });
 });

@@ -42,6 +42,7 @@ describe('projectAgentStartDrafts', () => {
         const discussionTabs = ['selection_1', 'selection_2'].map((draftCorrelationId) => {
             const discussion = createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab({
                 source: { kind: 'discussion', serverId: 'server-a', discussionId: 'discussion_1', messageIds: ['message_1'], draftCorrelationId },
+                sessionId: 'session_1',
                 initialText: 'Selected context',
             });
             return tab(discussion.key, discussion.kind, discussion.resource);

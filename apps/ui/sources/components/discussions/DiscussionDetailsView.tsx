@@ -1081,6 +1081,7 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
         const source = { ...prepared.source, draftCorrelationId: randomUUID() };
         pane.openDetailsTab(createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab({
             source,
+            sessionId: props.source.address.sessionId,
             initialText: prepared.text,
         }), { intent: 'preview', start: true });
     }, [pane, prepareSelection, props.source]);
@@ -1103,7 +1104,7 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
             template: sendTemplate,
             sourceSessionName: null,
             appendToDraft: appendSessionDraftText,
-            revealPrimaryComposer: device === 'phone'
+            revealPrimaryComposer: device === 'phone' || props.standaloneSurface
                 ? () => router.replace(buildScopedSessionRouteHref(source.address) as Href)
                 : pane.closeDetails,
             focusPrimaryComposer: () => requestRegisteredSessionComposerFocus(source.address),
@@ -1116,7 +1117,7 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
                 selectionHandoffInFlight.current = null;
             }
         }
-    }, [device, pane.closeDetails, props.source, router, sendTemplate]);
+    }, [device, pane.closeDetails, props.source, props.standaloneSurface, router, sendTemplate]);
     // The selection bar's one primary: Ask an agent about what was selected (CR5).
     const canAskAgent = discussion?.capabilities.askAgent === true && props.source?.canLaunchExecutionRuns === true;
     const selectionActions = React.useMemo<readonly TranscriptSelectionToolbarAction[] | undefined>(() => canAskAgent
