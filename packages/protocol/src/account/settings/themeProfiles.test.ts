@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as themes from './themeProfiles.js';
 import { ACCOUNT_SETTING_DEFINITIONS, AccountSettingsSchema } from './accountSettings.js';
 
 const profile = (id: string) => ({
@@ -42,5 +43,53 @@ describe('Account theme profile library', () => {
         const profiles = Array.from({ length: 51 }, (_, index) => profile(`theme_${index}`));
         expect(AccountSettingsSchema.parse({ themeProfiles: profiles }).themeProfiles).toEqual(profiles);
         expect(ACCOUNT_SETTING_DEFINITIONS).toHaveProperty('themeProfiles');
+    });
+});
+
+
+describe('portable theme presentation', () => {
+    it('admits seeds, style, CSS and pinned Store provenance', () => {
+        const source = { ...profile('theme_portable'), seeds: { canvas: '#112233', accent: '#abcdef' },
+            style: { radius: 'round', fontFamily: 'Inter' }, css: '[data-surface="card"] { opacity: .9 }',
+            source: { kind: 'store', contributionId: 'night', provenance: { sourceId: 'openvsx', itemId: 'publisher.palette', format: 'git', sourceUrl: 'https://open-vsx.org', ref: { kind: 'version', version: '1.0' }, importedAt: 1 } },
+            requiresAppVersion: '0.4.0' };
+        expect(themes.ThemeProfileV1Schema.safeParse(source).success).toBe(true);
+        expect(themes.ThemeProfileLibraryStoredSchema.parse([source])).toEqual([source]);
+    });
+});
+
+
+describe('theme document retention', () => {
+    it('preserves future raw presentation through a known edit and recovers supported stored siblings', () => {
+        const raw = { ...profile('future_theme'), style: { radius: 'round', futureGlow: { amount: 2 } }, futurePresentation: { blur: true } };
+        const result = themes.parseThemeProfileDocument(raw);
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error('document rejected');
+        expect(result.document.compatibility).toMatchObject({ status: 'partial', unsupportedPaths: ['style.futureGlow', 'futurePresentation'] });
+        const edited = themes.mergeThemeProfileDocumentEdit(result.document, { name: 'Renamed', style: { radius: 'sharp' } });
+        expect(edited.raw).toMatchObject({ name: 'Renamed', style: { radius: 'sharp', futureGlow: { amount: 2 } }, futurePresentation: { blur: true } });
+        expect(themes.ThemeProfileLibraryStoredSchema.parse([raw, profile('sibling')])[0])
+            .toMatchObject({ id: 'future_theme', style: { radius: 'round' } });
+    });
+    it('rejects malformed known fields and source authority while partially projecting future versions', () => {
+        for (const change of [{ id: 'new' }, { seeds: { canvas: 'url(external)', accent: '#abcdef' } }, { source: { kind: 'yours', pluginId: 'other' } }]) {
+            expect(themes.parseThemeProfileDocument({ ...profile('valid_theme'), ...change }).ok).toBe(false);
+        }
+        const future = themes.parseThemeProfileDocument({ ...profile('future_theme'), schemaVersion: 2, css: '.card{}' });
+        expect(future.ok).toBe(true);
+        if (!future.ok) throw new Error('future presentation rejected');
+        expect(future.document.raw.schemaVersion).toBe(2);
+        expect(future.document.profile.schemaVersion).toBe(1);
+        expect(future.document.compatibility.unsupportedPaths).toContain('schemaVersion');
+    });
+});
+
+
+describe('theme references', () => {
+    it('addresses plugin contributions independently from custom profile identities', () => {
+        const reference = { kind: 'plugin', pluginId: 'org.example.palette', contributionId: 'night' };
+        expect(themes.ThemeReferenceSchema.parse(reference)).toEqual(reference);
+        expect(themes.ThemeProfileV1Schema.safeParse({ ...profile('valid_theme'), id: 'org.example.palette:night' }).success).toBe(false);
+        expect(themes.ThemeReferenceSchema.safeParse({ ...reference, id: 'another-record' }).success).toBe(false);
     });
 });
