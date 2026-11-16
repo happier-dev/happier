@@ -324,6 +324,7 @@ export {
   HAPPIER_COLLECTION_LIST_METRICS,
   HAPPIER_COLLECTION_LIST_ROW_STYLE,
   HAPPIER_COLLECTION_LIST_TEXT,
+  resolveHappierCatalogDirectoryRowEdges,
   resolveHappierCollectionListRowPadding,
   resolveHappierCollectionRowRole,
   resolveHappierCollectionTreeChildIndentPx,

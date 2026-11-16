@@ -55,7 +55,7 @@ import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 import { Icon } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from './DisclosureCaret';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
-import { BareSectionRowsContext, MenuSectionRowsContext, useListPresentation, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
+import { BareSectionRowsContext, MenuSectionRowsContext, PageDirectoryRowsContext, useListPresentation, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
 import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
 import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
@@ -83,6 +83,7 @@ import {
     HappierListRowPrecedesSelectedContext,
     HappierListRowRule,
     resolveHappierListRowRuleShown,
+    resolveHappierCatalogDirectoryRowEdges,
 } from '@happier-dev/plugin-ui/presentation';
 
 const NO_MARGINS = Object.freeze({ start: 0, end: 0 });
@@ -364,6 +365,13 @@ export interface ItemProps {
  * wherever they are appended; see {@link MENU_ROW_METRICS} for why a menu ignores density at all.
  */
 const MENU_ROW_HEIGHT_STYLE = { minHeight: MENU_ROW_METRICS.minHeightPx } as const;
+/** A page directory row's edges (`PageDirectoryRowsContext`): its section title stands the heading's optical inset in from the rows' box. */
+const DIRECTORY_ROW_EDGES = resolveHappierCatalogDirectoryRowEdges(PAGE_LIST_METRICS.headingOpticalInsetPx);
+const DIRECTORY_ROW_CONTENT_STYLE = { paddingHorizontal: DIRECTORY_ROW_EDGES.contentInsetPx } as const;
+const DIRECTORY_ROW_FILL_STYLE = { marginHorizontal: DIRECTORY_ROW_EDGES.fillInsetPx } as const;
+/** A directory row's mark leads its column, so whatever its width it starts on the section title's edge. */
+const DIRECTORY_ROW_LEADING_STYLE = { alignItems: 'flex-start' } as const;
+const EMPTY_TRAILING_CELL_STYLE = { marginLeft: 0 } as const;
 /** A catalog row's air above and below its text block (`HAPPIER_COLLECTION_LIST_METRICS.catalogRow`). */
 const CATALOG_ROW_PADDING_STYLE = { paddingVertical: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.paddingVertical } as const;
 // A compact row in a side pane starts on the pane's text edge, the inset its header title and section labels use.
@@ -1175,6 +1183,9 @@ export const Item = React.memo<ItemProps>((props) => {
     // A row on a drawn sheet rounds its fill with the sheet's corners; a row laid flat on a page or a pane is
     // full-bleed, so its hover, press and selection fills are square and span the whole row.
     const bareSectionRow = React.useContext(BareSectionRowsContext) && !isMenuRow && !isCatalogRow;
+    // A page directory's row (Store Installed), described or title-only, stands on its section's edges by the one
+    // catalog-directory rule the Collection directory's rows take.
+    const directoryEdges = React.useContext(PageDirectoryRowsContext) && !isMenuRow ? DIRECTORY_ROW_EDGES : null;
     const flatRow = pageSheet?.framed === false || bareSectionRow;
     const groupCornerRadius = flatRow ? 0 : GROUPED_SURFACE_RADIUS_PX;
     const pageRowInsetPx = pageSheet?.rowInsetPx;
@@ -1339,6 +1350,7 @@ export const Item = React.memo<ItemProps>((props) => {
             : [styles.container, rowEdgeStyle, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle];
     const alignsToFirstLine = contentAlign === 'start';
     const containerCore = [alignsToFirstLine ? [containerBase, styles.containerAlignStart] : containerBase,
+        directoryEdges ? DIRECTORY_ROW_CONTENT_STYLE : null,
         catalogGeometry ? { minHeight: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.minHeight }
             // The described floor holds only a row that has its line beneath: an undescribed one (a column's Defaults,
             // a machine without its summary) keeps the one-line pitch, so its height follows its content (A5, B2).
@@ -1418,12 +1430,12 @@ export const Item = React.memo<ItemProps>((props) => {
     const firstLineLeadingStyle = titleLineHeightPx === undefined ? null : { height: titleLineHeightPx };
     const firstLineTrailingStyle = titleLineHeightPx === undefined ? null : { minHeight: titleLineHeightPx };
     const iconContainerStyle = isTight
-        ? [styles.iconContainer, styles.iconContainerTight, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle]
+        ? [styles.iconContainer, styles.iconContainerTight, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle, directoryEdges ? DIRECTORY_ROW_LEADING_STYLE : null]
         : isCompact
-            ? [styles.iconContainer, styles.iconContainerCompact, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle]
+            ? [styles.iconContainer, styles.iconContainerCompact, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle, directoryEdges ? DIRECTORY_ROW_LEADING_STYLE : null]
             : isCozy
-                ? [styles.iconContainer, styles.iconContainerCozy, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle]
-            : [styles.iconContainer, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle];
+                ? [styles.iconContainer, styles.iconContainerCozy, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle, directoryEdges ? DIRECTORY_ROW_LEADING_STYLE : null]
+            : [styles.iconContainer, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle, directoryEdges ? DIRECTORY_ROW_LEADING_STYLE : null];
     const resolvedIconMarginRight = isMenuRow
         ? MENU_ROW_METRICS.iconMarginRightPx
         : catalogGeometry ? HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markGap
@@ -1882,6 +1894,9 @@ export const Item = React.memo<ItemProps>((props) => {
                 !stackContentAccessory && (adaptiveAccessory || fieldMaxWidthPx !== null || accessoryMaxWidth === 'row') ? styles.rightSectionField : null,
                 detailInlineMaxWidthPx !== null ? { maxWidth: detailInlineMaxWidthPx } : null,
                 isMenuRow && !stackContentAccessory ? MENU_ROW_TRAILING : null,
+                // An empty trailing cell takes no gap, so a directory row's own end stands on its section's edge.
+                directoryEdges && !(detail && !detailBeneath) && !loading && !(includeRightAccessory && rightAccessory != null)
+                    && chevronAccessory == null ? EMPTY_TRAILING_CELL_STYLE : null,
                 firstLineTrailingStyle]}>
                 {copyFeedback.isCopied() ? (
                     <CopiedPill visible testID="item-copy-feedback" />
@@ -1942,6 +1957,7 @@ export const Item = React.memo<ItemProps>((props) => {
     );
     }, [
         chevronAccessory,
+        directoryEdges,
         placeFacts,
         rightElementYields,
         detailBeneath,
@@ -2089,6 +2105,7 @@ export const Item = React.memo<ItemProps>((props) => {
             isWeb && (disabled || loading) ? ({ cursor: 'not-allowed' } as any) : null,
             roundedCornersStyle,
             isMenuRow ? MENU_ROW_HIGHLIGHT_SHAPE : null,
+            directoryEdges ? DIRECTORY_ROW_FILL_STYLE : null,
             pressableStyle,
             typeof pressableBackground === 'string' ? { backgroundColor: paintColor(pressableBackground) } : null,
             focusRing,
@@ -2098,6 +2115,7 @@ export const Item = React.memo<ItemProps>((props) => {
         disabled,
         isCatalogRow,
         isMenuRow,
+        directoryEdges,
         paintColor,
         groupCornerRadius,
         bareSectionRow,

@@ -48,7 +48,7 @@ import type { HappierTypeRole, HappierUiTheme, HappierUiTypography } from '../en
 import { useOptionalPluginUiPresentationHost, type PluginUiMenuSelection } from '../presentationHost/context.js';
 import { PluginUiScrollActivityProvider } from '../presentationHost/scrollActivity.js';
 import { HappierCollectionDetailWidthContext, HappierCollectionLayoutContext, resolveHappierCollectionLayoutState } from '../presentation/collection/collectionLayout.js';
-import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, HappierListRowRule, resolveHappierListRowRuleShown } from '../presentation/collection/CollectionList.js';
+import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, HappierListRowRule, resolveHappierCatalogDirectoryRowEdges, resolveHappierListRowRuleShown } from '../presentation/collection/CollectionList.js';
 import { useHappierListRowHovered } from '../presentation/collection/ListItemFrame.js';
 import {
   HAPPIER_COLLECTION_INSTANT_MOTION,
@@ -812,12 +812,8 @@ const CATALOG_SIDE_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairlin
 const CATALOG_SIDE_INSET = 20;
 /** The catalog side row's content inset: its mark on the side list's edge, inside its inset fill. */
 const catalogSideRowContentStyle: HappierPortableStyle = { paddingLeft: CATALOG_SIDE_INSET - 1 - HAPPIER_COLLECTION_LIST_METRICS.rowInset };
-/**
- * A page directory's row (Store Discover, kind pages, Installed) stands on its section's edges (owner A9): its mark starts
- * on the section title's edge and its trailing control's glyph ends on the "All ›" edge. Its fill keeps the page row's
- * inset around that content, so the fill reaches past the section's text edges by that inset rather than pinching it.
- */
-const DIRECTORY_ROW_INSET = HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
+/** A page directory's row content inset, from the one catalog-directory edge rule (`resolveHappierCatalogDirectoryRowEdges`). */
+const DIRECTORY_ROW_INSET = resolveHappierCatalogDirectoryRowEdges(0).contentInsetPx;
 /** The directory row's content from its fill's leading edge (the row's 1 pt press edge is part of it). */
 const catalogDirectoryRowContentStyle: HappierPortableStyle = { paddingLeft: DIRECTORY_ROW_INSET - 1 };
 /** With no trailing control the content itself ends on the section's edge. */
@@ -2371,7 +2367,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const directoryHeadingInsetPx = HAPPIER_PAGE_METRICS.pageTextInsetPx - useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx);
   // Its rows' content stands on that same edge at both ends, inside a fill that keeps the page row's inset around it.
   const directoryRow = useMemo<HappierCollectionTableRowFacts | null>(() => (catalogDirectory
-    ? { hairline: true, insetFill: true, fillInsetPx: directoryHeadingInsetPx - DIRECTORY_ROW_INSET } : null),
+    ? { hairline: true, insetFill: true, fillInsetPx: resolveHappierCatalogDirectoryRowEdges(directoryHeadingInsetPx).fillInsetPx } : null),
   [catalogDirectory, directoryHeadingInsetPx]);
   const restingRows = useContext(HappierCollectionRestingRowsContext);
   const ruledInsetPx = wrapTitles && restingRows !== 'air' ? ruledRowInset(theme, restingRows) : null;

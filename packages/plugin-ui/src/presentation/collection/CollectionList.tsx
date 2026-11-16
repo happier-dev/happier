@@ -356,6 +356,18 @@ export function resolveHappierCollectionTreeChildIndentPx(): number {
   return M.rowGlyphBox + M.rowGlyphGap;
 }
 
+/**
+ * A catalog row standing on a page section without a sheet (a page directory: Store Discover, kind pages, Installed) stands
+ * on its section's edges (owner A9): its mark starts on the section title's edge and its trailing end on the section
+ * action's ("All ›") edge. Its fill keeps the page row's inset around that content, so the fill reaches past those text
+ * edges (`fillInsetPx` from the rows' box edge, negative) rather than pinching the content inward. `sectionTextInsetPx`
+ * is where the section title stands from that same box edge. Every such row, Collection or core `Item`, takes this one rule.
+ */
+export function resolveHappierCatalogDirectoryRowEdges(sectionTextInsetPx: number): Readonly<{ fillInsetPx: number; contentInsetPx: number }> {
+  const contentInsetPx = HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
+  return { fillInsetPx: sectionTextInsetPx - contentInsetPx, contentInsetPx };
+}
+
 /** A row's content inset (its own horizontal padding inside the gutter), plus a disclosure indent. */
 export function resolveHappierCollectionListRowPadding(indentPx = 0): Readonly<{ paddingLeft: number; paddingRight: number }> {
   const inset = HAPPIER_COLLECTION_LIST_METRICS.contentInset - HAPPIER_COLLECTION_LIST_METRICS.rowInset;

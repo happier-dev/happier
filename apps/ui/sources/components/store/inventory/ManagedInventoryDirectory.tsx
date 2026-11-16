@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { CapabilityRow } from '@/components/capabilities/row/CapabilityRow';
 import {
   presentCapabilityStatus,
@@ -26,6 +27,7 @@ import { useStoreMachineScope } from '@/components/settings/plugins/model/useSto
 import { useStoreProjectScope } from '@/components/settings/plugins/model/useStoreProjectScope';
 import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { PageDirectoryRowsContext } from '@/components/ui/lists/listPresentation';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { Text } from '@/components/ui/text/Text';
@@ -478,9 +480,14 @@ function InventorySection(
       {none ? (
         <Item testID={`${props.testID}.none`} title={t('storeInstalled.sectionNone')} titleStyle={styles.noneTitle} mode="info" showChevron={false} showDivider={false} />
       ) : null}
-      {props.columns > 1 ? (
-        <ItemGroupColumns columns={props.columns} paddingHorizontal={0} paddingVertical={0}>{rows}</ItemGroupColumns>
-      ) : rows}
+      {/* Installed is a page directory: its rows stand on the section's edges, as Discover's do. */}
+      <PageDirectoryRowsContext.Provider value>
+        {props.columns > 1 ? (
+          // A page directory's columns part by the directory's own gap: each row's fill reaches past its column's edges.
+          <ItemGroupColumns columns={props.columns} paddingHorizontal={0} paddingVertical={0}
+            columnGap={HAPPIER_COLLECTION_LIST_METRICS.catalogRow.directoryColumnGap}>{rows}</ItemGroupColumns>
+        ) : rows}
+      </PageDirectoryRowsContext.Provider>
       {rail ? (
         // A long open page closes where it ends too: Fewer sits between Previous and Next.
         <View style={styles.paging}>

@@ -90,6 +90,13 @@ export const MenuSectionRowsContext = React.createContext(false);
  */
 export const BareSectionRowsContext = React.createContext(false);
 
+/**
+ * Rows of a page directory laid out by core rows (Store Installed's sections, described or title-only): each row stands
+ * on its section's edges by the one catalog-directory rule the Collection directory's rows take
+ * (`resolveHappierCatalogDirectoryRowEdges`): mark on the section title's edge, trailing end on the section action's.
+ */
+export const PageDirectoryRowsContext = React.createContext(false);
+
 /** Only repeated states explained by the current page notice defer to this fact. */
 export function usePageNoticeActive(): boolean {
     return React.useContext(PageNoticeActiveContext);
