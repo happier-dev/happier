@@ -155,6 +155,7 @@ export function createSuperservePreparationClient(request: typeof fetch, signal?
     try {
       operation = await recoverSeed(operation);
       if (!operation.seed) return { kind: 'confirmed' };
+      const seed = operation.seed;
       const found = await read(operation);
       if (found) {
         operation = { ...operation, snapshotId: found.id };
@@ -168,7 +169,7 @@ export function createSuperservePreparationClient(request: typeof fetch, signal?
         }
         if (await read(operation) !== null) return { kind: 'pending', nativeOperationRef: reference(operation) };
       }
-      return await retireSeed(operation.seed) ? { kind: 'confirmed' } : { kind: 'pending', nativeOperationRef: reference(operation) };
+      return await retireSeed(seed) ? { kind: 'confirmed' } : { kind: 'pending', nativeOperationRef: reference(operation) };
     } catch (error) { return failure(error, operation); }
   }
   return { build, inspect, destroy };
