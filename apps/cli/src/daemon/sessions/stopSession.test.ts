@@ -1550,7 +1550,9 @@ describe('createStopSession', () => {
       spawnSyncMock.mockReset();
       isPidSafeHappySessionProcess.mockReset();
       isPidSafeHappySessionProcess.mockResolvedValueOnce(false);
-      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+        // Logger retention probes process liveness during module loading; signal 0 cannot stop a runner.
+        if (signal === 0) return true;
         throw new Error('process.kill should not run for Windows daemon children');
       });
 
@@ -1584,7 +1586,7 @@ describe('createStopSession', () => {
       });
       expect(spawnSyncMock).not.toHaveBeenCalled();
       expect(childKill).not.toHaveBeenCalled();
-      expect(killSpy).not.toHaveBeenCalled();
+      expect(killSpy.mock.calls.filter(([, signal]) => signal !== 0)).toEqual([]);
       killSpy.mockRestore();
     });
   });
@@ -1596,7 +1598,9 @@ describe('createStopSession', () => {
       isPidSafeHappySessionProcess.mockReset();
       spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: '', stderr: '' });
       isPidSafeHappySessionProcess.mockResolvedValueOnce(true);
-      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+        // Logger retention probes process liveness during module loading; signal 0 cannot stop a runner.
+        if (signal === 0) return true;
         throw new Error('process.kill should not run for Windows daemon children');
       });
 
@@ -1636,7 +1640,7 @@ describe('createStopSession', () => {
         windowsHide: true,
       }));
       expect(childKill).not.toHaveBeenCalled();
-      expect(killSpy).not.toHaveBeenCalled();
+      expect(killSpy.mock.calls.filter(([, signal]) => signal !== 0)).toEqual([]);
       killSpy.mockRestore();
     });
   });
