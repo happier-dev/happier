@@ -2704,6 +2704,65 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         ).toBe(true);
     });
 
+    it('replaces an older turn snapshot once when a terminal update needs its final anchors', async () => {
+        const sessionId = 'terminal-turn-during-initial-read';
+        const serverId = getActiveServerSnapshot().serverId!;
+        const { buildSessionTurnsProjectionV1 } = await import('@happier-dev/protocol/sessions/turns/sessionTurnV1');
+        const { sync } = await import('./sync');
+        const readStarted = createDeferred<void>();
+        const olderTurns = createDeferred<Response>();
+        const completedTurns = buildSessionTurnsProjectionV1({ sessionId, updatedAt: 3, latestTurnId: 'turn-1', turns: [{
+            turnId: 'turn-1', status: 'completed', startedAt: 1, updatedAt: 3, terminalAt: 3,
+            transcriptAnchors: { startUserMessageSeq: 2, finalAssistantMessageSeq: 3 },
+        }] });
+        let turnsReads = 0;
+        let firstSignal: AbortSignal | null | undefined;
+        const initialSession = createSessionFixture({ id: sessionId, serverId, encryptionMode: 'plain',
+            latestTurnId: 'turn-1', latestTurnStatus: 'in_progress' });
+        storage.getState().applySessions([initialSession]);
+        requestMock.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path.split('?')[0] === `/v2/sessions/${sessionId}`) return Response.json(createPlainSessionByIdResponseFixture(
+                storage.getState().sessions[sessionId]!,
+            ));
+            if (path === `/v1/sessions/${sessionId}/turns`) {
+                turnsReads += 1;
+                if (turnsReads === 1) {
+                    firstSignal = init?.signal;
+                    readStarted.resolve();
+                    return olderTurns.promise;
+                }
+                return Response.json(completedTurns);
+            }
+            if (path.startsWith(`/v1/sessions/${sessionId}/messages`)) return Response.json({
+                messages: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
+            });
+            return undefined;
+        });
+        const initialRead = sync.ensureSessionVisibleForMessageRoute(sessionId, {
+            forceRefresh: true, includeTurnsProjection: true, hydrateMessages: false,
+        });
+        const hydrate = Reflect.get(sync, 'hydrateSessionFromSocketUpdate') as (
+            id: string, reason: 'socket-update-turn-projection', sourceServerId: string,
+        ) => Promise<void>;
+        try {
+            await readStarted.promise;
+            storage.getState().applySessions([{ ...storage.getState().sessions[sessionId]!,
+                latestTurnStatus: 'completed', latestTurnStatusObservedAt: 3 }]);
+            const terminalRead = hydrate(sessionId, 'socket-update-turn-projection', serverId);
+            // Retire the older HTTP response after the push, as a slow server may do.
+            olderTurns.resolve(Response.json(buildSessionTurnsProjectionV1({ sessionId, updatedAt: 1, turns: [] })));
+            await terminalRead;
+            await initialRead;
+            expect(storage.getState().sessions[sessionId]?.sessionTurns).toEqual(completedTurns);
+            expect(firstSignal?.aborted).toBe(true);
+            expect(turnsReads).toBe(2);
+            expect(requestMock.mock.calls.some(([path]) => /^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(String(path)))).toBe(false);
+        } finally {
+            olderTurns.resolve(Response.json(buildSessionTurnsProjectionV1({ sessionId, updatedAt: 1, turns: [] })));
+            await initialRead;
+        }
+    });
+
     it('keeps visible cached socket update hydration targeted instead of refreshing the active session-list snapshot', async () => {
         const sessionId = 'socket_visible_cached_update_targeted_hydration';
         const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');

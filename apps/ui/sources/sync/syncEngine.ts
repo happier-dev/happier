@@ -8079,6 +8079,9 @@ class Sync {
     ): Promise<void> => {
         await this.ensureSessionVisibleForMessageRoute(sessionId, {
             forceRefresh: true,
+            // A completed turn can race the consumer's initial snapshot read.
+            // Its anchors must come from a read started after that update.
+            fresh: reason === 'socket-update-turn-projection',
             serverId: sourceServerId ?? undefined,
             includeTurnsProjection: reason === 'socket-update-turn-projection',
             scopeCurrentness,
