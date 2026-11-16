@@ -1,6 +1,6 @@
 import { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/plugin-sdk/interactions';
 import { readOpenCodeNativeChildOutcome, type OpenCodeNativeChildStatus } from './nativeChildOutcome.js';
-import { isSessionModeSelectionUnavailable, resolvePromptCacheLastUseAtMs } from '@happier-dev/plugin-sdk/agents/runtime';
+import { isSessionModeSelectionUnavailable, resolvePromptCacheLastUseAtMs, resolveUsageTokenCategories } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { randomUUID } from 'node:crypto';
 import { normalizeOpenCodePaidUsage } from '../../usage/paidUsage.js';
@@ -15,6 +15,7 @@ import type { OpenCodeSessionOpenRequest } from './operations.js';
 import {
   buildOpenCodeRuntimeIssue,
   buildOpenCodeProviderErrorIssue,
+  createOpenCodeRuntimeDiagnostic,
   publishOpenCodeTurnCancelled,
   publishOpenCodeRuntimeEvent,
   publishOpenCodeTurnFailed,
@@ -427,6 +428,10 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const promptCache = lastUseAtMs !== undefined ? { lastUseAtMs } : undefined;
     if (!nativeSessionId || !inferenceId || (!time?.completed && !info.finish && !info.error && info.nativeAccountingComplete !== true)) return;
     const usage = normalizeOpenCodePaidUsage(info, params.dialect ?? 'v1'); if (!usage) return;
+    const categories = resolveUsageTokenCategories(usage.tokens, usage);
+    const contextTokens = usage.tokens.total ?? (categories
+      ? categories.input + categories.output + categories.reasoning + categories.cacheRead + categories.cacheWrite
+      : null);
     const modelId = readNonBlankOpaqueIdentifier(info.modelID);
     const key = JSON.stringify([nativeSessionId, inferenceId]);
     // Inventory reconciliation and live frames describe the same native inference.
@@ -442,11 +447,11 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       ...(turnId ? { turnId } : {}),
       ...(promptCache ? { promptCache } : {}),
       // Native compaction sizes the latest assistant aggregate, not the paid
-      // Session ledger. The normalizer already resolves dialect overlap.
-      ...(ownsCurrentInference && usage.tokens.total !== null ? { context: {
+      // Session ledger. Canonical categories resolve the native dialect overlap.
+      ...(ownsCurrentInference && contextTokens !== null ? { context: {
         v: 1,
         modelId: modelId ?? null,
-        usedTokens: usage.tokens.total,
+        usedTokens: contextTokens,
         windowTokens: null,
         totalProcessedTokens: null,
         baselineTokens: null,
@@ -1906,11 +1911,8 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
               compactionId,
               phase: error ? 'failed' : 'completed',
               trigger,
-              ...(error ? { diagnostic: {
-                code: 'opencode_compaction_failed',
-                severity: 'error',
-                message: readOpenCodeProviderErrorMessage(error) || 'OpenCode compaction failed',
-              } } : {}),
+              ...(error ? { diagnostic: createOpenCodeRuntimeDiagnostic('opencode_compaction_failed',
+                readOpenCodeProviderErrorMessage(error) || 'OpenCode compaction failed', error) } : {}),
             });
           }
           return;
@@ -2852,11 +2854,8 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
           compactionId: request.compactionId,
           phase: 'failed',
           trigger: request.trigger,
-          diagnostic: {
-            code: 'opencode_compaction_failed',
-            severity: 'error',
-            message: error instanceof Error ? error.message : String(error),
-          },
+          diagnostic: createOpenCodeRuntimeDiagnostic('opencode_compaction_failed',
+            error instanceof Error ? error.message : String(error), error),
         });
         throw error;
       }

@@ -300,6 +300,7 @@ async function createStartedRuntime(params?: Readonly<{
   harness?: AgentSessionRuntimeHarness;
   executionRunId?: string;
   finiteExecutionRun?: boolean;
+  dialect?: 'v1' | 'v2';
   readManagedServiceSnapshot?: () => ManagedServiceSnapshot | null;
   mcpRegistration?: Promise<Readonly<{
     requiredHappier: Readonly<
@@ -315,6 +316,7 @@ async function createStartedRuntime(params?: Readonly<{
     directory: '/repo',
     ...(params?.executionRunId ? { executionRunId: params.executionRunId } : { happierSessionId: 'happy-session-1' }),
     ...(params?.finiteExecutionRun ? { finiteExecutionRun: true } : {}),
+    ...(params?.dialect ? { dialect: params.dialect } : {}),
     baseUrl: 'http://127.0.0.1:49196',
     client: params?.client ?? createClientFixture(),
     env: params?.env,
@@ -348,6 +350,53 @@ function createNativeSessionRuntimeForTest(operations: OpenCodeRuntimeTurnOperat
     },
   });
 }
+
+it.each([['session', 'cancel'], ['executionRun', 'cancel'], ['session', 'configure'], ['session', 'compact']] as const)(
+  'retains typed native %s %s control failures', async (kind, operation) => {
+    const failureCause = { code: 'provider_endpoint_unavailable', phase: 'turn_start',
+      failureReason: 'permission_denied', httpStatus: 503 } as const;
+    const failure = Object.assign(new Error('Native control refused'), { failureCause: {
+      ...failureCause, providerErrorMessage: 'PRIVATE_CONTROL_CAUSE',
+    } });
+    const client = createClientFixture();
+    client.globalConfigGet = async () => ({ model: 'anthropic/sonnet' });
+    client.providersList = async () => [{ id: 'anthropic', models: { sonnet: {
+      id: 'sonnet', status: 'active', capabilities: { input: ['text'], tools: true },
+    } } }];
+    const operations = await createStartedRuntime({ client,
+      ...(kind === 'executionRun' ? { executionRunId: 'control-cause-run' } : {}) });
+    const session = kind === 'session' ? createNativeSessionRuntimeForTest(operations) : null;
+    const runtime = session ?? createOpenCodeExecutionRunConversation({ operations, executionRunId: 'control-cause-run',
+      disposeOperations: () => operations.resetOrDisposeRuntime() });
+    const originalAbort = client.sessionAbort;
+    const events: unknown[] = [];
+    const subscription = runtime.watch(event => events.push(event));
+    try {
+      let result: unknown;
+      if (operation === 'cancel') {
+        await runtime.send({ inputIds: ['control-input'], input: { text: 'hello' },
+          delivery: { kind: 'newTurn', turnId: 'control-turn' } });
+        client.sessionAbort = async () => { throw failure; };
+        result = await runtime.cancel?.({ turnId: 'control-turn', reason: 'user' });
+      } else if (operation === 'configure') {
+        client.sessionSetModel = async () => { throw failure; };
+        result = await session?.updateConfiguration?.({ mode: { value: null, updatedAtMs: 1 },
+          model: { value: 'anthropic/sonnet', updatedAtMs: 1 }, permissionIntent: { value: null, updatedAtMs: 1 }, options: {} });
+      } else {
+        client.sessionSummarize = async () => { throw failure; };
+        result = await session?.compact?.({ compactionId: 'control-compact', trigger: 'manual' });
+      }
+      if (operation === 'compact') expect(events).toContainEqual(expect.objectContaining({
+        kind: 'context-compaction', phase: 'failed', diagnostic: expect.objectContaining({
+          details: expect.objectContaining({ failureCause }),
+        }),
+      }));
+      expect(result).toMatchObject({ status: operation === 'configure' ? 'rejected' : 'unavailable',
+        diagnostic: { details: { failureCause } } });
+      expect(JSON.stringify(result)).not.toContain('PRIVATE_CONTROL_CAUSE');
+    } finally { subscription.dispose(); client.sessionAbort = originalAbort; await runtime.dispose(); }
+  },
+);
 
 it.each([['session', 'session'], ['executionRun', 'session'], ['session', 'raw'], ['executionRun', 'raw']] as const)('retains typed native prompt failures through the %s adapter (%s cause)', async (kind, causeKind) => {
   const rawActionCause = { phase: 'agent.turn', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: null } as const;
@@ -442,6 +491,30 @@ describe('OpenCode catalog observation', () => {
 });
 
 describe('createOpenCodeServerRuntime', () => {
+  it('retains typed native compaction event failures', async () => {
+    const failureCause = { code: 'provider_endpoint_unavailable', phase: 'turn_start',
+      failureReason: 'permission_denied', httpStatus: 503 } as const;
+    const operations = createOpenCodeServerRuntime({ ctx: createContextFixture().ctx,
+      directory: '/repo', happierSessionId: 'happy-session-1', client: createClientFixture(),
+      dialect: 'v2', providerModelId: 'anthropic/sonnet',
+      mcpRegistration: readyMcpRegistration, mcpProjection: emptyMcpProjection });
+    await operations.openSession({ kind: 'create' });
+    const runtime = createNativeSessionRuntimeForTest(operations);
+    const events: AgentSessionRuntimeEvent[] = [];
+    const subscription = runtime.watch(event => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+    try {
+      expect(await runtime.compact({ compactionId: 'event-cause', trigger: 'idle' })).toEqual({ status: 'admitted' });
+      await operations.handleProviderEvent({ type: 'session.next.compaction.ended', properties: {
+        sessionID: 'ses-1', error: { message: 'Compaction refused', failureCause: {
+          ...failureCause, providerErrorMessage: 'PRIVATE_COMPACTION_EVENT',
+        } },
+      } });
+      expect(events).toContainEqual(expect.objectContaining({ kind: 'context-compaction', phase: 'failed',
+        diagnostic: expect.objectContaining({ details: expect.objectContaining({ failureCause }) }) }));
+      expect(JSON.stringify(events)).not.toContain('PRIVATE_COMPACTION_EVENT');
+    } finally { subscription.dispose(); await runtime.dispose(); }
+  });
+
   it('delivers pending V2 compaction cancellation to the public watcher before disposal', async () => {
     const client = createClientFixture();
     const operations = createOpenCodeServerRuntime({
@@ -473,9 +546,14 @@ describe('createOpenCodeServerRuntime', () => {
     } finally { await runtime.dispose(); }
   });
 
-  it.each([false, true])('publishes only live exact-parent cache clocks without adding history reads (tool: %s)', async (hasTool) => {
+  it.each([
+    { dialect: 'v1', hasTool: false, complete: true },
+    { dialect: 'v1', hasTool: true, complete: true },
+    { dialect: 'v2', hasTool: false, complete: true },
+    { dialect: 'v1', hasTool: false, complete: false },
+  ] as const)('publishes only live exact-parent cache clocks without adding history reads ($dialect, tool: $hasTool, complete: $complete)', async ({ dialect, hasTool, complete }) => {
     const client = createClientFixture();
-    const operations = await createStartedRuntime({ client });
+    const operations = await createStartedRuntime({ client, dialect });
     const runtime = createOpenCodeSessionRuntime({
       operations,
       request: { kind: 'create', sessionId: 'clock-session', cwd: '/repo' },
@@ -491,7 +569,7 @@ describe('createOpenCodeServerRuntime', () => {
         type: 'message.updated', properties: { info: {
           id, role: 'assistant', sessionID: 'ses-1', parentID, modelID: 'sonnet',
           time: { created, ...(completed === undefined ? {} : { completed }) },
-          tokens: { input: 100, output: 10, reasoning: 4, cache: { read: 50, write: 5 } },
+          tokens: { input: 100, output: 10, ...(complete ? { reasoning: 4 } : {}), cache: { read: 50, write: 5 } },
         } },
       });
       await operations.handleProviderEvent(assistant('clock-answer-1', user.info.id, 100));
@@ -508,12 +586,17 @@ describe('createOpenCodeServerRuntime', () => {
       const observations = events.filter(event => event.kind === 'usage-observed');
       expect(observations.find(event => event.accounting?.inferenceId === 'old-answer')).not.toHaveProperty('promptCache');
       expect(observations.find(event => event.accounting?.inferenceId === 'old-answer')).not.toHaveProperty('context');
-      expect(observations.find(event => event.accounting?.inferenceId === 'clock-final')).toMatchObject({
+      const final = observations.find(event => event.accounting?.inferenceId === 'clock-final');
+      expect(final).toMatchObject({
         promptCache: { lastUseAtMs: hasTool ? 200 : 100 },
-        // Native V1 output already includes reasoning; use the latest assistant,
-        // including its cache buckets, rather than a cumulative paid ledger.
-        context: { usedTokens: 165, windowTokens: null, source: 'provider_live' },
+        tokens: { total: null },
       });
+      // Context is the latest complete assistant aggregate. Paid totals remain
+      // unknown; V1 includes reasoning in output while V2 reports it separately.
+      if (complete) expect(final).toMatchObject({ context: {
+        usedTokens: dialect === 'v1' ? 165 : 169, windowTokens: null, source: 'provider_live',
+      } });
+      else expect(final).not.toHaveProperty('context');
       expect(observations.find(event => event.accounting?.inferenceId === 'clock-final')?.promptCache).not.toHaveProperty('ttlMs');
       expect(historyRead).not.toHaveBeenCalled();
     } finally { await runtime.dispose(); }
@@ -4706,7 +4789,7 @@ describe('createOpenCodeServerRuntime', () => {
     {
       label: 'invalid credential without attestation evidence',
       error: { name: 'APIError', data: { statusCode: 401, message: 'Authentication failed', responseBody: JSON.stringify({ error: { code: 'invalid_api_key' } }) } },
-      failureCause: { phase: 'authentication', failureReason: 'authentication_required', httpStatus: 401 },
+      failureCause: { phase: 'authentication', failureReason: 'authentication_required', httpStatus: 401, providerErrorCode: 'invalid_api_key' },
     },
   ])('fails and confirms provider acceptance from an immediate assistant error prompt response: $label', async ({ error, failureCause }) => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
@@ -5783,7 +5866,7 @@ describe('createOpenCodeServerRuntime', () => {
     { purpose: 'openai-codex-model-request', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, slot: 'openai', providerId: 'openai', status: 429, classify: false, proxy: true, resync: false },
     { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'custom-provider', status: 429, classify: false, proxy: false, resync: false },
     { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 500, classify: false, proxy: false, resync: false },
-    { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 429, classify: false, proxy: false, resync: true },
+    { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 429, classify: true, proxy: false, resync: true },
     { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 429, classify: true, proxy: false, resync: false, scope: 'run' },
     { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 429, classify: true, proxy: false, resync: false, presentation: true },
     { purpose: 'openai-api-key', service: { pluginId: 'happier.voice.openai', localId: 'openai' }, slot: 'openai', providerId: 'openai', status: 429, classify: true, proxy: false, resync: true, scope: 'run' },
@@ -5867,7 +5950,9 @@ describe('createOpenCodeServerRuntime', () => {
       if (isRun) expect(events.every(event => !('sessionId' in event))).toBe(true);
       if (row.resync && !isRun) {
         expect(prepared.isInvalidated()).toBe(true);
-        await expect(native.send({ inputIds: ['late'], input: { text: 'late' }, delivery: { kind: 'newTurn', turnId: 'late' } })).resolves.toMatchObject({ status: 'unavailable' });
+        // An already admitted Session keeps its materialized source until the
+        // next open; the observation does not introduce a per-turn admission.
+        await expect(native.send({ inputIds: ['late'], input: { text: 'late' }, delivery: { kind: 'newTurn', turnId: 'late' } })).resolves.toMatchObject({ status: 'admitted' });
       }
     } finally { subscription.dispose(); await native.dispose(); await prepared.dispose(); }
   });

@@ -147,6 +147,7 @@ export function createOpenCodeExecutionRunConversation(params: Readonly<{
           diagnostic: diagnostic(
             'opencode_cancellation_unavailable',
             error instanceof Error ? error.message : String(error),
+            error,
           ),
         };
       }

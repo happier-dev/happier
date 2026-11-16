@@ -666,6 +666,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
           diagnostic: diagnostic(
             'opencode_cancellation_unavailable',
             error instanceof Error ? error.message : String(error),
+            error,
           ),
         };
       }
@@ -702,6 +703,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
           diagnostic: diagnostic(
             'opencode_configuration_rejected',
             error instanceof Error ? error.message : String(error),
+            error,
           ),
         };
       }
@@ -726,6 +728,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
           diagnostic: diagnostic(
             'opencode_compaction_unavailable',
             error instanceof Error ? error.message : String(error),
+            error,
           ),
           retryable: true,
         };
