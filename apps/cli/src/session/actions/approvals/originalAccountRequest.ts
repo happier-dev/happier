@@ -47,8 +47,11 @@ export async function executeOriginalAccountCliApprovalRequest(options: Readonly
           }
           const { request } = ApprovalRequestGetResultV1Schema.parse(observed.result);
           if (request.status === 'open') {
-            notify({ kind: 'approval_request_created', artifactId, actionId: options.actionId });
-            // The live helper owns the decision; original HTTP owns completion.
+            // Deferred proposals are presented after the original HTTP returns.
+            // Only a blocking flow needs its person prompted while HTTP waits.
+            if (request.approval.flow === 'blocking') {
+              notify({ kind: 'approval_request_created', artifactId, actionId: options.actionId });
+            }
             await observation.dispose();
             return;
           }
