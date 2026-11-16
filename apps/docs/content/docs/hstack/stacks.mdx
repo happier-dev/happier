@@ -423,6 +423,44 @@ Doctor:
 node ./apps/stack/scripts/repo_local.mjs stack doctor agent-qa-17
 ```
 
+### QA beds: a seeded, signed-in stack with a fake Claude (0.3 development)
+
+`stack qa-bed` turns the controlled QA stack above into a ready bed in one command. It uses the same lifecycle (`stack new --qa`, `stack start --runtime=source`), so the server and daemon adopt the repository producer's built revision and nothing is compiled for the bed.
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack qa-bed create agent-qa-<lane>-bed --profile=small   # or --profile=large
+node ./apps/stack/scripts/repo_local.mjs stack qa-bed check  agent-qa-<lane>-bed
+node ./apps/stack/scripts/repo_local.mjs stack qa-bed reset  agent-qa-<lane>-bed [--profile=large]
+```
+
+`create`:
+
+1. creates the stack (`--qa`, light server, SQLite, `--no-copy-auth`), or adopts an earlier bed of that name. It refuses any stack that is not a bed;
+2. pins the daemon to the server's host and points the Claude Agent at the fake Claude fixture (`packages/tests/src/fixtures/fake-claude-code-cli.js`) in that host's checkout (`HAPPIER_CLAUDE_PATH` in the stack env);
+3. starts the stack, then seeds a fresh Account through the server's own HTTP API with the canonical seeder (`packages/tests/src/testkit/qaBed/seedQaBedAccount.ts`);
+4. signs the stack CLI in with that Account's recovery key over stdin (`happier auth login --secrets-json-stdin`), restarts the stack so the daemon loads the credential, and runs `check`.
+
+Profiles: `small` is 12 Sessions (one 120-message transcript), 2 Machines and 6 Artifacts. `large` is 300 Sessions (three 1,200-message transcripts), 6 Machines and 100 Artifacts, the sizes the signed-in device and web profiling used. Sessions are created through `POST /v1/sessions` with legacy metadata, and Artifacts carry no classification. These are the 0.2-era shapes 0.3 must keep reading; 0.3 migrates them the first time they are shown. The fixture Machines have no daemon, so they show as offline. The bed's own daemon is the one live Machine.
+
+`check` prints one JSON line (`kind: "qa_bed"`). `status` is `READY` only when every check passes; otherwise `check` names the first failure:
+
+| check | proves |
+|---|---|
+| `roles` | the server and daemon each run their selected source revision (selected = loaded) |
+| `key_login` | the server issues key challenges, which "Use a key" sign-in needs. A server without `HAPPIER_CANONICAL_SERVER_URL` answers 503 here. |
+| `cli_auth` | the stack CLI is signed in |
+| `seeded_data` | `session list` returns the seeded Sessions, including the long transcripts |
+| `agent_turn` | a Claude Session started by the daemon answers a prompt through the fake Claude, then is stopped and archived |
+
+`reset` seeds a new Account with the bed's profile (or `--profile`), signs the CLI in again, restarts the stack and runs `check`. It never deletes the database. Earlier Accounts stay in the bed's own database, unseen by the new one. After a reset, clear the app's data on a device or simulator before signing in again, so it does not keep the previous server's transport details.
+
+The recovery key is written only to `~/.happier/stacks/<bed>/qa-bed/account.key` (mode 0600). `seed.json` next to it holds counts and Session ids. Neither is printed. Sign in to the web app or a device with "Use a key", filling the key from that file. In a browser, use an asserted `locator.fill`; on a device, use a temporary file or the simulator pasteboard. Never type it or put it on a command line.
+
+Clients:
+
+- **Web:** open the bed's `uiUrl` from `check` (or `stack info`). It serves the producer's shared web export or borrowed dev Expo, as described above.
+- **iOS simulator / Android emulator:** install the shared development client once with `hstack mobile-dev-client --install` (Android: `--reuse` installs the cached APK from `~/.happier-stack/mobile-dev-client/<profile>/android/`, so no per-bed native build). Point it at the producer's Metro and the bed's `mobileUrl`. See [Mobile app development (iOS)](./mobile-ios).
+
 ## Edit a stack (interactive)
 
 To change server flavor, port, or repo worktree for an existing stack:

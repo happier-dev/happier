@@ -2461,6 +2461,11 @@ async function main() {
     await cmdCreateDevAuthSeed({ rootDir, argv });
     return;
   }
+  if (cmd === 'qa-bed') {
+    const { runQaBedCommand } = await import('./stack/qa_bed.mjs');
+    await runQaBedCommand({ rootDir, argv });
+    return;
+  }
 
   // Commands that need a stack name.
   const stackName = stackNameFromArg(positionals, 1);
