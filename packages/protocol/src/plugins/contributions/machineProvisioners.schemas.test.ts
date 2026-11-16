@@ -110,6 +110,35 @@ it('validates preparation payloads and retains native identity for every uncerta
       expect(validate({ ...value, vendorErrorReason: 'private log' })).toBe(false);
     }
   }
+  const nativeCause = { httpStatusClass: '4xx' as const, code: 'resource_limit_exceeded' as const };
+  for (const [schema, value] of [
+    [roles.buildResult, { kind: 'refused', code: 'provider_refused', nativeCause }],
+    [roles.buildResult, { kind: 'unknown', code: 'post_lost', nativeOperationRef, nativeCause }],
+    [roles.inspectResult, { kind: 'failed', code: 'build_failed', nativeOperationRef, nativeCause }],
+    [roles.inspectResult, { kind: 'unknown', code: 'get_lost', nativeOperationRef, nativeCause }],
+    [roles.destroyResult, { kind: 'refused', code: 'wrong_organization', nativeCause }],
+    [roles.destroyResult, { kind: 'unknown', code: 'delete_lost', nativeOperationRef, nativeCause }],
+  ] as const) {
+    const validate = compilePluginJsonSchema(schema.jsonSchema);
+    expect(schema.parse(value)).toEqual(value);
+    expect(validate(value)).toBe(true);
+    const privateDiagnostic = { ...value, nativeCause: { ...nativeCause, message: 'private vendor response' } };
+    expect(schema.safeParse(privateDiagnostic).success).toBe(false);
+    expect(validate(privateDiagnostic)).toBe(false);
+  }
+  for (const [schema, value] of [
+    [roles.buildResult, { kind: 'ready', artifact: artifactRef }],
+    [roles.buildResult, { kind: 'pending', nativeOperationRef }],
+    [roles.inspectResult, { kind: 'ready', artifact: artifactRef }],
+    [roles.inspectResult, { kind: 'pending', nativeOperationRef }],
+    [roles.inspectResult, { kind: 'absent' }],
+    [roles.destroyResult, { kind: 'confirmed' }],
+    [roles.destroyResult, { kind: 'pending', nativeOperationRef }],
+  ] as const) {
+    const withStaleCause = { ...value, nativeCause };
+    expect(schema.safeParse(withStaleCause).success).toBe(false);
+    expect(compilePluginJsonSchema(schema.jsonSchema)(withStaleCause)).toBe(false);
+  }
   for (const schema of [roles.buildResult, roles.inspectResult, roles.destroyResult]) {
     expect(schema.safeParse({ kind: 'unknown', code: 'lost' }).success).toBe(false);
     expect(compilePluginJsonSchema(schema.jsonSchema)({ kind: 'unknown', code: 'lost' })).toBe(false);
