@@ -72,7 +72,7 @@ describe('qualified provider usage finite history stream', () => {
             const response = await app.inject({ method: 'GET', url: path(query), headers: { ...headers, accept: 'application/x-ndjson' } });
             expect(response.statusCode, response.body).toBe(200);
             expect(response.headers['content-type']).toContain('application/x-ndjson');
-            const frames = response.body.trim().split('\n').map((line: string) => QualifiedProviderAccountUsageHistoryResponseV4Schema.parse(JSON.parse(line)));
+            const frames: ReturnType<typeof QualifiedProviderAccountUsageHistoryResponseV4Schema.parse>[] = response.body.trim().split('\n').map((line: string) => QualifiedProviderAccountUsageHistoryResponseV4Schema.parse(JSON.parse(line)));
             expect(frames.map(frame => frame.entries.length)).toEqual([2, 2, 2, 1]);
             expect(frames).toEqual(expected);
             expect(frames.at(-1)?.nextCursor).toBeNull();
@@ -85,7 +85,7 @@ describe('qualified provider usage finite history stream', () => {
             expect(new Set(entries.map(entry => entry.id)).size).toBe(7);
             const continuation = await app.inject({ method: 'GET', url: path({ ...query, history: { ...fixture.history, cursor: first.nextCursor } }),
                 headers: { ...headers, accept: 'application/x-ndjson' } });
-            const rest = continuation.body.trim().split('\n').map((line: string) => QualifiedProviderAccountUsageHistoryResponseV4Schema.parse(JSON.parse(line)));
+            const rest: ReturnType<typeof QualifiedProviderAccountUsageHistoryResponseV4Schema.parse>[] = continuation.body.trim().split('\n').map((line: string) => QualifiedProviderAccountUsageHistoryResponseV4Schema.parse(JSON.parse(line)));
             expect(rest.flatMap(frame => frame.entries)).toEqual(entries.slice(2));
             if (encrypted) {
                 expect(entries.every(entry => entry.record.content.t === 'encrypted')).toBe(true);
