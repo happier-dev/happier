@@ -39,7 +39,7 @@ import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourc
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
-import { SOURCE_CONDITION, SOURCE_RUNTIME_OUTPUT_OPTIONS, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 export { readWorkspacePackages, resolveWorkspaceSource } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 
 const SHARED_SOURCE_INPUT_MANIFEST = '.source-runtime-shared-inputs.json';
@@ -1554,8 +1554,8 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     ...SOURCE_RUNTIME_OUTPUT_OPTIONS,
     conditions: [SOURCE_CONDITION], tsconfig: join(projectDir, 'tsconfig.json'),
     chunkNames: `${outputPrefix}/src/chunks/[name]-[hash]`,
-    banner: { js: "import { createRequire as __sourceCreateRequire } from 'node:module'; import {fileURLToPath as __sourceFileURLToPath} from 'node:url'; import {dirname as __sourcePathDirname} from 'node:path'; const require = __sourceCreateRequire(import.meta.url); const __sourceFilename = __sourceFileURLToPath(import.meta.url); const __sourceDirname = __sourcePathDirname(__sourceFilename);" },
-    define: { __dirname: '__sourceDirname', __filename: '__sourceFilename',
+    banner: { js: SOURCE_RUNTIME_COMMONJS_BANNER },
+    define: { ...SOURCE_RUNTIME_COMMONJS_DEFINE,
       ...(component === 'server' ? { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify(env.HAPPIER_BUILD_GUEST_CLI_SOURCE ?? 'home-payload'),
         __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify(env.HAPPIER_BUILD_GUEST_CLI_CHANNEL ?? 'publicdev') } : {}) },
     metafile: true, logLevel: 'silent', plugins: [
@@ -1563,6 +1563,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
       plugin, createWorkspaceSourceResolver({workspacePackages, requireFromProject}),
     ],
   });
+  await stripUnusedSourceRuntimeBanners(Object.keys(result.metafile.outputs).map(file => resolve(repoDir, file)));
   phase('esbuild-main', 'plugin-resources');
   const runtimeManifest = component === 'daemon' ? {
     ...manifest, type: 'module', main: './src/index.mjs', module: './src/index.mjs',
