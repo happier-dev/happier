@@ -127,6 +127,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
      * says so, at the moment of consequence.
      */
     armedContinuationTarget?: Readonly<{ agentId: string; label: string }> | null;
+    modelContinuationLabel?: string | null;
     onSend: (options?: AgentInputSendIntentOptions) => void;
     sendMenuItems?: readonly AgentInputSendMenuItem[];
     onStop?: () => void;
@@ -135,9 +136,9 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     const sendMenuAnchorRef = React.useRef<View>(null);
     const [sendMenuOpen, setSendMenuOpen] = React.useState(false);
     const [sendTooltipOpen, setSendTooltipOpen] = React.useState(false);
-    const hasSendIntent = props.hasSendableContent || props.armedContinuationTarget != null;
+    const hasSendIntent = props.hasSendableContent || props.armedContinuationTarget != null || props.modelContinuationLabel != null;
     const sendMenuEnabled = props.hasSendableContent && !props.disabled && !props.isSending
-        && !props.armedContinuationTarget && Boolean(props.sendMenuItems?.length);
+        && !props.armedContinuationTarget && !props.modelContinuationLabel && Boolean(props.sendMenuItems?.length);
     const openSendMenu = () => {
         if (!sendMenuEnabled) return;
         hapticsLight();
@@ -183,8 +184,12 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
         }
     }, [hasSendIntent, props.micPressHandler, props.onSend, props.onStop, showStopWhenEmpty]);
 
-    if (armedContinuation) {
-        const mark = armedContinuation.markAgentId ? (
+    const modelContinuationLabel = !armedContinuation && props.modelContinuationLabel
+        ? t('session.agentContinuation.sendLabel', { agent: props.modelContinuationLabel })
+        : null;
+    const continuationLabel = armedContinuation?.label ?? modelContinuationLabel;
+    if (continuationLabel) {
+        const mark = armedContinuation?.markAgentId ? (
             // The same mark the Agent rail used to offer this target, at the
             // registry's own optical size and tinted by the button's token, so
             // it reads at the weight the reader just saw.
@@ -205,12 +210,12 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                     // dismissed. The Agent's identity is carried once, by the mark
                     // standing where the sentence names it, which keeps the control
                     // from growing to the width of the longest name in the catalog.
-                    title={armedContinuation.label}
+                    title={continuationLabel}
                     // The full sentence, always in words: this press commits an Agent
                     // switch, and a glyph reads as nothing to a screen reader.
-                    accessibilityLabel={armedContinuation.accessibilityLabel}
-                    leading={armedContinuation.markPlacement === 'leading' ? mark : undefined}
-                    trailing={armedContinuation.markPlacement === 'trailing' ? mark : undefined}
+                    accessibilityLabel={armedContinuation?.accessibilityLabel ?? continuationLabel}
+                    leading={armedContinuation?.markPlacement === 'leading' ? mark : undefined}
+                    trailing={armedContinuation?.markPlacement === 'trailing' ? mark : undefined}
                     loading={props.isSending}
                     disabled={disabled}
                     onPress={submitPress}

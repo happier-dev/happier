@@ -55,8 +55,9 @@ installAgentInputCommonModuleMocks({
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({
-            translate: (key: string, params?: { name?: string }) => {
+            translate: (key: string, params?: { name?: string; agent?: string }) => {
                 if (key === 'agentInput.mode.badgeA11y') return `Mode: ${params?.name ?? ''}`;
+                if (key === 'session.agentContinuation.sendLabel') return `Continue with ${params?.agent ?? ''}`;
                 return key;
             },
         });
@@ -125,21 +126,25 @@ vi.mock('@/sync/domains/state/storageStore', async () => {
     };
 });
 
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
-    getAgentIconSource: () => null,
-    getAgentIconSvgXml: (agentId: string) => (
-        agentId === 'codex' || agentId === 'pi' || agentId === 'opencode'
-            ? '<svg viewBox="0 0 16 16"><path fill="#111111" d="M8 0 16 8 8 16 0 8Z" /></svg>'
-            : null
-    ),
-    getAgentIconTintColor: () => undefined,
-    getAgentBehavior: (agentId: string) => ({
-        sessionUsage: {
-            contextUsageBadge: agentId === 'gemini' ? 'hidden' : agentId === 'codex' ? 'reportedOnly' : 'derived',
-        },
-    }),
-}));
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
+    return {
+        ...actual,
+        getAgentIconSource: () => null,
+        getAgentIconSvgXml: (agentId: string) => (
+            agentId === 'codex' || agentId === 'pi' || agentId === 'opencode'
+                ? '<svg viewBox="0 0 16 16"><path fill="#111111" d="M8 0 16 8 8 16 0 8Z" /></svg>'
+                : null
+        ),
+        getAgentIconTintColor: () => undefined,
+        getAgentBehavior: (agentId: Parameters<typeof actual.getAgentBehavior>[0]) => ({
+            ...actual.getAgentBehavior(agentId),
+            sessionUsage: {
+                contextUsageBadge: agentId === 'gemini' ? 'hidden' : agentId === 'codex' ? 'reportedOnly' : 'derived',
+            },
+        }),
+    };
+});
 
 vi.mock('@/sync/domains/models/modelOptions', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/sync/domains/models/modelOptions')>(),
@@ -161,27 +166,6 @@ vi.mock('@/sync/domains/models/modelOptions', async (importOriginal) => ({
         ];
     },
     supportsFreeformModelSelectionForSession: () => supportsFreeformModelSelectionState.value,
-}));
-
-vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
-    describeEffectiveModelMode: (params: {
-        selectedModelId?: string | null;
-        agentType?: string | null;
-        metadata?: any;
-    }) => {
-        const selectedModelId = params.selectedModelId?.trim() || 'default';
-        const state = params.metadata?.sessionAppliedModelV1 ?? null;
-        const appliedModelId = state?.provider === params.agentType && typeof state?.modelId === 'string'
-            ? state.modelId
-            : null;
-        return {
-            selectedModelId,
-            appliedModelId,
-            effectiveModelId: selectedModelId,
-            applyScope: 'spawn_only',
-            notes: [],
-        };
-    },
 }));
 
 vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
@@ -322,6 +306,57 @@ vi.mock('./components/PermissionModePicker', () => ({
 const { AgentInput } = await import('./AgentInput');
 
 describe('AgentInput (modelOptionsOverride)', () => {
+    it('offers OpenCode model continuation with an empty draft and clears it when the model is applied', async () => {
+        const onSend = vi.fn();
+        const metadata = {
+            path: '/tmp',
+            host: 'host',
+            flavor: 'opencode',
+            sessionAppliedModelV1: { v: 1, provider: 'opencode', modelId: 'anthropic/old', updatedAt: 1 },
+        } as const;
+        const props: React.ComponentProps<typeof AgentInput> = {
+            sessionId: 'session-1',
+            value: '',
+            placeholder: 'Type',
+            onChangeText: () => {},
+            onSend,
+            agentType: 'opencode',
+            metadata,
+            modelMode: 'openai/new',
+            modelOptionsOverride: [{ value: 'openai/new', label: 'New Model', description: '' }],
+            autocompleteKinds: [],
+            autocompleteSuggestions: async () => [],
+        };
+        const screen = await renderScreen(<AgentInput {...props} />);
+        const send = screen.findByTestId('session-composer-send');
+        expect(send?.props.disabled).toBe(false);
+        expect(send?.props.accessibilityLabel).toBe('Continue with New Model');
+        await screen.pressByTestIdAsync('session-composer-send');
+        expect(onSend).toHaveBeenCalledWith({ inputTextOverride: 'common.continue' });
+
+        onSend.mockClear();
+        await act(async () => {
+            screen.tree.update(<AgentInput {...props} value="Keep my draft" />);
+        });
+        await screen.pressByTestIdAsync('session-composer-send');
+        expect(onSend).toHaveBeenCalledWith(undefined);
+
+        await act(async () => {
+            screen.tree.update(<AgentInput {...props} modelMode="anthropic/old" />);
+        });
+        expect(screen.findByTestId('session-composer-send')?.props.accessibilityLabel)
+            .not.toBe('Continue with New Model');
+
+        await act(async () => {
+            screen.tree.update(<AgentInput {...props} metadata={{
+                ...metadata,
+                sessionAppliedModelV1: { ...metadata.sessionAppliedModelV1, modelId: 'openai/new', updatedAt: 2 },
+            }} />);
+        });
+        expect(screen.findByTestId('session-composer-send')?.props.accessibilityLabel)
+            .not.toBe('Continue with New Model');
+    });
+
     beforeEach(() => {
         supportsFreeformModelSelectionState.value = false;
         modalPromptMock.mockReset();

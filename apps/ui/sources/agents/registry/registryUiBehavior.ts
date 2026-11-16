@@ -238,6 +238,8 @@ export type AgentUiBehavior = Readonly<{
         }) => Record<string, unknown>;
     }>;
     sessionComposer?: Readonly<{
+        /** Offer an immediate continuation prompt after selecting a different model. */
+        offerModelContinuation?: boolean;
         buildNextMessageMetaOverrides?: (opts: {
             agentId: AgentId;
             configOptionOverrides: AcpConfigOptionOverridesV1 | null | undefined;
