@@ -182,6 +182,9 @@ async function blockPendingExecutionRunTargetMismatchInTx(params: {
 
 async function resolvePendingProviderRejoinInTx(params: {
     tx: Tx;
+    /** The caller's read of the fenced Session row in this transaction. */
+    session: Readonly<{ encryptionMode: string; seq: number; pendingCount: number; pendingBlockedCount: number; pendingVersion: number;
+        pendingPermissionRequestCount: number; pendingUserActionRequestCount: number; active: boolean; archivedAt: Date | null }>;
     authority: CurrentSessionPublisherAuthority;
     actorUserId: string;
     sessionId: string;
@@ -191,20 +194,7 @@ async function resolvePendingProviderRejoinInTx(params: {
     expectedSidechainId: string | null;
     retainedContextLocalIds: readonly string[];
 }): Promise<PendingMaterializationPublications | null> {
-    const session = await params.tx.session.findUniqueOrThrow({
-        where: { id: params.sessionId },
-        select: {
-            encryptionMode: true,
-            seq: true,
-            pendingCount: true,
-            pendingBlockedCount: true,
-            pendingVersion: true,
-            pendingPermissionRequestCount: true,
-            pendingUserActionRequestCount: true,
-            active: true,
-            archivedAt: true,
-        },
-    });
+    const session = params.session;
     const row = await params.tx.sessionPendingMessage.findFirst({
         where: { sessionId: params.sessionId, targetExecutionRunId: params.targetExecutionRunId, status: "queued", deliveryState: "delivering",
             ...(params.retainedContextLocalIds.length ? { localId: { notIn: [...params.retainedContextLocalIds] } } : {}) },
@@ -443,12 +433,13 @@ async function materializePendingTargetInTx(
         { admittedWork: true },
     )) return { ok: false, error: "forbidden" };
 
+    // One read of the fenced Session row serves the admission checks, the rejoin and the drain decision:
+    // nothing in this transaction writes it before the drain's own counter update.
     const sessionRow = await tx.session.findUnique({
         where: { id: sessionId },
-        select: {
-            accountId: true,
+        select: withSessionContentSelect({
+            ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
             encryptionMode: true,
-            seq: true,
             pendingCount: true,
             pendingBlockedCount: true,
             pendingVersion: true,
@@ -456,8 +447,13 @@ async function materializePendingTargetInTx(
             pendingUserActionRequestCount: true,
             active: true,
             archivedAt: true,
-        },
-    });
+            lastActiveAt: true,
+            runtimeActivityState: true,
+            runtimeActivityActiveCount: true,
+            runtimeActivityObservedAt: true,
+            runtimeActivityRevision: true,
+        }),
+    }).then(decodeSessionStoredContent);
     if (!sessionRow) return { ok: false, error: "session-not-found" };
     if (sessionRow.accountId !== actorUserId) return { ok: false, error: "forbidden" };
     const retainedContext = params.retainedContext === undefined ? undefined
@@ -510,27 +506,11 @@ async function materializePendingTargetInTx(
     const policy = readEncryptionFeatureEnv(process.env);
 
         const result = await (async () => {
-            const sessionBefore = await tx.session.findUniqueOrThrow({
-                where: { id: sessionId },
-                select: withSessionContentSelect({
-                    ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-                    pendingCount: true,
-                    pendingBlockedCount: true,
-                    pendingVersion: true,
-                    pendingPermissionRequestCount: true,
-                    pendingUserActionRequestCount: true,
-                    active: true,
-                    archivedAt: true,
-                    lastActiveAt: true,
-                    runtimeActivityState: true,
-                    runtimeActivityActiveCount: true,
-                    runtimeActivityObservedAt: true,
-                    runtimeActivityRevision: true,
-                }),
-            }).then(decodeSessionStoredContent);
+            const sessionBefore = sessionRow;
 
             const rejoin = await resolvePendingProviderRejoinInTx({
                 tx,
+                session: sessionRow,
                 authority: params.publisherAuthority,
                 actorUserId,
                 sessionId,

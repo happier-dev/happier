@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import type { Socket } from 'socket.io';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { db } from '@/storage/db';
@@ -11,7 +12,9 @@ import { readSessionDetail } from '@/app/api/routes/session/registerSessionListi
 import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { parseAccountStoredContentCompatibilityHttpHeadersV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { currentAccountStoredContentCompatibilityHeaders } from '@/app/api/testkit/accountStoredContentCompatibility';
-import { enqueuePendingMessage } from './pendingMessageService';
+import { createFakeSocket } from '@/app/api/testkit/socketHarness';
+import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
+import { enqueuePendingMessage, materializeNextPendingMessage, resolveAcceptedPendingDelivery, settlePendingInputAdmission } from './pendingMessageService';
 
 const SERVER_IDENTITY_ID = 'srv_01234567890123456789012345678901';
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -92,6 +95,40 @@ describe('pending pipeline operations per turn event (real SQLite)', () => {
         // fields; notify-once acceptance stops at one witness read when nobody holds one. RED: 7 Session reads, 4 Account ops.
         expect(count(measured.operations, sessionRead)).toBe(2);
         expect(count(measured.operations, operation => operation.startsWith('Account.'))).toBe(2);
+    });
+
+    it('materializes, settles and accepts one Pending input reading its retained row once per decision', async () => {
+        const f = await placedSession();
+        const content = { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'prompt' } } } as const;
+        const localId = randomUUID();
+        expect(await enqueuePendingMessage({ actorUserId: f.owner.id, authentication, sessionId: f.session.id, localId,
+            requestedAction: { v: 1, kind: 'send_now' }, content })).toMatchObject({ ok: true });
+        const binding = { accountId: f.owner.id, sessionId: f.session.id, machineId: f.machine.id };
+        const registered = await createSessionPublisherPresence().registerPublisher({ socket: createFakeSocket() as unknown as Socket,
+            binding, completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+        if (registered.status !== 'registered') throw new Error('Expected the placed publisher to be admitted');
+        const publisherAuthority = { ...binding, committedFence: registered.committedFence };
+        const materialized = await operations(() => materializeNextPendingMessage({ actorUserId: f.owner.id, sessionId: f.session.id,
+            deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready', publisherAuthority }));
+        expect(materialized.result).toMatchObject({ ok: true, didMaterialize: true });
+        const settled = await operations(() => settlePendingInputAdmission({ actorUserId: f.owner.id, sessionId: f.session.id,
+            localId, publisherAuthority, decision: { kind: 'admit', finalContent: content } }));
+        expect(settled.result).toMatchObject({ ok: true, result: { status: 'accepted', localId } });
+        const accepted = await operations(() => resolveAcceptedPendingDelivery({ actorUserId: f.owner.id, sessionId: f.session.id,
+            localId, publisherAuthority }));
+        expect(accepted.result).toMatchObject({ ok: true, didResolve: true });
+        console.info('MATERIALIZE_OPS', materialized.operations.length, JSON.stringify(materialized.operations));
+        console.info('SETTLE_OPS', settled.operations.length, JSON.stringify(settled.operations));
+        console.info('ACCEPTED_OPS', accepted.operations.length, JSON.stringify(accepted.operations));
+        const pendingRowRead = (operation: string) => operation === 'SessionPendingMessage.findUnique';
+        // One read of the fenced Session row serves admission, rejoin and the drain decision (the other three are the
+        // publisher fence, the activation reconcile and the post-update publication read). RED (HEAD e4edd8f0a7d): 7.
+        expect(count(materialized.operations, operation => /^Session\.findUnique(OrThrow)?$/.test(operation))).toBe(5);
+        // The retained row: the lock audience read, one read under the lock that also serves domain validation
+        // and the reply check, and one custody carry onto the Message. RED: 6.
+        expect(count(settled.operations, pendingRowRead)).toBe(3);
+        // The resolved row and one custody carry. RED: 3.
+        expect(count(accepted.operations, pendingRowRead)).toBe(2);
     });
 
     it('reads the Session runner snapshot without viewer or launch facts', async () => {

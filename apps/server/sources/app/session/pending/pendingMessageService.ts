@@ -1956,6 +1956,9 @@ function matchesOriginalReplyAdmission(progress: SessionMessageReplyProgressV1, 
         && isDeepStrictEqual(progress.actionRequestAttributionV1, reply?.actionRequestAttributionV1);
 }
 
+const SETTLEMENT_ORIGINAL_PROJECTION = { replyProgress: true, inputAdmissionReceipt: true, turnStartWitnessId: true,
+    autonomousExchangeRootSessionId: true, autonomousExchangeRootLocalId: true } as const;
+
 async function validateInputSettlementDomainFactsInTx(params: Readonly<{
     tx: Tx;
     accountId: string;
@@ -1964,6 +1967,9 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
     localId: string;
     validation?: SessionInputSettlementValidationV1;
     settledOriginal?: true;
+    /** The admitted original already read in this transaction under the Session lock. */
+    original?: Readonly<{ replyProgress: unknown; inputAdmissionReceipt: unknown; turnStartWitnessId: string | null;
+        autonomousExchangeRootSessionId: string | null; autonomousExchangeRootLocalId: string | null }>;
 }>): Promise<
     | Readonly<{ ok: true; exchangeRoot?: { sessionId: string; localId: string };
         exchangeCause?: 'agent_session' | 'returned_answer';
@@ -1974,13 +1980,11 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
 > {
     // Settlement reads its admitted original, including materialized inputs.
     // Policy withdrawal applies to the next admission, not this bounded input.
-    const originalProjection = { replyProgress: true, inputAdmissionReceipt: true, turnStartWitnessId: true,
-        autonomousExchangeRootSessionId: true, autonomousExchangeRootLocalId: true } as const;
-    const original = await params.tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: {
+    const original = params.original ?? await params.tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: {
         sessionId: params.targetSessionId, localId: params.localId,
-    } }, select: originalProjection }) ?? await params.tx.sessionMessage.findUnique({ where: { sessionId_localId: {
+    } }, select: SETTLEMENT_ORIGINAL_PROJECTION }) ?? await params.tx.sessionMessage.findUnique({ where: { sessionId_localId: {
         sessionId: params.targetSessionId, localId: params.localId,
-    } }, select: originalProjection });
+    } }, select: SETTLEMENT_ORIGINAL_PROJECTION });
     const originalProgress = SessionMessageReplyProgressV1Schema.safeParse(original?.replyProgress);
     const originalReceipt = SessionInputAdmissionReceiptV1Schema.safeParse(original?.inputAdmissionReceipt);
     const retainedRoot = params.settledOriginal && !params.validation?.autonomousCheckIn
@@ -2403,6 +2407,9 @@ export async function settlePendingInputAdmission(params: Readonly<{
                     position: true,
                     inputAdmissionReceipt: true,
                     requestEqualityEvidenceV1: true,
+                    // Under the Session lock nothing else writes this row: domain validation and the
+                    // reply check below read these facts from this one read.
+                    ...SETTLEMENT_ORIGINAL_PROJECTION,
                 },
             });
             if (!existing) {
@@ -2506,6 +2513,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 targetSessionId: sessionId,
                 targetExecutionRunId: existing.targetExecutionRunId,
                 localId,
+                original: existing,
                 ...(settledOriginal ? { settledOriginal: true } : {}),
                 ...(params.decision.validation ? { validation: params.decision.validation } : {}),
             });
@@ -2533,8 +2541,8 @@ export async function settlePendingInputAdmission(params: Readonly<{
                     recipientCursorsPending: state.recipientCursors,
                     recipientCursorsMessage: [] } as const;
             }
-            const retainedReply = await tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId, localId } }, select: { replyProgress: true } });
-            const progress = retainedReply?.replyProgress == null ? null : SessionMessageReplyProgressV1Schema.safeParse(retainedReply.replyProgress);
+            // Domain validation writes only the exchange root's transcript row, never this Pending row.
+            const progress = existing.replyProgress == null ? null : SessionMessageReplyProgressV1Schema.safeParse(existing.replyProgress);
             if (progress && (!progress.success || !matchesOriginalReplyAdmission(progress.data, params.decision.validation?.reply, existing.content))
                 || !progress && params.decision.validation?.reply !== undefined) return { ok: false, error: 'conflict' } as const;
             if (!domainValidation.ok && !domainValidation.rejectionCode) {
