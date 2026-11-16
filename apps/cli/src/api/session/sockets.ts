@@ -8,6 +8,7 @@ import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
 import {
     buildCurrentCliClientCompatibilitySocketAuth,
 } from '@/api/clientCompatibility/cliClientCompatibility';
+import { buildAccountChangeRowsSocketAuthV1, type ChangeKind } from '@happier-dev/protocol/changes';
 
 type SessionSocketConnection = Readonly<{
     socket: Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -37,7 +38,9 @@ export function createSessionScopedSocket(opts: { token: string; sessionId: stri
     return createSessionScopedSocketConnection(opts).socket;
 }
 
-export function createUserScopedSocketConnection(opts: { token: string; serverUrl?: string; connectTimeoutMs?: number; authorityCeiling?: 'account_automation'; clientPurpose?: string }): SessionSocketConnection {
+export function createUserScopedSocketConnection(opts: { token: string; serverUrl?: string; connectTimeoutMs?: number; authorityCeiling?: 'account_automation'; clientPurpose?: string;
+    /** The Account change kinds this connection consumes: its wakes then carry those rows, authorized by the server. */
+    accountChangeRows?: readonly ChangeKind[] }): SessionSocketConnection {
     const serverUrl = opts.serverUrl ? normalizeServerHttpBaseUrl(opts.serverUrl) : resolveServerHttpBaseUrl();
     const transports = resolveServerSocketIoTransports();
     return createHappierSocket({
@@ -48,6 +51,7 @@ export function createUserScopedSocketConnection(opts: { token: string; serverUr
         authExtras: {
             ...buildCurrentCliClientCompatibilitySocketAuth('session-runner'),
             ...(opts.authorityCeiling === 'account_automation' ? { authorityCeiling: opts.authorityCeiling } : {}),
+            ...(opts.accountChangeRows ? buildAccountChangeRowsSocketAuthV1(opts.accountChangeRows) : {}),
         },
         ...(transports ? { transports } : null),
         withCredentials: true,
@@ -56,6 +60,6 @@ export function createUserScopedSocketConnection(opts: { token: string; serverUr
     }) as SessionSocketConnection;
 }
 
-export function createUserScopedSocket(opts: { token: string; serverUrl?: string }): Socket<ServerToClientEvents, ClientToServerEvents> {
+export function createUserScopedSocket(opts: { token: string; serverUrl?: string; accountChangeRows?: readonly ChangeKind[] }): Socket<ServerToClientEvents, ClientToServerEvents> {
     return createUserScopedSocketConnection(opts).socket;
 }

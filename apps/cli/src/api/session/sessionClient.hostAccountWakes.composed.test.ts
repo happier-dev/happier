@@ -38,12 +38,14 @@ const tokenFor = (accountId: string) => `e30.${Buffer.from(JSON.stringify({ sub:
 describe('session host Account wakes', () => {
     afterEach(() => vi.restoreAllMocks());
 
-    it('reads each Account\'s changes once per wake for all of its Sessions and never for another Account', async () => {
+    /** One host process: real Session clients over one shared Account connection per Account; Home HTTP is the boundary. */
+    const startHost = () => {
         shareAccountUpdatesInThisProcess();
         const feeds = new Map<string, Array<{ cursor: number; kind: string; entityId: string; changedAt: number }>>([
             ['dana', []], ['erin', []],
         ]);
         const changesReads = new Map<string, number>([['dana', 0], ['erin', 0]]);
+        const readLog: string[] = [];
         const accountOf = (config: unknown): string => {
             const header = (config as { headers?: Record<string, string> })?.headers?.Authorization ?? '';
             return JSON.parse(Buffer.from(header.replace(/^Bearer /u, '').split('.')[1]!, 'base64url').toString('utf8')).sub;
@@ -57,6 +59,7 @@ describe('session host Account wakes', () => {
             if (parsed.pathname === '/v1/account/profile') return { status: 200, data: { id: accountId } };
             if (parsed.pathname === '/v2/changes') {
                 changesReads.set(accountId, changesReads.get(accountId)! + 1);
+                readLog.push(`${accountId}${parsed.search}`);
                 const after = Number(parsed.searchParams.get('after') ?? '0');
                 const changes = feeds.get(accountId)!.filter(change => change.cursor > after);
                 return { status: 200, data: { changes, nextCursor: changes.at(-1)?.cursor ?? after } };
@@ -108,6 +111,11 @@ describe('session host Account wakes', () => {
             }
         };
 
+        return { open, wake, settled, feeds, changesReads, readLog, servers, clients };
+    };
+
+    it('reads each Account\'s changes once per wake for all of its Sessions and never for another Account', async () => {
+        const { open, wake, settled, feeds, changesReads, servers, clients } = startHost();
         try {
             open('host-s1', 'dana');
             open('host-s2', 'dana');
@@ -131,6 +139,41 @@ describe('session host Account wakes', () => {
             await settled();
             expect([afterFirstWake, changesReads.get('dana')! - before.get('dana')!]).toEqual([1, 2]);
             expect(changesReads.get('erin')! - before.get('erin')!).toBe(0);
+        } finally {
+            await Promise.all(clients.map(client => client.close()));
+        }
+    }, 60_000);
+
+    it('applies the rows each wake carries for every Session of the host without reading the feed', async () => {
+        const { open, wake, settled, feeds, changesReads, readLog, servers, clients } = startHost();
+        // The server's page for this socket: the rows of the wake, authorized, covering (after, nextCursor].
+        const pushedWake = (after: number, change: { cursor: number; kind: string; entityId: string; changedAt: number }) => {
+            feeds.get('dana')!.push(change);
+            wake('dana', { changeKinds: [change.kind], entityIds: [change.entityId],
+                rows: { v: 1, after, page: { changes: [change], nextCursor: change.cursor } } });
+        };
+        try {
+            open('host-s1', 'dana');
+            open('host-s2', 'dana');
+            await vi.waitFor(() => expect(servers.get('dana')!.connected).toBe(true), { timeout: 15_000 });
+            await settled();
+            const before = changesReads.get('dana')!;
+            // Own-Session, other-Session and Account rows: every Session client applies them; none reads.
+            pushedWake(0, { cursor: 1, kind: 'session', entityId: 'host-s1', changedAt: 1 });
+            pushedWake(1, { cursor: 2, kind: 'session', entityId: 'host-x', changedAt: 2 });
+            pushedWake(2, { cursor: 3, kind: 'account', entityId: 'self', changedAt: 3 });
+            pushedWake(3, { cursor: 4, kind: 'session', entityId: 'host-s2', changedAt: 4 });
+            await settled();
+            expect(readLog.slice(readLog.length - (changesReads.get('dana')! - before))).toEqual([]);
+            // A gap (a cursor this host received in no pushed page): one read covers it for both Sessions.
+            feeds.get('dana')!.push({ cursor: 5, kind: 'session', entityId: 'host-s1', changedAt: 5 });
+            pushedWake(5, { cursor: 6, kind: 'account', entityId: 'self', changedAt: 6 });
+            await vi.waitFor(() => expect(changesReads.get('dana')! - before).toBeGreaterThanOrEqual(1), { timeout: 15_000 });
+            await settled();
+            expect(changesReads.get('dana')! - before).toBe(1);
+            pushedWake(6, { cursor: 7, kind: 'session', entityId: 'host-s1', changedAt: 7 });
+            await settled();
+            expect(changesReads.get('dana')! - before).toBe(1);
         } finally {
             await Promise.all(clients.map(client => client.close()));
         }

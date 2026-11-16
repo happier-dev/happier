@@ -1,7 +1,10 @@
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 import { fetchChanges } from '../changes';
 import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
-import { readSessionTranscriptChangeHintV1 } from '@happier-dev/protocol/changes';
+import {
+    isChangesPageFull, projectPushedChangesPageAt, PushedAccountChangesPageV1Schema, readSessionTranscriptChangeHintV1,
+    type ChangeKind, type ChangesResponse, type PushedAccountChangesPageV1,
+} from '@happier-dev/protocol/changes';
 import { serializeAxiosErrorForLog } from '../client/serializeAxiosErrorForLog';
 import { handleRequestAuthenticationFailure } from '@/api/connection/requestSupervision/reportRequestOutcomeToSupervisor';
 import { readKnownPendingQueueState, readPendingExecutionRunIds, type KnownPendingQueueState } from './pendingQueueState';
@@ -36,8 +39,18 @@ function snapshotReasonForChangesFallback(reason: 'connect' | 'reconnect' | 'liv
 type ChangesPage = Awaited<ReturnType<typeof fetchChanges>>;
 
 /** The change kinds `runSessionChangesSyncOnConnect` reads: Account rows (Settings, catalogs), plugin
- * Settings records, and the Session's own `session` / `share` rows. */
-const SESSION_CLIENT_CHANGE_KINDS: ReadonlySet<unknown> = new Set(['account', 'pluginDomain', 'session', 'share']);
+ * Settings records, and the Session's own `session` / `share` rows. The Account updates socket declares
+ * them as its change-row demand, so its wakes carry exactly these rows. */
+export const SESSION_CLIENT_ACCOUNT_CHANGE_KINDS = ['account', 'pluginDomain', 'session', 'share'] as const satisfies readonly ChangeKind[];
+const SESSION_CLIENT_CHANGE_KINDS: ReadonlySet<unknown> = new Set(SESSION_CLIENT_ACCOUNT_CHANGE_KINDS);
+
+/** The wake's pushed page, parsed explicitly; absent or malformed is undefined and the wake keeps its routing only. */
+function readWakePushedChangesPage(wake: unknown): PushedAccountChangesPageV1 | undefined {
+    const body = wake && typeof wake === 'object' && 'body' in wake ? wake.body : null;
+    if (!body || typeof body !== 'object' || !('rows' in body)) return undefined;
+    const parsed = PushedAccountChangesPageV1Schema.safeParse(body.rows);
+    return parsed.success ? parsed.data : undefined;
+}
 
 /**
  * Whether a live Account wake needs this Session client's changes read. The client consumes only
@@ -55,10 +68,14 @@ export function accountWakeNeedsSessionChangesRead(params: Readonly<{
     if (!body || typeof body !== 'object' || !('t' in body) || body.t !== 'account-change') return true;
     const routing = body as Readonly<{ changeKinds?: unknown; entityIds?: unknown; rowFactsPushedSessionId?: unknown }>;
     if (!Array.isArray(routing.changeKinds) || !Array.isArray(routing.entityIds) || routing.changeKinds.length === 0) return true;
-    const consumedKinds = routing.changeKinds.filter(kind => SESSION_CLIENT_CHANGE_KINDS.has(kind));
+    // Pushed rows are the wake's whole content (including typed Settings rows its routing omits).
+    const pushedRows = readWakePushedChangesPage(params.wake)?.page.changes ?? [];
+    const changeKinds: unknown[] = [...routing.changeKinds, ...pushedRows.map(change => change.kind)];
+    const entityIds: unknown[] = [...routing.entityIds, ...pushedRows.map(change => change.entityId)];
+    const consumedKinds = changeKinds.filter(kind => SESSION_CLIENT_CHANGE_KINDS.has(kind));
     if (consumedKinds.length === 0) return false;
     if (consumedKinds.some(kind => kind !== 'session')) return true;
-    if (!routing.entityIds.includes(params.sessionId)) return false;
+    if (!entityIds.includes(params.sessionId)) return false;
     return !(params.sessionPushesCurrent && routing.rowFactsPushedSessionId === params.sessionId);
 }
 
@@ -74,28 +91,34 @@ export type AccountWakeConsumer = Readonly<{
  * delivered with the feed pages read for that wake. A session host fans one wake object out to every
  * Session client of the stream (`sharedAccountUpdatesSocket`), so the wake object identifies the wake.
  */
-type AccountWakeStream = { consumers: Set<AccountWakeConsumer>; wake: object | null; pages: Map<string, Promise<ChangesPage>> };
+/** A pushed page held for one Session client until its next changes sync, with whether it has a consumer there. */
+type HeldPushedChangesPage = Readonly<{ pushed: PushedAccountChangesPageV1; consumed: boolean }>;
+type AccountWakeStream = { consumers: Set<AccountWakeConsumer>; wake: object | null; pages: Map<string, Promise<ChangesPage>>;
+    pushed: Map<AccountWakeConsumer, HeldPushedChangesPage[]> };
 const accountWakeStreams = new Map<string, AccountWakeStream>();
 
 /** One Session client consumes its Account stream's wakes in this process until the returned release. */
 export function registerAccountWakeConsumer(token: string, consumer: AccountWakeConsumer): () => void {
     let stream = accountWakeStreams.get(token);
-    if (!stream) accountWakeStreams.set(token, stream = { consumers: new Set(), wake: null, pages: new Map() });
+    if (!stream) accountWakeStreams.set(token, stream = { consumers: new Set(), wake: null, pages: new Map(), pushed: new Map() });
     const registered = stream;
     registered.consumers.add(consumer);
     return () => {
         registered.consumers.delete(consumer);
+        registered.pushed.delete(consumer);
         if (registered.consumers.size === 0 && accountWakeStreams.get(token) === registered) accountWakeStreams.delete(token);
     };
 }
 
 /**
- * Whether a live Account wake needs a changes read by this process's Session clients of that Account
- * stream. A session host reads each Account's feed once per wake: when any of its Sessions needs the
- * wake (`accountWakeNeedsSessionChangesRead`), every Session client receiving it reads and clients at
- * the same cursor get the one page read for this wake (`fetchSessionChangesPage`), so their cursors
- * stay together and the next wake is again one read. When none needs it, none reads. A process with
- * one Session client (a runner) decides exactly as that client alone.
+ * Whether a live Account wake needs a changes sync by this process's Session clients of that Account
+ * stream. A wake that carries its rows (the server authorized them for this socket's credential at
+ * fan-out) is held for every Session client receiving it and synced from, with no read: a client with
+ * no consumer for it only advances its cursor, so later wakes never find a gap. Otherwise a session
+ * host reads each Account's feed once per wake: when any of its Sessions needs the wake
+ * (`accountWakeNeedsSessionChangesRead`), every Session client receiving it reads and clients at the
+ * same cursor get the one page read for this wake (`fetchSessionChangesPage`). When none needs it,
+ * none reads. A process with one Session client (a runner) decides exactly as that client alone.
  */
 export function accountWakeNeedsHostChangesRead(params: Readonly<{ wake: unknown; token: string }>): boolean {
     const stream = accountWakeStreams.get(params.token);
@@ -104,6 +127,19 @@ export function accountWakeNeedsHostChangesRead(params: Readonly<{ wake: unknown
         // A new wake: pages read for the previous one no longer cover what this wake announces.
         stream.wake = params.wake;
         stream.pages = new Map();
+        const pushed = readWakePushedChangesPage(params.wake);
+        if (pushed) {
+            for (const consumer of stream.consumers) {
+                if (!consumer.receivesWakes()) continue;
+                const held = stream.pushed.get(consumer) ?? [];
+                held.push({ pushed, consumed: accountWakeNeedsSessionChangesRead({ wake: params.wake,
+                    sessionId: consumer.sessionId, sessionPushesCurrent: consumer.sessionPushesCurrent() }) });
+                stream.pushed.set(consumer, held);
+            }
+        }
+    }
+    for (const consumer of stream.consumers) {
+        if (consumer.receivesWakes() && (stream.pushed.get(consumer)?.length ?? 0) > 0) return true;
     }
     for (const consumer of stream.consumers) {
         if (consumer.receivesWakes() && accountWakeNeedsSessionChangesRead({ wake: params.wake,
@@ -112,6 +148,50 @@ export function accountWakeNeedsHostChangesRead(params: Readonly<{ wake: unknown
     return false;
 }
 const inFlightChangesPages = new Map<string, Promise<ChangesPage>>();
+
+/**
+ * The pushed rows a Session client at `after` applies: its held pages that continue from its cursor,
+ * in order, as one page (`projectPushedChangesPageAt`). Null when it holds none at its cursor: a gap
+ * the feed read covers when one of its held wakes has a consumer here, and nothing to do otherwise.
+ * Pages its cursor already covers are dropped. This client ignores the Session access witness (the
+ * daemon owns Session access), so a joined page carries none.
+ */
+function takeHeldPushedChangesPage(request: Readonly<{ token: string; sessionId: string; after: number }>):
+    Readonly<{ page: ChangesResponse; full: boolean; consumed: boolean }> | Readonly<{ gap: true; consumed: boolean }>
+    | Readonly<{ current: true }> | null {
+    const stream = accountWakeStreams.get(request.token);
+    const consumer = stream ? [...stream.consumers].find(entry => entry.sessionId === request.sessionId) : undefined;
+    const held = consumer ? stream!.pushed.get(consumer) : undefined;
+    if (!held || held.length === 0) {
+        // A sync coalesced behind one that already applied the latest wake's rows has nothing to read.
+        const latest = stream?.wake ? readWakePushedChangesPage(stream.wake) : undefined;
+        return latest && latest.page.nextCursor <= request.after ? { current: true } : null;
+    }
+    let cursor = request.after;
+    let joined: Readonly<{ changes: ChangesResponse['changes']; full: boolean; consumed: boolean }> | null = null;
+    for (;;) {
+        const index = held.findIndex(entry => projectPushedChangesPageAt(entry.pushed, cursor) !== null);
+        if (index < 0 || joined?.full) break;
+        const [entry] = held.splice(index, 1) as [HeldPushedChangesPage];
+        const projected = projectPushedChangesPageAt(entry.pushed, cursor)!;
+        joined = { changes: [...joined?.changes ?? [], ...projected.page.changes], full: projected.full,
+            consumed: (joined?.consumed ?? false) || entry.consumed };
+        cursor = projected.page.nextCursor;
+    }
+    const remaining = held.filter(entry => entry.pushed.page.nextCursor > cursor);
+    const consumedRemaining = remaining.some(entry => entry.consumed);
+    if (remaining.length === 0) stream!.pushed.delete(consumer!);
+    else stream!.pushed.set(consumer!, remaining);
+    if (!joined) return { gap: true, consumed: consumedRemaining || held.some(entry => entry.consumed) };
+    return { page: { changes: joined.changes, nextCursor: cursor, full: joined.full }, full: joined.full, consumed: joined.consumed };
+}
+
+/** A connect or reconnect catch-up reads the feed: pages held before it are superseded. */
+function dropHeldPushedChangesPages(token: string, sessionId: string): void {
+    const stream = accountWakeStreams.get(token);
+    const consumer = stream ? [...stream.consumers].find(entry => entry.sessionId === sessionId) : undefined;
+    if (consumer) stream!.pushed.delete(consumer);
+}
 
 /**
  * Clients at the same cursor share one page read. Connect and reconnect reads share only an in-flight
@@ -166,8 +246,18 @@ export async function runSessionChangesSyncOnConnect(params: {
 
     const CHANGES_PAGE_LIMIT = 200;
     const after = await params.readChangesCursor(accountId);
-    const result = await fetchSessionChangesPage({ token: params.token, after, limit: CHANGES_PAGE_LIMIT,
-        live: params.reason === 'live' });
+    if (params.reason !== 'live') dropHeldPushedChangesPages(params.token, params.sessionId);
+    const held = params.reason === 'live'
+        ? takeHeldPushedChangesPage({ token: params.token, sessionId: params.sessionId, after }) : null;
+    if (held && 'current' in held) return;
+    if (held && !held.consumed) {
+        // Pushed rows this client has no consumer for advance its cursor with no read; such a gap waits
+        // for a wake it consumes (as an unconsumed wake always did).
+        if (!('gap' in held) && !held.full) await params.writeChangesCursor(accountId, held.page.nextCursor);
+        if ('gap' in held || !held.full) return;
+    }
+    const result = held && !('gap' in held) ? { status: 'ok' as const, response: held.page }
+        : await fetchSessionChangesPage({ token: params.token, after, limit: CHANGES_PAGE_LIMIT, live: params.reason === 'live' });
     if (result.status === 'cursor-gone') {
         params.onSessionFollowInvalidated?.();
         let transcriptCatchUpSucceeded = true;
@@ -223,6 +313,8 @@ export async function runSessionChangesSyncOnConnect(params: {
 
     const changes = result.response.changes;
     const nextCursor = result.response.nextCursor;
+    // The server judges `full` on the rows it read; a page its filter shortened still reads on.
+    const pageFull = isChangesPageFull(result.response, CHANGES_PAGE_LIMIT);
     const pluginAccountSettingsInvalidations = readPluginAccountSettingsWatchInvalidations(changes);
     const accountSettingsVersions = changes
         .filter((change) => change.kind === 'account' && change.entityId === 'self')
@@ -235,15 +327,15 @@ export async function runSessionChangesSyncOnConnect(params: {
     // Settings convergence precedes Pending publication and cursor acknowledgement.
     if (highestAccountSettingsVersion !== null) {
         await params.refreshAccountSettingsForMinimumVersion?.(highestAccountSettingsVersion);
-    } else if (params.reason === 'reconnect' || changes.length >= CHANGES_PAGE_LIMIT) {
+    } else if (params.reason === 'reconnect' || pageFull) {
         await params.refreshAccountSettingsForMinimumVersion?.(null);
     }
-    if (params.reason === 'reconnect' || highestAccountSettingsVersion !== null || changes.length >= CHANGES_PAGE_LIMIT
+    if (params.reason === 'reconnect' || highestAccountSettingsVersion !== null || pageFull
         || changes.some(change => change.kind === 'account' && (change.entityId === MCP_SERVER_CATALOG_ACCOUNT_KEY_V1
             || parsePromptLibraryPhysicalKeyV1(change.entityId) !== null))) {
         await refreshDemandedAccountCatalogs();
     }
-    if (changes.length >= CHANGES_PAGE_LIMIT) {
+    if (pageFull) {
         publishPluginAccountSettingsWatchInvalidation({ kind: 'full' });
     } else {
         for (const invalidation of pluginAccountSettingsInvalidations) {
@@ -296,7 +388,7 @@ export async function runSessionChangesSyncOnConnect(params: {
     await Promise.all([...pendingExecutionRunIds].map(async (runId) => {
         await params.reconcilePendingExecutionRunTarget?.(runId);
     }));
-    if (changes.length >= CHANGES_PAGE_LIMIT) {
+    if (pageFull) {
         params.onSessionFollowInvalidated?.();
         // Slow-path: too many coalesced changes. Snapshot sync gets us back to a known-good state;
         // session transcript catch-up is only needed after reconnect.

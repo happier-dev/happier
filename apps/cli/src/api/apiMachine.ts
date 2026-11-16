@@ -20,7 +20,7 @@ import type { ExecutionRunMachineActivityV1 } from '@happier-dev/protocol/execut
 import { SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, type ScmDiffSummaryResultRevisionHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import type { ExecutionRunResumeMaterializationAuthority } from '@/agent/runtime/bridges/executionRun/resumeBackendController';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
-import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, changeRowsAlreadyHeld, readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
+import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, changeRowsAlreadyHeld, isChangesPageFull, readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/pluginDomain';
 import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
@@ -6689,7 +6689,8 @@ export class ApiMachineClient {
 
                 const changes = result.response.changes;
                 const nextCursor = result.response.nextCursor;
-                if (changes.length >= CHANGES_PAGE_LIMIT && nextCursor <= after) {
+                const pageFull = pushed ? pushed.full : isChangesPageFull(result.response, CHANGES_PAGE_LIMIT);
+                if (pageFull && nextCursor <= after) {
                     throw new Error('account_changes_cursor_not_advanced');
                 }
                 const followSourcesFull = reason !== 'live' || changes.some(change => change.kind === 'account'
@@ -7102,7 +7103,7 @@ export class ApiMachineClient {
                         phase: 'settled', ...connectedServicesPageDiagnostic,
                     });
                 }
-                if (!(pushed ? pushed.full : changes.length >= CHANGES_PAGE_LIMIT)
+                if (!pageFull
                     && !hasUsablePushedChangesPage(opts.pushedPages ?? [], after, transportGeneration)) return;
                 // Classify subsequent pages without repeating reconnect recovery.
                 reason = 'live';

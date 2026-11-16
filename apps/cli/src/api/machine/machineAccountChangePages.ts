@@ -1,5 +1,5 @@
 import {
-    ACCOUNT_CHANGES_PAGE_LIMIT_V1,
+    projectPushedChangesPageAt,
     PushedAccountChangesPageV1Schema,
     type ChangeKind,
     type ChangesResponse,
@@ -33,11 +33,8 @@ export function hasUsablePushedChangesPage(queue: readonly QueuedPushedChangesPa
 }
 
 /**
- * The pushed page a consumer at `cursor` applies, or null for a gap the feed read
- * covers. A page is the server's read of `(after, nextCursor]` for this socket; a
- * consumer already past `after` applies only its rows after `cursor`, which is
- * what a read from `cursor` at that snapshot returns. Pages this cursor already
- * covers and pages of another transport are dropped.
+ * The pushed page a consumer at `cursor` applies (`projectPushedChangesPageAt`), or null for a gap
+ * the feed read covers. Pages this cursor already covers and pages of another transport are dropped.
  */
 export function takePushedChangesPage(
     queue: QueuedPushedChangesPage[], cursor: number, transportGeneration: number,
@@ -49,15 +46,5 @@ export function takePushedChangesPage(
     const index = queue.findIndex(entry => usable(entry, cursor, transportGeneration));
     if (index < 0) return null;
     const [{ pushed }] = queue.splice(index, 1) as [QueuedPushedChangesPage];
-    const full = pushed.page.changes.length >= ACCOUNT_CHANGES_PAGE_LIMIT_V1;
-    if (pushed.after === cursor) return { page: pushed.page, full };
-    const witness = pushed.page.sessionAccessWitness;
-    return {
-        page: {
-            ...pushed.page,
-            changes: pushed.page.changes.filter(change => change.cursor > cursor),
-            ...(witness ? { sessionAccessWitness: { ...witness, entries: witness.entries.filter(entry => entry.cursor > cursor) } } : {}),
-        },
-        full,
-    };
+    return projectPushedChangesPageAt(pushed, cursor);
 }

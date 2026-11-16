@@ -325,7 +325,7 @@ describe('ApiMachineClient updates', () => {
    * page the server read for this socket. The HTTP feed is the boundary; the consumer stays real.
    */
   const startPushedChangesDaemon = async (servePage: (after: number) => Readonly<{ changes: unknown[]; nextCursor: number;
-    sessionAccessWitness?: unknown }>) => {
+    full?: boolean; sessionAccessWitness?: unknown }>) => {
     const persistence = await import('@/persistence');
     const { runWithServerHttpBaseUrl } = await import('./client/serverHttpBaseUrl');
     await Promise.all([
@@ -415,6 +415,20 @@ describe('ApiMachineClient updates', () => {
       expect(daemon.state.feedReads).toEqual([0, 0]);
       expect(daemon.sessionChanges.map(change => [change.sessionId, change.cursor])).toEqual([
         ['session-1', 1], ['session-2', 3], ['session-1', 4]]);
+    } finally { await daemon.client.shutdown(); }
+  });
+
+  it('reads on after a page the server marks full, even when its filtered rows are fewer than the limit', async () => {
+    const row = (cursor: number) => ({ cursor, kind: 'session', entityId: 'session-1', changedAt: cursor,
+      hint: { lastMessageSeq: cursor, pendingExecutionRunIds: [] } });
+    // After the pushed page, the feed serves a filtered page (stored rows hidden from this peer) with more after it.
+    const daemon = await startPushedChangesDaemon(after => after === 2 ? { changes: [row(3)], nextCursor: 4, full: true }
+      : { changes: [], nextCursor: after, full: false });
+    try {
+      // A pushed page cut at the page bound is full: the daemon reads on from its end, and on again.
+      daemon.wake(5, { v: 1, after: 0, page: { changes: [row(1)], nextCursor: 2, full: true } });
+      await vi.waitFor(() => expect(daemon.state.cursor).toBe(4));
+      expect(daemon.state.feedReads).toEqual([0, 2, 4]);
     } finally { await daemon.client.shutdown(); }
   });
 
