@@ -73,7 +73,8 @@ const TRIAGE_LIST_WINDOW_SHARED_KEY_V1 = 'triage.list-window.v1';
 
 type SharedMountedWindow = Readonly<{
   store: TriageListWindowStoreV1;
-  registerClient(host: TriageListWindowHostV1, readiness?: PluginUiHostReadiness, data?: AccountDataObserver | null): () => void;
+  registerClient(host: TriageListWindowHostV1, readiness: PluginUiHostReadiness | undefined,
+    data: AccountDataObserver | null, scope: PluginUiEphemeralSharedScope): () => void;
   // Older v1 artifact producers expose only store/registerClient.
   setClientReadiness?(host: TriageListWindowHostV1, readiness: PluginUiHostReadiness): void;
   readState?(): TriageMountedWindowReadState;
@@ -155,7 +156,8 @@ export function acquireTriageListWindow(
     const sharedLease = scope?.acquire<SharedMountedWindow>(
       TRIAGE_LIST_WINDOW_SHARED_KEY_V1,
       () => {
-        const clients = new Map<TriageListWindowHostV1, { leases: number; readiness: PluginUiHostReadiness | null; data: AccountDataObserver | null }>();
+        const clients = new Map<TriageListWindowHostV1, { leases: number; readiness: PluginUiHostReadiness | null;
+          data: AccountDataObserver | null; scope: PluginUiEphemeralSharedScope }>();
         const readinessListeners = new Set<() => void>();
         let activeReadiness: PluginUiHostReadiness | null = readiness;
         let readState = UNMOUNTED_READ_STATE;
@@ -223,15 +225,18 @@ export function acquireTriageListWindow(
             if (controller.signal.aborted) return;
             if (selection.kind === 'collection') void store.refresh('view');
             else if (change?.kind === 'internalTasks') {
-              const client = clients.keys().next().value;
-              if (client === undefined) return;
+              const current = clients.entries().next().value;
+              if (current === undefined) return;
+              const [client, { scope: clientScope }] = current;
               const source = store.getSnapshot().configuredSources.find(source => sameTriageSourceIdentity(source.source, INTERNAL_TASK_SOURCE_V1));
               if (source === undefined) return;
               for (const task of change.tasks) {
                 const entryRef = { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1(task.taskId,
                   task.ownerAccountId === change.accountId ? undefined : task.ownerAccountId) };
                 void reobserveTriagePostMutationRow(client, { entryRef }, store.getSnapshot().window?.lanes ?? [], source.sourceInstanceId, {
-                  signal: controller.signal, sharedScope: scope,
+                  // The retained window outlives its creator's mount facade.
+                  // Exact reads borrow the same live client's scope as transport.
+                  signal: controller.signal, sharedScope: clientScope,
                   publishObservation: observation => store.publishObservation(observation, false, { reconcileMembership: true }),
                 }).catch(() => {
                   // Keep the retained row on transport failure; explicit Refresh remains recovery.
@@ -267,8 +272,9 @@ export function acquireTriageListWindow(
             current.readiness = next;
             publishReadiness();
           },
-          registerClient(client, next, data) {
-            clients.set(client, { leases: (clients.get(client)?.leases ?? 0) + 1, readiness: next ?? null, data: data ?? null });
+          registerClient(client, next, data, clientScope) {
+            clients.set(client, { leases: (clients.get(client)?.leases ?? 0) + 1, readiness: next ?? null,
+              data: data ?? null, scope: clientScope });
             observeChanges();
             publishReadiness();
             let registered = true;
@@ -312,7 +318,7 @@ export function acquireTriageListWindow(
     mounted = {
       shared: sharedLease.value,
       sharedLease,
-      unregisterClient: sharedLease.value.registerClient(host, readiness, data),
+      unregisterClient: sharedLease.value.registerClient(host, readiness, data, scope),
       readState: UNMOUNTED_READ_STATE,
       leases: 0,
     };

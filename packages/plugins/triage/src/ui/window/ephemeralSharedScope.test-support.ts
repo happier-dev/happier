@@ -15,7 +15,7 @@ type SharedValueEntry = {
  * values remain generation-shared exactly like the product registry.
  */
 export function createTriageEphemeralSharedScopeOriginFixture(): Readonly<{
-  forExecutionOrigin(executionOriginKey: string): PluginUiEphemeralSharedScope;
+  forExecutionOrigin(executionOriginKey: string, isCurrent?: () => boolean): PluginUiEphemeralSharedScope;
   /** The host retires the scope (Account or plugin occurrence): every value is disposed. */
   retire(): void;
 }> {
@@ -29,7 +29,7 @@ export function createTriageEphemeralSharedScopeOriginFixture(): Readonly<{
       values.clear();
       for (const entry of entries) entry.dispose();
     },
-    forExecutionOrigin(executionOriginKey: string): PluginUiEphemeralSharedScope {
+    forExecutionOrigin(executionOriginKey: string, isCurrent: () => boolean = () => true): PluginUiEphemeralSharedScope {
       const scope: PluginUiEphemeralSharedScope = Object.freeze({
         acquire<T>(key: string, create: () => Readonly<{
           value: T;
@@ -38,7 +38,7 @@ export function createTriageEphemeralSharedScopeOriginFixture(): Readonly<{
           onIdle?(): void;
           onExecutionOriginChange?(): void;
         }>) {
-          if (retired) return null;
+          if (retired || !isCurrent()) return null;
           let entry = values.get(key);
           if (entry === undefined) {
             const created = create();

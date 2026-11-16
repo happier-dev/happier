@@ -649,8 +649,16 @@ it('pushes one external Task transition into both mounted projections with one r
 });
 
 
-it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page one, new matches and absence without list-page reads', async ownerAccountId => {
-  const scope = createTriageEphemeralSharedScopeFixture();
+it.each([
+  { ownerAccountId: 'viewer', retireCreator: false },
+  { ownerAccountId: 'owner', retireCreator: false },
+  { ownerAccountId: 'viewer', retireCreator: true },
+  { ownerAccountId: 'owner', retireCreator: true },
+])('reconciles qualified $ownerAccountId Task pushes without list-page reads (creator retired: $retireCreator)', async ({ ownerAccountId, retireCreator }) => {
+  const generation = createTriageEphemeralSharedScopeOriginFixture();
+  let creatorCurrent = true;
+  const creatorScope = generation.forExecutionOrigin('account', () => creatorCurrent);
+  const scope = generation.forExecutionOrigin('account');
   let listener: ((change?: { kind: 'internalTasks'; accountId: string; tasks: { ownerAccountId: string; taskId: string }[] }) => void) | undefined;
   let pageReads = 0;
   const exactReads: string[] = [];
@@ -693,15 +701,19 @@ it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page on
     return { dispose() { if (selection.kind === 'internalTasks') listener = undefined; } };
   } };
   // An earlier artifact can acquire transport before it has a Data observer.
-  const first = acquireTriageListWindow(host, scope, undefined, null);
+  const first = acquireTriageListWindow(host, creatorScope, undefined, null);
   const second = acquireTriageListWindow(otherHost, scope, undefined, data);
-  const rows = () => readTriageListWindowSnapshot(host, scope).window?.rows ?? [];
+  const rows = () => readTriageListWindowSnapshot(otherHost, scope).window?.rows ?? [];
   const push = (taskId: string) => { changed = true; listener?.({ kind: 'internalTasks', accountId: 'viewer', tasks: [{ ownerAccountId, taskId }] }); };
   try {
-    await refreshTriageListWindow('view', host, scope);
-    while (rows().length < 200) await loadMoreTriageListWindow(host, scope);
-    setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'Matching task' }, host, scope);
+    await refreshTriageListWindow('view', otherHost, scope);
+    while (rows().length < 200) await loadMoreTriageListWindow(otherHost, scope);
+    setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'Matching task' }, otherHost, scope);
     expect(rows()[0]?.content?.outcome.snapshot.state).toMatchObject({ stage: 'unstarted' });
+    if (retireCreator) {
+      first.release();
+      creatorCurrent = false;
+    }
     const before = pageReads;
     // A create must be admitted even after the retained walk is exhausted.
     push('task-created');
@@ -719,14 +731,14 @@ it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page on
       .toMatchObject({ completionReason: 'completed' });
     expect(projectTriageListWindow({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'No match' }, otherHost, scope)?.rows).toEqual([]);
     expect(pageReads).toBe(before);
-    expect(readTriageListWindowSnapshot(otherHost, scope)).toBe(readTriageListWindowSnapshot(host, scope));
+    if (!retireCreator) expect(readTriageListWindowSnapshot(otherHost, scope)).toBe(readTriageListWindowSnapshot(host, creatorScope));
     completed = false;
     push('task-a');
     await vi.waitFor(() => expect(rows()[0]?.content?.outcome.snapshot.state).toMatchObject({ stage: 'unstarted' }));
-    setTriageListWindowLens(TRIAGE_LIST_DEFAULT_LENS_V1, host, scope);
+    setTriageListWindowLens(TRIAGE_LIST_DEFAULT_LENS_V1, otherHost, scope);
     expect(rows()).toHaveLength(200);
     expect(pageReads).toBe(before);
-    setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'Matching task' }, host, scope);
+    setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'Matching task' }, otherHost, scope);
     push('task-b'); // not in the retained page; exact admission discovers a new matching row
     await vi.waitFor(() => expect(rows().map(row => row.entryRef.entryId).sort()).toEqual(['task-a', 'task-b']));
     expect(exactReads).toEqual(['task-created', 'task-created', 'task-a', 'task-a', 'task-b']);
