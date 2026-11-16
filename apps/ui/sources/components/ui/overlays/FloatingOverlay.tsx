@@ -38,6 +38,8 @@ import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropL
 import { useGlassSurfaceBackdropTone, useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
+import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
 import { SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 
 const OVERLAY_BORDER_RADIUS = FLOATING_OVERLAY_METRICS.radiusPx;
@@ -293,6 +295,10 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         if (typeof scrollViewRef === 'function') scrollViewRef(node);
         else if (scrollViewRef) (scrollViewRef as React.MutableRefObject<ScrollView | null>).current = node;
     }, [scrollViewRef]);
+    // Its scroll activity too: a collection windowed "in its page" inside the overlay windows in this scroller,
+    // never in the page behind it, which stays still while the overlay scrolls (SWEEP-STORE-OPS-164: the examples
+    // picker mounted 16 of 21 cards and scrolling it never brought the rest).
+    const scrollActivity = React.useMemo(() => createScrollViewNearViewportTracker(scrollerRef, false), []);
     // On the web the floating surface is glass, so a painted fade has no colour to cover a row with: the rows
     // themselves fade out at a scrolled-past edge of the viewport instead. Native keeps the painted fades.
     const webEdgeMask = React.useMemo(() => (Platform.OS === 'web' && fadeCfg ? resolveVerticalScrollEdgeMaskStyle({
@@ -326,7 +332,15 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const content = scrollEnabled ? (
         <PopoverScrollSourceProvider scrollSourceRef={scrollerRef}>
             {props.renderScrollContent ? props.renderScrollContent(scrollProps) : (
-                <Animated.ScrollView {...scrollProps} ref={setScroller}>{children}</Animated.ScrollView>
+                <Animated.ScrollView {...scrollProps} ref={setScroller}
+                    onLayout={(event) => { scrollProps.onLayout?.(event); scrollActivity.onLayout(event); }}
+                    onContentSizeChange={(width, height) => {
+                        scrollProps.onContentSizeChange?.(width, height);
+                        scrollActivity.onContentSizeChange(width, height);
+                    }}
+                    onScroll={(event) => { scrollProps.onScroll?.(event); scrollActivity.onScroll(event); }}>
+                    <PluginUiScrollActivityProvider tracker={scrollActivity}>{children}</PluginUiScrollActivityProvider>
+                </Animated.ScrollView>
             )}
         </PopoverScrollSourceProvider>
     ) : (
