@@ -1,7 +1,7 @@
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import * as z from 'zod/mini';
 import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { readFile, readdir, unlink } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import { join } from 'node:path';

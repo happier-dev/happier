@@ -3,7 +3,7 @@ import { ACCOUNT_SETTING_DEFINITIONS, accountSettingsParse, type AccountSettings
 import { ActionPolicyInputSchemas, isActionPolicyActionId, type ActionPolicySetResult } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { readActionAudiencePolicy, applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { listApprovalProfilesV1 } from '@happier-dev/protocol/actions';
+import { listApprovalProfilesV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { readPortableDomainSettingBindingV1,
   parseBuiltInAccountSettingValueV1, readBuiltInAccountSettingValueV1, buildBuiltInAccountSettingMutationV1,
   hasBuiltInAccountSettingBindingV1, resolveBuiltInAccountSettingResetValueV1,

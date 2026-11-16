@@ -1,5 +1,5 @@
 import type { RuntimeActionIdV1 } from '@happier-dev/protocol';
-import { requiredMachineRoleForBrowserAction } from '@happier-dev/protocol/actions';
+import { requiredMachineRoleForBrowserAction } from '@happier-dev/protocol/actions/browserMachineRole';
 
 import type { TrackedSession } from './types';
 

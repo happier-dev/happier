@@ -3,7 +3,7 @@ import type { CliActionDepsParams } from '../cliActionDeps/types';
 import type { logger } from '@/ui/logger';
 import { ManagedDeleteInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { createExecutionRunHostActionApprovalDecision } from '@happier-dev/protocol/actions';
+import { createExecutionRunHostActionApprovalDecision } from '@happier-dev/protocol/actions/executionRunHostActionApprovalDecision';
 import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';

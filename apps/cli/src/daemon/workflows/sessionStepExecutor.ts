@@ -34,7 +34,7 @@ import type {
 import { WORKFLOW_SESSION_LAUNCH_FIELD_IDS } from '@happier-dev/protocol/workflows';
 import type { ResolvedRoleV1, SessionAwarenessOriginV1, SessionInitialAccessDraftV1, SessionOwnerModeCatalogV2, SessionRolesV1 } from '@happier-dev/protocol';
 import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
-import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions';
+import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import {
   classifyWorkflowAbort,
   assertWorkflowAdmissionSignal,

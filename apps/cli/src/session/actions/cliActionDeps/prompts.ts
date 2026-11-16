@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import type { createFoundSkillBundleReader } from '@/cli/actions/foundSkillBundleReader';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
+import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries/registryActionsV1';
 import { installPromptRegistryItemInLibrary, updatePromptBundleInLibrary, updatePromptDocInLibrary, readPromptDocInLibrary, createPromptDocInLibrary, setPromptDocFavorite, listPromptLibrary, readSkillInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { createSkillActionExecuteV1, readSkillUsageCatalogV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionOperations';
 import { SKILL_MACHINE_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';

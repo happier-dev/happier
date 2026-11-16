@@ -16,12 +16,7 @@ import type {
 } from '../../../types';
 import { UserMessageSchema } from '../../../types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import {
-    SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT,
-    SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT,
-    SessionHumanPresenceSnapshotV1Schema,
-    SessionHumanPresenceVisibleReplaceResultV1Schema,
-} from '@happier-dev/protocol/sessions';
+import { SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT, SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT, SessionHumanPresenceSnapshotV1Schema, SessionHumanPresenceVisibleReplaceResultV1Schema } from '@happier-dev/protocol/sessions/presence/sessionHumanPresenceV1';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import {

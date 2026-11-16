@@ -2,7 +2,8 @@ import axios from '@/api/client/credentialAxios';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { registryUpstreamEqualV1, type RegistryProvenanceV1, type RegistryUpstreamV1 } from '@happier-dev/protocol/registries';
+import { registryUpstreamEqualV1, type RegistryUpstreamV1 } from '@happier-dev/protocol/registries/registryUpstreamV1';
+import type { RegistryProvenanceV1 } from '@happier-dev/protocol/registries/registryItemsV1';
 import { classifyHomeDomainHttpMutationFailureV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { commitMcpServerCatalogMutationV1, loadMcpServerCatalogV1, readRetainedMcpServerCatalogSourceV1, type McpServerCatalogMutationV1,

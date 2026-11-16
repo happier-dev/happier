@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { BotTemplateDraftRefV1Schema, BotTemplateInstanceV1Schema, readBotTemplateInstanceV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import {
   readSessionMemoryEnabledV1,
   writeSessionContextIntentV1ToMetadata,

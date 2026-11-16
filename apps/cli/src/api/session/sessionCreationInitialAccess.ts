@@ -1,5 +1,5 @@
-import { SessionInitialAccessEnvelopeHostError, materializeSessionInitialAccessCreateFields as materializeSessionInitialAccessCreateFieldsV1 } from '@happier-dev/protocol/sessions';
-export { SessionInitialAccessEnvelopeHostError, addSessionInitialAccessTeamShareStatement } from '@happier-dev/protocol/sessions';
+import { SessionInitialAccessEnvelopeHostError, materializeSessionInitialAccessCreateFields as materializeSessionInitialAccessCreateFieldsV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessCreateV1';
+export { SessionInitialAccessEnvelopeHostError, addSessionInitialAccessTeamShareStatement } from '@happier-dev/protocol/sessions/access/sessionInitialAccessCreateV1';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeFormatV1';
 import { PatchSessionDataKeyEnvelopesResultV1Schema, PatchSessionDataKeyEnvelopesV1Schema, SessionDataKeyEnvelopePageV1Schema } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';

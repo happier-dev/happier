@@ -4,7 +4,7 @@ import {
 } from './resolveCliPromptStackSystemAppendBlocks';
 import { PromptStackPreparationError } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import { configuration } from '@/configuration';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { listDisabledActionIdsForSurface } from '@/settings/actionsSettings';
 import { resolveCliHomeTarget } from '@/server/homeTarget';

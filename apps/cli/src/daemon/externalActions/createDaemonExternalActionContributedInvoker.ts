@@ -5,12 +5,9 @@ import { readPluginActionError } from '@happier-dev/protocol/plugins/actions/inv
 import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
 import { redactPluginInvocationResultData } from '@happier-dev/cli-common/plugins/registration';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import {
-  classifyApprovalExecutionOriginCurrentness,
-  type ActionExecuteResult,
-  type ActionExecutorContext,
-  type ActionExecutorDeps,
-} from '@happier-dev/protocol/actions';
+import { classifyApprovalExecutionOriginCurrentness } from '@happier-dev/protocol/actions/executor/approvalResults';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { projectTargetActionApprovalInvocationV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { createTargetActionApprovalDecision, buildTargetActionApprovalDecisionResult } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';

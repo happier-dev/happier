@@ -9,7 +9,7 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import type { AcpConfigOptionOverridesV1, BackendTargetRefV2, ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import { readPersistedProviderResumeState } from '@/providers/lifecycle/readPersistedResumeSelection';
 import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
-import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions';
+import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { readSessionMetadataConnectedServiceBindings } from '@happier-dev/agents/runtime/identity/session-metadata';
 import {
   readAcpSessionModeIntentFromMetadata,

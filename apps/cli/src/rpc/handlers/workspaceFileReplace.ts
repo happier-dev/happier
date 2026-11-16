@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { run as runRipgrep } from '@/integrations/ripgrep/index';
 import { computeFileReplacement, decodeReplaceFileText } from '@happier-dev/protocol/machines/workspaceFilesReplace';
 import { applyInverseEdits } from '@happier-dev/protocol/diff/hunks';
-import { isFilesystemWriteGuardErrorCode } from '@happier-dev/protocol/actions';
+import { isFilesystemWriteGuardErrorCode } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { DaemonWorkspaceFileReplacePreviewRequestSchema, DaemonWorkspaceFileReplaceApplyRequestSchema,
   WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES,
   type DaemonWorkspaceFileReplacePreviewResponse, type DaemonWorkspaceFileReplaceApplyResponse } from '@happier-dev/protocol/machines/workspaceFiles';

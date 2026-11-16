@@ -1,7 +1,7 @@
 import type { StoredCredentials } from '@/persistence';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
-import { createExecutionRunHostActionApprovalDecision } from '@happier-dev/protocol/actions';
+import { createExecutionRunHostActionApprovalDecision } from '@happier-dev/protocol/actions/executionRunHostActionApprovalDecision';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol';

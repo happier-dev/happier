@@ -16,7 +16,7 @@ import type { ExecutionRunState } from './executionRunTypes';
 import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { AgentSessionToolPolicyShapeV1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { FollowPolicyV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
-import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 
 /** Private lifecycle custody, independent of the daemon's disposable visibility marker. */
 const RetainedRunStateSchema = z.strictObject({

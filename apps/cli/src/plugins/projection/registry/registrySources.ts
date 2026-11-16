@@ -1,4 +1,4 @@
-import { projectPluginRegistrySourceDeclarationV1 } from '@happier-dev/protocol/registries';
+import { projectPluginRegistrySourceDeclarationV1 } from '@happier-dev/protocol/registries/registryPluginSourcesV1';
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 
 export const registrySourcesProjectionFamily = definePluginProjectionFamilyV2({

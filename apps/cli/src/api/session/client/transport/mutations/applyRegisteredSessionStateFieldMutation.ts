@@ -10,7 +10,7 @@ import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sess
 import { SessionContextIntentV1Schema, migrateRetainedSessionWorkContextV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { SessionVoicePreferenceV1Schema } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
 import { z } from 'zod/mini';
-import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { SessionTurnProgressV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
 
 import type { Metadata } from '@/api/types';

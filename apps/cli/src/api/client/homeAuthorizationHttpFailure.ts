@@ -1,6 +1,6 @@
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
-import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { createHttpStatusError } from './httpStatusError';
 
 /** Redacted recovery for a signed request whose admitted HTTP purpose was not matched. */

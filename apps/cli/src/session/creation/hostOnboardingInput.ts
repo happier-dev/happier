@@ -1,4 +1,4 @@
-import { buildSessionHostOnboardingInputV1 } from '@happier-dev/protocol/sessions';
+import { buildSessionHostOnboardingInputV1 } from '@happier-dev/protocol/sessions/creation/sessionPreparedBirthV1';
 import type { SessionCreationHostContinuationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { CreateSpawnedSessionParams } from '@/session/services/createSpawnedSession';
 

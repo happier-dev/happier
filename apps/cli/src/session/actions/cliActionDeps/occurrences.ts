@@ -1,6 +1,6 @@
 import axios from '@/api/client/credentialAxios';
 import { AutomationV3RunMutationResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
-import { automationOccurrenceRequest } from '@happier-dev/protocol/actions';
+import { automationOccurrenceRequest } from '@happier-dev/protocol/automations/occurrenceActions';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { CliActionDepsParams } from './types';
 import { AUTOMATION_HTTP_TIMEOUT_MS } from '@/api/automations';

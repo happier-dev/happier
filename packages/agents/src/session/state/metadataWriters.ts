@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { SessionIdentityAdditionsV1Schema, type SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { SessionAttestedContextV1Schema, type SessionAttestedContextV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
