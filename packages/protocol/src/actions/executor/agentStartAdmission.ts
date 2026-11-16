@@ -525,10 +525,13 @@ export function stampAgentStartSelectionV1(input: Readonly<Record<string, unknow
     } catch (error) {
         if (error instanceof AgentStartBaselineSelectionErrorV1 && target) {
             const parentModel = baseline.configuration?.modelSelection;
-            Object.assign(error, { details: withExecutionRunStartFailureDetails({ childChoice: projectExecutionRunChildChoiceV1({
+            const details = withExecutionRunStartFailureDetails({ childChoice: projectExecutionRunChildChoiceV1({
                 agentTargetKey: buildBackendTargetKeyV2(target), parentRouteCompatibility: 'incompatible',
                 parentModelSelection: parentModel && 'ref' in parentModel ? parentModel.ref : parentModel ?? null,
-            }) }, 'noRunCreated') });
+            }) }, 'noRunCreated');
+            Object.assign(error, { details, cause: {
+                ok: false, errorCode: error.code, error: error.message, details,
+            } satisfies ActionExecuteFailure });
         }
         throw error;
     }
