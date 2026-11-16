@@ -4464,6 +4464,7 @@
     "sources/components/tools/renderers/system/UnknownToolView.test.tsx",
     "sources/components/tools/renderers/system/WorkspaceIndexingPermissionView.test.tsx",
     "sources/components/tools/renderers/system/systemDisplayText.test.tsx",
+    "sources/components/tools/renderers/system/useThemeActionResultModel.test.tsx",
     "sources/components/tools/renderers/web/WebFetchView.test.tsx",
     "sources/components/tools/renderers/web/WebSearchView.test.tsx",
     "sources/components/tools/renderers/workflow/AgentTeamView.test.tsx",
