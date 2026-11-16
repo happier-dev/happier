@@ -10,7 +10,8 @@ import { mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountR
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { readDeploymentSourceIntentForHost } from './readDeploymentSourceIntentForHost';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
-import { projectDeploymentFailure } from './deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure } from './deploymentFailure';
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { createPlainProjectAccountRefRow } from '@/workspaces/projectAccountRows.testkit';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
@@ -260,8 +261,17 @@ it('requires a local workspace for native materialization and refuses provider r
             const requester = await identityOwner.resolveActionRequester!(current);
             try { return requester.identity; } finally { await requester.dispose(); }
         } };
-    await expect(readDeploymentSourceIntentForHost({ host, request: { environment, sourceIntent, context } }))
-        .rejects.toMatchObject({ code: 'deployment_source_unavailable' });
+    // No checkout row on the controller: a typed remedy that survives deployment and public CLI projection.
+    const missingCheckout = await readDeploymentSourceIntentForHost({ host, request: { environment, sourceIntent, context } })
+        .then(() => { throw new Error('A missing checkout cannot select a source'); }, (error: unknown) => error);
+    const failure = normalizeActionExecuteResult(projectDeploymentException(missingCheckout));
+    if (failure.ok) throw new Error('A missing checkout cannot become success');
+    const publicFailure = projectCliActionFailure(failure);
+    expect(publicFailure).toMatchObject({ code: 'deployment_source_checkout_required',
+        details: { requiredFact: 'deploymentActionResult', remedy: expect.any(String) } });
+    // Agents and the app read the public code through the one recovery owner: Open checkout, not Source setup.
+    expect(readDeploymentRefusalRecoveryV1(publicFailure.code, publicFailure.details)).toMatchObject({
+        nextAction: { kind: 'navigate', destination: 'source', label: 'Open checkout' } });
     await expect(readDeploymentSourceIntentForHost({ host, request: { environment, requireWorkspace: false, context } }))
         .rejects.toMatchObject({ code: 'deployment_source_unavailable' });
 });

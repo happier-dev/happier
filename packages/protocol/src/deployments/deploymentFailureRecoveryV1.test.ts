@@ -35,6 +35,7 @@ const reachableFailures = [
     ['deployment_build_input_missing', 'source'],
     ['deployment_execution_format_error', 'source'],
     ['deployment_source_unavailable', 'source'],
+    ['deployment_source_checkout_required', 'source'],
     ['needsGitAccess', 'settings'],
     ['required_fact_unavailable', 'history'],
     ['template_domain_route_required', 'domains'],
@@ -298,6 +299,13 @@ describe('deployment refusal recovery (a refused press: banner and platform shee
             expect(recovery?.remedy).not.toBe(stored.remedy);
             expect(recovery).toEqual(readDeploymentFailureRecoveryV1(code, stored));
         }
+    });
+
+    it('names Open checkout, not Source setup, when the Source has no checkout on the Machine', () => {
+        const recovery = readDeploymentRefusalRecoveryV1('deployment_source_checkout_required', projectDeploymentFailureRecoveryV1({}));
+        expect(recovery?.nextAction).toMatchObject({ kind: 'navigate', destination: 'source' });
+        expect(recovery?.nextAction.label).not.toBe(readDeploymentRefusalRecoveryV1('deployment_source_unavailable')?.nextAction.label);
+        expect(recovery?.remedy).not.toBe(readDeploymentRefusalRecoveryV1('deployment_source_unavailable')?.remedy);
     });
 
     it('names the missing Compose file of the selected revision instead of the generic Source setup', () => {

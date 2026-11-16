@@ -49,6 +49,7 @@ const recoveries = {
     deployment_execution_format_error: recovery('An executable could not run in the image build. Check its architecture, executable format and interpreter in the Dockerfile before deploying again.', 'source', 'Review build executable'),
     native_build_failed: recovery('The image build failed. Read its build output to fix the reported command or executable before deploying again.', 'logs', 'Open build output'),
     deployment_source_unavailable: recovery('Open Source details and set the Repository address and default branch or revision. Then open or accept its checkout on the selected Machine. Choose a revision containing your Compose file, then review the deployment again.', 'source', 'Open Source details'),
+    deployment_source_checkout_required: recovery("The Environment's Machine has no checkout of this Source yet. Open the Source's checkout on that Machine, then deploy again.", 'source', 'Open checkout'),
     required_fact_unavailable: recovery("Happier could not confirm the deployment's current state. Open its history to check what ran before trying again.", 'history', 'Review deployment history'),
     template_domain_route_required: recovery('This app needs a route for its address. Choose how to reach it, or leave the address out if the template makes it optional.', 'domains', 'Choose address'),
     template_domain_required: recovery('This template requires an address. Choose one in the app setup before installing.', 'domains', 'Set required address'),

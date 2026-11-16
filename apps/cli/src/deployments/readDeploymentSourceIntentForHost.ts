@@ -122,7 +122,8 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
     })) : undefined;
     const workspace = repository ? rows?.snapshot.workspaceRefs.find(ref => ref.serverId === host.serverId
         && ref.machineId === host.machineId && ref.source?.sourceId === sourceId && ref.source.revision === sourceRevision) : undefined;
-    if (needsWorkspace && !workspace) return refuse('deployment_source_unavailable');
+    // The person or agent opens this Source's checkout through projects.open (its own review), then deploys again.
+    if (needsWorkspace && !workspace) return refuse('deployment_source_checkout_required');
     if (!intent) {
         const definition = environment.content.definition;
         if (definition.kind === 'stored') intent = structuredClone(definition);
