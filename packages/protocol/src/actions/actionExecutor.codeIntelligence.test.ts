@@ -62,7 +62,7 @@ describe('search-backed code Actions', () => {
       approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: 'edit-approval' }; },
       approvalsUpdate: async () => ({ ok: true }),
       approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request }),
-      isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id, { v: 1, actions: {} }, context, undefined, undefined, input),
+      readActionsSettings: () => ({ v: 1, actions: {} }),
     });
     for (const name of ['code.format.apply', 'code.imports.organize'] as const) {
       const id = ActionIdSchema.parse(name);
@@ -117,8 +117,7 @@ describe('search-backed code Actions', () => {
       let request: ApprovalRequest | undefined;
       const executor = createActionExecutor({
         approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'approval' }; },
-        isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id,
-          { v: 1, actions: { [item.id]: { approvalRequiredSurfaces: ['agent'] } } }, context, undefined, undefined, input),
+        readActionsSettings: () => ({ v: 1, actions: { [item.id]: { approvalRequiredSurfaces: ['agent'] } } }),
       });
       await executor.execute(item.id, item.input, { surface: 'agent', authority: 'account_automation', actionRequestId: 'review-request',
         serverId: 'home', runtimeAccountId: 'account', externalActionTarget: { kind: 'machine', machineId: 'machine' } });
@@ -137,7 +136,7 @@ describe('search-backed code Actions', () => {
       approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'rename-approval' }; },
       approvalsUpdate: async () => ({ ok: true }),
       approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request }),
-      isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id, { v: 1, actions: {} }, context, undefined, undefined, input),
+      readActionsSettings: () => ({ v: 1, actions: {} }),
     });
     const input = { machineId: 'machine', rootPath: '/repo', path: 'a.ts', files: [{ path: 'a.ts', expectedHash: 'a'.repeat(64), edits: [] }] };
     expect(await executor.execute('code.rename.apply', input, { surface: 'agent', authority: 'account_automation',

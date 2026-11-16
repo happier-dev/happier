@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it } from 'vitest';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
@@ -63,7 +64,6 @@ function harness() {
       followHomeIds.push(args.serverId);
       return { changed: false };
     },
-    isActionApprovalRequired: () => false,
     isApprovalExecutionOriginCurrent: async () => true,
     approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
       stored = ApprovalRequestV2Schema.parse(request);
@@ -366,7 +366,7 @@ describe('SessionTarget at the Actions front door', () => {
     const h = harness();
     const executor = createActionExecutor({ ...h.deps, readSessionManager: async () => { throw new Error('private session content'); } } as unknown as ActionExecutorDeps);
     expect(await executor.execute('session.goal.get', { sessionId: { selector: 'manager' } }, context))
-      .toEqual({ ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable', details: { cause: 'target_read_failed' } });
+      .toEqual({ ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable', requestId: 'target-test', details: { cause: 'target_read_failed' } });
   });
 
   it('keeps ambiguous exact-reference previews unavailable without disclosing candidate addresses', async () => {
@@ -518,7 +518,7 @@ describe('SessionTarget at the Actions front door', () => {
       readSessionFollowRules: async () => ({ kind: 'complete', rules: [] }),
       discussionAction: async () => ({ discussionId: 'discussion', ownerAccountId: 'person', access: 'owner', grants: [],
         participants: members.map(sessionId => ({ participant: { kind: 'session', sessionId }, answerPolicy: 'when_addressed', createdAt: 1 })) }),
-      isActionApprovalRequired: (id: string) => id === 'session.message.send',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.message.send': { approvalRequiredSurfaces: [context.surface] } } }),
     } as unknown as ActionExecutorDeps);
     await expect(executor.execute('session.message.send', { sessionId: selector === 'discussion'
       ? { selector, discussionId: 'discussion' } : { selector }, message: 'hello' }, context))
@@ -610,7 +610,7 @@ describe('SessionTarget at the Actions front door', () => {
     let manager = 'original-manager';
     const executor = createActionExecutor({ ...h.deps,
       readSessionManager: async () => ({ kind: 'manager', address: { serverId: targetHome, sessionId: manager } }),
-      isActionApprovalRequired: (id: string) => id === 'follow.remove',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'follow.remove': { approvalRequiredSurfaces: [context.surface] } } }),
     } as unknown as ActionExecutorDeps);
     const originContext = { ...context, serverIdentityId: 'same-home-identity' };
     const input = { receiver: { kind: 'session', sessionId: { selector: 'manager' } }, source: { kind: 'session', sessionId: 'source-exact' } };
@@ -631,7 +631,7 @@ describe('SessionTarget at the Actions front door', () => {
   it('refuses nested Follow selector replay when its reviewed receiver snapshot is missing', async () => {
     const h = harness();
     const executor = createActionExecutor({ ...h.deps,
-      isActionApprovalRequired: (id: string) => id === 'follow.remove',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'follow.remove': { approvalRequiredSurfaces: [context.surface] } } }),
     } as unknown as ActionExecutorDeps);
     await executor.execute('follow.remove', {
       receiver: { kind: 'session', sessionId: { selector: 'manager' } },
@@ -800,7 +800,7 @@ describe('SessionTarget at the Actions front door', () => {
       sessionFollowPreview: async () => ({ coverage: 'complete', matchCount: selected.length,
         matches: selected.map(sessionId => ({ serverId: 'home', source: { kind: 'session', sessionId } })),
         unavailable: [], overlaps: [] }),
-      isActionApprovalRequired: (id: string) => id === 'session.message.send',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.message.send': { approvalRequiredSurfaces: [context.surface] } } }),
     } as unknown as ActionExecutorDeps);
     const input = { sessionId: { selector: 'matching', filter: normalizeSessionListFilterV1({
       homeServerIds: ['home'], show: 'sessions', scope: 'all_accessible',
@@ -957,7 +957,7 @@ describe('SessionTarget at the Actions front door', () => {
 
   it('replays the approved concrete list through strict Artifact custody and fresh access checks', async () => {
     const h = harness();
-    const executor = createActionExecutor({ ...h.deps, isActionApprovalRequired: (id: string) => id === 'session.message.send' } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ ...h.deps, readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.message.send': { approvalRequiredSurfaces: [context.surface] } } }) } as unknown as ActionExecutorDeps);
     const requested = await executor.execute('session.message.send', { sessionId: { selector: 'workers' }, message: 'hello' }, context);
     expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(h.effects).toEqual([]);
@@ -975,7 +975,7 @@ describe('SessionTarget at the Actions front door', () => {
 
   it('refuses selector approval replay without its reviewed concrete snapshot', async () => {
     const h = harness();
-    const executor = createActionExecutor({ ...h.deps, isActionApprovalRequired: (id: string) => id === 'session.message.send' } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ ...h.deps, readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.message.send': { approvalRequiredSurfaces: [context.surface] } } }) } as unknown as ActionExecutorDeps);
     await executor.execute('session.message.send', { sessionId: { selector: 'workers' }, message: 'hello' }, context);
     const request = h.approval();
     if (!request || request.v !== 2) throw new Error('missing current approval');

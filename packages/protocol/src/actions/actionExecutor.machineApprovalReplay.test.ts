@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it } from 'vitest';
 
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
@@ -107,7 +108,7 @@ describe('Machine approval replay composition', () => {
     let stored: ApprovalRequest | null = null;
     const receivedContexts: ActionExecutorContext[] = [];
     const executor = createActionExecutor({
-      isActionApprovalRequired: (actionId) => actionId === 'daemon.filesystem.writeFile',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['daemon.filesystem.writeFile']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       approvalsCreate: async ({ request }) => {
         stored = ApprovalRequestV2Schema.parse(request);
         return { artifactId: 'machine-write-approval' };

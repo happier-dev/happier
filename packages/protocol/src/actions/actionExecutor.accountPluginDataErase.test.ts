@@ -34,8 +34,10 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
     sessionActivityGet: vi.fn(async () => ({})),
     sessionRecentMessagesGet: vi.fn(async () => ({})),
     resetGlobalVoiceAgent: vi.fn(),
+    // Native product review is a UI host boundary, separate from automation Ask.
+    presentUserActionConfirmation: async () => true,
     // This suite isolates Account-owner dispatch and authority.
-    isActionApprovalRequired: () => false,
+
     ...overrides,
   };
 }
@@ -66,7 +68,7 @@ describe('createActionExecutor (account.plugins.data.erase)', () => {
     });
     expect(accountPluginDataEraseAction).toHaveBeenCalledWith({
       input: { pluginId: 'com.example.retained-data' },
-      context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } },
+      context: expect.objectContaining({ surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }),
     });
 
     await expect(executor.execute(
@@ -77,7 +79,7 @@ describe('createActionExecutor (account.plugins.data.erase)', () => {
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
-      details: { issues: [{ code: 'unrecognized_keys', path: [] }] },
+      details: { issues: [{ code: 'unrecognized_keys', path: [], message: expect.any(String) }] },
     });
     expect(accountPluginDataEraseAction).toHaveBeenCalledTimes(1);
   });

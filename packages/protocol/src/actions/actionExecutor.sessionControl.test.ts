@@ -62,8 +62,7 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     daemonMemoryGetWindow: async () => ({ v: 1, snippets: [], citations: [] }),
     daemonMemoryEnsureUpToDate: async () => ({}),
     resetGlobalVoiceAgent: async () => {},
-    // Most cases isolate Session routing; approval-specific cases override this.
-    isActionApprovalRequired: () => false,
+    // Approval-specific cases supply their host settings through overrides.
     ...overrides,
   });
 }
@@ -87,7 +86,10 @@ const canonicalSessionSpawnInput = {
 describe('createActionExecutor (session control)', () => {
   it('delivers an opaque native permission answer through the public Action without a fabricated decision', async () => {
     const received: unknown[] = [];
-    const executor = createExecutor({ sessionPermissionRespond: async request => {
+    const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.permission.respond': [context.surface] } }),
+       sessionPermissionRespond: async request => {
       received.push(request);
       return { ok: true };
     } });
@@ -214,7 +216,7 @@ describe('createActionExecutor (session control)', () => {
       if (actionId !== 'session.sections.archive') throw new Error('unexpected_action');
       return executeSessionSectionActionV1(actionId, input, { ...port, archiveSession });
     }, sessionArchiveSet: async ({ sessionId }) => { archived.push(sessionId); return { sessionId, archivedAt: 1 }; },
-    isActionApprovalRequired: actionId => actionId === 'session.archive',
+    readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.archive': { approvalRequiredSurfaces: [context.surface] } } }),
     approvalsCreate: async ({ request }) => { approvalAction = request.actionId; return { artifactId: 'archive-approval' }; },
     });
     expect(await withApproval.execute('session.sections.archive', { sectionId: 'launch' }, { ...context,
@@ -234,7 +236,6 @@ describe('createActionExecutor (session control)', () => {
     }
     const requests: unknown[] = [];
     const executor = createExecutor({
-      isActionApprovalRequired: undefined,
       sessionControlSwitch: async request => { requests.push(request); return { switched: true }; },
     });
     const input = { sessionId: 's1', to: 'remote' };
@@ -308,8 +309,7 @@ describe('createActionExecutor (session control)', () => {
     const writes: unknown[] = [];
     const executor = createExecutor({
       sessionStateFieldSet: async request => { writes.push(request); return { ok: true }; },
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
-        context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }), context),
+      readActionsSettings: context => context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }),
     });
     for (const surface of ['agent', 'mcp'] as const) {
       const input = { sessionId: 's1', showToolCalls: false };
@@ -344,10 +344,10 @@ describe('createActionExecutor (session control)', () => {
   it.each([
     { kind: 'typed domain refusal', failure: new RpcError('native refused', 'permission_request_not_found'),
       expected: { ok: false, errorCode: 'permission_request_not_found', error: 'native refused', failureCause: {
-        phase: 'dispatch', errorClass: 'RpcError', errorCode: null, httpStatus: null } } },
+        phase: 'dispatch', errorClass: 'RpcError', errorCode: 'permission_request_not_found', httpStatus: null } } },
     { kind: 'untyped domain carrier', failure: { rpcErrorCode: 'permission_request_not_found', message: 'native refused', details: { private: 'do-not-publish' } },
-      expected: { ok: false, errorCode: 'action_failed', error: 'native refused', failureCause: {
-        phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: null, httpStatus: null } } },
+      expected: { ok: false, errorCode: 'permission_request_not_found', error: 'native refused', failureCause: {
+        phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: 'permission_request_not_found', httpStatus: null } } },
     { kind: 'transport carrier', failure: { rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, message: 'native refused' },
       expected: { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: 'native refused', failureCause: {
         phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: null } } },
@@ -390,6 +390,9 @@ describe('createActionExecutor (session control)', () => {
       expect(getActionSpec(id).approval.result).toBe('required');
     }
     const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.pending.resetStart.set': [context.surface], 'session.pending.resetStart.cancel': [context.surface] } }),
+
       sessionPendingResetStartSet: async () => ({ didUpdate: true, requestedAction: { v: 1, kind: 'reset_start', reset: input.reset } }),
       sessionPendingResetStartCancel: async () => ({ outcome: 'delivery_unknown' }),
     });
@@ -397,7 +400,8 @@ describe('createActionExecutor (session control)', () => {
       .toMatchObject({ ok: true, result: { didUpdate: true, requestedAction: { kind: 'reset_start' } } });
     expect(await executor.execute('session.pending.resetStart.cancel', { sessionId: 'session', localId: 'pending' }, { surface: 'cli' }))
       .toEqual({ ok: true, result: { outcome: 'delivery_unknown' } });
-    expect(await createExecutor().execute('session.pending.resetStart.set', input, { surface: 'cli' }))
+    expect(await createExecutor({ readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.pending.resetStart.set': [context.surface], 'session.pending.resetStart.cancel': [context.surface] } }), }).execute('session.pending.resetStart.set', input, { surface: 'cli' }))
       .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
   });
   it('admits initial reset input through the same danger Action without changing existing binding semantics', async () => {
@@ -406,7 +410,10 @@ describe('createActionExecutor (session control)', () => {
       recordId: 'paug_v1_abcdefghijklmnop', meterId: 'session', witness: { id: 'accepted', observedAtMs: 10 },
     }, initialInput: { content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hold this input' } } } } };
     let admitted: unknown;
-    const executor = createExecutor({ sessionPendingResetStartSet: async args => {
+    const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.pending.resetStart.set': [context.surface] } }),
+       sessionPendingResetStartSet: async args => {
       admitted = args;
       return { didUpdate: true, requestedAction: { v: 1, kind: 'reset_start', reset: input.reset } };
     } });
@@ -420,7 +427,10 @@ describe('createActionExecutor (session control)', () => {
       method: 'POST', path: '/v2/sessions/:sessionId/pending/:localId/withdraw',
     });
     let outcome = 'removed';
-    const executor = createExecutor({ sessionPendingWithdraw: async () => ({ outcome }) });
+    const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.pending.withdraw': [context.surface] } }),
+       sessionPendingWithdraw: async () => ({ outcome }) });
     for (const next of ['removed', 'already_delivered', 'delivery_unknown']) {
       outcome = next;
       expect(await executor.execute('session.pending.withdraw', { sessionId: 'session', localId: 'pending', serverId: 'home' }, { surface: 'cli' }))
@@ -451,6 +461,9 @@ describe('createActionExecutor (session control)', () => {
   it('admits uncertain Pending recovery through configurable danger Actions and strict results', async () => {
     const effects: string[] = [];
     const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.pending.markHandled': [context.surface], 'session.pending.dismiss': [context.surface], 'session.pending.sendAsNew': [context.surface] } }),
+
       sessionPendingMarkHandled: async () => { effects.push('handled'); return { ok: true }; },
       sessionPendingDismiss: async () => { effects.push('dismiss'); return { ok: true }; },
       sessionPendingSendAsNew: async () => { effects.push('new'); return { newLocalId: 'replacement' }; },
@@ -478,21 +491,27 @@ describe('createActionExecutor (session control)', () => {
     expect(await executor.execute(markHandled, { sessionId: 'session', localId: 'pending', targetExecutionRunId: 'run' }, { surface: 'cli' }))
       .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     expect(effects).toHaveLength(3);
-    const targeted = createExecutor({ sessionPendingSendAsNew: async input => {
+    const targeted = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.pending.markHandled': [context.surface], 'session.pending.dismiss': [context.surface], 'session.pending.sendAsNew': [context.surface] } }),
+       sessionPendingSendAsNew: async input => {
       expect(input).toMatchObject({ sessionId: 'session', localId: 'pending', targetExecutionRunId: 'run' });
       return { newLocalId: 'replacement' };
     } });
     expect(await targeted.execute(ActionIdSchema.parse('session.pending.sendAsNew'),
       { sessionId: 'session', localId: 'pending', targetExecutionRunId: 'run' }, { surface: 'cli' }))
       .toMatchObject({ ok: true, result: { newLocalId: 'replacement' } });
-    const invalid = createExecutor({ sessionPendingMarkHandled: async () => ({ ok: true, injectedAuthority: true }) });
+    const invalid = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.pending.markHandled': [context.surface], 'session.pending.dismiss': [context.surface], 'session.pending.sendAsNew': [context.surface] } }),
+       sessionPendingMarkHandled: async () => ({ ok: true, injectedAuthority: true }) });
     expect(await invalid.execute(markHandled, { sessionId: 'session', localId: 'pending' }, { surface: 'cli' }))
       .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
   });
   it('exposes view preferences only to people and admits only the strict Bot input shape', async () => {
     // Metadata writes are the host boundary; keep the approval policy real.
     const sessionStateFieldSet = vi.fn(async () => ({ ok: true }));
-    const executor = createExecutor({ isActionApprovalRequired: undefined, sessionStateFieldSet });
+    const executor = createExecutor({ sessionStateFieldSet });
     expect(getActionSpec('session.view.toolCalls.set').surfaces).toMatchObject({
       ui: true, voice: true, cli: true, agent: false, mcp: false, api: false, plugin: false,
     });
@@ -577,7 +596,7 @@ describe('createActionExecutor (session control)', () => {
   it.each([true, false])('admits Files Explain=%s through semantic Session navigation on UI and agent surfaces', async (explain) => {
     const destination = { kind: 'scmReview', comparison: { kind: 'workingTree' }, view: 'files', explain } as const;
     const sessionOpen = vi.fn(async () => ({ ok: true, status: 'opened' }));
-    const executor = createExecutor({ sessionOpen, workspaceAction: async () => ({ ok: true }), isActionApprovalRequired: undefined });
+    const executor = createExecutor({ sessionOpen, workspaceAction: async () => ({ ok: true }) });
     for (const surface of ['ui', 'agent', 'mcp'] as const) {
       // Agent navigation stays within the Session corpus admitted by its host.
       const result = await executor.execute('session.open', { sessionId: 's1', destination }, {
@@ -630,7 +649,10 @@ describe('createActionExecutor (session control)', () => {
     const snapshot = { schemaVersion: 1 as const, version: 1, pins: [], folders: [folder],
       folderAssignments: [], tags: [tag], tagAssignments: [], orderEntries: [], labels: [] };
     // This port is the Home's HTTP boundary; registry admission and result parsing remain real.
-    const executor = createExecutor({ homeDomainAction: async ({ actionId }) => {
+    const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.sections.list': [context.surface], 'session.tags.list': [context.surface], 'session.sections.delete': [context.surface], 'session.tags.delete': [context.surface], 'session.sections.create': [context.surface], 'session.sections.update': [context.surface], 'session.tags.create': [context.surface], 'session.tags.rename': [context.surface] } }),
+       homeDomainAction: async ({ actionId }) => {
       const id = String(actionId);
       if (id === 'session.sections.list') return { sections: [section] };
       if (id === 'session.tags.list') return { snapshot };
@@ -773,7 +795,7 @@ describe('createActionExecutor (session control)', () => {
       ['session.tags.set', { sessionId: 's1', tagIds: ['tag-1'] }],
     ] as const) {
       await expect(executor.execute(actionId, input, {
-        surface: 'agent', serverId: 'home-1', defaultSessionId: 's1', actionsSettings: normalizeActionsSettingsV1({ v: 1 }),
+        surface: 'agent', serverId: 'home-1', defaultSessionId: 's1', actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.delete': ['agent'] } }),
       })).resolves.toMatchObject({ ok: true });
       expect(homeDomainAction).toHaveBeenLastCalledWith(expect.objectContaining({ actionId, input }));
     }
@@ -797,6 +819,7 @@ describe('createActionExecutor (session control)', () => {
     const executor = createExecutor({ homeDomainAction, detachedSessionDelete });
     const input = { machineId: 'machine-1', runId: 'run-1' };
     const context = { surface, authority: 'present_user' as const, serverId: 'home-1',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.delete': [surface] } }),
       presentUserConfirmation: { actionId: 'session.delete' as const },
       hostReviewedChild: { invoke: stop } };
     await expect(executor.execute('session.delete', input, context)).resolves.toEqual({ ok: true, result: { success: true } });
@@ -1212,7 +1235,7 @@ describe('createActionExecutor (session control)', () => {
     ]) {
       // The Session transport is the genuine boundary; encoding and admission remain real.
       const deliveries: unknown[] = [];
-      const executor = createExecutor({ isActionApprovalRequired: undefined, sessionSendMessage: async input => {
+      const executor = createExecutor({ sessionSendMessage: async input => {
         deliveries.push(input);
         return { status: 'accepted', localId: 'command-input' };
       } });
@@ -1521,7 +1544,7 @@ describe('createActionExecutor (session control)', () => {
     const executor = createExecutor({
       approvalsCreate,
       sessionSendMessage,
-      isActionApprovalRequired: (actionId) => actionId === 'session.message.send',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.message.send': { approvalRequiredSurfaces: [context.surface] } } }),
     });
 
     const result = await executor.execute(
@@ -1650,7 +1673,7 @@ describe('createActionExecutor (session control)', () => {
     const id = ActionIdSchema.parse('session.compact');
     const effects: unknown[] = [];
     let status: 'admitted' | 'already_pending' | 'unsupported' = 'admitted';
-    const executor = createExecutor({ isActionApprovalRequired: undefined,
+    const executor = createExecutor({
       sessionCompact: async input => { effects.push(input); return { status }; },
       resolveServerIdForSessionId: () => 'home-a',
     });
@@ -1668,7 +1691,7 @@ describe('createActionExecutor (session control)', () => {
   it('asks for other or unproven compact targets while preserving own-session and saved policy defaults', async () => {
     const id = ActionIdSchema.parse('session.compact');
     const effects: string[] = [];
-    const executor = createExecutor({ isActionApprovalRequired: undefined,
+    const executor = createExecutor({
       sessionCompact: async ({ sessionId }) => { effects.push(sessionId); return { status: 'admitted' }; },
     });
     const own = { surface: 'agent', defaultSessionId: ' focused-other ',
@@ -1712,7 +1735,6 @@ describe('createActionExecutor (session control)', () => {
     expect(spec.requiredAuthority).toBe('account_automation');
     const effects: unknown[] = [];
     const executor = createExecutor({
-      isActionApprovalRequired: undefined,
       sessionTurnCancel: async input => { effects.push(input); return { requested: true }; },
       sessionStop: async () => { throw new Error('Turn cancellation must not stop the session process'); },
       resolveServerIdForSessionId: () => 'home-a',
@@ -1725,7 +1747,7 @@ describe('createActionExecutor (session control)', () => {
       sessionId: 's1', serverId: 'home-a', context: expect.objectContaining({ surface }),
     })));
     expect(spec.inputSchema.safeParse({ sessionId: 's1', permissionDecision: 'approved' }).success).toBe(false);
-    expect(await createExecutor({ isActionApprovalRequired: undefined }).execute(id, { sessionId: 's1' }, { surface: 'cli' }))
+    expect(await createExecutor({ }).execute(id, { sessionId: 's1' }, { surface: 'cli' }))
       .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
   });
 
@@ -1784,6 +1806,9 @@ describe('createActionExecutor (session control)', () => {
       sessionId: 's1',
     }));
     const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.terminalComposer.clear': [context.surface] } }),
+
       sessionTerminalComposerClear,
       resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
     } as Partial<ActionExecutorDeps>);
@@ -1817,6 +1842,9 @@ describe('createActionExecutor (session control)', () => {
       localId: 'pending-b',
     }));
     const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.pendingInput.interruptAndRun': [context.surface] } }),
+
       sessionPendingInputInterruptAndRun,
       resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
     } as Partial<ActionExecutorDeps>);
@@ -1840,7 +1868,8 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it('fails closed when session.terminalComposer.clear is unsupported by the executor deps', async () => {
-    const executor = createExecutor();
+    const executor = createExecutor({ readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.terminalComposer.clear': [context.surface] } }), });
 
     await expect(executor.execute(
       'session.terminalComposer.clear' as any,
@@ -1876,21 +1905,23 @@ describe('createActionExecutor (session control)', () => {
     });
   });
 
-  it.each(['ui', 'cli', 'mcp', 'api', 'agent'] as const)('refuses next-prompt permission Actions and admits Send-with-mode on %s', async (surface) => {
+  it.each(['ui', 'cli', 'mcp', 'api', 'agent'] as const)('stages next-prompt permission through the client owner without sending on %s', async (surface) => {
     const sessionPermissionModeSet = vi.fn(async () => ({ ok: true }));
     const sessionSendMessage = vi.fn(async () => ({ status: 'accepted' as const, localId: 'next-input' }));
-    const executor = createExecutor({ sessionPermissionModeSet, sessionSendMessage });
+    const executor = createExecutor({ sessionPermissionModeSet, sessionSendMessage,
+      clientActionExecute: async () => ({ ok: true, result: { staged: true } }),
+    });
     const context = { surface, authority: 'present_user' as const, ...(surface === 'agent' ? {
-      defaultSessionId: 'caller', callerPermissionMode: 'read-only',
+      defaultSessionId: 's1', callerPermissionMode: 'read-only',
       causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'read-only' },
-      sessionInputSource: { sourceSessionId: 'caller', sourceTurnId: 'turn-1', via: 'action' as const },
+      sessionInputSource: { sourceSessionId: 's1', sourceTurnId: 'turn-1', via: 'action' as const },
     } : {}) };
-    const refusal = await executor.execute('session.permission_mode.set', {
+    const staged = await executor.execute('session.permission_mode.set', {
       sessionId: 's1', permissionMode: 'read_only', applyTiming: 'next_prompt',
     }, context);
-    expect(refusal).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-    if (!refusal.ok) expect(refusal.error).toContain('session.message.send');
+    expect(staged, JSON.stringify(staged)).toMatchObject({ ok: true, result: { staged: true } });
     expect(sessionPermissionModeSet).not.toHaveBeenCalled();
+    expect(sessionSendMessage).not.toHaveBeenCalled();
     expect(await executor.execute('session.message.send', {
       sessionId: 's1', message: 'Use this mode for my next prompt', permissionModeOverride: 'read_only',
     }, context)).toMatchObject({ ok: true, result: { status: 'accepted' } });
@@ -2094,24 +2125,24 @@ describe('createActionExecutor (session control)', () => {
     expect(effects).toEqual(['s1', 's1', 'refused', 'deferred']);
   });
 
-  it('does not reuse lead approval for reports and continues after a report awaits approval', async () => {
+  it('requires separate approvals for all reports and continues after one awaits approval', async () => {
     const effects: string[] = [];
     const approvals: string[] = [];
     const executor = createExecutor({
       sessionList: async () => archiveReportPage(['pending', 'last']),
       sessionArchiveSet: async ({ sessionId }) => { effects.push(sessionId); return { ok: true }; },
-      isActionApprovalRequired: (id, _context, input) => id === 'session.archive'
-        && typeof input === 'object' && input !== null && 'sessionId' in input && input.sessionId === 'pending',
-      approvalsCreate: async ({ request }) => { approvals.push(request.actionId); return { artifactId: 'approval-one' }; },
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1,
+        actions: { 'session.archive': { approvalRequiredSurfaces: [context.surface] } } }),
+      approvalsCreate: async ({ request }) => { approvals.push(request.actionId); return { artifactId: 'approval-' + approvals.length }; },
     });
     const result = await executor.execute('session.archive', { sessionId: 's1', alsoArchiveReports: true },
       { surface: 'cli', serverId: 'home-a', authority: 'present_user', bypassApprovals: true, actionRequestId: 'archive-lead' });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { reports: [
-      { sessionId: 'pending', status: 'approval_pending', artifactId: 'approval-one' },
-      { sessionId: 'last', status: 'archived' },
+      { sessionId: 'pending', status: 'approval_pending', artifactId: 'approval-1' },
+      { sessionId: 'last', status: 'approval_pending', artifactId: 'approval-2' },
     ] } });
-    expect(effects).toEqual(['s1', 'last']);
-    expect(approvals).toEqual(['session.archive']);
+    expect(effects).toEqual(['s1']);
+    expect(approvals).toEqual(['session.archive', 'session.archive']);
     if (result.ok) expect(getActionSpec('session.archive').outputSchema.parse(result.result)).toEqual(result.result);
   });
 
@@ -2590,6 +2621,9 @@ describe('createActionExecutor (session control)', () => {
     const sessionUsageLimitSwitchAccountNow = vi.fn(async () => ({ ok: true, status: 'waiting' }));
     const sessionUsageLimitConsumeResetCredit = vi.fn(async () => ({ ok: true, status: 'waiting' }));
     const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.usageLimit.waitResume.enable': [context.surface], 'session.usageLimit.waitResume.cancel': [context.surface], 'session.usageLimit.checkNow': [context.surface], 'session.usageLimit.consumeResetCredit': [context.surface] } }),
+
       sessionUsageLimitWaitResumeEnable,
       sessionUsageLimitWaitResumeCancel,
       sessionUsageLimitCheckNow,
@@ -2767,7 +2801,7 @@ describe('createActionExecutor (session control)', () => {
     expect(res).toMatchObject({
       ok: false,
       error: 'session_spawn_resolve_unsupported',
-      failureCause: { errorClass: 'Error', errorCode: null, phase: 'dispatch' },
+      failureCause: { errorClass: 'Error', errorCode: 'session_spawn_resolve_unsupported', phase: 'dispatch' },
       details: { spawnNonce: 'stable-attempt-1', accepted: true },
     });
   });
@@ -3120,7 +3154,10 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it('returns unsupported_action when session.permission.respond is not implemented by deps', async () => {
-    const executor = createExecutor({ sessionPermissionRespond: undefined as any });
+    const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.permission.respond': [context.surface] } }),
+       sessionPermissionRespond: undefined as any });
 
     const res = await executor.execute(
       'session.permission.respond' as any,
@@ -3313,7 +3350,6 @@ describe('createActionExecutor (session control)', () => {
       const responses: string[] = [];
       const approvals: string[] = [];
       const executor = createExecutor({
-        isActionApprovalRequired: undefined,
         sessionPermissionRespond: async ({ sessionId }) => { responses.push(sessionId); return { ok: true }; },
         approvalsCreate: async ({ request }) => { approvals.push(request.actionId); return { artifactId: 'permission-approval' }; },
       });
@@ -3348,7 +3384,7 @@ describe('createActionExecutor (session control)', () => {
 
   it('rejects API automation from responding to session permissions even with approval waived', async () => {
       const sessionPermissionRespond = vi.fn(async () => ({ ok: true }));
-      const executor = createExecutor({ sessionPermissionRespond, isActionApprovalRequired: undefined });
+      const executor = createExecutor({ sessionPermissionRespond });
 
       const res = await executor.execute(
         'session.permission.respond',
@@ -3400,7 +3436,7 @@ describe('createActionExecutor (session control)', () => {
     // absent here because the receiving question owner alone decides it.
     const executor = createExecutor({
       sessionUserActionAnswer: async request => { requests.push(request); return { ok: false, errorCode: 'present_user_required' }; },
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.user_action.answer': { approvalRequiredSurfaces: [context.surface] } } }),
     });
     const caller = { kind: 'session', sessionId: 'manager', starterDepth: 0, turnDepth: 1 } as const;
     for (const response of [{ answers: [{ question: 'Continue?', values: ['Yes'] }] }, { disposition: 'pass_up' }]) {
@@ -3430,7 +3466,10 @@ describe('createActionExecutor (session control)', () => {
 
   it('does not delegate answers from descriptive, missing or bypassed Session proof', async () => {
     const sessionUserActionAnswer = vi.fn(async () => ({ ok: true }));
-    const executor = createExecutor({ sessionUserActionAnswer, isActionApprovalRequired: () => false });
+    const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.user_action.answer': [context.surface] } }),
+       sessionUserActionAnswer });
     const caller = { kind: 'session', sessionId: 'manager', starterDepth: 0, turnDepth: 1 } as const;
     const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation', actionCaller: caller,
       defaultSessionId: 'manager', actionRequestId: 'answer-1',
@@ -3455,12 +3494,11 @@ describe('createActionExecutor (session control)', () => {
   it('requests human consent for a plugin action answer through the default approval policy', async () => {
     const sessionUserActionAnswer = vi.fn(async () => ({ ok: true }));
     const approvalsCreate = vi.fn<NonNullable<ActionExecutorDeps['approvalsCreate']>>(async () => ({ artifactId: 'human-answer-approval' }));
-    const approvalPolicy: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, context, input) =>
-      isApprovalRequiredByActionsSettings(id, context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }),
-        context, undefined, undefined, input);
-    const executor = createExecutor({ sessionUserActionAnswer, approvalsCreate, isActionApprovalRequired: approvalPolicy });
+    const readApprovalSettings: NonNullable<ActionExecutorDeps['readActionsSettings']> = context =>
+      context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 });
+    const executor = createExecutor({ sessionUserActionAnswer, approvalsCreate, readActionsSettings: readApprovalSettings });
     const input = { requestId: 'request-1', decision: 'approve' };
-    expect(await createExecutor({ sessionUserActionAnswer, isActionApprovalRequired: approvalPolicy }).execute('session.user_action.answer', input, {
+    expect(await createExecutor({ sessionUserActionAnswer, readActionsSettings: readApprovalSettings }).execute('session.user_action.answer', input, {
       surface: 'plugin', authority: 'account_automation', defaultSessionId: 's1',
       actionCaller: { kind: 'plugin', pluginId: 'acme.test' },
     })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
@@ -3489,7 +3527,10 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it('returns unsupported_action when session.user_action.answer is not implemented by deps', async () => {
-    const executor = createExecutor({ sessionUserActionAnswer: undefined as any });
+    const executor = createExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.user_action.answer': [context.surface] } }),
+       sessionUserActionAnswer: undefined as any });
 
     const res = await executor.execute(
       'session.user_action.answer' as any,
@@ -3513,7 +3554,6 @@ describe('createActionExecutor (session control)', () => {
     ] as const;
     let effects = 0;
     const executor = createExecutor({
-      isActionApprovalRequired: undefined,
       sessionPermissionRemoteAction: async args => {
         effects++;
         return args.actionId === 'session.permission.remote.grants.list' ? { grants: [], nextCursor: null }

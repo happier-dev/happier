@@ -5,7 +5,6 @@ import {
 } from './actionExecutor.js';
 import { ActionIdSchema } from './actionIds.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 
 describe('session.approval_reviewer.set authority', () => {
@@ -17,8 +16,7 @@ describe('session.approval_reviewer.set authority', () => {
       const executor = createActionExecutor({
         sessionApprovalReviewerSet: write,
         // The host wires the canonical policy owner against the caller's persisted Settings.
-        isActionApprovalRequired: (actionId, context, admittedInput) => isApprovalRequiredByActionsSettings(actionId,
-          context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context, undefined, undefined, admittedInput),
+        readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
       } as Partial<ActionExecutorDeps> as ActionExecutorDeps);
       const id = ActionIdSchema.parse('session.approval_reviewer.set');
       const input = { sessionId: 'session', enabled };

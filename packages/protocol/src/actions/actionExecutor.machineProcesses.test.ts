@@ -30,7 +30,7 @@ describe('Machine Processes Action executor', () => {
     const input = { machineId: 'm', targets: [{ ref: 'r', expect: { level: 'proven', owner: { kind: 'session', sessionId: 's' } } }], tree: true };
     const result = { status: 'ended', outcomes: [{ ref: 'r', outcome: 'ended', freedBytes: 5 }] };
     const executor = executorFor({ machineProcessesAction: async () => result,
-      isActionApprovalRequired: (id, context, args) => isApprovalRequiredByActionsSettings(id, context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context, undefined, undefined, args),
+      readActionsSettings: (context) => (context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 })),
     });
     expect(await executor.execute('machines.processes.kill', input, { surface: 'agent', actionsSettings: settings }))
       .toEqual({ ok: true, result });
@@ -45,14 +45,17 @@ describe('Machine Processes Action executor', () => {
       machineProcessesAction: async () => { reachedMachine = true; return { status: 'ended', outcomes: [] }; },
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async ({ request }) => { requested = request; return { artifactId: 'approval' }; },
-      approvalsUpdate: async () => ({ ok: true }),
+      approvalsGet: async () => requested ?? null,
+      approvalsUpdate: async ({ request }) => { requested = request; return { ok: true }; },
       approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request }),
-      isActionApprovalRequired: (id, context, args) => isApprovalRequiredByActionsSettings(id, context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context, undefined, undefined, args),
+      readActionsSettings: (context) => (context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 })),
     });
     const input = { machineId: 'm', targets: [{ ref: 'r', expect: { level: 'proven', owner: { kind: 'session', sessionId: 's' } } }], tree: true };
     expect(await executor.execute('machines.processes.kill', input, {
       surface: 'agent', serverId: 'h', runtimeAccountId: 'a', actionRequestId: 'kill-request',
-    })).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' } });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'reject' }, { surface: 'ui', authority: 'present_user', serverId: 'h' }))
+      .toMatchObject({ ok: true, result: { status: 'rejected' } });
     expect(requested).toMatchObject({ actionId: 'machines.processes.kill', actionArgs: input });
     expect(reachedMachine).toBe(false);
   });

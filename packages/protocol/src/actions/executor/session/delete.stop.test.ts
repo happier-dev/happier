@@ -10,7 +10,7 @@ describe('Delete through the public Stop Action', () => {
     let deletes = 0;
     // The host ports stand for Home HTTP and physical runtime control. All Action
     // admission, reviewed-child dispatch and result projection remain real.
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       homeDomainAction: async () => { deletes++; return { ok: false, errorCode: 'session_active', error: 'session_active' }; },
       sessionStop: async ({ sessionId }) => ({ sessionId, stopped: false, success: false, code, recovery, message: 'Runtime control unavailable' }),
     });

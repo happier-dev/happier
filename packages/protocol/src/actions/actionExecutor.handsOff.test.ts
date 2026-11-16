@@ -1,13 +1,14 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { ActionIdSchema } from './actionIds.js';
-import { markSessionListQueryResultV1, SessionListQueryActionResultV1Schema } from '../sessions/awareness/action.js';
+import { createSessionMembershipReadFixture } from '../sessions/read/sessionReadBatchV1.testkit.js';
 import { computeWorkspaceSyncPolicyDigest, type HandoffWorkspaceActionV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   // Dependencies represent host transport/effect boundaries; internal admission stays real.
-  return createActionExecutor({ isActionApprovalRequired: () => false, ...overrides } as ActionExecutorDeps);
+  return createActionExecutor({  ...overrides } as ActionExecutorDeps);
 }
 
 describe('hands-off Action admission', () => {
@@ -55,12 +56,8 @@ describe('hands-off Action admission', () => {
   it('admits session role edits only for the agent own or server-proved led sessions', async () => {
     const roleActionExecute = vi.fn(async () => ({ updated: true }));
     let accessible = true;
-    const listedReport = SessionListQueryActionResultV1Schema.parse(markSessionListQueryResultV1({
-      sessions: [{ id: 'report', active: false, presence: 'offline', updatedAt: 10 }],
-      nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
-    }));
     const executor = createExecutor({ roleActionExecute,
-      sessionList: async () => ({ ...listedReport, sessions: accessible ? listedReport.sessions : [] }),
+      sessionRead: async ({ sessionIds }) => createSessionMembershipReadFixture(sessionIds, accessible ? ['report'] : []),
     });
     const context = { surface: 'agent' as const, defaultSessionId: 'session-self', workspaceWrites: 'allow' as const,
       agentStartContext: { caller: { kind: 'session' as const, sessionId: 'session-self', starterDepth: 0, turnDepth: 0 },
@@ -150,7 +147,7 @@ describe('hands-off Action admission', () => {
   it('refuses workspace effects at prepare admission before creating an approval', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'approval' }));
     const scmActionExecute = vi.fn();
-    const executor = createExecutor({ approvalsCreate, scmActionExecute, isActionApprovalRequired: () => true });
+    const executor = createExecutor({ approvalsCreate, scmActionExecute, readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }) });
     await expect(executor.prepare('scm.repository.init', { cwd: '/repo' }, {
       surface: 'rpc', workspaceWrites: 'deny',
     })).resolves.toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'workspace_write_denied' } });

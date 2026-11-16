@@ -13,7 +13,7 @@ describe('createActionExecutor (Event Automations)', () => {
     }));
     const executor = createActionExecutor({
       automationEventAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
 
     await expect(executor.execute('automation.event.sources.list', sourceListInput, {
@@ -37,7 +37,7 @@ describe('createActionExecutor (Event Automations)', () => {
     const automationEventAction = vi.fn(async () => ({}));
     const executor = createActionExecutor({
       automationEventAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
 
     await expect(executor.execute('automation.event.sources.list', {

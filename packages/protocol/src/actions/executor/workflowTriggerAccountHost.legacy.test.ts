@@ -11,7 +11,6 @@ import { createWorkflowDefinitionActions } from './workflowDefinitions.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../../approvals/approvalRequestTransition.js';
 import { ActionsSettingsV1Schema } from '../actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from '../actionApprovalPolicy.js';
 import { describeApprovalActionFields } from '../actionApprovalPresentation.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 import { WorkflowTriggerListResultV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
@@ -132,8 +131,7 @@ async function conversionApprovalFixture(surface: 'agent' | 'mcp' | 'cli' = 'mcp
     },
     isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverId === 'home-one',
     resolveAgentStartContext: async () => agentStartContext,
-    isActionApprovalRequired: (actionId, context, actionInput) =>
-      isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, actionInput),
+    readActionsSettings: () => settings,
     observeActionExecution: async ({ context }) => { observations.push(context); },
     sessionSendMessage: async input => {
       deliveries.push(input);

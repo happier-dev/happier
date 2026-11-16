@@ -495,8 +495,7 @@ describe('configured widget Actions', () => {
     });
     const executor = createActionExecutor({ widgetDefinitionArtifacts: definitions,
       widgetAccountScope: () => ({ serverId: surface.serverId, accountId: surface.accountId }),
-      isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id,
-        context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }), context, undefined, undefined, input),
+      readActionsSettings: context => context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }),
     });
     const input = { account: { serverId: surface.serverId, accountId: surface.accountId }, artifactId: definition.id };
     const context = { surface: 'mcp' as const, authority: 'account_automation' as const, serverId: surface.serverId };

@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor } from './actionExecutor.js';
@@ -21,7 +22,7 @@ describe('workspace.sync.conflict.resolve Action authority', () => {
     }));
     const executor = createActionExecutor({
       workspaceSyncConflictResolve,
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'workspace.sync.conflict.resolve': { approvalRequiredSurfaces: [context.surface] } } }),
       approvalsCreate: async ({ request }) => {
         approvals.set('approval-1', request as unknown as Record<string, unknown>);
         return { artifactId: 'approval-1' };
@@ -35,7 +36,7 @@ describe('workspace.sync.conflict.resolve Action authority', () => {
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('workspace.sync.conflict.resolve', input, {
-      surface: 'ui', authority: 'present_user', serverId: 'server-1', actionRequestId: 'conflict-request-1',
+      surface: 'mcp', authority: 'account_automation', serverId: 'server-1', actionRequestId: 'conflict-request-1',
     })).resolves.toEqual({
       ok: true,
       result: { kind: 'approval_request_created', artifactId: 'approval-1', actionId: 'workspace.sync.conflict.resolve' },
@@ -51,7 +52,7 @@ describe('workspace.sync.conflict.resolve Action authority', () => {
     });
     expect(approvals.get('approval-1')).toMatchObject({ status: 'executed', execution: { ok: true } });
     expect(workspaceSyncConflictResolve).toHaveBeenCalledWith({
-      actionReceiptId: 'approval-1', input,
+      actionReceiptId: 'approval-1', input, context: expect.objectContaining({ authority: 'present_user', bypassApprovals: true }),
     });
   });
 
@@ -71,7 +72,7 @@ describe('workspace.sync.conflict.resolve Action authority', () => {
     let originCurrent = true;
     const executor = createActionExecutor({
       workspaceSyncConflictResolve,
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'workspace.sync.conflict.resolve': { approvalRequiredSurfaces: [context.surface] } } }),
       approvalsCreate: async ({ request }) => {
         const artifactId = `approval-${++nextArtifact}`;
         approvals.set(artifactId, request as unknown as Record<string, unknown>);

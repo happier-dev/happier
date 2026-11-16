@@ -573,7 +573,7 @@ describe('createActionExecutor (prompt library actions)', () => {
       approvalsGet: async () => request,
       approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
     };
-    const originExecutor = createExecutor({ ...approvalPorts, isActionApprovalRequired: undefined,
+    const originExecutor = createExecutor({ ...approvalPorts,
       memoryLibrary: { serverId: 'home', nowMs: () => 10, randomId: () => 'approved-fact',
         store: { read: async () => stored, update: async input => {
           stored = { ...stored, body: input.body, revision: { headerVersion: 2, bodyVersion: 2 } };
@@ -650,7 +650,7 @@ describe('createActionExecutor (prompt library actions)', () => {
     let record: PromptLibraryRecordV1 = { key: 'coding', value: { v: 1, scope: { kind: 'coding' }, entries: [neighbor] } };
     let revision = 4;
     let writes = 0;
-    const executor = createExecutor({ isActionApprovalRequired: undefined, promptStacks: {
+    const executor = createExecutor({  promptStacks: {
       serverId: 'home', assertCurrent: () => {},
       readCatalog: async () => ({ catalog: { status: 'ready' as const, rows: [{ record, revision }], tombstones: [], diagnostics: [] } }),
       writeRecord: async (input: { record: PromptLibraryRecordV1; expectedRevision: number | 'absent' }) => {
@@ -689,7 +689,7 @@ describe('createActionExecutor (prompt library actions)', () => {
     let deleted = false;
     let unavailable = false;
     const writes: { record: PromptLibraryRecordV1; expectedRevision: number | 'absent'; sourceSettingsVersion?: number }[] = [];
-    const executor = createExecutor({ isActionApprovalRequired: undefined, promptStacks: {
+    const executor = createExecutor({  promptStacks: {
       serverId: 'home', assertCurrent: () => {},
       readCatalog: async () => ({ catalog: unavailable ? { status: 'unavailable' as const, reason: 'encryption-material-unavailable' as const }
         : { status: 'ready' as const, rows: [], tombstones: deleted ? [{ key: 'coding' as const, revision: 8 }] : [], diagnostics: [] },
@@ -895,7 +895,7 @@ describe('createActionExecutor (prompt library actions)', () => {
     let approvalInput: unknown;
     let publication: StoredContentPublicShareV1 | null = null;
     let publicationAvailable = true;
-    const executor = createExecutor({ isActionApprovalRequired: undefined,
+    const executor = createExecutor({
       memoryLibrary: { serverId: 'home', nowMs: () => 10, randomId: () => `fact-${writes}`,
       store: { read: async () => stored, update: async input => { writes++; stored = { ...stored, body: input.body,
         revision: { headerVersion: 1 + writes, bodyVersion: 1 + writes } }; } },
@@ -958,7 +958,7 @@ describe('createActionExecutor (prompt library actions)', () => {
       header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1, index: [],
         topics: [{ title: 'Build', summary: 'Build details', facts: [] }, { title: 'archive', summary: 'History', facts: [original] }] }) };
     let shared = false;
-    const executor = createExecutor({ isActionApprovalRequired: undefined,
+    const executor = createExecutor({
       memoryLibrary: { serverId: 'home', nowMs: () => 10, randomId: () => 'wrong-new-id',
         store: { read: async () => stored, update: async input => {
           stored = { ...stored, body: input.body,
@@ -990,7 +990,7 @@ describe('createActionExecutor (prompt library actions)', () => {
     let revision = 4;
     let enabled = true;
     let selected = 'memory';
-    const executor = createExecutor({ isActionApprovalRequired: undefined, memoryLibrary: { serverId: 'home', randomId: () => 'active-session-fact',
+    const executor = createExecutor({  memoryLibrary: { serverId: 'home', randomId: () => 'active-session-fact',
       store,
       readSession: async () => ({ revision: ++revision, metadata: { bot: { kind: 'bot' }, work: { memoryEnabled: enabled,
         promptStack: [{ id: 'session.memory', ref: { kind: 'doc', artifactId: selected, serverId: 'home' }, enabled: true, placement: 'system_append' }],
@@ -1023,7 +1023,7 @@ describe('createActionExecutor (prompt library actions)', () => {
     let conflict = false;
     let ids = 0;
     let sessionAdmissions = 0;
-    const executor = createExecutor({ isActionApprovalRequired: undefined,
+    const executor = createExecutor({
       memoryLibrary: { serverId: 'home', randomId: () => `fact-${++ids}`,
       store: { read: async id => artifacts.get(id) ?? null, create: async input => { creates++; const id = `memory-${creates}`;
         artifacts.set(id, { id, header: input.header, body: input.body, revision: { headerVersion: 1, bodyVersion: 1 } }); return id; },
@@ -1088,7 +1088,7 @@ describe('createActionExecutor (prompt library actions)', () => {
     let accountAttachments = 0;
     let shared = false;
     const metadata = { work: { memoryEnabled: true, promptStack: [] } };
-    const executor = createExecutor({ isActionApprovalRequired: undefined,
+    const executor = createExecutor({
       memoryLibrary: { serverId: 'home', randomId: () => `fact-${artifacts.get('project-memory')?.revision.bodyVersion}-${creates}`,
         store: { read: async id => artifacts.get(id) ?? null,
           create: async input => { const id = `created-${++creates}`;
@@ -1140,7 +1140,7 @@ describe('createActionExecutor (prompt library actions)', () => {
     let shared = false;
     let conflict = false;
     let approvedInput: unknown;
-    const executor = createExecutor({ isActionApprovalRequired: undefined,
+    const executor = createExecutor({
       memoryLibrary: { serverId: 'home', randomId: () => `scope-fact-${++ids}`,
         store: { read: async id => artifacts.get(id) ?? null,
           create: async input => { const id = `scope-memory-${++creates}`;

@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
+import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
-import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from './actionApprovalPolicy.js';
+import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { prepareArtifactHeaderForRevisionV1 } from '../artifacts/artifactHeaderRestorationV1.js';
 import { buildWorkBoardArtifactHeaderV1, readWorkBoardArtifactSummaryV1 } from '../boards/workBoardArtifactV1.js';
@@ -40,9 +41,7 @@ function accountNoticeArtifact() {
 const usageNoticeActionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
   'artifact.create': ['ui'], 'artifact.update': ['ui'], 'artifact.delete': ['ui'],
 } });
-const usageNoticeApprovalPolicy: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (actionId, context, input) =>
-  isApprovalRequiredByActionsSettings(actionId, context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }),
-    context, undefined, undefined, input);
+const usageNoticeApprovalPolicy: NonNullable<ActionExecutorDeps['readActionsSettings']> = (context) => context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 });
 
 function openedArtifactBoundary(initial: z.infer<typeof ArtifactDocumentV1Schema>) {
   const artifacts = new Map([[initial.artifactId, initial]]);
@@ -87,17 +86,21 @@ const ids = ['artifact.create', 'artifact.get', 'artifact.list', 'artifact.updat
   'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'artifact.storage.usage'] as const;
 
 describe('ordinary Artifact Actions', () => {
-  it('saves a person’s document edit through the UI without a second approval', async () => {
+  it('saves a person’s reviewed document edit through the UI without a second approval', async () => {
     const initial = { ...usageNoticeArtifact(), header: ArtifactHeaderMetadataV1Schema.parse({ title: 'Notes' }), body: 'Original passage' };
     const boundary = openedArtifactBoundary(initial);
     const executor = createActionExecutor({ artifactAction: boundary.action });
     const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner',
+      serverId: 'home', actionRequestId: 'save',
       actionCaller: { kind: 'host' }, actionsSettings: normalizeActionsSettingsV1({ v: 1,
         actions: { 'artifact.update': { approvalRequiredSurfaces: ['ui', 'agent'] } } }) };
     const input = { artifactId: initial.artifactId, expectedRevision: initial.revision,
       header: initial.header, body: 'Revised passage' };
 
-    expect(await executor.execute('artifact.update', input, context)).toMatchObject({ ok: true,
+    expect(await executor.execute('artifact.update', input, { ...context, presentUserConfirmation: {
+      actionId: 'artifact.update', requestId: 'save', accountId: 'owner', serverId: 'home',
+      inputDigest: computeActionInputApprovalDigestV1('artifact.update', input),
+    } })).toMatchObject({ ok: true,
       result: { artifactId: initial.artifactId, revision: { headerVersion: 2, bodyVersion: 2 } } });
     expect(boundary.read()?.body).toBe('Revised passage');
     expect(resolveActionApprovalRouting({ actionId: 'artifact.update', spec: getActionSpec('artifact.update'), input,
@@ -116,9 +119,10 @@ describe('ordinary Artifact Actions', () => {
     const initial = { ...usageNoticeArtifact(), header: projectBotTemplateArtifactHeaderV1(template), body: JSON.stringify(template) };
     for (const surface of ['ui', 'cli', 'mcp', 'agent'] as const) {
       const boundary = openedArtifactBoundary(initial);
-      const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: () => false });
+      const executor = createActionExecutor({ artifactAction: boundary.action });
       const context = { surface, authority: surface === 'agent' || surface === 'mcp' ? 'account_automation' : 'present_user',
-        runtimeAccountId: 'owner', expectedAccountId: 'owner', actionCaller: { kind: 'host' } } as const;
+        runtimeAccountId: 'owner', expectedAccountId: 'owner', actionCaller: { kind: 'host' },
+        actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'artifact.delete': [surface] } }) } as const;
       const remove = (expectedRevision = initial.revision) => executor.execute('artifact.delete', { artifactId: initial.artifactId, expectedRevision }, context);
       expect(await remove({ headerVersion: 2, bodyVersion: 2 })).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
       expect(boundary.read()).toEqual(initial);
@@ -127,7 +131,7 @@ describe('ordinary Artifact Actions', () => {
       for (const access of ['view', 'edit', 'admin'] as const) {
         const shared = { ...initial, access };
         const recipient = openedArtifactBoundary(shared);
-        const recipientExecutor = createActionExecutor({ artifactAction: recipient.action, isActionApprovalRequired: () => false });
+        const recipientExecutor = createActionExecutor({ artifactAction: recipient.action });
         expect(await recipientExecutor.execute('artifact.delete', { artifactId: initial.artifactId, expectedRevision: initial.revision }, context))
           .toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
         expect(recipient.read()).toEqual(shared);
@@ -138,7 +142,7 @@ describe('ordinary Artifact Actions', () => {
   it('admits private notice evidence reads by scoped plugins without granting acknowledgement or producer authority', async () => {
     const initial = accountNoticeArtifact();
     const boundary = openedArtifactBoundary(initial);
-    const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({ artifactAction: boundary.action });
     const context = { surface: 'plugin', authority: 'account_automation', expectedAccountId: 'owner', runtimeAccountId: 'owner',
       actionCaller: { kind: 'plugin', pluginId: 'acme.investigator' } } as const;
     expect(await executor.execute('artifact.get', { artifactId: initial.artifactId }, context))
@@ -173,7 +177,7 @@ describe('ordinary Artifact Actions', () => {
     const initial = { ...accountNoticeArtifact(), header: AccountNoticeArtifactHeaderV1Schema.parse({ ...content,
       kind: 'account_notice.v1', title: 'db recovered', status: 'open' }), body: JSON.stringify(content) };
     const boundary = openedArtifactBoundary(initial);
-    const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+    const executor = createActionExecutor({ artifactAction: boundary.action, readActionsSettings: usageNoticeApprovalPolicy });
     const context = { surface: 'ui', authority: 'present_user', expectedAccountId: 'owner', actionCaller: { kind: 'host' },
       actionsSettings: usageNoticeActionsSettings } as const;
     const header = { ...initial.header, resolved: true, ...(intent === 'read' ? { readAt: 2000 } : { status: 'dismissed' }) };
@@ -240,7 +244,7 @@ describe('ordinary Artifact Actions', () => {
   it('admits owned notice reads and exact CAS dismissal from host Voice with the ordinary dangerous approval default', async () => {
     const initial = accountNoticeArtifact();
     const boundary = openedArtifactBoundary(initial);
-    const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+    const executor = createActionExecutor({ artifactAction: boundary.action, readActionsSettings: usageNoticeApprovalPolicy });
     const context = { surface: 'voice', authority: 'account_automation', runtimeAccountId: 'owner', actionCaller: { kind: 'host' } } as const;
     expect(await executor.execute('artifact.get', { artifactId: initial.artifactId }, context))
       .toMatchObject({ ok: true, result: { artifact: initial } });
@@ -272,7 +276,7 @@ describe('ordinary Artifact Actions', () => {
   it('admits only the captured present-user Account usage notice read and dismiss through the existing Artifact revision writer', async () => {
     const initial = usageNoticeArtifact();
     const boundary = openedArtifactBoundary(initial);
-    const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+    const executor = createActionExecutor({ artifactAction: boundary.action, readActionsSettings: usageNoticeApprovalPolicy });
     const context = { surface: 'ui', authority: 'present_user', expectedAccountId: 'owner', actionCaller: { kind: 'host' },
       actionsSettings: usageNoticeActionsSettings } as const;
     expect(await executor.execute('artifact.get', { artifactId: initial.artifactId }, context))
@@ -305,14 +309,14 @@ describe('ordinary Artifact Actions', () => {
     ];
     for (const sample of invalidCases) {
       const boundary = openedArtifactBoundary(sample.artifact);
-      const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+      const executor = createActionExecutor({ artifactAction: boundary.action, readActionsSettings: usageNoticeApprovalPolicy });
       expect(await executor.execute('artifact.get', { artifactId: initial.artifactId }, sample.context)).toMatchObject({ ok: false });
       expect(await executor.execute('artifact.update', { artifactId: initial.artifactId, expectedRevision: initial.revision,
         header: { ...initial.header, status: 'dismissed' }, body: initial.body }, sample.context)).toMatchObject({ ok: false });
       expect(boundary.read()).toEqual(sample.artifact);
     }
     const boundary = openedArtifactBoundary(initial);
-    const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+    const executor = createActionExecutor({ artifactAction: boundary.action, readActionsSettings: usageNoticeApprovalPolicy });
     for (const header of [{ ...initial.header, title: 'Altered', status: 'dismissed' }, { title: 'Retagged' }]) {
       expect(await executor.execute('artifact.update', { artifactId: initial.artifactId, expectedRevision: initial.revision,
         header, body: initial.body }, context)).toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
@@ -326,7 +330,7 @@ describe('ordinary Artifact Actions', () => {
     expect(boundary.read()).toEqual(initial);
     const ordinary = { ...initial, header: { title: 'Ordinary' }, body: 'before' };
     const ordinaryBoundary = openedArtifactBoundary(ordinary);
-    const ordinaryExecutor = createActionExecutor({ artifactAction: ordinaryBoundary.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+    const ordinaryExecutor = createActionExecutor({ artifactAction: ordinaryBoundary.action, readActionsSettings: usageNoticeApprovalPolicy });
     expect(await ordinaryExecutor.execute('artifact.update', { artifactId: ordinary.artifactId,
       expectedRevision: ordinary.revision, header: { ...initial.header, status: 'dismissed' }, body: initial.body }, context))
       .toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
@@ -335,7 +339,7 @@ describe('ordinary Artifact Actions', () => {
   it('admits current notice read acknowledgement and dismissal without rewriting content, and retains revision CAS', async () => {
     const initial = accountNoticeArtifact();
     const boundary = openedArtifactBoundary(initial);
-    const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+    const executor = createActionExecutor({ artifactAction: boundary.action, readActionsSettings: usageNoticeApprovalPolicy });
     const context = { surface: 'ui', authority: 'present_user', expectedAccountId: 'owner', actionCaller: { kind: 'host' },
       actionsSettings: usageNoticeActionsSettings } as const;
     expect(await executor.execute('artifact.get', { artifactId: initial.artifactId }, context))
@@ -367,14 +371,14 @@ describe('ordinary Artifact Actions', () => {
       { artifact: initial, context: { ...context, surface: 'mcp' as const, bypassApprovals: true } },
     ]) {
       const boundary = openedArtifactBoundary(sample.artifact);
-      const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+      const executor = createActionExecutor({ artifactAction: boundary.action, readActionsSettings: usageNoticeApprovalPolicy });
       expect(await executor.execute('artifact.get', { artifactId: initial.artifactId }, sample.context)).toMatchObject({ ok: false });
       expect(await executor.execute('artifact.update', { artifactId: initial.artifactId, expectedRevision: initial.revision,
         header: { ...initial.header, readAt: 2000 }, body: initial.body }, sample.context)).toMatchObject({ ok: false });
       expect(boundary.read()).toEqual(sample.artifact);
     }
     const boundary = openedArtifactBoundary(initial);
-    const executor = createActionExecutor({ artifactAction: boundary.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+    const executor = createActionExecutor({ artifactAction: boundary.action, readActionsSettings: usageNoticeApprovalPolicy });
     for (const header of [
       { ...initial.header, readAt: -1 }, { ...initial.header, readAt: 1.5 },
       { ...initial.header, readAt: 2000, title: 'Changed' },
@@ -398,7 +402,7 @@ describe('ordinary Artifact Actions', () => {
     expect(boundary.read()).toEqual(initial);
     const ordinary = { ...initial, header: { title: 'Ordinary' }, body: 'ordinary body' };
     const ordinaryBoundary = openedArtifactBoundary(ordinary);
-    const ordinaryExecutor = createActionExecutor({ artifactAction: ordinaryBoundary.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+    const ordinaryExecutor = createActionExecutor({ artifactAction: ordinaryBoundary.action, readActionsSettings: usageNoticeApprovalPolicy });
     expect(await ordinaryExecutor.execute('artifact.update', { artifactId: ordinary.artifactId, expectedRevision: ordinary.revision,
       header: { ...initial.header, readAt: 2000 }, body: initial.body }, context))
       .toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
@@ -408,7 +412,7 @@ describe('ordinary Artifact Actions', () => {
       const { kind: _kind, title: _title, status: _status, readAt: _readAt, ...body } = content;
       const artifact = { ...initial, header: content, body: JSON.stringify(body) };
       const guarded = openedArtifactBoundary(artifact);
-      const guardedExecutor = createActionExecutor({ artifactAction: guarded.action, isActionApprovalRequired: usageNoticeApprovalPolicy });
+      const guardedExecutor = createActionExecutor({ artifactAction: guarded.action, readActionsSettings: usageNoticeApprovalPolicy });
       expect(await guardedExecutor.execute('artifact.update', { artifactId: artifact.artifactId, expectedRevision: artifact.revision,
         header: { ...content, readAt: 2000 }, body: artifact.body }, context)).toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
       expect(guarded.read()).toEqual(artifact);
@@ -504,7 +508,7 @@ describe('ordinary Artifact Actions', () => {
       : { id: settings.id, expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false, updatedAt: 1, url: 'https://public.example/s/lookup#k=SECRET_FOR_CALLER' };
     const observeActionExecution = vi.fn(async () => {});
     const executor = createActionExecutor({ artifactAction: async () => output, sessionAccessAction: async () => output,
-      isActionApprovalRequired: () => false, interceptActionExecution: async ({ input }) => ({ status: 'continue', input }),
+       interceptActionExecution: async ({ input }) => ({ status: 'continue', input }),
       observeActionExecution });
     const result = await executor.execute(actionId, actionId === 'artifact.public_link.create' ? { artifactId: 'artifact' } : { sessionId: 'session' },
       { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
@@ -520,7 +524,7 @@ describe('ordinary Artifact Actions', () => {
           useCount: 0, isConsentRequired: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' }, url: 'https://public.example/s/link' }
       : { id: 'share', expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false, updatedAt: 1, url: 'https://public.example/s/link' }; };
     const executor = createActionExecutor({ artifactAction: publish, sessionAccessAction: publish,
-      isActionApprovalRequired: () => false,
+
       approvalsCreate: async () => ({ artifactId: 'approval' }) });
     const actionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['agent'] } });
     const result = await executor.execute(actionId, actionId === 'artifact.public_link.create'
@@ -547,8 +551,7 @@ describe('ordinary Artifact Actions', () => {
   it('settles quota refusal without losing the configured budget details', async () => {
     const quota = { ok: false, errorCode: 'quota_exceeded', error: 'quota_exceeded',
       details: { budget: 'account', limitBytes: 100, usedBytes: 110 } };
-    const executor = createActionExecutor({ artifactAction: async () => quota,
-      isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ artifactAction: async () => quota } as unknown as ActionExecutorDeps);
     expect(await executor.execute('artifact.create' as ActionId, { header: { title: 'Test' }, body: 'text' },
       { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } })).toMatchObject(quota);
   });

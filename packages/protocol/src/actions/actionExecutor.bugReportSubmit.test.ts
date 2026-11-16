@@ -6,7 +6,7 @@ import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { describeApprovalActionFields } from './actionApprovalPresentation.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+
 
 const draft = {
   title: 'Report title', summary: 'Report summary', reproductionStepsText: '', whatChangedRecently: '',
@@ -103,8 +103,7 @@ describe('bug report Submit Action admission', () => {
       deliveredAuthority = context.authority;
       return { mode: 'submitted', reportId: 'waived-report', issueNumber: 2,
         issueUrl: 'https://github.com/happier-dev/happier/issues/2', artifactCount: 0 };
-    }, isActionApprovalRequired: (actionId: Parameters<typeof isApprovalRequiredByActionsSettings>[0], context: ActionExecutorContext, admittedInput: unknown) =>
-      isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, admittedInput),
+    }, readActionsSettings: () => settings,
     } as unknown as ActionExecutorDeps);
     expect(await executor.execute('bugreport.submit', input,
       { surface: 'agent', authority: 'account_automation', actionsSettings: settings }))

@@ -1,3 +1,4 @@
+import { ActionIdSchema } from './actionIds.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
@@ -8,7 +9,7 @@ import { getActionSpec } from './actionSpecs.js';
 import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
 import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { NO_TEAM_CAPABILITIES_V1 } from '../teams/capabilities.js';
 import { TeamSummaryV1Schema } from '../teams/projections.js';
@@ -82,8 +83,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
         displays.push({ input, surface: context.surface, authority: context.authority });
         return portResult;
       },
-      isActionApprovalRequired: (id, context, admittedInput) =>
-        isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, admittedInput),
+      readActionsSettings: () => (settings),
       approvalsCreate: async ({ request }) => {
         const artifactId = `reveal-approval-${approvals.size + 1}`;
         approvals.set(artifactId, ApprovalRequestV2Schema.parse(request));
@@ -260,8 +260,9 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     const executor = createActionExecutor({
       homeDomainAction,
       observeActionExecution,
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'teams.credentials.externalKeys.create': ['ui'] } }),
       interceptActionExecution: async ({ input: actionInput }) => ({ status: 'continue' as const, input: actionInput }),
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('teams.credentials.externalKeys.create', {
@@ -306,7 +307,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       homeDomainAction,
       observeActionExecution,
       interceptActionExecution: async ({ input: actionInput }) => ({ status: 'continue' as const, input: actionInput }),
-      isActionApprovalRequired: (actionId) => actionId === 'secrets.shared.create',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['secrets.shared.create']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
         storedRequest = ApprovalRequestV2Schema.parse(request);
         return { artifactId: 'approval-secret-1' };
@@ -419,7 +420,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       };
       const executor = createActionExecutor({
         homeDomainAction,
-        isActionApprovalRequired: (actionId: string) => actionId === 'identity.githubApps.create',
+        readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['identity.githubApps.create']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
         approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
           stored = ApprovalRequestV2Schema.parse(request);
           persisted.push(stored);
@@ -506,7 +507,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     });
     const executor = createActionExecutor({
       homeDomainAction,
-      isActionApprovalRequired: (actionId) => actionId === 'teams.invitations.accept',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['teams.invitations.accept']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
         storedRequest = ApprovalRequestV2Schema.parse(request);
         return { artifactId: 'approval-invitation-1' };
@@ -679,7 +680,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       const homeDomainAction = vi.fn(async () => ({ outcome: 'unavailable' as const }));
       const executor = createActionExecutor({
         homeDomainAction,
-        isActionApprovalRequired: (actionId) => actionId === 'teams.invitations.accept',
+        readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['teams.invitations.accept']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
         approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
           storedRequest = ApprovalRequestV2Schema.parse(request);
           return { artifactId: 'approval-unpresentable-1' };
@@ -719,7 +720,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     });
     const executor = createActionExecutor({
       homeDomainAction,
-      isActionApprovalRequired: (actionId) => actionId === 'teams.invitations.accept',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['teams.invitations.accept']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       approvalsCreate,
     } as unknown as ActionExecutorDeps);
 
@@ -745,7 +746,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     const homeDomainAction = vi.fn(async () => homeAccountRow());
     const executor = createActionExecutor({
       homeDomainAction,
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('home.accounts.role.set', roleSetInput, {
@@ -766,7 +767,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     const homeDomainAction = vi.fn(async () => homeAccountRow());
     const executor = createActionExecutor({
       homeDomainAction,
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
 
     const result = await executor.execute('home.accounts.role.set', {
@@ -780,7 +781,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
 
   it('reports a host without the Home family as unsupported rather than silently succeeding', async () => {
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('teams.archive', { v: 1, teamId: 'team-1' }, {
@@ -799,7 +800,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     const homeDomainAction = vi.fn(async () => ({ outcome: 'joined' as const, teamId: 'team-1' }));
     const executor = createActionExecutor({
       homeDomainAction,
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
 
     const token = 'a'.repeat(43);
@@ -833,7 +834,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       approvalWaivedSurfaces: { 'teams.directory.sources.remove': ['api'] } });
     const executor = createActionExecutor({
       homeDomainAction,
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      readActionsSettings: () => (settings),
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('teams.directory.sources.remove', {
@@ -947,7 +948,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     const observeActionExecution = vi.fn(async () => undefined);
     const executor = createActionExecutor({
       homeDomainAction: vi.fn(async () => output),
-      isActionApprovalRequired: () => false,
+
       interceptActionExecution: async ({ input }) => ({ status: 'continue' as const, input }),
       observeActionExecution,
     } as unknown as ActionExecutorDeps);
@@ -1124,7 +1125,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     const observeActionExecution = vi.fn(async () => undefined);
     const executor = createActionExecutor({
       homeDomainAction,
-      isActionApprovalRequired: () => false,
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: ['api'] } }),
       interceptActionExecution: async ({ input }) => ({ status: 'continue' as const, input }),
       observeActionExecution,
     } as unknown as ActionExecutorDeps);
@@ -1284,7 +1285,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
         request,
       }),
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
       homeDomainAction,
     } as unknown as ActionExecutorDeps);
 
@@ -1335,7 +1336,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
         const pending = coordinator.waitForDecision(args); signalWaiting(); return pending;
       },
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: (actionId: string) => actionId === 'identity.providers.secret.replace',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['identity.providers.secret.replace']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       homeDomainAction,
     } as unknown as ActionExecutorDeps);
 

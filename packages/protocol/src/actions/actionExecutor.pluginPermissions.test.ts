@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
@@ -13,7 +14,7 @@ function createExecutor(
 ) {
   return createActionExecutor({
     pluginPermissionGrantAction,
-    isActionApprovalRequired: () => false,
+    readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'plugins.permissions.grants.request': ['plugin'], 'plugins.permissions.grants.revoke': ['plugin'] } }),
   } as ActionExecutorDeps);
 }
 
@@ -98,8 +99,8 @@ describe('createActionExecutor (plugin permission grants)', () => {
       'plugins.permissions.grants.grant': [surface],
       'plugins.permissions.grants.dismissRequest': [surface],
     } });
-    await expect(executor.execute('plugins.permissions.grants.revoke', { grantId: activeGrant.id }, { ...context, actionsSettings }))
-      .resolves.toMatchObject({ ok: true, result: { grant: revokedGrant } });
+    const revoked = await executor.execute('plugins.permissions.grants.revoke', { grantId: activeGrant.id }, { ...context, actionsSettings });
+    expect(revoked, JSON.stringify(revoked)).toMatchObject({ ok: true, result: { grant: revokedGrant } });
     // Grant/dismiss are person-class: waived on this surface they run like revoke (no present-user floor).
     for (const actionId of ['plugins.permissions.grants.grant', 'plugins.permissions.grants.dismissRequest'] as const) {
       await expect(executor.execute(actionId, { requestId: pendingRequest.id }, { ...context, actionsSettings }))
@@ -189,7 +190,7 @@ describe('createActionExecutor (plugin permission grants)', () => {
     await expect(executor.execute('plugins.permissions.grants.request', {
       ...spoofableRequest,
       pluginId: 'spoofed.plugin',
-    }, context)).resolves.toEqual({
+    }, context)).resolves.toMatchObject({
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
@@ -225,7 +226,7 @@ describe('createActionExecutor (plugin permission grants)', () => {
     expect(pluginPermissionGrantAction).toHaveBeenCalledTimes(2);
   });
 
-  it('preserves host-stamped plugin identity and descriptive provenance through deferred approval replay', async () => {
+  it('retains plugin proposal provenance while the approving person owns Account replay', async () => {
     const pluginPermissionGrantAction = vi.fn(async () => ({ grant: revokedGrant }));
     let storedRequest: ApprovalRequest | null = null;
     const approvalsCreate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
@@ -243,9 +244,7 @@ describe('createActionExecutor (plugin permission grants)', () => {
       approvalsGet,
       approvalsUpdate,
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: (actionId, context) => (
-        actionId === 'plugins.permissions.grants.revoke' && context.surface === 'plugin'
-      ),
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['plugins.permissions.grants.revoke']: { approvalRequiredSurfaces: ['plugin'] } } }),
     } as ActionExecutorDeps);
 
     await expect(executor.execute('plugins.permissions.grants.revoke', {
@@ -269,6 +268,10 @@ describe('createActionExecutor (plugin permission grants)', () => {
 
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
+        executionOriginV1: expect.objectContaining({ caller: expect.objectContaining({
+          kind: 'plugin', pluginId: 'acme.voice', contributionLocalId: 'permission-grants',
+          sourceCustody: { kind: 'development', registeredRootId: 'voice-root-1' },
+        }) }),
         createdBy: expect.objectContaining({
           pluginId: 'acme.voice',
           contributionLocalId: 'permission-grants',
@@ -288,14 +291,12 @@ describe('createActionExecutor (plugin permission grants)', () => {
     expect(pluginPermissionGrantAction).toHaveBeenCalledWith({
       actionId: 'plugins.permissions.grants.revoke',
       input: { grantId: 'grant-1' },
-      caller: {
-        kind: 'plugin',
-        pluginId: 'acme.voice',
-        contributionLocalId: 'permission-grants',
-        sourceCustody: { kind: 'development', registeredRootId: 'voice-root-1' },
-        startedBy: 'trigger',
-      },
+      caller: { kind: 'host' },
     });
+    expect(storedRequest).toMatchObject({ executionOriginV1: { caller: {
+      kind: 'plugin', pluginId: 'acme.voice', contributionLocalId: 'permission-grants',
+      sourceCustody: { kind: 'development', registeredRootId: 'voice-root-1' }, startedBy: 'trigger',
+    } } });
   });
 
   it('requests human approval for plugin grant/dismiss while routing present-user UI execution', async () => {

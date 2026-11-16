@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { ActionIdSchema } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
 import { isAgentInitiatedApprovalRequiredByDefault } from './actionApprovalPolicy.js';
-import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 import { pluginPublicationReviewedChildren } from './specs/pluginPublication.js';
@@ -135,9 +134,6 @@ describe('plugin publication Action contracts', () => {
     // The two ports replace approval persistence and Machine network transport;
     // admission and approval policy execute their production implementations.
     const executor = createActionExecutor({
-      isActionApprovalRequired: (actionId, context, input) => resolveActionApprovalRouting({
-        actionId, spec: getActionSpec(actionId), input, context,
-      }).required,
       approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: 'publication-approval' }; },
       pluginsDevLoopAction: async ({ actionId }) => {
         dispatched.push(actionId);

@@ -12,7 +12,6 @@ import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '../../account/publicProfile.js
 import { UsageRecapExportResultSchema } from '../../usage/usageRecap.js';
 import { projectUsageAnalyticsSummary } from '../../usage/usageSummary.js';
 import { normalizeActionsSettingsV1 } from '../actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from '../actionApprovalPolicy.js';
 
 const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 900 } });
 const response = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1,
@@ -36,9 +35,7 @@ describe('usage recap Action composition', () => {
     }), usageQueryToAnalyticsRequest(normalizeUsageQuery(query)));
     const settings = normalizeActionsSettingsV1(undefined);
     const deps: Partial<ActionExecutorDeps> = {
-      isActionApprovalRequired: (actionId, context, input, uiConfirmation, operation, scope, safety) =>
-        isApprovalRequiredByActionsSettings(actionId, settings, context, safety, undefined, input,
-          uiConfirmation, undefined, operation, scope),
+      readActionsSettings: () => settings,
       usageActions: {
         query: async request => resolveUsagePageAggregation({ queries: request.queries,
           accounting: [{ query: request.queries[0]!, value: compact, status: 'available', asOfMs: 500 }] }),
@@ -146,7 +143,6 @@ describe('usage recap Action composition', () => {
   });
   it('delivers only a recap rendered from admitted facts and preserves platform cancellation', async () => {
     const deps: Partial<ActionExecutorDeps> = {
-      isActionApprovalRequired: () => false,
       isApprovalExecutionOriginCurrent: async () => true,
       usageActions: {
         query: async request => resolveUsagePageAggregation({ queries: request.queries,
@@ -313,7 +309,6 @@ describe('usage recap Action composition', () => {
   });
   it('admits client placement before dispatch and retains compose-only fallback without a connected client', async () => {
     const deps: Partial<ActionExecutorDeps> = {
-      isActionApprovalRequired: () => false,
       isApprovalExecutionOriginCurrent: async () => true,
       usageActions: { query: async (request: Parameters<NonNullable<ActionExecutorDeps['usageActions']>['query']>[0]) =>
         resolveUsagePageAggregation({ queries: request.queries, accounting: [{ query: request.queries[0]!, value: response, status: 'available' }] }) },
@@ -335,7 +330,7 @@ describe('usage recap Action composition', () => {
   });
   it('returns the compose model when the actual client dispatcher declares no client, never rendering on its headless host', async () => {
     const deps: Partial<ActionExecutorDeps> = {
-      isActionApprovalRequired: () => false, isApprovalExecutionOriginCurrent: async () => true,
+       isApprovalExecutionOriginCurrent: async () => true,
       clientActionExecute: async ({ actionId }: Parameters<NonNullable<ActionExecutorDeps['clientActionExecute']>>[0]) => clientActionUnavailable(actionId),
       usageActions: {
         query: async (request: Parameters<NonNullable<ActionExecutorDeps['usageActions']>['query']>[0]) =>
@@ -356,7 +351,7 @@ describe('usage recap Action composition', () => {
     for (const errorCode of ['denied', 'outcome_uncertain']) {
       const refused = { ok: false as const, errorCode, error: errorCode };
       // Authentication/connected-client transport are genuine system boundaries.
-      const deps: Partial<ActionExecutorDeps> = { isActionApprovalRequired: () => false,
+      const deps: Partial<ActionExecutorDeps> = {
         isApprovalExecutionOriginCurrent: async () => true, clientActionExecute: async () => refused,
         usageActions: { query: async () => { throw new Error('A terminal refusal must not reread'); } },
       };

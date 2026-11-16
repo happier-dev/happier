@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec, SignedRootActionIdSchema } from './actionSpecs.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from './actionApprovalPolicy.js';
+import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 
 describe('Notify me Action', () => {
@@ -32,7 +32,7 @@ describe('Notify me Action', () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1,
       actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } });
     const executor = createActionExecutor({
-      isActionApprovalRequired: (id, caller, input) => isApprovalRequiredByActionsSettings(id, settings, caller, undefined, undefined, input),
+      readActionsSettings: () => (settings),
       approvalsCreate: async ({ request: pending }) => { request = pending; return { artifactId: 'notify-approval' }; },
       approvalsWaitForDecision: async ({ request: pending }) => ({ decision: 'reject', request: pending }),
       approvalsUpdate: async ({ request: settled }) => { request = settled; return { ok: true }; },

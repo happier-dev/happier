@@ -7,7 +7,6 @@ import {
 import { ApprovalRequestSchema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec, isInternalActionId } from './actionSpecs.js';
 
@@ -60,7 +59,6 @@ describe('current-Session presentation Action', () => {
     const presentationApply = vi.fn(async () => ({ status: 'applied' as const, revision: 'nonce-a:2' }));
     const executor = createActionExecutor({
       currentSessionPresentationApply: presentationApply,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
     const signal = new AbortController().signal;
     const context = {
@@ -89,7 +87,6 @@ describe('current-Session presentation Action', () => {
     const presentationApply = vi.fn(async () => ({ status: 'applied' as const, revision: 'nonce-a:2' }));
     const executor = createActionExecutor({
       currentSessionPresentationApply: presentationApply,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.presentation.apply', {
@@ -104,12 +101,12 @@ describe('current-Session presentation Action', () => {
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
-      details: { issues: [{ code: 'unrecognized_keys', path: [] }] },
+      requestId: 'tool-call-a',
+      details: { issues: [{ code: 'unrecognized_keys', path: [], message: expect.any(String) }] },
     });
     expect(presentationApply).not.toHaveBeenCalled();
 
     const unavailable = createActionExecutor({
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
     await expect(unavailable.execute('session.presentation.apply', {
       intent: { kind: 'companion.show' },
@@ -122,22 +119,21 @@ describe('current-Session presentation Action', () => {
       ok: false,
       errorCode: 'unsupported_action',
       error: 'unsupported_action:session.presentation.apply',
+      requestId: 'tool-call-a',
     });
   });
 
-  it('settles host UI Ask through sealed presentation input without admitting API or plugin replay', async () => {
+  it('settles host MCP Ask through sealed presentation input without admitting API or plugin replay', async () => {
     let stored: ApprovalRequest | null = null;
     const delivered: unknown[] = [];
     const settings = ActionsSettingsV1Schema.parse({ v: 1,
-      actions: { 'session.presentation.apply': { approvalRequiredSurfaces: ['ui'] } },
+      actions: { 'session.presentation.apply': { approvalRequiredSurfaces: ['mcp'] } },
     });
     // Artifact persistence and the daemon's bounded presentation ACK are the
     // executor's external ports. Policy, sealed-origin replay, strict parsing
     // and the approval transition remain the real protocol owners.
     const ports = {
-      isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(
-        actionId, settings, context, undefined, undefined, input,
-      ),
+      readActionsSettings: () => settings,
       approvalsCreate: async ({ request }) => {
         stored = ApprovalRequestSchema.parse(structuredClone(request));
         return { artifactId: 'viewer-approval' };
@@ -158,16 +154,16 @@ describe('current-Session presentation Action', () => {
         return { status: 'applied' as const, revision: 'viewer-host:2' };
       },
     } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate'
-      | 'isApprovalExecutionOriginCurrent' | 'currentSessionPresentationApply' | 'isActionApprovalRequired'>;
+      | 'isApprovalExecutionOriginCurrent' | 'currentSessionPresentationApply' | 'readActionsSettings'>;
     // The unrelated required host ports are unreachable in this focused test.
     const executor = createActionExecutor(ports as unknown as ActionExecutorDeps);
     const deferred = await executor.execute('session.presentation.apply', { intent: { kind: 'viewer.close' } }, {
-      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home-a',
+      surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' }, serverId: 'home-a',
       runtimeAccountId: 'alice', defaultSessionId: 'session-a', actionRequestId: 'viewer-close', actionsSettings: settings,
     });
     expect(deferred).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'viewer-approval' } });
     expect(stored).toMatchObject({ status: 'open', executionOriginV1: {
-      surface: 'ui', caller: { kind: 'host' }, authority: 'present_user', sessionId: 'session-a',
+      surface: 'mcp', caller: { kind: 'host' }, authority: 'account_automation', sessionId: 'session-a',
     } });
     expect(delivered).toEqual([]);
     for (const surface of ['api', 'plugin'] as const) {

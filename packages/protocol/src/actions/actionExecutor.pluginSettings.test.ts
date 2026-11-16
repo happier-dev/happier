@@ -25,7 +25,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
     await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: true });
     expect(admitInput).toHaveBeenCalledTimes(1);
   });
-  it('defaults automation and irreversible UI Settings writes to approval while letting users waive each surface', () => {
+  it('separates automation approval from native UI Settings review and lets users waive each surface', () => {
     const defaults = ActionsSettingsV1Schema.parse({ v: 1 });
     for (const actionId of [
       'plugins.settings.list', 'plugins.settings.get', 'plugins.settings.secret.status',
@@ -36,8 +36,11 @@ describe('createActionExecutor (plugin Settings administration)', () => {
       const sensitive = spec.sideEffectClass === 'write';
       for (const surface of ['ui', 'agent', 'mcp'] as const) {
         const context = { surface, authority: surface === 'ui' ? 'present_user' as const : 'account_automation' as const };
-        const requiresApproval = sensitive && (surface !== 'ui'
-          || actionId === 'plugins.settings.reset' || actionId === 'plugins.settings.secret.delete');
+        const requiresApproval = sensitive && surface !== 'ui';
+        const requiresUiConfirmation = surface === 'ui'
+          && (actionId === 'plugins.settings.reset' || actionId === 'plugins.settings.secret.delete');
+        expect(resolveActionApprovalRouting({ actionId, spec, settings: defaults, context }).uiConfirmationRequired === true,
+          `${actionId}/${surface} native review`).toBe(requiresUiConfirmation);
         expect(resolveActionApprovalRouting({ actionId, spec, settings: defaults, context }).required,
           `${actionId}/${surface}`).toBe(requiresApproval);
         const waived = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
@@ -92,7 +95,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
         },
       });
       const executor = createActionExecutor({ pluginSettingsAdministrationAction: port,
-        isActionApprovalRequired: id => id === 'plugins.settings.set',
+        readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['plugins.settings.set']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
         approvalsCreate: async ({ request }) => { artifacts.push(request); return { artifactId: 'settings-approval' }; },
         interceptActionExecution: async ({ input }) => { interceptedInputs.push(input);
           return { status: 'continue', input: transformToSecret ? { ...PluginSettingsAdministrationSetActionInputV1Schema.parse(input),
@@ -123,7 +126,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
           localId: parsed.localId, revision: String(revision), application: { kind: 'live' as const } } };
     }, { admitInput: async () => null });
     const executor = createActionExecutor({ pluginSettingsAdministrationAction: port,
-      isActionApprovalRequired: id => id === 'plugins.settings.set',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['plugins.settings.set']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       approvalsCreate: async args => {
         request = ApprovalRequestV2Schema.parse(args.request);
         return { artifactId: 'settings-approval' };
@@ -156,7 +159,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
       },
     });
     const input = { pluginId: 'acme.settings', scope: { kind: 'account' }, target: { kind: 'account' }, localId: 'endpoint', value: secretValue };
-    const executor = createActionExecutor({ pluginSettingsAdministrationAction: port, isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({ pluginSettingsAdministrationAction: port,
       interceptActionExecution: async request => ({ status: 'continue', input: { ...PluginSettingsAdministrationSetActionInputV1Schema.parse(request.input), localId: 'token' } }),
       observeActionExecution: observation => { observations.push(observation); },
     } as ActionExecutorDeps);
@@ -166,7 +169,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
     expect(observations).toHaveLength(1);
     expect(JSON.stringify(observations)).not.toContain(secretValue);
   });
-  it('honors explicit Ask first for a UI setting write before effects and replays the approved intent', async () => {
+  it('honors explicit UI Ask through native confirmation before writing the exact Settings intent', async () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1,
       actions: { 'plugins.settings.set': { approvalRequiredSurfaces: ['ui'] } } });
     expect(isApprovalRequiredByActionsSettings('plugins.settings.set', settings,
@@ -174,16 +177,20 @@ describe('createActionExecutor (plugin Settings administration)', () => {
     const write = Object.assign(vi.fn(async () => ({ ok: true, kind: 'plugins.settings.set' as const,
       data: { scope: { kind: 'account' as const }, target: { kind: 'account' as const },
         localId: 'enabled', revision: '8', application: { kind: 'live' as const } } })), { admitInput: async () => null });
+    const confirm = vi.fn(async () => false);
     const executor = createActionExecutor({ pluginSettingsAdministrationAction: write,
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+      presentUserActionConfirmation: confirm,
+      readActionsSettings: () => (settings),
     } as ActionExecutorDeps);
     const input = { pluginId: 'acme.settings', scope: { kind: 'account' as const },
       target: { kind: 'account' as const }, localId: 'enabled', value: true, expectedRevision: '7' };
-    const context = { surface: 'ui' as const, authority: 'present_user' as const };
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, actionsSettings: settings };
     expect(await executor.execute('plugins.settings.set', input, context))
-      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+      .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
     expect(write).not.toHaveBeenCalled();
-    expect(await executor.execute('plugins.settings.set', input, { ...context, bypassApprovals: true }))
+    expect(confirm).toHaveBeenCalledOnce();
+    confirm.mockResolvedValueOnce(true);
+    expect(await executor.execute('plugins.settings.set', input, context))
       .toMatchObject({ ok: true, result: { ok: true, data: { revision: '8' } } });
     expect(write).toHaveBeenCalledWith(expect.objectContaining({ input }));
   });
@@ -201,7 +208,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
     }));
     const executor = createActionExecutor({
       pluginSettingsAdministrationAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
     const input = {
       pluginId: 'acme.settings',
@@ -226,7 +233,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
     expect(pluginSettingsAdministrationAction).toHaveBeenCalledWith({
       actionId: 'plugins.settings.list',
       input,
-      context,
+      context: expect.objectContaining(context),
     });
   });
 
@@ -238,19 +245,21 @@ describe('createActionExecutor (plugin Settings administration)', () => {
     }));
     const executor = createActionExecutor({
       pluginSettingsAdministrationAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
 
-    await expect(executor.execute('plugins.settings.secret.status', {
+    const result = await executor.execute('plugins.settings.secret.status', {
       pluginId: 'acme.settings',
       localId: 'token',
       value: 'must-never-reach-a-secret-owner',
-    }, { surface: 'cli' })).resolves.toEqual({
+    }, { surface: 'cli' });
+    expect(result).toEqual({
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
-      details: { issues: [{ code: 'unrecognized_keys', path: [] }] },
+      details: { issues: [{ code: 'unrecognized_keys', path: [], message: expect.any(String) }] },
     });
+    expect(JSON.stringify(result)).not.toContain('must-never-reach-a-secret-owner');
     expect(pluginSettingsAdministrationAction).not.toHaveBeenCalled();
   });
 
@@ -269,7 +278,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
     }));
     const executor = createActionExecutor({
       pluginSettingsAdministrationAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
 
     await expect(executor.execute('plugins.settings.secret.status', {
@@ -297,7 +306,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
     const executor = createActionExecutor({
       pluginSettingsAdministrationAction,
       approvalsCreate: async () => ({ artifactId: 'secret-approval' }),
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, ActionsSettingsV1Schema.parse({ v: 1 }), context),
+      readActionsSettings: () => (ActionsSettingsV1Schema.parse({ v: 1 })),
     } as ActionExecutorDeps);
     const inputs = {
       'plugins.settings.secret.bind': {
@@ -376,12 +385,12 @@ describe('createActionExecutor (plugin Settings administration)', () => {
     expect(pluginSettingsAdministrationAction).toHaveBeenCalledWith({
       actionId: 'plugins.settings.secret.bind',
       input: inputs['plugins.settings.secret.bind'],
-      context: {
+      context: expect.objectContaining({
         surface: 'cli',
         authority: 'present_user',
         bypassApprovals: true,
         actionCaller: { kind: 'host' },
-      },
+      }),
     });
   });
 });

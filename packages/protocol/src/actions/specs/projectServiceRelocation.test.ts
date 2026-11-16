@@ -50,7 +50,7 @@ describe('service relocation Action', () => {
       declaration: { workspaceRefId: 'workspace', selection: { kind: 'manifest' as const, name: 'worker' } } };
     const input = relocationInput(currentTarget);
     const runtimeActionExecute = vi.fn(async () => ({ status: 'moved' as const, currentTarget: { ...currentTarget, machineId: 'new' } }));
-    const executor = createActionExecutor({ runtimeActionExecute, isActionApprovalRequired: () => false } as ActionExecutorDeps);
+    const executor = createActionExecutor({ runtimeActionExecute } as ActionExecutorDeps);
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home' };
     expect(await executor.execute('action.spec.search', { query: 'projects.service.relocate', limit: 10 }, context))
       .toMatchObject({ ok: true, result: { actionSpecs: [expect.objectContaining({ id: 'projects.service.relocate' })] } });

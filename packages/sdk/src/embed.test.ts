@@ -153,7 +153,7 @@ describe('SDK embed helpers', () => {
     const listResult = { queryVersion: 1, sessions: [], nextCursor: null, hasNext: false,
       attentionNextCursor: null, attentionHasNext: false };
     const sessionList = vi.fn(async () => listResult);
-    const executor = createActionExecutor({ sessionList, isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ sessionList } as unknown as ActionExecutorDeps);
     const requests: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: URL, options: RequestInit) => {
       if (url.pathname.endsWith('/self')) return json({ ...self, accountEncryptionMode: 'e2ee',

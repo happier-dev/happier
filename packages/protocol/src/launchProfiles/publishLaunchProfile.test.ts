@@ -3,7 +3,7 @@ import { createLaunchProfilePublisherV1 } from '../index.js';
 import { LaunchProfileArtifactV1Schema, launchProfileArtifactSharingAdapterV1, listSharedLaunchProfileArtifactsV1, readLaunchProfileArtifactV1 } from './launchProfileArtifactV1.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
-import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from '../actions/actionApprovalPolicy.js';
+import { resolveActionApprovalRouting } from '../actions/actionApprovalPolicy.js';
 import { normalizeActionsSettingsV1 } from '../actions/actionSettings.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
@@ -24,9 +24,8 @@ function publisherExecutor(publish: ReturnType<typeof createLaunchProfilePublish
   // allow/deny result. Unused host boundaries remain omitted in this harness.
   const deps = {
     launchProfilePublish: publish,
-    isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(actionId,
-      context.actionsSettings ?? defaultActionSettings, context, getActionSpec(actionId).safety, undefined, input),
-  } satisfies Pick<ActionExecutorDeps, 'launchProfilePublish' | 'isActionApprovalRequired'>;
+    readActionsSettings: (context) => context.actionsSettings ?? defaultActionSettings,
+  } satisfies Pick<ActionExecutorDeps, 'launchProfilePublish' | 'readActionsSettings'>;
   return createActionExecutor(deps as unknown as ActionExecutorDeps);
 }
 
@@ -99,7 +98,7 @@ describe('launch_profiles.publish', () => {
     expect(artifact.header).not.toHaveProperty('savedBy');
     expect(JSON.parse(artifact.body)).not.toHaveProperty('savedBy');
   });
-  it.each(['cli', 'ui'] as const)('retains its Artifact result through deferred %s approval custody', async surface => {
+  it.each(['cli', 'ui'] as const)('retains its Artifact result through %s approval custody', async surface => {
     const state = harness();
     let stored: ApprovalRequest | null = null;
     const settings = normalizeActionsSettingsV1({ v: 1, actions: {
@@ -108,7 +107,11 @@ describe('launch_profiles.publish', () => {
     // Only Artifact persistence is substituted; policy, transitions, replay and publication remain real.
     const deps = {
       launchProfilePublish: state.publisher.publish,
-      isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, input),
+      readActionsSettings: () => settings,
+      ...(surface === 'ui' ? { presentUserActionConfirmation: async () => {
+        expect(state.create).not.toHaveBeenCalled();
+        return true;
+      } } : {}),
       approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'approval-profile' }; },
       approvalsGet: async () => stored,
       approvalsUpdate: async ({ request }) => {
@@ -121,10 +124,18 @@ describe('launch_profiles.publish', () => {
       isApprovalExecutionOriginCurrent: async () => true,
     } satisfies Partial<ActionExecutorDeps>;
     const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
-    expect(await executor.execute('launch_profiles.publish', { profileId: 'work' }, {
+    const publication = await executor.execute('launch_profiles.publish', { profileId: 'work' }, {
       surface, authority: 'present_user', serverId: 'home', runtimeAccountId: 'account',
       actionRequestId: 'publish-work', actionCaller: { kind: 'host' },
-    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval-profile' } });
+    });
+    if (surface === 'ui') {
+      expect(publication).toMatchObject({ ok: true, result: { artifactId: [...state.artifacts.keys()][0] } });
+      expect(state.create).toHaveBeenCalledTimes(1);
+      expect(stored).toBeNull();
+      expect(state.readRecord().definition).toEqual({ kind: 'artifact', artifactId: [...state.artifacts.keys()][0] });
+      return;
+    }
+    expect(publication).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval-profile' } });
     expect(state.create).not.toHaveBeenCalled();
     expect(state.readRecord().definition).toMatchObject({ kind: 'inline', profile });
     if (!stored) throw new Error('Expected persisted approval');

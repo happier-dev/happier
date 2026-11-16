@@ -16,7 +16,6 @@ describe('createActionExecutor (Session access)', () => {
     const sessionAccessAction = vi.fn(async () => ({ changed: true, grant }));
     const executor = createActionExecutor({
       sessionAccessAction,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.access.grant.set', { sessionId: 'session-1', ...grant }, {
@@ -37,7 +36,6 @@ describe('createActionExecutor (Session access)', () => {
     const sessionAccessAction = vi.fn(async () => ({ changed: true, grant }));
     const executor = createActionExecutor({
       sessionAccessAction,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     const result = await executor.execute('session.access.grant.set', {
@@ -52,7 +50,6 @@ describe('createActionExecutor (Session access)', () => {
 
   it('reports a host without the family as unsupported rather than silently succeeding', async () => {
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.access.grants.list', { sessionId: 'session-1' }, {

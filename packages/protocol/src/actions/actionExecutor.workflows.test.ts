@@ -9,6 +9,19 @@ import { getBuiltinWorkflowCatalogV1 } from '../workflows/builtins/catalog.js';
 import { getActionSpec } from './actionSpecs.js';
 import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
 import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from '../workflows/builtins/planWithAPanel.js';
+import { workflowDefinitionPreviewStepsV1 } from '../workflows/workflowStepLabel.js';
+
+function workflowWithIngressBoundary(resolveIngressContext: NonNullable<Parameters<typeof createWorkflowActionExecutor>[0]['resolveIngressContext']>) {
+  const unexpected = (): never => { throw new Error('unexpected_workflow_effect'); };
+  const definitions = createWorkflowDefinitionActions({
+    artifactStore: { list: unexpected, read: unexpected, create: unexpected, update: unexpected, delete: unexpected },
+    encodeListCursor: row => row.artifactId, assertDefinitionWriteAllowed: unexpected,
+  });
+  return createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, definitions, resolveIngressContext,
+    runs: createWorkflowAccountRunActionOwner({ definitions, storage: { execute: unexpected },
+      resolveAccountId: unexpected, resolveEncryption: unexpected, normalizeAbsolutePath: () => null, randomBytes: unexpected }),
+  });
+}
 
 describe('createActionExecutor (Workflow family)', () => {
   it('returns declared Workflow input names so discovery can recover and resolve a real consuming field', async () => {
@@ -53,7 +66,8 @@ describe('createActionExecutor (Workflow family)', () => {
           const index = cursor ? 1 : 0;
           return { items: [{ artifactId: ids[index]!, headerVersion: 1, bodyVersion: 1, updatedAt: 1,
             header: { kind: 'workflow-definition.v1', definitionId: ids[index],
-              revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: index ? 'Shared recipe' : 'Own recipe' } },
+              revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: index ? 'Shared recipe' : 'Own recipe' },
+              previewSteps: workflowDefinitionPreviewStepsV1(getBuiltinWorkflowCatalogV1()[0]!.definition.blocks) },
             body: JSON.stringify({ kind: 'workflow-definition.v1', definition: getBuiltinWorkflowCatalogV1()[0]!.definition }),
             access: index ? 'view' : 'owner', ownerAccountId: index ? 'other-account' : 'account' }],
             ...(index ? {} : { nextCursor: ids[0] }) };
@@ -79,7 +93,7 @@ describe('createActionExecutor (Workflow family)', () => {
     for (const [actionId, fieldPath] of [['workflow.trigger.add', 'workflow'], ['session.trigger.add', 'target.ref'],
       ['workflow.run.start', 'source.workflow']] as const) {
       const result = await executor.execute('action.options.resolve', { actionId, fieldPath, draftInput: {} }, { surface: 'agent' });
-      expect(result).toMatchObject({ ok: true, result: { options: expect.arrayContaining([
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { options: expect.arrayContaining([
         ...(actionId === 'workflow.run.start' ? [] : [{ value: ids[0], label: 'Own recipe' }, { value: ids[1], label: 'Shared recipe' }]),
         expect.objectContaining({ value: 'builtin:keep-going' }),
         expect.objectContaining({ value: 'builtin:plan-with-a-panel' }),
@@ -114,7 +128,6 @@ describe('createActionExecutor (Workflow family)', () => {
     }));
     const executor = createActionExecutor({
       workflowAction,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('workflow.validate', {
@@ -167,7 +180,6 @@ describe('createActionExecutor (Workflow family)', () => {
         expect(args.input).toEqual(input);
         return summaries;
       },
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
     await expect(executor.execute('workflow.run.summaries', input, { surface: 'mcp' }))
       .resolves.toEqual({ ok: true, result: summaries });
@@ -175,7 +187,6 @@ describe('createActionExecutor (Workflow family)', () => {
 
   it('fails closed before execution when the Workflow dependency is absent', async () => {
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
     await expect(executor.execute('workflow.validate', {
       definition: { blocks: ['Summarize'] },
@@ -190,7 +201,6 @@ describe('createActionExecutor (Workflow family)', () => {
     const workflowAction = vi.fn();
     const executor = createActionExecutor({
       workflowAction,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('workflow.run.start', {
@@ -217,20 +227,18 @@ describe('createActionExecutor (Workflow family)', () => {
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
-      details: { issues: [{ code: 'unrecognized_keys', path: [] }] },
+      details: { issues: [expect.objectContaining({ code: 'unrecognized_keys', path: [] })] },
     });
     expect(workflowAction).not.toHaveBeenCalled();
   });
 
   it('host-stamps the effective controller permission for a direct start', async () => {
-    const workflowAction = vi.fn(async () => ({
-      ok: false as const,
-      errorCode: 'target_unavailable' as const,
-      error: 'target_unavailable',
-    }));
+    // The ingress host reads plugin-owned schemas after the real family has
+    // normalized authenticated permission context.
+    const readIngress = vi.fn(async () => { throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' }); });
+    const workflowAction = workflowWithIngressBoundary(readIngress);
     const executor = createActionExecutor({
       workflowAction,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await executor.execute('workflow.run.start', {
@@ -252,23 +260,21 @@ describe('createActionExecutor (Workflow family)', () => {
       },
     });
 
-    expect(workflowAction).toHaveBeenCalledWith(expect.objectContaining({
+    expect(readIngress).toHaveBeenCalledWith(expect.objectContaining({
       context: expect.objectContaining({ callerPermissionMode: 'yolo' }),
     }));
   });
 
   it('preserves a Workflow Run mediated source in the canonical Action permission context', async () => {
-    const workflowAction = vi.fn(async () => ({
-      ok: false as const,
-      errorCode: 'target_unavailable' as const,
-      error: 'target_unavailable',
-    }));
+    // The ingress host reads plugin-owned schemas after the real family has
+    // normalized authenticated permission context.
+    const readIngress = vi.fn(async () => { throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' }); });
+    const workflowAction = workflowWithIngressBoundary(readIngress);
     const executor = createActionExecutor({
       workflowAction,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
-    await executor.execute('workflow.run.get', { runId: 'run-1' }, {
+    await executor.execute('workflow.validate', { definition: { blocks: ['Summarize'] } }, {
       surface: 'agent',
       authority: 'account_automation',
       actionCaller: {
@@ -287,7 +293,7 @@ describe('createActionExecutor (Workflow family)', () => {
       },
     });
 
-    expect(workflowAction).toHaveBeenCalledWith(expect.objectContaining({
+    expect(readIngress).toHaveBeenCalledWith(expect.objectContaining({
       context: expect.objectContaining({
         callerPermissionMode: 'read-only',
         causalPermissionAuthority: {
@@ -322,8 +328,8 @@ describe('createActionExecutor (Workflow family)', () => {
         via: 'mcp' as const,
       },
     };
-    const workflowAction = vi.fn(async (args) => {
-      expect(args.context).toEqual({
+    const readIngress = vi.fn<NonNullable<Parameters<typeof createWorkflowActionExecutor>[0]['resolveIngressContext']>>(async (args) => {
+      expect(args.context).toMatchObject({
         ...context,
         callerPermissionMode: 'default',
       });
@@ -331,21 +337,16 @@ describe('createActionExecutor (Workflow family)', () => {
         definition: { blocks: ['Summarize'] },
       });
       expect(args.input).not.toHaveProperty('authorization');
-      return {
-        ok: false as const,
-        errorCode: 'invalid_input' as const,
-        error: 'invalid_input',
-      };
+      throw Object.assign(new Error('invalid_input'), { code: 'invalid_input' });
     });
     const executor = createActionExecutor({
-      workflowAction,
-      isActionApprovalRequired: () => false,
+      workflowAction: workflowWithIngressBoundary(readIngress),
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('workflow.validate', {
       definition: { blocks: ['Summarize'] },
     }, context)).resolves.toMatchObject({ ok: false, errorCode: 'invalid_input' });
-    expect(workflowAction).toHaveBeenCalledOnce();
+    expect(readIngress).toHaveBeenCalledOnce();
   });
 
   it('does not publish an unrecognized Workflow operation error', async () => {
@@ -355,7 +356,6 @@ describe('createActionExecutor (Workflow family)', () => {
         errorCode: 'workflow_private_internal_failure',
         error: 'private detail',
       })),
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('workflow.validate', {
@@ -375,7 +375,6 @@ describe('createActionExecutor (Workflow family)', () => {
         error: 'private lookup detail',
         details: { storageKey: 'private-key' },
       })),
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('workflow.run.get', {
@@ -395,7 +394,6 @@ describe('createActionExecutor (Workflow family)', () => {
         error: 'The current Session is an execution target',
         details: { runId: 'run-1' },
       })),
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('workflow.validate', {
@@ -415,7 +413,6 @@ describe('createActionExecutor (Workflow family)', () => {
         errorCode: 'workflow_wait_self_dependency',
         error: 'The current Session is an execution target',
       })),
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('workflow.validate', {

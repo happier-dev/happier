@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it } from 'vitest';
 import { describeApprovalActionFields } from './actionApprovalPresentation.js';
 import { prepareApprovalRequest } from './executor/approvalPreparation.js';
@@ -20,7 +21,7 @@ describe('native permission choice Ask presentation', () => {
     let stored: ApprovalRequestV2 | null = null;
     const effects: unknown[] = [];
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.permission.respond': { approvalRequiredSurfaces: [context.surface] } } }),
       sessionStatusGet: async () => SessionStatusResultSchema.parse({ session, pendingRequests: [occurrence] }),
       approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'ask-native' }; },
       sessionPermissionRespond: async args => { effects.push(args); return { ok: true }; },

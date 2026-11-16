@@ -4,7 +4,7 @@ import { getActionSpec } from './actionSpecs.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+
 
 const ensureInput = {
   webhookContribution: { pluginId: 'example.github', localId: 'events' },
@@ -33,8 +33,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
     // HTTP execution and Artifact persistence are genuine boundaries; admission/replay are real.
     const deps = {
       pluginWebhookAction: async args => { effects.push(args); return result; },
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
-        context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context),
+      readActionsSettings: (context) => (context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 })),
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'move-approval' }; },
       approvalsGet: async () => stored,
@@ -84,8 +83,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
       const effects: unknown[] = [];
       const executor = createActionExecutor({
         pluginWebhookAction: async args => { effects.push(args); return result; },
-        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
-          context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context),
+        readActionsSettings: (context) => (context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 })),
       } as ActionExecutorDeps);
       for (const surface of ['agent', 'mcp'] as const) {
         const context = { surface, authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
@@ -185,7 +183,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
     }));
     const executor = createActionExecutor({
       pluginWebhookAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
 
     await expect(executor.execute('plugin.webhook.endpoint.ensure', ensureInput, {
@@ -215,7 +213,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
     const pluginWebhookAction = vi.fn(async () => ({}));
     const executor = createActionExecutor({
       pluginWebhookAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
 
     await expect(executor.execute('plugin.webhook.endpoint.ensure', {
@@ -225,7 +223,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
-      details: { issues: [{ code: 'unrecognized_keys', path: [] }] },
+      details: { issues: [{ code: 'unrecognized_keys', path: [], message: expect.any(String) }] },
     });
     expect(pluginWebhookAction).not.toHaveBeenCalled();
   });
@@ -290,11 +288,15 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
     });
 
 
-    it('requests approval for plugin-driven endpoint read and retarget before any endpoint effect', async () => {
+    it('retains blocking read and deferred retarget approval before any plugin endpoint effect', async () => {
       const pluginWebhookAction = vi.fn(async () => ({}));
+      const created: ApprovalRequest[] = [];
       const executor = createActionExecutor({
         pluginWebhookAction,
-        approvalsCreate: async () => ({ artifactId: 'endpoint-approval' }),
+        approvalsCreate: async ({ request }) => { created.push(request); return { artifactId: 'endpoint-approval' }; },
+        approvalsGet: async () => created.at(-1) ?? null,
+        approvalsUpdate: async () => ({ ok: true }),
+        approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request }),
       } as ActionExecutorDeps);
 
       await expect(executor.execute('plugin.webhook.endpoint.read', {
@@ -309,8 +311,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
           sourceCustody: { kind: 'development', registeredRootId: 'channels-root-1' },
         },
       })).resolves.toEqual({
-        ok: true,
-        result: { kind: 'approval_request_created', artifactId: 'endpoint-approval', actionId: 'plugin.webhook.endpoint.read' },
+        ok: false, errorCode: 'approval_rejected', error: 'approval_rejected',
       });
 
       await expect(executor.execute('plugin.webhook.endpoint.retarget', {
@@ -336,6 +337,10 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
         result: { kind: 'approval_request_created', artifactId: 'endpoint-approval', actionId: 'plugin.webhook.endpoint.retarget' },
       });
 
+      expect(created).toMatchObject([
+        { actionId: 'plugin.webhook.endpoint.read', approval: { flow: 'blocking' } },
+        { actionId: 'plugin.webhook.endpoint.retarget', approval: { flow: 'deferred' } },
+      ]);
       expect(pluginWebhookAction).not.toHaveBeenCalled();
     });
 
@@ -347,7 +352,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
       }));
       const executor = createActionExecutor({
         pluginWebhookAction,
-        isActionApprovalRequired: () => false,
+
       } as ActionExecutorDeps);
 
       await expect(executor.execute('plugin.webhook.endpoint.checkCorrespondence', {
@@ -391,7 +396,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
       }));
       const executor = createActionExecutor({
         pluginWebhookAction,
-        isActionApprovalRequired: () => false,
+
       } as ActionExecutorDeps);
       const convergeInput = {
         webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
@@ -411,6 +416,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
         authority: 'account_automation',
         actionCaller: pluginCaller,
         signal: controller.signal,
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'plugin.webhook.endpoint.convergeTarget': ['plugin'] } }),
       })).resolves.toEqual({
         ok: true,
         result: {
@@ -443,7 +449,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
       const pluginWebhookAction = vi.fn(async () => ({}));
       const executor = createActionExecutor({
         pluginWebhookAction,
-        isActionApprovalRequired: () => false,
+
       } as ActionExecutorDeps);
 
       await expect(executor.execute('plugin.webhook.endpoint.convergeTarget', {
@@ -466,7 +472,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
         ok: false,
         errorCode: 'invalid_parameters',
         error: 'invalid_parameters',
-        details: { issues: [{ code: 'unrecognized_keys', path: [] }] },
+        details: { issues: [{ code: 'unrecognized_keys', path: [], message: expect.any(String) }] },
       });
       expect(pluginWebhookAction).not.toHaveBeenCalled();
     });

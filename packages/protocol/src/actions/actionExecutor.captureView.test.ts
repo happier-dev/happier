@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 
 const input = { sourceId: 'host-screen', sourceOccurrenceId: 'screen-occurrence-1' };
@@ -21,9 +21,7 @@ function executor(settings: unknown = { v: 1 }, decision: 'approve' | 'reject' =
     approvalsUpdate: async (args) => { request = args.request; return { ok: true }; },
     approvalsWaitForDecision: async () => ({ decision, request: request! }),
     isApprovalExecutionOriginCurrent: async () => true,
-    isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(
-      actionId, normalizeActionsSettingsV1(settings), context,
-    ),
+    readActionsSettings: () => normalizeActionsSettingsV1(settings),
   } as ActionExecutorDeps);
   return {
     invoke: (pluginId = 'acme.viewer') => instance.execute('capture.view', input, {
@@ -67,7 +65,7 @@ describe('host capture viewing Action admission', () => {
   });
 
   it('requires host-stamped plugin provenance even when approval is waived', async () => {
-    const instance = createActionExecutor({ isActionApprovalRequired: () => false } as ActionExecutorDeps);
+    const instance = createActionExecutor({  } as ActionExecutorDeps);
     expect(await instance.execute('capture.view', input, {
       surface: 'plugin', actionCaller: { kind: 'host' },
     })).toMatchObject({ ok: false, errorCode: 'plugin_action_caller_required' });

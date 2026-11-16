@@ -113,11 +113,12 @@ describe('answering-client external links', () => {
     let enabled = false;
     const executor = createActionExecutor({
       isActionEnabled: () => enabled,
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [id]: ['agent'] } }),
       clientActionExecute: async request => {
         effects.push(request.input);
         return { ok: true, result: { status: 'opened' } };
       },
-      isActionApprovalRequired: () => false,
+
     });
     const context = { surface: 'agent', authority: 'account_automation' } as const;
     const input = { url: 'https://example.test/docs' };
@@ -138,7 +139,7 @@ describe('answering-client external links', () => {
     let approve!: () => void;
     const decision = new Promise<void>(resolve => { approve = resolve; });
     const deps = {
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async ({ request }) => { persisted.push(request); created(); return { artifactId: 'link-approval' }; },
       approvalsUpdate: async ({ request }) => { persisted.push(request); return { ok: true as const }; },

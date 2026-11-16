@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { createActionExecutor, type ActionExecutorContext } from './actionExecutor.js';
+import { createActionExecutor } from './actionExecutor.js';
 import type { ActionId } from './actionIds.js';
-import { normalizeActionsSettingsV1 } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+import { ActionsSettingsV1Schema, normalizeActionsSettingsV1 } from './actionSettings.js';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
 import type { WidgetSurfaceRefV1 } from '../widgets/widgetInstanceV1.js';
 import { createWidgetActionInputResolverV1 } from '../widgets/widgetActionInputResolverV1.js';
@@ -52,8 +51,7 @@ async function fixture(owner: WidgetSurfaceRefV1['owner'], shared: boolean | ((a
   const homeHubArtifacts = createHomeHubArtifactPortV1(admittedTransport, { accountId: account.accountId });
   const definitions = createWidgetDefinitionArtifactPortV1(admittedTransport, { accountId: account.accountId });
   const executor = createActionExecutor({ homeHubArtifacts, widgetDefinitionArtifacts: definitions, widgetAccountScope: () => account, presentUserActionConfirmation,
-    ...(policyHook ? { isActionApprovalRequired: (actionId: ActionId, context: ActionExecutorContext, input: unknown, defaultUiConfirmation?: boolean) => isApprovalRequiredByActionsSettings(actionId,
-      readActionsSettings?.() ?? context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }), context, undefined, undefined, input, defaultUiConfirmation) } : {}),
+    ...(policyHook ? { readActionsSettings: context => readActionsSettings?.() ?? context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }) } : {}),
     widgetSurfaceActions: { project: port, corePage: port, pluginArea: port },
     widgetInputs: createWidgetActionInputResolverV1({
       readDescriptor: async ({ instance }) => readBuiltinWidgetDescriptorV1(instance.definition),
@@ -132,7 +130,7 @@ describe('contextual widget approval at the Action executor', () => {
     await artifact.apply({ kind: 'add', instance });
     const requests: ApprovalRequest[] = [];
     const executor = createActionExecutor({ widgetAccountScope: () => account,
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: [context.surface] } } }),
       widgetSurfaceActions: { pluginArea: createWidgetAreaActionPortV1(() => artifact) },
       widgetCatalog: { list: async () => [{ definition: instance.definition, title: 'Directory count', fields: [], availability: 'available',
         sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, instanceCount: 1 }],
@@ -203,7 +201,7 @@ describe('contextual widget approval at the Action executor', () => {
       expect(JSON.stringify(requests)).not.toContain('private-session');
     }
   });
-  it.each(['waived', 'ask'] as const)('uses live hook-only %s policy for an audience-widening move', async policy => {
+  it.each(['waived', 'ask'] as const)('uses saved %s policy for an audience-widening move', async policy => {
     const actionId = 'widgets.item.move';
     const settings = normalizeActionsSettingsV1({ v: 1,
       approvalWaivedSurfaces: { [actionId]: ['ui'] },
@@ -216,9 +214,9 @@ describe('contextual widget approval at the Action executor', () => {
     await state.homeHubArtifacts.apply({ kind: 'widget_add', instance });
     const input = { ref: { surface: { ...account, owner: { kind: 'home' } }, instanceId: instance.id },
       to: { surface: state.surface, index: 0 } };
-    const result = await state.executor.execute(actionId, input, { surface: 'ui', authority: 'present_user' });
-    expect(result).toMatchObject(policy === 'waived' ? { ok: true } : { ok: false, errorCode: 'approvals_not_supported' });
-    expect(confirmations).toBe(0);
+    const result = await state.executor.execute(actionId, input, { surface: 'ui', authority: 'present_user', actionsSettings: settings });
+    expect(result).toMatchObject(policy === 'waived' ? { ok: true } : { ok: false, errorCode: 'approval_canceled' });
+    expect(confirmations).toBe(policy === 'waived' ? 0 : 1);
     expect((await state.artifact.read()).items.some(item => item.kind === 'widget' && item.instance.id === instance.id)).toBe(policy === 'waived');
   });
 
@@ -301,26 +299,30 @@ describe('contextual widget approval at the Action executor', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
   });
 
-  it('refuses a confirmation when current Account policy changed to Ask-first while the host was open', async () => {
+  it('consumes the exact completed confirmation when Account policy changes to Ask-first while the host is open', async () => {
+    let confirmations = 0;
     let settings = normalizeActionsSettingsV1({ v: 1 });
     const state = await fixture({ kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'main' }, true, true,
       async () => {
+        confirmations += 1;
         settings = normalizeActionsSettingsV1({ v: 1, actions: { 'widgets.item.remove': { approvalRequiredSurfaces: ['ui'] } } });
         return true;
       }, () => settings);
-    const before = (await state.artifact.read()).items;
     expect(await state.executor.execute('widgets.item.remove', {
       ref: { surface: state.surface, instanceId: 'group' },
     }, { surface: 'ui', authority: 'present_user', actionsSettings: settings }))
-      .toMatchObject({ ok: false, errorCode: 'approval_stale' });
-    expect((await state.artifact.read()).items).toEqual(before);
+      .toMatchObject({ ok: true, result: { instance: null } });
+    expect(confirmations).toBe(1);
+    expect((await state.artifact.read()).items.some(item => item.kind === 'group' && item.id === 'group')).toBe(false);
   });
 
-  it('keeps declared-danger confirmation on the same host boundary for non-widget UI actions', async () => {
+  it('confirms a non-widget UI Action configured Ask-first at the same host boundary', async () => {
     const executor = createActionExecutor({ presentUserActionConfirmation: async () => false });
     expect(await executor.execute('projects.trust.revoke', {
       project: { serverId: 'home', projectId: 'project' }, expectedRevision: 1, expectedEffectDigest: 'reviewed-effect',
-    }, { surface: 'ui', authority: 'present_user' }))
+    }, { surface: 'ui', authority: 'present_user', actionsSettings: normalizeActionsSettingsV1({ v: 1,
+      actions: { 'projects.trust.revoke': { approvalRequiredSurfaces: ['ui'] } },
+    }) }))
       .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
   });
 
@@ -339,7 +341,7 @@ describe('contextual widget approval at the Action executor', () => {
     expect(await state.executor.prepare('widgets.item.remove', {
       ref: { surface: state.surface, instanceId: 'group' },
     }, { surface: 'ui', authority: 'present_user' }))
-      .toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'approvals_not_supported' } });
+      .toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'action_interactive_review_required' } });
     expect(confirmations).toBe(1);
     expect((await state.artifact.read()).items).toEqual(before);
     approved = true;
@@ -347,6 +349,7 @@ describe('contextual widget approval at the Action executor', () => {
       ref: { surface: state.surface, instanceId: 'group' },
     }, { surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: true, result: { ref: { surface: state.surface, instanceId: 'group' }, instance: null } });
     expect(confirmations).toBe(2);
+    approved = false;
     const applied = (await state.artifact.read()).items;
     expect(applied.some(item => item.kind === 'group' && item.id === 'group')).toBe(false);
     expect(await state.executor.execute('widgets.item.rename', {
@@ -354,8 +357,8 @@ describe('contextual widget approval at the Action executor', () => {
     }, { surface: 'ui', authority: 'present_user', actionsSettings: normalizeActionsSettingsV1({ v: 1,
       actions: { 'widgets.item.rename': { approvalRequiredSurfaces: ['ui'] } },
       approvalWaivedSurfaces: { 'widgets.item.rename': ['ui'] },
-    }) })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
-    expect(confirmations).toBe(2);
+    }) })).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(confirmations).toBe(3);
     expect((await state.artifact.read()).items).toEqual(applied);
   });
 
@@ -417,14 +420,14 @@ describe('contextual widget approval at the Action executor', () => {
     const input = await row.input(state);
     const actionsSettings = normalizeActionsSettingsV1({ v: 1, actions: { [row.action]: { approvalRequiredSurfaces: ['ui'] } } });
     expect(await state.executor.execute(row.action, input, { surface: 'ui', authority: 'present_user', actionsSettings }))
-      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+      .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
   });
 
   it.each(owners.flatMap(owner => ['ui', 'mcp'].map(surface => ({ ...owner, surface }))))('retains destructive layout deletion for $name ($surface)', async row => {
     const state = await fixture(row.owner, row.shared);
     const created = await state.layouts.create({ surface: state.surface, layoutId: 'delete-me', name: 'Delete me' });
     expect(await state.executor.execute('widgets.area.layout.delete', { surface: created.surface, expectedRevision: created.revision },
-      { surface: row.surface, authority: row.surface === 'ui' ? 'present_user' : 'account_automation' })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+      { surface: row.surface, authority: row.surface === 'ui' ? 'present_user' : 'account_automation' })).toMatchObject({ ok: false, errorCode: row.surface === 'ui' ? 'action_interactive_review_required' : 'approvals_not_supported' });
     expect(await state.layouts.list()).toContainEqual(expect.objectContaining({ artifactId: created.artifactId }));
   });
 
@@ -435,7 +438,7 @@ describe('contextual widget approval at the Action executor', () => {
     expect(await state.executor.execute(action, {
       ref: { surface: state.surface, instanceId: 'group' },
     }, { surface: 'ui', authority: 'present_user' }))
-      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+      .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     expect((await state.artifact.read()).items).toEqual(before);
   });
 
@@ -462,7 +465,7 @@ describe('contextual widget approval at the Action executor', () => {
     const result = await state.executor.execute('widgets.item.network.set', {
       ref: { surface: state.surface, instanceId: 'one' }, network: row.after,
     }, { surface: 'ui', authority: 'present_user', actionsSettings });
-    expect(result).toMatchObject(row.asks ? { ok: false, errorCode: 'approvals_not_supported' } : { ok: true });
+    expect(result).toMatchObject(row.asks ? { ok: false, errorCode: 'action_interactive_review_required' } : { ok: true });
     const items = (await state.artifact.read()).items;
     if (row.asks) expect(items).toEqual(before);
     else expect(items[0]).toMatchObject({ instance: { id: 'one', networkOverride: row.after } });
@@ -487,7 +490,7 @@ describe('contextual widget approval at the Action executor', () => {
     const context = { surface: 'ui', authority: 'present_user' } as const;
     expect(await state.executor.execute('widgets.item.network.set', { ref, network: { network: 'none' } }, context)).toMatchObject({ ok: true });
     expect(await state.executor.execute('widgets.item.network.set', { ref, network: { network: 'open' } }, context))
-      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+      .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     expect((await state.homeHubArtifacts.read()).items).toContainEqual(expect.objectContaining({ instance: { ...instance, networkOverride: { network: 'none' } } }));
   });
 
@@ -507,7 +510,7 @@ describe('contextual widget approval at the Action executor', () => {
     const countDefinitionReads = () => state.artifactReads.filter(id => id === 'network-definition').length;
     const readsBeforeWidening = countDefinitionReads();
     expect(await state.executor.execute('widgets.item.network.set', { ref, network: { network: 'open' } }, context))
-      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+      .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     expect(countDefinitionReads() - readsBeforeWidening).toBe(1);
     await state.definitions.update('network-definition', { networkOverride: { network: 'open' } });
     const readsBeforeNarrowing = countDefinitionReads();

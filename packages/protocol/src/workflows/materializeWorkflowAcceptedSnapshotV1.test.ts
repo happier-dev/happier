@@ -218,7 +218,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
   });
 
   it('admits a sequential For-each Action using the discovered native Action contract', async () => {
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({  });
     const action = await readCompleteActionSpecV1({ actionId: 'workflow.starters.list', read: async input => {
       const discovered = await executor.execute('action.spec.get', input, {
         surface: 'cli', authority: 'account_automation',
@@ -607,11 +607,9 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, snapshot: { workDepth: 2,
       materializedLeaves: expect.arrayContaining([expect.objectContaining({ sourceKey: '$root', blockId: actionBlockId,
-        ...(actionBlockId === 'review' ? { kind: 'action', actionInput: expect.objectContaining({ engineIds: [{ kind: 'unresolved' }] }) }
-          : { kind: 'step', selection: expect.objectContaining({ agentTarget, permissionMode: 'read-only' }),
-            engineBindings: expect.objectContaining({ selections: expect.arrayContaining([
-              expect.objectContaining({ selection: expect.objectContaining({ agentTarget, permissionMode: 'read-only' }) }),
-            ]) }) }) })]) } });
+        kind: 'action', actionInput: expect.objectContaining({
+          [actionBlockId === 'review' ? 'engineIds' : 'backendTargetKeys']: [{ kind: 'unresolved' }],
+        }) })]) } });
     if (!result.ok) throw new Error(result.error.code);
     const reread = await readWorkflowAcceptedAgentStartLeavesV1(result.snapshot);
     expect(reread.filter((leaf) => leaf.blockId === actionBlockId)).toMatchObject([

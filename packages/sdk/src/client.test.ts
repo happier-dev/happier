@@ -2,6 +2,7 @@ import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protoc
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { formatAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol';
+import { MachinePoolCreateInputV1Schema } from '@happier-dev/protocol/machines/pools';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import {
@@ -9,7 +10,6 @@ import {
   ActionIdSchema,
   ExternalActionRequestEnvelopeV2Schema,
   createActionExecutor,
-  isApprovalRequiredByActionsSettings,
   type ActionExecutorDeps,
   PublicActionIdSchema,
   SignedRootActionIdSchema,
@@ -238,8 +238,8 @@ describe('Happier SDK client', () => {
         physicalEffects.push({ actionId, input });
         return results[actionId];
       },
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context, getActionSpec(actionId).safety),
-    } as Pick<ActionExecutorDeps, 'machineTerminalAction' | 'isActionApprovalRequired'> as ActionExecutorDeps);
+      readActionsSettings: () => settings,
+    } as Pick<ActionExecutorDeps, 'machineTerminalAction' | 'readActionsSettings'> as ActionExecutorDeps);
     vi.stubGlobal('fetch', vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body)) as { input: unknown };
       const actionId = ActionIdSchema.parse(decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1)!));
@@ -289,8 +289,8 @@ describe('Happier SDK client', () => {
         permissionWrites++;
         return saved;
       },
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
-    } as Pick<ActionExecutorDeps, 'machineAccessAction' | 'isActionApprovalRequired'> as ActionExecutorDeps);
+      readActionsSettings: () => settings,
+    } as Pick<ActionExecutorDeps, 'machineAccessAction' | 'readActionsSettings'> as ActionExecutorDeps);
     const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body)) as { input: unknown };
       const actionId = ActionIdSchema.parse(decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1)!));
@@ -1771,7 +1771,12 @@ describe('Happier SDK client', () => {
     vi.stubGlobal('fetch', fetch);
 
     const poolId = '99d55938-f860-4af8-8023-01fecec86f35';
-    const create = { poolId, name: 'Fast', description: 'Home-readable', members: [] };
+    const create = MachinePoolCreateInputV1Schema.parse({
+      poolId,
+      name: { content: { t: 'plain', v: 'Fast' }, recipients: [] },
+      description: { content: { t: 'plain', v: 'Home-readable' }, recipients: [] },
+      members: [],
+    });
     const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     await callsTransport(client.actions.machines.pools.list({}));
     await callsTransport(client.actions.machines.pools.get({ poolId }));

@@ -1,3 +1,4 @@
+import { ActionIdSchema } from './actionIds.js';
 import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
@@ -335,7 +336,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'relation-approval' }; },
       approvalsGet: async () => stored,
       approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); updates.push(stored); return { ok: true }; },
-      isActionApprovalRequired: actionId => actionId === 'session.manager.set',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.manager.set']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       // Home/Account authentication and the relation HTTP writer are system boundaries.
       isApprovalExecutionOriginCurrent: async ({ reportStale }) => {
         if (!homeCurrent) reportStale?.('home_changed');
@@ -348,7 +349,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
           : { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
       },
     } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate'
-      | 'isActionApprovalRequired' | 'isApprovalExecutionOriginCurrent' | 'sessionManagerSet'>;
+      | 'readActionsSettings' | 'isApprovalExecutionOriginCurrent' | 'sessionManagerSet'>;
     const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
     expect(await executor.execute('session.manager.set', {
       sessionId: 'worker', managerSessionId: 'lead', expectedManagerSessionId: null,
@@ -377,8 +378,8 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     const caller = { kind: 'session', sessionId: 'parent-1', starterDepth: 2, turnDepth: 3 } as const;
     const deps = {
       approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request))); return { artifactId: 'session-mutation' }; },
-      isActionApprovalRequired: () => true,
-    } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'isActionApprovalRequired'>;
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
+    } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'readActionsSettings'>;
     const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
     expect(await executor.execute('teams.update', { v: 1, teamId: 'team-1', name: 'Session proposal' }, {
       surface: 'agent', authority: 'account_automation', serverId: 'server-1', runtimeAccountId: 'account-1',
@@ -399,14 +400,14 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       approvalsGet: async () => stored,
       approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request))); return { ok: true }; },
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: actionId => actionId === 'session.spawn_new',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.spawn_new']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       resolveAgentStartContext: async () => current,
       sessionSpawnNew: async (args) => { createdSessions.push(args); return { type: 'success', disposition: 'created', sessionId: 'child-1',
         executionTarget: sessionSpawnInput.executionTarget, organizationPlacement: sessionSpawnInput.organizationPlacement,
         initialInput: { status: 'accepted', localId: 'initial-1' } }; },
       sessionSendMessage: async ({ localId }) => ({ status: 'accepted', localId }),
     } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate'
-      | 'isApprovalExecutionOriginCurrent' | 'isActionApprovalRequired' | 'resolveAgentStartContext' | 'sessionSpawnNew' | 'sessionSendMessage'>;
+      | 'isApprovalExecutionOriginCurrent' | 'readActionsSettings' | 'resolveAgentStartContext' | 'sessionSpawnNew' | 'sessionSendMessage'>;
     const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
     expect(await executor.execute('session.spawn_new', sessionSpawnInput, {
       surface: 'agent', authority: 'account_automation', serverId: 'server-1', runtimeAccountId: 'account-1',
@@ -431,7 +432,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
   ])('refuses malformed Session provenance before durable capture: %j', async (caller) => {
     const requests: ApprovalRequest[] = [];
     const deps = { approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'invalid' }; },
-      isActionApprovalRequired: () => true } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'isActionApprovalRequired'>;
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }) } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'readActionsSettings'>;
     const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
     expect(await executor.execute('teams.update', { v: 1, teamId: 'team-1', name: 'Forged' }, {
       surface: 'agent', authority: 'account_automation', serverId: 'server-1', runtimeAccountId: 'account-1',
@@ -480,13 +481,13 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         return { ok: true };
       },
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: actionId => actionId === 'workflow.run.start',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['workflow.run.start']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       workflowAction: args => {
         if (args.actionId !== 'workflow.run.start') throw new Error('unexpected_workflow_action');
         return owner.execute(args);
       },
     } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate'
-      | 'isApprovalExecutionOriginCurrent' | 'isActionApprovalRequired' | 'workflowAction'>;
+      | 'isApprovalExecutionOriginCurrent' | 'readActionsSettings' | 'workflowAction'>;
     // Only Artifact persistence/currentness and the Account storage are process boundaries; real capture, parsing, replay and admission run.
     const executor = createActionExecutor(approvalDeps as unknown as ActionExecutorDeps);
     const created = await executor.execute('workflow.run.start', { runId, source: { kind: 'inline', definition: {
@@ -554,7 +555,8 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         approvalCount += 1;
         return { artifactId: 'team-update-approval' };
       },
-      isActionApprovalRequired: (actionId: string) => actionId === 'teams.update',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['teams.update']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
+      presentUserActionConfirmation: async () => true,
       homeDomainAction,
     } as unknown as ActionExecutorDeps);
     const input = { v: 1 as const, teamId: 'team-1', name: 'Approval rename' };
@@ -653,7 +655,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         return { ok: true as const };
       },
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
       sessionList,
     } as unknown as ActionExecutorDeps);
     const admitted = await executor.execute('session.list', {}, {
@@ -774,7 +776,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         if (!current) reportStale?.('credential_changed');
         return current;
       },
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
       homeDomainAction,
     } as unknown as ActionExecutorDeps);
 
@@ -916,7 +918,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         storedRequest = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request)));
         return { artifactId: 'nested-pat-approval' };
       },
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
       homeDomainAction: async () => ({ status: 'removed', membershipId: 'membership-1' }),
     } as unknown as ActionExecutorDeps);
     const input = { v: 1, teamId: 'team-1', membershipId: 'membership-1' };
@@ -988,7 +990,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       approvalsGet: async () => storedRequest,
       approvalsUpdate: async ({ request }: { request: ApprovalRequest }) => { storedRequest = request; return { ok: true as const }; },
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: (actionId: string) => actionId === 'session.spawn_new',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.spawn_new']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       resolveAgentStartContext: async () => ({
         caller,
         baseline: { machineId: 'machine-1', directory: sessionSpawnInput.directory.path, configuration: { agentTarget: sessionSpawnInput.agentTarget, permissionMode: 'safe-yolo' } },
@@ -1057,7 +1059,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       approvalsGet: async () => storedRequest,
       approvalsUpdate: async ({ request }: { request: ApprovalRequest }) => { storedRequest = request; return { ok: true as const }; },
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: (actionId: string) => actionId === 'execution.run.action',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['execution.run.action']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       executionRunAction,
     } as unknown as ActionExecutorDeps);
     await expect(executor.execute('execution.run.action', { sessionId: 'session-1', runId: 'run-1', actionId: 'review.triage', input: {} }, {
@@ -1127,7 +1129,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     }));
     const executor = createActionExecutor({
       invokeContributedAction,
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('action.invoke', {
@@ -1159,7 +1161,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     }));
     const executor = createActionExecutor({
       invokeContributedAction,
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('action.invoke', {
@@ -1201,9 +1203,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       approvalsUpdate,
       sessionSpawnNew,
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: (actionId, context) => (
-        actionId === 'session.spawn_new' && context.surface === 'plugin'
-      ),
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.spawn_new']: { approvalRequiredSurfaces: ['plugin'] } } }),
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.spawn_new', sessionSpawnInput, {
@@ -1279,7 +1279,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     const approvalsCreate = vi.fn();
     const executor = createActionExecutor({
       approvalsCreate,
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.spawn_new', sessionSpawnInput, {
@@ -1350,9 +1350,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'approval-plugin-missing-caller-1' }));
     const executor = createActionExecutor({
       approvalsCreate,
-      isActionApprovalRequired: (actionId, context) => (
-        actionId === 'session.spawn_new' && context.surface === 'plugin'
-      ),
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.spawn_new']: { approvalRequiredSurfaces: ['plugin'] } } }),
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.spawn_new', sessionSpawnInput, {
@@ -1791,7 +1789,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     });
     const executor = createActionExecutor({
       approvalsCreate,
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
     } as unknown as ActionExecutorDeps);
     const authorization = {
       admittedPermissionCeiling: 'default' as const,
@@ -1828,7 +1826,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     const approvalsCreate = vi.fn();
     const executor = createActionExecutor({
       approvalsCreate,
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('agents.backends.list', {}, {
@@ -1849,7 +1847,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
 
   it('refuses a Workflow approval with accepted authorization but no identified requester', async () => {
     const approvalsCreate = vi.fn();
-    const executor = createActionExecutor({ approvalsCreate, isActionApprovalRequired: () => true });
+    const executor = createActionExecutor({ approvalsCreate, readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }) });
 
     await expect(executor.execute('agents.backends.list', {}, {
       surface: 'cli',

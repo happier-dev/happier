@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
@@ -29,7 +30,7 @@ describe('createActionExecutor (Machine Pools family)', () => {
     });
     const executor = createActionExecutor({
       machinePoolAction,
-      isActionApprovalRequired: () => false,
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.pools.delete': ['ui'] } }),
     } as unknown as ActionExecutorDeps);
     const inputs = {
       'machines.pools.list': {},
@@ -55,7 +56,7 @@ describe('createActionExecutor (Machine Pools family)', () => {
         effects.push(request);
         return poolView;
       },
-      isActionApprovalRequired: (actionId) => actionId === 'machines.pools.create',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['machines.pools.create']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       approvalsCreate: async ({ request }) => {
         stored = ApprovalRequestV2Schema.parse(request);
         return { artifactId: 'pool-create-approval' };
@@ -108,7 +109,7 @@ describe('createActionExecutor (Machine Pools family)', () => {
   });
 
   it('fails closed when the Account server adapter is absent', async () => {
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({  } as unknown as ActionExecutorDeps);
     await expect(executor.execute('machines.pools.list', {}, { surface: 'ui' })).resolves.toEqual({
       ok: false,
       errorCode: 'unsupported_action',
@@ -117,8 +118,7 @@ describe('createActionExecutor (Machine Pools family)', () => {
   });
 
   it('admits a workspace at the captured portable Home without admitting another Home', async () => {
-    const executor = createActionExecutor({ machinePoolAction: async () => poolView,
-      isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ machinePoolAction: async () => poolView } as unknown as ActionExecutorDeps);
     const context = { surface: 'cli', serverId: 'local-profile', serverIdentityId: 'srv_same_home' } as const;
     const input = { poolId, requestKey: 'home-alias', purpose: 'finite',
       workspace: { serverId: 'srv_same_home', refId: 'checkout' } } as const;
@@ -155,8 +155,7 @@ describe('createActionExecutor (Machine Pools family)', () => {
         explanation: request.destination.machineId === 'unknown' ? 'load_unknown' : 'eligible',
       };
     };
-    const executor = createActionExecutor({ machinePoolAction, projectWorkerAction,
-      isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ machinePoolAction, projectWorkerAction } as unknown as ActionExecutorDeps);
     for (const purpose of ['finite', 'service-start'] as const) {
       const input = { poolId, requestKey: 'one', purpose, workspace: { serverId: 'home', refId: 'checkout' } };
       await expect(executor.execute('machines.pools.resolve', input, { surface: 'ui', serverId: 'home' }))
@@ -183,8 +182,7 @@ describe('createActionExecutor (Machine Pools family)', () => {
       return { eligible: true, load: { kind: 'unknown' }, explanation: 'load_unknown',
         candidate: { serverId: swapped ? 'other-home' : 'home', machineId: request.destination.machineId } };
     };
-    const executor = createActionExecutor({ machinePoolAction, projectWorkerAction,
-      isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ machinePoolAction, projectWorkerAction } as unknown as ActionExecutorDeps);
     const input = { poolId, requestKey: 'one', purpose: 'finite', workspace: { serverId: 'home', refId: 'checkout' } };
     await expect(executor.execute('machines.pools.resolve', input, { surface: 'cli' })).resolves.toEqual({
       ok: true, result: { kind: 'resolved', poolId, machineId: 'fallback-b', priorityTier: 3 },

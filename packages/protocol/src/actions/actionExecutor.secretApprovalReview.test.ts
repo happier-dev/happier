@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it } from 'vitest';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
@@ -86,7 +87,7 @@ describe('confidential Action review declarations', () => {
         stored = structuredClone(next);
         return { ok: true };
       },
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: [context.surface] } } }),
       isApprovalExecutionOriginCurrent: async () => true,
       homeDomainAction: async request => {
         effects.push(request.input);
@@ -99,9 +100,10 @@ describe('confidential Action review declarations', () => {
     });
     const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
       serverId: 'home', serverIdentityId: 'stable-home', runtimeAccountId: 'account', actionRequestId: 'review-request' } as const;
-    const invokingContext = actionId === 'secrets.shared.grants.set'
-      ? { ...context, surface: 'cli', authority: 'account_automation', machineId: 'controller' } as const
-      : context;
+    // CLI policy review exercises both durable operands and live-only custody;
+    // the person's own UI press uses its separate native confirmation.
+    const invokingContext = { ...context, surface: 'cli', authority: 'account_automation',
+      defaultSessionMachineId: 'controller' } as const;
     const initial = await executor.execute(actionId, input, invokingContext);
     expect(initial, initial.ok ? undefined : initial.errorCode).toMatchObject(liveInput ? { ok: true } : { ok: true, result: { kind: 'approval_request_created' } });
     const request = ApprovalRequestV2Schema.parse(stored);

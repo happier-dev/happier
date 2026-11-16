@@ -29,7 +29,7 @@ describe('external review Apply authoring', () => {
         const refusal = { ok: false as const, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
         const sent: string[] = [];
         // Only the Home review transport and Session message transport are replaced.
-        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ isActionApprovalRequired: () => false,
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             reviewCommentAction: async request => {
                 expect(request.reviewCommentPrincipal).toEqual({ actor: { kind: 'plugin', pluginId: 'external.consumer' } });
                 return { items: [comment], cursor: null };
@@ -51,7 +51,7 @@ describe('external review Apply authoring', () => {
 
     it('refuses a plugin invocation without a host-stamped caller before sending', async () => {
         const spec = getActionSpec('review.apply');
-        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ isActionApprovalRequired: () => false,
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             reviewCommentAction: async () => ({ ok: false, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' }),
             sessionSendMessage: async () => { throw new Error('A refused review must never send'); },
         }));

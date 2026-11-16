@@ -10,7 +10,6 @@ const result = { v: 1 as const, relationshipId: 'relationship-a', terminated: tr
 
 function executorWith(deps: Record<string, unknown>) {
   return createActionExecutor({
-    isActionApprovalRequired: () => false,
     ...deps,
   } as unknown as ActionExecutorDeps);
 }
@@ -29,15 +28,17 @@ describe('workspace.sync.relationship.terminate Action', () => {
 
     const response = await executorWith({ workspaceSyncRelationshipTerminate: terminate }).execute(actionId, input, {
       surface: 'ui', authority: 'present_user', serverId: 'home-a', actionRequestId: 'terminate-a',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } }),
     });
     expect(response).toEqual({ ok: true, result });
-    expect(terminate).toHaveBeenCalledWith({ input, serverId: 'home-a' });
+    expect(terminate).toHaveBeenCalledWith({ input, serverId: 'home-a', context: expect.objectContaining({ surface: 'ui', authority: 'present_user' }) });
   });
 
   it('fails closed when the relationship termination dependency is disconnected', async () => {
     const actionId = 'workspace.sync.relationship.terminate' as never;
     await expect(executorWith({}).execute(actionId, input, {
       surface: 'ui', authority: 'present_user', serverId: 'home-a', actionRequestId: 'terminate-a',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } }),
     })).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
   });
 });
@@ -83,7 +84,7 @@ describe('workspace Sync relationship reversible lifecycle Actions', () => {
     } });
     await expect(executor.execute(actionId as never, input, {
       surface: 'ui', authority: 'present_user', serverId: 'home-a', actionsSettings: settings,
-    })).resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    })).resolves.toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     await expect(executor.execute(actionId as never, input, {
       surface: 'agent', authority: 'account_automation', serverId: 'home-a',
     })).resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });

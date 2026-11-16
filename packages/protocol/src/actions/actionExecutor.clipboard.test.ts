@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 
@@ -55,7 +55,7 @@ describe('answering-client clipboard Action', () => {
     const deps = {
       interceptActionExecution: async request => ({ status: 'continue' as const, input: request.input }),
       observeActionExecution: observation => { observations.push(observation); },
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      readActionsSettings: () => settings,
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async ({ request }) => { persisted.push(request); markCreated(); return { artifactId: 'clipboard-approval' }; },
       approvalsUpdate: async ({ request }) => { persisted.push(request); return { ok: true as const }; },

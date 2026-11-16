@@ -7,7 +7,6 @@ import {
   isApprovalRequiredByActionsSettings,
   isInternalActionId,
   RUNTIME_ACTION_IDS_V1,
-  type ActionExecutorContext,
   type ActionId,
   type ApprovalRequest,
   type RuntimeActionExecute,
@@ -24,7 +23,7 @@ import { createActionExecutorBoundaryFixture } from '../../src/testkit/actionExe
  * from the danger SSOT and is actually ENFORCED by the assembled action executor — not merely
  * declared in a policy table. It drives the REAL protocol `createActionExecutor` wired exactly as
  * production (`apps/ui/.../defaultActionExecutor.ts`) routes approvals through
- * `isApprovalRequiredByActionsSettings`. The only stubbed seams are the two real SYSTEM boundaries:
+ * the shared approval router with host-provided settings. The only stubbed seams are the two real SYSTEM boundaries:
  *   - the runtime-action leaf (the daemon RPC transport), and
  *   - the approvals store (persistence/await transport).
  * There are NO internal mocks: the executor, the approval-routing logic, the danger-floor derivation
@@ -138,8 +137,8 @@ const EXECUTOR_DRIVE_LEAF_RESULT = {
 } as const;
 
 /**
- * Builds the production-wired executor. Approval routing is decided by the REAL
- * `isApprovalRequiredByActionsSettings` (exactly as `defaultActionExecutor.ts` wires it). The
+ * Builds the production-wired executor. The host supplies its settings to the shared approval router,
+ * exactly as `defaultActionExecutor.ts` does. The
  * runtime leaf and approvals store are the only seams provided, and they ARE the system boundaries
  * (RPC + persistence). Every other dep is a rejecting stub so an accidental extra dependency surfaces.
  */
@@ -181,8 +180,7 @@ function createProductionWiredExecutor(input: Readonly<{
       const decision = await pending;
       return { ...decision, request: StoredApprovalRequestSchema.parse(decision.request) };
     },
-    isActionApprovalRequired: (actionId: ActionId, ctx: ActionExecutorContext) =>
-      isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, ctx),
+    readActionsSettings: () => EMPTY_SETTINGS,
   }));
   const context = { serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'account',
     actionRequestId: 'launcher-1', actionCaller: { kind: 'host' as const },

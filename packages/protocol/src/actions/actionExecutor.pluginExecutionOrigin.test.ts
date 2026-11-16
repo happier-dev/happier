@@ -15,7 +15,7 @@ describe('plugin execution origin Action front door', () => {
       const requests: unknown[] = [];
       const executor = createActionExecutor({ clientActionExecute: async request => {
         requests.push(request); return { ok: true, result: { status: 'applied' } };
-      }, isActionApprovalRequired: () => false });
+      } });
       expect(await executor.execute('plugins.execution_origin.set', { pluginId: 'acme.plugin', origin, contextualTarget, clientId: 'app-b' },
         { surface, authority: 'account_automation' })).toEqual({ ok: true, result: { status: 'applied' } });
       expect(requests).toEqual([expect.objectContaining({ actionId: 'plugins.execution_origin.set',
@@ -40,7 +40,7 @@ describe('plugin execution origin Action front door', () => {
       // The answering client is a system boundary; admission and output parsing stay real.
       const executor = createActionExecutor({ pluginExecutionOriginAction: async (args: { input: unknown }) => {
         expect(args.input).toEqual(input); return output;
-      }, isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+      } } as unknown as ActionExecutorDeps);
       expect(await executor.execute(id, input, { surface: 'ui', authority: 'present_user' }))
         .toEqual({ ok: true, result: output });
       expect(spec.inputSchema.safeParse({ ...input, accountId: 'foreign' }).success).toBe(false);
@@ -49,14 +49,13 @@ describe('plugin execution origin Action front door', () => {
 
   it('preserves the answering app unavailable reason through the CLI relay result parser', async () => {
     const result = { status: 'unavailable', reason: { code: 'current_ui_context_unavailable', phase: 'selection', retryable: false } };
-    const executor = createActionExecutor({ clientActionExecute: async () => ({ ok: true, result }), isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({ clientActionExecute: async () => ({ ok: true, result }) });
     expect(await executor.execute('plugins.execution_origin.list', { pluginId: 'acme.plugin', contextual: true },
       { surface: 'cli', authority: 'account_automation' })).toEqual({ ok: true, result });
   });
 
   it('requires a diagnostic for an unavailable list while retaining mutation outcomes', async () => {
-    const executor = createActionExecutor({ clientActionExecute: async () => ({ ok: true, result: { status: 'unavailable' } }),
-      isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({ clientActionExecute: async () => ({ ok: true, result: { status: 'unavailable' } }) });
     expect(await executor.execute('plugins.execution_origin.list', { pluginId: 'acme.plugin' },
       { surface: 'cli', authority: 'account_automation' })).toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
     expect(await executor.execute('plugins.execution_origin.clear', { pluginId: 'acme.plugin' },

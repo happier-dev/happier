@@ -28,7 +28,6 @@ function harness(overrides: Partial<ActionExecutorDeps> = {}) {
     approvalsGet: async ({ artifactId }) => records.get(artifactId) ?? null,
     approvalsUpdate: async ({ artifactId, request }) => { records.set(artifactId, request); return { ok: true }; },
     isApprovalExecutionOriginCurrent: async () => true,
-    isActionApprovalRequired: () => false,
     runtimeActionExecute: async () => { rawEffects += 1; return { status: 'filled', code: 'filled' }; },
     ...overrides,
   } as ActionExecutorDeps);
@@ -49,7 +48,7 @@ const credentialDefinition: ActionDefinitionV1 = {
 describe('confidential secret-fill approval continuation', () => {
   it.each([undefined, null, { clientId: 'public-client' }])('lets Account-waived MCP sign-in reach its host without an optional client secret (%j)', async client => {
     let effects = 0;
-    const { executor, records } = harness({ isActionApprovalRequired: undefined, mcpServerAction: async () => {
+    const { executor, records } = harness({ mcpServerAction: async () => {
       effects++;
       return { ok: true, result: { attemptId: 'attempt', authorizationUrl: 'https://example.test/sign-in', expiresAtMs: 100, machineId: 'machine' } };
     } });
@@ -62,18 +61,20 @@ describe('confidential secret-fill approval continuation', () => {
     expect(effects).toBe(1);
   });
 
-  it('keeps an explicit UI Ask at the approval policy without manufacturing a confidential-input choice', async () => {
+  it('keeps an explicit UI Ask in native review without manufacturing a confidential-input choice', async () => {
     let effects = 0;
-    const { executor, records } = harness({ isActionApprovalRequired: undefined,
-      approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request: { ...request, status: 'rejected' } }),
+    const { executor, records } = harness({
+      presentUserActionConfirmation: async ({ preview }) => {
+        expect(preview).not.toHaveProperty('confidentialInputs');
+        return false;
+      },
       mcpServerAction: async () => { effects++; return { ok: true, result: {} }; },
     });
     expect(await executor.execute('mcp.servers.signIn.start', { serverId: 'mcp-server' }, { ...context,
       surface: 'ui', authority: 'present_user', actionsSettings: { v: 1, actions: {
         'mcp.servers.signIn.start': { approvalRequiredSurfaces: ['ui'] },
-      } } })).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
-    expect(records.size).toBe(1);
-    expect(records.get('approval')?.preview).not.toHaveProperty('confidentialInputs');
+      } } })).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(records.size).toBe(0);
     expect(effects).toBe(0);
   });
 
@@ -285,7 +286,6 @@ describe('confidential secret-fill approval continuation', () => {
         rows.set(artifactId, { ...row, header: { ...row.header, approvalStatus: request.status }, body: JSON.stringify(request) });
         return { ok: true };
       },
-      isActionApprovalRequired: () => false,
       isApprovalExecutionOriginCurrent: async () => true,
       confidentialSecretFill: async ({ isCurrent }) => {
         expect(await isCurrent()).toBe(true);

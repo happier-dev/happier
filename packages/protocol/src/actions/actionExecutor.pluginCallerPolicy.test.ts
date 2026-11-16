@@ -10,7 +10,7 @@ import { UsageFileResultSchema } from '../usage/usageExport.js';
 import { decodeBase64 } from '../crypto/base64.js';
 import { PluginUiResourceSubscriptionRequestV1Schema } from '../plugins/ui/subscriptions.js';
 import { createPluginInstallationReviewFixture } from '../testing/pluginInstallationReviewFixture.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 
 function pluginCaller(
@@ -31,14 +31,12 @@ function pluginCaller(
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
-    isActionApprovalRequired: () => false,
+
     ...overrides,
   } as ActionExecutorDeps);
 }
 
-const defaultApprovalPolicy: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, context, input) =>
-  isApprovalRequiredByActionsSettings(id, context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }),
-    context, undefined, undefined, input);
+const defaultApprovalPolicy: NonNullable<ActionExecutorDeps['readActionsSettings']> = (context) => context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 });
 
 describe('createActionExecutor plugin caller policy', () => {
   it('preserves the real plugin caller through contributed dispatch and keeps target admission authoritative', async () => {
@@ -124,7 +122,7 @@ describe('createActionExecutor plugin caller policy', () => {
       ok: true as const,
       kind: 'plugins_uninstall',
     }));
-    const executor = createExecutor({ pluginsDevLoopAction, isActionApprovalRequired: defaultApprovalPolicy });
+    const executor = createExecutor({ pluginsDevLoopAction, readActionsSettings: defaultApprovalPolicy });
 
     await expect(executor.execute('plugins.uninstall', {
       pluginId: 'acme.author',
@@ -169,7 +167,7 @@ describe('createActionExecutor plugin caller policy', () => {
     });
     const executor = createExecutor({
       pluginsDevLoopAction, approvalsCreate,
-      isActionApprovalRequired: defaultApprovalPolicy,
+      readActionsSettings: defaultApprovalPolicy,
       approvalsGet: async () => storedRequest,
       approvalsUpdate: async ({ request }) => {
         storedRequest = request;
@@ -243,8 +241,7 @@ describe('createActionExecutor plugin caller policy', () => {
     }));
     const executor = createExecutor({
       pluginsDevLoopAction, sessionSendMessage,
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
-        normalizeActionsSettingsV1({ v: 1 }), context),
+      readActionsSettings: () => (normalizeActionsSettingsV1({ v: 1 })),
       buildApprovalPreview: async ({ defaultPreview }) => ({
         ...defaultPreview,
         pluginInstall: {
@@ -318,8 +315,7 @@ describe('createActionExecutor plugin caller policy', () => {
   it.each(['ui', 'cli'] as const)('keeps native UI install review separate from the CLI approval handle (%s)', async (surface) => {
     const requests: unknown[] = [];
     const executor = createActionExecutor({
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
-        normalizeActionsSettingsV1({ v: 1 }), context),
+      readActionsSettings: () => (normalizeActionsSettingsV1({ v: 1 })),
       approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'install-review' }; },
       pluginsDevLoopAction: async () => { throw new Error('Install effect must wait for approval'); },
     } as ActionExecutorDeps);
@@ -342,7 +338,7 @@ describe('createActionExecutor plugin caller policy', () => {
     const settings = normalizeActionsSettingsV1({ v: 1,
       approvalWaivedSurfaces: { 'plugins.install': ['agent'] } });
     const executor = createActionExecutor({
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+      readActionsSettings: () => (settings),
       pluginsDevLoopAction: async ({ context }) => ({ ok: true, kind: 'plugins_install',
         outcome: 'applied', authority: context.authority, proofArtifactId: context.presentUserApproval?.artifactId ?? null }),
     } as ActionExecutorDeps);
@@ -360,8 +356,7 @@ describe('createActionExecutor plugin caller policy', () => {
     let storedRequest: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
     const executor = createExecutor({
       pluginsDevLoopAction,
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
-        normalizeActionsSettingsV1({ v: 1 }), context),
+      readActionsSettings: () => (normalizeActionsSettingsV1({ v: 1 })),
       buildApprovalPreview: async ({ defaultPreview }) => ({
         ...defaultPreview,
         pluginInstall: { permissionsDisclosure: 'pendingDaemonEvaluation' },
@@ -405,7 +400,7 @@ describe('createActionExecutor plugin caller policy', () => {
     const approvalsCreate = vi.fn<NonNullable<ActionExecutorDeps['approvalsCreate']>>(
       async () => ({ artifactId: 'approval-uninstall-1' }),
     );
-    const executor = createExecutor({ pluginsDevLoopAction, approvalsCreate, isActionApprovalRequired: defaultApprovalPolicy });
+    const executor = createExecutor({ pluginsDevLoopAction, approvalsCreate, readActionsSettings: defaultApprovalPolicy });
     const caller = {
       ...pluginCaller('acme.author'),
       sourceCustody: { kind: 'development' as const, registeredRootId: 'author-root-1' },
@@ -433,6 +428,7 @@ describe('createActionExecutor plugin caller policy', () => {
       surface: 'plugin',
       actionCaller: caller,
       signal: controller.signal,
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'plugins.reload': ['plugin'] } }),
     })).resolves.toEqual({ ok: true, result: { ok: true, kind: 'plugins_reload' } });
 
     expect(pluginsDevLoopAction).toHaveBeenCalledWith({
@@ -470,6 +466,7 @@ describe('createActionExecutor plugin caller policy', () => {
     await expect(executor.execute('plugins.reload', { pluginId: 'acme.target' }, {
       surface: 'plugin',
       actionCaller: caller,
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'plugins.reload': ['plugin'] } }),
     })).resolves.toEqual({ ok: true, result: { ok: true, kind: 'plugins_reload' } });
 
     expect(pluginsDevLoopAction).toHaveBeenCalledWith({

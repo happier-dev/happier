@@ -17,7 +17,6 @@ describe('machine agent install Action parity', () => {
     }
     const requests: unknown[] = [];
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => false,
       presentUserActionConfirmation: async () => true,
       machineAgentInstallStart: async (args: Parameters<NonNullable<ActionExecutorDeps['machineAgentInstallStart']>>[0]) => {
         requests.push(args); return { ok: true, jobId: 'definition-job' };
@@ -56,7 +55,6 @@ describe('machine agent install Action parity', () => {
       progress: [{ stepId: 'cli', bytesDone: 32, bytesTotal: null }],
     };
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => false,
       presentUserActionConfirmation: async () => true,
       machineAgentInstallStart: async (args: Parameters<NonNullable<ActionExecutorDeps['machineAgentInstallStart']>>[0]) => {
         requests.push(args);

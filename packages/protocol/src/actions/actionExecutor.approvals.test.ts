@@ -1,3 +1,4 @@
+import { ActionIdSchema } from './actionIds.js';
 import { describe, expect, it, vi } from 'vitest';
 import { isDeepStrictEqual } from 'node:util';
 import tweetnacl from 'tweetnacl';
@@ -289,7 +290,7 @@ describe('Environment binding pending-input hold', () => {
     };
     const executor = createExecutor({ deploymentAction: transport,
       resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport),
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      readActionsSettings: () => settings,
       approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'binding-choice' }; },
       approvalsGet: async () => request,
       approvalsUpdate: async ({ request: next }) => {
@@ -1450,7 +1451,7 @@ describe('createActionExecutor (approvals)', () => {
     let settings = defaultActionsSettings;
     // Approval persistence and Session RPC delivery are the system boundaries.
     const executor = createExecutor({
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      readActionsSettings: () => settings,
       approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'permission-answer-approval' }; },
       sessionPermissionRespond: async ({ requestId }) => { delivered.push(requestId ?? ''); return { ok: true }; },
     });
@@ -1661,7 +1662,7 @@ describe('createActionExecutor (approvals)', () => {
     } });
     // Approval persistence and the attention HTTP port are the system boundaries.
     const executor = createExecutor({
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      readActionsSettings: () => settings,
       approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'attention-approval' }; },
       approvalsGet: async () => request,
       approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
@@ -1857,7 +1858,7 @@ describe('createActionExecutor (approvals)', () => {
     const effects: unknown[] = [];
     const executor = createExecutor({
       sessionOpen: async input => { effects.push(input); return { ok: true, status: 'opened' }; },
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
       approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'resume-request' }; },
       approvalsGet: async () => request,
       approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
@@ -1933,7 +1934,7 @@ describe('createActionExecutor (approvals)', () => {
     const sessionOpen = vi.fn(async () => ({ ok: true, status: 'opened' }));
     const executor = createExecutor({
       sessionOpen,
-      isActionApprovalRequired: () => false,
+
       isApprovalExecutionOriginCurrent: async ({ reportStale }) => {
         if (!current) reportStale?.('credential_changed');
         return current;
@@ -2064,7 +2065,7 @@ describe('createActionExecutor (approvals)', () => {
       accountApiTokensRevokeAction: async () => { effects.push(actionId); return { revoked: true }; },
       accountApiTokensRevokeAllAction: async () => { effects.push(actionId); return { revokedCount: 1 }; },
       accountSessionsSignOutEverywhereAction: async () => { effects.push(actionId); return { status: 'signed_out' }; },
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, input),
+      readActionsSettings: () => settings,
       approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'security-request' }; },
       approvalsGet: async () => request,
       approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
@@ -2250,14 +2251,14 @@ describe('createActionExecutor (approvals)', () => {
         // This is the server feature-bit boundary; family dispatch/trigger semantics stay real.
         isWorkflowFeatureEnabled: () => true, definitions, triggers, runs: { execute: unused },
       }),
-      isActionApprovalRequired: (actionId, context, input) => {
+      readActionsSettings: (context) => {
         authorities.push(context?.authority);
-        return isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input);
+        return settings;
       },
       approvalsCreate: async (input) => { request = input.request; return { artifactId: 'approval' }; },
       approvalsGet: async () => request,
       approvalsUpdate: async (input) => { request = input.request; return { ok: true }; },
-    } satisfies Pick<ActionExecutorDeps, 'workflowAction' | 'isActionApprovalRequired' | 'presentUserActionConfirmation'
+    } satisfies Pick<ActionExecutorDeps, 'workflowAction' | 'readActionsSettings' | 'presentUserActionConfirmation'
       | 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate'>, { confirmUiDefault: true });
     expect(await executor.execute('workflow.trigger.remove', { automationId: 'automation', triggerId: 'trigger' }, {
       surface, authority: 'account_automation', actionCaller: { kind: 'host' },
@@ -2364,7 +2365,7 @@ describe('createActionExecutor (approvals)', () => {
   it('requires an Artifact owner for durable Session approvals instead of a Session-local confirmation', async () => {
     const sessionActionConfirmation = vi.fn(async () => ({ decision: 'approve' as const, isCurrent: () => true }));
     const sessionActivityGet = vi.fn();
-    const executor = createExecutor({ sessionActionConfirmation, sessionActivityGet, isActionApprovalRequired: () => true });
+    const executor = createExecutor({ sessionActionConfirmation, sessionActivityGet, readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }) });
     expect(await executor.execute('session.activity.get', { sessionId: 's1', windowSeconds: 10 }, {
       surface: 'agent', authority: 'account_automation', defaultSessionId: 's1',
     })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
@@ -2595,7 +2596,7 @@ describe('createActionExecutor (approvals)', () => {
 
     const executor = createExecutor({
       approvalsCreate,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'ui.voice_global.reset' && ctx.surface === 'cli',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['ui.voice_global.reset']: { approvalRequiredSurfaces: ['cli'] } } }),
     } as any);
 
     const res = await executor.execute(
@@ -2624,7 +2625,7 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       approvalsCreate,
       sessionSendMessage,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'mcp',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.message.send']: { approvalRequiredSurfaces: ['mcp'] } } }),
     } as any);
 
     const res = await executor.execute(
@@ -2649,7 +2650,7 @@ describe('createActionExecutor (approvals)', () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
     const executor = createExecutor({
       approvalsCreate,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'mcp',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.message.send']: { approvalRequiredSurfaces: ['mcp'] } } }),
     } as any);
 
     const authoredSummary = 'Caller-authored replacement summary';
@@ -2691,7 +2692,7 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       approvalsCreate,
       buildApprovalPreview,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'plugins.install' && ctx.surface === 'agent',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['plugins.install']: { approvalRequiredSurfaces: ['agent'] } } }),
     } as any);
 
     const res = await executor.execute(
@@ -2780,7 +2781,7 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       approvalsCreate,
       sessionSendMessage,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'agent',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.message.send']: { approvalRequiredSurfaces: ['agent'] } } }),
     } as any);
 
     const res = await executor.execute(
@@ -2832,7 +2833,7 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       approvalsCreate,
       sessionSendMessage,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'agent',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.message.send']: { approvalRequiredSurfaces: ['agent'] } } }),
     } as any);
 
     const res = await executor.execute(
@@ -2866,7 +2867,7 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       approvalsCreate,
       sessionSendMessage,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'agent',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.message.send']: { approvalRequiredSurfaces: ['agent'] } } }),
     } as any);
 
     const res = await executor.execute(
@@ -2936,7 +2937,7 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       approvalsCreate,
       sessionSendMessage,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'cli',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.message.send']: { approvalRequiredSurfaces: ['cli'] } } }),
     });
 
     const res = await executor.execute(
@@ -2959,7 +2960,7 @@ describe('createActionExecutor (approvals)', () => {
 
     const executor = createExecutor({
       approvalsCreate,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'cli',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.message.send']: { approvalRequiredSurfaces: ['cli'] } } }),
     } as any);
 
     const res = await executor.execute(
@@ -2983,7 +2984,7 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       approvalsCreate,
       executionRunStart,
-      isActionApprovalRequired: (actionId) => actionId === 'review.start',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['review.start']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
     } as any);
 
     const res = await executor.execute(
@@ -3020,7 +3021,7 @@ describe('createActionExecutor (approvals)', () => {
     }));
     const executor = createExecutor({
       executionRunStart,
-      isActionApprovalRequired: (actionId) => actionId === 'execution.run.start',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['execution.run.start']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       ...overrides,
     });
 
@@ -3054,7 +3055,7 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       approvalsCreate,
       agentsBackendsList,
-      isActionApprovalRequired: (actionId) => actionId === 'agents.backends.list',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['agents.backends.list']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
     } as any);
 
     const res = await executor.execute(
@@ -3085,7 +3086,7 @@ describe('createActionExecutor (approvals)', () => {
       approvalsCreate,
       approvalsUpdate,
       approvalsWaitForDecision,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'action.spec.search' && ctx.surface === 'api',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['action.spec.search']: { approvalRequiredSurfaces: ['api'] } } }),
     });
 
     await expect(executor.execute(
@@ -3154,11 +3155,7 @@ describe('createActionExecutor (approvals)', () => {
       approvalsWaitForDecision,
       presentUserActionConfirmation: async () => false,
       homeDomainAction,
-      isActionApprovalRequired: (actionId, context) => (
-        actionId === 'teams.invitations.create'
-        && context.surface === 'ui'
-        && context.authority === 'present_user'
-      ),
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['teams.invitations.create']: { approvalRequiredSurfaces: ['ui'] } } }),
     }, { confirmUiDefault: true });
 
     await expect(executor.execute(
@@ -3215,7 +3212,7 @@ describe('createActionExecutor (approvals)', () => {
           const pending = coordinator.waitForDecision(args); signalWaiting(); return pending;
         },
         isApprovalExecutionOriginCurrent: async () => true,
-        isActionApprovalRequired: id => id === actionId,
+        readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
         mcpServerAction: async request => { effects.push(request.input); return { ok: true, result: output }; },
       });
       const context: ActionExecutorContext = { surface, authority: surface === 'cli' ? 'present_user' : 'account_automation',
@@ -3402,7 +3399,7 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       approvalsCreate,
       sessionStateFieldSet,
-      isActionApprovalRequired: (actionId) => actionId === 'session.title.set',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.title.set']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
     } as any);
 
     const res = await executor.execute(
@@ -3489,8 +3486,7 @@ describe('createActionExecutor (approvals)', () => {
     let storedRequest: ApprovalRequest | null = null;
     const homeDomainAction = vi.fn(async () => ({ success: true as const }));
     const executor = createExecutor({
-      isActionApprovalRequired: (actionId, context) =>
-        isApprovalRequiredByActionsSettings(actionId, defaultActionsSettings, context),
+      readActionsSettings: () => defaultActionsSettings,
       approvalsCreate: async ({ request }) => {
         storedRequest = ApprovalRequestV2Schema.parse(request);
         return { artifactId: 'stopped-session-delete' };
@@ -4056,7 +4052,7 @@ describe('createActionExecutor (approvals)', () => {
     } });
     const executor = createExecutor({
       isApprovalExecutionOriginCurrent: async () => !authorityRetired,
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+      readActionsSettings: () => settings,
       approvalsCreate: async ({ request }) => {
         storedRequest = ApprovalRequestV2Schema.parse(request);
         return { artifactId: 'leaving' };
@@ -4162,6 +4158,7 @@ describe('createActionExecutor (approvals)', () => {
       ok: false,
       errorCode: 'approval_execution_outcome_unknown',
       error: 'approval_execution_outcome_unknown',
+      details: { reasonCode: 'version_mismatch' },
     });
     expect(sessionSendMessage).toHaveBeenCalledOnce();
     expect(storedRequest.status).toBe('executing');
@@ -4188,6 +4185,7 @@ describe('createActionExecutor (approvals)', () => {
       ok: false,
       errorCode: 'approval_execution_outcome_unknown',
       error: 'approval_execution_outcome_unknown',
+      details: { reasonCode: 'server_unreachable' },
       failureCause: { errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null, phase: 'approval.settlement' },
     });
     expect(effects).toBe(1);
@@ -4885,7 +4883,7 @@ describe('createActionExecutor (approvals)', () => {
       approvalsUpdate,
       approvalsCreate,
       sessionSendMessage,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'mcp',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.message.send']: { approvalRequiredSurfaces: ['mcp'] } } }),
     } as any);
 
     const res = await executor.execute('approval.request.decide' as any, {
@@ -5460,7 +5458,7 @@ describe('createActionExecutor (approvals)', () => {
           stored = next;
           return { ok: true };
         },
-        isActionApprovalRequired: (actionId, ctx) => isApprovalRequiredByActionsSettings(actionId, defaultActionsSettings, ctx),
+        readActionsSettings: () => defaultActionsSettings,
       });
       return { ...executor, decide: () => executor.execute('approval.request.decide', { artifactId, decision }) };
     };

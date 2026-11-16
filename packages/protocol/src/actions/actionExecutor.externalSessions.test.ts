@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
@@ -39,8 +40,8 @@ function createDeps(
     sessionRecentMessagesGet: vi.fn(async () => ({})),
     resetGlobalVoiceAgent: vi.fn(),
     externalSessionAction,
-    // External-session routing has dedicated authority tests below; approval is orthogonal.
-    isActionApprovalRequired: () => false,
+    readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'sessions.external.takeover.start': ['agent', 'mcp', 'cli'], 'sessions.external.backgroundFollow.set': ['ui', 'agent', 'mcp', 'cli', 'plugin'], 'sessions.external.materialize.start': ['ui', 'agent', 'mcp', 'plugin'], 'sessions.external.operation.cancel': ['plugin'], 'sessions.external.operation.resume': ['plugin'], 'sessions.external.operation.retry': ['plugin'], 'sessions.external.operation.discard': ['plugin'], 'sessions.external.follow': ['api'], 'sessions.external.unfollow': ['api'] } }),
+
   };
 }
 
@@ -333,12 +334,12 @@ describe('createActionExecutor (public External Session actions)', () => {
     expect(hostExternalSessionAction).toHaveBeenCalledWith({
       actionId: 'sessions.external.status.get',
       input: { sessionId: 'session-1' },
-      context: {
+      context: expect.objectContaining({
         surface: 'api',
         authority: 'account_automation',
         actionCaller: { kind: 'host' },
         signal,
-      },
+      }),
       signal,
     });
     expect(pluginExternalSessionAction).not.toHaveBeenCalled();
@@ -378,11 +379,11 @@ describe('createActionExecutor (public External Session actions)', () => {
         agentId: 'codex',
         source: { kind: 'codexHome', home: 'user' },
       },
-      context: {
+      context: expect.objectContaining({
         surface: 'api',
         authority: 'account_automation',
         actionCaller: { kind: 'host' },
-      },
+      }),
     });
     expect(pluginExternalSessionAction).not.toHaveBeenCalled();
   });

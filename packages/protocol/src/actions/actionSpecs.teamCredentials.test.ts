@@ -172,7 +172,6 @@ describe('Team credential Action contracts', () => {
     }));
     const executor = createActionExecutor({
       homeDomainAction,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('teams.credentials.list', { teamId: 'team-1' }, {

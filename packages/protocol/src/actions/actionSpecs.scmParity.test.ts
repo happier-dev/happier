@@ -8,7 +8,6 @@ import { ActionsSettingsV1Schema } from './actionSettings.js';
 // Load the real Action graph during collection, outside observable dispatch budgets.
 await import('./actionSpecs.js');
 const { createActionExecutor } = await import('./actionExecutor.js');
-const { isApprovalRequiredByActionsSettings } = await import('./actionApprovalPolicy.js');
 import { getActionSpec } from './actionSpecs.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
@@ -56,8 +55,7 @@ describe('SCM Action parity', () => {
     const executor = createActionExecutor({
       // Session resolution and SCM dispatch are authenticated transport boundaries.
       resolveSessionReference: async () => ({ kind: 'unique', address: { serverId: 'target-home', sessionId: 'bound-session' } }),
-      isActionApprovalRequired: (...[id, context, input]: Parameters<NonNullable<Deps['isActionApprovalRequired']>>) =>
-        isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, input),
+      readActionsSettings: () => settings,
       scmActionExecute: async ({ input, context }: Parameters<NonNullable<Deps['scmActionExecute']>>[0]) => {
         calls.push({ input, serverId: context.serverId, sessionId: context.defaultSessionId,
           machineId: context.defaultSessionMachineId, machine: context.externalActionTarget,
@@ -103,8 +101,7 @@ describe('SCM Action parity', () => {
       sessionList: async () => markSessionListQueryResultV1({ sessions: ['child-a', 'child-b'].map(id => ({
         id, manager: { sessionId: 'manager' }, active: false, presence: 'offline', updatedAt: 1,
       })), nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }),
-      isActionApprovalRequired: (...[id, context, input]: Parameters<NonNullable<Deps['isActionApprovalRequired']>>) =>
-        isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, input),
+      readActionsSettings: () => settings,
       scmActionExecute: async ({ input, context }: Parameters<NonNullable<Deps['scmActionExecute']>>[0]) => {
         calls.push({ input, sessionId: context.defaultSessionId, machine: context.externalActionTarget });
         return { ok: false, errorCode: 'fixture_transport', error: 'fixture_transport' };
@@ -159,9 +156,7 @@ describe('SCM Action parity', () => {
     });
     const executor = createActionExecutor({
       // Match the UI host adapter: execute real policy against the admitted settings.
-      isActionApprovalRequired: (...[actionId, context, input]: Parameters<NonNullable<Deps['isActionApprovalRequired']>>) => isApprovalRequiredByActionsSettings(
-        actionId, context.actionsSettings ?? settings, context, undefined, undefined, input,
-      ),
+      readActionsSettings: context => context.actionsSettings ?? settings,
       scmActionExecute: async ({ input, context }: Parameters<NonNullable<Deps['scmActionExecute']>>[0]) => {
         calls.push({ input, target: context.externalActionTarget, sessionId: context.defaultSessionId });
         return { success: true };

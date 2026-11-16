@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { normalizeActionsSettingsV1 } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+import { ActionsSettingsV1Schema, normalizeActionsSettingsV1 } from './actionSettings.js';
 import { createSessionBoardOutcomeUnknownFailureV1, projectSessionBoardGetResultV1, SessionBoardGetInputV1Schema, SessionBoardLayoutUpdateInputV1Schema, SessionBoardItemUpsertInputV1Schema, type SessionBoardItemUpsertInputV1 } from '../sessions/board/actions.js';
 import { SessionSurfaceItemV1Schema, type SessionSurfaceItemV1 } from '../sessions/board/item.js';
 import { SessionBoardMutationV1Schema } from '../sessions/board/mutations.js';
@@ -46,7 +45,7 @@ function mutationResult(operation: 'upsert_item' | 'remove_item' | 'update_layou
 describe('createActionExecutor (Session Board family)', () => {
   it('publishes the canonical Home identity only after validating the exact transport target', async () => {
     let transportHome = 'daemon-profile';
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       sessionBoardAction: async ({ actionId }) => actionId === 'session.board.get'
         ? projectSessionBoardGetResultV1({ serverId: 'daemon-profile', sessionId: 'session-1',
             capabilities: { readTranscript: true, editSessionRecords: true }, layout: null, entries: [],
@@ -61,7 +60,7 @@ describe('createActionExecutor (Session Board family)', () => {
       .resolves.toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
   });
   it('creates transcript widgets without a Board footprint or layout dependency', async () => {
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       widgetAccountScope: () => ({ serverId: 'home-1', accountId: 'account' }),
       widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => ({ inputs: { fields: [] },
         inputSchema: { type: 'object', additionalProperties: false } }),
@@ -128,8 +127,7 @@ describe('createActionExecutor (Session Board family)', () => {
     // The sealed Board persistence transport is the boundary; layout application stays real.
     const executor = createActionExecutor({
       widgetAccountScope: () => ({ serverId: 'home-1', accountId: 'account' }),
-      isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id,
-        context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }), context, undefined, undefined, input),
+      readActionsSettings: context => context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }),
       sessionBoardAction: async ({ actionId, input }) => {
         if (actionId === 'session.board.get') return { v: 1, serverId: 'home-1', sessionId: 'session-1',
           capabilities: { readTranscript: true, editSessionRecords: true }, layout: { revision, document },
@@ -322,7 +320,6 @@ describe('createActionExecutor (Session Board family)', () => {
     const sessionBoardAction = vi.fn(async () => mutationResult('upsert_item'));
     const executor = createActionExecutor({
       sessionBoardAction,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     for (const { input, issues } of [
@@ -546,7 +543,7 @@ describe('createActionExecutor (Session Board family)', () => {
     const requiredExecutor = createActionExecutor({
       sessionBoardAction: requiredBoardAction,
       approvalsCreate: requiredApprovalsCreate,
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.board.item.remove': { approvalRequiredSurfaces: [context.surface] } } }),
     } as unknown as ActionExecutorDeps);
 
     await expect(requiredExecutor.execute('session.board.item.remove', removeInput, context)).resolves.toEqual({
@@ -564,7 +561,8 @@ describe('createActionExecutor (Session Board family)', () => {
     const skippedExecutor = createActionExecutor({
       sessionBoardAction: skippedBoardAction,
       approvalsCreate: skippedApprovalsCreate,
-      isActionApprovalRequired: () => false,
+      readActionsSettings: context => normalizeActionsSettingsV1({ v: 1,
+        approvalWaivedSurfaces: { 'session.board.item.remove': [context.surface] } }),
     } as unknown as ActionExecutorDeps);
 
     await expect(skippedExecutor.execute('session.board.item.remove', removeInput, {
@@ -579,7 +577,6 @@ describe('createActionExecutor (Session Board family)', () => {
     const executor = createActionExecutor({
       sessionBoardAction,
       isActionEnabled: (actionId) => actionId !== 'session.board.item.upsert',
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     const outcome = await executor.execute('session.board.item.upsert', upsertInput, { surface: 'agent' });

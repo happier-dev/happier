@@ -11,7 +11,7 @@ const session = { serverId: 'home', sessionId: 'session', accountId: 'account' }
 
 it('returns the addressed capture pin and its default provenance from an admitted open', async () => {
   const opened = { captureRef: 'capture-2', status: 'opened', targetSession: session, defaultReason: 'lastCapturePick' } as const;
-  const executor = createActionExecutor({ screenCaptureAction: async () => opened, isActionApprovalRequired: () => false });
+  const executor = createActionExecutor({ screenCaptureAction: async () => opened });
   expect(await executor.execute('screenCapture.open', { captureRef: 'capture-2' }, person)).toEqual({ ok: true, result: opened });
 });
 
@@ -106,7 +106,8 @@ describe('screen capture delivery Action admission', () => {
     let enabled = false;
     const executor = createActionExecutor({
       isActionEnabled: () => enabled,
-      isActionApprovalRequired: () => false,
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'screenCapture.send': ['agent'] } }),
       clientActionExecute: async request => { requests.push(request.input); return { ok: true, result: { captureRef: 'capture', messageRef: 'message' } }; },
     });
     const agent = { surface: 'agent', authority: 'account_automation' } as const;
@@ -123,7 +124,7 @@ describe('screen capture delivery Action admission', () => {
     let settings = ActionsSettingsV1Schema.parse({ v: 1 });
     const delivered: unknown[] = [];
     const deps = {
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      readActionsSettings: () => settings,
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async () => ({ artifactId: 'capture-decision' }),
       approvalsUpdate: async () => ({ ok: true as const }),

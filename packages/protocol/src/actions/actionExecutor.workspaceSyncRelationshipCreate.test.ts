@@ -50,6 +50,37 @@ const result = {
 };
 
 describe('workspace.sync.relationship.create Action', () => {
+  it.each(['execute', 'prepare'] as const)('uses one own-UI destination review for mounted and headless %s', async entry => {
+    for (const mounted of [true, false]) {
+      const approval = { v: 1 as const, consequences: ['delete_target_only_files_during_exact_mirror'] as const,
+        serverId: 'home', machineId: 'target-machine', canonicalRoot: '/work/existing',
+        rootFingerprint: 'a'.repeat(64), operationId: `native-${entry}-${mounted}` };
+      let artifacts = 0;
+      let effects = 0;
+      const reviews: unknown[] = [];
+      const executor = createActionExecutor({
+        // Target inspection/effect, persisted approval writing and native presentation are the boundaries.
+        sessionHandoffTargetReplacementApprovalPreflight: async () => ({ type: 'approval_required', approval }),
+        workspaceSyncRelationshipCreate: async () => { effects++; return result; },
+        approvalsCreate: async () => { artifacts++; return { artifactId: 'unexpected-self-approval' }; },
+        ...(mounted ? { presentUserActionConfirmation: async request => { reviews.push(request); return true; } } : {}),
+      });
+      const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
+        serverId: 'home', runtimeAccountId: 'alice', actionRequestId: approval.operationId };
+      const request = { ...input, mode: 'mirror_exactly' as const, replaceRelationshipId: 'old-link' };
+      const prepared = entry === 'prepare' ? await executor.prepare('workspace.sync.relationship.replace', request, context) : null;
+      const outcome = prepared ? prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result
+        : await executor.execute('workspace.sync.relationship.replace', request, context);
+      expect(outcome).toMatchObject(mounted ? { ok: true, result }
+        : { ok: false, errorCode: 'action_interactive_review_required', details: { reviewDigest: expect.any(String),
+          review: { preview: { handoffTargetReplacementApproval: approval } } } });
+      if (mounted) expect(reviews).toMatchObject([{ preview: { handoffTargetReplacementApproval: approval } }]);
+      expect(reviews).toHaveLength(mounted ? 1 : 0);
+      expect(effects).toBe(mounted ? 1 : 0);
+      expect(artifacts).toBe(0);
+    }
+  });
+
   it('binds exact-mirror replacement approval to the replacement Action and its exact old link', async () => {
     const exactInput = { ...input, mode: 'mirror_exactly' as const, replaceRelationshipId: 'old-link' };
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'replace-approval' }));
@@ -67,11 +98,10 @@ describe('workspace.sync.relationship.create Action', () => {
         } };
       },
       workspaceSyncRelationshipCreate: create,
-      isActionApprovalRequired: () => false,
       approvalsCreate,
     } satisfies ActionExecutorDeps);
     expect(await executor.execute('workspace.sync.relationship.replace', exactInput, {
-      surface: 'ui', authority: 'present_user', serverId: 'server-a', actionRequestId: 'replace-request',
+      surface: 'mcp', authority: 'account_automation', serverId: 'server-a', actionRequestId: 'replace-request',
     })).toMatchObject({ ok: true, result: { artifactId: 'replace-approval' } });
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({
       actionId: 'workspace.sync.relationship.replace', actionArgs: exactInput,
@@ -82,7 +112,6 @@ describe('workspace.sync.relationship.create Action', () => {
     const executor = createActionExecutor({
       sessionHandoffTargetReplacementApprovalPreflight: async () => ({ type: 'not_required' as const }),
       workspaceSyncRelationshipCreate: async () => ({ error: 'Workspace root identity is unavailable', errorCode: 'workspace_root_identity_unavailable' }),
-      isActionApprovalRequired: () => false,
     } satisfies ActionExecutorDeps);
     expect(await executor.execute('workspace.sync.relationship.create', input, {
       surface: 'ui', authority: 'present_user', serverId: 'home-1', actionRequestId: 'link-failure',
@@ -100,11 +129,10 @@ describe('workspace.sync.relationship.create Action', () => {
         canonicalRoot: '/chosen-worker', rootFingerprint: 'a'.repeat(64), operationId: 'worker-create',
       } }),
       workspaceSyncRelationshipCreate: create,
-      isActionApprovalRequired: () => false,
       approvalsCreate,
     } satisfies ActionExecutorDeps);
     const outcome = await executor.execute('workspace.sync.relationship.create', exactInput, {
-      surface: 'ui', authority: 'present_user', machineId: 'source-machine', actionRequestId: 'worker-create', serverId: 'server-a',
+      surface: 'mcp', authority: 'account_automation', machineId: 'source-machine', actionRequestId: 'worker-create', serverId: 'server-a',
     });
     expect(outcome).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'worker-approval' } });
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ actionId: 'workspace.sync.relationship.create', actionArgs: exactInput }) }));
@@ -116,7 +144,6 @@ describe('workspace.sync.relationship.create Action', () => {
     const executor = createActionExecutor({
       sessionHandoffTargetReplacementApprovalPreflight: preflight,
       workspaceSyncRelationshipCreate: create,
-      isActionApprovalRequired: () => false,
     } satisfies ActionExecutorDeps);
 
     const context = {
@@ -160,7 +187,6 @@ describe('workspace.sync.relationship.create Action', () => {
     const executor = createActionExecutor({
       sessionHandoffTargetReplacementApprovalPreflight: async () => ({ type: 'approval_required', approval: currentApproval }),
       workspaceSyncRelationshipCreate: create,
-      isActionApprovalRequired: () => false,
       approvalsCreate: async ({ request }) => {
         approvals.set('approval-1', ApprovalRequestV2Schema.parse(request));
         return { artifactId: 'approval-1' };
@@ -179,7 +205,7 @@ describe('workspace.sync.relationship.create Action', () => {
     const exactInput = { ...input, targetPath: '/work/empty', mode: 'mirror_exactly' as const };
 
     const requested = await executor.execute('workspace.sync.relationship.create', exactInput, {
-      surface: 'ui', authority: 'present_user', serverId: 'home-1', defaultSessionMachineId: 'source-machine', actionRequestId: 'link-request-2',
+      surface: 'mcp', authority: 'account_automation', serverId: 'home-1', defaultSessionMachineId: 'source-machine', actionRequestId: 'link-request-2',
     });
     expect(requested).toMatchObject({
       ok: true,
@@ -189,7 +215,7 @@ describe('workspace.sync.relationship.create Action', () => {
     expect(approvals.get('approval-1')).toMatchObject({
       actionId: 'workspace.sync.relationship.create',
       handoffTargetReplacementApproval: approval,
-      executionOriginV1: { authority: 'present_user', requestId: 'link-request-2' },
+      executionOriginV1: { authority: 'account_automation', requestId: 'link-request-2' },
     });
     const captured = approvals.get('approval-1');
     if (!captured || captured.v !== 2) throw new Error('Expected current approval custody');

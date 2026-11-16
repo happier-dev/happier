@@ -18,9 +18,9 @@ describe('desktop.notch.set', () => {
     let admitted = 0;
     const received: unknown[] = [];
     const executor = createActionExecutor({
-      isActionApprovalRequired: (actionId, context) => {
+      readActionsSettings: (context) => {
         admitted += 1;
-        return isApprovalRequiredByActionsSettings(actionId, ActionsSettingsV1Schema.parse({ v: 1 }), context);
+        return ActionsSettingsV1Schema.parse({ v: 1 });
       },
       desktopNotchSet: async ({ input }) => { received.push(input); return { applied: true }; },
     } as ActionExecutorDeps);

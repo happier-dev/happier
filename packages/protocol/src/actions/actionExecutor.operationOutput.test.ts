@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it, vi } from 'vitest';
 import { completeActionResult, createActionExecutor, settleActionOutput, type ActionExecutorDeps } from './actionExecutor.js';
 import type { ActionOperationCredentialUseV1 } from './actionExecutionResult.js';
@@ -55,7 +56,7 @@ describe('operation and retained output Actions', () => {
       const confirm = vi.fn(async () => outcome === 'accept');
       const approvalsCreate = vi.fn(async () => ({ artifactId: 'unexpected-approval' }));
       const executor = createActionExecutor({ approvalsCreate,
-        isActionApprovalRequired: () => true,
+        readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
         ...(outcome === 'unmounted' ? {} : { presentUserActionConfirmation: confirm }),
         actionOperationAction: args => executeActionOperationActionV1({ ...args, transport }),
       });

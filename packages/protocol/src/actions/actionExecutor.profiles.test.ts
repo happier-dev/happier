@@ -71,7 +71,7 @@ async function artifactEditStore() {
     return { status: 'updated', id: input.record.id, revision: input.expectedRevision };
   });
   await store.operations.setEnabled({ id: profile.id, enabled: true });
-  const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+  const executor = createActionExecutor({
     profileActionExecute: createProfileActionExecuteV1({ operations: store.operations }) });
   return { executor, profile, currentProfile, openedRevision, currentRevision,
     refreshOpenedResource: () => { openedArtifacts.set(resource.artifactId, { ...resource,
@@ -113,7 +113,7 @@ describe('Profile entity Actions', () => {
     const profile = { ...record.definition.profile, name: 'Edited converted', updatedAt: 2 };
     const store = catalogStore();
     store.rows.set(id, { record, revision: 7 });
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       profileActionExecute: createProfileActionExecuteV1({ operations: store.operations }) });
     expect(await executor.execute('launch_profiles.save', { id, expectedRevision: 7, profile }, context))
       .toEqual({ ok: true, result: { status: 'updated', id, revision: 8 } });
@@ -143,7 +143,7 @@ describe('Profile entity Actions', () => {
       writeRecord: async () => { throw new Error('Reading a builtin must not write a private row'); },
       deleteRecord: async () => { throw new Error('Reading a builtin must not delete a private row'); },
     });
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       profileActionExecute: createProfileActionExecuteV1({ operations }) });
     const result = await executor.execute('launch_profiles.read', { id: builtin.id }, context);
     expect(result).toMatchObject({ ok: true, result: { status: 'present', profile: AiLaunchProfileV1Schema.parse(builtin), location: { kind: 'builtin' } } });
@@ -160,7 +160,7 @@ describe('Profile entity Actions', () => {
       body: JSON.stringify({ kind: 'launch-profile.v1', profile, secretBindings: {} }), access: 'view',
       revision: { headerVersion: 2, bodyVersion: 3 } };
     const store = catalogStore(new Map([[artifact.artifactId, artifact]]));
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       profileActionExecute: createProfileActionExecuteV1({ operations: store.operations,
         selectSecret: input => store.operations.selectSecret(input) }) });
     const input = { expectedRevision: 'absent', envName: 'TOKEN',
@@ -223,7 +223,7 @@ describe('Profile entity Actions', () => {
       body: JSON.stringify({ kind: 'launch-profile.v1', profile, secretBindings: {} }), access: 'view',
       revision: { headerVersion: 2, bodyVersion: 3 } };
     const store = catalogStore(new Map([[artifact.artifactId, artifact]]));
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       profileActionExecute: createProfileActionExecuteV1({ operations: store.operations }) });
     const result = await executor.execute('launch_profiles.search', { query: 'grant' }, context);
     expect(result).toEqual({ ok: true, result: { status: 'listed', complete: true, records: [], profiles: [{
@@ -245,7 +245,7 @@ describe('Profile entity Actions', () => {
   });
 
   it('recognizes the Profile edit contract and refuses an unsupported editor host truthfully', async () => {
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({  });
     await expect(executor.execute('launch_profiles.edit' as ActionId, { id: 'profile-1', expectedRevision: 1 },
       { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
       .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
@@ -264,7 +264,7 @@ describe('Profile entity Actions', () => {
   it('executes the same row save contract as the editor and keeps stale drafts from overwriting', async () => {
     const fromAction = catalogStore();
     const fromEditor = catalogStore();
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       profileActionExecute: createProfileActionExecuteV1({ operations: fromAction.operations }) });
     const expected = await fromEditor.operations.save({ profile: authored });
     expect(await executor.execute('launch_profiles.create', { profile: authored, expectedRevision: 'absent' }, context))
@@ -287,7 +287,7 @@ describe('Profile entity Actions', () => {
   it('reads and searches destination rows, then disables, duplicates and removes through the real owner', async () => {
     const store = catalogStore();
     await store.operations.save({ profile: authored });
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       presentUserActionConfirmation: async () => true,
       profileActionExecute: createProfileActionExecuteV1({ operations: store.operations }) });
     const read = await executor.execute('launch_profiles.read', { id: authored.id }, context);
@@ -311,7 +311,7 @@ describe('Profile entity Actions', () => {
 
   it('rejects raw credentials and arbitrary operations before the semantic service', async () => {
     const store = catalogStore();
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       profileActionExecute: createProfileActionExecuteV1({ operations: store.operations }) });
     expect(getActionSpec('launch_profiles.secrets.select').inputSchema.safeParse({ id: authored.id,
       expectedRevision: 0, envName: 'API_KEY', selection: { kind: 'resource', resourceId: 'saved-secret:secret-1',
@@ -329,7 +329,7 @@ describe('Profile entity Actions', () => {
   it('keeps private profile definitions out of shared Action observations', async () => {
     const store = catalogStore();
     const observations: unknown[] = [];
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       profileActionExecute: createProfileActionExecuteV1({ operations: store.operations }),
       interceptActionExecution: async ({ input }) => ({ status: 'continue', input }),
       observeActionExecution: async observation => { observations.push(observation); } });

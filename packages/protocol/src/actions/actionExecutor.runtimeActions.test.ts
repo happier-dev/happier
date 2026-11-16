@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActionId } from './actionIds.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
@@ -36,8 +35,9 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
     sessionActivityGet: vi.fn(async () => ({})),
     sessionRecentMessagesGet: vi.fn(async () => ({})),
     resetGlobalVoiceAgent: vi.fn(),
-    // Runtime routing is tested independently from approval policy here.
-    isActionApprovalRequired: () => false,
+    // Runtime routing is tested with an explicit waiver; policy cases supply their own settings.
+    readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+      approvalWaivedSurfaces: { 'browser.navigate': ['ui'] } }),
     ...overrides,
   };
 }
@@ -77,7 +77,7 @@ describe('createActionExecutor (runtime-unification actions)', () => {
       const effects: unknown[] = [];
       // Only the client/runtime effect is a boundary; declaration and policy stay real.
       const executor = createActionExecutor(createDeps({
-        isActionApprovalRequired: undefined,
+        readActionsSettings: undefined,
         runtimeActionExecute: async args => { effects.push(args); return row.output; },
       }));
       const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
@@ -115,7 +115,7 @@ describe('createActionExecutor (runtime-unification actions)', () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'must-not-create' }));
     const settings = ActionsSettingsV1Schema.parse({ v: 1 });
     const executor = createActionExecutor(createDeps({ runtimeActionExecute, approvalsCreate,
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context) }));
+      readActionsSettings: () => settings }));
     expect(await executor.execute('computer.input', {
       machineId: 'machine_1', captureId: 'capture_1', operation: { kind: 'press', key: 'Return' },
     }, { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1', bypassApprovals: true }))
@@ -131,7 +131,7 @@ describe('createActionExecutor (runtime-unification actions)', () => {
     const executor = createActionExecutor(createDeps({
       runtimeActionExecute,
       approvalsCreate,
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      readActionsSettings: () => settings,
     }));
     const result = await executor.execute('computer.capture', { machineId: 'native-machine' }, {
       surface: 'agent', authority: 'account_automation', serverId: 'home-1',
@@ -255,8 +255,7 @@ describe('createActionExecutor (runtime-unification actions)', () => {
       // The machine runtime is the external boundary; policy and admission remain real.
       const executor = createActionExecutor(createDeps({
         runtimeActionExecute: async args => { effects.push(args); return row.output; },
-        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
-          context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context),
+        readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
       }));
       for (const surface of ['agent', 'mcp'] as const) {
         const context = { surface, authority: 'account_automation', defaultSessionId: 'session_1', actionCaller: { kind: 'host' } } as const;

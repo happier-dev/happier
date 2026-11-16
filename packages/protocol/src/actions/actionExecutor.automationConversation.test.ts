@@ -59,11 +59,11 @@ describe('createActionExecutor (Automation conversation admission)', () => {
         contributionLocalId: 'provider/observation-ingest-v1',
         materialization: callerMaterialization,
       },
-      context: {
+      context: expect.objectContaining({
         surface: 'plugin',
         actionCaller: { kind: 'plugin', pluginId: 'happier.channels', contributionLocalId: 'provider/observation-ingest-v1', materialization: callerMaterialization },
         signal: controller.signal,
-      },
+      }),
       signal: controller.signal,
     });
   });
@@ -78,7 +78,7 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     }));
     const executor = createActionExecutor({
       automationConversationAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
 
     await expect(executor.execute('automation.conversation.target.verify', input, {
@@ -100,11 +100,11 @@ describe('createActionExecutor (Automation conversation admission)', () => {
         contributionLocalId: 'binding/create-v1',
         materialization: callerMaterialization,
       },
-      context: {
+      context: expect.objectContaining({
         surface: 'plugin',
         actionCaller: { kind: 'plugin', pluginId: 'happier.channels', contributionLocalId: 'binding/create-v1', materialization: callerMaterialization },
         signal: controller.signal,
-      },
+      }),
       signal: controller.signal,
     });
   });
@@ -121,7 +121,7 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     }));
     const executor = createActionExecutor({
       automationConversationAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
 
     await expect(executor.execute('automation.conversation.targets.list', input, {
@@ -152,10 +152,10 @@ describe('createActionExecutor (Automation conversation admission)', () => {
         contributionLocalId: 'binding/create-v1',
         materialization: callerMaterialization,
       },
-      context: {
+      context: expect.objectContaining({
         surface: 'plugin',
         actionCaller: { kind: 'plugin', pluginId: 'happier.channels', contributionLocalId: 'binding/create-v1', materialization: callerMaterialization },
-      },
+      }),
     });
   });
 
@@ -188,7 +188,7 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     const automationConversationAction = vi.fn(async () => ({}));
     const executor = createActionExecutor({
       automationConversationAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
 
     await expect(executor.execute('automation.conversation.admit', conversationAdmitInput, {
@@ -206,7 +206,7 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     const automationConversationAction = vi.fn(async () => ({}));
     const executor = createActionExecutor({
       automationConversationAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
     const input = {
       automationId: 'automation-1',
@@ -256,7 +256,7 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     ));
     const executor = createActionExecutor({
       automationConversationAction,
-      isActionApprovalRequired: () => false,
+
     } as ActionExecutorDeps);
 
     // The bridge lists the Account's existing Automations, binds one, and
@@ -304,7 +304,7 @@ describe('createActionExecutor (Automation conversation admission)', () => {
       actionId: 'automation.conversation.admit',
       input: thirdPartyAdmitInput,
       caller: thirdPartyCaller,
-      context: { surface: 'plugin', actionCaller: thirdPartyCaller },
+      context: expect.objectContaining({ surface: 'plugin', actionCaller: thirdPartyCaller }),
     });
 
     expect(automationConversationAction.mock.calls.map(([args]) => args.actionId)).toEqual([

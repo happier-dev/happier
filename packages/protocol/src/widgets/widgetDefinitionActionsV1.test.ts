@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '../actions/actionExecutor.js';
 import { ActionsSettingsV1Schema } from '../actions/actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from '../actions/actionApprovalPolicy.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
 import { createWidgetDefinitionArtifactPortV1 } from './widgetDefinitionArtifactV1.js';
@@ -170,7 +169,7 @@ describe('widget definition semantic Actions', () => {
         }, { accountId: 'owner' });
         let approvalRequest: ApprovalRequest | null = null;
         const executor = createActionExecutor({ widgetAccountScope: () => account, widgetDefinitionArtifacts: port,
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context),
+            readActionsSettings: (context) => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
             // Approval persistence is a host system boundary; the decision owner remains real.
             approvalsCreate: async ({ request }) => { approvalRequest = request; return { artifactId: 'definition-approval' }; },
             approvalsGet: async () => approvalRequest,

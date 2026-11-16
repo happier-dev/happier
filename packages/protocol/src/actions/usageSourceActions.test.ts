@@ -6,7 +6,6 @@ import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { createActionExecutor } from './actionExecutor.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
-import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
 import { createUsageSourceActionPort } from './executor/usageSourceActions.js';
 import type { UsageSourceV1 } from '../usage/usageSources.js';
 import { describeApprovalRequestFields, projectApprovalRequestForPublicRead } from './actionApprovalPresentation.js';
@@ -45,15 +44,11 @@ describe('Usage source Action admission', () => {
       agent: { pluginId: 'happier.agent.' + agent, localId: agent }, root: { kind: 'default', path: '/private/source' },
       consent: 'enabled', status: 'ready', coverage: 'unknown', pendingCount: 0, asOfMs: null };
     const input = { serverId: 'home', machineId: 'machine', sourceId: source.sourceId, enabled: true };
-    const coordinator = createBlockingApprovalCoordinator();
-    const controller = new AbortController();
     let stored: ApprovalRequestV2 | null = null;
     const effects: unknown[] = [];
-    let ready!: () => void;
-    const waiting = new Promise<void>(resolve => { ready = resolve; });
     const createExecutor = (accountId: string) => createActionExecutor({
       // Artifact storage and Machine RPC are boundaries; create, decide, CAS,
-      // live delivery and the Usage transport owner all run their real logic.
+      // detached replay and the Usage transport owner all run their real logic.
       approvalsCreate: async ({ request }) => {
         stored = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request)));
         return { artifactId: 'consent-approval' };
@@ -68,45 +63,32 @@ describe('Usage source Action admission', () => {
         stored = structuredClone(next);
         return { ok: true };
       },
-      approvalsWaitForDecision: args => {
-        const result = coordinator.waitForDecision(args);
-        ready();
-        return result;
-      },
-      approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
       isApprovalExecutionOriginCurrent: async () => true,
       usageSourceAction: createUsageSourceActionPort({ serverId: 'home', assertCurrent() {},
         rpc: async request => { effects.push(request.input); return { source }; } }),
     });
     const executor = createExecutor('owner');
     const requester = { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
-      serverId: 'home', runtimeAccountId: 'owner', actionRequestId: 'consent-request', signal: controller.signal } as const;
-    const pending = executor.execute('usage.sources.consent.set', input, requester);
-    try {
-      await Promise.race([waiting, pending.then(result => { throw new Error('Invocation did not wait: ' + JSON.stringify(result)); })]);
-      const open = ApprovalRequestV2Schema.parse(stored);
-      expect(open.actionArgs).toEqual(input);
-      expect(projectApprovalRequestForPublicRead(open)).toMatchObject({ actionArgs: {
-        serverId: 'home', machineId: 'machine', sourceId: source.sourceId,
-      } });
-      expect(open.preview).toMatchObject({ actionArgs: { serverId: 'home', machineId: 'machine', sourceId: source.sourceId } });
-      expect(effects).toEqual([]);
-      const person = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
-        serverId: 'home', runtimeAccountId: 'owner' } as const;
-      await expect(createExecutor('another-account').execute('approval.request.decide', { artifactId: 'consent-approval', decision: 'approve' },
-        { ...person, runtimeAccountId: 'another-account' })).resolves.toMatchObject({ ok: false, errorCode: 'approval_not_found' });
-      expect(ApprovalRequestV2Schema.parse(stored).status).toBe('open');
-      expect(effects).toEqual([]);
-      const decision = await executor.execute('approval.request.decide', { artifactId: 'consent-approval', decision: 'approve' }, person);
-      expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
-      await expect(pending).resolves.toEqual({ ok: true, result: { source } });
-      expect(effects).toEqual([input]);
-      expect(ApprovalRequestV2Schema.parse(stored)).toMatchObject({ status: 'executed', execution: { ok: true, result: {} } });
-    } finally {
-      controller.abort();
-      coordinator.dispose();
-      await pending;
-    }
+      serverId: 'home', runtimeAccountId: 'owner', actionRequestId: 'consent-request' } as const;
+    await expect(executor.execute('usage.sources.consent.set', input, requester)).resolves.toEqual({ ok: true,
+      result: { kind: 'approval_request_created', artifactId: 'consent-approval', actionId: 'usage.sources.consent.set' } });
+    const open = ApprovalRequestV2Schema.parse(stored);
+    expect(open.actionArgs).toEqual(input);
+    expect(projectApprovalRequestForPublicRead(open)).toMatchObject({ actionArgs: {
+      serverId: 'home', machineId: 'machine', sourceId: source.sourceId,
+    } });
+    expect(open.preview).toMatchObject({ actionArgs: { serverId: 'home', machineId: 'machine', sourceId: source.sourceId } });
+    expect(effects).toEqual([]);
+    const person = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'home', runtimeAccountId: 'owner' } as const;
+    await expect(createExecutor('another-account').execute('approval.request.decide', { artifactId: 'consent-approval', decision: 'approve' },
+      { ...person, runtimeAccountId: 'another-account' })).resolves.toMatchObject({ ok: false, errorCode: 'approval_not_found' });
+    expect(ApprovalRequestV2Schema.parse(stored).status).toBe('open');
+    expect(effects).toEqual([]);
+    const decision = await executor.execute('approval.request.decide', { artifactId: 'consent-approval', decision: 'approve' }, person);
+    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+    expect(effects).toEqual([input]);
+    expect(ApprovalRequestV2Schema.parse(stored)).toMatchObject({ status: 'executed', execution: { ok: true, result: {} } });
   });
 
   it('admits metadata reads and keeps consent, root edits and scoped deletion behind ordinary approval', () => {
@@ -121,7 +103,7 @@ describe('Usage source Action admission', () => {
         context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
       if (id !== 'usage.sources.history.delete') {
         expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), requiredByPolicy: true,
-          context: { surface: 'cli', authority: 'present_user' } }).flow).toBe('blocking');
+          context: { surface: 'cli', authority: 'present_user' } }).flow).toBe('deferred');
       }
     }
   });
@@ -181,7 +163,7 @@ describe('Usage source Action admission', () => {
       approvalsUpdate: async ({ request }) => { persisted.push(ApprovalRequestV2Schema.parse(request)); return { ok: true }; },
       approvalsWaitForDecision: async ({ request }) => ({ decision: 'approve', request }),
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: (id, ctx) => isApprovalRequiredByActionsSettings(id, settings, ctx),
+      readActionsSettings: () => settings,
       usageSourceAction: createUsageSourceActionPort({ serverId: 'home', assertCurrent: () => {}, rpc: async () => output }),
     });
     const result = await executor.execute(actionId, input, context);

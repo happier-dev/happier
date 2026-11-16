@@ -40,7 +40,7 @@ describe('createActionExecutor (Ephemeral Runner activation family)', () => {
     ));
     const executor = createActionExecutor({
       ephemeralRunnerAction,
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
 
     for (const actionId of EPHEMERAL_RUNNER_ACTION_IDS_V1) {
@@ -53,7 +53,7 @@ describe('createActionExecutor (Ephemeral Runner activation family)', () => {
   });
 
   it('fails closed when the Home activation adapter is absent', async () => {
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({  } as unknown as ActionExecutorDeps);
     await expect(executor.execute('sessions.runner.activation.get', { activationId }, { surface: 'ui', authority: 'present_user' })).resolves.toEqual({
       ok: false,
       errorCode: 'unsupported_action',

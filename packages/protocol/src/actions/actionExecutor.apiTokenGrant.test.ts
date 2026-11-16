@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from './actionExecutor.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
@@ -119,7 +119,7 @@ describe('ActionExecutor API token grant admission', () => {
         effects += 1;
         return { ok: true, result: { disposition: 'matched' } };
       },
-      isActionApprovalRequired: ((id, ctx) => isApprovalRequiredByActionsSettings(id, settings, ctx)) satisfies NonNullable<ActionExecutorDeps['isActionApprovalRequired']>,
+      readActionsSettings: () => settings,
       approvalsCreate: async () => { effects += 1; return { artifactId: 'unexpected' }; },
     } as unknown as ActionExecutorDeps);
     const input = actionId === 'action.invoke'
@@ -315,6 +315,9 @@ describe('ActionExecutor API token grant admission', () => {
     };
     const executor = createActionExecutor({ sessionPermissionRespond } as unknown as ActionExecutorDeps);
     const ctx = context(['session.title.set']);
+    // Token approval authority does not waive the Account's separate Action policy.
+    ctx.actionsSettings = normalizeActionsSettingsV1({ v: 1,
+      approvalWaivedSurfaces: { 'session.permission.respond': ['api'] } });
     if (!ctx.externalActionCredential?.grant) throw new Error('Expected grant');
     ctx.externalActionCredential.grant.approve = true;
     expect(await executor.execute('session.permission.respond', {

@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
@@ -50,7 +51,7 @@ describe('createActionExecutor (Account Security)', () => {
       const actionId = scenario === 'durable' ? 'connectedServices.accounts.rename' : 'connectedServices.configuration.replace';
       const service = { pluginId: 'happier.channel.email', localId: 'email-imap-smtp' };
       const input = scenario === 'durable' ? { account: { service, accountId: 'work' }, label: 'After' }
-        : { machineId: 'machine-1', target: { kind: 'attempt', attemptId: 'attempt-1' },
+        : { target: { kind: 'attempt', attemptId: 'attempt-1' },
           expectedRevision: null, values: {}, secretValues: {} };
       let stored: ApprovalRequest | null = null;
       let effects = 0;
@@ -173,19 +174,19 @@ describe('createActionExecutor (Account Security)', () => {
         actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'account',
         actionRequestId: `rename-${scenario}`, defaultSessionId: 'requesting-session', actionsSettings: settings,
       });
-      expect(confirmations).toBe(0);
-      if (!asks) {
+      expect(confirmations).toBe(scenario === 'ui-ask' ? 1 : 0);
+      if (!asks || surface === 'ui') {
         expect(result).toEqual({ ok: true, result: { applied: true } });
         expect(label).toBe('After');
         expect(persisted).toEqual([]);
       } else {
-        expect(result).toMatchObject(scenario === 'ui-ask'
-          ? { ok: true, result: { kind: 'approval_request_created', artifactId: 'rename-approval', actionId } }
-          : { ok: false, errorCode: 'approval_rejected' });
+        expect(result).toMatchObject({ ok: true, result: {
+          kind: 'approval_request_created', artifactId: 'rename-approval', actionId,
+        } });
         expect(label).toBe('Before');
         expect(persisted).toHaveLength(1);
         expect(persisted[0]).toMatchObject({ actionId, actionArgs: input, status: 'open',
-          executionOriginV1: { authority: scenario === 'ui-ask' ? 'present_user' : 'account_automation' } });
+          executionOriginV1: { authority: 'account_automation' } });
       }
     },
   );
@@ -197,7 +198,7 @@ describe('createActionExecutor (Account Security)', () => {
       accountPasswordChangeAction,
       observeActionExecution,
       interceptActionExecution: async ({ input }) => ({ status: 'continue', input }),
-      isActionApprovalRequired: () => false,
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'account.password.change': ['cli'] } }),
     }));
     const input = {
       v: 1 as const,
@@ -216,7 +217,7 @@ describe('createActionExecutor (Account Security)', () => {
       ok: true,
       result: { v: 1, status: 'updated' },
     });
-    expect(accountPasswordChangeAction).toHaveBeenCalledWith({ input, context });
+    expect(accountPasswordChangeAction).toHaveBeenCalledWith({ input, context: expect.objectContaining(context) });
     expect(observeActionExecution).toHaveBeenCalledWith(expect.objectContaining({
       actionId: 'account.password.change',
       input: { v: 1, kind: 'plain', expectedCredentialRevision: 7 },
@@ -232,11 +233,7 @@ describe('createActionExecutor (Account Security)', () => {
     const accountPasswordChangeAction = vi.fn(async () => ({ v: 1 as const, status: 'updated' as const }));
     const executor = createActionExecutor(createDeps({
       accountPasswordChangeAction,
-      isActionApprovalRequired: (actionId, context) => (
-        actionId === 'account.password.change'
-        && context.surface === 'ui'
-        && context.authority === 'present_user'
-      ),
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['account.password.change']: { approvalRequiredSurfaces: ['cli'] } } }),
       approvalsCreate: async ({ request }) => {
         persisted.push(ApprovalRequestV2Schema.parse(request));
         return { artifactId: 'ui-password-approval' };
@@ -265,7 +262,7 @@ describe('createActionExecutor (Account Security)', () => {
     };
 
     await expect(executor.execute('account.password.change', input, {
-      surface: 'ui' as const,
+      surface: 'cli' as const,
       authority: 'present_user' as const,
       serverId: 'server-1',
       runtimeAccountId: 'account-1',
@@ -287,7 +284,7 @@ describe('createActionExecutor (Account Security)', () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'never' }));
     const executor = createActionExecutor(createDeps({
       approvalsCreate,
-      isActionApprovalRequired: () => false,
+
     }));
 
     await expect(executor.execute('approval.request.create', {
@@ -313,7 +310,8 @@ describe('createActionExecutor (Account Security)', () => {
   });
 
   it.each([
-    { machineId: 'machine-1', target: { kind: 'attempt' as const, attemptId: 'attempt-1' } },
+    { machineId: 'machine-1', target: { kind: 'account' as const,
+      account: { service: { pluginId: 'happier.channel.email', localId: 'email-imap-smtp' }, accountId: 'work' } } },
     { service: { pluginId: 'happier.channel.email', localId: 'email-imap-smtp' }, modeId: 'password' },
   ])('keeps configuration approval placement on the admitted target without persisting its values: %j', async (target) => {
     const coordinator = createBlockingApprovalCoordinator();
@@ -354,10 +352,10 @@ describe('createActionExecutor (Account Security)', () => {
       isApprovalExecutionOriginCurrent: async () => true,
     }));
     const pending = executor.execute('connectedServices.configuration.replace', input, {
-      surface: 'ui', authority: 'present_user', serverId: 'server-1', runtimeAccountId: 'account-1',
+      surface: 'cli', authority: 'present_user', serverId: 'server-1', runtimeAccountId: 'account-1',
       actionRequestId: 'request-configuration', actionCaller: { kind: 'host' },
       actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
-        'connectedServices.configuration.replace': { approvalRequiredSurfaces: ['ui'] },
+        'connectedServices.configuration.replace': { approvalRequiredSurfaces: ['cli'] },
       } }),
     });
     try {

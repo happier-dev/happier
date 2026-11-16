@@ -75,7 +75,7 @@ describe('machine storage Action front door', () => {
     // Daemon transport is the process boundary: its current filesystem classification
     // supplies refusal facts, while real Action admission must not add verdict rules.
     const executor = createActionExecutor({ machineStorageAction: async () => result,
-      isActionApprovalRequired: (id, ctx, input) => isApprovalRequiredByActionsSettings(id, ctx.actionsSettings, ctx, undefined, undefined, input),
+      readActionsSettings: (ctx) => (ctx.actionsSettings),
     } as ActionExecutorDeps);
     const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.storage.trash.move': ['agent'] } });
     expect(isApprovalRequiredByActionsSettings(actionId, ActionsSettingsV1Schema.parse({ v: 1 }), { surface: 'agent' })).toBe(true);

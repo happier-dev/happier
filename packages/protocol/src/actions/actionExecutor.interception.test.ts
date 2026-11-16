@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
@@ -269,7 +270,7 @@ describe('createActionExecutor execution interception', () => {
     expect(sequence).toEqual(['before', 'execute', 'after']);
     expect(sessionStateFieldSet).toHaveBeenCalledOnce();
     expect(sessionStateFieldSet).toHaveBeenCalledWith({
-      context: { surface: 'cli', actionCaller: { kind: 'plugin', pluginId: 'caller.plugin' } },
+      context: expect.objectContaining({ surface: 'cli', actionCaller: { kind: 'plugin', pluginId: 'caller.plugin' } }),
       actionId: 'session.title.set', fieldId: 'display.title',
       sessionId: 'session-1', value: 'transformed',
     });
@@ -316,10 +317,10 @@ describe('createActionExecutor execution interception', () => {
 
   it('rejects malformed transformed input before rights, approval, or action effects', async () => {
     const sessionStateFieldSet = vi.fn(async () => ({}));
-    const isActionApprovalRequired = vi.fn(() => true);
+    const readActionsSettings = vi.fn(() => ActionsSettingsV1Schema.parse({ v: 1 }));
     const executor = createExecutor({
       sessionStateFieldSet,
-      isActionApprovalRequired,
+      readActionsSettings,
       interceptActionExecution: async () => ({
         status: 'continue',
         input: { sessionId: 'session-1', title: 42 },
@@ -335,7 +336,7 @@ describe('createActionExecutor execution interception', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters', details: { issues: [{
       code: 'invalid_type', path: ['title'], expected: 'string',
     }] } });
-    expect(isActionApprovalRequired).not.toHaveBeenCalled();
+    expect(readActionsSettings).not.toHaveBeenCalled();
     expect(sessionStateFieldSet).not.toHaveBeenCalled();
   });
 
@@ -461,7 +462,7 @@ describe('createActionExecutor execution interception', () => {
       sessionStateFieldSet,
       interceptActionExecution,
       observeActionExecution,
-      isActionApprovalRequired: (actionId) => actionId === 'session.title.set',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.title.set']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       approvalsCreate: async ({ request }) => {
         storedRequest = request;
         return { artifactId: 'approval-1' };

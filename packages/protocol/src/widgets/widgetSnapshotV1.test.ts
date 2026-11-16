@@ -7,7 +7,6 @@ import { executeWidgetSnapshotPostV1 } from './executeWidgetSnapshotPostV1.js';
 import { MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1 } from '../plugins/contributions/ui/declarativeDocumentPreflightV1.js';
 import { createActionExecutor } from '../actions/actionExecutor.js';
 import { ActionsSettingsV1Schema } from '../actions/actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from '../actions/actionApprovalPolicy.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { SessionBoardItemUpsertInputV1Schema, projectSessionBoardActionFailureV1, type SessionBoardItemUpsertInputV1 } from '../sessions/board/actions.js';
 
@@ -23,7 +22,8 @@ describe('frozen widget Board content', () => {
     const approvals: ApprovalRequest[] = [];
     const executor = createActionExecutor({
       widgetAccountScope: () => ({ serverId: 'home-a', accountId: 'viewer-a' }),
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context),
+      readActionsSettings: (context) => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        actions: { 'widgets.snapshot.post': { approvalRequiredSurfaces: ['voice'] } } }),
       approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: 'snapshot-approval' }; },
       // Human approval delivery and persistence are host system boundaries.
       approvalsWaitForDecision: async ({ request }) => {
@@ -42,7 +42,7 @@ describe('frozen widget Board content', () => {
     });
     const context = { surface: 'voice' as const, serverId: 'home-a', actionCaller: { kind: 'host' as const }, actionRequestId: 'snapshot-post' };
     const approval = await executor.execute('widgets.snapshot.post', input, context);
-    expect(approval).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+    expect(approval, JSON.stringify(approval)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'snapshot-approval' } });
     expect(approvals).toMatchObject([{ actionId: 'widgets.snapshot.post', actionArgs: input, status: 'open' }]);
     expect(published).toEqual([]);
     expect(await executor.execute('widgets.snapshot.post', input, { ...context,

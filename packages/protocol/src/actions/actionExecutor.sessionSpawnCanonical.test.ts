@@ -13,7 +13,7 @@ import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../account/settings/sessionAgentSpawnPolicyV1.js';
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { ActionDefinitionV1Schema } from './actionDefinitionV1.js';
-import { normalizeActionsSettingsV1 } from './actionSettings.js';
+import { ActionsSettingsV1Schema, normalizeActionsSettingsV1 } from './actionSettings.js';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
@@ -628,7 +628,7 @@ describe('session.spawn_new canonical execution', () => {
     const approvalsCreate = vi.fn();
     const sessionSpawnNew = vi.fn();
     // Unused transport dependencies are omitted: policy rejection precedes every effect.
-    const executor = createActionExecutor({ approvalsCreate, sessionSpawnNew, isActionApprovalRequired: () => true } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ approvalsCreate, sessionSpawnNew, readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.spawn_new': { approvalRequiredSurfaces: [context.surface] } } }) } as unknown as ActionExecutorDeps);
     expect(await executor.execute('session.spawn_new', { ...canonicalInput, environmentVariables }, {
       surface: 'agent', defaultSessionId: 'parent-session', agentStartContext,
       callerPermissionMode: 'yolo',
@@ -691,7 +691,7 @@ describe('session.spawn_new canonical execution', () => {
     const executor = createActionExecutor({
       approvalsCreate,
       sessionSpawnNew: vi.fn(),
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.spawn_new': { approvalRequiredSurfaces: [context.surface] } } }),
     } as unknown as ActionExecutorDeps);
     const { creationKey: _creationKey, ...input } = apiSpawnInput;
     const target = { kind: 'machine' as const, machineId: 'machine-1' };
@@ -755,7 +755,7 @@ describe('session.spawn_new canonical execution', () => {
       approvalsCreate,
       sessionSpawnNew,
       resolveAgentStartContext: async () => agentStartContext,
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.spawn_new': { approvalRequiredSurfaces: [context.surface] } } }),
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.spawn_new', canonicalInput, {
@@ -805,7 +805,7 @@ describe('session.spawn_new canonical execution', () => {
       approvalsCreate,
       sessionSpawnNew: vi.fn(),
       resolveAgentStartContext: async () => agentStartContext,
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.spawn_new': { approvalRequiredSurfaces: [context.surface] } } }),
     } as unknown as ActionExecutorDeps);
 
     await executor.execute('session.spawn_new', { ...canonicalInput, permissionMode: 'read-only' }, {
@@ -848,7 +848,6 @@ describe('session.spawn_new canonical execution', () => {
     }));
     const executor = createActionExecutor({
       sessionSpawnNew,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.spawn_new', apiSpawnInput, {
@@ -868,7 +867,6 @@ describe('session.spawn_new canonical execution', () => {
     const sessionSpawnNew = vi.fn();
     const executor = createActionExecutor({
       sessionSpawnNew,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.spawn_new', apiSpawnInput, {
@@ -892,7 +890,6 @@ describe('session.spawn_new canonical execution', () => {
     }));
     const executor = createActionExecutor({
       sessionSpawnNew,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.spawn_new', apiSpawnInput, {
@@ -921,7 +918,6 @@ describe('session.spawn_new canonical execution', () => {
     const sessionSpawnNew = vi.fn();
     const executor = createActionExecutor({
       sessionSpawnNew,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.spawn_new', apiSpawnInput, {
@@ -959,7 +955,7 @@ describe('session.spawn_new canonical execution', () => {
     const sessionSpawnNew = vi.fn<ActionExecutorDeps['sessionSpawnNew']>(async () => ({
       type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted',
     }));
-    const executor = createActionExecutor({ sessionSpawnNew, isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ sessionSpawnNew } as unknown as ActionExecutorDeps);
     const context = {
       surface, authority: 'account_automation' as const,
       serverId: 'server-1', runtimeAccountId: 'account-1',
@@ -986,7 +982,7 @@ describe('session.spawn_new canonical execution', () => {
     { surface, serverId: 'server-1', runtimeAccountId: 'account-1', authority: undefined },
   ]))('refuses host creation with incomplete admitted scope: %j', async (scope) => {
     const sessionSpawnNew = vi.fn();
-    const executor = createActionExecutor({ sessionSpawnNew, isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ sessionSpawnNew } as unknown as ActionExecutorDeps);
     expect(await executor.execute('session.spawn_new', canonicalInput, {
       authority: 'account_automation', actionCaller: { kind: 'host' }, ...scope,
     })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
@@ -996,7 +992,7 @@ describe('session.spawn_new canonical execution', () => {
   it.each(['voice', 'cli'] as const)('retains required approval for a scoped host %s creation', async (surface) => {
     const sessionSpawnNew = vi.fn();
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'voice-spawn-approval' }));
-    const executor = createActionExecutor({ sessionSpawnNew, approvalsCreate, isActionApprovalRequired: () => true } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ sessionSpawnNew, approvalsCreate, readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.spawn_new': { approvalRequiredSurfaces: [context.surface] } } }) } as unknown as ActionExecutorDeps);
     expect(await executor.execute('session.spawn_new', canonicalInput, {
       surface, authority: 'account_automation', actionCaller: { kind: 'host' },
       serverId: 'server-1', runtimeAccountId: 'account-1',
@@ -1011,7 +1007,6 @@ describe('session.spawn_new canonical execution', () => {
     const sessionSpawnNew = vi.fn();
     const executor = createActionExecutor({
       sessionSpawnNew,
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('session.spawn_new', apiSpawnInput, {
@@ -1051,9 +1046,7 @@ describe('session.spawn_new canonical execution', () => {
       approvalsGet,
       approvalsUpdate,
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: (actionId, context) => (
-        actionId === 'session.spawn_new' && context.surface === 'api'
-      ),
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.spawn_new': { approvalRequiredSurfaces: ['api'] } } }),
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute(
@@ -1102,9 +1095,7 @@ describe('session.spawn_new canonical execution', () => {
       approvalsGet,
       approvalsUpdate,
       isApprovalExecutionOriginCurrent: async () => true,
-      isActionApprovalRequired: (actionId, context) => (
-        actionId === 'session.spawn_new' && context.surface === 'api'
-      ),
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.spawn_new': { approvalRequiredSurfaces: ['api'] } } }),
     } as unknown as ActionExecutorDeps);
     const { creationKey: _creationKey, ...apiInputWithoutCreationKey } = apiSpawnInput;
 
@@ -1196,7 +1187,6 @@ describe('session.spawn_new canonical execution', () => {
 
   it('projects compact spawn input schemas and hints when API callers discover Action specs', async () => {
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
     const context = {
       surface: 'api' as const,
@@ -1506,7 +1496,7 @@ describe('session.spawn_new canonical execution', () => {
     }));
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'must-not-create' }));
     const executor = createActionExecutor({ sessionSpawnNew, approvalsCreate,
-      isActionApprovalRequired: () => true } satisfies Partial<ActionExecutorDeps>);
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.spawn_new': { approvalRequiredSurfaces: [context.surface] } } }) } satisfies Partial<ActionExecutorDeps>);
     const { creationKey: _creationKey, ...inputWithoutCreationKey } = canonicalInput;
 
     const result = await executor.execute('session.spawn_new', {

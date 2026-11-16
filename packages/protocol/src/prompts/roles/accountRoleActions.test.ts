@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ActionsSettingsV1Schema } from '../../actions/actionSettings.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../../actions/actionExecutor.js';
 import { prepareAccountRoleArtifactDeletionV1, createAccountRoleActionExecutorV1, createRoleSourceReaderV1, projectAccountRoleActionRefusalV1, RoleActionRefusalV1, type RoleArtifactStoreV1 } from './accountRoleActions.js';
 import { BUILT_IN_ROLES_V1 } from './builtInRolesV1.js';
@@ -64,7 +65,8 @@ function createHarness(readError?: Error, guidanceSource?: Readonly<Record<strin
   const unusedHostBoundary = async () => { throw new Error('Unexpected non-Role host boundary'); };
   const deps = {
     roleActionExecute,
-    isActionApprovalRequired: () => false,
+    readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1,
+      approvalWaivedSurfaces: { 'roles.delete': ['ui'] } }),
     executionRunStart: unusedHostBoundary,
     executionRunList: unusedHostBoundary,
     executionRunGet: unusedHostBoundary,

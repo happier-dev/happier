@@ -1,3 +1,5 @@
+import { ActionIdSchema } from './actionIds.js';
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it } from 'vitest';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { resolveApprovalExecutor } from '../approvals/resolveApprovalExecutor.js';
@@ -31,7 +33,7 @@ function harness(initialPolicy: DiscussionAnswerPolicyV1 = 'drafts_for_approval'
   // Only HTTP/persistence/current-machine boundaries are replaced. The real
   // Action admission, V2 parser, decision/CAS transition and replay run below.
   const deps: Partial<ActionExecutorDeps> = {
-    isActionApprovalRequired: () => false,
+
     // Replace the receiving Session transport; admission/replay stay real.
     sessionSendMessage: async ({ localId }) => ({ status: 'accepted', localId }),
     discussionAction: async ({ actionId, context: executionContext }) => {
@@ -86,7 +88,7 @@ describe('Discussion direct-user creation policy', () => {
     expect(state.publications).toHaveLength(1);
   });
   it.each(['session', 'host'] as const)('hands a private Post decision to its daemon before recording consent on the reviewing client (%s)', async caller => {
-    const daemon = harness('drafts_for_approval', { isActionApprovalRequired: undefined });
+    const daemon = harness('drafts_for_approval', {  });
     const publisher: ActionExecutorContext = caller === 'host' ? { ...context, actionCaller: { kind: 'host' },
       discussionReplyReturn: { serverId: 'srv_home', requestLocalId: 'original-input', acceptedTurnId: 'original-turn' } } : context;
     expect(await daemon.executor.execute('discussion.reply', input, publisher))
@@ -118,7 +120,7 @@ describe('Discussion direct-user creation policy', () => {
   });
   it.each(['reject', 'cancel'] as const)('lets the ordinary approval owner %s a person-attributed non-Session Workflow return without Session settlement', async decision => {
     const settlements: unknown[] = [];
-    const state = harness('when_addressed', { isActionApprovalRequired: undefined,
+    const state = harness('when_addressed', {
       sessionMessageReply: async request => { settlements.push(request); return { ok: false, errorCode: 'unexpected_session_settlement' }; } });
     state.setPolicy(null);
     const producer = { v: 1 as const, kind: 'workflow' as const, runId: 'run', invocationRecordId: 'leaf', invocationAttempt: '0',
@@ -142,7 +144,7 @@ describe('Discussion direct-user creation policy', () => {
     expect(state.publications).toEqual([]);
   });
   it('keeps default informational return available but refuses personless explicit Ask for non-Session Workflow custody', async () => {
-    const state = harness('when_addressed', { isActionApprovalRequired: undefined });
+    const state = harness('when_addressed', {  });
     state.setPolicy(null);
     const producer = { v: 1 as const, kind: 'workflow' as const, runId: 'run', invocationRecordId: 'leaf', invocationAttempt: '0',
       execution: { kind: 'action' as const, actionId: 'plugin:external/check' }, outcome: 'answer' as const };
@@ -163,7 +165,7 @@ describe('Discussion direct-user creation policy', () => {
     expect(state.stored()).toBeNull();
   });
   it.each(['text', 'typed'] as const)('lets an exact host Workflow original reach the trusted publisher without enrolling its implicit leaf (%s)', async resultKind => {
-    const state = harness('when_addressed', { isActionApprovalRequired: undefined });
+    const state = harness('when_addressed', {  });
     state.setPolicy(null);
     const workflow = { runId: 'workflow-run', invocationRecordId: 'leaf', invocationAttempt: '0' };
     const requestLocalId = deriveWorkflowSessionInputLocalIdV2({ purpose: 'invocation', runId: workflow.runId, invocationRecordId: workflow.invocationRecordId });
@@ -239,7 +241,7 @@ describe('Discussion direct-user creation policy', () => {
   it.each(['agent-session', 'person-cli-global', 'person-cli-contextual'] as const)(
     'retains independently-one initial participants through approval (%s)', async path => {
       const writes: unknown[] = [];
-      const h = harness('when_addressed', { isActionApprovalRequired: undefined,
+      const h = harness('when_addressed', {
         discussionAction: async ({ input }) => { writes.push(input); return created; } });
       const invocation: ActionExecutorContext = path === 'agent-session' ? context : {
         surface: 'cli', authority: 'present_user', serverId: 'home', serverIdentityId: 'srv_home',
@@ -267,7 +269,7 @@ describe('Discussion direct-user creation policy', () => {
     });
 
   it('still refuses a Discussion proposal with no captured Home origin before storage or effect', async () => {
-    const h = harness('when_addressed', { isActionApprovalRequired: undefined });
+    const h = harness('when_addressed', {  });
     expect(await h.executor.execute('discussion.create', createInput, {
       surface: 'cli', authority: 'present_user', actionRequestId: 'originless-create',
     })).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
@@ -310,13 +312,13 @@ describe('Discussion direct-user creation policy', () => {
     expect(writes).toEqual(['discussion.create', 'discussion.create']);
   });
 
-  it('honors explicit UI confirmation and keeps irreversible ownership transfer distinct from reversible archive', () => {
+  it('routes explicit UI Ask through native confirmation and keeps ownership transfer distinct from archive', () => {
     const ui = { surface: 'ui', authority: 'present_user' } as const;
     const spec = getActionSpec('discussion.create');
     expect(resolveActionApprovalRouting({ actionId: spec.id, spec, context: ui,
       settings: normalizeActionsSettingsV1({ v: 1, actions: {
         'discussion.create': { approvalRequiredSurfaces: ['ui'] },
-      } }) }).required).toBe(true);
+      } }) })).toMatchObject({ required: false, uiConfirmationRequired: true });
     for (const actionId of ['discussion.archive', 'discussion.restore', 'discussion.leave'] as const) {
       const spec = getActionSpec(actionId);
       expect(resolveActionApprovalRouting({ actionId, spec, context: ui }).required, actionId).toBe(false);
@@ -326,7 +328,8 @@ describe('Discussion direct-user creation policy', () => {
         .toMatchObject({ required: true, flow: 'deferred' });
     }
     const transfer = getActionSpec('discussion.owner.transfer');
-    expect(resolveActionApprovalRouting({ actionId: transfer.id, spec: transfer, context: ui }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId: transfer.id, spec: transfer, context: ui }))
+      .toMatchObject({ required: false, uiConfirmationRequired: true });
     expect(transfer.requiredAuthority).toBe('present_user');
   });
 
@@ -334,7 +337,7 @@ describe('Discussion direct-user creation policy', () => {
     let selected = 'chosen';
     const writes: unknown[] = [];
     const reads: string[] = [];
-    const h = harness('when_addressed', { isActionApprovalRequired: id => id === 'discussion.create',
+    const h = harness('when_addressed', { readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['discussion.create']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       discussionAction: async ({ actionId, input, context }) => {
       if (actionId === 'discussion.participants.list') {
         reads.push(context.serverId!);
@@ -425,7 +428,7 @@ describe('Discussion direct-user creation policy', () => {
 
   it.each(['slot', 'target-list', 'home'] as const)('rejects a reviewed initial operand with changed %s correspondence', async change => {
     const writes: unknown[] = [];
-    const h = harness('when_addressed', { isActionApprovalRequired: id => id === 'discussion.create',
+    const h = harness('when_addressed', { readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['discussion.create']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       discussionAction: async ({ input }) => { writes.push(input); return created; } });
     await h.executor.execute('discussion.create', { ...createInput, participants: [{ kind: 'session', sessionId: 'chosen' }] }, context);
     const request = h.stored();
@@ -464,8 +467,10 @@ describe('Discussion direct-user invitation policy', () => {
       }] });
     const approvals: ApprovalRequestV2[] = [];
     const writes: string[] = [];
+    let confirmations = 0;
     // HTTP and approval storage are the only substituted system boundaries.
     const executor = createActionExecutor({
+      presentUserActionConfirmation: async () => { confirmations++; return true; },
       discussionAction: async ({ actionId }) => { writes.push(actionId); return granted; },
       approvalsCreate: async ({ request }) => {
         approvals.push(ApprovalRequestV2Schema.parse(request));
@@ -488,9 +493,17 @@ describe('Discussion direct-user invitation policy', () => {
     expect(await executor.execute(actionId, input, { ...base, surface: 'ui', authority: 'present_user',
       actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
         [actionId]: { approvalRequiredSurfaces: ['ui'] },
+      } }) })).toEqual({ ok: true, result: granted });
+    expect(approvals).toHaveLength(1);
+    expect(confirmations).toBe(1);
+    expect(writes).toEqual([actionId, actionId]);
+
+    expect(await executor.execute(actionId, input, { ...base, surface: 'agent', authority: 'account_automation',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+        [actionId]: { approvalRequiredSurfaces: ['agent'] },
       } }) })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'invite-approval' } });
     expect(approvals).toHaveLength(2);
-    expect(writes).toEqual([actionId]);
+    expect(writes).toEqual([actionId, actionId]);
   });
 });
 
@@ -576,7 +589,7 @@ describe('Discussion participant publication policy', () => {
       phase: 'action_admission', retryable: false } };
     let loseReplyResponse = true;
     const h = harness(policy, {
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
       // Existing authenticated original-input HTTP persistence is the boundary;
       // V2 creation, decision/CAS and terminal retry use the real owners.
       sessionMessageReply: async request => {

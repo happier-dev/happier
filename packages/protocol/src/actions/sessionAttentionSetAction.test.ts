@@ -34,7 +34,6 @@ describe('session.attention.set (ORC R-10)', () => {
         : { sessionId: 'session-1', standing: false, remindAt: args.request.remindAt, updatedAt: 11 },
     }));
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => false,
       sessionAttentionSet,
       resolveServerIdForSessionId: () => 'home-1',
     } as unknown as ActionExecutorDeps);
@@ -62,7 +61,6 @@ describe('session.attention.set (ORC R-10)', () => {
   it('refuses a body that changes both or neither field before the route is written', async () => {
     const sessionAttentionSet = vi.fn();
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => false,
       sessionAttentionSet,
     } as unknown as ActionExecutorDeps);
 
@@ -81,7 +79,6 @@ describe('session.attention.set (ORC R-10)', () => {
       standing: { sessionId: 'session-1', standing: false, updatedAt: 10 },
     }));
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => false,
       sessionAttentionSet,
     } as unknown as ActionExecutorDeps);
 

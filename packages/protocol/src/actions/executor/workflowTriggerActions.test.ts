@@ -10,7 +10,6 @@ import { SessionTriggerAddRequestV1Schema, SessionTriggerListResultV1Schema, Wor
 import { normalizeUsageQuery } from '../../inputs/usageQuery.js';
 import { resolveUsagePageAggregation } from '../../usage/resolveUsagePageAggregation.js';
 import { ActionsSettingsV1Schema } from '../actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from '../actionApprovalPolicy.js';
 import { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations } from './workflowDefinitions.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 import { createWorkflowActionExecutor } from './workflowAccountActions.js';
@@ -304,7 +303,7 @@ describe('trigger source display provenance', () => {
       trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'session-one',
         events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } } }, caller);
     let goalPresent = true;
-    const boundary = f.executor(actions, { isActionApprovalRequired: () => false,
+    const boundary = f.executor(actions, {
       sessionGoalClear: async () => { goalPresent = false; return { ok: true }; } });
     const cleared = await boundary.execute('session.goal.clear', { sessionId: 'session-one' }, caller);
     expect(cleared, JSON.stringify(cleared)).toMatchObject({ ok: true });
@@ -329,7 +328,7 @@ describe('trigger source display provenance', () => {
       trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'session-one',
         events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } } }, caller);
     let goalPresent = true;
-    const boundary = f.executor(actions, { isActionApprovalRequired: () => false,
+    const boundary = f.executor(actions, {
       sessionGoalClear: async () => { goalPresent = false; return { ok: true }; } });
     refuseDetach = true;
     const refused = await boundary.execute('session.goal.clear', { sessionId: 'session-one' }, caller);
@@ -349,7 +348,7 @@ describe('trigger source display provenance', () => {
       target: { kind: 'workflow', ref: 'builtin:keep-going' },
       trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'session-one',
         events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } } }, caller);
-    const boundary = f.executor(actions, { isActionApprovalRequired: () => false,
+    const boundary = f.executor(actions, {
       sessionGoalClear: async () => ({ ok: false, errorCode: 'session_goal_control_unsupported', error: 'session_goal_control_unsupported' }) });
     expect(await boundary.execute('session.goal.clear', { sessionId: 'session-one' }, caller))
       .toMatchObject({ ok: false, errorCode: 'session_goal_control_unsupported' });
@@ -358,7 +357,7 @@ describe('trigger source display provenance', () => {
   it('keeps the Goal when the Workflow owner refuses the prerequisite trigger read', async () => {
     const f = fixture();
     let goalPresent = true;
-    const boundary = createActionExecutor({ isActionApprovalRequired: () => false,
+    const boundary = createActionExecutor({
       workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => false,
         definitions: f.definitions, triggers: f.actions,
         runs: { execute: async () => { throw new Error('Unexpected Run write'); } } }),
@@ -369,7 +368,7 @@ describe('trigger source display provenance', () => {
   });
   it('refuses compound Goal clear without a trigger owner before mutating the Goal', async () => {
     let goalPresent = true;
-    const boundary = createActionExecutor({ isActionApprovalRequired: () => false,
+    const boundary = createActionExecutor({
       sessionGoalClear: async () => { goalPresent = false; return { ok: true }; } });
     expect(await boundary.execute('session.goal.clear', { sessionId: 'session-one' }, { surface: 'ui', authority: 'present_user' }))
       .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
@@ -654,7 +653,7 @@ describe('person-saved exact-input trigger consent', () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1,
       actions: { 'workflow.trigger.add': { approvalRequiredSurfaces: ['cli'] } } });
     const executor = f.executor(f.actions, {
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+      readActionsSettings: () => settings,
       approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'profile-review' }; },
       approvalsGet: async () => approval,
       approvalsUpdate: async ({ request }) => { approval = request; return { ok: true }; },
@@ -1638,8 +1637,8 @@ describe('workflow trigger Automation composition', () => {
       target: { kind: 'inline', definition: { version: 1, inputs: [], defaults: { conversation: destination },
         blocks: [{ kind: 'step', id: 'first', name: 'Habit B',
           document: { text: 'Reply exactly HABIT B.', references: [], attachments: [] },
-          execution: { engine: { agentTarget: { kind: 'agent', identity: { pluginId, localId: 'agent' } },
-            modelSelection: { v: 1, ref: { agentTargetKey: `agent:${pluginId}/agent`, providerConnectionId: null, modelId: 'model' }, updatedAt: 1 }, effort: 'low' },
+          execution: { agentTarget: { kind: 'agent', identity: { pluginId, localId: 'agent' } },
+            modelSelection: { v: 1, ref: { agentTargetKey: `agent:${pluginId}/agent`, providerConnectionId: null, modelId: 'model' }, updatedAt: 1 }, sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 0, overrides: { reasoning_effort: { value: 'low', updatedAt: 0 } } },
             connectedServices: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
               source: 'connected', selection: 'profile', profileId: 'profile-one' } } },
             conversation: destination, permissionMode: 'default' }, result: { kind: 'text' } }],
@@ -1804,7 +1803,7 @@ describe('workflow trigger Automation composition', () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1,
       actions: { 'workflow.trigger.add': { approvalRequiredSurfaces: ['cli'] } } });
     const gated = f.executor(f.actions, {
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+      readActionsSettings: () => settings,
       approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'digest-approval' }; },
       approvalsGet: async () => approval,
       approvalsUpdate: async ({ request }) => { approval = request; return { ok: true }; },
@@ -2750,7 +2749,7 @@ describe('workflow trigger Automation composition', () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1,
       actions: { 'workflow.trigger.remove': { approvalRequiredSurfaces: ['cli'] } } });
     const executor = f.executor(actions, {
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+      readActionsSettings: () => settings,
       approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'remove-approval' }; },
       approvalsGet: async () => approval,
       approvalsUpdate: async ({ request }) => { approval = request; return { ok: true }; },

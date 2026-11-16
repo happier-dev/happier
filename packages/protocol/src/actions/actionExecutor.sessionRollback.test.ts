@@ -42,8 +42,10 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
 
     resetGlobalVoiceAgent: vi.fn(),
     teleportVoiceAgentToSessionRoot: vi.fn(async () => ({ ok: true })),
-    // These cases isolate rollback routing rather than approval behavior.
-    isActionApprovalRequired: () => false,
+    // These cases isolate rollback routing using explicit Account waivers.
+    readActionsSettings: context => context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1,
+      approvalWaivedSurfaces: { 'session.rollback': [context.surface], 'session.checkpoint_code_rollback': [context.surface],
+        'session.checkpoint': [context.surface], 'session.restore': [context.surface] } }),
     ...overrides,
   } as ActionExecutorDeps;
 }
@@ -156,7 +158,8 @@ describe('createActionExecutor (session.checkpoint / session.restore)', () => {
   it('exposes checkpoint creation to Agent, MCP and CLI without dropping their approval default', async () => {
     const effects: unknown[] = [];
     const output = { ok: true, status: 'succeeded', source: 'happier_scm', receipts: [] };
-    const executor = createActionExecutor(createDeps({ isActionApprovalRequired: undefined,
+    const executor = createActionExecutor(createDeps({
+      readActionsSettings: undefined,
       sessionCheckpoint: async args => { effects.push(args); return output; },
     }));
     const input = { v: 1, sessionId: 'sess_1', scopes: ['workspace'], candidate: { source: 'happier_scm' }, timing: 'idle' };

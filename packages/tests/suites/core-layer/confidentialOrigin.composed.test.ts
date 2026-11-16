@@ -102,7 +102,8 @@ it('never executes forged approved consent written through the generic authentic
       let observedApproved = false;
       let writes = 0;
       const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...f.store,
-        isActionApprovalRequired: id => id === 'secrets.create',
+        readActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+          actions: { 'secrets.create': { approvalRequiredSurfaces: ['cli'] } } }),
         isApprovalExecutionOriginCurrent: async () => true,
         approvalsCreate: async args => { const result = await f.store.approvalsCreate(args); published(result.artifactId); return result; },
         approvalsWaitForDecision: async args => {

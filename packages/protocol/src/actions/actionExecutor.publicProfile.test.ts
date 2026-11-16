@@ -28,8 +28,7 @@ const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
 } });
 const context = { surface: 'cli', authority: 'present_user', serverId: 'home', expectedAccountId: 'account',
   runtimeAccountId: 'account', actionRequestId: 'public-profile-request', actionsSettings: settings } as const;
-const approvalRequired: NonNullable<ActionExecutorDeps['isActionApprovalRequired']> = (id, ctx, input) =>
-  isApprovalRequiredByActionsSettings(id, ctx.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), ctx, undefined, undefined, input);
+const approvalRequired: NonNullable<ActionExecutorDeps['readActionsSettings']> = (ctx) => ctx.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 });
 const layout = { v: 1, items: [] } as const;
 const picturePng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=';
 function reviewedPictureAppearance(): PublicProfilePreparedAppearanceV1 {
@@ -74,7 +73,7 @@ describe('public-profile Actions through the shared executor', () => {
       writes.push(bindPublicProfilePreparedHttpRequestV1(args.actionId, args.preparedRequest));
       return { kind: 'updated', record: null };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {},
         getRepository: async selector => selector.repository.nameWithOwner === publicProject.repository.nameWithOwner
           ? { success: true, kind: 'public', repository: { label: 'owner/public', url: 'https://forge.test/owner/public' } }
@@ -107,7 +106,7 @@ describe('public-profile Actions through the shared executor', () => {
   });
   it.each(['unknown', 'unsupported'] as const)('still refuses a %s repository classification', async kind => {
     const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async () => owner();
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {},
         getRepository: async () => ({ success: true, kind }),
       }),
@@ -127,7 +126,7 @@ describe('public-profile Actions through the shared executor', () => {
     const failureCause = { phase: 'scm.repository.read', errorClass: 'Error', errorCode: 'authentication_required',
       httpStatus: null };
     const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async () => owner();
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {},
         getRepository: async () => ({ success: false, kind: 'failed', code: 'repository_unavailable', failureCause }),
       }),
@@ -150,7 +149,7 @@ describe('public-profile Actions through the shared executor', () => {
       if (args.actionId === 'account.public_profile.get') return current;
       throw new Error('Preview cannot mutate Home');
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
     } as ActionExecutorDeps);
     const result = await executor.execute('account.public_profile.preview', { policy, metadataSelection: {},
@@ -178,7 +177,7 @@ describe('public-profile Actions through the shared executor', () => {
       writes.push(bindPublicProfilePreparedHttpRequestV1(args.actionId, args.preparedRequest));
       return { kind: 'updated', record: current.record };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {}, buildSnapshot: buildPublicProfileSnapshot,
         usage: { query: async request => {
           queries.push(...request.queries);
@@ -223,7 +222,7 @@ describe('public-profile Actions through the shared executor', () => {
       writes.push(args.preparedRequest);
       return { kind: 'updated', record: null };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => { admissions += 1; } }),
     } as ActionExecutorDeps);
     const result = await executor.execute('account.public_profile.update', { policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1 }, context);
@@ -237,7 +236,7 @@ describe('public-profile Actions through the shared executor', () => {
     current.record.policy = { ...current.record.policy, fields: { ...current.record.policy.fields, name: false } };
     const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args =>
       args.actionId === 'account.public_profile.get' ? current : { kind: 'updated', record: current.record };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {},
         usage: { query: async () => { throw new Error('No selected Usage change'); } } }),
     } as ActionExecutorDeps);
@@ -252,7 +251,7 @@ describe('public-profile Actions through the shared executor', () => {
       requests.push(args.preparedRequest);
       return { kind: 'updated', record: null };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
     } as ActionExecutorDeps);
@@ -297,7 +296,7 @@ describe('public-profile Actions through the shared executor', () => {
       writes.push(args.preparedRequest);
       return { kind: 'updated', record: null };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
       artifactAction: async args => {
         expect(args.actionId).toBe('artifact.get');
@@ -340,7 +339,7 @@ describe('public-profile Actions through the shared executor', () => {
       return { kind: 'updated', record: null };
     };
     const identity = { pluginId: 'example.metrics', localId: 'days' };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
       widgetCatalog: {
         list: async () => { unrelatedReads += 1; return []; },
@@ -396,7 +395,7 @@ describe('public-profile Actions through the shared executor', () => {
       writes.push(args.preparedRequest);
       return { kind: 'updated', record: null };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {}, buildSnapshot: buildPublicProfileSnapshot,
         usage: { query: async ({ queries }) => resolveUsagePageAggregation({ queries, accounting: queries.map(query => ({ query,
           status: 'available', asOfMs: 1_000, value: UsageAnalyticsQueryResponseSchema.parse({ v: 1,
@@ -437,7 +436,7 @@ describe('public-profile Actions through the shared executor', () => {
     for (const field of PUBLIC_PROFILE_FIELDS_V1) policy.fields[field] = field === 'bio';
     const input = { intent: 'publish', policy, metadataSelection: { bio: 'Reviewed biography' },
       query: normalizeUsageQuery({ period: { relative: 'all' } }), layout, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
     } as ActionExecutorDeps);
     const result = await executor.execute('account.public_profile.publish', {
@@ -492,7 +491,7 @@ describe('public-profile Actions through the shared executor', () => {
       return args.actionId === 'account.public_profile.get' ? current : { kind: 'updated', record: current.kind === 'ready' ? current.record : null };
     };
     const executor = createActionExecutor({
-      isActionApprovalRequired: approvalRequired,
+      readActionsSettings: approvalRequired,
       homeDomainAction,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
     } as ActionExecutorDeps);
@@ -517,7 +516,7 @@ describe('public-profile Actions through the shared executor', () => {
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1_000 } });
     const queries: UsageQuery[] = [];
     const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async () => owner();
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {}, buildSnapshot: buildPublicProfileSnapshot,
         usage: { query: async request => {
           queries.push(...request.queries);
@@ -565,7 +564,7 @@ describe('public-profile Actions through the shared executor', () => {
     const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
       requests.push(args.actionId); return read;
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {},
         buildSnapshot: buildPublicProfileSnapshot,
         ...(missing === 'usage' ? {} : { usage: { query: async ({ queries }) => {
@@ -659,7 +658,7 @@ describe('public-profile Actions through the shared executor', () => {
       requests.push(args.actionId);
       return args.actionId === 'account.public_profile.get' ? current : { kind: 'updated', record };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {},
         usage: { query: async () => { throw new Error('Narrowing must not query Usage'); } } }),
     } as ActionExecutorDeps);
@@ -681,7 +680,7 @@ describe('public-profile Actions through the shared executor', () => {
       writes.push(args.actionId);
       return { kind: 'updated', record: current.record };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {}, buildSnapshot: buildPublicProfileSnapshot,
         usage: { query: async ({ queries }) => resolveUsagePageAggregation({ queries, accounting: queries.map(query => ({ query,
           status: 'available', value: UsageAnalyticsQueryResponseSchema.parse({ v: 1,
@@ -746,7 +745,7 @@ describe('public-profile Actions through the shared executor', () => {
       writes.push(bindPublicProfilePreparedHttpRequestV1(args.actionId, args.preparedRequest));
       return { kind: 'updated', record: null };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {}, buildSnapshot: buildPublicProfileSnapshot,
         usage: { query: async ({ queries }) => resolveUsagePageAggregation({ queries, accounting: queries.map(query => ({ query,
           status: 'available', asOfMs: 1_000, value: UsageAnalyticsQueryResponseSchema.parse({ v: 1,
@@ -845,7 +844,7 @@ describe('public-profile Actions through the shared executor', () => {
       effects.push('write');
       return { kind: 'updated', record: null };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
       approvalsCreate: async () => { effects.push('approval'); return { artifactId: 'unexpected-approval' }; },
     } as ActionExecutorDeps);
@@ -877,7 +876,7 @@ describe('public-profile Actions through the shared executor', () => {
       return args.actionId === 'account.public_profile.get' ? current
         : { kind: 'updated', record: current.kind === 'ready' ? { ...current.record, query: publicQuery } : null };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
     } as ActionExecutorDeps);
     await expect(executor.execute('account.public_profile.update', { query: ordinaryQuery }, context))
@@ -893,7 +892,7 @@ describe('public-profile Actions through the shared executor', () => {
       if (args.actionId === 'account.public_profile.get') return owner();
       requests.push(args); return { kind: 'updated', record: null };
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
     } as ActionExecutorDeps);
     const prepared = await executor.prepare('account.public_profile.update', { layout }, { ...context, signal: controller.signal });
@@ -912,7 +911,7 @@ describe('public-profile Actions through the shared executor', () => {
       controller.abort();
       return owner();
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
     } as ActionExecutorDeps);
     await expect(executor.execute('account.public_profile.update', { layout }, { ...context, signal: controller.signal }))
@@ -925,7 +924,7 @@ describe('public-profile Actions through the shared executor', () => {
     const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
       requests.push(args.actionId); return owner();
     };
-    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+    const executor = createActionExecutor({ homeDomainAction, readActionsSettings: approvalRequired,
       publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {} }),
     } as ActionExecutorDeps);
     const uiOnly = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'account.public_profile.update': ['ui'] } });

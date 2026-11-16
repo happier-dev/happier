@@ -318,12 +318,12 @@ describe('connected-service configuration Action owner', () => {
             'connectedServices.configuration.replace': ['cli'],
         } });
         const executor = createActionExecutor({
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+            readActionsSettings: () => settings,
             connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
         });
         const input = { ...(machineId ? { machineId } : {}), target: exactTarget, expectedRevision: 'revision-1', values: {}, secretValues: {} };
         const unapproved = createActionExecutor({
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, {}, context),
+            readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }),
             connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
         });
         expect(await unapproved.execute('connectedServices.configuration.replace', input, { surface: 'cli' }))
@@ -451,8 +451,7 @@ describe('connected-service configuration Action owner', () => {
             const hookBoundary = {
                 interceptActionExecution: async ({ input }) => ({ status: 'continue' as const, input }),
             } satisfies Pick<ActionExecutorDeps, 'interceptActionExecution'>;
-            const executor = createActionExecutor({ isActionApprovalRequired: (action, context, admitted) =>
-                isApprovalRequiredByActionsSettings(action, settings, context, undefined, undefined, admitted),
+            const executor = createActionExecutor({ readActionsSettings: () => settings,
                 ...approvalBoundary,
                 ...hookBoundary,
                 connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
@@ -460,9 +459,11 @@ describe('connected-service configuration Action owner', () => {
             } as unknown as ActionExecutorDeps);
             issued = null;
             if (spec.safety === 'danger') {
-                expect(await executor.execute(id, input, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
-                    serverId: 'home', runtimeAccountId: 'account', actionRequestId: 'request-1' }))
-                    .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+                const approval = await executor.execute(id, input, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
+                    serverId: 'home', runtimeAccountId: 'account', actionRequestId: 'request-1' });
+                expect(approval, JSON.stringify(approval)).toMatchObject(spec.approvalInputCustody === 'live_only'
+                    ? { ok: false, errorCode: 'approval_rejected' }
+                    : { ok: true, result: { kind: 'approval_request_created', artifactId: 'approval-1' } });
                 expect(issued).toBeNull();
             }
             observations.length = 0;
@@ -493,7 +494,7 @@ describe('connected-service configuration Action owner', () => {
             approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject' as const, request }),
             approvalsUpdate: async ({ request }) => { persisted.push(request); return { ok: true as const }; },
         } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsWaitForDecision' | 'approvalsUpdate'>;
-        const executor = createActionExecutor({ isActionApprovalRequired: () => true,
+        const executor = createActionExecutor({ readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { [id]: { approvalRequiredSurfaces: ['mcp'] } } }),
             ...approvalBoundary } as unknown as ActionExecutorDeps);
         expect(await executor.execute(id, input, { surface: 'mcp', serverId: 'home', runtimeAccountId: 'account',
             authority: 'account_automation', actionCaller: { kind: 'host' }, actionRequestId: 'request-1',
@@ -544,8 +545,7 @@ describe('connected-service configuration Action owner', () => {
             async setSubscriptionPrice(value: unknown) { applied = value; },
         };
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'connectedServices.subscription.price.set': ['ui'] } });
-        const executor = createActionExecutor({ isActionApprovalRequired: (id, context, admittedInput) =>
-            isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, admittedInput),
+        const executor = createActionExecutor({ readActionsSettings: () => settings,
             connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
         } as unknown as ActionExecutorDeps);
         const input = { account, price: { amount: 17, currency: 'EUR' } };
@@ -588,7 +588,7 @@ describe('connected-service configuration Action owner', () => {
                 },
             } };
         const executor = createActionExecutor({ presentUserActionConfirmation: async () => true,
-            isActionApprovalRequired: () => false, connectedServiceAction: ({ actionId, input }) =>
+            connectedServiceAction: ({ actionId, input }) =>
             executeConnectedServiceConfigurationActionV1(host, actionId, input) });
         const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
         const target = { service, modeId: 'manual' };
@@ -701,8 +701,7 @@ describe('connected-service configuration Action owner', () => {
         const settings = ActionsSettingsV1Schema.parse({ v: 1,
             approvalWaivedSurfaces: { 'connectedServices.configuration.replace': ['ui'] } });
         const executor = createActionExecutor({ presentUserActionConfirmation: async () => true,
-            isActionApprovalRequired: (id, context, admittedInput) =>
-            isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, admittedInput),
+            readActionsSettings: () => settings,
             connectedServiceAction: ({ actionId, input }) =>
             executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
         const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
@@ -813,7 +812,7 @@ describe('connected-service configuration Action owner', () => {
             .resolves.toMatchObject({ ok: false, errorCode: 'qualified_connected_accounts_inconsistent_peer' });
     });
     it('admits quota and selector reads as safe public reads without account-switch authority', async () => {
-        const executor = createActionExecutor({ isActionApprovalRequired: () => false } as ActionExecutorDeps);
+        const executor = createActionExecutor({  } as ActionExecutorDeps);
         for (const [id, input] of [
             ['connectedServices.quota.get', { source: { bindingKind: 'account', ref: { service, accountId: 'default' } } }],
             ['connectedServices.pools.selection.get', { machineId: 'machine', group: { service, groupId: 'work' } }],
@@ -1015,10 +1014,9 @@ describe('connected-service configuration Action owner', () => {
             async resetQuota() { throw new Error('unexpected_reset'); },
             async controlCommand(machineId, command) { commands.push({ machineId, command }); return response; },
         };
-        const deps: Pick<ActionExecutorDeps, 'connectedServiceAction' | 'isActionApprovalRequired'> = {
+        const deps: Pick<ActionExecutorDeps, 'connectedServiceAction' | 'readActionsSettings'> = {
             connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input),
-            isActionApprovalRequired: (id, context, admittedInput) =>
-                isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, admittedInput),
+            readActionsSettings: () => settings,
         };
         const executor = createActionExecutor(deps as ActionExecutorDeps);
         const reviewedExecutor = createActionExecutor({ ...deps, presentUserActionConfirmation: async () => true });

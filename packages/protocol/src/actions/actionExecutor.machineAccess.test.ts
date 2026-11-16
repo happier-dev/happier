@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import type { ActionExecutorContext } from './executor/types.js';
-import type { ActionId } from './actionIds.js';
+
+
 import { ActionIdSchema } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
 import { listActionSpecsForCatalogSurface } from './actionCatalog.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { MachineAccessGrantsListResponseV1Schema } from '../machines/machineAccessV1.js';
 
@@ -38,9 +38,10 @@ describe('Machine access Action front door', () => {
           dispatches++;
           return output;
         },
-        isActionApprovalRequired: () => false,
+
       } as unknown as ActionExecutorDeps);
-      const context = { surface: 'ui', authority: 'present_user', serverId: 'decider', serverIdentityId: 'srv_same_home' } as const;
+      const context = { surface: 'ui', authority: 'present_user', serverId: 'decider', serverIdentityId: 'srv_same_home',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [id]: ['ui'] } }) } as const;
       expect(await executor.execute(id, { ...input, serverId: 'creator' }, context)).toEqual({ ok: true, result: output });
       expect(await executor.execute(id, { ...input, serverId: 'unknown' }, context))
         .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
@@ -53,7 +54,7 @@ describe('Machine access Action front door', () => {
       machineWorkSummaryGet: unavailable, machineProcessesAction: unavailable, machineStorageAction: unavailable,
       machineGuardAction: unavailable, machineResourcesPolicyAction: unavailable, machineVitalsAction: unavailable,
       machineTerminalAction: unavailable, machinePageAction: unavailable, machinesList: unavailable,
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
     const neighbors = [
       ['machines.work.summary.get', {}], ['machines.processes.list', {}], ['machines.storage.summary.get', {}],
@@ -76,8 +77,7 @@ describe('Machine access Action front door', () => {
   });
   it('refuses a qualified inventory target different from its captured Home', async () => {
     let reachedInventory = false;
-    const executor = createActionExecutor({ machinesList: async () => { reachedInventory = true; return { items: [] }; },
-      isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ machinesList: async () => { reachedInventory = true; return { items: [] }; } } as unknown as ActionExecutorDeps);
     expect(await executor.execute('machines.list', { serverId: 'foreign' }, { surface: 'cli', serverId: 'home' }))
       .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
     expect(reachedInventory).toBe(false);
@@ -97,9 +97,10 @@ describe('Machine access Action front door', () => {
             expect(args.input).toEqual(input);
             return output;
           },
-          isActionApprovalRequired: () => false,
+
         } as unknown as ActionExecutorDeps);
-        expect(await executor.execute(id, input, { surface, authority: 'present_user', serverId: 'home' }))
+        expect(await executor.execute(id, input, { surface, authority: 'present_user', serverId: 'home',
+          actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [id]: [surface] } }) }))
           .toEqual({ ok: true, result: output });
       }
     }
@@ -125,7 +126,9 @@ describe('Machine access Action front door', () => {
     for (const surface of ['ui', 'cli', 'agent', 'mcp', 'voice'] as const) {
       for (const id of dangerActions) {
         const direct = surface === 'ui' && (id === 'machines.access.grant.remove' || id === 'machines.access.leave');
-        expect(isApprovalRequiredByActionsSettings(id, settings, { surface, authority: 'present_user' })).toBe(!direct);
+        expect(isApprovalRequiredByActionsSettings(id, settings, { surface, authority: 'present_user' })).toBe(surface !== 'ui');
+        const routing = resolveActionApprovalRouting({ actionId: id, spec: getActionSpec(id), settings, context: { surface, authority: 'present_user' } });
+        expect(routing.uiConfirmationRequired === true).toBe(surface === 'ui' && !direct);
         expect(isApprovalRequiredByActionsSettings(id, waived, { surface, authority: 'present_user' })).toBe(false);
       }
     }
@@ -141,16 +144,19 @@ describe('Machine access Action front door', () => {
       machineAccessAction: async () => { savedCount++; return saved; },
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async ({ request }: { request: ApprovalRequest }) => { approval = request; return { artifactId: 'approval' }; },
-      approvalsUpdate: async () => ({ ok: true }),
+      approvalsGet: async () => approval ?? null,
+      approvalsUpdate: async ({ request }: { request: ApprovalRequest }) => { approval = request; return { ok: true }; },
       approvalsWaitForDecision: async ({ request }: { request: ApprovalRequest }) => ({
         decision: 'reject', request: { ...request, status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } },
       }),
-      isActionApprovalRequired: (id: ActionId, ctx: ActionExecutorContext) => isApprovalRequiredByActionsSettings(id, settings, ctx),
+      readActionsSettings: () => (settings),
     };
     const context = { surface: 'voice', authority: 'present_user', serverId: 'home', runtimeAccountId: 'alice',
       actionRequestId: 'share-request', actionCaller: { kind: 'host' } } as const;
     const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
-    expect(await executor.execute(actionId, input, context)).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+    expect(await executor.execute(actionId, input, context)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' } });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'reject' }, { surface: 'ui', authority: 'present_user', serverId: 'home' }))
+      .toMatchObject({ ok: true, result: { status: 'rejected' } });
     expect(savedCount).toBe(0);
     expect(approval?.preview).toMatchObject({ machineAccessDisclosure: { machineId: 'machine',
       ownerCanInspectDeliveredMaterial: true, sharedAgentUidExposesSelectedMaterial: true,
@@ -158,7 +164,7 @@ describe('Machine access Action front door', () => {
       dedicatedMachineRecommended: true } });
     const waived = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: ['voice'] } });
     const waivedExecutor = createActionExecutor({ ...deps,
-      isActionApprovalRequired: (id: ActionId, ctx: ActionExecutorContext) => isApprovalRequiredByActionsSettings(id, waived, ctx),
+      readActionsSettings: () => (waived),
     } as unknown as ActionExecutorDeps);
     expect(await waivedExecutor.execute(actionId, input, context)).toEqual({ ok: true, result: saved });
     expect(savedCount).toBe(1);

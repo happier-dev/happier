@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+
 import { createProviderActionExecuteV1 } from '../providers/executeProviderActionV1.js';
 import { parseProviderActionRequestV1 } from '../providers/providerActionsV1.js';
 import { createProviderErrorV1 } from '../providers/errors.js';
@@ -32,7 +32,7 @@ describe('Provider Settings Actions', () => {
       writeCatalog: async () => { writes++; return { status: 'updated' }; },
     });
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
       presentUserActionConfirmation: async () => { confirmations++; return true; },
       approvalsCreate: async ({ request }) => {
         approvals.push(ApprovalRequestV2Schema.parse(request));
@@ -53,7 +53,7 @@ describe('Provider Settings Actions', () => {
     if (surface === 'ui') {
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { action: 'createCustom' } });
       expect(approvals).toHaveLength(0);
-      expect(confirmations).toBe(origin === 'ui-ask' ? 1 : 0);
+      expect(confirmations).toBe(1);
       expect(writes).toBe(1);
       return;
     }
@@ -330,7 +330,7 @@ describe('Provider Settings Actions', () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {},
       approvalWaivedSurfaces: { [actionId]: ['ui'] } });
     const executor = createActionExecutor({
-      isActionApprovalRequired: (id, ctx, input) => isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, input),
+      readActionsSettings: () => (settings),
       providerActionExecute: createProviderActionExecuteV1({ assertCurrent: () => {}, setDefault: async () => ({ status: 'applied' }),
         rpc: async ({ request }) => {
           // Only the daemon RPC transport is replaced; parsing, dispatch and outcome handling remain real.
@@ -407,7 +407,7 @@ describe('Provider Settings Actions', () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {},
       approvalWaivedSurfaces: { 'providers.connections.start_local': ['ui'] } });
     const executor = createActionExecutor({
-      isActionApprovalRequired: (id, ctx, input) => isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, input),
+      readActionsSettings: () => (settings),
       providerActionExecute: createProviderActionExecuteV1({
         assertCurrent: () => { if (!current) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' }); },
         rpc: async () => { current = false; return reply; }, setDefault: async () => ({ status: 'applied' }),

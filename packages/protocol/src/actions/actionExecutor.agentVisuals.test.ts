@@ -7,7 +7,7 @@ import { SessionBoardAuthoredItemUpsertInputV1Schema, SessionBoardGetInputV1Sche
 import { SessionSurfaceItemV1Schema, type SessionSurfaceItemV1 } from '../sessions/board/item.js';
 import { SessionInputAdmissionResultV1Schema } from '../sessions/messages/sessionInputAdmission.js';
 import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1 } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+
 import { createWidgetActionInputResolverV1 } from '../widgets/widgetActionInputResolverV1.js';
 import { describeApprovalRequestFields } from './actionApprovalPresentation.js';
 
@@ -105,8 +105,7 @@ describe('agent visuals through canonical Action admission', () => {
       'session.board.item.upsert': { approvalRequiredSurfaces: ['agent'] },
     } } : { v: 1 });
     const host = harness('allowed', {
-      isActionApprovalRequired: (id, ctx, input, uiConfirmation, approvedOperation, approvalScope, defaultSafety) =>
-        isApprovalRequiredByActionsSettings(id, settings, ctx, defaultSafety, undefined, input, uiConfirmation, undefined, approvedOperation, approvalScope),
+      readActionsSettings: () => settings,
     });
     if (policy === 'default') {
       expect(await host.show(note)).toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
@@ -135,8 +134,7 @@ describe('agent visuals through canonical Action admission', () => {
   it('keeps the same visual direct for a present person under the real host policy', async () => {
     const settings = normalizeActionsSettingsV1({ v: 1 });
     const host = harness('allowed', {
-      isActionApprovalRequired: (id, ctx, input, uiConfirmation) =>
-        isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, input, uiConfirmation),
+      readActionsSettings: () => settings,
     });
     expect(await host.show(note, null, { ...context, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
       .toMatchObject({ ok: true, result: { result: { outcome: 'created' } } });
@@ -154,7 +152,7 @@ describe('agent visuals through canonical Action admission', () => {
       const effects: string[] = [];
       const settings = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } });
       const host = harness('allowed', {
-        isActionApprovalRequired: (id, ctx, admitted) => isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, admitted),
+        readActionsSettings: () => settings,
         // HTTP mutation ports are the boundaries; approval construction,
         // decision authority, replay and strict Action outputs remain real.
         sessionFollowAction: async () => { effects.push('follow'); return { changed: true, source: {
@@ -184,7 +182,8 @@ describe('agent visuals through canonical Action admission', () => {
     const ask = harness();
     expect(await ask.show(note, null, { ...ui, actionsSettings: normalizeActionsSettingsV1({ v: 1,
       actions: { 'session.board.item.upsert': { approvalRequiredSurfaces: ['ui'] } },
-    }) })).toEqual({ ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required', requestId: 'show' });
+    }) })).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required', requestId: 'show',
+      details: { review: { actionArgs: { itemId: 'visual', expectedItemRevision: null, item: note } }, reviewDigest: expect.any(String) } });
     expect(ask.approvals).toEqual([]);
     expect(ask.writes).toEqual([]);
   });
@@ -205,8 +204,7 @@ describe('agent visuals through canonical Action admission', () => {
           ...(waived ? { approvalWaivedSurfaces: { 'session.board.item.upsert': [surface] } } : {}) });
         // The host supplies the same Account policy to automation admission and
         // native UI review; both keep the canonical consequence decision real.
-        const host = harness('allowed', { isActionApprovalRequired: (id, ctx, input, uiConfirmation, approvedOperation, approvalScope, defaultSafety) =>
-          isApprovalRequiredByActionsSettings(id, actionsSettings, ctx, defaultSafety, undefined, input, uiConfirmation, undefined, approvedOperation, approvalScope) });
+        const host = harness('allowed', { readActionsSettings: () => actionsSettings });
         const invocation = { ...caller, actionsSettings };
         if (testCase.prior) host.setStored({ item: SessionSurfaceItemV1Schema.parse(testCase.prior), revision });
         else host.setCopyItem(SessionSurfaceItemV1Schema.parse(html({ network: 'open' })));
@@ -336,7 +334,7 @@ describe('agent visuals through canonical Action admission', () => {
       });
       const host = harness('allowed', {
         isActionEnabled: (id, ctx) => isActionEnabledByActionsSettings(id, settings, ctx),
-        isActionApprovalRequired: (id, ctx, input) => isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, input),
+        readActionsSettings: () => settings,
       });
       expect(await host.show(note)).toMatchObject(enabled
         ? { ok: true, result: { result: { outcome: 'created' } } }
@@ -421,7 +419,8 @@ describe('agent visuals through canonical Action admission', () => {
     expect(await host.show(explicitNone, revision)).toMatchObject({ ok: true, result: { result: { outcome: 'updated' } } });
     expect(host.stored?.item.source).toMatchObject({ instance: { networkOverride: { network: 'none' } } });
     expect(await host.show(installed, revision, { ...context, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
-      .toEqual({ ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required', requestId: 'show' });
+      .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required', requestId: 'show',
+        details: { review: { actionArgs: { itemId: 'visual', expectedItemRevision: revision, item: installed } }, reviewDigest: expect.any(String) } });
     expect(host.approvals).toEqual([]);
     expect(host.writes).toHaveLength(2);
     expect(host.stored?.item.source).toMatchObject({ instance: { networkOverride: { network: 'none' } } });

@@ -3,7 +3,7 @@ import { createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 import { getActionSpec } from './actionSpecs.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { encodeV2SessionListCursorV2 } from '../sessions/listing/cursor.js';
+import { createSessionMembershipReadFixture } from '../sessions/read/sessionReadBatchV1.testkit.js';
 import { SessionManagerSetResultV1Schema } from '../sessions/follow/sessionManagerV1.js';
 import type {
   SessionManagerSetActionInputV1,
@@ -73,7 +73,7 @@ describe('session.manager.set', () => {
     }).success).toBe(false);
   });
 
-  it.each(['summary', 'awareness'] as const)('edits a child proved by %s but does not submit an unapproved outside-subtree mutation', async (view) => {
+  it.each([true, false])('edits an exact server-proved child (active=%s) and refuses an unapproved outside-subtree mutation', async active => {
     const submittedAttachments: SessionManagerSetActionInputV1[] = [];
     const sessionManagerSet = async (request: SessionManagerSetActionInputV1): Promise<SessionManagerSetResultV1> => {
       submittedAttachments.push({
@@ -83,23 +83,19 @@ describe('session.manager.set', () => {
       });
       return { ok: true, sessionId: request.sessionId, managerSessionId: request.managerSessionId, attachedAt: 1 };
     };
-    const sessionList = vi.fn(async () => view === 'awareness' ? {
-      view: 'awareness', projectionVersion: 1,
-      sessions: [{
-        v: 1, sessionId: 'worker', lifecycle: 'active', runtime: 'idle', freshness: 'live',
-        operational: { primary: 'none', reasons: [] }, encryption: 'plain', availability: 'complete',
-      }],
-      nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
-    } : {
-      sessions: [{ id: 'worker', active: false, presence: 'offline', updatedAt: 10 }],
-      nextCursor: null, hasNext: false, queryVersion: 1, attentionNextCursor: null, attentionHasNext: false,
+    const sessionRead = vi.fn<NonNullable<ActionExecutorDeps['sessionRead']>>(async ({ sessionIds }) => {
+      const response = createSessionMembershipReadFixture(sessionIds, ['worker']);
+      for (const result of response.results) if (result.detail?.status === 200) result.detail.body.session.active = active;
+      return response;
     });
-    const executor = createTransportExecutor({ sessionManagerSet, sessionList, isActionApprovalRequired: () => false });
+    const sessionList = vi.fn(async () => { throw new Error('Exact membership must not scan list projections'); });
+    const executor = createTransportExecutor({ sessionManagerSet, sessionRead, sessionList });
     const agent = { surface: 'agent', authority: 'account_automation', defaultSessionId: 'lead' } as const;
     await expect(executor.execute('session.manager.set', input, agent)).resolves.toMatchObject({ ok: true });
     await expect(executor.execute('session.manager.set', { ...input, sessionId: 'unrelated' }, agent)).resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(submittedAttachments).toEqual([input]);
-    expect(sessionList).toHaveBeenCalledWith(expect.objectContaining({ query: expect.objectContaining({ underSessionId: 'lead' }) }));
+    expect(sessionRead).toHaveBeenCalledWith(expect.objectContaining({ sessionIds: ['worker'], underSessionId: 'lead' }));
+    expect(sessionList).not.toHaveBeenCalled();
   });
 
   it('honors explicit require inside the subtree and waiver outside without granting input authority', async () => {
@@ -124,23 +120,6 @@ describe('session.manager.set', () => {
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {}, approvalWaivedSurfaces: { 'session.manager.set': ['agent'] } }),
     })).resolves.toMatchObject({ ok: false, errorCode: 'manager_forbidden', details: { reason: 'input' } });
     expect(submittedAttachments).toEqual(['worker']);
-  });
-
-  it('proves an inactive archived child through continuation before treating its mutation as safe', async () => {
-    const cursor = encodeV2SessionListCursorV2({ sessionId: 'archived-peer', meaningfulActivityAt: 10 });
-    const executor = createTransportExecutor({
-      sessionList: async ({ query }) => ({
-        sessions: query?.storage === 'archived' && query.includeInactive && query.cursor === cursor
-          ? [{ id: 'worker', active: false, presence: 'offline', updatedAt: 10 }] : [],
-        nextCursor: query?.storage === 'archived' && query.cursor === undefined ? cursor : null,
-        hasNext: query?.storage === 'archived' && query.cursor === undefined,
-        queryVersion: 1, attentionNextCursor: null, attentionHasNext: false,
-      }),
-      sessionManagerSet: async () => ({ ok: true, sessionId: 'worker', managerSessionId: 'lead', attachedAt: 1 }),
-    });
-    await expect(executor.execute('session.manager.set', input, {
-      surface: 'agent', authority: 'account_automation', defaultSessionId: 'lead',
-    })).resolves.toMatchObject({ ok: true });
   });
 
   it('requires explicit compare-and-set facts and preserves typed service failures', async () => {

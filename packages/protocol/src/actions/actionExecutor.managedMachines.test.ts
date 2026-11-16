@@ -423,7 +423,7 @@ describe('managed Machine Action executor', () => {
       managedMachineReferences: async () => ({ homeId: 'home', machineId: 'guest', coverage: 'complete', references: [], unavailable: [] }),
       managedMachineAction: async () => ({ kind: 'accepted', managedId: 'managed', intentRevision: 5,
         operation: { operationId: 'delete-operation' } }),
-      approvalsList, approvalsGet, approvalsUpdate, isActionApprovalRequired: () => false,
+      approvalsList, approvalsGet, approvalsUpdate,
     } as unknown as ActionExecutorDeps);
 
     expect(await executor.execute('machines.managed.delete', actionArgs, { surface: 'ui', authority: 'present_user',
@@ -462,7 +462,7 @@ describe('managed Machine Action executor', () => {
         nextCursor: null, queryPlan: { kind: 'bounded_approval_artifact_header_scan',
           boundedBy: 'exact approval subject key', hydratedTranscripts: false } };
       },
-      approvalsGet: async () => stored, approvalsUpdate, isActionApprovalRequired: () => false,
+      approvalsGet: async () => stored, approvalsUpdate,
     } as unknown as ActionExecutorDeps);
     const execute = () => executor.execute('machines.managed.delete', actionArgs, { surface: 'ui', authority: 'present_user',
       serverId: 'home', presentUserConfirmation: { actionId: 'machines.managed.delete' } });
@@ -508,7 +508,7 @@ describe('managed Machine Action executor', () => {
       },
       approvalsUpdate,
       recordApprovalRetirementWarning,
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
 
     expect(await executor.execute('machines.managed.delete', actionArgs, { surface: 'ui', authority: 'present_user',
@@ -531,7 +531,7 @@ describe('managed Machine Action executor', () => {
       approvalsGet: async () => null,
       approvalsUpdate: async () => ({ ok: true }),
       recordApprovalRetirementWarning: listFailureWarning,
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
     expect(await listFailureExecutor.execute('machines.managed.delete', actionArgs, { surface: 'ui', authority: 'present_user',
       serverId: 'home', presentUserConfirmation: { actionId: 'machines.managed.delete' } }))
@@ -614,9 +614,10 @@ describe('managed Machine Action executor', () => {
 
   it('refuses a known external Agent continuation before compute when its original grant cannot start on new compute', async () => {
     const managedMachineAction = vi.fn(async () => ({ managedId: 'managed', operation: { operationId: 'operation' } }));
-    const executor = createActionExecutor({ managedMachineAction, isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ managedMachineAction } as unknown as ActionExecutorDeps);
     const start = { creationKey: 'start', directory: { kind: 'managed' }, agentTarget };
     const context = { surface: 'api' as const, authority: 'account_automation' as const,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['api'] } }),
       externalActionTarget: { kind: 'machine' as const, machineId: 'controller' },
       externalActionCredential: { accountId: 'account', principalId: 'account', credentialId: 'pat', grant: {
         ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['machines.managed.acquire'] },
@@ -653,8 +654,7 @@ describe('managed Machine Action executor', () => {
   it('validates provisioner results through the canonical family output contract', async () => {
     const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
     let networkResult: unknown = { dimensions };
-    const executor = createActionExecutor({ managedMachineAction: async () => networkResult,
-      isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ managedMachineAction: async () => networkResult } as unknown as ActionExecutorDeps);
     const input = { homeId: 'home', controller: acquireInput.selection.controller,
       contribution: acquireInput.selection.launch.provider, selectors: {} };
     expect(await executor.execute('machines.provisioners.options', input, { surface: 'cli' }))
@@ -668,8 +668,7 @@ describe('managed Machine Action executor', () => {
     // Durable acquisition and approval storage are network/persistence boundaries.
     const managedMachineAction = vi.fn(async (_args: unknown) => ({ managedId: 'managed', operation: { operationId: 'operation' } }));
     const approvalsCreate = vi.fn();
-    const executor = createActionExecutor({ managedMachineAction, approvalsCreate,
-      isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ managedMachineAction, approvalsCreate } as unknown as ActionExecutorDeps);
     expect(await executor.execute('machines.managed.acquire', { ...acquireInput, agentStart: {
       creationKey: 'start-1', directory: { kind: 'path', path: '/repo' }, agentTarget,
     } }, { ...agentContext, sessionAgentSpawnPolicyV1: {
@@ -678,17 +677,17 @@ describe('managed Machine Action executor', () => {
       details: { field: 'executionTarget.machineId' } });
     expect(managedMachineAction).not.toHaveBeenCalled();
     expect(approvalsCreate).not.toHaveBeenCalled();
-    expect(await executor.execute('machines.managed.acquire', acquireInput, { surface: 'cli' }))
+    expect(await executor.execute('machines.managed.acquire', acquireInput, { surface: 'cli',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['cli'] } }) }))
       .toMatchObject({ ok: true, result: { managedId: 'managed', operation: { operationId: 'operation' } } });
   });
 
   it('retains admitted child depth and role selection at the real acquisition transport boundary', async () => {
     const managedMachineAction = vi.fn(async (_args: unknown) => ({ managedId: 'managed', operation: { operationId: 'operation' } }));
-    const executor = createActionExecutor({ managedMachineAction,
-      isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ managedMachineAction } as unknown as ActionExecutorDeps);
     const result = await executor.execute('machines.managed.acquire', { ...acquireInput, agentStart: {
       creationKey: 'start-1', directory: { kind: 'path', path: '/repo' }, agentTarget, roleId: 'worker',
-    } }, { ...agentContext, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }), agentStartContext: { ...agentContext.agentStartContext, roles: {
+    } }, { ...agentContext, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['agent'] } }), agentStartContext: { ...agentContext.agentStartContext, roles: {
       worker: { roleId: 'worker', name: 'Worker', instructions: 'Complete the task',
         engine: { agentTargetKey: 'agent:role.agent/worker', modelId: 'role-model' },
         runsAs: { kind: 'session' }, workspaceWrites: 'deny', secondOpinion: 'off', enabled: true },
@@ -703,10 +702,10 @@ describe('managed Machine Action executor', () => {
   });
 
   it('fails closed for unsupported hosts and preserves typed transport refusals', async () => {
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({  } as unknown as ActionExecutorDeps);
     expect(await executor.execute('machines.managed.list', { homeId: 'home' }, { surface: 'cli' }))
       .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
-    const refused = createActionExecutor({ isActionApprovalRequired: () => false,
+    const refused = createActionExecutor({
       managedMachineAction: async () => ({ ok: false, errorCode: 'permission_denied', error: 'permission_denied' }),
     } as unknown as ActionExecutorDeps);
     expect(await refused.execute('machines.managed.get', { homeId: 'home', managedId: 'managed' }, { surface: 'cli' }))

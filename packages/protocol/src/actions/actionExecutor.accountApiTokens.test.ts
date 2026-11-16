@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionId } from './actionIds.js';
@@ -5,10 +6,6 @@ import { createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 import type { AccountApiTokenSummaryV1 } from '../auth/accountApiTokens.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
-import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
-import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
-import { resolveApprovalExecutor } from '../approvals/resolveApprovalExecutor.js';
-import { normalizeActionsSettingsV1 } from './actionSettings.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
   return {
@@ -72,80 +69,31 @@ const token = {
 } satisfies AccountApiTokenSummaryV1;
 
 describe('createActionExecutor (account.apiTokens)', () => {
-  it.each(['agent', 'mcp'] as const)('returns a bearer only to the waiting %s caller after a human decision', async surface => {
-    const coordinator = createBlockingApprovalCoordinator();
-    const cancellation = new AbortController();
-    const bearer = `hap_v1_${token.tokenId}_${'A'.repeat(43)}`;
-    const history: ApprovalRequest[] = [];
-    const observations: unknown[] = [];
-    let stored: ApprovalRequest | null = null;
-    const effect = vi.fn(async () => ({ token: bearer, apiToken: token }));
-    const executor = createActionExecutor(createDeps({
-      accountApiTokensCreateAction: effect,
-      isApprovalExecutionOriginCurrent: async () => true,
-      approvalsCreate: async ({ request }) => { stored = request; history.push(request); return { artifactId: 'token-request' }; },
-      approvalsGet: async () => stored,
-      approvalsUpdate: async ({ request }) => { stored = request; history.push(request); return { ok: true }; },
-      approvalsWaitForDecision: async args => {
-        const decision = await coordinator.waitForDecision(args);
-        return { ...decision, request: stored! };
-      },
-      approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
-      observeActionExecution: async value => { observations.push(value); },
-    }));
-    const requestContext = { surface, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const },
-      serverId: 'home-1', runtimeAccountId: 'account-1', defaultSessionMachineId: 'token-machine', actionRequestId: 'token-request', signal: cancellation.signal };
-    const input = { tokenId: token.tokenId, label: token.label };
-    // Scoped credentials are never a person, even with a full grant.
-    expect(await executor.execute('account.apiTokens.create', input, { ...requestContext,
-      externalActionCredential: { accountId: 'account-1', principalId: 'account-1', credentialId: token.tokenId, grant: API_TOKEN_FULL_GRANT_V1 },
-    })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(stored).toBeNull();
-    let returned = false;
-    let detached: Promise<unknown> | undefined;
-    const invocation = executor.execute('account.apiTokens.create', { tokenId: token.tokenId, label: token.label }, {
-      surface, authority: 'account_automation', actionCaller: { kind: 'host' },
-      serverId: 'home-1', runtimeAccountId: 'account-1', defaultSessionMachineId: 'token-machine', actionRequestId: 'token-request', signal: cancellation.signal,
-    }).then(result => { returned = true; return result; });
-    try {
-      await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('token-request')).toBe(1));
-      expect(returned).toBe(false);
-      expect(effect).not.toHaveBeenCalled();
-      expect(resolveApprovalExecutor(stored!)).toEqual({ kind: 'live_invocation', daemonMachineId: 'token-machine' });
-      const decided = await executor.execute('approval.request.decide', { artifactId: 'token-request', decision: 'approve' }, {
-        surface: 'ui', authority: 'present_user', serverId: 'home-1', actionCaller: { kind: 'host' },
-      });
-      expect(decided).toMatchObject({ ok: true, result: { status: 'approved' } });
-      expect(JSON.stringify(decided)).not.toContain(bearer);
-      await expect(invocation).resolves.toEqual({ ok: true, result: { token: bearer, apiToken: token } });
-      expect(effect).toHaveBeenCalledOnce();
-      expect(JSON.stringify(history)).not.toContain(bearer);
-      expect(JSON.stringify(observations)).not.toContain(bearer);
-      expect(await executor.execute('approval.request.decide', { artifactId: 'token-request', decision: 'approve' }, {
-        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-      })).toMatchObject({ ok: true, result: { status: 'executed' } });
-      expect(effect).toHaveBeenCalledOnce();
-      detached = executor.execute('account.apiTokens.create', input, { ...requestContext, actionRequestId: 'detached-request' });
-      await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('token-request')).toBe(1));
-      cancellation.abort();
-      await detached;
-      const expired = await executor.execute('approval.request.decide', { artifactId: 'token-request', decision: 'approve' }, {
-        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-      });
-      expect(expired).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' } });
-      expect(stored).toMatchObject({ status: 'approved' });
-      expect(effect).toHaveBeenCalledOnce();
-    } finally { cancellation.abort(); coordinator.dispose(); await Promise.all([invocation, detached]); }
+  it.each(['agent', 'mcp'] as const)('refuses token creation on the excluded %s surface before approval or issuance', async surface => {
+    const effect = vi.fn();
+    const approvalsCreate = vi.fn();
+    const executor = createActionExecutor(createDeps({ accountApiTokensCreateAction: effect, approvalsCreate }));
+    for (const externalActionCredential of [undefined, {
+      accountId: 'account-1', principalId: 'account-1', credentialId: token.tokenId, grant: API_TOKEN_FULL_GRANT_V1,
+    }]) {
+      expect(await executor.execute('account.apiTokens.create', { tokenId: token.tokenId, label: token.label }, {
+        surface, authority: 'account_automation', actionCaller: { kind: 'host' }, externalActionCredential,
+      })).toMatchObject(externalActionCredential
+        ? { ok: false, errorCode: 'present_user_required' }
+        : { ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface', surface } });
+    }
+    expect(effect).not.toHaveBeenCalled();
+    expect(approvalsCreate).not.toHaveBeenCalled();
   });
 
-  it('refuses agent-supplied encryption material before an approval or effect', async () => {
+  it('refuses encryption-bearing creation on an excluded agent surface before an approval or effect', async () => {
     const effect = vi.fn();
     const approvalsCreate = vi.fn();
     const executor = createActionExecutor(createDeps({ accountApiTokensCreateAction: effect, approvalsCreate }));
     expect(await executor.execute('account.apiTokens.create', {
       tokenId: token.tokenId, label: token.label, encryption: { access: encryptionAccess },
     }, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' } }))
-      .toMatchObject({ ok: false, errorCode: 'api_token_encryption_not_ready' });
+      .toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface', surface: 'agent' } });
     expect(effect).not.toHaveBeenCalled();
     expect(approvalsCreate).not.toHaveBeenCalled();
   });
@@ -161,7 +109,8 @@ describe('createActionExecutor (account.apiTokens)', () => {
     const deps = Object.assign(createDeps({
       // The plugin hook transport is the boundary; canonical Action execution stays real.
       interceptActionExecution: async ({ input }) => ({ status: 'continue', input }),
-      isActionApprovalRequired: () => false,
+
+      presentUserActionConfirmation: async () => true,
       observeActionExecution,
     }), {
       accountApiTokensCreateAction,
@@ -212,7 +161,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
       CREATE_ACTION_ID,
       { tokenId: token.tokenId, label: token.label, accountId: 'caller-selected-account' },
       context,
-    )).resolves.toEqual({
+    )).resolves.toMatchObject({
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
@@ -235,7 +184,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
       accountApiTokensCreateAction,
       interceptActionExecution: async ({ input }) => ({ status: 'continue', input }),
       observeActionExecution,
-      isActionApprovalRequired: (candidate) => candidate === CREATE_ACTION_ID,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { [CREATE_ACTION_ID]: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       approvalsCreate,
     }));
     await expect(executor.execute(CREATE_ACTION_ID, actionInput, {
@@ -267,43 +216,26 @@ describe('createActionExecutor (account.apiTokens)', () => {
     });
   });
 
-  it('keeps a confirmed present-user token creation on the live invocation and never persists the show-once bearer', async () => {
+  it('keeps present-user token creation on its invocation and redacts the show-once bearer from observation', async () => {
     const bearer = `hap_v1_${token.tokenId}_${'A'.repeat(43)}`;
     const accountApiTokensCreateAction = vi.fn(async () => ({ token: bearer, apiToken: token }));
-    const persisted: unknown[] = [];
-    let stored: unknown = null;
-    const deps = Object.assign(createDeps({
-      isActionApprovalRequired: (actionId) => actionId === CREATE_ACTION_ID,
-      isApprovalExecutionOriginCurrent: async () => true,
-      // The Artifact transport is the boundary: record exactly what the executor persists.
-      approvalsCreate: async ({ request }) => { stored = request; persisted.push(request); return { artifactId: 'approval-api-token' }; },
-      approvalsGet: async () => stored as never,
-      approvalsUpdate: async ({ request }) => { stored = request; persisted.push(request); return { ok: true as const }; },
-      // The present user confirms on the waiting invocation.
-      approvalsWaitForDecision: async ({ request }) => ({
-        decision: 'approve' as const,
-        request: { ...request, status: 'approved' as const, decision: { kind: 'approve' as const, decidedAtMs: 2 } },
-      }),
-    }), { accountApiTokensCreateAction });
-    const executor = createActionExecutor(deps);
-
-    await expect(executor.execute(
-      CREATE_ACTION_ID,
+    const approvalsCreate = vi.fn();
+    const observations: unknown[] = [];
+    const executor = createActionExecutor(createDeps({
+      accountApiTokensCreateAction,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { [CREATE_ACTION_ID]: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
+      approvalsCreate,
+      observeActionExecution: async event => { observations.push(event); },
+    }));
+    await expect(executor.execute(CREATE_ACTION_ID,
       { tokenId: token.tokenId, label: token.label, expiresAt: token.expiresAt },
-      {
-        surface: 'ui',
-        authority: 'present_user',
-        serverId: 'home-1',
-        runtimeAccountId: 'account-1',
-        actionRequestId: 'request-api-token',
-        actionCaller: { kind: 'host' },
-      },
+      { surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1',
+        actionRequestId: 'request-api-token', actionCaller: { kind: 'host' } },
     )).resolves.toEqual({ ok: true, result: { token: bearer, apiToken: token } });
-
     expect(accountApiTokensCreateAction).toHaveBeenCalledOnce();
-    expect(persisted.length).toBeGreaterThan(0);
-    expect(persisted.at(-1)).toMatchObject({ status: 'executed', execution: { ok: true, result: { apiToken: token } } });
-    expect(JSON.stringify(persisted)).not.toContain(bearer);
+    expect(approvalsCreate).not.toHaveBeenCalled();
+    expect(observations).toEqual([expect.objectContaining({ result: { ok: true, result: { apiToken: token } } })]);
+    expect(JSON.stringify(observations)).not.toContain(bearer);
   });
 
   it('lets account automation read token summaries but refuses every token-management mutation before its owner runs', async () => {
@@ -363,7 +295,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
       // The plugin hook transport is the boundary; canonical Action execution stays real.
       interceptActionExecution: async ({ input }) => ({ status: 'continue', input }),
       observeActionExecution,
-      isActionApprovalRequired: () => false,
+
     }), { accountApiTokensCreateAction });
     const executor = createActionExecutor(deps);
     const context = {
@@ -423,7 +355,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
         ],
       },
     ]) {
-      await expect(executor.execute(CREATE_ACTION_ID, input, context)).resolves.toEqual({
+      await expect(executor.execute(CREATE_ACTION_ID, input, context)).resolves.toMatchObject({
         ok: false,
         errorCode: 'invalid_parameters',
         error: 'invalid_parameters',
@@ -469,7 +401,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
     });
 
     for (const invalid of [{ includeEncryptionAccess: true }, { projectionVersion: 2 }]) {
-      await expect(executor.execute(LIST_ACTION_ID, invalid, context)).resolves.toEqual({
+      await expect(executor.execute(LIST_ACTION_ID, invalid, context)).resolves.toMatchObject({
         ok: false,
         errorCode: 'invalid_parameters',
         error: 'invalid_parameters',

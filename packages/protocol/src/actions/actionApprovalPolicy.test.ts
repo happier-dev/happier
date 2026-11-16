@@ -4954,7 +4954,7 @@ describe('agent-initiated dangerous-action approval default (FINALIZATION-PLAN Â
   });
 
   it('fails safe to the agent danger floor when the approval signal is unwired (no requiredByPolicy, no settings)', () => {
-    // Simulates a host that never wired `isActionApprovalRequired` AND passed no settings.
+    // Simulates a host that supplies no Actions settings.
     // The resolver must NOT fall open to "no approval" for the dangerous agent-initiated subset.
     const decision = resolveActionApprovalRouting({
       actionId: 'browser.diagnostics.eval' as any,

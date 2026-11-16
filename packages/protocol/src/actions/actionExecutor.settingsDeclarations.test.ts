@@ -19,8 +19,7 @@ describe('declared settings Actions', () => {
     const executor = createActionExecutor({ settingsDeclarationAction: async ({ input }: Parameters<NonNullable<ActionExecutorDeps['settingsDeclarationAction']>>[0]) => {
       writes.push(input);
       return { anchor: input.anchor, value: input.value };
-    }, isActionApprovalRequired: (id, context, admittedInput) =>
-      isApprovalRequiredByActionsSettings(id, context.actionsSettings ?? actionsSettings, context, undefined, undefined, admittedInput),
+    }, readActionsSettings: context => context.actionsSettings ?? actionsSettings,
     } as unknown as ActionExecutorDeps);
     for (const surface of ['agent', 'mcp'] as const) {
       expect(await executor.execute('settings.set', input, { surface, actionsSettings }))

@@ -108,11 +108,11 @@ describe('desktop destination window Action', () => {
     let forwards = 0;
     const presenter = executor({
       isActionEnabled: () => { throw new Error('Presenter must trust the admitted request'); },
-      isActionApprovalRequired: () => { throw new Error('Presenter must not ask again'); },
+      readActionsSettings: () => { throw new Error('Presenter must not ask again'); },
       clipboardWrite: async () => { effects += 1; return { status: 'copied' }; },
     });
     const main = executor({
-      isActionApprovalRequired: () => { admissions += 1; return false; },
+      readActionsSettings: () => { admissions += 1; return ActionsSettingsV1Schema.parse({ v: 1 }); },
       clientActionExecute: async request => {
         forwards += 1;
         return presenter.executeAdmittedClientAction(request.actionId, request.input, request.context);
@@ -151,8 +151,8 @@ describe('desktop destination window Action', () => {
       expect(await actions.execute('workspace.tabs.close', { tabId: 'placed-session' }, context))
         .toEqual({ ok: true, result: { ok: true } });
       const expected = { ...context, authority: 'account_automation' };
-      expect(admitted).toEqual(expected);
-      expect(effectContext).toEqual(expected);
+      expect(admitted).toEqual(expect.objectContaining(expected));
+      expect(effectContext).toEqual(expect.objectContaining(expected));
     }
     let effects = 0;
     const unavailable = executor({ clientActionExecute: async request => {

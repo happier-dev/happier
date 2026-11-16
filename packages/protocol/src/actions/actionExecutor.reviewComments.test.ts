@@ -61,7 +61,6 @@ describe('createActionExecutor (review comments)', () => {
     let sibling: typeof comment | null = null;
     const sent: string[] = [];
     const executor = createActionExecutor(createDeps({
-      isActionApprovalRequired: () => false,
       resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: 'home', sessionId: sessionId! } }),
       reviewCommentAction: async ({ input }) => {
         const request = ReviewCommentActionInputSchemasV1['reviews.comments.list'].parse(input);
@@ -110,7 +109,6 @@ describe('createActionExecutor (review comments)', () => {
     const refusal = { ok: false as const, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
     const sent: string[] = [];
     const executor = createActionExecutor(createDeps({
-      isActionApprovalRequired: () => false,
       reviewCommentAction: async () => refusal,
       sessionSendMessage: async ({ message }) => { sent.push(message); return {}; },
     }));
@@ -134,7 +132,7 @@ describe('createActionExecutor (review comments)', () => {
     let reads = 0;
     const executor = createActionExecutor(createDeps({
       // Artifact persistence and the authenticated Home/message transports are boundaries.
-      isActionApprovalRequired: actionId => actionId === 'review.apply',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'review.apply': { approvalRequiredSurfaces: [context.surface] } } }),
       resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: 'home', sessionId: sessionId! } }),
       approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'apply-approval' }; },
       approvalsGet: async () => approval,
@@ -146,7 +144,8 @@ describe('createActionExecutor (review comments)', () => {
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', serverIdentityId: 'srv_home',
       defaultSessionId: 'origin', defaultSessionMachineId: 'machine',
       runtimeAccountId: 'account', actionRequestId: 'apply-request', actionCaller: { kind: 'host' as const } };
-    expect(await executor.execute('review.apply', { sessionId: 'origin', reviews: [{ runId: 'review', findings: [finding] }] }, context))
+    expect(await executor.execute('review.apply', { sessionId: 'origin', reviews: [{ runId: 'review', findings: [finding] }] },
+      { ...context, surface: 'cli' }))
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(approval).toMatchObject({ actionId: 'review.apply' });
     expect(reads).toBe(0);
@@ -234,12 +233,16 @@ describe('createActionExecutor (review comments)', () => {
     let approval: ApprovalRequest | null = null;
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(91) };
     let prepared: ReviewCommentPreparedRecordV1 | undefined;
+    const deliveries: string[] = [];
     const read = () => {
       const split = splitReviewCommentV1(comment);
       return { v: 1 as const, structural: split.structural, sensitiveEnvelope: sealReviewCommentSensitiveEnvelopeV1({ ...split, mode: 'e2ee', material, randomBytes: length => new Uint8Array(length).fill(92) }) };
     };
     const executor = createActionExecutor(createDeps({
       // Account Artifact persistence and Home authorization are boundaries of the Protocol executor.
+      sessionSendMessage: async ({ sessionId, localId }) => {
+        deliveries.push(sessionId); return { status: 'accepted', localId };
+      },
       approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'approval' }; },
       approvalsGet: async () => approval,
       approvalsUpdate: async ({ request }) => { approval = request; return { ok: true }; },
@@ -276,7 +279,7 @@ describe('createActionExecutor (review comments)', () => {
       ? { workspace, commentId: 'comment', expectedServerRevision: 1, expectedBodyVersion: 1, nextBody: 'Approved edit', clientMutationId: 'edit' }
       : { workspace, commentId: 'comment', expectedServerRevision: 1, expectedState: 'open', toState: 'dismissed', reason: 'Approved dismissal', clientMutationId: 'transition' };
     await expect(executor.execute(actionId, input, { surface: 'agent', authority: 'account_automation', serverId: 'home', serverIdentityId: 'srv_home',
-      actionRequestId: 'request', defaultSessionId: 'session', defaultSessionMachineId: 'machine',
+      runtimeAccountId: 'account', actionRequestId: 'request', defaultSessionId: 'session', defaultSessionMachineId: 'machine',
       actionCaller: { kind: 'session', sessionId: 'session', starterDepth: 0, turnDepth: 0 },
       reviewCommentPrincipal: { actor: { kind: 'agent', agentId: 'acme.external/agent', sessionId: 'session' } },
     })).resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
@@ -285,6 +288,7 @@ describe('createActionExecutor (review comments)', () => {
       surface: 'cli', authority: 'present_user', serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'account', actionCaller: { kind: 'host' },
     });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(deliveries).toEqual(['session']);
     expect(comment).toMatchObject({ serverRevision: 2, author: { kind: 'plugin', pluginId: 'acme.external-review' },
       ...(actionId === 'reviews.comments.edit' ? { body: 'Approved edit', edits: [{ editedBy: { kind: 'user', userId: 'account' } }] }
         : { state: 'dismissed', transitions: [{ transitionedBy: { kind: 'user', userId: 'account' } }] }) });

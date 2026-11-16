@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from '../actionSettings.js';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from '../actionExecutor.js';
 import { createProfileActionExecuteV1 } from '../../profiles/profileActionsV1.js';
@@ -21,9 +22,10 @@ describe('Profile seeds at new Session admission', () => {
       deleteRecord: async () => { throw new Error('Admission must not delete the Profile'); },
     }) });
     const executor = createActionExecutor({ profileActionExecute,
+      presentUserActionConfirmation: async () => true,
       sessionSpawnNew: async () => { births += 1; return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }; },
       approvalsCreate: async () => { approvals += 1; return { artifactId: 'must-not-create' }; },
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.spawn_new': { approvalRequiredSurfaces: [context.surface] } } }),
     });
     const input = { creationKey: 'missing-profile-session', executionTarget: { serverId: 'home', machineId: 'machine' },
       directory: { kind: 'path', path: '/repo' }, profileId: 'unknown-profile',

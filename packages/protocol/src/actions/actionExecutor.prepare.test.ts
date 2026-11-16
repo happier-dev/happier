@@ -1,3 +1,4 @@
+import { ActionIdSchema } from './actionIds.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
@@ -7,7 +8,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionAp
 import { getActionSpec } from './actionSpecs.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+
 import { markSessionListQueryResultV1 } from '../sessions/awareness/action.js';
 import { createSessionMembershipReadFixture } from '../sessions/read/sessionReadBatchV1.testkit.js';
 import { SessionReadBatchResponseV1Schema } from '../sessions/read/sessionReadBatchV1.js';
@@ -111,7 +112,7 @@ describe('one own-UI review disposition', () => {
     const launches: unknown[] = [];
     const launchConsent: unknown[] = [];
     const executor = createExecutor({
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }),
       // These ports are the addressed native host and mounted human presenter.
       prepareLocalServiceStartApproval: async () => review,
       presentUserActionConfirmation: async confirmation => {
@@ -148,7 +149,7 @@ describe('one own-UI review disposition', () => {
       const executor = createActionExecutor({
         // The HTTP reader, persisted approval writer and native presenter are system boundaries.
         sessionList: async () => { effects++; return { sessions: [] }; },
-        ...(policy === 'host policy' ? { isActionApprovalRequired: () => true } : {}),
+        ...(policy === 'host policy' ? { readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }) } : {}),
         approvalsCreate: async () => { artifacts++; return { artifactId: 'unexpected-self-approval' }; },
         ...(mounted ? { presentUserActionConfirmation: async request => { reviews.push(request); return true; } } : {}),
       });
@@ -269,7 +270,7 @@ describe('ActionExecutor prepared invocation', () => {
     const presentUserActionConfirmation = vi.fn(async () => true);
     const sessionList = vi.fn(async () => ({ sessions: [] }));
     const executor = createExecutor({ approvalsCreate, approvalsWaitForDecision, presentUserActionConfirmation,
-      sessionList, isActionApprovalRequired: () => true });
+      sessionList, readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }) });
     await expect(executor.prepare('session.list', {}, {
       surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'server-1',
       actionRequestId: 'native-press', interactivePresentation: 'unavailable',
@@ -282,7 +283,7 @@ describe('ActionExecutor prepared invocation', () => {
 
   it('retains a one-shot prepared noninteractive effect when no decision is required', async () => {
     const sessionList = vi.fn(async () => ({ sessions: [] }));
-    const executor = createExecutor({ sessionList, isActionApprovalRequired: () => false });
+    const executor = createExecutor({ sessionList });
     const prepared = await executor.prepare('session.list', {}, { surface: 'ui', authority: 'present_user',
       actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable' });
     expect(prepared.kind).toBe('ready');
@@ -298,7 +299,7 @@ describe('ActionExecutor prepared invocation', () => {
     const uiCurrentContextAction = vi.fn(async () => ({ ok: true as const, result: CurrentUiContextSnapshotV1Schema.parse({
       navigation: { area: 'sessions', screen: 'list' }, commands: [],
     }) }));
-    const executor = createExecutor({ uiCurrentContextAction, isActionApprovalRequired: () => false });
+    const executor = createExecutor({ uiCurrentContextAction });
     await expect(executor.prepare('ui.current_context.read', {}, { surface: 'ui', authority: 'present_user',
       actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable' }))
       .resolves.toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'action_interactive_review_required' } });
@@ -329,7 +330,7 @@ describe('ActionExecutor prepared invocation', () => {
       nowMs: 10, sessionId, lifecycle: { archivedAtMs: 9 }, runtime: { presence: 'unknown' }, pending: {}, content: { mode: 'plain' },
       currentness: { lifecycle: 'observed', runtime: 'unavailable', pending: 'unavailable' },
     }));
-    const executor = createExecutor({ sessionRead, sessionActivityGet, isActionApprovalRequired: () => false,
+    const executor = createExecutor({ sessionRead, sessionActivityGet,
       sessionAwarenessWait: async ({ input, options, readAwareness }) => waitForSessionAwarenessV1({
         condition: input.condition, deadlineMs: options.deadlineMs, signal: options.signal,
         read: async () => {
@@ -358,7 +359,7 @@ describe('ActionExecutor prepared invocation', () => {
     // The interceptor is the real plugin boundary; both sides use the same admission owner.
     const executor = createExecutor({
       sessionRead: harness.sessionRead, sessionActivityGet: harness.sessionActivityGet,
-      isActionApprovalRequired: () => false,
+
       interceptActionExecution: async ({ input }) => ({ status: 'continue', input }),
     });
     const prepared = await executor.prepare('session.activity.get', { sessionId: 'child', view: 'awareness' }, harness.caller('parent'));
@@ -451,7 +452,7 @@ describe('ActionExecutor prepared invocation', () => {
 
   it('refuses missing host caller facts and an unproved subtree without disclosing the target', async () => {
     const { caller, sessionActivityGet } = sessionReadHarness();
-    const executor = createExecutor({ sessionActivityGet, isActionApprovalRequired: () => false });
+    const executor = createExecutor({ sessionActivityGet });
     await expect(executor.execute('session.activity.get', { sessionId: 'child' }, caller('parent'))).resolves.toMatchObject({ ok: false });
     await expect(executor.execute('session.activity.get', { sessionId: 'child' }, {
       ...caller('parent'), agentStartContext: undefined,
@@ -470,7 +471,7 @@ describe('ActionExecutor prepared invocation', () => {
   it('refuses a still-led child headless Resume before the Session open effect', async () => {
     const { caller, sessionRead } = sessionReadHarness();
     const opened: string[] = [];
-    const executor = createExecutor({ sessionRead, isActionApprovalRequired: () => false,
+    const executor = createExecutor({ sessionRead,
       sessionOpen: async ({ sessionId }) => { opened.push(sessionId); return { ok: true }; },
     });
     const context = caller('parent');
@@ -492,7 +493,7 @@ describe('ActionExecutor prepared invocation', () => {
       results: sessionIds.map(sessionId => ({ sessionId, detail: { status: 200,
         body: { session: session(sessionId, sessionId === 'child' ? 'parent' : 'child') } } })) }));
     const opened: string[] = [];
-    const executor = createExecutor({ sessionRead, isActionApprovalRequired: () => false,
+    const executor = createExecutor({ sessionRead,
       sessionOpen: async ({ sessionId }) => { opened.push(sessionId); return { ok: true }; },
     });
     const context = caller('parent');
@@ -507,7 +508,7 @@ describe('ActionExecutor prepared invocation', () => {
   it('admits registered Session setters for own and server-proved led targets', async () => {
     const { caller, sessionRead } = sessionReadHarness();
     const writes: Array<Readonly<{ sessionId: string; fieldId: string; value: unknown }>> = [];
-    const executor = createExecutor({ sessionRead, isActionApprovalRequired: () => false,
+    const executor = createExecutor({ sessionRead,
       sessionStateFieldSet: async (request) => {
         writes.push(request);
         return { ok: true, version: 3 };
@@ -535,7 +536,7 @@ describe('ActionExecutor prepared invocation', () => {
   it.each(['current_session', 'unavailable'] as const)('keeps registered Session setters within the host %s corpus', async (sessionListAccess) => {
     const { caller, sessionRead } = sessionReadHarness();
     const writes: unknown[] = [];
-    const executor = createExecutor({ sessionRead, isActionApprovalRequired: () => false,
+    const executor = createExecutor({ sessionRead,
       sessionStateFieldSet: async (request) => { writes.push(request); return { ok: true }; },
     });
     await expect(executor.prepare('session.bot.set', { sessionId: 'child', bot: null }, { ...caller('parent'), sessionListAccess }))
@@ -551,7 +552,7 @@ describe('ActionExecutor prepared invocation', () => {
     const context = caller('parent');
     if (!context.agentStartContext) throw new Error('Missing host caller facts');
     context.agentStartContext = { ...context.agentStartContext, ledSubtreeSessionIds: ['child'] };
-    const executor = createExecutor({ isActionApprovalRequired: () => false,
+    const executor = createExecutor({
       sessionRead: async ({ sessionIds }) => createSessionMembershipReadFixture(sessionIds, attached ? ['child'] : []),
       sessionStateFieldSet: async (request) => { writes.push(request); return { ok: true }; },
     });
@@ -566,7 +567,7 @@ describe('ActionExecutor prepared invocation', () => {
     expect(writes).toHaveLength(1);
 
     const abort = new AbortController();
-    const cancelled = createExecutor({ isActionApprovalRequired: () => false,
+    const cancelled = createExecutor({
       sessionRead: async ({ sessionIds }) => {
         abort.abort();
         return createSessionMembershipReadFixture(sessionIds);
@@ -580,7 +581,7 @@ describe('ActionExecutor prepared invocation', () => {
 
   it('rechecks the same read admission after interception changes the target', async () => {
     const { sessionRead, sessionActivityGet, caller } = sessionReadHarness();
-    const executor = createExecutor({ sessionRead, sessionActivityGet, isActionApprovalRequired: () => false,
+    const executor = createExecutor({ sessionRead, sessionActivityGet,
       interceptActionExecution: async () => ({ status: 'continue', input: { sessionId: 'unrelated', view: 'awareness' } }),
     });
     await expect(executor.prepare('session.activity.get', { sessionId: 'child', view: 'awareness' }, caller('parent')))
@@ -594,7 +595,7 @@ describe('ActionExecutor prepared invocation', () => {
     if (!context.agentStartContext) throw new Error('Missing host caller facts');
     context.agentStartContext = { ...context.agentStartContext, ledSubtreeSessionIds: ['child'] };
     let accessible = true;
-    const executor = createExecutor({ isActionApprovalRequired: () => false, sessionActivityGet,
+    const executor = createExecutor({  sessionActivityGet,
       sessionRead: async ({ sessionIds }) => createSessionMembershipReadFixture(sessionIds, accessible ? ['child'] : []),
     });
     const prepared = await executor.prepare('session.activity.get', { sessionId: 'child', view: 'awareness' }, context);
@@ -611,7 +612,7 @@ describe('ActionExecutor prepared invocation', () => {
   it('refuses unavailable host list access before approval or a prepared continuation', async () => {
     const sessionList = vi.fn(async () => ({ sessions: [{ id: 'private-session' }] }));
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'must-not-exist' }));
-    const executor = createExecutor({ sessionList, approvalsCreate, isActionApprovalRequired: () => true });
+    const executor = createExecutor({ sessionList, approvalsCreate, readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: Object.fromEntries(ActionIdSchema.options.map(actionId => [actionId, { approvalRequiredSurfaces: [context.surface ?? 'ui'] }])) }) });
     const context = { surface: 'agent', authority: 'account_automation', sessionListAccess: 'unavailable' } as const;
     await expect(executor.prepare('session.list', {}, context)).resolves.toEqual({
       kind: 'settled',
@@ -630,7 +631,7 @@ describe('ActionExecutor prepared invocation', () => {
     { surface: 'api', authority: 'account_automation' },
   ] as const)('preserves existing credential-backed list admission on $surface', async (context) => {
     const payload = { sessions: [{ id: 'permitted-session', active: false, presence: 'offline', updatedAt: 10 }], nextCursor: null };
-    const executor = createExecutor({ sessionList: async () => payload, isActionApprovalRequired: () => false });
+    const executor = createExecutor({ sessionList: async () => payload });
     const prepared = await executor.prepare('session.list', {}, context);
     expect(prepared.kind).toBe('ready');
     if (prepared.kind !== 'ready') throw new Error('Expected admitted list');
@@ -640,7 +641,7 @@ describe('ActionExecutor prepared invocation', () => {
   it('defaults an agent list to its host-stamped led subtree', async () => {
     const payload = { sessions: [], nextCursor: null, hasNext: false, queryVersion: 1, attentionNextCursor: null, attentionHasNext: false };
     const sessionList = vi.fn(async () => payload);
-    const executor = createExecutor({ sessionList, isActionApprovalRequired: () => false });
+    const executor = createExecutor({ sessionList });
 
     await expect(executor.execute('session.list', {}, {
       surface: 'agent',
@@ -661,7 +662,7 @@ describe('ActionExecutor prepared invocation', () => {
   it('admits the exact host-stamped current-Session corpus for an autonomous listing', async () => {
     const payload = { sessions: [{ id: 'admitted-session', active: false, presence: 'offline', updatedAt: 10 }], nextCursor: null };
     const sessionList = vi.fn(async () => payload);
-    const executor = createExecutor({ sessionList, isActionApprovalRequired: () => false });
+    const executor = createExecutor({ sessionList });
 
     await expect(executor.execute('session.list', {}, {
       surface: 'agent',
@@ -685,7 +686,7 @@ describe('ActionExecutor prepared invocation', () => {
   it('admits only a host-stamped mounted UI Session list without elevating plugin authority', async () => {
     const payload = { sessions: [{ id: 'listed-session', active: false, presence: 'offline', updatedAt: 10 }], nextCursor: null };
     const sessionList = vi.fn(async () => payload);
-    const executor = createExecutor({ sessionList, isActionApprovalRequired: () => false });
+    const executor = createExecutor({ sessionList });
 
     // Reading the mounted Account's list does not turn the plugin into the person.
     await expect(executor.execute('session.list', {}, {
@@ -798,8 +799,7 @@ describe('ActionExecutor prepared invocation', () => {
     let issuedInput: unknown = null;
     let observerFails = false;
     const executor = createExecutor({
-      isActionApprovalRequired: (actionId, context, input) =>
-        isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input),
+      readActionsSettings: () => (settings),
       // The Account HTTP writer and plugin observation receiver are boundaries;
       // admission, preparation and confidential projections remain real.
       accountPasswordChangeAction: async ({ input }) => {
@@ -856,7 +856,7 @@ describe('ActionExecutor prepared invocation', () => {
     const executor = createExecutor({
       sessionSpawnNewDirectoryApprovalPreflight,
       sessionSpawnNew,
-      isActionApprovalRequired: () => false,
+
     });
 
     const prepared = await executor.prepare('session.spawn_new', input, {
@@ -879,7 +879,7 @@ describe('ActionExecutor prepared invocation', () => {
     const sessionFork = vi.fn(async () => ({ ok: true as const, childSessionId: 'child-1' }));
     const executor = createExecutor({
       sessionFork,
-      isActionApprovalRequired: () => false,
+
     });
 
     const prepared = await executor.prepare('session.fork', {
@@ -950,7 +950,7 @@ describe('ActionExecutor prepared invocation', () => {
       approvalsUpdate,
       approvalsWaitForDecision,
       sessionList,
-      isActionApprovalRequired: (actionId) => actionId === 'session.list',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.list']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
     });
 
     const prepared = await executor.prepare('session.list', {}, origin === 'Session MCP' ? {
@@ -1019,7 +1019,7 @@ describe('ActionExecutor prepared invocation', () => {
       approvalsResolveBlockingDecision,
       approvalsWaitForDecision,
       sessionList,
-      isActionApprovalRequired: (actionId) => actionId === 'session.list',
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.list']: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
     });
 
     const preparedPromise = executor.prepare('session.list', {}, {

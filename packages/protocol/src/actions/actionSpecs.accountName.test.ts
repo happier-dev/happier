@@ -4,7 +4,7 @@ import { getActionSpec } from './actionSpecs.js';
 import { bindHomeDomainActionHttpRequestV1, HomeDomainActionIdV1Schema } from './homeDomainActionFamily.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from './actionApprovalPolicy.js';
-import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1 } from './actionSettings.js';
+import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings, normalizeActionsSettingsV1 } from './actionSettings.js';
 
 describe('self Account profile Actions', () => {
   it.each([
@@ -25,13 +25,20 @@ describe('self Account profile Actions', () => {
     expect(spec.surfaces).toMatchObject({ ui: true, agent: true, cli: true, plugin: true, mcp: false });
   });
 
-  it('asks before release on UI, Agent, CLI and plugin, with surface-specific waivers; checking is safe', () => {
+  it('admits direct UI release and asks automation, with surface-specific waivers; checking is safe', () => {
     const actionId = ActionIdSchema.parse('account.username.release');
     const checkId = ActionIdSchema.parse('account.username.check');
     for (const surface of ['ui', 'agent', 'cli', 'plugin'] as const) {
       const context = { surface, authority: 'present_user' as const };
       const settings = normalizeActionsSettingsV1({ v: 1, actions: {} });
-      expect(isApprovalRequiredByActionsSettings(actionId, settings, context)).toBe(true);
+      expect(isApprovalRequiredByActionsSettings(actionId, settings, context)).toBe(surface !== 'ui');
+      if (surface === 'ui') {
+        expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), settings, context })
+          .uiConfirmationRequired ?? false).toBe(false);
+        expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), context,
+          settings: normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }),
+        })).toMatchObject({ required: false, uiConfirmationRequired: true });
+      }
       expect(isApprovalRequiredByActionsSettings(checkId, settings, context)).toBe(false);
       const waived = normalizeActionsSettingsV1({ v: 1, actions: {}, approvalWaivedSurfaces: { [actionId]: [surface] } });
       expect(isApprovalRequiredByActionsSettings(actionId, waived, context)).toBe(false);
@@ -96,8 +103,10 @@ describe('self Account profile Actions', () => {
     const result = { name: 'Captain', firstName: 'Captain', lastName: null, timestamp: 1 };
     // This dependency is the host HTTP transport; all catalog and executor logic remains real.
     const executor = createActionExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'account.name.set': [context.surface] } }),
+
       homeDomainAction: async () => result,
-      isActionApprovalRequired: () => false,
       interceptActionExecution: async ({ input }) => ({ status: 'continue', input }),
     } as unknown as ActionExecutorDeps);
     expect(await executor.execute(ActionIdSchema.parse('account.name.set'), { name: 'Captain' }, {

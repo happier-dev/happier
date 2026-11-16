@@ -80,8 +80,7 @@ describe('notification signing secret Action input', () => {
       // The answering client's native permission adapter is the process boundary.
       const executor = createActionExecutor({
         notificationConfigurationAction: async args => { effects.push(args); return result; },
-        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
-          context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }), context),
+        readActionsSettings: context => context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }),
       } as ActionExecutorDeps);
       for (const surface of ['agent', 'mcp'] as const) {
         const context = { surface, authority: 'account_automation', actionCaller: { kind: 'host' } } as const;

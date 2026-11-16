@@ -6,7 +6,7 @@ import type { ArtifactAccessGrantRowV1 } from '../artifacts/artifactAccessV1.js'
 
 const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
 
-function createFixture(executorDeps: Pick<ActionExecutorDeps, 'isActionApprovalRequired'> = { isActionApprovalRequired: () => false }) {
+function createFixture(executorDeps: Pick<ActionExecutorDeps, 'readActionsSettings'> = {  }) {
   // Authenticated storage is the external boundary; Action/kind logic stays real.
   let grants: ArtifactAccessGrantRowV1[] = [];
   let removed = false;
@@ -44,10 +44,12 @@ describe('Artifact access Action family', () => {
     removeArtifact();
     await expect(executor.execute('artifact.access.grants.list', input, context)).resolves.toEqual({
       ok: false, errorCode: 'artifact_not_found', error: 'artifact_not_found',
+      failureCause: { errorClass: 'Error', errorCode: 'artifact_not_found', httpStatus: null, phase: 'dispatch' },
     });
     failRead(Object.assign(new Error('unexpected_storage_failure'), { code: 'unexpected_storage_failure' }));
     await expect(executor.execute('artifact.access.grants.list', input, context)).resolves.toEqual({
       ok: false, errorCode: 'action_failed', error: 'unexpected_storage_failure',
+      failureCause: { errorClass: 'Error', errorCode: 'unexpected_storage_failure', httpStatus: null, phase: 'dispatch' },
     });
   });
   it('persists and lists semantic grants through the canonical Action and kind owners', async () => {

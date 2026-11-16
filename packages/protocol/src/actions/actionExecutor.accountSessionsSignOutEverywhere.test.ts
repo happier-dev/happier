@@ -43,7 +43,7 @@ const SIGN_OUT_EVERYWHERE_ACTION_ID = 'account.sessions.signOutEverywhere' as Ac
 describe('createActionExecutor (account.sessions.signOutEverywhere)', () => {
   it('dispatches the current Account only for a host-stamped present-user call', async () => {
     const accountSessionsSignOutEverywhereAction = vi.fn(async () => ({ status: 'signed_out' as const }));
-    const deps = Object.assign(createDeps({ isActionApprovalRequired: () => false }), {
+    const deps = Object.assign(createDeps({  }), {
       accountSessionsSignOutEverywhereAction,
     });
     const executor = createActionExecutor(deps);
@@ -54,7 +54,7 @@ describe('createActionExecutor (account.sessions.signOutEverywhere)', () => {
       {},
       context,
     )).resolves.toEqual({ ok: true, result: { status: 'signed_out' } });
-    expect(accountSessionsSignOutEverywhereAction).toHaveBeenCalledWith({ input: {}, context });
+    expect(accountSessionsSignOutEverywhereAction).toHaveBeenCalledWith({ input: {}, context: expect.objectContaining(context) });
 
     await expect(executor.execute(
       SIGN_OUT_EVERYWHERE_ACTION_ID,
@@ -64,7 +64,7 @@ describe('createActionExecutor (account.sessions.signOutEverywhere)', () => {
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
-      details: { issues: [{ code: 'unrecognized_keys', path: [] }] },
+      details: { issues: [{ code: 'unrecognized_keys', path: [], message: expect.any(String) }] },
     });
     expect(accountSessionsSignOutEverywhereAction).toHaveBeenCalledTimes(1);
   });

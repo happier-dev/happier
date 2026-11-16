@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it } from 'vitest';
 import { getActionSpec } from './actionSpecs.js';
 import { describeApprovalActionFields, describeApprovalRequestFields, resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
@@ -68,7 +69,7 @@ describe('MCP danger approval review', () => {
     } }) };
     const spec = getActionSpec('mcp.servers.signIn.start');
     let stored: import('../approvals/approvalRequestV1.js').ApprovalRequestV2 | undefined;
-    const executor = createActionExecutor({ isActionApprovalRequired: () => true,
+    const executor = createActionExecutor({ readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { [spec.id]: { approvalRequiredSurfaces: [context.surface] } } }),
       approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'oauth-review' }; },
       approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request: { ...request, status: 'rejected' } }),
     });
@@ -100,7 +101,7 @@ describe('MCP danger approval review', () => {
     const raw = cases.find(([id]) => id === spec.id)![1];
     let stored: import('../approvals/approvalRequestV1.js').ApprovalRequestV2 | undefined;
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => true,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { [spec.id]: { approvalRequiredSurfaces: [context.surface] } } }),
       approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'import-review' }; },
       approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request: { ...request, status: 'rejected' } }),
     });

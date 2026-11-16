@@ -17,7 +17,7 @@ describe('client Session-open continuation', () => {
       },
       clientActionExecute: async ({ execute }) => execute(),
       sessionOpen: async ({ sessionId }) => { opened.push(sessionId); return { status: 'opened', sessionId }; },
-      isActionApprovalRequired: () => false,
+
     } satisfies ActionExecutorDeps;
     const executor = createActionExecutor(deps);
     const context = {

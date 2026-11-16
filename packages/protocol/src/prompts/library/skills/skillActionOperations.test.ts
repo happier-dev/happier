@@ -432,7 +432,7 @@ describe('skill library Actions', () => {
       approvalsGet: async () => approval,
       approvalsUpdate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
       isApprovalExecutionOriginCurrent: async () => true,
-      ...(mode === 'waived' ? { isActionApprovalRequired: () => false } : {}),
+      ...(mode === 'waived' ? { readActionsSettings: () => ({ v: 1, actions: {}, approvalWaivedSurfaces: { 'skills.install': ['agent'] } }) } : {}),
       skillActionExecute: async ({ actionId, input, context }) => {
         contexts.push(context);
         return h.execute(actionId, input, { ...context, surface: context.surface ?? null,

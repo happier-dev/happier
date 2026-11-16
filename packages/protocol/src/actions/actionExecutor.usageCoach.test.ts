@@ -345,7 +345,7 @@ describe('evidence-bound Coach Action admission', () => {
         const finding = batch.results[0]!.coach!.findings.find(row => row.detectorId === 'approval_friction')!;
         let preferences = UsageCoachPreferencesV1Schema.parse({});
         let suppressions = UsageCoachSuppressionStateV1Schema.parse({ v: 1, suppressions: [] });
-        const client = createActionExecutor({ isActionApprovalRequired: () => false,
+        const client = createActionExecutor({
             usageActions: { query: async () => batch,
                 coachSuppressions: () => coachKv(() => suppressions, value => { suppressions = value; }) },
             settingsDeclarationAction: async request => {
@@ -354,7 +354,7 @@ describe('evidence-bound Coach Action admission', () => {
                 return { anchor: 'usage.coachPreferences', value: preferences, settingsVersion: 2 };
             },
         } as ActionExecutorDeps);
-        const headless = createActionExecutor({ isActionApprovalRequired: () => false,
+        const headless = createActionExecutor({
             // This transport reaches the existing client Action executor; no private finding crosses in input.
             clientActionExecute: async request => client.execute(request.actionId, request.input, { ...request.context, surface: 'ui' }),
             usageActions: { query: async input => resolveUsagePageAggregation({ queries: input.queries }),

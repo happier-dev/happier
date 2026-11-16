@@ -27,7 +27,7 @@ it.each(['delete', 'teardown', 'stop-only', 'failed'] as const)(
       : scenario === 'delete' ? { ok: true, environmentId: 'environment', revision: 4, detached: false }
         : { ok: true, environmentId: 'environment', revision: 4, deploymentId: 'receipt',
           deploymentRevision: 5, state: 'succeeded', ...(scenario === 'teardown' ? { environmentRemoved: true } : {}) };
-    const executor = createActionExecutor({ deploymentAction: transport, isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({ deploymentAction: transport,
       resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport, async () => ({ ok: true,
         environment: { id: 'environment', projectSourceId: 'project', purpose: 'standard' } })),
       // Home transport and Artifact persistence are the only substituted boundaries.
@@ -74,7 +74,7 @@ it('reads only approvals for the removed Environment through its subject index',
   let inventoryBodiesRead = 0;
   const transport: NonNullable<ActionExecutorDeps['deploymentAction']> = async () => ({ ok: true, environmentId: 'environment',
     revision: 4, deploymentId: 'receipt', deploymentRevision: 5, state: 'succeeded', environmentRemoved: true });
-  const executor = createActionExecutor({ deploymentAction: transport, isActionApprovalRequired: () => false,
+  const executor = createActionExecutor({ deploymentAction: transport,
     resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport, async () => ({ ok: true,
       environment: { id: 'environment', projectSourceId: 'project', purpose: 'standard' } })),
     // Home transport and Artifact persistence are the only substituted boundaries.

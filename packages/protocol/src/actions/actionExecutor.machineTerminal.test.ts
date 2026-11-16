@@ -7,7 +7,7 @@ import { SessionTerminalTargetV1Schema } from '../terminal/workspace.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
-import type { ActionId } from './actionIds.js';
+
 import type { ActionExecutorContext } from './executor/types.js';
 
 const routing = { serverId: 'home', machineId: 'machine' };
@@ -27,7 +27,8 @@ describe('Machine terminal canonical Action family', () => {
     for (const [id, input, output] of cases.filter(([id]) => id !== 'machines.terminal.open' && id !== 'machines.terminal.restart')) {
       const executor = createActionExecutor({
         machineTerminalAction: async () => { transported = true; return output; },
-        isActionApprovalRequired: () => false,
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [id]: ['agent'] } }),
+
       } as unknown as ActionExecutorDeps);
       expect(await executor.execute(id, input, { surface: 'agent', serverId: 'home', authority: 'account_automation' }))
         .not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
@@ -58,7 +59,7 @@ describe('Machine terminal canonical Action family', () => {
         waitedForHuman = true;
         return { decision: 'reject', request: { ...request, status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } } };
       },
-      isActionApprovalRequired: (actionId: ActionId, context: ActionExecutorContext) => isApprovalRequiredByActionsSettings(actionId, settings, context, getActionSpec(actionId).safety),
+      readActionsSettings: () => (settings),
     } as unknown as ActionExecutorDeps);
     expect(await executor.execute('session.terminals.restart', { scopeId: 'qualified-project', terminalId: 'member' }, {
       surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'bob',
@@ -86,14 +87,15 @@ describe('Machine terminal canonical Action family', () => {
     const executor = createActionExecutor({
       machineTerminalAction: async () => { spawned = true; return { ok: true, terminalId: 'pty', reused: false }; },
       isApprovalExecutionOriginCurrent: async () => true,
-      approvalsCreate: async () => ({ artifactId: 'approval' }), approvalsUpdate: async () => ({ ok: true }),
+      presentUserActionConfirmation: async () => false,
+      approvalsCreate: async () => { throw new Error('Own UI must not create self-approval'); }, approvalsUpdate: async () => ({ ok: true }),
       approvalsWaitForDecision: async ({ request }: { request: ApprovalRequest }) => ({ decision: 'reject',
         request: { ...request, status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } } }),
-      isActionApprovalRequired: (actionId: ActionId, context: ActionExecutorContext) => isApprovalRequiredByActionsSettings(actionId, settings, context, getActionSpec(actionId).safety),
+      readActionsSettings: () => (settings),
     } as unknown as ActionExecutorDeps);
     expect(await executor.execute('machines.terminal.open', cases[0][1], { surface: 'ui', authority: 'present_user',
-      serverId: 'home', runtimeAccountId: 'bob', actionRequestId: 'open-shell', actionCaller: { kind: 'host' } }))
-      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' } });
+      serverId: 'home', runtimeAccountId: 'bob', actionsSettings: settings, actionRequestId: 'open-shell', actionCaller: { kind: 'host' } }))
+      .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
     expect(spawned).toBe(false);
   });
   it('advertises and executes every operation through its real terminal transport port', async () => {
@@ -106,9 +108,10 @@ describe('Machine terminal canonical Action family', () => {
           machineTerminalAction: async (request: { actionId: string; input: unknown }) => {
             expect(request).toMatchObject({ actionId: id, input });
             return output;
-          }, isActionApprovalRequired: () => false,
+          },
         } as unknown as ActionExecutorDeps);
-        expect(await executor.execute(id, input, { surface, serverId: 'home', authority: 'present_user' }))
+        expect(await executor.execute(id, input, { surface, serverId: 'home', authority: 'present_user',
+          actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [id]: [surface] } }) }))
           .toEqual({ ok: true, result: output });
       }
     }
@@ -116,12 +119,12 @@ describe('Machine terminal canonical Action family', () => {
 
   it('refuses foreign Homes and caller-authored requester authority before reaching a PTY', async () => {
     let reached = false;
-    const executor = createActionExecutor({ machineTerminalAction: async () => { reached = true; return { ok: true }; },
-      isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ machineTerminalAction: async () => { reached = true; return { ok: true }; } } as unknown as ActionExecutorDeps);
     for (const [rawId, input] of cases) {
       const id = ActionIdSchema.parse(rawId);
       expect(getActionSpec(id).inputSchema.safeParse({ ...input, requesterAccountId: 'forged' }).success).toBe(false);
-      expect(await executor.execute(id, { ...input, serverId: 'foreign' }, { surface: 'cli', serverId: 'home', authority: 'present_user' }))
+      expect(await executor.execute(id, { ...input, serverId: 'foreign' }, { surface: 'cli', serverId: 'home', authority: 'present_user',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [id]: ['cli'] } }) }))
         .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
     }
     expect(reached).toBe(false);

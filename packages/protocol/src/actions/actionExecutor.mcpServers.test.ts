@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it } from 'vitest';
 import { getActionSpec } from './actionSpecs.js';
 import { createActionExecutor } from './actionExecutor.js';
@@ -22,7 +23,7 @@ describe('MCP catalog Actions', () => {
       decision: 'approved' as const, scope: 'session' as const, response: { approved: true }, followUp }] };
     let catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{ id: 'docs', name: 'docs', transport: 'stdio',
       stdio: { command: 'docs-mcp', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }] };
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       sessionPermissionRemoteAction: async args => {
         if (args.actionId === 'session.permission.remote.pending.list') {
           expect(args.input).toMatchObject({ sessionId: 'session', sourceRef: 'source', sourceRevisionOrEpoch: 'revision' });
@@ -60,7 +61,7 @@ describe('MCP catalog Actions', () => {
     const followUp = nativeChoices.choices.find(choice => choice.id === 'mcp_always_allow')?.followUp;
     if (!followUp) throw new Error('Claude must offer catalog consent');
     const executor = createActionExecutor({
-      isActionApprovalRequired: () => false,
+
       sessionStatusGet: async () => ({ pendingRequests: [{ requestId: 'native-request', kind: 'permission', tool: 'McpTool',
         nativeChoices }] }),
       sessionPermissionRespond: async () => { answered++; return nativeApplied ? { ok: true } : { ok: false, errorCode: 'permission_request_not_found' }; },
@@ -135,7 +136,7 @@ describe('MCP catalog Actions', () => {
   ] as const)('keeps a typed %s failure in the public approval receipt without disclosing diagnostics', async (actionId, input, errorCode) => {
     let stored: ApprovalRequest | null = null;
     const executor = createActionExecutor({
-      isActionApprovalRequired: id => id === actionId,
+      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
       // Artifact persistence and Machine RPC are system boundaries; admission,
       // MCP response parsing, approval replay and observation stay real.
       approvalsCreate: async ({ request }) => {
@@ -163,8 +164,8 @@ describe('MCP catalog Actions', () => {
     const receipt = await executor.execute('approval.request.decide', {
       artifactId: 'mcp-test-approval', decision: 'approve',
     }, { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account' });
-    expect(receipt).toMatchObject({ ok: true, result: { status: 'executed', execution: {
-      ok: true, result: { ok: false, errorCode },
+    expect(receipt).toMatchObject({ ok: true, result: { status: 'failed', execution: {
+      ok: false, errorCode,
     } } });
     expect(JSON.stringify(receipt)).not.toContain('private');
     const publicRead = await executor.execute('approval.request.get', { artifactId: 'mcp-test-approval' },
@@ -199,10 +200,12 @@ describe('MCP catalog Actions', () => {
     expect(create.projectObservationInput?.({ entry: { id: 'one', env: { TOKEN: { t: 'literal', v: 'private' } } },
       expectedRevision: 3 })).toEqual({ serverId: 'one', expectedRevision: 3 });
   });
-  it('asks CLI and Agent callers while applying reversible UI taps directly under D22', () => {
+  it('asks automation callers while keeping native UI review separate from approval custody', () => {
     for (const actionId of MCP_SERVER_ACTION_IDS_V1.filter(id => getActionSpec(id).safety === 'danger')) {
       const args = { actionId, spec: getActionSpec(actionId), context: { surface: 'ui', authority: 'present_user' } as const };
-      expect(resolveActionApprovalRouting(args).required, actionId).toBe(getActionSpec(actionId).approvalPolicy?.uiConfirmation !== 'direct');
+      expect(resolveActionApprovalRouting(args).required, actionId).toBe(false);
+      expect(resolveActionApprovalRouting(args).uiConfirmationRequired === true, actionId)
+        .toBe(getActionSpec(actionId).approvalPolicy?.uiConfirmation !== 'direct');
       for (const surface of ['cli', 'agent', 'mcp'] as const) {
         expect(resolveActionApprovalRouting({ ...args, context: { surface, authority: 'account_automation' } }).required, `${actionId}:${surface}`).toBe(true);
       }
@@ -211,7 +214,7 @@ describe('MCP catalog Actions', () => {
     }
   });
   it('does not claim authoritative absence from an inactive retained-source snapshot', async () => {
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       mcpServerAction: createMcpServerActionExecuteV1({
         // Replace the row/source persistence boundary, retaining the real loader
         // and Action projection beneath it.
@@ -230,7 +233,7 @@ describe('MCP catalog Actions', () => {
         catalog: { v: 1, servers: [], bindings: [] } } });
   });
   it('lists metadata without disclosing executable configuration or literal credentials', async () => {
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       mcpServerAction: createMcpServerActionExecuteV1({
         // Only the persisted row boundary is replaced; the catalog opener and
         // public Action executor must apply the real list-disclosure contract.

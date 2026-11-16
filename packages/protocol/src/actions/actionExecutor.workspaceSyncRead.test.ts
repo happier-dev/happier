@@ -39,7 +39,6 @@ const inspectResult = {
 
 function createExecutor(deps: Partial<ActionExecutorDeps>) {
   return createActionExecutor({
-    isActionApprovalRequired: () => false,
     isApprovalExecutionOriginCurrent: async () => true,
     ...deps,
   } as unknown as ActionExecutorDeps);
@@ -75,6 +74,7 @@ describe('workspace sync read Actions', () => {
     );
     expect(result).toEqual({ ok: true, result: relationshipsResult });
     expect(workspaceSyncRelationshipsList).toHaveBeenCalledWith({
+      context: expect.objectContaining({ surface: 'agent', authority: 'account_automation', serverId: 'server-1' }),
       input: { controllerMachineId: 'machine-a' },
     });
   });
@@ -89,6 +89,7 @@ describe('workspace sync read Actions', () => {
     );
     expect(result).toEqual({ ok: true, result: conflictPage });
     expect(workspaceSyncConflictsList).toHaveBeenCalledWith({
+      context: expect.objectContaining({ surface: 'agent', authority: 'account_automation', serverId: 'server-1' }),
       input: { controllerMachineId: 'machine-a', relationshipId: 'rel-ab', limit: 50 },
     });
   });
@@ -114,6 +115,7 @@ describe('workspace sync read Actions', () => {
     );
     expect(result).toEqual({ ok: true, result: inspectResult });
     expect(workspaceSyncConflictInspect).toHaveBeenCalledWith({
+      context: expect.objectContaining({ surface: 'agent', authority: 'account_automation', serverId: 'server-1' }),
       input: { controllerMachineId: 'machine-a', workspaceRefId: 'workspace-c', path: 'src/index.ts' },
     });
   });

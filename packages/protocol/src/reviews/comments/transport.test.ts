@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 import { createActionExecutor } from '../../actions/actionExecutor.js';
 import { ActionsSettingsV1Schema } from '../../actions/actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from '../../actions/actionApprovalPolicy.js';
 import type { ApprovalRequest } from '../../approvals/approvalRequestV1.js';
 import { executeReviewCommentTransportV1, buildReviewCommentCreateEquivalenceCommitmentV1, type ReviewCommentTransportContextV1 } from './transport.js';
 import {
@@ -145,9 +144,7 @@ describe('canonical Review Comment client transport', () => {
     let bulkActionId: string | undefined;
     const approvalRequests: ApprovalRequest[] = [];
     const executor = createActionExecutor({
-      isActionApprovalRequired: (actionId, actionContext) => isApprovalRequiredByActionsSettings(
-        actionId, actionContext.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), actionContext,
-      ),
+      readActionsSettings: (actionContext) => actionContext.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
       approvalsCreate: async ({ request }) => {
         approvalRequests.push(request);
         return { artifactId: 'comment-approval' };

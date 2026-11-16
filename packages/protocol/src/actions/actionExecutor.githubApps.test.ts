@@ -23,7 +23,7 @@ describe('createActionExecutor (managed GitHub Apps)', () => {
     } }));
     const executor = createActionExecutor({
       homeDomainAction,
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
     const input = {
       owner: { kind: 'team' as const, teamId: 'team-1' },

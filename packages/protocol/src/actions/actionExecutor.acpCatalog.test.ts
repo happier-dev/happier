@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { applyAcpBackendUpsertV1 } from '../acp/catalog/catalogMutationsV1.js';
@@ -42,8 +43,8 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     daemonMemoryGetWindow: async () => ({ v: 1, snippets: [], citations: [] }),
     daemonMemoryEnsureUpToDate: async () => ({}),
     resetGlobalVoiceAgent: async () => {},
-    // Routing tests exercise the domain ports, not the shared approval owner.
-    isActionApprovalRequired: () => false,
+    readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'agents.acp.backends.upsert': ['mcp', 'ui'], 'agents.acp.backends.delete': ['mcp'], 'agents.acp.backends.installFromRegistry': ['mcp'] } }),
+
     ...overrides,
   });
 }

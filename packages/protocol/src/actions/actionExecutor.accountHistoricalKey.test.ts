@@ -4,7 +4,7 @@ import type { ActionId } from './actionIds.js';
 import { createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+
 import { resolveActionApprovalFlow } from './actionApprovalMetadata.js';
 import { getActionSpec } from './actionSpecs.js';
 
@@ -59,8 +59,7 @@ describe('historical Account encryption key Forget Action', () => {
     let settings = ActionsSettingsV1Schema.parse({ v: 1 });
     const executor = createActionExecutor(Object.assign(createDeps(), {
       accountHistoricalEncryptionKeyForgetAction,
-      isActionApprovalRequired: (id: ActionId, context: Parameters<typeof isApprovalRequiredByActionsSettings>[2]) =>
-        isApprovalRequiredByActionsSettings(id, settings, context),
+      readActionsSettings: () => settings,
     }));
     const agent = { surface, authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
     expect(await executor.execute(actionId, {}, agent)).not.toMatchObject({ ok: true });
@@ -105,8 +104,7 @@ describe('historical Account automation template recovery Action', () => {
     let settings = ActionsSettingsV1Schema.parse({ v: 1 });
     const executor = createActionExecutor(Object.assign(createDeps(), {
       accountEncryptionAutomationTemplatesRecoverAction,
-      isActionApprovalRequired: (id: ActionId, context: Parameters<typeof isApprovalRequiredByActionsSettings>[2]) =>
-        isApprovalRequiredByActionsSettings(id, settings, context),
+      readActionsSettings: () => settings,
     }));
     const agent = { surface, authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
     expect(await executor.execute(recoveryActionId, {}, agent)).not.toMatchObject({ ok: true });

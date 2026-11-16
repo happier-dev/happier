@@ -1,3 +1,4 @@
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it } from 'vitest';
 
 import { ActionSpecSchema, getActionSpec } from './actionSpecs.js';
@@ -116,7 +117,10 @@ describe('current UI context host ActionSpecs', () => {
       expect(spec.inputSchema.safeParse(JSON.parse(spec.examples?.mcp?.argsExample ?? 'null')).success).toBe(true);
     }
     expect(transactionSpec.inputSchema.safeParse({ scope, ref, transaction }).success).toBe(true);
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({
+      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'composer.transaction.apply': [context.surface], 'composer.attachments.pick': [context.surface], 'repository.upload.pick': [context.surface] } }),
+      } as unknown as ActionExecutorDeps);
     expect(await executor.execute('composer.transaction.apply' as never, { scope, ref, transaction }, { surface: 'agent', authority: 'account_automation' }))
       .toEqual({ ok: true, result: { status: 'composerUnavailable' } });
     for (const [id, input] of [
@@ -142,7 +146,7 @@ describe('current UI context host ActionSpecs', () => {
     expect(spec.inputSchema.safeParse({ ...input, prompt: 'do not submit' }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ ...input, address: { ...input.address, machineId: 'caller-chosen' } }).success).toBe(false);
     expect(spec.inputHints?.fields.map(field => field.path)).toEqual(['scope', 'draftId', 'stepId', 'address', 'clientId']);
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({} as unknown as ActionExecutorDeps);
     expect(await executor.execute(actionId, input, { surface: 'agent', authority: 'account_automation' }))
       .toEqual({ ok: true, result: { status: 'unavailable' } });
   });
@@ -150,10 +154,10 @@ describe('current UI context host ActionSpecs', () => {
     const input = { scope: { serverId: 'home-a', accountId: 'account-a' }, sourceId: 'source', position: { anchorId: 'anchor', placement: 'before' } };
     // The client-hosted execution port is the system boundary; real Protocol admission and result handling run below.
     const executor = createActionExecutor({ listReorder: async () => ({ status: 'refused', reason: 'todo_reorder_conflict' }),
-      isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+       } as unknown as ActionExecutorDeps);
     const context = { surface: 'agent' as const, authority: 'account_automation' as const };
     expect(await executor.execute('tasks.internal.reorder', input, context)).toEqual({ ok: true, result: { status: 'refused', reason: 'todo_reorder_conflict' } });
-    const headless = createActionExecutor({ isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const headless = createActionExecutor({} as unknown as ActionExecutorDeps);
     expect(await headless.execute('tasks.internal.reorder', input, context)).toEqual({ ok: true, result: { status: 'unavailable' } });
     expect(await executor.execute('tasks.internal.reorder', { ...input, orderedIds: ['source'] }, context)).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
   });
