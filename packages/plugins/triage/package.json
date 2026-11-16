@@ -59,6 +59,7 @@
     "build:ui": "happier-plugin-build-ui"
   },
   "dependencies": {
+    "@happier-dev/deployment-protocol": "0.0.0",
     "@happier-dev/channels-protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/plugin-ui": "0.0.0",

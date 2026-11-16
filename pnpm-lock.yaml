@@ -4400,6 +4400,9 @@ importers:
       '@happier-dev/channels-protocol':
         specifier: 0.0.0
         version: link:../../channels-protocol
+      '@happier-dev/deployment-protocol':
+        specifier: 0.0.0
+        version: link:../../deployment-protocol
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk

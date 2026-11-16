@@ -151,3 +151,5 @@ export const DeploymentApprovalReviewV1Schema = z.union([
 export type DeploymentApprovalReviewV1 = z.infer<
   typeof DeploymentApprovalReviewV1Schema
 >;
+
+export { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';

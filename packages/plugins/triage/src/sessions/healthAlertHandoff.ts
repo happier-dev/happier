@@ -4,9 +4,9 @@ import type { TriageProjectCandidateV1 } from './launchPlacement.js';
 import type { PluginActionInputById, PluginActionResultById, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import type { TriageActionResolutionHostV1 } from './actionResolution.js';
 import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
-import { deploymentRevisionShortLabelV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
-import type { DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
-import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { deploymentRevisionShortLabelV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentReceiptFailureV1 } from '@happier-dev/deployment-protocol/v1';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/deployment-protocol/v1';
 import {
     ProtocolArtifactGetOutputV1Schema,
     ProtocolServiceHealthNoticeSourceV1Schema, ProtocolServiceHealthNoticePageV1Schema,
