@@ -19,6 +19,7 @@ import { projectDeploymentReadAdmissionV1, projectExternalActionDeploymentLinkEn
   projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectDeploymentPreparationAdmissionV1, projectDeploymentNativeAdmissionV1, isDeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { MACHINE_REBOOT_ACTION_IDS } from '@happier-dev/protocol/machines/rebootActionIdsV1';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { SIGNED_ROOT_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, SignedRootActionIdSchema, isPluginProvenanceOnlyActionId } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult, ActionExecutorContext, ExternalActionResponseEnvelopeV1, ExternalActionTargetV1, PreparedExternalActionResponseEnvelope, ExternalActionEncryptionBindingV2, ExternalActionExecutionAuthorizationV1, ExternalActionServerPrincipalV1, SignedRootActionId } from '@happier-dev/protocol/actions';
@@ -561,7 +562,9 @@ async function executeExternalActionRequest(input: Readonly<{
     if (preparationAdmission && executionAuthorization?.success) {
       const root = decodedInput && typeof decodedInput === 'object' ? decodedInput : null;
       const workspace = root && 'workspace' in root && root.workspace && typeof root.workspace === 'object' ? root.workspace : null;
-      const home = preparationAdmission.operation === 'setup' ? root && 'homeId' in root ? root.homeId : null
+      // Setup roots name their Home as homeId; Reboot spends the same admission but its public input names serverId.
+      const setupHomeField = MACHINE_REBOOT_ACTION_IDS.some(id => id === actionId.data) ? 'serverId' : 'homeId';
+      const home = preparationAdmission.operation === 'setup' ? root && setupHomeField in root ? Reflect.get(root, setupHomeField) : null
         : preparationAdmission.operation === 'prepare' ? workspace && 'serverId' in workspace ? workspace.serverId : null
           : root && 'serverId' in root ? root.serverId : null;
       if (typeof home !== 'string' || !await isServerProfileHomeIdentity(home, executionAuthorization.data.binding.serverIdentityId))

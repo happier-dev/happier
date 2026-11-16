@@ -449,7 +449,7 @@ describe('executeExternalAction', () => {
       executor: createActionExecutor(createUnavailableHostActionDeps()),
     })).toMatchObject({ kind: 'response' });
   });
-  it.each(['deployments.environments.create', 'deployments.publish.prepare'] as const)(
+  it.each(['deployments.environments.create', 'deployments.publish.prepare', 'machines.reboot'] as const)(
     'opens the root Home of encrypted deployment preparation without accepting a foreign Home (%s)', async actionId => {
       const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(47) };
       const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(48));
@@ -459,15 +459,19 @@ describe('executeExternalAction', () => {
         ? { serverId: 'srv_preparation', projectSourceId: 'source', requestKey: 'copy-request', name: 'Duplicate',
           protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
           copyFrom: { environmentId: 'original', expectedRevision: 2, choices: { secrets: [], values: [], data: [] } } }
-        : { serverId: 'srv_preparation', projectSourceId: 'source', sourceRevision: 2,
-          machineId: target.machineId, installationId: 'preparation-installation',
-          templateRef: { sourceId: 'catalog', itemId: 'app', version: '1', ref: { kind: 'version', version: '1' } } };
+        : actionId === 'deployments.publish.prepare'
+          ? { serverId: 'srv_preparation', projectSourceId: 'source', sourceRevision: 2,
+            machineId: target.machineId, installationId: 'preparation-installation',
+            templateRef: { sourceId: 'catalog', itemId: 'app', version: '1', ref: { kind: 'version', version: '1' } } }
+          // Reboot spends the setup preparation family but names its Home as serverId.
+          : { serverId: 'srv_preparation', machineId: target.machineId, expectedInstallationId: 'preparation-installation' };
       for (const home of ['srv_preparation', 'foreign'] as const) {
         const input = getActionSpec(actionId).inputSchema.parse({ ...publicInput, serverId: home });
         const binding = { serverIdentityId: 'srv_preparation', accountId: principal.accountId,
           credentialId: requestPrincipal.credentialId, actionId, requestId: `${actionId}-${home}`, target };
         const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input, randomBytes: tweetnacl.randomBytes });
-        expect(envelope.deploymentPreparationAdmission?.operation).toBe(actionId === 'deployments.environments.create' ? 'create' : 'catalog');
+        expect(envelope.deploymentPreparationAdmission?.operation).toBe(actionId === 'deployments.environments.create' ? 'create'
+          : actionId === 'machines.reboot' ? 'setup' : 'catalog');
         const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-proof', binding: {
           ...binding, principalId: principal.principalId, grant: principal.grant,
           custodianAccountId: principal.accountId, machineId: target.machineId, installationId: 'preparation-installation',
