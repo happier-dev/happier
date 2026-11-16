@@ -41,7 +41,8 @@ function accountRows(rows: ProjectAccountRowV1[], options?: Readonly<{ rejectAft
       return { status: 200, data: row ? { status: 'present', row } : { status: 'absent' } };
     }
     if (!String(url).endsWith('/v1/account/project-rows/mutate')) throw new Error(`Unexpected POST ${url}`);
-    const request = ProjectAccountRowMutationRequestV1Schema.parse(body);
+    // Axios crosses a JSON boundary; optional undefined fields do not reach the Home or its acknowledgement.
+    const request = ProjectAccountRowMutationRequestV1Schema.parse(JSON.parse(JSON.stringify(body)));
     const updates: ProjectAccountRowV1[] = [];
     for (const mutation of request.mutations) {
       const prior = rows.find(row => buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(mutation.key));
@@ -265,6 +266,39 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
     expect(boundary.writes()[0]?.[1]).toMatchObject({ topologyChange: true, mutations: [
       { key: { kind: 'workspace-ref', serverId: 'home-a', id: ref.id }, content: null }, { key: { kind: 'relationship-graph' } },
     ] });
+  });
+
+  it.each([
+    { projectKey: 'self', destinationKey: ref.id, pinned: true },
+    { projectKey: 'anchor-b', destinationKey: 'anchor-b', pinned: false },
+  ])('persists combined grouping and pin through JSON acknowledgement ($projectKey, $pinned)', async ({ projectKey, destinationKey, pinned }) => {
+    const destinationOrganizationKey = { ...organizationKey, projectKey: destinationKey };
+    const formerOrganization: ProjectAccountRowV1 = { key: organizationKey, revision: 3,
+      content: { t: 'plain', v: { key: organizationKey, value: { pinned, hidden: false } } } };
+    const rows = [refRow(), refRow({ ...refB, projectKey: 'anchor-b' }), formerOrganization,
+      { key: destinationOrganizationKey, revision: 4,
+        content: { t: 'plain' as const, v: { key: destinationOrganizationKey, value: { pinned: !pinned, hidden: true } } } }];
+    accountRows(rows);
+    await expect(createActionExecutor(dependencies()).execute(ActionIdSchema.parse('projects.workspace.update'),
+      { serverId: 'home-a', workspaceId: ref.id, projectKey, pinned },
+      { surface: 'cli', bypassApprovals: true })).resolves.toMatchObject({
+      ok: true, result: { workspaceRef: { id: ref.id, projectKey: destinationKey }, organization: { pinned, hidden: true } },
+    });
+    expect(rows.find(row => row.key.kind === 'project-organization' && row.key.projectKey === destinationKey))
+      .toMatchObject({ content: { t: 'plain', v: { value: { pinned, hidden: true } } } });
+    expect(rows.find(row => row.key.kind === 'project-organization' && row.key.projectKey === organizationKey.projectKey))
+      .toEqual(formerOrganization);
+  });
+
+  it('retains an absent Project key through JSON acknowledgement of a label change', async () => {
+    const { projectKey: _projectKey, ...standalone } = ref;
+    const key = { kind: 'workspace-ref' as const, serverId: ref.serverId, id: ref.id };
+    accountRows([{ key, revision: 1, content: { t: 'plain', v: { key, value: standalone } } }]);
+    await expect(createActionExecutor(dependencies()).execute(ActionIdSchema.parse('projects.workspace.update'),
+      { serverId: 'home-a', workspaceId: ref.id, label: 'Named standalone checkout' },
+      { surface: 'cli', bypassApprovals: true })).resolves.toMatchObject({
+      ok: true, result: { workspaceRef: { id: ref.id, label: 'Named standalone checkout' } },
+    });
   });
 
   it('groups a checkout with another Project, separates it with self, and refuses an unknown Project (owner 11-08)', async () => {

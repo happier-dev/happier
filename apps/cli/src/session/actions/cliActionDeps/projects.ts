@@ -78,20 +78,21 @@ export function createCliProjectActionDeps(
         const ref = resolved.ref;
         const mutations: OpenedProjectAccountRowMutationRequest['mutations'][number][] = [];
         const key = { kind: 'workspace-ref' as const, serverId: ref.serverId, id: ref.id };
-        const target = projectWorkspaceRefV1(ref);
+        // The person's grouping (owner 11-08): the one protocol owner decides the explicit key.
+        const grouping = projectKey === undefined ? null : resolveWorkspaceGroupingV1(before.workspaceRefs, ref, projectKey);
+        if (grouping && !grouping.ok) return executionRunActionFailure(grouping.code);
+        const workspaceRef = ProjectAccountWorkspaceRefV1Schema.parse({ ...ref,
+          ...(label === undefined ? {} : { label }),
+          ...(grouping ? { projectKey: grouping.projectKey } : {}),
+        });
+        const target = projectWorkspaceRefV1(workspaceRef);
         const organizationKey = { kind: 'project-organization' as const, ...target };
         const organizationRows = await readProjectRows({ key: organizationKey }, operationSignal, context, 'projects.workspace.update');
         const revisionFor = (rowKey: Parameters<typeof buildProjectAccountRowPhysicalKeyV1>[0]) => (rowKey.kind === 'project-organization'
           ? organizationRows.rows : before.rows).find(
           row => buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(rowKey),
         )?.revision ?? 'absent';
-        // The person's grouping (owner 11-08): the one protocol owner decides the explicit key.
-        const grouping = projectKey === undefined ? null : resolveWorkspaceGroupingV1(before.workspaceRefs, ref, projectKey);
-        if (grouping && !grouping.ok) return executionRunActionFailure(grouping.code);
-        const nextLabel = label !== undefined ? label : ref.label;
-        const nextProjectKey = grouping ? grouping.projectKey : ref.projectKey;
-        if (nextLabel !== ref.label || nextProjectKey !== ref.projectKey) {
-          const workspaceRef = ProjectAccountWorkspaceRefV1Schema.parse({ ...ref, label: nextLabel, projectKey: nextProjectKey });
+        if (workspaceRef.label !== ref.label || workspaceRef.projectKey !== ref.projectKey) {
           mutations.push({ key, expectedRevision: revisionFor(key), payload: { key, value: workspaceRef } });
         }
         const organization = organizationRows.organizations.find(row => row.key.serverId === target.serverId && row.key.projectKey === target.projectKey)?.value ?? {};
