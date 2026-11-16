@@ -14,6 +14,7 @@ import { MachinePresetActionInputSchemasV1, machinePresetActionEndpointPathV1 } 
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { captureLazyActionAccountContext } from './actionAccountContext';
 import { prepareUiManagedProvisionerAdmission } from './managedProvisionerAction';
 import { executeUiMachinePresetArchive } from './machinePresetArchive';
@@ -60,6 +61,7 @@ async function archiveFixture(originalMachineId?: string, accountNative = false,
         owner: { kind: 'account', accountId: 'owner' }, contentEncryptionMode: 'plain', recipients: [],
         content: { t: 'plain', v: { v: 1, name: 'Preset', launch: { ...launch, name: 'Guest' }, prepared } } });
     homes.answer(serverId, machinePresetActionEndpointPathV1('machines.presets.get'), { select: () => ({ body: { kind: 'found', preset } }) });
+    homes.answer(serverId, '/v1/machines/read-batch', { select: async body => ({ body: await createMachineReadBatchResponseFixture(body, () => null).json() }) });
     homes.answer(serverId, machinePresetActionEndpointPathV1('machines.presets.update'), { select: value => {
         const update = MachinePresetActionInputSchemasV1['machines.presets.update'].parse(value);
         if (update.expectedRevision !== preset.revision) return { body: { kind: 'conflict', currentRevision: preset.revision } };
@@ -90,6 +92,40 @@ it('retains a prepared local image and refuses Archive when its original host is
     expect(fixture.row().content).toMatchObject({ t: 'plain', v: { prepared: { artifact: { value: { image: 'original-image' } } } } });
 });
 
+it.each(['revoked', 'replaced', 'offline', 'missing', 'cancelled'] as const)
+('archives only a permanently unavailable original host (%s)', async state => {
+    const fixture = await archiveFixture('original-host');
+    const machine = createPlainMachineRowFixture({ id: 'original-host', accountId: 'owner' });
+    const lifetime = new AbortController();
+    onTestFinished(() => lifetime.abort());
+    homes.answer(fixture.serverId, '/v1/machines/read-batch', { select: async body => {
+        if (state === 'cancelled') lifetime.abort();
+        return { body: await createMachineReadBatchResponseFixture(body,
+        () => state === 'missing' ? null : { ...machine, active: false,
+            ...(state === 'revoked' || state === 'cancelled' ? { revokedAt: 1 } : {}),
+            ...(state === 'replaced' ? { replacedByMachineId: 'replacement-host' } : {}) }).json() };
+    } });
+    const preset = fixture.row();
+    const result = await createDefaultActionExecutor().executeConfirmed('machines.presets.archive', {
+        homeId: fixture.homeId, id: preset.id, expectedRevision: preset.revision,
+    }, { serverId: fixture.serverId, surface: 'ui', authority: 'present_user', actionRequestId: `archive-${state}`, signal: lifetime.signal })
+        .catch(error => { expect(state).toBe('cancelled'); expect(error).toMatchObject({ name: 'AbortError' }); return undefined; });
+    if (state === 'revoked' || state === 'replaced') {
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'saved' } });
+        expect(fixture.row()).toHaveProperty('archivedAt');
+        expect(fixture.row().content).toMatchObject({ t: 'plain', v: { prepared: {
+            status: 'cancelled', code: 'preparation_cleanup_required',
+            artifact: { value: { image: 'original-image' } }, binding: { machineId: 'original-host' },
+        } } });
+    } else {
+        if (result) expect(result).toMatchObject({ ok: false });
+        expect(fixture.row()).not.toHaveProperty('archivedAt');
+        expect(fixture.row().content).toMatchObject({ t: 'plain', v: { prepared: {
+            artifact: { value: { image: 'original-image' } },
+        } } });
+    }
+});
+
 it('returns an observable preparation failure while Account availability has not loaded', async () => {
     const fixture = await archiveFixture();
     clearPluginAccountAvailabilityProjection();
@@ -104,7 +140,12 @@ it('returns an observable preparation failure while Account availability has not
 
 it.each([{ refuseFirst: false, accountNative: false }, { refuseFirst: true, accountNative: false },
     { refuseFirst: false, accountNative: true }])('cleans the original image and restores cold (%j)', async ({ refuseFirst, accountNative }) => {
-    const fixture = await archiveFixture(accountNative ? undefined : 'original-host', accountNative);
+    const fixture = await archiveFixture(accountNative ? 'unrelated-original-host' : 'original-host', accountNative);
+    if (accountNative) homes.answer(fixture.serverId, '/v1/machines/read-batch', { select: async body => ({
+        body: await createMachineReadBatchResponseFixture(body, () => ({
+            ...createPlainMachineRowFixture({ id: 'unrelated-original-host', accountId: 'owner' }), revokedAt: 1,
+        })).json(),
+    }) });
     const account = fixture.account;
     const input = { homeId: fixture.homeId, id: fixture.row().id, expectedRevision: fixture.row().revision };
     const native: unknown[] = [];
