@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { refuseDeploymentAuthorization } from '../deploymentAuthorizationFailure';
 
@@ -7,7 +8,7 @@ export type InstalledSecretContext = Pick<ActionExecutorContext, 'signal' | 'ext
 }>;
 
 const assertNotCancelled = (signal?: AbortSignal) => {
-    if (signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+    if (signal?.aborted) throw createActionExecuteFailureError({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
 };
 
 async function assertSecretInvocationTransportCurrent(context: InstalledSecretContext, signal?: AbortSignal): Promise<void> {

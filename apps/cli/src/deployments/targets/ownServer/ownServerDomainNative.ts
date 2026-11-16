@@ -14,7 +14,7 @@ import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deploy
 import type { ActionExecutorContext, DeploymentDomainChildRpcV1, DeploymentDomainDiscoverChildRpcV1 } from '@happier-dev/protocol';
 import type { DeploymentDomainDnsChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { readActionFailureCauseV1, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, readActionFailureCauseV1, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, environmentSecretBindingIdentityV1,
     type DeploymentArtifactDocumentV1, type DeploymentEnvironmentDetailV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import { ApiClient } from '@/api/api';
@@ -67,9 +67,7 @@ const refuse = (code: string, details?: unknown, failureCause?: ActionFailureCau
     logger.warnLocalFile('[Deployment] Domain native step refused', {
         phase: 'deployment.domain.native_execution', callSite: new Error('Domain native refusal').stack,
     });
-    throw Object.assign(new Error(code), {
-        code, ...(details === undefined ? {} : { details }), ...(failureCause ? { failureCause } : {}),
-    });
+    throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { ...(details === undefined ? {} : { details }), ...(failureCause ? { failureCause } : {}) });
 };
 const failure = (job: DomainJob, errorCode: string, details?: unknown, failureCause?: ActionFailureCauseV1) => {
     const parsed = DeploymentDomainFailureDetailsV1Schema.safeParse(details);

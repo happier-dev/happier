@@ -1,7 +1,8 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { OwnServerDataQueryNative, OwnServerReadOnlyDataQueryInput } from './dataQuery';
 import { assertOwnServerDataQuerySupportedEngine, executeOwnServerReadOnlyDataQuery, ownServerReadOnlyRoleGuardSql } from './dataQuery';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 const mysqlIdentifier = (value: string) => `\`${value.replaceAll('`', '``')}\``;
 
 /** Called only from the reviewed bindings writer. Administrator credentials stay

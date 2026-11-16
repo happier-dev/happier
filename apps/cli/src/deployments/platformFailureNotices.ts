@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentFailedEventV1Schema, DeploymentReceiptOutcomeEventV1Schema, DeploymentReceiptEventSourceConfigV1Schema,
     DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -29,7 +30,7 @@ export type PlatformFailureNoticeObservation = Readonly<{
 }>;
 
 const refuse = (code: 'target_mismatch' | 'invalid_parameters' | 'notice_account_scope_mismatch'): never => {
-    throw Object.assign(new Error(code), { code });
+    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
 };
 
 /** Consumes an admitted source observation; descriptor and current link own its association. */

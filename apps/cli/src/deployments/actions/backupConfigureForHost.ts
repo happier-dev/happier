@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deploymentOutputValidationFailure } from '../outputValidation';
 import axios from '@/api/client/credentialAxios';
 import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
@@ -39,7 +40,7 @@ type Host = Pick<ConfigureHost, 'serverId' | 'readEnvironment' | 'resolveCreatio
     resolveRequestHeaders(context: ActionExecutorContext, actionId: string,
         request: Parameters<ArtifactRequestAuthorizationHeaders>[0]): Promise<Readonly<Record<string, string>> | null>;
 }>;
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 
 /** Compose the configuration owner with the incumbent P42/native/storage owners.
  * Its admitted Bindings child publishes only after the destination proof and backup CAS settle. */

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { buildDeploymentTeardownInputV1, DeploymentDeployInputV1Schema, DeploymentReceiptObserveInputV1Schema, DeploymentTeardownDetachInputV1Schema,
     type ActionExecutorContext } from '@happier-dev/protocol';
 import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
+import { createActionExecuteFailureError, ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1,
     type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1,
@@ -62,7 +62,7 @@ type Host = Readonly<{
     writeTransition(request: Omit<OwnServerDeploymentTransition, 'content'> & Readonly<{ content: ContributedReceiptContent }>):
         ReturnType<OwnServerDeploymentTargetHostInput['writeTransition']>;
 }>;
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 const deployRole = (method: 'gitIntegration' | 'upload'): Role => method === 'upload' ? 'uploadDeploy' : 'deploy';
 
 function receiptFailureContent(content: ContributedReceiptContent, result: ActionExecuteFailure,

@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentDetailV1, EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import { configuration } from '@/configuration';
@@ -6,7 +7,7 @@ import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { assertOwnServerDataQuerySupportedEngine } from './dataQuery';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 
 /** Template provenance supplies the logical data identity; the runtime owner below
  * proves that this exact declaration is the current admitted native service. */

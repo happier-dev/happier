@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
 import { readDeploymentEnvironmentArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
@@ -17,7 +18,7 @@ export async function readDeploymentEnvironmentForHost(
 ) {
     const detail = await host.readMetadata(request);
     if (detail.environment.id !== request.environmentId || !detail.environment.capabilities.read) {
-        throw Object.assign(new Error('deployment_access_denied'), { code: 'deployment_access_denied' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_access_denied', error: 'deployment_access_denied' });
     }
     const opened = await host.open(detail.environment.contentArtifactId, request.context);
     const content = readDeploymentEnvironmentArtifactV1(detail.environment, opened);

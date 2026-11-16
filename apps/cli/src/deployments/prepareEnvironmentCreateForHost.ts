@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { DeploymentEnvironmentCreateInputV1Schema,
     type ActionExecutorContext, type DeploymentEnvironmentCreateInputV1,
@@ -127,7 +128,7 @@ export async function resolveEnvironmentCreatePreviewForHost(
                 signal: context.signal, prepareRecipients: false, includeSharedAudience: false,
                 authorizationHeaders: async transport => {
                     const headers = await host.resolveRequestHeaders(context, 'deployments.environments.create', transport);
-                    if (!headers) throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' });
+                    if (!headers) throw createActionExecuteFailureError({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' });
                     return headers;
                 },
             }));
@@ -227,7 +228,7 @@ export function createPrepareEnvironmentCreateForHost(host: EnvironmentCreateHos
                         beforeWrite: () => host.assertCurrent(context),
                         authorizationHeaders: async transport => {
                             const headers = await host.resolveRequestHeaders(context, 'deployments.environments.create', transport);
-                            if (!headers) throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' });
+                            if (!headers) throw createActionExecuteFailureError({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' });
                             return headers;
                         },
                 } }));

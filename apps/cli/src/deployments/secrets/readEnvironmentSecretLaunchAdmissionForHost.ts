@@ -7,7 +7,7 @@ import type { DeploymentDomainChildRpcV1 } from '@happier-dev/protocol/deploymen
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
-import { parseActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, parseActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -36,7 +36,7 @@ export { assertDeploymentSecretInvocationCurrent, assertMachineConnectorSecretIn
 
 const refuse = (code: string, cause?: ActionExecuteFailure): never => {
     cause ??= code === 'invalid_action_output' ? deploymentOutputValidationFailure('deployments.secrets.admission', undefined) : undefined;
-    throw Object.assign(new Error(cause?.error ?? code), { code, ...(cause ? { cause } : {}) });
+    throw Object.assign(createActionExecuteFailureError(cause ?? { ok: false, errorCode: code, error: code }), { code, ...(cause ? { cause } : {}) });
 };
 type HostSecretAdmissionRequest = Omit<OwnServerSecretLaunchAdmissionRequest, 'materialization'> & Readonly<{
     environmentUpdate?: true;
@@ -214,8 +214,7 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
             return refuse(failure.errorCode, failure);
         }
         if (!parsed.success && ![404, 405, 501].includes(response.status)) {
-            throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output',
-                cause: deploymentOutputValidationFailure('environment_secret_launch_admission', response.status, parsed.error) });
+            return refuse('invalid_action_output', deploymentOutputValidationFailure('environment_secret_launch_admission', response.status, parsed.error));
         }
         if (!parsed.success) return refuse(response.status === 404 || response.status === 405 || response.status === 501
             ? 'unsupported_action' : 'invalid_action_output');
@@ -224,8 +223,7 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
             failureCause: projectActionFailureCauseV1(
                 createHttpStatusError(response.status, parsed.data.error, parsed.data.error), 'deployment.secret_launch.admission'),
         });
-        if (response.status !== 200) throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output',
-            cause: deploymentOutputValidationFailure('environment_secret_launch_admission', response.status) });
+        if (response.status !== 200) return refuse('invalid_action_output', deploymentOutputValidationFailure('environment_secret_launch_admission', response.status));
         const { grants, bindingPreparation, domainAdmission } = parsed.data;
         return { grants, ...(bindingPreparation ? { bindingPreparation } : {}), ...(domainAdmission ? { domainAdmission } : {}) };
     };

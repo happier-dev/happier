@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { MachineFirewallTransitionIntentV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
@@ -7,7 +8,7 @@ import { isLiteralLoopbackHostname } from '@happier-dev/protocol';
 import { DeploymentServiceExportV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 const unavailable = (): never => {
-    throw Object.assign(new Error('private_scope_unenforceable'), { code: 'private_scope_unenforceable' });
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'private_scope_unenforceable', error: 'private_scope_unenforceable' });
 };
 
 type ServicePublications = Pick<Parameters<typeof privateServicePublicationBindings>[0], 'exports' | 'services'>;

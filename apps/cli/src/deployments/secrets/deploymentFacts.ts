@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 
 /** Facts come from the already admitted source/receipt, never another storage read. */
@@ -6,6 +7,6 @@ export function resolveEnvironmentDeploymentFactForHost(
     facts: Readonly<Record<typeof fact, string | undefined>>,
 ): string {
     const value = facts[fact];
-    if (value === undefined) throw Object.assign(new Error('reference_unavailable'), { code: 'reference_unavailable' });
+    if (value === undefined) throw createActionExecuteFailureError({ ok: false, errorCode: 'reference_unavailable', error: 'reference_unavailable' });
     return value;
 }

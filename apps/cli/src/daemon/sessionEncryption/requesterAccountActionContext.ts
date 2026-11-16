@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequesterAccountProjectionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -71,9 +72,8 @@ export function resolveRequesterSavedSecretActionCustody(input: Readonly<{
 }>): Readonly<{ credentials: StoredCredentials; operation: SavedSecretOperationContextV1 | undefined }> {
   const operation = readRequesterAccountActionContext(input.authorization)?.savedSecretOperationContext
     ?? (input.authorization ? undefined : input.operationContext);
-  if (input.authorization && !operation) throw Object.assign(new Error('Saved Secret requester custody is unavailable'), {
-    code: 'client_required',
-  });
+  if (input.authorization && !operation) throw Object.assign(createActionExecuteFailureError({ ok: false,
+    errorCode: 'client_required', error: 'client_required' }), { message: 'Saved Secret requester custody is unavailable' });
   return { credentials: operation?.credentials ?? input.credentials, operation };
 }
 

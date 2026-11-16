@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecuteFailure, ActionExecutorContext } from '@happier-dev/protocol';
 import type { OwnServerDeploymentImageArchiveV1 } from '@happier-dev/deployment-protocol';
 import { readNativeComposeArchiveTransportIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
@@ -19,7 +20,8 @@ export type DeploymentImageArchiveCopyRequest = Readonly<{
     signal: AbortSignal;
     assertCurrent(): Promise<void>;
 }>;
-const refuse = (code: string, cause?: ActionExecuteFailure): never => { throw Object.assign(new Error(code, { cause }), { code }); };
+const refuse = (code: string, cause?: ActionExecuteFailure): never => { throw Object.assign(createActionExecuteFailureError(cause ?? { ok: false, errorCode: code, error: code }),
+    { message: code, code, cause }); };
 
 /** The receiving daemon mounts the existing credentialed target_copy byte driver.
  * Profile identity is a proved transport adapter; archive provenance stays Home-scoped. */

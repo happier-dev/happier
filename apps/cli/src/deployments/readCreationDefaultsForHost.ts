@@ -8,13 +8,14 @@ import { resolveDeploymentCreationDefaultsV1, type DeploymentCreationDefaultsInp
 import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
-import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import type { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 const refuse = (failure: string | ActionExecuteFailure): never => {
     const code = typeof failure === 'string' ? failure : failure.errorCode;
-    throw Object.assign(new Error(code, typeof failure === 'string' ? undefined : { cause: failure }), { code });
+    throw Object.assign(createActionExecuteFailureError(typeof failure === 'string' ? { ok: false, errorCode: code, error: code } : failure),
+        { message: code, code, ...(typeof failure === 'string' ? undefined : { cause: failure }) });
 };
 export type DeploymentCreationDefaultInputsForHost = Pick<DeploymentCreationDefaultsInputV1, 'projectDefaults' | 'account'> & Readonly<{
     reviewBasis?: DeploymentTemplateInstantiationReviewV1['creationDefaultsBasis'];

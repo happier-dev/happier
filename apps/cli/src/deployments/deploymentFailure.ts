@@ -19,7 +19,8 @@ import type { DeploymentTargetRoleResultV1 } from '@happier-dev/protocol/plugins
 
 /** Throwing host readers retain the Artifact owner's code-only validation cause. */
 export function refuseDeploymentArtifactRead(failure: DeploymentArtifactReadFailureV1): never {
-    throw Object.assign(new TypeError(failure.error), { code: failure.error, failureCause: failure.failureCause });
+    throw createActionExecuteFailureError({ ok: false, errorCode: failure.error, error: failure.error,
+        ...(failure.failureCause ? { failureCause: failure.failureCause } : {}) });
 }
 
 /** The acquisition boundary supplies context; arbitrary deployment network errors

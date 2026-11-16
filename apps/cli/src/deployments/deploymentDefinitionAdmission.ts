@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { DeploymentContentV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol';
@@ -10,7 +11,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { normalizeAdmittedHomeServerIdV1 } from '@happier-dev/protocol/actions/executor/deploymentHomeAdmission';
 import { refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
 
-const refuse = (): never => { throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' }); };
+const refuse = (): never => { throw createActionExecuteFailureError({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' }); };
 
 export async function assertDeploymentHttpAuthorityForHost(context: ActionExecutorContext): Promise<void> {
     context.signal?.throwIfAborted();

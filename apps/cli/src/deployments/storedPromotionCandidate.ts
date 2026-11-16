@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveDeploymentStoredDefinitionRevisionV1, DeploymentOwnServerContentV1Schema, type DeploymentContentV1,
     type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import type { ActionExecutorContext, DeploymentPromoteActionInputV1 } from '@happier-dev/protocol';
@@ -11,7 +12,7 @@ export async function readPromotionSelectionForHost(request: Readonly<{
 }>, readers: Pick<OwnServerDeploymentTargetHostInput, 'readEnvironment' | 'readEnvironmentMetadata'> & Readonly<{
     readReceipt(request: Parameters<OwnServerDeploymentTargetHostInput['readReceipt']>[0]): Promise<DeploymentReceiptDetailV1>;
 }>) {
-    const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+    const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
     const { input, context } = request;
     if (input.artifact !== 'image') return refuse('unsupported');
     if (!readers.readEnvironmentMetadata) return refuse('deployment_executor_unavailable');
@@ -63,7 +64,7 @@ export function createStoredPromotionReceiptContentForHost(
 
 /** A promotion replaces only the destination definition, using captured receipt bytes. */
 export function prepareStoredPromotionCandidate(source: DeploymentReceiptDetailV1, destination: DeploymentEnvironmentDetailV1) {
-    const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+    const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
     if (source.deployment.state !== 'succeeded' && source.deployment.state !== 'running_unverified') refuse('deployment_conflict');
     const captured = source.content.sourceIntent;
     const incumbent = destination.content.definition;

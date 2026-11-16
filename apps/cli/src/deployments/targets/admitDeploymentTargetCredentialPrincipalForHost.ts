@@ -1,7 +1,7 @@
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { DeploymentTargetRoleCommonInputV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { PluginError } from '@happier-dev/cli-common/plugins/errors';
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /** Shared credential-principal admission for deployment roles and partial-draft reads. */
 export function admitDeploymentTargetCredentialPrincipalForHost(
@@ -11,7 +11,7 @@ export function admitDeploymentTargetCredentialPrincipalForHost(
     const principal = input.credentialPrincipal;
     if (principal.kind === 'team') {
         if (principal.selection.deliveryMode !== 'direct') {
-            throw Object.assign(new Error('deployment_target_role_unavailable'), { code: 'deployment_target_role_unavailable' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_target_role_unavailable', error: 'deployment_target_role_unavailable' });
         }
         if (!sameStrictJsonValue(principal.selection.disclosedMember, input.credentialRef)) {
             throw new PluginError({ code: 'deployment_access_denied', failureCause: projectActionFailureCauseV1(

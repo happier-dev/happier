@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { deploymentOutputValidationFailure } from './outputValidation';
 import { isDeepStrictEqual } from 'node:util';
@@ -22,7 +23,7 @@ import type { ActionOperationCancellation, ActionOperationCancellationContext } 
 import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 type Resource = NonNullable<Awaited<ReturnType<ReturnType<typeof createCredentialedAccountArtifactStore>['readForUpdate']>>>;
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 const resourceBinding = (environment: DeploymentEnvironmentHeaderV1) => ({ artifactId: environment.contentArtifactId,
     expectedRevision: { headerVersion: environment.contentHeaderVersion, bodyVersion: environment.contentBodyVersion } });
 

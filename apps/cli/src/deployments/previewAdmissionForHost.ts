@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { DeploymentEnvironmentListResultV1Schema, type DeploymentEnvironmentListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -44,7 +45,7 @@ export async function admitPreviewEnvironmentForHost(input: Readonly<{
         environment: DeploymentEnvironmentHeaderV1; content: DeploymentEnvironmentContentV1;
     }>>;
 }>): Promise<Readonly<{ fork: boolean }>> {
-    const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+    const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
     const provenance = input.content.previewProvenance;
     if (!provenance || provenance.templateEnvironmentId !== input.templateEnvironmentId)
         return refuse('deployment_content_unavailable');

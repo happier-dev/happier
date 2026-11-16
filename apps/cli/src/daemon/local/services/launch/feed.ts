@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionOperationSnapshotV1, LocalServiceLauncherSnapshotV1, LocalServiceLaunchTargetV1 } from '@happier-dev/protocol';
 
 import { expandHomeDirPath } from '../../../../utils/path/expandHomeDirPath';
@@ -259,16 +260,12 @@ export function createLocalServiceLauncherFeed(
         async getSnapshot(request, observedInventoryEntries) {
             const bindingsOnly = request?.projection === 'managed_bindings' || request?.requesterManagedServices !== undefined;
             if (bindingsOnly && !input.projectManagedServices) {
-                throw Object.assign(new Error('Project Service binding owner is unavailable'), {
-                    code: 'project_service_bindings_unavailable',
-                });
+                throw createActionExecuteFailureError({ ok: false, errorCode: 'project_service_bindings_unavailable', error: 'Project Service binding owner is unavailable' });
             }
             const sessionId = request?.sessionId ?? input.sessionId;
             const workspaceScopePaths = await resolveWorkspaceScope(request);
             if (request?.requireWorkspaceScope && !workspaceScopePaths?.length) {
-                throw Object.assign(new Error('Local service workspace scope is unavailable'), {
-                    code: 'local_service_workspace_scope_unavailable',
-                });
+                throw createActionExecuteFailureError({ ok: false, errorCode: 'local_service_workspace_scope_unavailable', error: 'Local service workspace scope is unavailable' });
             }
             const includePackageScripts = request?.scope !== 'machine';
             // Complete bindings read cached listener evidence without waiting for discovery.

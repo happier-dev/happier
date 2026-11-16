@@ -6,7 +6,7 @@ import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/sa
 import { applyEnvironmentSecretBindingsPatchV1, isSettledEnvironmentSecretBindingV1,
     type ActionExecutorContext, type DeploymentChildRpcV1 } from '@happier-dev/protocol';
 import { DeploymentDataRoleChildRpcV1Schema } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, parseActionExecuteFailure, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentEnvironmentArtifactV1, environmentSecretBindingIdentityV1, machineSecretGrantSubjectKey, MachineSecretGrantV1Schema,
     type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
@@ -20,7 +20,8 @@ import { bootstrapOwnServerReadOnlyDataRoleForHost } from './dataRoleBootstrap';
 type RoleJob = Extract<DeploymentChildRpcV1, { kind: 'dataRole' }>;
 type ServiceRole = Extract<EnvironmentSecretBindingV1, { purpose: 'dataRole' }> & { service: string };
 const isServiceRole = (binding: EnvironmentSecretBindingV1): binding is ServiceRole => binding.purpose === 'dataRole' && 'service' in binding;
-const refuse = (code: string, cause?: unknown): never => { throw Object.assign(new Error(code, { cause }), { code }); };
+const refuse = (code: string, cause?: unknown): never => { throw Object.assign(createActionExecuteFailureError(parseActionExecuteFailure(cause)
+    ?? { ok: false, errorCode: code, error: code }), { message: code, code, cause }); };
 
 /** The bindings author seals the selected credential; the existing mounted data
  * owner installs it before the one Environment bindings CAS publishes it. */

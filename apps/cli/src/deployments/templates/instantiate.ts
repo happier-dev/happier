@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { carryActionFailureDiagnostic, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { deploymentOutputValidationFailure } from '../outputValidation';
 import { applyEnvironmentSecretBindingsPatchV1, captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
@@ -50,7 +51,8 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 const refuse = (failure: string | ActionExecuteFailure): never => {
     const code = typeof failure === 'string' ? failure : failure.errorCode;
-    throw Object.assign(new Error(code, typeof failure === 'string' ? undefined : { cause: failure }), { code });
+    throw Object.assign(createActionExecuteFailureError(typeof failure === 'string' ? { ok: false, errorCode: code, error: code } : failure),
+        { message: code, code, ...(typeof failure === 'string' ? undefined : { cause: failure }) });
 };
 const deploymentTemplateDomainChildRole = (key: string) => `template.domain:${key}`;
 const deploymentTemplateBindingsChildRole = 'template.bindings';

@@ -47,7 +47,7 @@ export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNo
             || !sameStrictJsonValue(source.data.subject, transition.subject)) return unavailable();
         input.signal.throwIfAborted();
         const accountId = readAccountIdFromToken(host.credentials.token);
-        if (!accountId) throw Object.assign(new Error('notice_account_scope_mismatch'), { code: 'notice_account_scope_mismatch' });
+        if (!accountId) throw createActionExecuteFailureError({ ok: false, errorCode: 'notice_account_scope_mismatch', error: 'notice_account_scope_mismatch' });
         let page: ServiceHealthNoticePageV1;
         let protection: DeploymentEnvironmentDetailV1['environment']['protection'] = 'nonProduction';
         let controllerMachineId: string | null | undefined = host.machineId;
@@ -155,7 +155,7 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
     settled(): Promise<void>;
 }> {
     const accountId = readAccountIdFromToken(input.credentials.token);
-    if (!accountId) throw Object.assign(new Error('notice_account_scope_mismatch'), { code: 'notice_account_scope_mismatch' });
+    if (!accountId) throw createActionExecuteFailureError({ ok: false, errorCode: 'notice_account_scope_mismatch', error: 'notice_account_scope_mismatch' });
     const services = input.handles.map(handle => {
         const subject = MachineDeploymentServiceIdentityV1Schema.parse(handle.identity);
         if (subject.machineId !== input.machineId || subject.environmentId !== input.environment.environment.id

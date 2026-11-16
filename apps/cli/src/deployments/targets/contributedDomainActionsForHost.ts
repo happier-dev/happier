@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import axios from '@/api/client/credentialAxios';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, isDeploymentDomainAddActionIdV1,
     isDeploymentDomainChildActionIdV1, type ActionExecutorContext, type ActionExecutorDeps, type ActionExecuteResult, type DeploymentDomainChildActionIdV1 } from '@happier-dev/protocol';
@@ -18,7 +19,7 @@ import type { createContributedDeploymentTargetForHost } from './contributedDepl
 
 type NativeHost = Parameters<typeof createOwnServerDomainActions>[0];
 type Preparation = Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0];
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 
 /** Platform placement is another consumer of the existing Domain record, reviewed child port and Artifact codec. */
 export function createContributedDomainActionsForHost(host: NativeHost & Readonly<{

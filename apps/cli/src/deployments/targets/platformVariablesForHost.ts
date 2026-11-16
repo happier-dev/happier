@@ -8,7 +8,7 @@ import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-prot
 import type { createContributedDeploymentTargetForHost } from './contributedDeploymentTargetForHost';
 import type { PreparePlatformBindingsForHost } from '../secrets/prepareDeploymentBindingsForHost';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 type Host = Readonly<{
     withTargetRole: ReturnType<typeof createContributedDeploymentTargetForHost>['withTargetRole'];
     readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;

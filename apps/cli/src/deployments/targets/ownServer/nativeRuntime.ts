@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { homedir } from 'node:os';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createPluginExecSystemToolResolver } from '@/plugins/runtime/exec/system/tools/resolveGrant';
@@ -26,7 +27,7 @@ export function createOwnServerNativeRuntime(input: Readonly<{
         async resolveExecutable() { throw new PluginError({ code: 'plugin_exec_executable_denied', message: 'A resolved Docker tool is required' }); },
         async resolvePath(path) {
             if (typeof path !== 'string' || path !== input.cwd && path !== input.buildExecutionDirectory) {
-                throw Object.assign(new Error('Native cwd escaped its owner'), { code: 'outside_root' });
+                throw createActionExecuteFailureError({ ok: false, errorCode: 'outside_root', error: 'Native cwd escaped its owner' });
             }
             return path;
         } });

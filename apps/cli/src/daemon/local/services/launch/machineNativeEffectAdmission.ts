@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 
@@ -35,10 +36,16 @@ export class MachineNativeEffectAdmissionError extends Error {
     readonly code: 'effect_in_progress' | 'admission_unavailable' | 'plan_changed';
     readonly actionOperationId: string | undefined;
     readonly details: Readonly<{ actionOperationId: string }> | undefined;
+    /** Public Action failure fields, so projection keeps the typed refusal. */
+    readonly ok = false;
+    readonly errorCode: MachineNativeEffectAdmissionError['code'];
+    readonly error: MachineNativeEffectAdmissionError['code'];
     constructor(code: MachineNativeEffectAdmissionError['code'], actionOperationId?: string) {
         super(code);
         this.name = 'MachineNativeEffectAdmissionError';
         this.code = code;
+        this.errorCode = code;
+        this.error = code;
         this.actionOperationId = actionOperationId;
         this.details = actionOperationId ? { actionOperationId } : undefined;
     }
@@ -66,7 +73,7 @@ type ProtectedStage = {
     onStopPending: (status: 'stop_pending') => void;
 };
 type StageScope = Readonly<{ entry: ActiveEffect; protectedStage?: ProtectedStage; admission?: true }>;
-const cancelled = () => Object.assign(new Error('cancelled'), { code: 'cancelled' });
+const cancelled = () => createActionExecuteFailureError({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
 
 function keyIdentity(key: MachineNativeEffectKey): string {
     switch (key.kind) {
@@ -219,7 +226,7 @@ export function createMachineNativeEffectAdmission() {
             /** Existing process/container custody, not a server receipt ACK. */
             settleNative?: () => Promise<void>;
         }>, effect: (context: MachineNativeEffectContext) => Promise<T>): Promise<T> {
-            if (input.operation.signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+            if (input.operation.signal?.aborted) throw createActionExecuteFailureError({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
             const keys = input.keys.map(key => Object.freeze({ ...key }));
             while (true) {
                 for (const incumbent of active) if (incumbent.state === 'unknown' && incumbent.originalFinalized && incumbent.observeNativeSettlement

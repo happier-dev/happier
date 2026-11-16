@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import type { createCredentialedAccountArtifactStore, ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -15,13 +16,11 @@ export function createDeploymentArtifactHeaderReader(params: Readonly<{
     const authorization = context.externalActionExecutionAuthorization;
     const artifacts = authorization ? readRequesterDeploymentArtifactStore(authorization) : params.artifacts;
     const http = authorization?.requesterHttpProjection;
-    if (!artifacts || authorization && !http) throw Object.assign(new Error('project_requester_authority_unavailable'),
-      { code: 'project_requester_authority_unavailable' });
+    if (!artifacts || authorization && !http) throw createActionExecuteFailureError({ ok: false, errorCode: 'project_requester_authority_unavailable', error: 'project_requester_authority_unavailable' });
     const authorizationHeaders: ArtifactRequestAuthorizationHeaders | undefined = http ? async request => {
       const headers = await http.createRequestHeaders({ ...request, effectActionId: authorization!.binding.actionId,
         ...(context.signal ? { signal: context.signal } : {}) });
-      if (!headers) throw Object.assign(new Error('project_requester_authority_unavailable'),
-        { code: 'project_requester_authority_unavailable' });
+      if (!headers) throw createActionExecuteFailureError({ ok: false, errorCode: 'project_requester_authority_unavailable', error: 'project_requester_authority_unavailable' });
       return headers;
     } : undefined;
     const read = artifacts.createHeaderReader({ prepareRecipients: false, ...(context.signal ? { signal: context.signal } : {}),

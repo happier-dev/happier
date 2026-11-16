@@ -21,7 +21,7 @@ import type { StoredCredentials } from '@/persistence';
 import { admitDeploymentTargetCredentialPrincipalForHost } from './admitDeploymentTargetCredentialPrincipalForHost';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { PluginError } from '@happier-dev/cli-common/plugins/errors';
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 
 export type DeploymentTargetRoleAdmissionHost = Readonly<{
@@ -58,7 +58,7 @@ export type DeploymentTargetRoleAdmissionRequest = Readonly<{
 const refuse = (code: string, phase?: string): never => {
     if (code === 'deployment_access_denied' || phase !== undefined) throw new PluginError({ code,
         failureCause: projectActionFailureCauseV1(new Error(code), phase ?? 'deployment.target.admission') });
-    throw Object.assign(new Error(code), { code });
+    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
 };
 
 /** Link and receipt custody compare the same captured provider operands. */

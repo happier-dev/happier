@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { environmentSecretBindingIdentityV1, type ActionExecutorContext, type DeploymentEnvironmentCreateIntentInputV1,
     type DeploymentEnvironmentCopyPlanV1, type DeploymentEnvironmentCopyReviewV1,
     type EnvironmentSecretBindingV1 } from '@happier-dev/protocol';
@@ -27,7 +28,7 @@ export type EnvironmentCreateCopyHost = EnvironmentCreateHost & Readonly<{
     }> | null>;
 }>;
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 
 function exactChoices<T>(choices: readonly T[], identity: (choice: T) => string, expected: readonly string[]): Map<string, T> {
     const selected = new Map(choices.map(choice => [identity(choice), choice]));

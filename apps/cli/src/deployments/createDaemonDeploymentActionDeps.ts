@@ -1038,7 +1038,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             const reviewedChild = readHostAdmittedReviewedChildV1(context);
             const native = reviewedChild?.deploymentNativeAdmission ?? binding?.deploymentNativeAdmission;
             if (!binding || !isDeploymentDomainNativeAdmissionV1(native) || !native.authoredMetadataDigest)
-                throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' });
+                throw createActionExecuteFailureError({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' });
             const created = await atHome(() => createDeploymentArtifactForHost({ artifacts, owner, publication: 'create',
                 assertCurrent: async () => { context.signal?.throwIfAborted(); },
                 content: { artifactId: createDeploymentDomainContentArtifactIdV1({ ...binding, deploymentNativeAdmission: native,

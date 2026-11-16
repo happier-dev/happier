@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -31,7 +32,7 @@ import { createRequesterConnectedAccountPurposeBindingRuntime } from '@/daemon/c
 import { join } from 'node:path';
 
 const refuse = (code: string, phase = 'deployment.target.admission.host_read', failureCause?: unknown): never => {
-    const failure = normalizeActionExecutorThrownError(Object.assign(new Error(code), { code, failureCause }), phase);
+    const failure = normalizeActionExecutorThrownError(Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { failureCause }), phase);
     throw new PluginError({ code, failureCause: failure.failureCause });
 };
 

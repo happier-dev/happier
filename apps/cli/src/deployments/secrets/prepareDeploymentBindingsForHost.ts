@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { carryActionFailureDiagnostic, normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import axios from '@/api/client/credentialAxios';
@@ -33,7 +34,7 @@ import { prepareEnvironmentSecretBindings, type EnvironmentSecretInstallation } 
 import { assertDeploymentSecretInvocationCurrent, readEnvironmentSecretBindingPreparationForHost } from './readEnvironmentSecretLaunchAdmissionForHost';
 import { deploymentUnavailableError, projectDeploymentFailure } from '../deploymentFailure';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 function failure(error: unknown): ActionExecuteFailure {
     const { errorCode } = normalizeActionExecutorThrownError(error);
     return projectDeploymentFailure(errorCode, error, 'deployment.bindings.prepare');

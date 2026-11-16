@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { DeploymentOwnServerContentV1Schema, type DeploymentOwnServerContentV1, type DeploymentEnvironmentDetailV1, type DeploymentMachineResultV1, type DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
 import { createNativeComposeLifecycle } from '@/daemon/local/services/launch/nativeComposeLifecycle';
@@ -24,7 +25,7 @@ export async function prepareOwnServerDeploymentCandidate(input: Readonly<{
     readPreviewDomain?: OwnServerDeploymentTargetHostInput['readPreviewDomain'];
     machineResults?: readonly DeploymentMachineResultV1[];
 }>): Promise<DeploymentOwnServerContentV1> {
-    const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+    const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
     const { environment } = input;
     const link = environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId)?.targetLink;
     if (!link) return refuse('target_mismatch');

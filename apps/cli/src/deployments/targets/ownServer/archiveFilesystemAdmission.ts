@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { basename } from 'node:path';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol/deployments/deploymentArchiveRpcV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -9,7 +10,7 @@ import { computeExternalActionMachineRpcParamsDigestV1 } from '@happier-dev/prot
 import type { PreparedFilesystemReadFile } from '@/machines/transfer/preparedFilesystemTransferScope';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 
-const forbidden = (): never => { throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' }); };
+const forbidden = (): never => { throw createActionExecuteFailureError({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' }); };
 
 /** Home and Machine RPC admission already verified both signatures. This one
  * host projection retains the actual finite requester separately from the root. */

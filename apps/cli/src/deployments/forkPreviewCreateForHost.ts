@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext, ActionExecutorDeps, DeploymentEnvironmentCreateInputV1 } from '@happier-dev/protocol';
 import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -16,7 +17,7 @@ import type { EnvironmentVariableBindingInputV1 } from '@happier-dev/protocol';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentDomainInventoryForHost } from './targets/ownServer/domainRouteSelection';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 type Storage = NonNullable<ActionExecutorDeps['deploymentAction']>;
 type Open = Parameters<typeof readDeploymentEnvironmentArtifactV1>[1];
 /** Admission reads only the Environment header and content, from either detail projection. */

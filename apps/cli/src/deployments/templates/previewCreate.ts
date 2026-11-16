@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps, DeploymentEnvironmentCreateInputV1, EnvironmentSecretBindingInputV1,
     EnvironmentSecretBindingV1, EnvironmentVariableBindingInputV1, EnvironmentVariableBindingV1, StoredAppPresetInputV1 } from '@happier-dev/protocol';
 import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
@@ -38,7 +39,7 @@ export type PreviewTemplateCreationPlanForHost = Readonly<{
     serviceExports?: NonNullable<DeploymentEnvironmentContentV1['ownServer']>['serviceExports'];
     backup?: Selection['destinationBackup'];
 }>;
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 function templateCustody(context: ActionExecutorContext, host: Host) {
     return resolveRequesterSavedSecretActionCustody({ authorization: context.externalActionExecutionAuthorization,
         credentials: host.credentials, operationContext: host.savedSecretOperationContext });

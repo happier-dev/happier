@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApiClient } from '@/api/api';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli';
@@ -5,7 +6,7 @@ import type { DomainNativeSetupForHost } from './ownServerDomainNative';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { privateServicePublicationBindings } from './privateServicePublication';
 
-const unavailable = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const unavailable = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 
 /** The installed Action host lends its existing setup/elevation and requester read ports. */
 export function createPrivateServicePublicationSettlementForHost(host: Pick<OwnServerDeploymentTargetHostInput,

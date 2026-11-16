@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { constants } from 'node:fs';
 import { cp, lstat, mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -23,7 +24,7 @@ const contained = (root: string, path: string) => {
     const suffix = relative(resolve(root), resolve(path));
     return suffix !== '' && !isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`);
 };
-const refusal = (): never => { throw Object.assign(new Error('Deployment data path escaped its owner'), { code: 'deployment_source_unavailable' }); };
+const refusal = (): never => { throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Deployment data path escaped its owner' }); };
 
 async function readWriterBindSource(source: string): Promise<string> {
     try { return await realpathWithAbsentSuffix(source); }

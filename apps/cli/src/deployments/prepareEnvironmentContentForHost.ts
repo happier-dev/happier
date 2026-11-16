@@ -55,7 +55,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 signal: request.context.signal, prepareRecipients: false, includeSharedAudience: false,
                 authorizationHeaders: async transport => {
                     const headers = await host.resolveRequestHeaders(request.context, request.actionId, transport);
-                    if (!headers) throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' });
+                    if (!headers) throw createActionExecuteFailureError({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' });
                     return headers;
                 },
             }));
@@ -71,7 +71,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 const metadataActionId = admittedRoot !== undefined && admittedRoot !== request.actionId
                     ? 'deployments.environments.get' : request.actionId;
                 const headers = await host.resolveRequestHeaders(request.context, metadataActionId, wire);
-                if (!headers) throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' });
+                if (!headers) throw createActionExecuteFailureError({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' });
                 const response = await axios.request<unknown>({ method: wire.method, url: `${host.serverHttpBaseUrl}${wire.path}`,
                     headers, signal: request.context.signal, validateStatus: () => true });
                 const loaded = DeploymentEnvironmentGetResultV1Schema.parse(response.data);
@@ -230,7 +230,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                         beforeWrite: async () => { request.context.signal?.throwIfAborted(); },
                         authorizationHeaders: async transport => {
                             const headers = await host.resolveRequestHeaders(request.context, request.actionId, transport);
-                            if (!headers) throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' });
+                            if (!headers) throw createActionExecuteFailureError({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' });
                             return headers;
                         } },
                 }));

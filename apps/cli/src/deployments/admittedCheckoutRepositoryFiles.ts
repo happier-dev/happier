@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -30,9 +31,7 @@ export function createAdmittedCheckoutRepositoryFiles(
     ? binding.accountId === binding.custodianAccountId
     : !admission || admission.actorAccountId === admission.custodianAccountId;
   if (!custodian)
-    throw Object.assign(new Error(ADMITTED_CHECKOUT_OWNER_REQUIRED), {
-      code: ADMITTED_CHECKOUT_OWNER_REQUIRED,
-    });
+    throw createActionExecuteFailureError({ ok: false, errorCode: ADMITTED_CHECKOUT_OWNER_REQUIRED, error: ADMITTED_CHECKOUT_OWNER_REQUIRED });
   type Scope = Readonly<{ root: string; accessPolicy: FilesystemAccessPolicy }>;
   let scope: Promise<Scope> | undefined;
   const admitted = () =>
