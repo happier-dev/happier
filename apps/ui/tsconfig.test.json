@@ -3690,6 +3690,7 @@
     "sources/components/settings/appearance/themeProfiles/themeProfileScreenUtils.test.ts",
     "sources/components/settings/appearance/themeProfiles/themeProfileSettingsScreens.test.tsx",
     "sources/components/settings/appearance/themeProfiles/themeProfilesSettingBinding.test.ts",
+    "sources/components/settings/appearance/themeProfiles/useThemeDevicePicker.test.tsx",
     "sources/components/settings/appearance/themeProfiles/useThemeProfileEditorPreview.test.tsx",
     "sources/components/settings/appearance/useApplyThemeSelection.toggle.test.ts",
     "sources/components/settings/attachments/AttachmentsSettingsView.test.tsx",
