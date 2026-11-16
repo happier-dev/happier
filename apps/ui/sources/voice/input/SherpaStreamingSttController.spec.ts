@@ -256,7 +256,7 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
     const stop = vi.mocked(harness.nativeModule.stop);
     const stopNative = stop.getMockImplementation();
     if (!stopNative) throw new Error('Native capture stop boundary missing');
-    stop.mockImplementationOnce(async () => { await stopNative(); captureStopped.resolve(); });
+    stop.mockImplementationOnce(async (...args) => { await stopNative(...args); captureStopped.resolve(); });
     let settlePush!: () => void;
     sherpaStreamingPushFrame.mockImplementation(async () => {
       pushEntered.resolve();

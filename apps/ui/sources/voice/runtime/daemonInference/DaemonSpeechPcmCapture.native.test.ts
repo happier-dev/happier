@@ -76,7 +76,7 @@ describe('daemon native PCM through the shared capture owner', () => {
     const stop = vi.mocked(harness.nativeModule.stop);
     const stopNative = stop.getMockImplementation();
     if (!stopNative) throw new Error('Native stop boundary missing');
-    stop.mockImplementationOnce(async () => { nativeStopEntered.resolve(); await stopNative(); });
+    stop.mockImplementationOnce(async (...args) => { nativeStopEntered.resolve(); await stopNative(...args); });
     const finishing = capture.finish();
     await nativeStopEntered.promise;
     expect(harness.nativeModule.stop).toHaveBeenCalledTimes(1);

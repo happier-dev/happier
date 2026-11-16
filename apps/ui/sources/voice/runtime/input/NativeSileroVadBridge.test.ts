@@ -16,7 +16,7 @@ describe('resolveNativeSileroVadBridge frame-fed VAD', () => {
         const nativeStop = vi.mocked(harness.nativeModule.stop);
         const stopCapture = nativeStop.getMockImplementation();
         if (!stopCapture) throw new Error('Native capture stop boundary missing');
-        nativeStop.mockImplementationOnce(async () => { captureStopped.resolve(); await stopCapture(); });
+        nativeStop.mockImplementationOnce(async (...args) => { captureStopped.resolve(); await stopCapture(...args); });
         const bridge = await resolveNativeSileroVadBridge({ createVadDetector: vi.fn(async () => {}), pushVadAudioFrame, cancelVadDetector }, { frameSource: harness.capture });
         const onEndpointSignal = vi.fn();
         const controller = createNativeVadController({ bridge, onEndpointSignal });
