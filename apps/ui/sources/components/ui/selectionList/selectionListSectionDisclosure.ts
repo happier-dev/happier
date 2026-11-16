@@ -57,8 +57,8 @@ export type SelectionListSectionDisclosures = (
 
 /**
  * Which folded sections are open, kept per list so a lower disclosure never inserts rows above itself.
- * The one open-state owner for a list's in-place folds (the model picker's "Unavailable", the Machine
- * picker's offline workers).
+ * The one open-state owner for a list's in-place folds (the "Unavailable" folds of the model picker and of
+ * Runs through).
  */
 export function useSelectionListSectionDisclosures(): SelectionListSectionDisclosures {
   const [openSectionIds, setOpenSectionIds] = React.useState<
