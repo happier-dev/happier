@@ -207,6 +207,9 @@ describe('useInboxSummary workflow source', () => {
             if (artifactResponse) return artifactResponse;
             return new Response('{}', { status: 404 });
         } });
+        // Restoration publishes its initial Account wake after capturing the cursor.
+        // Measure this window's demand after that producer settles.
+        await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition();
         primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: features() } });
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         storage.setState({
@@ -356,9 +359,11 @@ describe('useInboxSummary workflow source', () => {
         listRuns.mockResolvedValue(page([]));
         await act(async () => publishHomeAccountChange(connection!.home.id, [`workflow-run:${run.id}`]));
         await waitForHomeGovernance(() => expect(latest?.count).toBe(0));
-        expect(listRuns.mock.calls.map(([input]) => ({ projection: input.request.projection ?? 'full',
-            bytes: Buffer.byteLength(JSON.stringify(input)) }))).toEqual([
-            { projection: 'membership', bytes: 106 }, { projection: 'full', bytes: expect.any(Number) }, { projection: 'membership', bytes: 106 },
+        expect(listRuns.mock.calls.map(([input]) => input.request)).toEqual([
+            { attention: 'required', projection: 'membership' },
+            { attention: 'required', limit: expect.any(Number) },
+            { attention: 'required', runIds: [run.id], projection: 'membership' },
+            { attention: 'required', projection: 'membership' },
         ]);
         expect(listRuns.mock.calls[1]?.[0].request).toMatchObject({ attention: 'required', limit: expect.any(Number) });
     });
@@ -375,17 +380,20 @@ describe('useInboxSummary workflow source', () => {
     });
 
     it('lets an answered off-page hold recede on the next Account-change wake', async () => {
-        listRuns.mockResolvedValueOnce(page(['run-held'])).mockResolvedValueOnce(page([]));
+        let held = true;
+        listRuns.mockImplementation(async () => page(held ? ['run-held'] : []));
 
         await renderSummary();
         expect(latest?.count).toBe(1);
 
+        held = false;
         await act(async () => {
             publishHomeAccountChange(connection!.home.id, ['workflow-run:run-held']);
         });
-        await act(async () => {});
+        await waitForHomeGovernance(() => expect(latest?.count).toBe(0));
 
-        expect(listRuns).toHaveBeenCalledTimes(2);
+        expect(listRuns.mock.calls.every(([input]) => input.request.attention === 'required'
+            && input.request.projection === 'membership')).toBe(true);
         expect(latest).toEqual({ count: 0, needsYouCount: 0, hasContent: false });
     });
 
