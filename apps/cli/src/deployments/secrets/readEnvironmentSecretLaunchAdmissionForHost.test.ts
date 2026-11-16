@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DeploymentDomainHeaderV1Schema, DeploymentTemplateInstantiateInputV1Schema, encodeBase64, verifyMachineInstallationProof } from '@happier-dev/protocol';
@@ -464,7 +464,7 @@ describe('installed Environment secret launch reader', () => {
                 installationPrivateSeed: (isSibling ? receiver : sibling).secretKey.subarray(0, 32) })).toBeNull();
             expect(openMachineSecretGrant({ grant: body.grant, machineId: target.machineId, installationId: target.installationId,
                 installationPrivateSeed: seed })).toBeNull();
-            if (failSibling && isSibling) throw new Error('lost sibling acknowledgement');
+            if (failSibling && isSibling) throw new AxiosError('lost sibling acknowledgement', 'ECONNRESET', undefined, {});
             return { status: 200, data: { ok: true, grant: body.grant } };
         });
         const admitted = await reader.readEnvironmentDomainSecretLaunchAdmissionForHost({ ...request,
@@ -779,5 +779,18 @@ describe('installed Environment secret launch reader', () => {
         await expect(reader.readEnvironmentSecretLaunchAdmissionForHost({ ...request, installationId: 'replacement' }))
             .rejects.toMatchObject({ code: 'secret_missing' });
         expect(boundary).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a local request failure typed and reports home_unreachable only for a request that got no response', async () => {
+        // HUNT-CAUSE-RELABEL-1116: every throw from the Home request was reported as home_unreachable.
+        const reader = await import('./readEnvironmentSecretLaunchAdmissionForHost.js');
+        install();
+        const boundary = vi.spyOn(axios, 'request').mockRejectedValueOnce(new TypeError('local header projection failed'));
+        const local = await reader.readEnvironmentSecretLaunchAdmissionForHost(request).catch(error => error);
+        expect(local).toMatchObject({ code: 'action_failed' });
+        expect(projectDeploymentFailure(local.code, local, 'deployment.secrets.admission'))
+            .toMatchObject({ errorCode: 'action_failed', failureCause: { errorClass: 'TypeError' } });
+        boundary.mockRejectedValueOnce(new AxiosError('connect ECONNREFUSED', 'ECONNREFUSED', undefined, {}));
+        await expect(reader.readEnvironmentSecretLaunchAdmissionForHost(request)).rejects.toMatchObject({ code: 'home_unreachable' });
     });
 });

@@ -12,6 +12,8 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { deploymentOutputValidationFailure } from '../outputValidation';
+import { projectDeploymentException } from '../deploymentFailure';
+import { isAxiosError } from 'axios';
 import axios from '@/api/client/credentialAxios';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema,
@@ -154,8 +156,15 @@ function createInstalledSecretTransportForHost(input: InstalledSecretHostInput,
                 const response = await axios.request<unknown>({ method: 'POST', url, headers, data, signal,
                     maxRedirects: 0, validateStatus: () => true });
                 return { response, requestHeaders: headers };
-            } catch {
-                return refuse(signal.aborted ? 'cancelled' : 'home_unreachable');
+            } catch (error) {
+                if (signal.aborted) return refuse('cancelled');
+                // Only a request that left and got no response proves Home unreachable;
+                // anything else keeps its own classified cause.
+                if (isAxiosError(error) && error.response === undefined) return refuse('home_unreachable', {
+                    ok: false, errorCode: 'home_unreachable', error: 'home_unreachable',
+                    failureCause: projectActionFailureCauseV1(error, 'deployment.secrets.admission.request') });
+                const failure = projectDeploymentException(error, { phase: 'deployment.secrets.admission.request' });
+                return refuse(failure.errorCode, failure);
             }
         };
     };
