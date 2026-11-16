@@ -12,6 +12,7 @@ import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { getAccountChangeRowsSocketRoom, getAccountStoredContentV3SocketRoom } from '@/app/api/socketRooms';
 import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { eventRouter } from './connectionEventRouter';
 
 type Wake = Readonly<{ seq: number; body: Readonly<{ t: string; rows?: Readonly<{ after: number; page: Readonly<{
@@ -119,6 +120,58 @@ describe('Account wake with per-socket authorized change rows (SQLite)', () => {
             ]));
         } finally {
             clients.forEach(client => client.close());
+            eventRouter.clearIo();
+            await io.close();
+        }
+    });
+
+    it('reads at most one page in flight and one pending per socket, and still delivers every wake', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain', publicKey: `burst-${crypto.randomUUID()}` } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'burst', encryptionMode: 'plain', metadata: '{}' } });
+        const http = createServer();
+        const io = new Server(http, { path: '/v1/updates' });
+        io.on('connection', socket => {
+            Object.assign(socket.data, { userId: account.id, clientType: 'machine-scoped', machineId: 'burst-machine',
+                authAuthority: 'present_user', authTokenAuthenticationEvidence: [] });
+            writeAccountStoredContentCompatibilityForSocket(socket, evaluateAccountStoredContentSocketCompatibility(socket.handshake.auth));
+            socket.data.accountChangeRows = { kinds: readAccountChangeRowsDemandV1(socket.handshake.auth)!.kinds };
+            void socket.join([getAccountStoredContentV3SocketRoom(account.id), getAccountChangeRowsSocketRoom(account.id)]);
+            socket.emit('joined');
+        });
+        await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+        const address = http.address();
+        if (!address || typeof address === 'string') throw new Error('Missing test address');
+        eventRouter.setIo(io);
+        const client = connect(`http://127.0.0.1:${address.port}`, { path: '/v1/updates', transports: ['websocket'], reconnection: false,
+            auth: { accountStoredContentCompatibility: { v: 1, protocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION_PROTOCOL_VERSION },
+                accountChangeRows: { v: 1, kinds: ['session'] } } });
+        const wakes: Wake[] = [];
+        client.on('update', (wake: Wake) => wakes.push(wake));
+        // The database is the boundary: hold the first page read until the whole burst has committed.
+        let pageReads = 0;
+        let release!: () => void;
+        const released = new Promise<void>(resolve => { release = resolve; });
+        const stop = observeSqliteRequests({ before: async (request) => {
+            const where = (request.args as { where?: { accountId?: string; cursor?: unknown } } | undefined)?.where;
+            if (request.model !== 'AccountChange' || request.action !== 'findMany' || where?.accountId !== account.id || !where.cursor) return;
+            pageReads += 1;
+            if (pageReads === 1) await released;
+        } });
+        try {
+            await new Promise<void>((resolve, reject) => { client.once('joined', () => resolve()); client.once('connect_error', reject); });
+            for (let index = 0; index < 5; index += 1) {
+                await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id }));
+            }
+            await vi.waitFor(() => expect(pageReads).toBe(1));
+            release();
+            await vi.waitFor(() => expect(wakes).toHaveLength(5));
+            const seq = (await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq;
+            expect(wakes.every(wake => wake.body.rows !== undefined)).toBe(true);
+            expect(Math.max(...wakes.map(wake => wake.body.rows!.page.nextCursor))).toBe(seq);
+            expect(pageReads).toBe(2);
+        } finally {
+            stop();
+            client.close();
             eventRouter.clearIo();
             await io.close();
         }

@@ -30,7 +30,9 @@ declare module "socket.io" {
          * Declared Account change-row demand of an unrestricted machine socket. `cursor` is the
          * nextCursor of the last page pushed to this socket; `tail` orders this socket's page reads.
          */
-        accountChangeRows?: { readonly kinds: readonly ChangeKind[]; cursor?: number; tail?: Promise<void> };
+        accountChangeRows?: { readonly kinds: readonly ChangeKind[]; cursor?: number; tail?: Promise<void>;
+            /** Wakes waiting for this socket's next page read (not yet started). */
+            pending?: { fromCursor: number; payloads: { id: string; seq: number; body: { t: string; [key: string]: unknown }; createdAt: number }[] } };
     }
 }
 

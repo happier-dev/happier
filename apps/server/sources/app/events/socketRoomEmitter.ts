@@ -102,7 +102,9 @@ export function parseAccountChangeRowsDelivery(value: unknown): AccountChangeRow
         v: 1,
         accountId: record.accountId,
         fromCursor: record.fromCursor,
-        payload: { id: update.id, seq: update.seq, body: update.body as Readonly<Record<string, unknown>>, createdAt: update.createdAt },
+        // Rows are read by the receiving node for its own sockets, never carried in the envelope.
+        payload: { id: update.id, seq: update.seq, createdAt: update.createdAt,
+            body: Object.fromEntries(Object.entries(update.body as Readonly<Record<string, unknown>>).filter(([key]) => key !== "rows")) },
         recipientFilter: filter as AccountChangeRowsDeliveryV1["recipientFilter"],
     };
 }

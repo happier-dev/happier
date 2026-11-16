@@ -576,8 +576,10 @@ class EventRouter {
     /**
      * One socket's page, ordered after its previous page so each page starts where the last one
      * this socket received ended. Wakes this socket was excluded from (its own Machine write) are
-     * covered by its next page. A failed read sends the bare wake: the consumer reads the feed,
-     * whose own refusal (cursor gone, indeterminate access) stays the feed's.
+     * covered by its next page. At most one read is in flight and one pending per socket: wakes
+     * arriving before the pending read starts join it, and every joined wake is delivered with
+     * that one page (the consumer applies it once; the rest are covered). A failed read sends the
+     * bare wakes: the consumer reads the feed, whose own refusal stays the feed's.
      */
     private deliverAccountChangeRows(
         delivery: AccountChangeRowsDeliveryV1,
@@ -587,29 +589,34 @@ class EventRouter {
     ): void {
         const state = socket.data.accountChangeRows;
         if (!state) return;
+        // The canonical recipient filter decides exclusions; it reads only these connection facts.
         const connection = { connectionType: clientType, machineId: socket.data.machineId,
             sessionId: socket.data.sessionId, socket } as unknown as ClientConnection;
         if (!this.shouldSendToConnection(connection, delivery.recipientFilter as RecipientFilter)) return;
         const payload = delivery.payload as UpdatePayload;
+        if (state.pending) {
+            state.pending.fromCursor = Math.min(state.pending.fromCursor, delivery.fromCursor);
+            state.pending.payloads.push(payload);
+            return;
+        }
+        state.pending = { fromCursor: delivery.fromCursor, payloads: [payload] };
         state.tail = (state.tail ?? Promise.resolve()).then(async () => {
-            const after = state.cursor ?? delivery.fromCursor - 1;
+            const job = state.pending!;
+            state.pending = undefined;
+            const after = state.cursor ?? job.fromCursor - 1;
+            let rows: PushedAccountChangesPageV1 | undefined;
             try {
                 const read = await readAccountChangesPage({
                     accountId: delivery.accountId, after, limit: ACCOUNT_CHANGES_PAGE_LIMIT_V1, kinds: state.kinds,
                     compatibility: readAccountStoredContentCompatibilityForSocket(socket),
                     readAuthentication: () => readSessionAccessAuthenticationFromSocket(socket),
                 });
-                if (read.status === 'ok') {
-                    state.cursor = read.page.nextCursor;
-                    const rows: PushedAccountChangesPageV1 = { v: 1, after, page: read.page };
-                    emit({ ...payload, body: { ...payload.body, rows } });
-                    return;
-                }
+                if (read.status === 'ok') rows = { v: 1, after, page: read.page };
             } catch (error) {
                 log({ module: "websocket", level: "warn", error }, "Account change-row page read failed; sending the bare wake");
             }
-            state.cursor = undefined;
-            emit(payload);
+            state.cursor = rows?.page.nextCursor;
+            for (const wake of job.payloads) emit(rows ? { ...wake, body: { ...wake.body, rows } } : wake);
         }).catch((error: unknown) => {
             log({ module: "websocket", level: "warn", error }, "Account change-row delivery failed");
         });
