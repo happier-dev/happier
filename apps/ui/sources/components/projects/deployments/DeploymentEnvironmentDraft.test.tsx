@@ -992,7 +992,7 @@ describe('Environment draft Machine Home', () => {
       // Each platform the plugins declare is a choice of its own, beside the person's Machines.
       await waitForTestEvent(screen.subscribe,
         () => screen.findHostByTestId(`project-deployments.draft.target:${pluginId}/beta`), node => node !== null);
-      expect(screen.findHostByTestId('project-deployments.draft.target:machine')).not.toBeNull();
+      expect(screen.findHostByTestId('project-deployments.draft.target:own-server')).not.toBeNull();
       expect(screen.findHostByTestId(`project-deployments.draft.target:${pluginId}/alpha`)).not.toBeNull();
       await screen.pressByTestIdAsync(`project-deployments.draft.target:${pluginId}/beta`);
       // Owner feedback 2026-11-10: the real choices and preparation are inline before any creation.

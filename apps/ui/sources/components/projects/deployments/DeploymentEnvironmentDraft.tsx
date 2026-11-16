@@ -86,7 +86,8 @@ import {
 type Actions = ReturnType<typeof createDeploymentActions>;
 type PreparedCreate = Pick<Awaited<ReturnType<Actions['prepareCreate']>>, 'review' | 'run'>;
 const DEFAULT_COMPOSE_PATH = 'compose.yaml';
-const MACHINE_TILE = 'machine';
+/** The own-server target is the catalog's own identity, so a suggested `targetId` resolves to the Machine card as is. */
+const OWN_SERVER_TARGET = OWN_SERVER_DEPLOYMENT_TARGET_V1.id;
 /** Not a choice: leads to Plugins, or reads the declared platforms again. */
 const PLUGINS_TILE = 'plugins';
 const RETRY_TILE = 'retry';
@@ -178,7 +179,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     // Provider choices are prepared in the existing platform editor; Create links that exact result.
     const platforms = useDeploymentPlatformTargets(props.platformAvailable === true ? props.lifetime : null);
     const platformTargets = platforms.state.status === 'ready' ? platforms.state.targets : NO_PLATFORM_TARGETS;
-    const [targetKey, setTargetKey] = React.useState<string>(props.initialTargetKey ?? MACHINE_TILE);
+    const [targetKey, setTargetKey] = React.useState<string>(props.initialTargetKey ?? OWN_SERVER_TARGET);
     const platformTarget = props.platformAvailable === true ? platformTargets.find((target) => target.key === targetKey) ?? null : null;
     const [platformProvider, setPlatformProvider] = React.useState<PreparedPlatformTargetLink | null>(null);
     const [composePath, setComposePath] = React.useState(DEFAULT_COMPOSE_PATH);
@@ -235,8 +236,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     const recommendation = resolvePublishTargetRecommendation({
       definition: props.copyFrom?.content.definition ?? (props.catalogApp ? { from: 'catalogApp' }
         : definitionKind ? { from: definitionKind } : { kind: 'repository' }),
-      explicitTarget: targetKey !== MACHINE_TILE ? { id: targetKey, targetClass: 'platform' } : undefined,
-      targets: [{ id: MACHINE_TILE, targetClass: 'ownServer', availability: allMachines == null ? 'unknown'
+      explicitTarget: targetKey !== OWN_SERVER_TARGET ? { id: targetKey, targetClass: 'platform' } : undefined,
+      targets: [{ id: OWN_SERVER_TARGET, targetClass: 'ownServer', availability: allMachines == null ? 'unknown'
         : chosen && answers(chosen) ? 'available' : 'unavailable',
         accepts: OWN_SERVER_DEPLOYMENT_TARGET_V1.accepts, needs: OWN_SERVER_DEPLOYMENT_TARGET_V1.needs },
         ...platformTargets.map(target => ({ id: target.key, targetClass: 'platform' as const, availability: 'unknown' as const,
@@ -394,7 +395,7 @@ export const DeploymentEnvironmentDraft = React.memo(
 
     const platformStatus = platforms.state.status;
     const targetTiles: Array<SelectionTile<string>> = [
-      { id: MACHINE_TILE, icon: 'hard-drives', title: t('projects.deployments.platformLink.onMachine'),
+      { id: OWN_SERVER_TARGET, icon: 'hard-drives', title: t('projects.deployments.platformLink.onMachine'),
         subtitle: t('projects.deployments.whereDescription') },
       ...offeredPlatformTargets.map((target): SelectionTile<string> => ({
         id: target.key, title: target.title, mark: <PluginMark title={target.title} pluginId={target.pluginId} />,
@@ -680,7 +681,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               minimumColumns={1}
               maximumColumns={props.phone ? 1 : 2}
               descriptionPlacement="below"
-              renderOptionFooter={({ option }) => option.id === MACHINE_TILE ? machineCard : null}
+              renderOptionFooter={({ option }) => option.id === OWN_SERVER_TARGET ? machineCard : null}
             />
             </BareSectionContent>
           </ItemGroup>

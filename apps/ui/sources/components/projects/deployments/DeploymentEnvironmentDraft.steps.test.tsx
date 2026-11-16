@@ -303,7 +303,7 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       const tiles = () => screen.findAllByType(SelectionTiles).find(node => node.props.testIdPrefix === 'project-deployments.draft.target');
       await waitForHomeGovernance(async () => { await act(async () => {}); expect(frames.length).toBeGreaterThan(0); });
       // A Compose file runs on a Machine only, yet Where still reads as targets: the Machine, then More platforms last.
-      expect(tiles()?.props.options.map((option: { id: string }) => option.id)).toEqual(['machine', 'plugins']);
+      expect(tiles()?.props.options.map((option: { id: string }) => option.id)).toEqual(['own-server', 'plugins']);
       // The chosen target leads across its row; each card's body sits under its title row (jdF-whereM).
       expect(tiles()?.props.options.map((option: { span?: string }) => option.span ?? null)).toEqual(['row', null]);
       expect(tiles()?.props.descriptionPlacement).toBe('below');
@@ -354,6 +354,29 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       expect(screen.findAllByType(AttentionBanner).map(node => node.props.testID)).toEqual([]);
       const notice = screen.findAllByType(SurfaceStateCard).filter(node => node.props.testID === 'project-deployments.draft.machineAwayNotice');
       expect(notice.map(node => node.props.size)).toEqual(['line']);
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
+  it('a suggested own-server target lands on the Machine card and can continue (AUTO-U1 03:58Z)', async () => {
+    const { OWN_SERVER_DEPLOYMENT_TARGET_V1 } = await import('@happier-dev/deployments');
+    const serverId = await homes.addHome({ name: 'Deploy suggested', serverUrl: 'https://draft-steps-suggested.test', accountId: 'alice',
+      serverIdentityId: `srv_${'7'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const frames: DeploymentDraftFrame[] = [];
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources', { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
+      const steps = { onFrame: (frame: DeploymentDraftFrame) => { frames.push(frame); }, onExit: () => {} };
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null}
+        definitionKind="compose" phone={false} actions={createDeploymentActions(account.accountLifetime)} steps={steps}
+        initialTargetKey={OWN_SERVER_DEPLOYMENT_TARGET_V1.id} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+      const { SelectionTiles } = await import('@/components/ui/forms/SelectionTiles');
+      const tiles = () => screen.findAllByType(SelectionTiles).find(node => node.props.testIdPrefix === 'project-deployments.draft.target');
+      await waitForHomeGovernance(async () => { await act(async () => {}); expect(frames[frames.length - 1]?.primary.disabled).toBe(false); });
+      expect(tiles()?.props.value).toBe(OWN_SERVER_DEPLOYMENT_TARGET_V1.id);
+      expect(frames[frames.length - 1]!.runsOn).toMatchObject({ kind: 'machine' });
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
