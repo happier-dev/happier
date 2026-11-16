@@ -46,7 +46,10 @@ describe('deployment Artifact content boundary', () => {
         const { healthCheck: _healthCheck, ...unchecked } = content;
         expect(readDeploymentDomainArtifactV1(reference, { ...domain, body: JSON.stringify(unchecked) }))
             .toEqual({ ok: true, content: unchecked, title: 'Application' });
-        for (const body of [{ ...content, healthCheck: { path: '/ready' } }, { ...content, tls: { kind: 'custom', privateKeyPem: 'private' } },
+        const defaultStatus = { ...content, healthCheck: { path: '/ready' } };
+        expect(readDeploymentDomainArtifactV1(reference, { ...domain, body: JSON.stringify(defaultStatus) }))
+            .toEqual({ ok: true, content: defaultStatus, title: 'Application' });
+        for (const body of [{ ...content, healthCheck: { path: 'ready' } }, { ...content, tls: { kind: 'custom', privateKeyPem: 'private' } },
             { ...content, basicAuth: { username: 'operator', password: 'private' } },
             { ...content, redirectTo: 'https://example.test' }]) {
             expect(readDeploymentDomainArtifactV1(reference, { ...domain, body: JSON.stringify(body) }))

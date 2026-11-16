@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { createDeploymentEnvironmentDetailV1 } from '../testing/v1.js';
 import { DeploymentEnvironmentContentV1Schema } from './environment.js';
 import * as schemas from './index.js';
-import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol';
-import { computeDeploymentEnvironmentUpdateInputDigestV1, computeDeploymentEnvironmentUpdateMetadataDigestV1,
-    projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { DeploymentBackupConfigureInputV1Schema, DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol';
+import { projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 const backup = {
     configRevision: 1,
@@ -21,20 +21,21 @@ const backup = {
 describe('Environment backup content', () => {
     const content = createDeploymentEnvironmentDetailV1().content;
 
-    it('binds backup setup to the reviewed input while keeping its configuration out of Home storage operands', () => {
-        const input = DeploymentEnvironmentUpdateInputV1Schema.parse({ serverId: 'home', environmentId: 'environment-a',
+    it('binds backup setup to configure admission and keeps it out of generic Environment updates', () => {
+        const update = { serverId: 'home', environmentId: 'environment-a',
             expectedRevision: 1, contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
-            patch: { buildMachineId: 'builder', backup } });
-        expect(schemas.DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(input).success).toBe(false);
-        const prepared = { ...input, contentArtifactId: 'prepared', patch: { buildMachineId: 'builder' } };
+            patch: { buildMachineId: 'builder', backup } };
+        expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse(update).success).toBe(false);
+        expect(schemas.DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(update).success).toBe(false);
+        const prepared = { ...update, contentArtifactId: 'prepared', patch: { buildMachineId: 'builder' } };
         expect(schemas.DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(prepared).success).toBe(true);
-        const native = projectDeploymentNativeAdmissionV1('deployments.environments.update', input);
-        expect(native).toHaveProperty('authoredMetadataDigest', computeDeploymentEnvironmentUpdateMetadataDigestV1(prepared));
-        expect(computeDeploymentEnvironmentUpdateInputDigestV1({ ...input,
-            patch: { ...input.patch, backup: { ...backup, config: { bucket: 'changed' } } } }))
-            .not.toBe(computeDeploymentEnvironmentUpdateInputDigestV1(input));
-        expect(computeDeploymentEnvironmentUpdateMetadataDigestV1({ ...prepared, patch: { buildMachineId: 'other' } }))
-            .not.toBe(computeDeploymentEnvironmentUpdateMetadataDigestV1(prepared));
+        const input = DeploymentBackupConfigureInputV1Schema.parse({ serverId: 'home', environmentId: 'environment-a',
+            expectedRevision: 1, intent: 'save', configuration: backup });
+        const native = projectDeploymentNativeAdmissionV1(DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, input);
+        expect(native).toMatchObject({ kind: 'backupConfigure', environmentId: 'environment-a', expectedRevision: 1,
+            intent: 'save', inputDigest: expect.any(String) });
+        expect(projectDeploymentNativeAdmissionV1(DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, { ...input,
+            configuration: { ...backup, config: { bucket: 'changed' } } })).not.toEqual(native);
     });
 
     it('preserves strict JSON configuration values and detached nested snapshots', () => {

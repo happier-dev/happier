@@ -47,7 +47,7 @@ describe('P44 preview template private content', () => {
         const selection = { kind: 'template', templateRef: { sourceId: 'data', itemId: 'postgres', version: '1',
             ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } }, dataExportNames: ['database'],
             copyFrom: { environmentId: 'source-environment', targetLinkId: 'source-target', deploymentId: 'source-deployment',
-                backupOperationId: 'captured-operation', restoreBackupId: 'captured-backup' } };
+                backupOperationId: 'captured-operation', snapshotId: 'captured-backup' } };
         const previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
             repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
             runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [selection] };
@@ -55,9 +55,9 @@ describe('P44 preview template private content', () => {
         expect(DeploymentEnvironmentContentV1Schema.parse(JSON.parse(JSON.stringify(content)))).toEqual(content);
         const { backupOperationId: _operation, ...withoutOperation } = selection.copyFrom;
         expect(DeploymentEnvironmentContentV1Schema.parse({ ...content, previewTemplate: { ...previewTemplate,
-            data: [{ ...selection, copyFrom: withoutOperation }] } })).toHaveProperty('previewTemplate.data.0.copyFrom.restoreBackupId', 'captured-backup');
-        const { restoreBackupId: _capture, ...withoutCapture } = selection.copyFrom;
-        for (const copyFrom of [withoutCapture, { ...selection.copyFrom, restoreBackupId: '' },
+                data: [{ ...selection, copyFrom: withoutOperation }] } })).toHaveProperty('previewTemplate.data.0.copyFrom.snapshotId', 'captured-backup');
+        const { snapshotId: _capture, ...withoutCapture } = selection.copyFrom;
+        for (const copyFrom of [withoutCapture, { ...selection.copyFrom, snapshotId: '' },
             { ...selection.copyFrom, credentialPrincipal: { kind: 'account', accountId: 'owner' } }]) {
             expect(DeploymentEnvironmentContentV1Schema.safeParse({ ...content, previewTemplate: { ...previewTemplate,
                 data: [{ ...selection, copyFrom }] } }).success).toBe(false);
