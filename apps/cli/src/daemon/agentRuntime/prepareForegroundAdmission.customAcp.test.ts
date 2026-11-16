@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol';
-import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 
@@ -27,8 +27,21 @@ describe('Custom ACP foreground instance admission', () => {
       vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
       const home = fastify();
       let projectCensusObserved = false;
+      const definitions = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: ['definition-a', 'definition-b'].map(id => ({
+        id, name: id, title: id, launch: { kind: 'command' as const, command: `command-${id}`, args: [id] }, env: {}, capabilities: {}, createdAt: 1, updatedAt: 1,
+      })) });
+      let catalogRecord = definitions;
+      let catalogRevision = 1;
       // Home's complete census proves this ordinary directory is not an accepted Project.
       home.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
+      home.get('/v1/account/encryption/currentness', async () => ({
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0,
+      }));
+      home.get(ACP_CATALOG_ROWS_ROUTE_V1, async request => {
+        expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`);
+        return AcpCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: catalogRevision,
+          content: { t: 'plain', v: catalogRecord } });
+      });
       home.post(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, async request => {
         expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`);
         projectCensusObserved = true;
@@ -37,9 +50,6 @@ describe('Custom ACP foreground instance admission', () => {
       await home.ready();
       const restoreAxios = installAxiosFastifyAdapter({ app: home, origin: new URL(configuration.serverUrl).origin });
       try {
-        const definitions = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: ['definition-a', 'definition-b'].map(id => ({
-          id, name: id, title: id, launch: { kind: 'command' as const, command: `command-${id}`, args: [id] }, env: {}, capabilities: {}, createdAt: 1, updatedAt: 1,
-        })) });
         const publish = (record = definitions) => setActiveAccountSettingsSnapshot({
           source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1,
           settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials),
@@ -72,10 +82,12 @@ describe('Custom ACP foreground instance admission', () => {
         }
         expect(projectCensusObserved).toBe(true);
         expect(await fixture.prepare(choice('definition-a', 'definition-b'))).toMatchObject({ ok: false });
+        catalogRecord = { v: 1, definitions: [] };
+        catalogRevision = 2;
         expect(commitActiveAcpCatalog({
           scopeKey: resolveAccountSettingsScopeKey(credentials),
           lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
-          catalog: { status: 'ready', revision: 2, record: { v: 1, definitions: [] } },
+          catalog: { status: 'ready', revision: catalogRevision, record: catalogRecord },
         })).toBe(true);
         expect(await fixture.prepare(choice('definition-a'))).toMatchObject({ ok: false });
       } finally {
