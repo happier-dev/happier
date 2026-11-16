@@ -1,5 +1,8 @@
 import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as z from 'zod/mini';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
+import { deleteLumeNativeVm } from './nativeDelete.js';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isLumeMacos, readLumeCapacity } from './capacity.js';
 import { readLumeHostResources } from './hostResources.js';
@@ -17,7 +20,7 @@ import {
 // Stop/delete inspect the recorded storage before the vendor's name-keyed cache
 // dispatch (C53 CD1). Unknown inspection never authorizes a mutation.
 export type LumeNativeUnknown = Readonly<{
-  kind: 'unknown'; reason: 'transport' | 'http' | 'response'; httpStatus?: number; nativeCause?: MachineProvisionerNativeCauseV1;
+  kind: 'unknown'; reason: 'transport' | 'http' | 'response' | 'native_command_failed'; httpStatus?: number; nativeCause?: MachineProvisionerNativeCauseV1;
   /** Connection setup failed before this request could be delivered. */
   delivery?: 'not-sent';
 }>;
@@ -48,7 +51,9 @@ const LumePrivateConnectionSchema = z.object({ ipAddress: z.optional(z.nullable(
 // Settings includes private registry configuration. Project only this native fact.
 const LumeCacheSettingsSchema = z.object({ cachingEnabled: z.boolean() });
 
-export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeof fetch }) {
+export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeof fetch;
+  command: Readonly<{ exec: Pick<ExecService, 'run'>; executable: ManagedExecutableRef }>;
+}) {
   const base = new URL(options.baseUrl);
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash || base.pathname !== '/') {
     throw new Error('Lume requires an HTTP origin without credentials');
@@ -337,11 +342,7 @@ export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeo
         if (observed.vendorStatus !== 'stopped') return stopped;
       }
       if (observed.vendorStatus !== 'stopped') return { kind: 'unknown', resource, reason: 'response' };
-      const result = await mutate(resource, `${vmPath(resource)}?${new URLSearchParams({ storage: resource.storage })}`, 'DELETE', undefined, 200, 'delete-accepted', 'delete', signal);
-      // The handler maps a thrown native delete to HTTP400. It proves refusal
-      // to complete deletion, not absence or absence of preceding side effects.
-      return result.kind === 'unknown' && result.reason === 'http' && result.httpStatus === 400
-        ? { ...result, nativeCause: { localCause: 'native_delete_refused', httpStatus: 400 } } : result;
+      return deleteLumeNativeVm({ ...options.command, resource, signal });
     },
     // These facts travel only into protected bootstrap; safe inspect/choices
     // deliberately continue projecting away the guest address and native bags.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { createLumeNativeClient } from './nativeClient.js';
+import { lumeProcessResult, createLumeNativeClientForTest as createLumeNativeClient } from './nativeClient.testkit.js';
 import { createLumeProvider } from './provider.js';
 import { createLumePreparationClient, PREPARATION_SCHEMAS, type LumePreparationBuildExecution } from './preparation.js';
 
@@ -52,12 +52,18 @@ function vendor() {
       return new Response(null, { status: 202 });
     }
     if (url.pathname.endsWith('/stop')) { if (stopWorks) status = 'stopped'; return Response.json({}); }
-    if (method === 'DELETE') { if (!holdDelete) present = false; return Response.json({}); }
     const name = decodeURIComponent(url.pathname.split('/').at(-1) ?? '');
     if (clones.has(name)) return Response.json({ ...facts(), name, status: clones.get(name) });
     return present ? Response.json(facts()) : Response.json({ message: `Virtual machine not found: ${operation.vmName}` }, { status: 400 });
   };
-  const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: request });
+  const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: request, command: {
+    executable: { kind: 'managedDependency', id: { pluginId: 'happier.machine.lume', localId: 'lume-cli' } },
+    exec: { run: async () => {
+      effects.push('lume delete');
+      if (!holdDelete) present = false;
+      return lumeProcessResult();
+    } },
+  } });
   const executed: Parameters<LumePreparationBuildExecution>[0][] = [];
   const executeBuild: LumePreparationBuildExecution = async input => { effects.push('guest-build'); requests.push('guest-build'); executed.push(input); };
   return { native, effects, requests, executed, executeBuild, setPresent(value: string) { present = true; status = value; },

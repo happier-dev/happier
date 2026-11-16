@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createLumeNativeClient } from './nativeClient';
+import { lumeProcessResult, createLumeNativeClientForTest as createLumeNativeClient } from './nativeClient.testkit.js';
 import { createLumeProvider } from './provider';
 import { tmpdir } from 'node:os';
 import { MachineProvisionerCheckResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -58,6 +58,7 @@ describe('Lume prepared launch', () => {
 // Only the native HTTP boundary is replaced. Recovery and response interpretation stay real.
 function setup(responses: Array<Response | Error>) {
   const requests: Array<{ url: URL; init?: RequestInit }> = [];
+  const commands: Array<readonly string[]> = [];
   const nativeFetch: typeof fetch = async (input, init) => {
     requests.push({ url: new URL(String(input)), init });
     if (new URL(String(input)).pathname === '/lume/vms') return Response.json([details]);
@@ -66,7 +67,16 @@ function setup(responses: Array<Response | Error>) {
     if (!response) throw new Error('Unexpected native request');
     return response;
   };
-  return { requests, client: createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: nativeFetch }) };
+  return { requests, commands, client: createLumeNativeClient({ baseUrl: 'http://localhost:7777', command: {
+    executable: { kind: 'managedDependency', id: { pluginId: 'happier.machine.lume', localId: 'lume-cli' } },
+    exec: { run: async input => {
+      commands.push(input.args ?? []);
+      const response = responses.shift();
+      if (response instanceof Error) throw response;
+      if (!response) throw new Error('Unexpected native Delete process');
+      return lumeProcessResult(response.status === 200 ? 0 : 1);
+    } },
+  }, fetch: nativeFetch }) };
 }
 
 describe('Lume 0.6.1 native HTTP boundary', () => {
@@ -181,7 +191,7 @@ describe('Lume 0.6.1 native HTTP boundary', () => {
     expect(await client[operation](resource)).toEqual({ kind: operation === 'stop' ? 'stop-accepted' : 'delete-accepted', resource });
     expect(requests.map(({ url, init }) => [url.pathname, url.searchParams.get('storage'), init?.method])).toEqual([
       ['/lume/vms/managed-vm', resource.storage, 'GET'],
-      [operation === 'stop' ? '/lume/vms/managed-vm/stop' : '/lume/vms/managed-vm', operation === 'stop' ? null : resource.storage, operation === 'stop' ? 'POST' : 'DELETE'],
+      ...(operation === 'stop' ? [['/lume/vms/managed-vm/stop', null, 'POST']] : []),
     ]);
   });
 

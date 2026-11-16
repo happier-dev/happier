@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ExecService, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { createLumeNativeClient } from './nativeClient.js';
+import { createLumeNativeClientForTest as createLumeNativeClient } from './nativeClient.testkit.js';
 import { resolveLumeBootstrap } from './bootstrap.js';
 
 const resource = { keepPasswordLogin: true, storage: 'home', vmName: 'happier-cmvnxb7gn009mmcagisyszwlh' };

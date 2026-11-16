@@ -50,7 +50,7 @@ async function runtime(context: PluginInvocationContext) {
   const [{ createLumeNativeClient }, { createLumeProvider }] = await Promise.all([
     import('./machine/nativeClient.js'), import('./machine/provider.js'),
   ]);
-  const native = createLumeNativeClient({ baseUrl: origin, fetch: async (rawUrl, init) => {
+  const native = createLumeNativeClient({ baseUrl: origin, command: { exec: context.services.exec, executable: status.executable }, fetch: async (rawUrl, init) => {
     const method = init?.method ?? 'GET';
     if (!(['GET', 'POST', 'PATCH', 'DELETE'] as readonly string[]).includes(method)) {
       throw new Error('Unsupported Lume native method');

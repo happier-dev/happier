@@ -238,7 +238,7 @@ export const MachineProvisionerNativeCauseV1Schema = lazyDefinition(() => z.unio
     issues: z.array(z.pick(ActionInputIssueSchema, { path: true, code: true })),
   }),
   z.strictObject({ localCause: z.literal('ssh_keyscan_failed'), resultClass: z.enum(['empty', 'invalid', 'command_failed', 'spawn_failed']) }),
-  z.strictObject({ localCause: z.literal('native_command_failed'), command: z.enum(['start', 'restart', 'stop', 'create', 'run', 'up', 'edit', 'update']),
+  z.strictObject({ localCause: z.literal('native_command_failed'), command: z.enum(['start', 'restart', 'stop', 'create', 'run', 'up', 'edit', 'update', 'delete']),
     exitCode: z.nullable(z.int()),
     stderr: z.optional(z.string().check(z.minLength(1), z.maxLength(MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1))),
     stderrTruncated: z.optional(z.literal(true)),

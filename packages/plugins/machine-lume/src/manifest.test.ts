@@ -648,17 +648,23 @@ describe('activated Lume provisioner Actions', () => {
     expect(MachineProvisionerPowerResultV1Schema.parse(await current.action('destroy')({ [arm]: resource }, current.context))).toEqual({ kind: 'confirmed' });
     expect(current.requests.map(input => [input.method, new URL(input.url).pathname, new URL(input.url).searchParams.get('storage')]))
       .toEqual([['GET', `/lume/vms/${resource.vmName}`, 'home'], ['POST', `/lume/vms/${resource.vmName}/stop`, null],
-        ['GET', `/lume/vms/${resource.vmName}`, 'home'], ['DELETE', `/lume/vms/${resource.vmName}`, 'home']]);
+        ['GET', `/lume/vms/${resource.vmName}`, 'home']]);
     expect(JSON.parse(new TextDecoder().decode(current.requests[1].body))).toEqual({ storage: 'home' });
+    expect(current.commands).toEqual([{ executable: { kind: 'managedDependency',
+      id: { pluginId: 'happier.machine.lume', localId: 'lume-cli' } },
+      args: ['delete', '--force', '--storage', 'home', '--', resource.vmName] }]);
   });
 
-  it('carries a native Delete refusal through the activated Action and strict role result without leaking native content', async () => {
+  it('deletes an already stopped VM through the managed binary despite the native service cached-VM refusal', async () => {
     const current = await activated(true, async input => ({ status: input.method === 'DELETE' ? 400 : 200,
       finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(input.method === 'DELETE'
         ? { message: 'private native disk-lock failure' } : { ...native, status: 'stopped' })) }));
     const result = MachineProvisionerPowerResultV1Schema.parse(await current.action('destroy')({ resource }, current.context));
-    expect(result).toEqual({ kind: 'refused', code: 'native_delete_refused', nativeCause: { localCause: 'native_delete_refused', httpStatus: 400 } });
-    expect(current.requests.map(input => input.method)).toEqual(['GET', 'DELETE']);
+    expect(result).toEqual({ kind: 'confirmed' });
+    expect(current.requests.map(input => input.method)).toEqual(['GET']);
+    expect(current.commands).toEqual([{ executable: { kind: 'managedDependency',
+      id: { pluginId: 'happier.machine.lume', localId: 'lume-cli' } },
+      args: ['delete', '--force', '--storage', 'home', '--', resource.vmName] }]);
   });
 
   it.each(['power', 'destroy'] as const)('retains a typed missing Stop route through the activated %s Action', async role => {

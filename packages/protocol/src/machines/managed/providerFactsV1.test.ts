@@ -23,6 +23,11 @@ describe('prerequisite Setup preview', () => {
 });
 
 describe('native acquisition failure facts', () => {
+  it('retains a failed native Delete command through the strict destroy reader', () => {
+    const result = { kind: 'unknown', code: 'native_command_failed',
+      nativeCause: { localCause: 'native_command_failed', command: 'delete', exitCode: 1 } };
+    expect(MachineProvisionerDestroyResultV1Schema.parse(result)).toEqual(result);
+  });
   it.each(['create', 'run', 'up'])('carries equivalent native acquisition command %s through the shared reader', command => {
     const result = { kind: 'unknown', recovery: { reference: 'owned-instance', reason: 'native_acquisition_unconfirmed' },
       nativeCause: { localCause: 'native_command_failed', command, exitCode: 1, stderr: 'boot failed' } };

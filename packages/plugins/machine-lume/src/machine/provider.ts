@@ -270,12 +270,8 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
       const result = await native.destroy(nativeIdentity(LumeResourceV1Schema.parse(rawResource)), signal);
       const routeRefusal = nativeRouteRefusal(result);
       if (routeRefusal) return routeRefusal;
-      // Native Stop/readback/Delete is one leaf-owned sequence. HTTP200 awaits
-      // exact directory deletion; the typed HTTP400 refusal retains the row.
-      if (result.kind === 'unknown' && result.nativeCause && 'localCause' in result.nativeCause
-        && result.nativeCause.localCause === 'native_delete_refused') {
-        return { kind: 'refused', code: 'native_delete_refused', ...failureCause(result) };
-      }
+      // Native Stop/readback and the awaited managed CLI Delete are one
+      // leaf-owned sequence. Failed commands retain the resource's custody.
       return result.kind === 'delete-accepted' || result.kind === 'absent' ? { kind: 'confirmed' }
         : { kind: 'unknown', code: result.kind === 'unknown' ? result.reason : 'native_pending', ...failureCause(result) };
     },

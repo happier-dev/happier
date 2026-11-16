@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import { cpus, homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { createLumeNativeClient } from './nativeClient';
+import { createLumeNativeClientForTest as createLumeNativeClient } from './nativeClient.testkit.js';
 
 vi.mock('node:fs/promises', async importOriginal => ({
   ...await importOriginal<typeof import('node:fs/promises')>(),

@@ -4104,11 +4104,21 @@ proves absence. Power-command confirmation does not imply resource absence.
 
 Lume's native destroy adapter observes the recorded storage and VM name, stops a
 running VM, and confirms that exact VM is stopped before issuing Delete. A failed
-or unsettled Stop/readback retains cleanup custody. A native Delete HTTP400 is a
-typed refusal to complete deletion, not proof that no preceding side effect
-occurred. The pinned [Lume controller](https://github.com/trycua/cua/blob/3350f504014c85416009a90fcb339fe556ce02fc/libs/lume/src/LumeController.swift#L934)
-and [HTTP handlers](https://github.com/trycua/cua/blob/3350f504014c85416009a90fcb339fe556ce02fc/libs/lume/src/Server/Handlers.swift)
-establish those native semantics. Fly uses its documented
+or unsettled Stop/readback retains cleanup custody. In 0.3 development, deletion
+uses the resolved managed Lume binary's `delete --force --storage <storage> -- <name>`
+command and confirms completion only on its normal zero exit. This mitigates the
+pinned Lume v0.6.1 HTTP API defect: its
+[Lume controller](https://github.com/trycua/cua/blob/3350f504014c85416009a90fcb339fe556ce02fc/libs/lume/src/LumeController.swift#L934)
+stops any cached VM before deletion, including a stopped VM, then throws
+`notRunning`. The [native CLI](https://github.com/trycua/cua/blob/3350f504014c85416009a90fcb339fe556ce02fc/libs/lume/src/Commands/Delete.swift)
+executes the same guarded deletion in a fresh process without that cache. There
+is no HTTP Delete fallback or retry. Failed or interrupted commands retain
+custody and the existing `native_command_failed` cause with command `delete`
+and its observed exit code, or null when completion is unknown. Native stderr
+passes the canonical privacy projection before the existing diagnostic excerpt
+bound, preserving useful failure details without raw process output. Matching
+Protocol, SDK, controller and app diagnostic readers reload together under the
+unpublished 0.3 direct cut; earlier command values remain accepted. Fly uses its documented
 [`force=true` Delete option](https://docs.fly.io/machines/api/machines-resource/#delete-a-machine-permanently) to stop and remove the
 exact Machine, then confirms absence before cleaning up owned attachments.
 These prerequisites stay with the native adapters; the shared host does not
@@ -4128,8 +4138,8 @@ Inspect stay read-only; native pull and digest verification are unchanged.
 Lume Stop sends storage in the JSON body of `POST /lume/vms/:name/stop`.
 The pinned [route matcher](https://github.com/trycua/cua/blob/3350f504014c85416009a90fcb339fe556ce02fc/libs/lume/src/Server/Server.swift)
 compares raw URL segments, so appending a storage query to the literal `stop`
-segment returns HTTP404. GET and DELETE retain their storage query on the
-parameter segment; run, configure and pull use their documented JSON bodies.
+segment returns HTTP404. GET retains its storage query on the parameter
+segment; run, configure and pull use their documented JSON bodies.
 The [official HTTP API](https://cua.ai/docs/lume/reference/http-api), checked
 2026-10-26 for 0.6.1, specifies the same storage placement. A lifecycle route404
 is a typed refusal carrying `native_route_not_found`, the static route kind and

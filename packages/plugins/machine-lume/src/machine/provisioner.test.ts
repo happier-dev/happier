@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createLumeProvider } from './provider.js';
-import { createLumeNativeClient } from './nativeClient.js';
+import { lumeProcessResult, createLumeNativeClientForTest as createLumeNativeClient } from './nativeClient.testkit.js';
 import { LumeLaunchV1Schema, LumeResourceV1Schema } from './schemas.js';
 import { MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema, prepareMachineProvisionerStoredSchemas, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 
@@ -21,7 +21,17 @@ function projectOptions(raw: unknown, image?: string) {
 
 function setup(responses: Array<Response | Error>, imageDiskBytes = launch.diskBytes) {
   const requests: Array<{ url: URL; init?: RequestInit }> = [];
-  const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: async (url, init) => {
+  const commands: Array<readonly string[]> = [];
+  const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', command: {
+    executable: { kind: 'managedDependency', id: { pluginId: 'happier.machine.lume', localId: 'lume-cli' } },
+    exec: { run: async input => {
+      commands.push(input.args ?? []);
+      const response = responses.shift();
+      if (response instanceof Error) throw response;
+      if (!response) throw new Error('Unexpected native Delete process');
+      return lumeProcessResult(response.status === 200 ? 0 : 1);
+    } },
+  }, fetch: async (url, init) => {
     requests.push({ url: new URL(String(url)), init });
     const requested = new URL(String(url));
     if (requested.pathname === '/lume/vms') return Response.json([details]);
@@ -35,7 +45,7 @@ function setup(responses: Array<Response | Error>, imageDiskBytes = launch.diskB
     if (response instanceof Error) throw response;
     return response;
   } });
-  return { requests, provider: createLumeProvider({ native, observedAt: 123 }) };
+  return { requests, commands, provider: createLumeProvider({ native, observedAt: 123 }) };
 }
 
 describe('Lume managed provisioner', () => {
@@ -177,7 +187,7 @@ describe('Lume managed provisioner', () => {
     expect(await provider.destroy(resource)).toEqual({ kind: 'confirmed' });
     expect(requests.map(({ url, init }) => [url.pathname, url.searchParams.get('storage'), init?.method ?? 'GET']))
       .toEqual([[`/lume/vms/${resource.vmName}`, 'home', 'GET'],
-        [`/lume/vms/${resource.vmName}`, 'home', 'GET'], [`/lume/vms/${resource.vmName}`, 'home', 'DELETE']]);
+        [`/lume/vms/${resource.vmName}`, 'home', 'GET']]);
   });
 
   it('binds completed creation without claiming daemon online or native running from run acceptance', async () => {
@@ -231,8 +241,7 @@ describe('Lume managed provisioner', () => {
     expect(requests.map(({ url, init }) => [url.pathname, url.searchParams.get('storage'), init?.method]))
       .toEqual([[`/lume/vms/${resource.vmName}`, 'home', 'GET'],
         [`/lume/vms/${resource.vmName}/stop`, null, 'POST'],
-        [`/lume/vms/${resource.vmName}`, 'home', 'GET'],
-        [`/lume/vms/${resource.vmName}`, 'home', 'DELETE']]);
+        [`/lume/vms/${resource.vmName}`, 'home', 'GET']]);
     expect(JSON.parse(String(requests[1].init?.body))).toEqual({ storage: 'home' });
   });
 
@@ -265,8 +274,8 @@ describe('Lume managed provisioner', () => {
     const { provider } = setup([Response.json(details),
       Response.json({ message: 'not found or native failure' }, { status: 400 })]);
     const result = await provider.destroy(resource);
-    expect(MachineProvisionerPowerResultV1Schema.parse(result)).toEqual({ kind: 'refused', code: 'native_delete_refused',
-      nativeCause: { localCause: 'native_delete_refused', httpStatus: 400 } });
+    expect(MachineProvisionerPowerResultV1Schema.parse(result)).toEqual({ kind: 'unknown', code: 'native_command_failed',
+      nativeCause: { localCause: 'native_command_failed', command: 'delete', exitCode: 1 } });
   });
 
   it('confirms successful awaited native directory deletion', async () => {
@@ -276,11 +285,11 @@ describe('Lume managed provisioner', () => {
 
   it('projects exact native absence after Delete and confirms an already absent resource without another mutation', async () => {
     const absent = () => Response.json({ message: `Virtual machine not found: ${resource.vmName}` }, { status: 400 });
-    const { provider, requests } = setup([Response.json(details), new Response(null, { status: 200 }), absent(), absent()]);
+    const { provider, commands } = setup([Response.json(details), new Response(null, { status: 200 }), absent(), absent()]);
     expect(await provider.destroy(resource)).toEqual({ kind: 'confirmed' });
     expect(await provider.inspect(resource)).toMatchObject({ availability: 'absent', storage: 'lost' });
     expect(await provider.destroy(resource)).toEqual({ kind: 'confirmed' });
-    expect(requests.filter(({ init }) => init?.method === 'DELETE')).toHaveLength(1);
+    expect(commands).toEqual([['delete', '--force', '--storage', 'home', '--', resource.vmName]]);
   });
 
   it('uses real stored readers to discard nested future fields while effect ingress stays strict', async () => {

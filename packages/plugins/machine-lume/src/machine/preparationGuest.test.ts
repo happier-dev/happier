@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { createLumeNativeClient } from './nativeClient.js';
+import { createLumeNativeClientForTest as createLumeNativeClient } from './nativeClient.testkit.js';
 import { createLumePreparationBuildExecutor } from './preparationGuest.js';
 
 const success = (stdout = ''): PluginProcessResult => ({ stdout: new TextEncoder().encode(stdout), stderr: new Uint8Array(),

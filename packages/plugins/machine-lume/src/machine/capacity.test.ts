@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MachineProvisionerAcquireResultV1Schema, MachineProvisionerObservationV1Schema,
   MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { createLumeNativeClient } from './nativeClient.js';
+import { createLumeNativeClientForTest as createLumeNativeClient } from './nativeClient.testkit.js';
 import { createLumeProvider } from './provider.js';
 
 const resource = { storage: 'home', vmName: 'happier-capacity' };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { createLumeNativeClient } from './nativeClient.js';
+import { createLumeNativeClientForTest as createLumeNativeClient } from './nativeClient.testkit.js';
 
 describe('lume native HTTP failure boundary', () => {
   it.each(['read', 'mutation'] as const)('preserves a typed HTTP refusal during a native %s', async operation => {

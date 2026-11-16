@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { MachineProvisionerCheckResultV1Schema, MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { createLumeNativeClient } from './nativeClient.js';
+import { lumeProcessResult, createLumeNativeClientForTest as createLumeNativeClient } from './nativeClient.testkit.js';
 import { createLumeProvider } from './provider.js';
 
 const resource = { storage: 'external_disk', vmName: 'happier-route-contract' };
@@ -16,8 +16,8 @@ const routes = [
 // External boundary only. Reproduce Server.swift Route.matches literally:
 // method + raw URI segments (including query), then strip query for parameters.
 // Basis: trycua/cua 3350f504014c85416009a90fcb339fe556ce02fc, Lume 0.6.1.
-async function withLumeServer(run: (client: ReturnType<typeof createLumeNativeClient>, requests: string[]) => Promise<void>, missingRoute?: string, port = 0) {
-  let status = 'running';
+async function withLumeServer(run: (client: ReturnType<typeof createLumeNativeClient>, requests: string[]) => Promise<void>, missingRoute?: string, port = 0, initialStatus = 'running') {
+  let status = initialStatus;
   let present = true;
   let cpuCount = 2;
   let cachingEnabled = false;
@@ -71,8 +71,9 @@ async function withLumeServer(run: (client: ReturnType<typeof createLumeNativeCl
       status = 'running'; return reply(202, {});
     }
     if (req.method === 'DELETE') {
-      if (status !== 'stopped') return reply(400, {});
-      present = false; return reply(200, {});
+      // Captured Lume 0.6.1 cached stopped-VM defect. The adapter must never
+      // use this route or retry its refusal.
+      return reply(400, { message: `Virtual machine not running: ${resource.vmName}` });
     }
     if (req.method === 'PATCH') {
       if (status !== 'stopped' || body.cpu !== 4) return reply(400, {});
@@ -87,13 +88,30 @@ async function withLumeServer(run: (client: ReturnType<typeof createLumeNativeCl
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Expected loopback address');
   try {
-    await run(createLumeNativeClient({ baseUrl: `http://127.0.0.1:${address.port}` }), requests);
+    await run(createLumeNativeClient({ baseUrl: `http://127.0.0.1:${address.port}`, command: {
+      executable: { kind: 'managedDependency', id: { pluginId: 'happier.machine.lume', localId: 'lume-cli' } },
+      exec: { run: async input => {
+        expect(input.args).toEqual(['delete', '--force', '--storage', resource.storage, '--', resource.vmName]);
+        requests.push('lume delete');
+        if (status !== 'stopped') return lumeProcessResult(1);
+        present = false;
+        return lumeProcessResult();
+      } },
+    } }), requests);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 }
 
 describe('pinned Lume HTTP route composition', () => {
+  it('deletes an already stopped exact VM despite the pinned HTTP cached-VM refusal', async () => {
+    await withLumeServer(async (native, requests) => {
+      const provider = createLumeProvider({ native, observedAt: 123 });
+      expect(MachineProvisionerDestroyResultV1Schema.parse(await provider.destroy(resource))).toEqual({ kind: 'confirmed' });
+      expect(await provider.inspect(resource)).toMatchObject({ availability: 'absent', storage: 'lost' });
+      expect(requests.filter(request => !request.startsWith('GET '))).toEqual(['lume delete']);
+    }, undefined, 0, 'stopped');
+  });
   it.each(['start', 'stop'] as const)('reports refused %s as non-delivery when the native endpoint refuses connections, and allows a later retry', async intent => {
     const server = createServer();
     server.listen(0, '127.0.0.1');
@@ -137,7 +155,7 @@ describe('pinned Lume HTTP route composition', () => {
       expect(await provider.inspect(resource)).toMatchObject({ availability: 'absent', storage: 'lost' });
       expect(requests.filter(request => !request.startsWith('GET '))).toEqual([
         `POST /lume/vms/${resource.vmName}/stop`, `POST /lume/vms/${resource.vmName}/run`,
-        `POST /lume/vms/${resource.vmName}/stop`, `DELETE /lume/vms/${resource.vmName}?storage=${resource.storage}`,
+        `POST /lume/vms/${resource.vmName}/stop`, 'lume delete',
       ]);
     });
   });
@@ -154,17 +172,16 @@ describe('pinned Lume HTTP route composition', () => {
     });
   });
 
-  it.each(['stop', 'run', 'delete'] as const)('settles native %s route404 as a typed refusal with no repeated mutation', async route => {
+  it.each(['stop', 'run'] as const)('settles native %s route404 as a typed refusal with no repeated mutation', async route => {
     await withLumeServer(async (native, requests) => {
       const provider = createLumeProvider({ native, observedAt: 123 });
-      if (route === 'delete') expect(await provider.power(resource, 'stop')).toEqual({ kind: 'confirmed' });
-      const result = route === 'delete' ? await provider.destroy(resource) : await provider.power(resource, route === 'run' ? 'start' : 'stop');
+      const result = await provider.power(resource, route === 'run' ? 'start' : 'stop');
       expect(MachineProvisionerPowerResultV1Schema.parse(result)).toEqual({ kind: 'refused', code: 'native_route_not_found',
         nativeCause: { localCause: 'native_route_not_found', route, httpStatus: 404 } });
       expect(await provider.inspect(resource)).toMatchObject({ availability: 'present', storage: 'retained' });
-      expect(requests.filter(request => request.startsWith(route === 'delete' ? 'DELETE ' : `POST /lume/vms/${resource.vmName}/${route}`))).toHaveLength(1);
+      expect(requests.filter(request => request.startsWith(`POST /lume/vms/${resource.vmName}/${route}`))).toHaveLength(1);
       expect(JSON.stringify(result)).not.toContain('private');
-    }, route === 'delete' ? 'DELETE /lume/vms/:name' : `POST /lume/vms/:name/${route}`);
+    }, `POST /lume/vms/:name/${route}`);
   });
 
   it('retains a running VM and withholds Delete when the prerequisite Stop route is missing', async () => {

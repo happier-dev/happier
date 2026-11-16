@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLumeNativeClient } from './nativeClient.js';
+import { createLumeNativeClientForTest as createLumeNativeClient } from './nativeClient.testkit.js';
 
 const source = { storage: 'prepared bases', vmName: 'happier-prepared-operation' };
 const destination = { storage: 'sandbox guests', vmName: 'happier-session' };
