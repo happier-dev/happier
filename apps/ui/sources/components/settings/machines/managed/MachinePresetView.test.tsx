@@ -129,6 +129,7 @@ const { DropdownMenu } =
 const { HappierBrandMark } =
   await import('@/components/ui/media/HappierBrandMark');
 const { t } = await import('@/text');
+const { formatManagedSizeBytes } = await import('./managedConfigurationPresentation');
 const { ModalProvider } = await import('@/modal');
 const { resolveServerProfileScopeIdForIdentifier } =
   await import('@/sync/domains/server/serverProfiles');
@@ -1014,10 +1015,13 @@ describe('reachable preset detail', () => {
         expect(receipt.facts).toEqual(expect.arrayContaining([
           expect.objectContaining({ id: 'saved:image', label: declaredTitle('image'), value: image }),
           expect.objectContaining({ id: 'saved:store', label: declaredTitle('store'), value: choices.store }),
-          expect.objectContaining({ id: 'saved:cpus', label: declaredTitle('cpus'), value: '4' }),
-          expect.objectContaining({ id: 'saved:memoryGiB', label: declaredTitle('memoryGiB'), value: '4' }),
-          expect.objectContaining({ id: 'saved:diskGiB', label: declaredTitle('diskGiB'), value: '100' }),
+          expect.objectContaining({ id: 'saved:arch', label: declaredTitle('arch') }),
+          expect.objectContaining({ id: 'saved:vmType', label: declaredTitle('vmType') }),
         ]));
+        // The declared size roles are the spec line, never repeated as rows (SWEEP-S0VD-164).
+        expect(receipt.spec).toBe([t('managedMachines.receipt.cores', { count: 4 }), formatManagedSizeBytes(4 * 1024 ** 3),
+          formatManagedSizeBytes(100 * 1024 ** 3)].map(part => part.replace(/ /g, '\u00a0')).join(' · '));
+        expect(receipt.facts.filter((fact: { id: string }) => ['saved:cpus', 'saved:memoryGiB', 'saved:diskGiB'].includes(fact.id))).toEqual([]);
         expect(rendered.getTextContent()).toContain(image);
         expect(rendered.getTextContent()).toContain(choices.store);
         expect(receipt.cost?.kind).toBe('local');

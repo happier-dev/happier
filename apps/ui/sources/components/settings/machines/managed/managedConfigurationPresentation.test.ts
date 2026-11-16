@@ -27,6 +27,29 @@ describe('saved option size roles', () => {
     });
 });
 
+describe('a saved size beside the other saved choices (SWEEP-S0VD-164)', () => {
+    it('keeps every other declared saved choice when only the saved size, not the provider, describes the machine', () => {
+        const savedLaunchPresentation = { schema: { type: 'object' as const }, inputHints: InputHintsSchema.parse({ fields: [
+            { path: 'store', title: 'Lima store', widget: 'text' },
+            { path: 'image', title: 'Image location', widget: 'text' },
+            { path: 'arch', title: 'Architecture', widget: 'select', options: [{ value: 'x86_64', label: 'x86_64' }] },
+            { path: 'vmType', title: 'VM driver', widget: 'select', options: [{ value: 'qemu', label: 'QEMU' }] },
+            { path: 'cpus', role: 'cpu', title: 'CPU cores', widget: 'integer' },
+            { path: 'memoryGiB', role: 'memory', title: 'Memory (GiB)', widget: 'integer' },
+            { path: 'diskGiB', role: 'disk', title: 'Disk (GiB)', widget: 'integer' },
+        ] }) };
+        const saved = { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'g1-fixed',
+            choices: { arch: 'x86_64', cpus: 4, image: 'https://cloud-images.example/ubuntu-26.04.img', store: '/home/happier/.lima',
+                vmType: 'qemu', diskGiB: 100, memoryGiB: 4 } };
+        const receipt = buildManagedConfigurationReceipt({ launch: saved, providerTitle: 'Lima', savedLaunchPresentation });
+        expect(receipt.spec).toBeTruthy();
+        // The size is the spec line; the saved choices it does not cover stay, and the size is not repeated as rows.
+        expect(receipt.facts.filter(fact => fact.id.startsWith('saved:')).map(fact => [fact.label, fact.value])).toEqual([
+            ['Lima store', '/home/happier/.lima'], ['Image location', saved.choices.image], ['Architecture', 'x86_64'], ['VM driver', 'QEMU'],
+        ]);
+    });
+});
+
 const launch = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Original guest', choices: { cpu: 2 } };
 const reviewedFacts = { launch: { ...launch, name: 'Unrelated later name' }, controller: { machineId: 'original-host', installationId: 'installation' },
     optionStatus: 'current' as const, prerequisites: [], billing: { location: 'cloud' as const, stoppedBilling: 'billed' as const },

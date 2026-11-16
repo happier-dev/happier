@@ -132,8 +132,10 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
     // Saved launch choices are an object of field values; any other JSON shape has no field to present.
     // They stand in for the provider's own facts: once its native facts (current or last saved) describe the
     // configuration, the raw choices behind them would only repeat it in launch terms (a store path, an image URL).
+    // A size read from the saved choices' declared roles is not such a fact: the other saved choices stay, and only
+    // the size-role choices give way to the spec line (SWEEP-S0VD-164).
     const savedChoices = input.launch.choices;
-    const nativeDescribed = Boolean(size || nativeLabels.length || input.lastSaved?.size || input.lastSaved?.image);
+    const nativeDescribed = Boolean(facts?.nativeFacts?.size || nativeLabels.length || input.lastSaved?.size || input.lastSaved?.image);
     if (input.savedLaunchPresentation && !nativeDescribed && savedChoices !== null && typeof savedChoices === 'object' && !Array.isArray(savedChoices)) {
         const { schema, inputHints } = input.savedLaunchPresentation;
         const hints = deriveActionInputHints(schema, inputHints);
@@ -141,6 +143,7 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         for (const field of resolveEffectiveActionInputFields({ inputHints: hints }, savedChoices)) {
             // Only a declared title names a choice; a title derived from its schema key ("Disk Gi B") names nothing.
             if (!inputHints?.fields.some(hint => hint.path === field.path) && !declaredSchemaTitle(schema, field.path)) continue;
+            if (size && field.role) continue;
             const savedValue = readInputPath(savedChoices, field.path);
             if (savedValue === undefined || savedValue === null) continue;
             const presentation = resolveActionFieldPresentationForInput(field, savedChoices);
