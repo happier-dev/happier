@@ -154,6 +154,41 @@ describe('managed Machine inventory', () => {
             await homes.dispose();
         }
     });
+    // P03-ANDROID-FIX-2: Home hides through Activity, so each return releases and re-takes the inventory. A return
+    // with nothing changed while away re-read the list every time; it refreshes on its own change push instead.
+    it('re-takes a released inventory without a list read unless it changed while away', async () => {
+        let reads = 0;
+        const homes = await serveAccountHomes({ homes: [
+            { key: 'a', serverUrl: 'https://inventory-retake.test', serverIdentityId: 'srv_inventory_retake', accountId: 'owner' },
+        ], route: request => {
+            if (request.path !== '/v1/machines/managed/actions/list') return undefined;
+            reads += 1;
+            return Response.json({ machines: [] });
+        } });
+        const serverId = homes.homes.a!.id;
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            const first = retainManagedMachineInventory(account.accountLifetime, () => {});
+            await waitForHomeGovernance(() => expect(first.getSnapshot().status).toBe('ready'));
+            first.dispose();
+            for (let visit = 0; visit < 3; visit += 1) {
+                const again = retainManagedMachineInventory(account.accountLifetime, () => {});
+                await flushHookEffects({ cycles: 20 });
+                expect(again.getSnapshot().status).toBe('ready');
+                again.dispose();
+            }
+            expect(reads).toBe(1);
+            // A change pushed while nothing holds it is caught up on the next take.
+            await act(async () => publishHomeAccountChange(serverId));
+            const changed = retainManagedMachineInventory(account.accountLifetime, () => {});
+            await waitForHomeGovernance(() => expect(reads).toBe(2));
+            changed.dispose();
+        } finally {
+            account.dispose();
+            await homes.dispose();
+        }
+    });
+
     it('publishes a real approval transition from a settled failure and clears it on recovery', async () => {
         const settings = managedUiApprovalSettings(['machines.managed.list']);
         const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://inventory-failure-approval.test',
