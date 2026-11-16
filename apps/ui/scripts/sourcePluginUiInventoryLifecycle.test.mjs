@@ -3,6 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { EventEmitter } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { createTempFixture } from '../../stack/scripts/testkit/core/temp_fixture.mjs';
 import { watchUiSourcePluginInventory } from './ensureWorkspacePackagesBuilt.mjs';
@@ -36,10 +39,70 @@ async function inventoryFixture(t) {
       logger: { error() {} },
     });
     t.after(() => owner.close());
-    return owner;
+    return { ...owner, watcher };
   };
   return { assetPath, fixture, open };
 }
+
+test('bundle readiness waits for a source refresh already preparing its successor inventory', async t => {
+  const { fixture, open } = await inventoryFixture(t);
+  let began;
+  const preparing = new Promise(resolve => { began = resolve; });
+  let release;
+  const graphReady = new Promise(resolve => { release = resolve; });
+  let graphReads = 0;
+  // Metro is a genuine system boundary. Hold preparation at its initial crawl,
+  // before any compiler child starts; subsequent reads can admit the old graph.
+  const owner = open(() => {
+    if (++graphReads === 1) { began(); return graphReady; }
+    return Promise.resolve({ doesFileExist: () => true });
+  });
+  owner.watcher.emit('change', { eventsQueue: [{ type: 'change',
+    filePath: fixture.path('source/apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs') }] });
+  await preparing;
+  const readiness = owner.ready();
+  readiness.catch(() => {});
+  try {
+    // This is a test observation window, not a product timeout. Serving here
+    // gives a freshly reloaded HMR-disabled tab the previous immutable graph.
+    assert.equal(await Promise.race([readiness.then(() => 'served'), delay(100, 'pending')]), 'pending');
+  } finally {
+    const closing = owner.close();
+    release({ doesFileExist: () => true });
+    await closing;
+  }
+  await assert.rejects(readiness, { name: 'AbortError' });
+});
+
+test('bundle readiness includes source changes still discovering their compiler inputs', async t => {
+  const { fixture, open } = await inventoryFixture(t);
+  const cliPath = fixture.path('source/apps/cli/package.json');
+  let began;
+  const discovering = new Promise(resolve => { began = resolve; });
+  let release;
+  const sourceReady = new Promise(resolve => { release = resolve; });
+  const read = fs.promises.readFile;
+  t.mock.method(fs.promises, 'readFile', async (path, ...args) => {
+    if (path === cliPath) { began(); await sourceReady; }
+    return read(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const owner = open(async () => ({ doesFileExist: () => true }));
+  await discovering;
+  owner.watcher.emit('change', { eventsQueue: [{ type: 'change',
+    filePath: fixture.path('source/apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs') }] });
+  const readiness = owner.ready();
+  readiness.catch(() => {});
+  try {
+    assert.equal(await Promise.race([readiness.then(() => 'served'), delay(100, 'pending')]), 'pending');
+  } finally {
+    const closing = owner.close();
+    release();
+    await closing;
+  }
+  await assert.rejects(readiness, { name: 'AbortError' });
+});
 
 test('retiring an unrelated watch folder does not block valid inventory assets', async t => {
   const { assetPath, fixture, open } = await inventoryFixture(t);

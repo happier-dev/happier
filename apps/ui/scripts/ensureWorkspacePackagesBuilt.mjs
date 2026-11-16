@@ -171,7 +171,8 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
       return path === inventoryPath || path === sourceAssetsRecordPath
         || (type !== 'change' && admission?.paths.has(path));
     })) admission = undefined;
-    void inputs().then(async paths => {
+    const previous = pending;
+    const refresh = inputs().then(async paths => {
       const { isWorkspaceBuildInputIgnoredPath } = await import('../../stack/scripts/utils/fs/workspaceBuildInputs.mjs');
       const changed = eventsQueue.find(({ filePath, type }) => {
         let path = resolve(filePath);
@@ -189,24 +190,30 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
       if (closed || !changed || queued) return;
       queued = true;
       logger.info?.(`[source-ui] phase=plugin-ui-refresh input=${relative(repoRoot, changed.filePath)}`);
-      pending = pending.then(async () => {
-        // Arrivals during an install share one refresh. Edits during the actual
-        // compiler still request the existing trailing preparation.
-        try {
-          await waitForDependencyRefresh({ installDir: repoRoot, env, signal: cancellation.signal });
-        } finally { queued = false; }
-        if (closed) return;
-        try {
-          const { published } = await prepareUiSourcePluginInventory({ uiPackageDir, env, signal: cancellation.signal, metroServer, metroConfig });
-          // The Stack supervisor retires superseded graphs after this line.
-          if (published) logger.info?.(PLUGIN_UI_PUBLISHED_LINE);
-        } finally { inputsPromise = null; }
-      }).catch(report);
-    }).catch(report);
+      await previous;
+      // Arrivals during an install share one refresh. Edits during the actual
+      // compiler still request the existing trailing preparation.
+      try {
+        await waitForDependencyRefresh({ installDir: repoRoot, env, signal: cancellation.signal });
+      } finally { queued = false; }
+      if (closed) return;
+      try {
+        const { published } = await prepareUiSourcePluginInventory({ uiPackageDir, env, signal: cancellation.signal, metroServer, metroConfig });
+        // The Stack supervisor retires superseded graphs after this line.
+        if (published) logger.info?.(PLUGIN_UI_PUBLISHED_LINE);
+      } finally { inputsPromise = null; }
+    });
+    // Include discovery immediately: a request can arrive before we know
+    // whether this observed batch changes the compiler's input graph.
+    pending = Promise.all([previous, refresh.catch(report)]).then(() => {});
   };
   watcher.on('change', onChange);
   void inputs().catch(report);
   return { async ready() {
+    cancellation.signal.throwIfAborted();
+    // A reload during compilation must consume the successor inventory, not
+    // pin an HMR-disabled tab to the previous graph for its entire lifetime.
+    await pending;
     cancellation.signal.throwIfAborted();
     // A one-shot child/warm-start parent can publish without this process's
     // callback. Two metadata reads detect that atomic publication; immutable

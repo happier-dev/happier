@@ -1327,7 +1327,12 @@ While serving source, Metro's existing batched file-map changes trigger that
 same producer for bundled-plugin and compiler inputs. The workspace input
 owner supplies source/dependency membership, including added source files;
 generated inventory assets do not trigger another preparation. Pending edits
-share serialized preparation. The inventory producer materializes each distinct
+share serialized preparation. Bundle and artifact requests await the source
+changes already observed by this owner, including input discovery and compilation,
+before admitting the selected inventory. A reload during preparation therefore
+consumes its successor instead of keeping the previous graph in an HMR-disabled
+tab. Routine source saves require no explicit preparation command.
+The inventory producer materializes each distinct
 plugin byte graph once, using the canonical file-set digest, and does not rewrite
 unchanged assets. Completed or failed compiler invocations remove their own
 `.happier-plugin-ui-stage-*` scratch, including generated tooling and temporary

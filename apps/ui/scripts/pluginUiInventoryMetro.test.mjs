@@ -1,3 +1,4 @@
+// @happier-test-preparation source-condition
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -6,9 +7,97 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { createServer, get } from 'node:http';
+import { retainBundledPluginUiArtifactsInventory } from './generateBundledPluginUiArtifacts.mjs';
 
 const uiRoot = fileURLToPath(new URL('..', import.meta.url));
 const require = createRequire(join(uiRoot, 'package.json'));
+
+test('an atomic private inventory publication reaches the next bundle of a running Metro', async (t) => {
+  const fixture = await mkdtemp(join(tmpdir(), 'happier-plugin-ui-publication-'));
+  const projectRoot = join(fixture, 'project');
+  const inventoryRoot = join(fixture, 'plugin-ui');
+  const inventory = join(inventoryRoot, 'inventory.js');
+  const candidate = join(fixture, 'candidate.js');
+  const previousInventory = process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY;
+  let metro;
+  let http;
+  try {
+    await mkdir(projectRoot);
+    await mkdir(inventoryRoot);
+    const declaration = digest => `export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = [{ digest: ${JSON.stringify(digest)} }];\n`;
+    await writeFile(inventory, declaration('predecessor-6db91'));
+    await writeFile(join(projectRoot, 'entry.js'),
+      'globalThis.pluginUiInventory = require("@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts");\n');
+    process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY = inventory;
+    delete require.cache[require.resolve(join(uiRoot, 'metro.config.js'))];
+    const authored = require(join(uiRoot, 'metro.config.js'));
+    const config = await require('metro-config').getDefaultConfig(projectRoot);
+    config.resolver.resolveRequest = authored.resolver.resolveRequest;
+    config.resolver.useWatchman = false;
+    config.resolver.nodeModulesPaths = [join(uiRoot, 'node_modules'), join(uiRoot, '../../node_modules')];
+    config.watchFolders = [projectRoot, inventoryRoot, dirname(require.resolve('metro-runtime/package.json'))];
+    config.maxWorkers = 1;
+    config.fileMapCacheDirectory = join(fixture, 'file-map-cache');
+    await mkdir(config.fileMapCacheDirectory);
+    const { createMetroCacheStore } = require('./scripts/metroCache.cjs');
+    const { FileStore } = require('metro-cache');
+    config.cacheStores = [createMetroCacheStore({ FileStore, root: join(fixture, 'transform-cache') })];
+    config.reporter = { update() {} };
+    const Server = require('metro/private/Server').default;
+    metro = new Server(config, { watch: true });
+    await metro.ready();
+    const graph = await metro.getBundler().getBundler().getDependencyGraph();
+    assert.equal(graph.doesFileExist(join(projectRoot, 'entry.js')), true);
+    http = createServer((req, res) => {
+      void metro.processRequest(req, res, () => { res.writeHead(404); res.end(); });
+    });
+    await new Promise(resolve => http.listen(0, '127.0.0.1', resolve));
+    const bundle = () => new Promise((resolve, reject) => {
+      get({ hostname: '127.0.0.1', port: http.address().port,
+        path: '/entry.bundle?platform=web&dev=true&minify=false' }, res => {
+        const chunks = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => resolve({ status: res.statusCode, source: Buffer.concat(chunks).toString() }));
+        res.on('error', reject);
+      }).on('error', reject);
+    });
+    const first = await bundle();
+    assert.equal(first.status, 200, first.source);
+    assert.match(first.source, /predecessor-6db91/);
+    const before = (await graph.getOrComputeSha1(inventory)).sha1;
+    const watcher = metro.getBundler().getBundler().getWatcher();
+    const changed = new Promise((resolve, reject) => {
+      const cleanup = () => {
+        watcher.off('change', onChange);
+        t.signal.removeEventListener('abort', onAbort);
+      };
+      const onAbort = () => { cleanup(); reject(t.signal.reason); };
+      const onChange = ({ eventsQueue }) => {
+        if (eventsQueue.some(({ filePath }) => filePath === inventory)) { cleanup(); resolve(); }
+      };
+      watcher.on('change', onChange);
+      t.signal.addEventListener('abort', onAbort, { once: true });
+    });
+    await writeFile(candidate, declaration('successor-2aae'));
+    assert.equal(await retainBundledPluginUiArtifactsInventory({ inventoryPath: candidate, outputPath: inventory }), true);
+    await changed;
+    assert.notEqual((await graph.getOrComputeSha1(inventory)).sha1, before,
+      'the running file map must replace the inventory hash after atomic publication');
+    const next = await bundle();
+    assert.equal(next.status, 200, next.source);
+    assert.match(next.source, /successor-2aae/);
+    assert.doesNotMatch(next.source, /predecessor-6db91/,
+      'a full reload must not retain the previously transformed inventory');
+  } finally {
+    if (http) await new Promise(resolve => http.close(resolve));
+    if (metro) await metro.end();
+    if (previousInventory === undefined) delete process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY;
+    else process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY = previousInventory;
+    delete require.cache[require.resolve(join(uiRoot, 'metro.config.js'))];
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
 
 test('Metro crawl and watch exclude installer and QA scratch without invalidating bundles', async (t) => {
   const fixture = await mkdtemp(join(tmpdir(), 'happier-metro-pnpm-state-'));
