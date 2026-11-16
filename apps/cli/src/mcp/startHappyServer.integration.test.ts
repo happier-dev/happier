@@ -4,8 +4,10 @@ import { createServer } from 'node:net';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { AccountSettingsSchema } from '@happier-dev/protocol';
 
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { updateSessionMetadataWithAck } from '@/api/session/stateUpdates';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { Metadata } from '@/api/types';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
@@ -409,7 +411,7 @@ describe('startHappyServer (MCP integration)', () => {
     }
   });
 
-  it('routes change_title through session metadata updates instead of provider-specific summary messages', async () => {
+  it.each(['claude', 'codex'] as const)('enforces title policy for %s over MCP without provider approval callbacks', async (flavor) => {
     const rpcHandlerManager = new RpcHandlerManager({
       scopePrefix: 'sess_mcp_change_title_1',
       encryptionKey: new Uint8Array([1, 2, 3, 4]),
@@ -423,11 +425,27 @@ describe('startHappyServer (MCP integration)', () => {
       happyHomeDir: '/tmp/happy',
       happyLibDir: '/tmp/happy/lib',
       happyToolsDir: '/tmp/happy/tools',
-      flavor: 'claude',
+      flavor,
     };
-    const updateMetadata = vi.fn((updater: (current: Metadata) => Metadata) => {
-      metadata = updater(metadata);
-    });
+    let metadataVersion = 0;
+    // Only the server ACK is a boundary fake; keep the real metadata updater and retry behavior.
+    const updateMetadata = vi.fn((handler: (current: Metadata) => Metadata) => updateSessionMetadataWithAck({
+      socket: {
+        emitWithAck: async (_event: string, payload: { metadata: string; expectedVersion: number }) => ({
+          result: 'success', metadata: payload.metadata, version: payload.expectedVersion + 1,
+        }),
+      },
+      sessionId: 'sess_mcp_change_title_1',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      getMetadata: () => metadata,
+      setMetadata: (next) => { if (next) metadata = next; },
+      getMetadataVersion: () => metadataVersion,
+      setMetadataVersion: (next) => { metadataVersion = next; },
+      syncSessionSnapshotFromServer: async () => {},
+      handler,
+    }));
     const sendClaudeSessionMessage = vi.fn();
 
     const fakeClient = {
@@ -435,9 +453,12 @@ describe('startHappyServer (MCP integration)', () => {
       rpcHandlerManager,
       sendClaudeSessionMessage,
       updateMetadata,
+      getMetadataSnapshot: () => metadata,
+      getPermissionMode: () => 'yolo',
     } satisfies HappyMcpSessionClient;
 
-    const server = await startHappyServer(fakeClient);
+    let accountSettings = AccountSettingsSchema.parse({});
+    const server = await startHappyServer(fakeClient, { getAccountSettings: () => accountSettings });
     let client: Client | null = null;
     try {
       client = new Client({ name: 'mcp-test-change-title', version: '1.0.0' }, { capabilities: {} });
@@ -453,6 +474,39 @@ describe('startHappyServer (MCP integration)', () => {
       expect(updateMetadata).toHaveBeenCalled();
       expect(sendClaudeSessionMessage).not.toHaveBeenCalled();
       expect((metadata.summary as { text?: string }).text).toBe('QA MCP Title');
+
+      // User-driven metadata changes remain possible; replayed agent instructions cannot overwrite them.
+      await fakeClient.updateMetadata((current) => ({ ...current, summary: { text: 'User title', updatedAt: 1 } }));
+      const userTitleVersion = metadataVersion;
+      for (const call of [
+        { name: 'change_title', arguments: { title: 'Replayed title' } },
+        { name: 'action_execute', arguments: { actionId: 'session.title.set', input: { title: 'Replayed title' } } },
+      ]) {
+        const denied = await client.callTool(call);
+        expect(denied.isError).toBe(true);
+        expect(parseMcpJsonText(denied)).toMatchObject({ error: 'session_title_updates_disabled' });
+        expect(metadata.summary?.text).toBe('User title');
+        expect(metadataVersion).toBe(userTitleVersion);
+      }
+
+      // Settings and profile changes are read at the write, not captured when the bridge starts.
+      accountSettings = AccountSettingsSchema.parse({
+        codingPromptBehaviorV1: { sessionTitleUpdates: 'ongoing' },
+      });
+      expect(parseMcpJsonText(await client.callTool({
+        name: 'change_title', arguments: { title: 'Ongoing title' },
+      }))).toMatchObject({ success: true });
+      expect(metadata.summary?.text).toBe('Ongoing title');
+
+      accountSettings = AccountSettingsSchema.parse({
+        codingPromptBehaviorV1: { sessionTitleUpdates: 'ongoing' },
+        profiles: [{ id: 'no-titles', name: 'No titles', codingPromptBehaviorV1: { sessionTitleUpdates: 'disabled' } }],
+      });
+      await fakeClient.updateMetadata((current) => ({ ...current, profileId: 'no-titles' }));
+      expect(parseMcpJsonText(await client.callTool({
+        name: 'change_title', arguments: { title: 'Disallowed title' },
+      }))).toMatchObject({ error: 'session_title_updates_disabled' });
+      expect(metadata.summary?.text).toBe('Ongoing title');
     } finally {
       await (client as any)?.close?.();
       server.stop();

@@ -3,6 +3,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
+import { shouldDenyAgentSessionTitleToolCall } from '@/agent/permissions/codingPromptTitlePermission';
+import { resolveSessionCodingPromptSettings } from '@/agent/prompting/coding/resolveSessionCodingPromptSettings';
 
 import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
@@ -168,15 +170,33 @@ export function createHappierMcpServer(
           return { ok: false as const, errorCode: 'not_authenticated' as const, error: 'not_authenticated' as const };
         }
 
+        const titlePolicyDenied = Object.assign(new Error('session_title_updates_disabled'), { retryable: false });
         try {
-          await Promise.resolve(client.updateMetadata((current) => ({
-            ...current,
-            summary: {
-              text: normalizedTitle,
-              updatedAt: Date.now(),
-            },
-          })));
+          await Promise.resolve(client.updateMetadata((current) => {
+            // Evaluate the current metadata on every update attempt, including conflict retries.
+            // Provider approval callbacks are optional; this session-agent write boundary is not.
+            if (shouldDenyAgentSessionTitleToolCall({
+              settings: resolveSessionCodingPromptSettings({
+                settings: actionSettingsProvider.getAccountSettings() ?? {},
+                profileId: current.profileId,
+              }),
+              sessionMetadata: current,
+              toolName: 'change_title',
+              input: { title: normalizedTitle },
+            })) {
+              throw titlePolicyDenied;
+            }
+            // Keep the in-memory session metadata snapshot in sync so the UI / session agent
+            // can reflect the new title immediately (without requiring a full server refresh).
+            return {
+              ...current,
+              summary: { text: normalizedTitle, updatedAt: Date.now() },
+            };
+          }));
         } catch (error) {
+          if (error === titlePolicyDenied) {
+            return { ok: false as const, errorCode: 'session_title_updates_disabled' as const, error: 'session_title_updates_disabled' as const };
+          }
           logger.debug('[mcp] Failed to update title metadata via session-scoped bridge', {
             sessionId: normalizedSessionId,
             error,
@@ -272,17 +292,6 @@ export function createHappierMcpServer(
       changeTitle: createChangeTitleToolHandler({
         executor,
         surface: toolSurface,
-        afterCommit: async ({ title }) => {
-          // Keep the in-memory session metadata snapshot in sync so the UI / session agent
-          // can reflect the new title immediately (without requiring a full server refresh).
-          await Promise.resolve(client.updateMetadata((current) => ({
-            ...current,
-            summary: {
-              text: title,
-              updatedAt: Date.now(),
-            },
-          })));
-        },
       }),
       startExecutionRun: createStartExecutionRunToolHandler({ executor, surface: toolSurface }),
       executeActionByToolName: actionToolBridge.executeActionByToolName,
