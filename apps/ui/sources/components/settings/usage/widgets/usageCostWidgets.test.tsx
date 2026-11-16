@@ -873,7 +873,7 @@ describe('one selected money basis across Usage bodies', () => {
     for (const metric of ['cost', 'tokens'] as const) {
       const query = normalizeUsageQuery({ ...base.query, metric });
       const slice = resolveUsagePageAggregation({ queries: [query],
-        accounting: [{ query, status: 'available', value: repriceUsageAnalyticsResponse(empty, (empty).priceCatalog ?? bundledUsageModelPriceCatalog) }] }, bundledUsageModelPriceCatalog).results[0]!;
+        accounting: [{ query, status: 'available', value: repriceUsageAnalyticsResponse(empty, bundledUsageModelPriceCatalog) }] }, bundledUsageModelPriceCatalog).results[0]!;
       const screen = await renderScreen(<UsagePeriodSummaryWidget {...base} query={query} slice={slice}
         id="usage_period_summary" testID="empty" />);
       const figure = screen.findAllByType(HappierDataMetric)
