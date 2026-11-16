@@ -68,8 +68,11 @@ function RowMark(props: Readonly<{ mark: NonNullable<HappierDataRowsProps['marks
   </View>;
 }
 
+/** A cell as it is spoken: "Models: 12", or only the value when its column is unnamed (an annotation line reads as shown). */
 function readable(column: HappierDataColumn, value: HappierDataValue | undefined, locale: string | undefined, formatted?: string): string | null {
-  return value === undefined || value === '' ? null : `${column.label}: ${formatted ?? formatHappierDataValue(value, locale)}`;
+  if (value === undefined || value === '') return null;
+  const spoken = formatted ?? formatHappierDataValue(value, locale);
+  return column.label ? `${column.label}: ${spoken}` : spoken;
 }
 
 function IncompleteLine(props: Readonly<{ text: string; styles: HappierDataTextStyles; testID?: string }>) {

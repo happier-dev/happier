@@ -39,7 +39,7 @@ export function RankedRows(props: RankedRowsProps) {
       renderRow={props.renderRow ? (_row, visual, index) => props.renderRow!(props.rows[index]!, visual) : undefined}
       renderIdentity={props.renderIdentity ? (_row, visual, index) => props.renderIdentity!(props.rows[index]!, visual) : undefined}
       rowDatums={props.rowDatums}
-      columns={[{ label: props.label }, { label: props.basis ?? props.label, proportion: true }, { label: 'Annotation' }]}
+      columns={[{ label: props.label }, { label: props.basis ?? props.label, proportion: true }, { label: '' }]}
       rows={props.rows.map(row => [row.label, row.value !== null && Number.isFinite(row.value) ? row.value : props.unknownLabel ?? 'Unknown',
         row.annotation ?? ''])} />
   </View>;

@@ -382,7 +382,7 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
         return interval.datum ? <ChartDatum datum={interval.datum}
           testID={props.testID ? `${props.testID}-values-datum-${interval.id}` : undefined}>{visual}</ChartDatum> : visual;
       }}
-      columns={[...(lanesLayout ? [{ label: props.laneLabel ?? '' }] : []), { label: props.label }, { label: startLabel }, ...(hasIntervals ? [{ label: endLabel }] : []), { label: 'Annotation' }]}
+      columns={[...(lanesLayout ? [{ label: props.laneLabel ?? '' }] : []), { label: props.label }, { label: startLabel }, ...(hasIntervals ? [{ label: endLabel }] : []), { label: '' }]}
       rows={props.intervals.map(rowValues)} />}
   </View>;
 }

@@ -172,7 +172,7 @@ export function OutcomeScatter(props: OutcomeScatterProps) {
     <HappierDataRows theme={props.theme} label={props.label} testID={props.testID ? `${props.testID}-values` : undefined}
       density={props.size === 'inline' || props.size === 'tile' ? 'compact' : 'comfortable'}
       rowIds={props.points.map((point) => point.id)}
-      columns={[{ label: props.label }, { label: props.xLabel }, { label: props.yLabel }, { label: 'Annotation' }]}
+      columns={[{ label: props.label }, { label: props.xLabel }, { label: props.yLabel }, { label: '' }]}
       renderRow={(_row, visual, index) => {
         const point = props.points[index]!;
         return formatX(point.x).includes(format(point.x)) ? visual

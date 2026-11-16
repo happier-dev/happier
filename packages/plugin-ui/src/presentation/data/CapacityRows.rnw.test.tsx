@@ -125,6 +125,16 @@ describe('neutral capacity and ranked data through public presentation', () => {
     } finally { mount.unmount(); }
   });
 
+  it('speaks a ranked row\'s annotation as it reads on screen, without a column name', () => {
+    const mount = mountThroughReactNativeWeb(<RankedRows theme={createSurfaceContext().theme} label="By agent" testID="agents"
+      rows={[{ id: 'claude', label: 'Claude', value: 13, annotation: '60.4M · reported by agents' }, { id: 'pi', label: 'Pi', value: 2 }]} />);
+    try {
+      expect(mount.container.querySelector('[data-testid="agents-row-0"]')?.getAttribute('aria-label'))
+        .toBe('Claude, By agent: 13, 60.4M · reported by agents');
+      expect(mount.container.querySelector('[data-testid="agents-row-1"]')?.getAttribute('aria-label')).toBe('Pi, By agent: 2');
+    } finally { mount.unmount(); }
+  });
+
   it('draws a set-aside part as its colour\'s hatch and can name each part by its amount in a compact legend', () => {
     const mount = mountThroughReactNativeWeb(<CompositionStrip theme={createSurfaceContext().theme}
       label="Disk" total={100} testID="disk" valueFormatter={value => `${value} GB`}
