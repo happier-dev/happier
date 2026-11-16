@@ -2,6 +2,7 @@ import type { PendingDeliveryFailureV1 } from '@happier-dev/protocol/sessions/me
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { SessionSpawnNewIncompatibleTargetV1, SessionSpawnNewInitialInputDispositionV1, SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { WorkflowTargetUnavailableDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { SessionCreationCurrentnessFailureV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
@@ -124,12 +125,15 @@ export function resolveSessionSpawnNewActionFailureMessage(
         : message;
 }
 
-function sessionSpawnFailureDisplayCode(failure: Readonly<{ errorCode: string; details?: unknown }>): string {
+function sessionSpawnFailureDisplayCode(failure: Readonly<{ errorCode: string; details?: unknown; failureCause?: ActionFailureCauseV1 }>): string {
     const stale = failure.errorCode === 'approval_stale' ? ApprovalStaleFailureDetailsSchema.safeParse(failure.details) : null;
     if (stale?.success) return `${failure.errorCode}:${stale.data.reason}`;
     const unavailable = failure.errorCode === 'target_unavailable'
         ? WorkflowTargetUnavailableDetailsV1Schema.safeParse(failure.details) : null;
-    return unavailable?.success ? `${failure.errorCode}:${unavailable.data.reason}` : failure.errorCode;
+    if (unavailable?.success) return `${failure.errorCode}:${unavailable.data.reason}`;
+    const cause = failure.failureCause;
+    const causeCode = cause && !('kind' in cause) ? cause.nativeErrorReason ?? cause.errorCode : undefined;
+    return causeCode && causeCode !== failure.errorCode ? `${failure.errorCode}:${causeCode}` : failure.errorCode;
 }
 
 export function resolveSessionSpawnNewResultFailureMessage(
@@ -212,7 +216,7 @@ function resolveSessionSpawnNewResultFailureBody(
             result.code === 'spawn_failed' ? result.launchError?.failureCause : undefined);
         const presented = presentSessionStartupFailureRecovery([cause])?.message ?? (message !== null && cause !== undefined
             ? t('errors.errorWithCode', { message, code: cause })
-            : t('errors.errorWithCode', { message: t(key), code: result.code }));
+            : t('errors.errorWithCode', { message: t(key), code: sessionSpawnFailureDisplayCode({ ...result, errorCode: result.code }) }));
         const defaultFailure = result.code === 'spawn_failed'
             ? result.launchError?.failureCause?.connectedServicesDefault : undefined;
         const providerMessage = result.code === 'spawn_failed'

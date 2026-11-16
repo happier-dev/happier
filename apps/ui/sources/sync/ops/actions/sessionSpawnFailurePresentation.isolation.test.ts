@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { preloadTranslations, t } from '@/text';
-import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
+import { resolveSessionSpawnNewActionFailureMessage, resolveSessionSpawnNewOperationFailureMessage,
+  resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 
 vi.mock('react-native', async () => {
@@ -11,6 +12,17 @@ vi.mock('react-native', async () => {
 });
 
 describe('isolation refusal on a member’s session start (UI-LOGIC-R8, B-LAUNCH2)', () => {
+  it('retains the typed sandbox placement reason for direct and operation failures', async () => {
+    await preloadTranslations('en');
+    const failureCause = { phase: 'session.spawn_new', errorClass: 'Error', errorCode: 'target_unavailable',
+      nativeErrorReason: 'not_available_in_sandbox_type', httpStatus: null } as const;
+    const messages = [
+      resolveSessionSpawnNewResultFailureMessage({ type: 'error', code: 'target_unavailable', retryable: false, failureCause }),
+      resolveSessionSpawnNewActionFailureMessage({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', failureCause }),
+      resolveSessionSpawnNewOperationFailureMessage({ errorCode: 'target_unavailable', error: 'target_unavailable', failureCause }),
+    ];
+    for (const message of messages) expect(message).toContain(failureCause.nativeErrorReason);
+  });
   it('presents a typed Machine admission refusal through the existing launch failure', async () => {
     await preloadTranslations('en');
     const result = {
