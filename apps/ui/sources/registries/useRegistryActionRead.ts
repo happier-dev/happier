@@ -14,7 +14,7 @@ import { RegistryActionFailure } from './registryActionFailure';
 
 /** Reads share the mounted approval/currentness owner and retain last-known data during refresh. */
 export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId: K, input: unknown,
-    parse: (value: ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]['parse']>, previous: T | null) => T, revision?: unknown, enabled = true,
+    parse: (value: ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]['parse']>, previous: T | null, refreshedSourceIds?: readonly string[]) => T, revision?: unknown, enabled = true,
     recovery?: Readonly<{ resolving?: boolean; sourceIds?: readonly string[]; installMachineId?: string | null; scope?: ServerAccountScope;
         failures?: (value: T | null) => readonly Readonly<{ sourceId: string; status: RegistrySourceStatusV1 }>[] }>): {
     scopeKey: string;
@@ -26,6 +26,7 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
     loading: boolean;
     stale: boolean;
     refresh: () => Promise<void>;
+    refreshSources: (sourceIds: readonly string[]) => Promise<void>;
     execution: ReturnType<typeof useMountedActionExecution>;
     scope: ReturnType<typeof useAccountSettingsScope>;
     externalActionTarget: ReturnType<typeof useStoreActionTarget>;
@@ -53,7 +54,7 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
     latest.current = state;
     const generation = React.useRef(0);
     const pending = React.useRef<AbortController | null>(null);
-    const load = React.useCallback(async (force: boolean) => {
+    const load = React.useCallback(async (force: boolean, refreshedSourceIds?: readonly string[]) => {
         pending.current?.abort();
         const request = ++generation.current;
         if (!demand.current || !execution.ready || recovery?.resolving) return;
@@ -82,13 +83,13 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
         });
         try {
             const value = force && actionId === 'registries.items.list' && args && typeof args === 'object'
-                ? { ...args, refresh: true } : args;
+                ? { ...args, ...(refreshedSourceIds ? { sourceIds: refreshedSourceIds } : {}), refresh: true } : args;
             const result = await execution.execute(actionId, value, { signal: controller.signal, externalActionTarget });
             if (request !== generation.current || !execution.isCurrent()) return;
             if (!result.ok) throw new RegistryActionFailure(result);
             // The registry protocol host already validated this same-process Action result.
             const parsed = parser.current(result.result as ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]['parse']>, previous.scopeKey === scopeKey && previous.inputKey === inputKey
-                && Object.is(previous.revision, revision) ? previous.value : null);
+                && Object.is(previous.revision, revision) ? previous.value : null, refreshedSourceIds);
             setState(previous => ({ scopeKey, inputKey, revision, value: previous.scopeKey === scopeKey && Object.is(previous.revision, revision)
                 && sameStrictJsonValue(previous.value, parsed)
                 ? previous.value : parsed, loading: false, error: null, status: null }));
@@ -105,8 +106,8 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
         } finally { if (pending.current === controller) pending.current = null; }
     }, [actionId, args, enabled, execution.execute, execution.isCurrent, execution.ready, scopeKey, scope, inputKey, revision, externalActionTarget, recovery?.resolving]);
     const refresh = React.useCallback(() => load(true), [load]);
-    // The per-source host retries needs_machine pages on a normal read. Only
-    // the person's Retry bypasses healthy source memos.
+    const refreshSources = React.useCallback((sourceIds: readonly string[]) => load(true, sourceIds), [load]);
+    // Natural carrier recovery uses the existing per-source host memo.
     const recover = React.useCallback(() => load(false), [load]);
     React.useEffect(() => {
         void load(false);
@@ -126,5 +127,5 @@ export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId:
         status: execution.ready ? current.status : null,
         // A demanded read that has not answered is still loading: the render between demand and its effect never settles empty.
         loading: enabled && (recovery?.resolving || current.loading || !execution.ready || !answered || stale && current.error === null),
-        stale, refresh, execution, scope, externalActionTarget };
+        stale, refresh, refreshSources, execution, scope, externalActionTarget };
 }

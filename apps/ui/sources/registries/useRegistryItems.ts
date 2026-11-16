@@ -56,9 +56,16 @@ export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: re
     const revision = selection.revision;
     const [more, setMore] = React.useState<{ first: ReturnType<typeof project> | null; pages: readonly DisplayPage[] } | null>(null);
     const pagesFor = (value: ReturnType<typeof project> | null) => value && more?.first === value ? more.pages : value?.pages;
-    const read = useRegistryActionRead('registries.items.list', input, (value, previous: ReturnType<typeof project> | null) => {
+    const read = useRegistryActionRead('registries.items.list', input, (value, previous: ReturnType<typeof project> | null, refreshedSourceIds) => {
         const previousPages = pagesFor(previous);
-        const parsed = project(value, previousPages, previous?.curation);
+        const projected = project(value, previousPages, previous?.curation);
+        const replacements = new Map(projected.pages.map(page => [page.sourceId, page]));
+        const mergedPages = refreshedSourceIds && previousPages
+            ? [...previousPages.map(page => replacements.get(page.sourceId) ?? page),
+                ...projected.pages.filter(page => !previousPages.some(prior => prior.sourceId === page.sourceId))]
+            : projected.pages;
+        const parsed = mergedPages === projected.pages ? projected : { ...projected, pages: mergedPages,
+            curation: mergedPages.flatMap(page => page.discovery ? [{ sourceId: page.sourceId, discovery: page.discovery }] : []) };
         if (!previousPages) return parsed;
         const bySource = new Map(previousPages.map(page => [page.sourceId, page]));
         const refreshed = { ...parsed, pages: parsed.pages.map(page => {
@@ -118,6 +125,7 @@ export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: re
         error: read.error, status: read.status, nextPage, hasNextPage: pages.some(page => page.nextCursor !== null), refresh: read.refresh,
         sourceFailures: pages.flatMap(page => page.status.state === 'ok' ? [] : [{ sourceId: page.sourceId,
             status: page.status, message: [page.items.length > 0 || page.discovery
-                ? t('capabilities.registries.status.updatedEarlier') : null, describeRegistrySourceStatus(page.status)].filter(Boolean).join(' · '), onRetry: read.refresh }]),
-    }), [items, pages, curation, revision, read.value, read.loading, read.stale, read.error, read.status, nextPage, read.refresh]);
+                ? t('capabilities.registries.status.updatedEarlier') : null, describeRegistrySourceStatus(page.status)].filter(Boolean).join(' · '),
+            onRetry: () => read.refreshSources([page.sourceId]) }]),
+    }), [items, pages, curation, revision, read.value, read.loading, read.stale, read.error, read.status, nextPage, read.refresh, read.refreshSources]);
 }

@@ -89,6 +89,40 @@ async function setup(suffix: string, refresh = true) {
 }
 
 describe('registry item last-known reads through the Account and HTTP owners', () => {
+    it('retries only the failed source and retains the healthy source page', async () => {
+        const serverUrl = 'https://registry-source-only-retry.test';
+        const healthyUrl = `${serverUrl}/healthy.json`;
+        const failedUrl = `${serverUrl}/failed.json`;
+        const healthyId = deriveMarketplaceSourceId(healthyUrl);
+        const failedId = deriveMarketplaceSourceId(failedUrl);
+        const healthy = createRegistryPluginCatalogFixture({ sourceUrl: healthyUrl });
+        const recovered = createRegistryPluginCatalogFixture({ sourceUrl: failedUrl });
+        const requests: string[] = [];
+        let failed = true;
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
+            key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [
+                { id: healthyId, title: 'Healthy', format: 'happier-catalog', kinds: ['plugin'], url: healthyUrl, enabled: true, addedAt: 1 },
+                { id: failedId, title: 'Recovering', format: 'happier-catalog', kinds: ['plugin'], url: failedUrl, enabled: true, addedAt: 1 },
+            ] },
+        }, 'updated', { handleRequest: async path => {
+            if (path !== '/healthy.json' && path !== '/failed.json') return null;
+            requests.push(path);
+            return path === '/healthy.json' ? Response.json(healthy)
+                : failed ? new Response(null, { status: 503 }) : Response.json(recovered);
+        } });
+        onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+        const hook = await renderHook(() => useRegistryItems({ kind: 'plugin', sourceIds: [healthyId, failedId] }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        const held = hook.getCurrent().pages.find(page => page.sourceId === healthyId);
+        expect(hook.getCurrent().sourceFailures).toHaveLength(1);
+        expect(requests).toEqual(['/healthy.json', '/failed.json']);
+        failed = false;
+        await act(async () => { await hook.getCurrent().sourceFailures[0]!.onRetry(); });
+        expect(hook.getCurrent().sourceFailures).toEqual([]);
+        expect(hook.getCurrent().pages.find(page => page.sourceId === healthyId)).toBe(held);
+        expect(hook.getCurrent().items.filter(item => item.sourceId === failedId)).toHaveLength(recovered.entries.length);
+        expect(requests).toEqual(['/healthy.json', '/failed.json', '/failed.json']);
+    });
     it('keeps starter selection resolving until plugin sources answer', async () => {
         await setupHome('plugin-sources-pending');
         let shell: ShellValue = { pluginUiProjection: null, pluginBrowserProjection: null,
