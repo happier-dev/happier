@@ -437,6 +437,19 @@ describe('Triage plugin manifest', () => {
     });
   });
 
+  it.each(['tasks/list-v1', 'entries/list-v1', 'entries/read-detail-v1', 'entries/reobserve-v1'])(
+    'keeps the mounted %s Account read available when no Machine is reachable', id => {
+      // This is the published placement contract consumed by the UI host's real
+      // Account executor; without it a cold mount routes the read to a daemon.
+      const action = PLUGIN_MANIFEST.contributes.actions.find(candidate => candidate.id === id);
+      expect(action).toMatchObject({
+        readOnly: true,
+        execution: { target: 'account', invokingUi: true,
+          account: { artifactId: 'triage-account-runtime', exportName: 'activate' } },
+      });
+    },
+  );
+
   it('declares localized Voice Action presentation in every shipped Triage bundle', () => {
     const action = PLUGIN_MANIFEST.contributes.actions.find(
       (candidate) => candidate.id === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,

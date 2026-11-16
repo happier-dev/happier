@@ -126,7 +126,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         inputSchema: TriageListEntriesInputV1Schema,
         resultSchema: TriageListEntriesResultV1Schema,
         hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         run: createTriageListEntriesActionHandler({ taskOnly: true }),
       },
 [TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1]: {
@@ -210,7 +210,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         resultSchema: TriageListEntriesResultV1Schema,
         // The one Collection it touches is `source-instances`, read-only.
         hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         run: createTriageListEntriesActionHandler(),
       },
 [TRIAGE_SEARCH_ENTRIES_ACTION_LOCAL_ID_V1]: {
@@ -400,7 +400,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         resultSchema: TriageReadEntryDetailResultV1Schema,
         // `source-instances` and `session-links`, both read-only.
         hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         run: createTriageReadEntryDetailActionHandler(),
       },
 [TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1]: {
@@ -425,7 +425,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         inputSchema: TriageReobserveEntryInputV1Schema,
         resultSchema: TriageReobserveEntryResultV1Schema,
         hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         run: createTriageReobserveEntryActionHandler(),
       },
 [TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1]: {
