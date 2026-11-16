@@ -113,12 +113,23 @@ export function captureAccountEncryptionObservationForHome(params: Readonly<{
     signals?: readonly (AbortSignal | undefined)[];
 }>): AccountEncryptionObservationBinding | undefined {
     const serverId = resolveServerProfileScopeIdForIdentifier(params.serverId);
-    const source = sync?.getAccountEncryptionObservationBinding(params.credentials, serverId);
-    const admitted = Boolean(source && resolveServerProfileScopeIdForIdentifier(source.serverId) === serverId
-        && canonicalizeServerUrl(source.endpointUrl) === canonicalizeServerUrl(params.endpointUrl)
-        && matchesAccountEncryptionObservationCredentials(source, params.credentials));
-    if (!source || !admitted) return undefined;
-    const isCurrent = () => source.isCurrent() && params.isCurrent?.() !== false
+    const admits = (binding: AccountEncryptionObservationBinding | null | undefined): binding is AccountEncryptionObservationBinding =>
+        Boolean(binding && resolveServerProfileScopeIdForIdentifier(binding.serverId) === serverId
+            && canonicalizeServerUrl(binding.endpointUrl) === canonicalizeServerUrl(params.endpointUrl)
+            && matchesAccountEncryptionObservationCredentials(binding, params.credentials));
+    const captured = sync?.getAccountEncryptionObservationBinding(params.credentials, serverId);
+    if (!admits(captured)) return undefined;
+    // A socket reconnect replaces the transport's observation, not its owner: the Home, endpoint and
+    // credential stay the capture's, so the replacement passes the same admission and is borrowed.
+    let source = captured;
+    const live = (): AccountEncryptionObservationBinding | null => {
+        if (source.isCurrent()) return source;
+        const published = sync?.getAccountEncryptionObservationBinding(params.credentials, serverId);
+        if (!admits(published) || !published.isCurrent()) return null;
+        source = published;
+        return source;
+    };
+    const isCurrent = () => live() !== null && params.isCurrent?.() !== false
         && !params.signals?.some(signal => signal?.aborted);
     const assertCurrent = (step: 'captured_binding_before_read' | 'captured_binding_after_read') => {
         for (const signal of params.signals ?? []) throwIfAborted(signal);
@@ -134,7 +145,7 @@ export function captureAccountEncryptionObservationForHome(params: Readonly<{
         }
     };
     return {
-        ...source,
+        ...captured,
         isCurrent,
         read: async signal => {
             assertCurrent('captured_binding_before_read');

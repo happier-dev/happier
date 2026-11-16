@@ -942,3 +942,42 @@ it('lets a Session draft invocation borrow the settled Account observation throu
         expect(reads - before).toBe(0);
     } finally { context.dispose(); }
 });
+
+it('keeps a Home observation captured before a socket reconnect borrowing the reconnected transport', async () => {
+    const { captureAccountEncryptionObservationForHome, bindAccountEncryptionObservation } = await import('@/sync/http/accountEncryptionObservationBinding');
+    const accountId = 'captured-across-reconnect';
+    const serverUrl = 'https://captured-across-reconnect.test';
+    const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }) };
+    const serverId = await home.addHome({ name: 'Captured across reconnect', serverUrl, accountId, credentials,
+        accountEncryptionMode: 'plain', currentAccount: true });
+    let reads = 0;
+    setRuntimeFetch(async (url, init) => {
+        if (new URL(String(url)).pathname === '/v1/account/encryption/currentness') {
+            reads++;
+            return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        }
+        return home.request(url, init);
+    });
+    let socket: Socket | undefined;
+    installDisconnectedServerSocketBoundary(current => { socket = current; configureConnectedServerSocketBoundary(current); });
+    apiSocket.initialize({ endpoint: serverUrl, token: credentials.token, credentials, serverId,
+        generation: getActiveServerSnapshot().generation,
+        request: createServerFetchAtEndpoint({ endpointUrl: serverUrl, serverId, credentials }), isCurrent: () => true }, null);
+    await waitForHomeGovernance(() => expect(socket?.connected).toBe(true));
+    // A long-lived surface (workspace tabs, catalogs) captures its Home's observation once at mount.
+    const captured = captureAccountEncryptionObservationForHome({ serverId, endpointUrl: serverUrl, credentials });
+    expect(captured).toBeDefined();
+    const request = bindAccountEncryptionObservation(createServerFetchAtEndpoint({ endpointUrl: serverUrl, serverId, credentials }), captured);
+    await fetchAccountEncryptionIdentity(credentials, { request, usage: 'identity' });
+    const settled = reads;
+    // The network drops and reachability recovery re-establishes the Home transport (a new socket
+    // and observation for the same Home and credential); that transport re-reads its fact once.
+    const previous = apiSocket.getAccountEncryptionObservationBinding(credentials);
+    apiSocket.disconnect();
+    apiSocket.connect();
+    await waitForHomeGovernance(() => expect(socket?.connected).toBe(true));
+    expect(previous?.isCurrent()).toBe(false);
+    await waitForHomeGovernance(() => expect(apiSocket.getAccountEncryptionObservationBinding(credentials)?.isCurrent()).toBe(true));
+    await Promise.all(Array.from({ length: 3 }, () => fetchAccountEncryptionIdentity(credentials, { request, usage: 'identity' })));
+    expect(reads).toBe(settled + 1);
+});
