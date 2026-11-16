@@ -263,6 +263,20 @@ describe('Projects model Action admission', () => {
         await hook.unmount();
     });
 
+    // QA-WAVE-1115 (H6): the phone list named ~38 listed Machines "Removed machine" for ~20 s on first load, while the
+    // Home's Machine list was still arriving. Missing from a list that is still loading is resolving, not removed.
+    it('keeps a Machine missing from a Machine list still loading unnamed, and calls it removed only once the list settles', async () => {
+        const other = createMachineFixture({ id: 'other', activeAt: Date.now() });
+        storage.setState({ machines: { other }, machineListByServerId: { [serverId]: [other] },
+            machineListStatusByServerId: { [serverId]: 'loading' } });
+        const hook = await renderHook(() => useProjectsListModel());
+        const { t } = await import('@/text');
+        expect(hook.getCurrent().treeProjects[0]?.checkouts[0]?.machineName ?? null).toBeNull();
+        await act(async () => { storage.setState({ machineListStatusByServerId: { [serverId]: 'idle' } }); });
+        expect(hook.getCurrent().treeProjects[0]?.checkouts[0]?.machineName).toBe(t('machine.unlistedMachine'));
+        await hook.unmount();
+    });
+
     it('uses canonical display names while Machine content is hydrating and follows name updates without fetching', async () => {
         const machine = createMachineFixture({ id: 'machine', activeAt: Date.now() });
         const hydrating = { ...machine, metadata: null, availability: undefined };

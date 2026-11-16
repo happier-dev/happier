@@ -346,6 +346,8 @@ export function PluginPageContent(props: Readonly<{
 
 
     const phoneTitleChrome = useNavigationTitleChromeShowsTitle();
+    // A phone main screen hides its bar, so the bar's own "shows the title" fact no longer says it is a phone: the device does.
+    const phone = useDeviceType() === 'phone';
     // The page names the declared view on screen: one page may present several of its plugin's views a lens apart.
     const settledView = React.useSyncExternalStore(locationOwner.subscribe, locationOwner.selectedView, locationOwner.selectedView);
     // The route's `?view=` is the view on screen until the page settles another: losing liveness for a moment (its
@@ -365,7 +367,9 @@ export function PluginPageContent(props: Readonly<{
         pluginId={props.pluginId}
         page={page}
         projection={projection.pluginUiProjection}
-        compact={phoneTitleChrome}
+        // A phone keeps the Machine chip compact (its mark), so a name arriving late never widens the head and wraps it
+        // (QA-WAVE-1115 H3); the picker it opens names the Machine in full.
+        compact={phoneTitleChrome || phone}
         surfaceTarget={props.projectContext?.target}
         headerActions={activePageForHeader && openSurface && pageHeaderActions.length > 0 ? {
             actions: pageHeaderActions,
@@ -388,6 +392,7 @@ export function PluginPageContent(props: Readonly<{
         props.pluginId,
         props.projectContext?.target,
         phoneTitleChrome,
+        phone,
     ]);
     // A rail page's own route is a main screen: the tab bar is its way around, so its bar carries no Back (owner 11-10).
     // The page's own place (its location's root, not where its search or lens moved the location) is what is a rail
@@ -400,8 +405,6 @@ export function PluginPageContent(props: Readonly<{
     // A phone's top-level collection page (an app page whose header is its Collection toolbar) leads with its name as
     // its large title under the navigation row, as the Inbox tab does (lab `merged-list` 390, `phone-P4`); the bar then
     // carries Back and the page's controls only. Wide layouts keep the name in the toolbar row.
-    // A phone main screen hides its bar, so the bar's own "shows the title" fact no longer says it is a phone: the device does.
-    const phone = useDeviceType() === 'phone';
     const toolbarPage = props.appChrome === true && page?.headerStyle === 'toolbar';
     const mainScreenHead = toolbarPage && phone && mainScreen && pageIsLive;
     const largeTitle = toolbarPage && (phoneTitleChrome || mainScreenHead);

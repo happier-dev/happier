@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { t } from '@/text';
-import { useActiveServerAccountScope, useWorkspaceRefs, usePinnedWorkspaceRefIds, useMachineDisplayById, useProjectOrganizations, useProjectAccountRows, useIsDataReady, useActiveMachineFacts } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useWorkspaceRefs, usePinnedWorkspaceRefIds, useMachineDisplayById, useProjectOrganizations, useProjectAccountRows, useIsDataReady, useActiveMachineFacts, useIsActiveMachineListSettled } from '@/sync/domains/state/storage';
 import { isProjectAccountRowsCensusComplete } from '@/sync/store/domains/projectAccountRows';
 import type { WorkspaceRefUnconfirmed } from './detail/useWorkspaceRefById';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type QualifiedProjectKeyV1, type WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces';
@@ -63,6 +63,9 @@ export function useProjectsListModel() {
     const accountScope = selectActiveServerAccountScopeForServer(activeScope, activeServer.serverId);
     // The Machine inventory has arrived (or the account is synced and genuinely has none).
     const machinesReady = useIsDataReady() || allMachines.length > 0;
+    // Only a settled Machine list says a Machine is gone. Missing from a list still arriving is resolving: its rows leave the
+    // name out until it lands, never "Removed machine" (QA-WAVE-1115 H6; apps/ui AGENTS "resolving is its own state").
+    const machineListSettled = useIsActiveMachineListSettled();
     // Subscribe to this Home's actual Machine facts, not the request revision of
     // every Home. The presence owner also keeps grace expiry and recovery live.
     const machinePresence = useMachinePresenceSummaries(activeServer.serverId, allMachines.map(machine => machine.id));
@@ -126,8 +129,9 @@ export function useProjectsListModel() {
     // loading has none yet (never "Loading…", owner 11-15): its rows leave it out until the name arrives.
     const machineNames = React.useMemo(() => resolveSettledMachineDisplayNames([
         ...machineDisplays,
-        ...[...new Set(treeRefs.map(ref => ref.machineId))].filter(id => !machinesById.has(id)).map(id => ({ id, absence: 'unlisted' as const })),
-    ]), [machineDisplays, machinesById, treeRefs]);
+        ...(machineListSettled ? [...new Set(treeRefs.map(ref => ref.machineId))].filter(id => !machinesById.has(id))
+            .map(id => ({ id, absence: 'unlisted' as const })) : []),
+    ]), [machineDisplays, machineListSettled, machinesById, treeRefs]);
     // The Machine facts the tree shows (name, home directory, online), retained while equal: a daemon,
     // key or resource publication replaces Machine records without changing any of them.
     const previousTreeMachines = React.useRef<Readonly<Record<string, TreeMachineFacts>> | undefined>(undefined);
@@ -148,7 +152,7 @@ export function useProjectsListModel() {
             groups: projectGroups, projectName: resolveWorkspaceRefDisplayName,
             machine: machineId => {
                 const facts = treeMachines[machineId];
-                return { name: facts ? facts.name : t('machine.unlistedMachine'), homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
+                return { name: facts ? facts.name : machineListSettled ? t('machine.unlistedMachine') : null, homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
             },
             sources: composition.sources, teamName: composition.teamName,
         });
@@ -162,7 +166,7 @@ export function useProjectsListModel() {
         const treeProjects = project(groups.projectGroups, previousTreeProjects.current.visible);
         previousTreeProjects.current = { visible: treeProjects, hidden: hiddenTreeProjects };
         return { treeProjects, hiddenTreeProjects, hiddenItems: buildProjectsTreeHiddenItems(hiddenTreeProjects) };
-    }, [composition.sources, composition.teamName, groups.hiddenProjectGroups, groups.projectGroups, machinesReady, treeMachines]);
+    }, [composition.sources, composition.teamName, groups.hiddenProjectGroups, groups.projectGroups, machineListSettled, machinesReady, treeMachines]);
     const newSessionHere = React.useCallback(async (ref: WorkspaceRefV1): Promise<ActionExecuteResult> => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         const retired = { ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
@@ -413,7 +417,7 @@ export function useProjectsListModel() {
     const readFromSessions = React.useCallback(() => {
         const machine = (machineId: string) => {
             const facts = treeMachines[machineId];
-            return { name: facts ? facts.name : t('machine.unlistedMachine'), homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
+            return { name: facts ? facts.name : machineListSettled ? t('machine.unlistedMachine') : null, homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
         };
         const accepted = buildProjectsTreeProjects({ groups: groups.unlistedProjectGroups, projectName: resolveWorkspaceRefDisplayName, machine });
         const refs = Array.isArray(workspaceRefsV1) ? workspaceRefsV1 : [];
@@ -430,7 +434,7 @@ export function useProjectsListModel() {
                 path: formatPathRelativeToHome(folder.path, where.homeDir ?? undefined), attention: null,
                 ...(where.online === false ? { offline: true } : {}) }] };
         })];
-    }, [activeServer.serverId, groups.unlistedProjectGroups, treeMachines, workspaceRefsV1]);
+    }, [activeServer.serverId, groups.unlistedProjectGroups, machineListSettled, treeMachines, workspaceRefsV1]);
     const addFromSessions = React.useCallback((key: string) => {
         if (!key.startsWith(SESSION_FOLDER_KEY_PREFIX)) { showHiddenProject(key); return; }
         const rest = key.slice(SESSION_FOLDER_KEY_PREFIX.length);
