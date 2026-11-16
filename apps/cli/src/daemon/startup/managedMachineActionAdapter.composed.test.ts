@@ -524,7 +524,7 @@ describe('daemon managed Machine Action factory', () => {
             expect(nativeRoles.filter(role => role === 'prepare-destroy')).toHaveLength(1);
         }
     });
-    it.each(['supported', 'unsupported'] as const)(
+    it.each(['supported', 'unsupported', 'failed'] as const)(
       'runs a Machine isolation preset through native Sandbox qualification (%s)', async nativeSandbox => {
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
@@ -546,14 +546,26 @@ describe('daemon managed Machine Action factory', () => {
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         const roles: string[] = [];
         const nativeInputs: unknown[] = [];
-        const native = nativeFixture({ privateNative: true, credentialPurposes: [], onNativeRole: (role, input) => {
+        let releaseAcquire!: () => void;
+        const acquireReleased = new Promise<void>(resolve => { releaseAcquire = resolve; });
+        let notifyAcquireStarted!: () => void;
+        const acquireStarted = new Promise<void>(resolve => { notifyAcquireStarted = resolve; });
+        let notifyAcquireAccepted!: () => void;
+        const acquireAccepted = new Promise<void>(resolve => { notifyAcquireAccepted = resolve; });
+        onTestFinished(() => releaseAcquire());
+        const native = nativeFixture({ privateNative: true, credentialPurposes: [], onNativeRole: async (role, input) => {
             roles.push(role);
             nativeInputs.push({ role, input });
+            if (role === 'acquire') {
+                notifyAcquireStarted();
+                await acquireReleased;
+                if (nativeSandbox === 'failed') throw new PluginError({ code: 'native_acquire_failed', message: 'Native acquisition failed' });
+            }
         } });
         const registry = { ...native.runtimeRegistry, contributes: { ...native.runtimeRegistry.contributes,
             machineProvisioners: native.runtimeRegistry.contributes.machineProvisioners?.map(entry => ({ ...entry,
                 definition: { ...entry.definition, sessionPlacement: { kind: 'controller-local' as const,
-                    supportsAgentNativeSandbox: nativeSandbox === 'supported' } } })) } };
+                    supportsAgentNativeSandbox: nativeSandbox !== 'unsupported' } } })) } };
         // Home persistence, installed-machine RPC and native plugin effects are
         // system boundaries. Session defaults, admission, preset opening,
         // controller custody and native role qualification remain real.
@@ -595,7 +607,10 @@ describe('daemon managed Machine Action factory', () => {
                 return { status: 200, data: { machine, presetContent: content, replayed: false } };
             }
             if (path.endsWith('/current')) return { status: 200, data: { machine, current: true } };
-            if (path.endsWith('/submit')) return { status: 200, data: { machine, submitted: true } };
+            if (path.endsWith('/submit')) {
+                machine = ManagedMachineV1Schema.parse({ ...machine, allocation: 'may-exist' });
+                return { status: 200, data: { machine, submitted: true } };
+            }
             if (path.endsWith('/report')) {
                 isolationReports.push(body);
                 const report = ManagedControllerReportV1Schema.parse(body);
@@ -619,7 +634,6 @@ describe('daemon managed Machine Action factory', () => {
         };
         vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(request => nativeRpc(request.method));
         vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(request => nativeRpc(request.method));
-        const managed = adapter(true, undefined, undefined, signing.secretKey, accountCredentials, undefined, undefined, undefined, registry);
         const launched: unknown[] = [];
         const isolationChildResults: unknown[] = [];
         const isolationQualifications: boolean[] = [];
@@ -627,6 +641,8 @@ describe('daemon managed Machine Action factory', () => {
         let nextIsolationOperationId = 0;
         const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account',
             generateOperationId: () => `isolation-operation-${nextIsolationOperationId++}` });
+        const managed = adapter(true, undefined, undefined, signing.secretKey, accountCredentials, undefined, undefined, undefined,
+            registry, 'installation', operations.runner.waitForCompletion);
         const deps = createCliActionDeps({ credentials: accountCredentials, token, sessionId: '', mode: 'plain', ctx: null,
             serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
             externalActionMachineRequestPrivateKey: signing.secretKey, externalActionMachineInstallationId: 'installation',
@@ -647,6 +663,7 @@ describe('daemon managed Machine Action factory', () => {
                         executeSessionIsolationAcquire: async (input, context) => {
                             const result = await request.executeSessionIsolationAcquire(input, context);
                             isolationChildResults.push(result);
+                            notifyAcquireAccepted();
                             return result;
                         },
                     });
@@ -661,7 +678,10 @@ describe('daemon managed Machine Action factory', () => {
                     workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
                         botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } } } } }),
                 prepare: async () => ({ ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
-                spawnedSession: { spawn: async request => { launched.push(request); return { type: 'success', sessionId: 'created',
+                spawnedSession: { spawn: async request => { launched.push(request);
+                    // The real Home refuses Session birth until its managed resource is bound.
+                    if (machine.allocation !== 'bound') return { type: 'error', errorMessage: 'session-origin-forbidden' };
+                    return { type: 'success', sessionId: 'created',
                     sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } }; },
                     resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) } },
             machineActionDirectTargetTransport: { machineId: 'controller', invoke: nativeRpc },
@@ -689,12 +709,21 @@ describe('daemon managed Machine Action factory', () => {
             actionsSettings: normalizeActionsSettingsV1(settings.actionsSettingsV1), runtimeAccountId: 'account', actionRequestId: 'isolation-spawn',
             serverId: configuration.activeServerId, externalActionExecutionAuthorization: requester.authorization, externalActionTarget: authorization.binding.target,
             originalActionEnvelope: { v: 1, requestId: 'isolation-spawn', target: authorization.binding.target, input } };
-        const result = await operations.observeExecution({ actionId: 'session.spawn_new', input, actionRequestId: 'isolation-spawn',
+        const pendingResult = operations.observeExecution({ actionId: 'session.spawn_new', input, actionRequestId: 'isolation-spawn',
             actionContext: rootContext,
             execute: operation => executor.execute('session.spawn_new', input, { ...rootContext, ...operation }) });
-        // Native acquisition retains its own operation after returning acceptance.
-        // The root Session's terminal result does not settle that child effect.
-        const isolationChildOperation = nativeSandbox === 'supported'
+        let launchedWhileAcquiring: unknown[] = [];
+        if (nativeSandbox !== 'unsupported') {
+            await acquireAccepted;
+            expect(isolationChildResults).toMatchObject([{ ok: true }]);
+            await acquireStarted;
+            expect(await operations.handlers.getV2({ operationId: 'isolation-operation-1' }))
+                .toMatchObject({ kind: 'found', operation: { state: 'running' } });
+            launchedWhileAcquiring = [...launched];
+            releaseAcquire();
+        }
+        const result = await pendingResult;
+        const isolationChildOperation = nativeSandbox !== 'unsupported'
             ? await operations.handlers.getV2({ operationId: 'isolation-operation-1', waitForTerminal: true })
             : undefined;
         const diagnostic = JSON.stringify({ result, isolationChildResults, isolationQualifications, isolationFailure,
@@ -704,6 +733,14 @@ describe('daemon managed Machine Action factory', () => {
                 failureCause: { nativeErrorReason: 'not_available_in_sandbox_type' } } });
             expect(isolationAdmissions).toEqual([]);
             expect(roles).toEqual([]);
+            expect(launched).toEqual([]);
+            return;
+        }
+        expect(launchedWhileAcquiring, diagnostic).toEqual([]);
+        if (nativeSandbox === 'failed') {
+            expect(isolationChildOperation, diagnostic).toMatchObject({ kind: 'found', operation: { state: 'failed' } });
+            expect(result, diagnostic).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed',
+                launchError: { kind: 'launch_error', code: 'native_acquire_failed' } } });
             expect(launched).toEqual([]);
             return;
         }

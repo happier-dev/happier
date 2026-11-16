@@ -363,6 +363,15 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             });
             if (!result.ok) throw ManagedMachineControllerError.fromActionFailure(result, MANAGED_ACQUIRE_ACTION_ID_V1);
             const accepted = ManagedAcceptedV1Schema.parse(result.result);
+            if (accepted.operation) {
+                const waitForCompletion = params.waitForActionOperationCompletion;
+                const accountId = request.context.externalActionExecutionAuthorization?.binding.accountId ?? request.context.runtimeAccountId;
+                if (!waitForCompletion || !accountId) throw new ManagedMachineControllerError('admission_unavailable');
+                const completed = await waitForCompletion({ accountId, machineId: params.machineId }, accepted.operation.operationId);
+                const terminal = completed ? readActionOperationTerminalResultV1(completed) : null;
+                if (!terminal) throw new ManagedMachineControllerError('admission_unavailable');
+                if (!terminal.ok) throw ManagedMachineControllerError.fromActionFailure(terminal, MANAGED_ACQUIRE_ACTION_ID_V1);
+            }
             return { managedCreation: { homeId, managedId: accepted.managedId, controller }, sandboxTypeSupportsNativeSandbox,
                 ...(nativeSandbox ? { nativeSandbox } : {}) };
         }) satisfies AcquireSessionIsolationSandbox,
