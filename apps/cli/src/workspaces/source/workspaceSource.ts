@@ -175,6 +175,6 @@ export function readWorkspaceSourcePlacement(
   const authorization = context?.authorization;
   const sessionId = context?.sessionActionOrigin?.caller.sessionId
     ?? (readString(authorization, 'kind') === 'session.write' ? readString(authorization, 'sessionId') : undefined);
-  const rootPath = readString(input, 'rootPath') ?? readString(input, 'directory');
+  const rootPath = readString(input, 'rootPath') ?? readString(input, 'directory') ?? readString(input, 'cwd');
   return { ...(sessionId ? { sessionId } : {}), ...(rootPath ? { rootPath } : {}) };
 }

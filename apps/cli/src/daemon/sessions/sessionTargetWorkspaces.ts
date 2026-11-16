@@ -1,8 +1,10 @@
 import type { Duplex } from 'node:stream';
+import { realpathSync } from 'node:fs';
 
 import { openSessionHolderWorkspaceClient, type SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
 import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
 import type { WorkspaceSource, WorkspaceSourcePlacement } from '@/workspaces/source/workspaceSource';
+import { expandHomeDirPath, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 /**
  * The daemon's Files/Git view of Sessions placed on a target (no daemon inside):
@@ -64,12 +66,39 @@ export function resolveSessionTargetPtyTarget(sessionId: string): Readonly<{ roo
     return entry ? { rootPath: entry.workspace.hostRoot, openHolder: () => workspaceClient(entry) } : null;
 }
 
-/** `resolveWorkspaceTarget` for the daemon's filesystem admission. */
+function physicalPath(path: string): string | null {
+    try { return realpathSync(expandHomeDirPath(path)); } catch { return null; }
+}
+
+/** `resolveWorkspaceTarget` for filesystem admission, including directory-only Git panel requests. */
 export function resolveSessionTargetWorkspace(placement: WorkspaceSourcePlacement): WorkspaceSource | null {
-    const entry = placement.sessionId ? entries.get(placement.sessionId) : undefined;
+    let sessionId = placement.sessionId;
+    let entry = sessionId ? entries.get(sessionId) : undefined;
+    if (!entry && placement.rootPath) {
+        for (const [id, candidate] of entries) {
+            if (isCanonicalAbsolutePathInsideRoot(candidate.workspace.hostRoot, placement.rootPath)) {
+                sessionId = id;
+                entry = candidate;
+                break;
+            }
+        }
+        // Aliases of a shared root carry the same placement. Keep lexical matching
+        // above even for unavailable/nonexistent paths: failure must not select host IO.
+        if (!entry) {
+            const requestedPath = physicalPath(placement.rootPath);
+            if (requestedPath) for (const [id, candidate] of entries) {
+                const root = physicalPath(candidate.workspace.hostRoot);
+                if (root && isCanonicalAbsolutePathInsideRoot(root, requestedPath)) {
+                    sessionId = id;
+                    entry = candidate;
+                    break;
+                }
+            }
+        }
+    }
     if (!entry) return null;
     const client = workspaceClient(entry);
-    entry.source ??= createHolderWorkspaceSource({ id: `${entry.target.id}:${placement.sessionId}`, rootPath: entry.workspace.hostRoot,
+    entry.source ??= createHolderWorkspaceSource({ id: `${entry.target.id}:${sessionId}`, rootPath: entry.workspace.hostRoot,
         guestRootPath: entry.workspace.targetRoot, holder: client, helperPath: entry.target.helperPath });
     return entry.source!;
 }
