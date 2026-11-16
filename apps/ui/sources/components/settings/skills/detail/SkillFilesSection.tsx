@@ -13,6 +13,7 @@ import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { MarkdownCodeEditorField } from '@/components/ui/markdown/editor/MarkdownCodeEditorField';
 import { StatusPill } from '@/components/ui/status/StatusPill';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -25,6 +26,7 @@ import {
   skillTextFile,
 } from './skillFileContent';
 import type { SkillChange, SkillChangeResult } from './useSkillDetail';
+import { readSkillActionFailure } from '../skillActionResult';
 
 /** Past this many files the list shows the first ones and one "N more" row (layout density, not a limit). */
 const FOLDED_FILE_COUNT = 40;
@@ -44,14 +46,16 @@ function SkillFileEditor(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const [loaded, setLoaded] = React.useState<Readonly<{
-    text: string | null;
-  }> | null>(null);
+  const [loaded, setLoaded] = React.useState<
+    Readonly<{ text: string | null }> |
+    Readonly<{ error: ReturnType<typeof readSkillActionFailure> }> | null
+  >(null);
   React.useEffect(() => {
     let cancelled = false;
-    void props.readFile(props.file.path).then((value) => {
-      if (!cancelled) setLoaded(value);
-    });
+    void props.readFile(props.file.path).then(
+      (value) => { if (!cancelled) setLoaded(value); },
+      (error: unknown) => { if (!cancelled) setLoaded({ error: readSkillActionFailure(error) }); },
+    );
     return () => {
       cancelled = true;
     };
@@ -65,13 +69,17 @@ function SkillFileEditor(
       }),
     [path, unixMode, update],
   );
-  const autosave = useSkillTextAutosave({ saved: loaded?.text ?? '', onSave });
+  const autosave = useSkillTextAutosave({ saved: loaded && 'text' in loaded ? loaded.text ?? '' : '', onSave });
   if (!loaded)
     return (
       <Text variant="meta" style={{ color: theme.colors.text.tertiary }}>
         {t('capabilities.skillDetail.files.loading')}
       </Text>
     );
+  if ('error' in loaded)
+    return <SurfaceStateCard testID={`${props.testID}:error`} kind="error" size="line"
+      title={t('common.error')} diagnosticCode={loaded.error.code} diagnosticDetail={loaded.error.message}
+      accessibilitySemantics="alert" />;
   if (loaded.text === null)
     return (
       <Text variant="meta" style={{ color: theme.colors.text.tertiary }}>

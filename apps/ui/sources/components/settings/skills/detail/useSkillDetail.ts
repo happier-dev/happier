@@ -177,7 +177,12 @@ export function useSkillDetail(skillId: string | null) {
         skillId,
         ...(file ? { file } : {}),
       });
-      if (readSkillActionRefusal(result)) return null;
+      const refusal = readSkillActionRefusal(result);
+      if (refusal) {
+        if (!file) return null;
+        requireActionSuccess(result);
+        throw new HappyError(refusal, false, { code: refusal });
+      }
       return SkillReadResultV1Schema.parse(result.ok ? result.result : null);
     },
     [execute, skillId],

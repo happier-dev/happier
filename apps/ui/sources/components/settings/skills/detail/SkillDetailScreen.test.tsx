@@ -17,6 +17,7 @@ import {
 } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { t } from '@/text';
 
 // The person's answer to Remove's confirmation is the boundary (the shared modal presenter).
 const modalSpies = vi.hoisted(() => ({
@@ -167,6 +168,7 @@ async function seededHome(
   origin: string,
   handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>,
   options: Readonly<{ records?: readonly PromptLibraryRecordV1[]; header?: Record<string, unknown>; text?: string;
+    files?: readonly ReturnType<typeof skillTextFile>[];
     handleExternalRequest?: (url: string) => Promise<Response | null> }> = {},
 ) {
   const catalog = createPromptLibraryCatalogBoundary({ records: options.records });
@@ -198,6 +200,7 @@ async function seededHome(
         contentKind: 'utf8',
         contentBase64: encodeBase64(new TextEncoder().encode(options.text ?? SKILL_MD)),
       },
+      ...options.files ?? [],
     ],
   });
   const seeded = await home.boundary.handle('/v1/artifacts', {
@@ -216,6 +219,17 @@ async function seededHome(
 }
 
 describe('SkillDetailScreen instructions autosave', () => {
+  it('preserves a file read refusal as a typed error', async () => {
+    const home = await seededHome('https://skill-file-refusal.test');
+    const detail = await renderHook(() => useSkillDetail('release-notes'));
+    try {
+      await vi.waitFor(() => expect(detail.getCurrent().status).toBe('ready'));
+      await expect(detail.getCurrent().readLatest('missing.md')).rejects.toMatchObject({ code: 'not_found' });
+    } finally {
+      await detail.unmount(); await home.dispose();
+    }
+  });
+
   it('deletes a newly written Skill on the first attempt after changing its reach', async () => {
     const home = await seededHome('https://skill-first-delete.test');
     const author = await renderHook(() => useMountedActionExecution(home.home.id));
@@ -390,6 +404,49 @@ describe('SkillDetailScreen instructions autosave', () => {
 });
 
 describe('SkillDetailScreen over the real skills Actions', () => {
+  it('settles a file removed by another device as an error instead of binary content', async () => {
+    const home = await seededHome('https://skill-file-removed.test', undefined, {
+      files: [skillTextFile('checklist.md', 'Check it.')],
+    });
+    const { SkillDetailScreen } = await import('./SkillDetailScreen');
+    const screen = await renderScreen(<SkillDetailScreen skillId="release-notes" />);
+    try {
+      await vi.waitFor(() => expect(screen.findByTestId('skill.detail.files:file:checklist.md')).not.toBeNull());
+      // Another device committed a bundle without that file after this page's inventory read.
+      const stored = home.boundary.read('release-notes')!;
+      if (stored.bodyVersion === undefined) throw new Error('The skill must have a body revision');
+      home.boundary.replaceStoredRow({ ...stored, bodyVersion: stored.bodyVersion + 1,
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(PromptBundleBodyV1Schema.parse({
+          v: 1, createdAtMs: 1, updatedAtMs: 2, entries: [skillTextFile('SKILL.md', SKILL_MD)],
+        })) }),
+      });
+      await screen.pressByTestIdAsync('skill.detail.files:file:checklist.md');
+      await vi.waitFor(() => expect(screen.findHostByTestId('skill.detail.files:editor:checklist.md:error-details-toggle'), screen.getTextContent()).not.toBeNull());
+      await screen.pressByTestIdAsync('skill.detail.files:editor:checklist.md:error-details-toggle');
+      const text = screen.getTextContent();
+      expect(text).toContain('not_found');
+      expect(text).not.toContain(t('capabilities.skillDetail.files.loading'));
+      expect(text).not.toContain(t('capabilities.skillDetail.files.binary'));
+    } finally {
+      await screen.unmount(); await home.dispose();
+    }
+  });
+
+  it('keeps actual binary files classified as binary', async () => {
+    const home = await seededHome('https://skill-file-binary.test', undefined, {
+      files: [{ path: 'note.bin', contentKind: 'binary', contentBase64: 'AA==' }],
+    });
+    const { SkillDetailScreen } = await import('./SkillDetailScreen');
+    const screen = await renderScreen(<SkillDetailScreen skillId="release-notes" />);
+    try {
+      await vi.waitFor(() => expect(screen.findByTestId('skill.detail.files:file:note.bin')).not.toBeNull());
+      await screen.pressByTestIdAsync('skill.detail.files:file:note.bin');
+      await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('capabilities.skillDetail.files.binary')));
+    } finally {
+      await screen.unmount(); await home.dispose();
+    }
+  });
+
   it.each(['keepMine', 'takeTheirs'] as const)('retains dirty instructions and outside-reference warnings through width/focus changes, then resolves %s against the current revision', async choice => {
     const original = `${SKILL_MD}\nRead [the checklist](../../shared/checklist.md).\n`;
     const mine = `${original}\nMy unsaved instructions.\n`;
