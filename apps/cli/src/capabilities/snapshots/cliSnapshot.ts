@@ -547,7 +547,6 @@ async function detectCliAuthStatus(params: { name: DetectCliName; resolvedPath: 
         ...(declared?.nativeHome ? { nativeHome: declared.nativeHome } : {}),
         ...(declared ? { authSpec: declared.authSpec } : {}),
         authEnvironmentVariables: agent?.cliMetadata?.auth.environmentVariables ?? [],
-        credentialPaths: agent?.cliMetadata?.auth.credentialPaths ?? [],
         fresh: params.fresh,
     });
 }

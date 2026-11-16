@@ -525,7 +525,7 @@ process.exit(auth.tokens.access_token === 'fixture-access' ? 0 : 1); } catch { p
     }
   });
 
-  it('holds the Agent sign-in fact per binary identity and sign-in state instead of probing every spawn', async () => {
+  it('holds the signed-in Agent fact per binary identity and config dir instead of probing every spawn', async () => {
     const home = await createTempDir('happier-spawn-held-auth-', tmpdir());
     try {
       if (process.platform === 'win32') return;
@@ -562,11 +562,8 @@ process.exit(auth.tokens.access_token === 'fixture-access' ? 0 : 1); } catch { p
       writeCli(1);
       expect(await spawn(codexHome)).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
       expect(await authProbes()).toBe(3);
-      // A signed-out answer is held until the sign-in state changes on disk...
-      expect(await spawn(codexHome)).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
-      expect(await authProbes()).toBe(3);
-      // ...and a terminal sign-in writes into the config dir, so the next spawn checks again.
-      await writeFile(join(codexHome, 'auth.json'), '{}');
+      // Codex may keep its sign-in in the OS keyring (cli_auth_credentials_store), so it declares no
+      // observable sign-in state: a signed-out answer is checked again on the next spawn.
       expect(await spawn(codexHome)).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
       expect(await authProbes()).toBe(4);
     } finally {

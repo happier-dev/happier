@@ -873,8 +873,6 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         processEnv: effectiveAgentEnvironment,
         ...(nativeHome ? { nativeHome } : {}),
         authEnvironmentVariables: selectedAgentCredentialEnvironmentVariables,
-        credentialPaths: params.pluginRuntimeRegistry?.contributes.agentDefinitionsById
-          .get(resolvedAgentId)?.cliMetadata?.auth.credentialPaths ?? [],
         ...(params.pluginRuntimeRegistry ? { authSpec: await authCatalogEntry?.getCliAuthSpec?.() ?? null } : {}),
       });
     if (auth?.state === 'logged_out') {

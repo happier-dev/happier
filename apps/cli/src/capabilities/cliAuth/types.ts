@@ -29,10 +29,13 @@ export type CliAuthSpec = Readonly<{
    * derived from the strict manifest auth facts, never from an Agent parser.
    */
   isSafeForBackgroundChecks: boolean;
+  /** The Agent's declared on-disk sign-in state (see AgentCliAuthContributionV1.signInState). */
+  signInState?: Readonly<{ paths: readonly string[]; platforms: readonly NodeJS.Platform[] }>;
   detectAuthStatus?: (args: Readonly<{
     resolvedPath: string;
     /** Host-private final child environment; never forwarded to Agent callbacks. */
     processEnv?: NodeJS.ProcessEnv;
+    cwd?: string;
     nativeExecution?: CliAuthNativeExecution;
     /** Host-owned containing probe budget; never exposed to Agent callbacks. */
     timeoutMs?: number;

@@ -660,6 +660,7 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
                 ...(params.cli.executable.alternativeBinaryNames ?? []),
             ],
             isSafeForBackgroundChecks: isPluginAgentCliAuthBackgroundCheckSafe(params.cli),
+            ...(params.cliAuth.signInState ? { signInState: params.cliAuth.signInState } : {}),
             detectAuthStatus: async ({ processEnv = process.env, timeoutMs: probeTimeoutMs, nativeExecution }): Promise<CliAuthStatusDraft> => {
                 if (!params.isCurrent()) {
                     return { state: 'unknown', reason: 'probe_failed' };

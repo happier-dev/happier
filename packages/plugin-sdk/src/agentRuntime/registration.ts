@@ -345,6 +345,14 @@ export type AgentCliAuthCommandResultV1 = Readonly<{
  * interprets its own bounded probe results.
  */
 export type AgentCliAuthContributionV1 = Readonly<{
+  /**
+   * Where a terminal sign-in or sign-out is observable on disk, and on which platforms that holds.
+   * The host reads only stat metadata of these home-relative paths (never contents) and remembers a
+   * signed-out or unknown answer until they change. Omit a platform where the sign-in can live only
+   * in an OS credential store (macOS Keychain, Windows Credential Manager, Secret Service): the host
+   * then checks on every read. Declare only what the Agent's own documentation states.
+   */
+  signInState?: Readonly<{ paths: readonly string[]; platforms: readonly ('darwin' | 'linux' | 'win32')[] }>;
   detectAuthStatus(input: Readonly<{
     runDeclaredSystemToolCommand(input: Readonly<{
       toolId: string;
