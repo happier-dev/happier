@@ -1,4 +1,5 @@
-import { createHash, createHmac } from 'node:crypto';
+import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
+import { computeHttpContentMd5Hex, computeHttpHmacSha256 } from '@happier-dev/plugin-sdk/http';
 import { decodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 
 export type DaytonaStorageCredentials = Readonly<{ accessKey: string; secret: string; sessionToken?: string; region: string }>;
@@ -31,12 +32,12 @@ export function createDaytonaContextFile(file: Readonly<{ path: string; contents
   const checksum = archive.subarray(0, 512).reduce((sum, byte) => sum + byte, 0);
   text(checksum.toString(8).padStart(6, '0') + '\0 ', 148, 8);
   archive.set(contents, 512);
-  return { hash: createHash('md5').update(file.path).update(contents).digest('hex'), bytes: archive };
+  return { hash: computeHttpContentMd5Hex([file.path, contents]), bytes: archive };
 }
 
 const uri = (value: string) => encodeURIComponent(value).replace(/[!'()*]/g, character => '%' + character.charCodeAt(0).toString(16).toUpperCase());
-const sha256 = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
-const hmac = (key: string | Uint8Array, value: string) => createHmac('sha256', key).update(value).digest();
+const sha256 = computeSha256HexDigest;
+const hmac = computeHttpHmacSha256;
 
 /** S3 SigV4 signed payload, including the vendor-issued temporary session token.
  * https://docs.aws.amazon.com/AmazonS3/latest/developerguide/sig-v4-header-based-auth.html */
@@ -55,7 +56,8 @@ export function signDaytonaStoragePut(input: Readonly<{ url: URL; body: Uint8Arr
   const path = input.url.pathname.split('/').map(part => uri(decodeURIComponent(part))).join('/');
   const canonical = ['PUT', path, query, names.map(name => name + ':' + headers[name] + '\n').join(''), signedHeaders, headers['x-amz-content-sha256']].join('\n');
   const key = hmac(hmac(hmac(hmac('AWS4' + input.credentials.secret, date), input.credentials.region), 's3'), 'aws4_request');
-  const signature = createHmac('sha256', key).update('AWS4-HMAC-SHA256\n' + timestamp + '\n' + scope + '\n' + sha256(canonical)).digest('hex');
+  const signature = Array.from(hmac(key, 'AWS4-HMAC-SHA256\n' + timestamp + '\n' + scope + '\n' + sha256(canonical)),
+    byte => byte.toString(16).padStart(2, '0')).join('');
   headers.authorization = `AWS4-HMAC-SHA256 Credential=${input.credentials.accessKey}/${scope},SignedHeaders=${signedHeaders},Signature=${signature}`;
   return headers;
 }

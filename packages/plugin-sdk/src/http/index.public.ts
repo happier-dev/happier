@@ -15,3 +15,4 @@ export type { PluginWebSocketMessage } from '../http.js';
 export type { PluginWebSocketOpenInput } from '../http.js';
 
 export { readHttpStatus, isPermanentRequestStatus, isPermanentRequestError } from '../httpStatusError.js';
+export { computeHttpContentMd5Hex, computeHttpHmacSha256 } from './requestSigning.js';

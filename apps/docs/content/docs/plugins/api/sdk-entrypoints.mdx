@@ -117,6 +117,24 @@ shows this boundary; carrying an id grants no access or mutation permission.
 | `@happier-dev/plugin-sdk/voice/speech` | Speech-provider contract types. | `import type * as VoiceSpeech from '@happier-dev/plugin-sdk/voice/speech';` |
 | `@happier-dev/plugin-sdk/webhooks` | Daemon-realm webhook endpoint declarations, verification, and test fixtures. | `import type * as Webhooks from '@happier-dev/plugin-sdk/webhooks';` |
 
+## Portable HTTP request signing in development
+
+Unreleased 0.3 source exports `computeHttpContentMd5Hex` and
+`computeHttpHmacSha256` from `@happier-dev/plugin-sdk/http` for vendor protocols
+that need content checksums or request signing in Account code. They accept UTF-8
+strings or bytes without importing Node built-ins. MD5 is only for legacy vendor
+checksums; use the root `computeSha256HexDigest` for SHA-256 digests.
+
+```ts
+import { computeHttpContentMd5Hex, computeHttpHmacSha256 } from '@happier-dev/plugin-sdk/http';
+
+const checksum = computeHttpContentMd5Hex([archivePath, contents]);
+const signingKey = computeHttpHmacSha256(secret, canonicalRequest);
+```
+
+The HMAC helper returns raw bytes, so it also supports protocols with successive
+key derivations, such as S3 SigV4.
+
 ## Machine app-page authoring in development
 
 The root `defineUiSurfaceDefinition` helper accepts
