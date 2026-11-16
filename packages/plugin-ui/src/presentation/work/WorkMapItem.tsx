@@ -1,6 +1,6 @@
 import { memo, useCallback, useState, type ReactElement, type ReactNode } from 'react';
-import { Platform, Pressable, View, type ViewStyle } from 'react-native';
-import type { HappierGestureResponderEvent, HappierLayoutChangeEvent, HappierPortableStyle } from '../portableTypes.js';
+import { Pressable, View, type ViewStyle } from 'react-native';
+import type { HappierGestureResponderEvent, HappierLayoutChangeEvent } from '../portableTypes.js';
 import type { HappierWorkMapNode } from './workMap.js';
 import { resolveHappierWorkStatusSurfaceStyle, softenHappierWorkColor, type HappierWorkStatusTone } from './workStatus.js';
 import type { HappierWorkColors, HappierWorkHost, HappierWorkTextRole, HappierWorkTheme } from './workTheme.js';
@@ -18,13 +18,6 @@ function selectedCardRing(colors: HappierWorkColors, tone: HappierWorkStatusTone
     : tone === 'danger' ? softenHappierWorkColor(colors.danger.border, 0.7) ?? colors.danger.border : colors.text;
   return { boxShadow: `0 0 0 2px ${colors.surface}, 0 0 0 3.5px ${ring}` };
 }
-
-/**
- * Web only: a node's name wraps between its words and never inside one. The browser's default for text
- * (`overflow-wrap: break-word`) split "changelog" across two lines in a narrow lane; the portable style
- * has no overflow-wrap, but react-native-web still receives it.
- */
-const WRAP_BY_WORD = Platform.select<HappierPortableStyle>({ web: { overflowWrap: 'normal' } as unknown as HappierPortableStyle });
 
 function detailRole(compact: boolean): HappierWorkTextRole {
   return compact ? 'mapDetailCompact' : 'mapDetail';
@@ -146,8 +139,10 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: Omit<WorkMapIt
           strong={selected}
           // A name is read in full (DESIGN-9 P5): the node grows rather than ellipsizing it. A compact map's
           // card is one line while its name fits (lab `.wm.sm .wm-node`); a longer name, or a heading with
-          // what it tests, wraps instead of being cut.
-          style={{ color: appearance === 'lane' ? theme.colors.secondaryText : theme.colors.text, overflow: 'hidden', ...WRAP_BY_WORD }}
+          // what it tests, wraps instead of being cut. Words keep whole because the copy keeps its floor
+          // (`copyMinWidth`); only a token wider than the whole row breaks inside itself (web's default
+          // `overflow-wrap: break-word`), rather than being clipped (QA-LAYOUT V1).
+          style={{ color: appearance === 'lane' ? theme.colors.secondaryText : theme.colors.text, overflow: 'hidden' }}
         >
           {node.label}
           {node.labelDetail === undefined ? null : (
