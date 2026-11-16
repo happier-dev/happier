@@ -15,6 +15,9 @@ import { artifactsRoutes } from "./artifactsRoutes";
 import { withSqliteReadSnapshot } from '@/storage/prisma';
 import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifactUploadFrameV1 } from '@happier-dev/transfers';
 import { registerArtifactUploadRoutes } from './registerArtifactUploadRoutes';
+import { artifactUpdateHandler } from '@/app/api/socket/artifactUpdateHandler';
+import { createFakeSocket, getSocketHandler } from '../../testkit/socketHarness';
+import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 
 const { emitUpdate, randomKeyNaked } =
     vi.hoisted(() => ({
@@ -242,7 +245,7 @@ describe("artifactsRoutes (AccountChange integration)", () => {
         });
     });
 
-    async function assertArtifactChange(accountId: string, artifactId: string, deleted = false) {
+    async function assertArtifactChange(accountId: string, artifactId: string, deleted = false, artifactKind?: string) {
         const [account, change] = await Promise.all([
             db.account.findUniqueOrThrow({ where: { id: accountId }, select: { seq: true } }),
             db.accountChange.findUniqueOrThrow({ where: {
@@ -255,11 +258,70 @@ describe("artifactsRoutes (AccountChange integration)", () => {
         expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({ userId: accountId,
             payload: expect.objectContaining({ seq: account.seq, body: {
                 t: "account-change", changeKinds: ["artifact"], entityIds: [artifactId],
+                ...(artifactKind === undefined ? {} : { artifactKinds: [artifactKind] }),
             } }),
             recipientFilter: { type: "account-stored-content-v3" },
         }));
         return account.seq;
     }
+
+    // Q1 theme delivery: inactive clients receive the existing bodyless change,
+    // while the writer's acknowledgement and ordinary document events stay intact.
+    it.each([
+        ['plain', 'http'], ['e2ee', 'http'], ['plain', 'socket'], ['e2ee', 'socket'],
+    ] as const)('publishes bodyless theme changes over %s Account %s mutations without changing document delivery', async (mode, transport) => {
+        const account = mode === 'e2ee' ? await seedAccount() : await db.account.create({ data: { encryptionMode: 'plain' } });
+        const socket = createFakeSocket({ data: { userId: account.id, authTokenKind: 'account',
+            authAuthority: 'present_user', tokenEpoch: 0 } });
+        artifactUpdateHandler(account.id, socket as Parameters<typeof artifactUpdateHandler>[1]);
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            for (const kind of ['theme_profile.v1', 'ordinary-document.v1']) {
+                const id = crypto.randomUUID();
+                const header = { title: 'Saved item', kind };
+                const encode = (value: unknown) => mode === 'plain' ? encodePlainArtifactStoredContent(value)
+                    : Buffer.from(JSON.stringify(value)).toString('base64');
+                const payload = { id, kind: deriveArtifactStoredKindV1(header), header: encode(header),
+                    body: encode({ body: 'private CSS content' }), dataEncryptionKey: mode === 'plain'
+                        ? ARTIFACT_PLAIN_DATA_KEY_MARKER : Buffer.from('opaque-data-key').toString('base64') };
+                emitUpdate.mockClear();
+                if (transport === 'http') {
+                    const response = await app.inject({ method: 'POST', url: '/v1/artifacts',
+                        headers: { 'x-test-user-id': account.id }, payload });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.json()).toMatchObject({ id, bodyVersion: 1 });
+                } else {
+                    const callback = vi.fn();
+                    await getSocketHandler(socket, 'artifact-create')(payload, callback);
+                    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ result: 'success',
+                        artifact: expect.objectContaining({ id, bodyVersion: 1 }) }));
+                }
+                await assertArtifactChange(account.id, id, false, payload.kind);
+                const legacyEvents = () => emitUpdate.mock.calls.filter(([event]) =>
+                    event.payload.body.t === 'new-artifact' || event.payload.body.t === 'update-artifact');
+                expect(legacyEvents()).toHaveLength(kind === 'theme_profile.v1' ? 0 : 1);
+
+                emitUpdate.mockClear();
+                const body = encode({ body: 'revised private CSS content' });
+                // A body-only update must consume the admitted stored kind.
+                if (transport === 'http') {
+                    const response = await app.inject({ method: 'POST', url: `/v1/artifacts/${id}`,
+                        headers: { 'x-test-user-id': account.id }, payload: { body, expectedBodyVersion: 1 } });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.json()).toMatchObject({ success: true, bodyVersion: 2 });
+                } else {
+                    const callback = vi.fn();
+                    await getSocketHandler(socket, 'artifact-update')({ artifactId: id,
+                        body: { data: body, expectedVersion: 1 } }, callback);
+                    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ result: 'success',
+                        body: { data: body, version: 2 } }));
+                }
+                await assertArtifactChange(account.id, id, false, payload.kind);
+                expect(legacyEvents()).toHaveLength(kind === 'theme_profile.v1' ? 0 : 1);
+                const stored = await db.artifact.findUniqueOrThrow({ where: { id } });
+                expect(stored.bodyVersion).toBe(2);
+            }
+        });
+    });
 
     it("bounds artifact listing with an explicit limit query", async () => {
         const account = await seedAccount();
@@ -453,7 +515,7 @@ describe("artifactsRoutes (AccountChange integration)", () => {
         );
     });
 
-    it("marks artifact create and emits new-artifact using returned cursor", async () => {
+    it("marks artifact create, publishes once and acknowledges new versus existing records", async () => {
         const account = await seedAccount();
         const artifactId = "11111111-1111-4111-8111-111111111111";
 
@@ -476,10 +538,29 @@ describe("artifactsRoutes (AccountChange integration)", () => {
                 expect(res.json()).toEqual(
                     expect.objectContaining({
                         id: artifactId,
+                        created: true,
                         headerVersion: 1,
                         bodyVersion: 1,
                     }),
                 );
+
+                const socket = createFakeSocket({ data: { userId: account.id, authTokenKind: 'account',
+                    authAuthority: 'present_user', tokenEpoch: 0 } });
+                artifactUpdateHandler(account.id, socket as Parameters<typeof artifactUpdateHandler>[1]);
+                const retry = vi.fn();
+                await getSocketHandler(socket, 'artifact-create')({ id: artifactId,
+                    header: Buffer.from('different head').toString('base64'), body: Buffer.from('different body').toString('base64'),
+                    dataEncryptionKey: Buffer.from('key').toString('base64') }, retry);
+                expect(retry).toHaveBeenCalledWith(expect.objectContaining({ result: 'success', created: false,
+                    artifact: expect.objectContaining({ id: artifactId, body: Buffer.from('body').toString('base64') }) }));
+
+                const repeated = await app.inject({ method: 'POST', url: '/v1/artifacts',
+                    headers: { 'x-test-user-id': account.id }, payload: { id: artifactId,
+                        header: Buffer.from('different head').toString('base64'), body: Buffer.from('different body').toString('base64'),
+                        dataEncryptionKey: Buffer.from('key').toString('base64') } });
+                expect(repeated.statusCode, repeated.body).toBe(200);
+                expect(repeated.json()).toMatchObject({ id: artifactId, created: false,
+                    body: Buffer.from('body').toString('base64'), bodyVersion: 1 });
             },
         );
 

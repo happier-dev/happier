@@ -11,7 +11,7 @@ import { isPrismaErrorCode } from '@/storage/prisma';
 import { readArtifactStorageEnv } from '@/app/features/catalog/readFeatureEnv';
 import { deletePrivateFile } from '@/storage/blob/files';
 import type { ArtifactBlobWriteV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { tryDeriveArtifactStoredKindV1, ArtifactStoredKindV1Schema, decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { tryDeriveArtifactStoredKindV1, ArtifactStoredKindV1Schema, decodeArtifactKindV1, getArtifactContentDeliveryPolicyV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { prepareArtifactBlobWrite, admitArtifactBlobWriteInTx, completeArtifactBlobCandidateCustodyInTx, discardArtifactBlobCandidate, cleanupArtifactOrphanBlobs, cleanupArtifactOrphanBlobsAfterCommit, cleanupRejectedArtifactBlobUploads, artifactBlobRejectedUploadReuseKey, type PreparedArtifactBlobWrite } from './artifactBlobService';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged, markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
 import { readArtifactKindsV1 } from '@happier-dev/protocol/changes';
@@ -700,8 +700,8 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
 
 export type CreateArtifactResult =
     | ({ ok: false } & ArtifactQuotaExceeded)
-    | { ok: true; didWrite: true; cursor: Cursor; artifact: ArtifactRow }
-    | { ok: true; didWrite: false; artifact: ArtifactRow }
+    | { ok: true; didWrite: true; legacySocketPublication: boolean; cursor: Cursor; artifact: ArtifactRow }
+    | { ok: true; didWrite: false; legacySocketPublication: boolean; artifact: ArtifactRow }
     | {
         ok: false;
         error:
@@ -912,6 +912,7 @@ async function readArtifactCreateStateInTx(tx: Tx, params: CreateArtifactTxParam
         return {
             ok: true,
             didWrite: false,
+            legacySocketPublication: getArtifactContentDeliveryPolicyV1(decodeArtifactKindV1(existing.kind).kindHint).legacySocketPublication,
             artifact: {
                 ...artifact,
                 header: opened.header,
@@ -1063,6 +1064,7 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
     return {
         ok: true,
         didWrite: true,
+        legacySocketPublication: getArtifactContentDeliveryPolicyV1(decodeArtifactKindV1(kind.kind).kindHint).legacySocketPublication,
         cursor,
         artifact: {
             ...created,
@@ -1077,6 +1079,7 @@ export type UpdateArtifactResult =
     | ({ ok: false } & ArtifactQuotaExceeded)
     | {
         ok: true;
+        legacySocketPublication: boolean;
         cursor?: Cursor;
         recipientUpdates: readonly Readonly<{
             accountId: string;
@@ -1314,6 +1317,8 @@ export async function updateArtifactTx(
             approvalSessionId: params.approvalSessionId === undefined ? current.approvalSessionId : params.approvalSessionId,
         }) : undefined;
     if (nextKind === null) return { ok: false, error: 'invalid-params' };
+    const legacySocketPublication = getArtifactContentDeliveryPolicyV1(
+        decodeArtifactKindV1(nextKind?.kind ?? current.kind).kindHint).legacySocketPublication;
     if (params.transcriptVisualPublication) {
         if (!params.header || !params.body
             || nextKind?.approvalState !== 'executed'
@@ -1330,7 +1335,7 @@ export async function updateArtifactTx(
     }
     if (!params.header && !params.body && nextKind?.kind === current.kind
         && nextKind?.approvalState === current.approvalState && nextKind?.approvalSessionId === current.approvalSessionId) {
-        return { ok: true, recipientUpdates: [] };
+        return { ok: true, legacySocketPublication, recipientUpdates: [] };
     }
 
     // Opaque older-client body writes cannot prove whether the file is retained
@@ -1498,7 +1503,7 @@ export async function updateArtifactTx(
     // hint's own Session facts move.
     if (kindOnly && !decodeArtifactKindV1(current.kind).classified) {
         await markApprovalSessionsChangedInTx(tx, ownerAccountId, [current.approvalSessionId, nextKind?.approvalSessionId ?? null]);
-        return { ok: true, recipientUpdates: [] };
+        return { ok: true, legacySocketPublication, recipientUpdates: [] };
     }
     const recipients = await resolveArtifactAudienceInTx(tx, params.artifactId);
     const recipientCursors = await markAccountsChanged(tx, { accountIds: recipients, kind: "artifact", entityId: params.artifactId,
@@ -1532,7 +1537,7 @@ export async function updateArtifactTx(
     if (cursor === undefined) throw new Error("Artifact writer is missing from its authorized audience");
     const ownerCursor = recipientCursors.find((recipient) => recipient.accountId === ownerAccountId);
     if (ownerCursor === undefined) throw new Error("Artifact owner is missing from its authorized audience");
-    return { ok: true, cursor, recipientUpdates,
+    return { ok: true, legacySocketPublication, cursor, recipientUpdates,
         ...(headerUpdate ? { header: headerUpdate } : {}), ...(bodyUpdate ? { body: bodyUpdate } : {}) };
 }
 

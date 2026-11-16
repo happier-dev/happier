@@ -223,7 +223,7 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 ? { value: body.data, version: result.body.version }
                 : undefined;
 
-            for (const recipient of result.recipientUpdates) {
+            for (const recipient of result.legacySocketPublication ? result.recipientUpdates : []) {
                 eventRouter.emitUpdate({
                     userId: recipient.accountId,
                     payload: buildUpdateArtifactUpdate(artifactId, recipient.cursor.resolveCursor(), randomKeyNaked(12), headerUpdate, bodyUpdate, recipient),
@@ -329,7 +329,7 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 return;
             }
 
-            if (result.didWrite) {
+            if (result.didWrite && result.legacySocketPublication) {
                 const newArtifactPayload = buildNewArtifactUpdate(result.artifact, result.cursor.resolveCursor(), randomKeyNaked(12));
                 eventRouter.emitUpdate({
                     userId,
@@ -348,6 +348,7 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
 
             callback?.({
                 result: 'success',
+                created: result.didWrite,
                 artifact: {
                     id: result.artifact.id,
                     header: Buffer.from(result.artifact.header).toString('base64'),

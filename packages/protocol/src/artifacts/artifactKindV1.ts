@@ -6,6 +6,21 @@ import { ApprovalArtifactQueryHintsV1Schema, deriveApprovalArtifactQueryHintsV1,
 export const ArtifactCoarseKindV1Schema = z.enum(['skill', 'prompt', 'plugin_ui', 'work_board', 'widget_area_layout', 'widget_definition', 'widget_layout_fragment', 'other']);
 export type ArtifactCoarseKindV1 = z.infer<typeof ArtifactCoarseKindV1Schema>;
 
+export const THEME_PROFILE_ARTIFACT_KIND_V1 = 'theme_profile.v1';
+
+export type ArtifactContentDeliveryPolicyV1 = Readonly<{
+  legacySocketPublication: boolean;
+  bodyPreviewAllowed: boolean;
+}>;
+
+/** Private theme bodies use addressed delivery; replay-bearing approval bodies have no excerpt. */
+export function getArtifactContentDeliveryPolicyV1(kind: unknown): ArtifactContentDeliveryPolicyV1 {
+  const privateTheme = kind === THEME_PROFILE_ARTIFACT_KIND_V1;
+  return { legacySocketPublication: !privateTheme,
+    bodyPreviewAllowed: !privateTheme && !isApprovalArtifactKindV1(kind) };
+}
+
+
 export interface ArtifactKindV1 {
   kind: ArtifactCoarseKindV1;
   kindHint: string | null;

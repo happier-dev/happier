@@ -2,6 +2,7 @@ import type { ArtifactCallerAccessV1 } from './artifactAccessV1.js';
 import type { ArtifactAccessGrantsListResponseV1 } from './artifactAccessV1.js';
 import type { ArtifactPublicAudienceV1 } from './artifactActionsV1.js';
 import type { ArtifactBodyV1 } from './artifactBinaryV1.js';
+import { THEME_PROFILE_ARTIFACT_KIND_V1, getArtifactContentDeliveryPolicyV1, type ArtifactContentDeliveryPolicyV1 } from './artifactKindV1.js';
 import { isArtifactHtmlHeaderV1 } from './artifactHtmlV1.js';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '../approvals/approvalArtifactKindV1.js';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from './deploymentArtifactKindsV1.js';
@@ -82,7 +83,7 @@ export type ArtifactKindPolicyV1 = Readonly<{
   publicLinkAllowed: boolean;
   peopleSharingAllowed: boolean;
   grantInspection: 'all' | 'owner_only';
-}>;
+}> & ArtifactContentDeliveryPolicyV1;
 
 export const workflowDefinitionArtifactSharingAdapterV1 = {
   kind: 'workflow-definition.v1',
@@ -189,7 +190,7 @@ const documentPolicy = { browserListed: true, ownerDeleteAllowed: true, publicLi
 const privatePolicy = { browserListed: false, ownerDeleteAllowed: false, publicLinkAllowed: false, peopleSharingAllowed: false, grantInspection: 'all' } as const;
 
 // One table owns presentation, grant/public admission, intent and content validation.
-const kindPolicies: readonly Readonly<ArtifactKindPolicyV1 & {
+const kindPolicies: readonly Readonly<Omit<ArtifactKindPolicyV1, keyof ArtifactContentDeliveryPolicyV1> & {
   kind: string; adapter?: ArtifactSharingKindAdapterV1; useKind: ArtifactUseTargetV1['kind']; requiresTextBody: boolean;
   signedInLinkAllowed?: boolean;
 }>[] = [
@@ -208,6 +209,7 @@ const kindPolicies: readonly Readonly<ArtifactKindPolicyV1 & {
     useKind: 'open', requiresTextBody: true, browserListed: false, publicLinkAllowed: false, signedInLinkAllowed: true, grantInspection: 'owner_only' },
   { ...documentPolicy, kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, adapter: widgetSurfaceArtifactSharingAdapterV1, useKind: 'open', requiresTextBody: false,
     browserListed: false, ownerDeleteAllowed: false, publicLinkAllowed: false },
+  { ...privatePolicy, kind: THEME_PROFILE_ARTIFACT_KIND_V1, ownerDeleteAllowed: true, useKind: 'open', requiresTextBody: true },
   { ...privatePolicy, kind: HOME_HUB_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: false },
   { ...privatePolicy, kind: WIDGET_LAYOUT_FRAGMENT_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
   { ...privatePolicy, kind: USAGE_NOTICE_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
@@ -226,8 +228,9 @@ export const ARTIFACT_BROWSER_NON_LISTED_KINDS_V1: readonly string[] = Object.fr
 /** Unknown and untyped ordinary documents retain generic document behavior. */
 export function getArtifactKindPolicyV1(kind: unknown, audience: 'anonymous' | 'signed_in' = 'anonymous'): ArtifactKindPolicyV1 {
   const policy = kindPolicies.find(policy => policy.kind === kind) ?? documentPolicy;
-  return audience === 'signed_in' && 'signedInLinkAllowed' in policy && policy.signedInLinkAllowed === true
-    ? { ...policy, publicLinkAllowed: true } : policy;
+  return { ...policy, ...getArtifactContentDeliveryPolicyV1(kind),
+    ...(audience === 'signed_in' && 'signedInLinkAllowed' in policy && policy.signedInLinkAllowed === true
+      ? { publicLinkAllowed: true } : {}) };
 }
 
 /** The server combines kind policy with admitted access before collecting audience details. */

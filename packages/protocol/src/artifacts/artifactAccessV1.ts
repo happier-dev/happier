@@ -135,6 +135,12 @@ export const ArtifactHttpReadV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type ArtifactHttpReadV1 = z.infer<typeof ArtifactHttpReadV1Schema>;
 
+/** Create returns the authoritative inserted-row fact; reads keep their existing shape. */
+export const ArtifactCreateHttpResponseV1Schema = lazyZodSchema(() => z.extend(ArtifactHttpReadV1Schema, {
+  created: z.optional(z.boolean()),
+}));
+
+
 /** V1 selected read: one result for every requested identity, in request order. */
 export const ArtifactReadBatchInputV1Schema = lazyZodSchema(() => z.strictObject({
   artifactIds: z.array(z.string().check(z.minLength(1))).check(z.refine(ids => new Set(ids).size === ids.length, {

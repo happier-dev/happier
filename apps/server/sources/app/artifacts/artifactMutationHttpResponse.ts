@@ -67,7 +67,7 @@ export async function createArtifactHttpMutation(userId: string, input: Artifact
             }
             createSucceeded = true;
 
-            if (result.didWrite) {
+            if (result.didWrite && result.legacySocketPublication) {
                 const newArtifactPayload = buildNewArtifactUpdate(result.artifact, result.cursor.resolveCursor(), randomKeyNaked(12));
                 eventRouter.emitUpdate({
                     userId,
@@ -82,7 +82,7 @@ export async function createArtifactHttpMutation(userId: string, input: Artifact
                 transactionClass: 'artifact-create-response-read',
             });
             if (!read.ok) return { statusCode: 500 as const, body: { error: 'Failed to create artifact' as const } };
-            return { statusCode: 200 as const, body: projectArtifactHttpRead(read.artifact) };
+            return { statusCode: 200 as const, body: { ...projectArtifactHttpRead(read.artifact), created: result.didWrite } };
         } catch (error) {
             const databaseError = readDatabaseErrorCode(error);
             // A failed response read cannot certify rollback of the preceding
@@ -173,7 +173,7 @@ export async function updateArtifactHttpMutation(userId: string, artifactId: str
                 ? { value: body!, version: result.body.version }
                 : undefined;
 
-            for (const recipient of result.recipientUpdates) {
+            for (const recipient of result.legacySocketPublication ? result.recipientUpdates : []) {
                 eventRouter.emitUpdate({
                     userId: recipient.accountId,
                     payload: buildUpdateArtifactUpdate(id, recipient.cursor.resolveCursor(), randomKeyNaked(12), headerUpdate, bodyUpdate, recipient),

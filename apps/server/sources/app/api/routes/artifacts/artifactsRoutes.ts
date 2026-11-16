@@ -21,7 +21,7 @@ import {
     reportArtifactTemplateAcceptedVersionInTx,
     type ArtifactListItemForCaller,
 } from "@/app/artifacts/artifactAccessService";
-import { ArtifactHttpReadV1Schema, ArtifactReadBatchHttpInputV1Schema, ArtifactReadBatchHttpResponseV1Schema,
+import { ArtifactHttpReadV1Schema, ArtifactCreateHttpResponseV1Schema, ArtifactReadBatchHttpInputV1Schema, ArtifactReadBatchHttpResponseV1Schema,
     type ArtifactReadBatchResponseV1, type ArtifactReadHeadersBatchResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { Fastify } from "../../types";
 import { z } from "zod/mini";
@@ -216,7 +216,7 @@ export function artifactsRoutes(app: Fastify) {
             return reply.code(500).send({ error: 'Failed to restore artifact' });
         }
         if (!result.header || !result.body) return reply.code(500).send({ error: 'Failed to restore artifact' });
-        for (const recipient of result.recipientUpdates) {
+        for (const recipient of result.legacySocketPublication ? result.recipientUpdates : []) {
             eventRouter.emitUpdate({ userId: recipient.accountId,
                 payload: buildUpdateArtifactUpdate(request.params.id, recipient.cursor.resolveCursor(), randomKeyNaked(12),
                     { value: privacyKit.encodeBase64(new Uint8Array(result.header.bytes)), version: result.header.version },
@@ -463,7 +463,7 @@ export function artifactsRoutes(app: Fastify) {
         schema: {
             body: createArtifactCreateHttpInputV1Schema({ requiresBlob, requiresMemoryDecisionSource }),
             response: {
-                200: ArtifactHttpReadV1Schema,
+                200: ArtifactCreateHttpResponseV1Schema,
                 403: z.object({ error: z.string() }),
                 404: z.object({ error: z.literal('memory_decision_source_unavailable') }),
                 409: z.object({ error: z.enum(['Artifact with this ID already exists for another account', 'memory_decision_source_unsupported']) }),

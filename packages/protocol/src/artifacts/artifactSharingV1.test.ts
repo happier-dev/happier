@@ -16,6 +16,7 @@ import {
   filterArtifactSharingResourcesByKindV1,
   workflowDefinitionArtifactSharingAdapterV1,
   getArtifactUseTargetV1,
+  getArtifactKindPolicyV1,
   artifactKindRequiresTextBodyV1,
   readArtifactSharedAudienceV1,
   readArtifactPublicNetworkPolicyV1,
@@ -29,6 +30,17 @@ const artifact = {
   },
 };
 describe('Document sharing kind owner', () => {
+  it('keeps private theme documents out of browsing, sharing, legacy delivery, and body excerpts', () => {
+    const header = { kind: 'theme_profile.v1', title: 'Private theme', excerpt: 'stale private content' };
+    expect(getArtifactKindPolicyV1(header.kind)).toMatchObject({
+      browserListed: false, ownerDeleteAllowed: true, publicLinkAllowed: false,
+      peopleSharingAllowed: false, legacySocketPublication: false, bodyPreviewAllowed: false,
+    });
+    expect(getArtifactUseTargetV1({ artifactId: 'theme', header, body: '.private { color: red; }' }))
+      .toMatchObject({ browserListed: false, publicLinkAllowed: false, canShare: false });
+    expect(withArtifactExcerptV1(header, '.private { color: red; }')).toEqual({ kind: header.kind, title: header.title });
+    expect(withArtifactExcerptV1({ kind: 'markdown' }, 'Ordinary document')).toMatchObject({ excerpt: 'Ordinary document' });
+  });
   it('opens a released Bot template in its recipient owner while keeping drafts private and generic', () => {
     const header = { v: 1, kind: 'bot_template.v1', state: 'released', title: 'Garden', description: 'Garden advice', version: '1.0.0', changelog: '' };
     expect(getArtifactUseTargetV1({ artifactId: 'template', header, body: null }))
