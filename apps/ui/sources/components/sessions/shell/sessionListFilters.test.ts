@@ -49,6 +49,65 @@ const inactiveHeader: Extract<SessionListViewItem, { type: 'header' }> = {
 };
 
 describe('filterSessionListItemsForHeaderControls', () => {
+    it('does not reintroduce transcript-excluded sessions through metadata matches', () => {
+        const result = filterSessionListItemsForHeaderControls([
+            sessionItem('blocked', { name: 'Continue with this task', path: '/repo' }),
+            sessionItem('allowed', { name: 'Continue with this task', path: '/repo' }),
+        ], {
+            searchQuery: 'continue -umbrella',
+            selectedTags: [],
+            sessionTags: {},
+            searchableTextBySessionKey: {},
+            memoryExcludedSessionKeys: new Set(['server-a:blocked']),
+        });
+        expect(result.flatMap((item) => item.type === 'session' ? [item.session.id] : [])).toEqual(['allowed']);
+    });
+
+    it.each([
+        ['continue -umbrella', ['clear']],
+        ['continue -"umbrella pigs"', ['separated', 'clear']],
+        ['-"umbrella pigs"', ['separated', 'clear', 'other']],
+        ['-umbrella', ['clear', 'other']],
+    ])('excludes terms and phrases in %s, including memory matches', (searchQuery, expected) => {
+        const result = filterSessionListItemsForHeaderControls([
+            sessionItem('phrase', { name: 'Continue with umbrella pigs', path: '/repo' }),
+            sessionItem('separated', { name: 'Continue with umbrella dancing pigs', path: '/repo' }),
+            sessionItem('clear', { name: 'Continue with dancing pigs', path: '/repo' }),
+            sessionItem('loaded', { name: 'Continue', path: '/repo' }),
+            sessionItem('other', { name: 'Unrelated', path: '/repo' }),
+        ], {
+            searchQuery,
+            selectedTags: [],
+            sessionTags: {},
+            searchableTextBySessionKey: { 'server-a:loaded': 'umbrella pigs' },
+            memoryMatchedSessionKeys: new Set(['server-a:phrase', 'server-a:loaded']),
+        });
+        expect(result.flatMap((item) => item.type === 'session' ? [item.session.id] : [])).toEqual(expected);
+    });
+
+    it.each([
+        ['"continue with"', ['phrase', 'loaded']],
+        ['"continue a with"', []],
+        ['release "continue with"', ['phrase']],
+        ['"continue with" "release candidate"', ['phrase']],
+        ['"continue with', ['phrase', 'loaded']],
+        ['continue with', ['phrase', 'separated', 'loaded', 'fields']],
+    ])('matches words and quoted phrases in %s', (searchQuery, expected) => {
+        const result = filterSessionListItemsForHeaderControls([
+            activeHeader,
+            sessionItem('phrase', { name: 'Continue with the release candidate', path: '/repo' }),
+            sessionItem('separated', { name: 'Continue the release candidate with care', path: '/repo' }),
+            sessionItem('loaded', { name: 'Notes', path: '/repo' }),
+            sessionItem('fields', { name: 'Continue', summaryText: 'with release candidate', path: '/repo' }),
+        ], {
+            searchQuery,
+            selectedTags: [],
+            sessionTags: {},
+            searchableTextBySessionKey: { 'server-a:loaded': 'Please CONTINUE WITH this task.' },
+        });
+        expect(result.flatMap((item) => item.type === 'session' ? [item.session.id] : [])).toEqual(expected);
+    });
+
     it('filters sessions by metadata and prunes empty headers', () => {
         const result = filterSessionListItemsForHeaderControls([
             activeHeader,

@@ -7,6 +7,7 @@ export type SqliteStatementSync = Readonly<{
 }>;
 
 export type SqliteDatabaseSync = Readonly<{
+  function: (name: string, options: Readonly<{ deterministic: boolean }>, fn: (value: unknown) => string) => unknown;
   exec: (sql: string) => void;
   prepare: (sql: string) => SqliteStatementSync;
   close: () => void;

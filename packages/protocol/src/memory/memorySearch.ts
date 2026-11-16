@@ -64,6 +64,8 @@ export const MemorySearchResultV1Schema = lazySchema(() => z.union([
     v: z.literal(1),
     ok: z.literal(true),
     hits: z.array(MemorySearchHitV1Schema),
+    querySyntaxVersion: z.literal(1).optional(),
+    excludedSessionIds: z.array(z.string().min(1)).optional(),
   }).passthrough(),
   z.object({
     v: z.literal(1),

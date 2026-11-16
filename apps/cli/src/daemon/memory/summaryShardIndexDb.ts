@@ -1,4 +1,6 @@
 import { openSqliteDatabaseSync, type SqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
+import { parseSearchQuery } from '@happier-dev/protocol';
+import { registerMemorySearchFunctions } from './memorySearchSqlite';
 import {
   createMemoryIndexQueueDb,
   ensureMemoryIndexQueueSchema,
@@ -29,6 +31,7 @@ export type SummaryIndexStats = Readonly<{
 }>;
 
 export type SummaryShardIndexDbHandle = Readonly<{
+  findExcludedSessionIds: (args: Readonly<{ query: string; scope: MemorySearchScope }>) => string[];
   init: () => void;
   insertSummaryShard: (args: Readonly<{
     sessionId: string;
@@ -201,6 +204,7 @@ function ensureSchema(db: SqliteDatabaseSync): void {
 
 export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): SummaryShardIndexDbHandle {
   const db = openSqliteDatabaseSync(args.dbPath);
+  registerMemorySearchFunctions(db);
   ensureSchema(db);
 
   const insertStmt = db.prepare(`
@@ -363,6 +367,20 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
   const queueDb = createMemoryIndexQueueDb(db);
 
   return {
+    findExcludedSessionIds: ({ query, scope }) => {
+      const { excludedTerms } = parseSearchQuery(query);
+      if (excludedTerms.length === 0) return [];
+      const conditions = excludedTerms.map(() => '(instr(memory_search_lower(summary), ?) > 0 OR instr(memory_search_lower(keywordsText), ?) > 0 OR instr(memory_search_lower(entitiesText), ?) > 0 OR instr(memory_search_lower(decisionsText), ?) > 0)');
+      const params: Array<string | number> = [];
+      for (const term of excludedTerms) params.push(term, term, term, term);
+      if (scope.type === 'session') params.push(scope.sessionId);
+      const rows = db.prepare(`
+        SELECT DISTINCT sessionId FROM summary_shards
+        WHERE (${conditions.join(' OR ')})
+          ${scope.type === 'session' ? 'AND sessionId = ?' : ''}
+      `).all(...params) as Array<{ sessionId: string }>;
+      return rows.map((row) => row.sessionId);
+    },
     init: () => {
       // Schema is ensured at open time; keep init() for call-site symmetry.
     },
@@ -395,9 +413,20 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
       if (!normalized) return [];
 
       const limit = Math.max(1, Math.min(100, Math.floor(maxResults)));
-      const terms = tokenize(normalized);
-      if (terms.length === 0) return [];
-
+      const parsed = parseSearchQuery(query);
+      const terms = tokenize(parsed.terms.join(' '));
+      const { phrases, excludedTerms } = parsed;
+      if (terms.length === 0 && phrases.length === 0 && excludedTerms.length === 0) return [];
+      // Enforce phrases in SQL before ranking/limiting, never on a truncated preview.
+      const phraseConditions = phrases.map(() => '(instr(memory_search_lower(s.summary), ?) > 0 OR instr(memory_search_lower(s.keywordsText), ?) > 0 OR instr(memory_search_lower(s.entitiesText), ?) > 0 OR instr(memory_search_lower(s.decisionsText), ?) > 0)');
+      // An excluded term anywhere in the indexed session excludes all of its hits.
+      const exclusionConditions = excludedTerms.map(() => `
+        NOT EXISTS (
+          SELECT 1 FROM summary_shards excluded
+          WHERE excluded.sessionId = s.sessionId
+            AND (instr(memory_search_lower(excluded.summary), ?) > 0 OR instr(memory_search_lower(excluded.keywordsText), ?) > 0 OR instr(memory_search_lower(excluded.entitiesText), ?) > 0 OR instr(memory_search_lower(excluded.decisionsText), ?) > 0)
+        )
+      `);
       const placeholders = terms.map(() => '?').join(',');
       const sql = `
         SELECT
@@ -408,23 +437,29 @@ export function openSummaryShardIndexDb(args: Readonly<{ dbPath: string }>): Sum
           s.createdAtToMs AS createdAtToMs,
           s.summary AS summary,
           COUNT(*) AS hitCount
-        FROM summary_terms t
-          JOIN summary_shards s ON s.shardId = t.shardId
-        WHERE t.term IN (${placeholders})
+        FROM summary_shards s
+          ${terms.length > 0 ? 'JOIN summary_terms t ON s.shardId = t.shardId' : ''}
+        WHERE ${terms.length > 0 ? `t.term IN (${placeholders})` : '1 = 1'}
+          ${phraseConditions.map((condition) => `AND ${condition}`).join('\n')}
+          ${exclusionConditions.map((condition) => `AND ${condition}`).join('\n')}
           ${scope.type === 'session' ? 'AND s.sessionId = ?' : ''}
         GROUP BY s.shardId
+        ${phrases.length > 0 && terms.length > 0 ? 'HAVING COUNT(*) = ?' : ''}
         ORDER BY hitCount DESC, s.createdAtToMs DESC
         LIMIT ?;
       `;
       const stmt = db.prepare(sql);
-      const params: any[] = [...terms];
+      const params: Array<string | number> = [...terms];
+      for (const phrase of phrases) params.push(phrase, phrase, phrase, phrase);
+      for (const term of excludedTerms) params.push(term, term, term, term);
       if (scope.type === 'session') params.push(scope.sessionId);
+      if (phrases.length > 0 && terms.length > 0) params.push(terms.length);
       params.push(limit);
       const rows = stmt.all(...params) as any[];
 
       return rows.flatMap((row) => {
         const hitCount = Number(row.hitCount ?? 0);
-        const score = terms.length > 0 ? hitCount / terms.length : 0;
+        const score = terms.length > 0 ? hitCount / terms.length : 1;
         if (terms.length > 1 && score <= MULTI_TERM_QUERY_MIN_MATCH_RATIO) {
           return [];
         }

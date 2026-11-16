@@ -39,6 +39,24 @@ To search:
 
 If you do not see the feature yet, enable the `memory.search` feature in **Settings → Features**.
 
+### Quoted phrases and exclusions (development)
+
+The session list search field and local memory search support double quotes and
+minus-prefixed exclusions in development builds:
+
+- `"continue with"` requires that phrase in order, including the space.
+- `continue -umbrella` searches for `continue` and excludes sessions containing `umbrella`.
+- `continue -"umbrella pigs"` excludes the exact phrase; `umbrella dancing pigs` remains eligible.
+- `-"umbrella pigs"` applies the exclusion without requiring a positive search term.
+
+Matching ignores letter case. An unfinished closing quote groups the remaining
+text while you type. Exclusions apply to the content available to each search:
+metadata and loaded text in the app, and indexed content on the machine. Light
+indexing searches generated summaries and their keywords; deep indexing searches
+transcript chunks. Unloaded or unindexed content cannot establish an exclusion.
+The app and daemon both need this syntax support for memory results; an older
+daemon leaves local session-list filtering available but cannot augment these queries.
+
 ## Important model: machine-local, not account-global
 
 Memory search is scoped to the **selected machine**.

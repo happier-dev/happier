@@ -1,4 +1,5 @@
 import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import { parseSearchQuery, type ParsedSearchQuery } from '@happier-dev/protocol';
 
 import { sessionTagKey } from './sessionTagUtils';
 import { isSessionListPrimaryHeaderKind } from './sessionListPrimaryHeader';
@@ -9,20 +10,12 @@ export type SessionListHeaderFilterInput = Readonly<{
     searchableTextBySessionKey: Readonly<Record<string, string>>;
     memoryMatchedSessionKeys?: ReadonlySet<string>;
     controlsAnchorKey?: string | null;
+    memoryExcludedSessionKeys?: ReadonlySet<string>;
 }>;
 
 export type SessionListHeaderFilterState = SessionListHeaderFilterInput & Readonly<{
     sessionTags: Readonly<Record<string, readonly string[]>>;
 }>;
-
-function normalizeSearchTokens(query: string): string[] {
-    return query
-        .trim()
-        .toLocaleLowerCase()
-        .split(/\s+/)
-        .map((token) => token.trim())
-        .filter(Boolean);
-}
 
 function buildSessionKey(item: Extract<SessionListViewItem, { type: 'session' }>): string | null {
     const serverId = String(item.serverId ?? '').trim();
@@ -67,15 +60,19 @@ function buildSessionSearchText(
 function sessionMatchesSearch(
     item: Extract<SessionListViewItem, { type: 'session' }>,
     sessionKey: string | null,
-    searchTokens: ReadonlyArray<string>,
+    query: ParsedSearchQuery,
     searchableTextBySessionKey: Readonly<Record<string, string>>,
     memoryMatchedSessionKeys: ReadonlySet<string> | null | undefined,
 ): boolean {
-    if (searchTokens.length === 0) return true;
-    if (sessionKey && memoryMatchedSessionKeys?.has(sessionKey)) return true;
+    if (query.excludedTerms.length === 0) {
+        if (query.terms.length === 0 || (sessionKey && memoryMatchedSessionKeys?.has(sessionKey))) return true;
+    }
     const haystack = buildSessionSearchText(item, sessionKey, searchableTextBySessionKey);
+    if (query.excludedTerms.some((term) => haystack.includes(term))) return false;
+    if (query.terms.length === 0) return true;
+    if (sessionKey && memoryMatchedSessionKeys?.has(sessionKey)) return true;
     if (!haystack) return false;
-    return searchTokens.every((token) => haystack.includes(token));
+    return query.terms.every((token) => haystack.includes(token));
 }
 
 export function hasActiveSessionListHeaderFilters(input: Pick<SessionListHeaderFilterInput, 'searchQuery' | 'selectedTags'> | null | undefined): boolean {
@@ -113,7 +110,7 @@ export function filterSessionListItemsForHeaderControls(
 ): SessionListViewItem[] {
     if (!hasActiveSessionListHeaderFilters(input)) return items as SessionListViewItem[];
 
-    const searchTokens = normalizeSearchTokens(input.searchQuery);
+    const query = parseSearchQuery(input.searchQuery);
     const selectedTags = new Set(input.selectedTags);
     const result: SessionListViewItem[] = [];
     let pendingHeaders: Extract<SessionListViewItem, { type: 'header' }>[] = [];
@@ -136,8 +133,9 @@ export function filterSessionListItemsForHeaderControls(
 
         const key = buildSessionKey(item);
         if (
-            !sessionMatchesSelectedTags(key, selectedTags, input.sessionTags)
-            || !sessionMatchesSearch(item, key, searchTokens, input.searchableTextBySessionKey, input.memoryMatchedSessionKeys)
+            (key && input.memoryExcludedSessionKeys?.has(key))
+            || !sessionMatchesSelectedTags(key, selectedTags, input.sessionTags)
+            || !sessionMatchesSearch(item, key, query, input.searchableTextBySessionKey, input.memoryMatchedSessionKeys)
         ) {
             continue;
         }

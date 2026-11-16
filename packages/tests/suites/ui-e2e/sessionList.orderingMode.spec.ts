@@ -215,6 +215,54 @@ test.describe('ui e2e: session list ordering mode', () => {
     await server?.stop().catch(() => {});
   });
 
+  test('filters quoted phrases and minus exclusions through the session list field', async ({ page }) => {
+    test.setTimeout(180_000);
+    if (!server || !uiBaseUrl || !token) throw new Error('missing server/ui fixtures');
+    const diagnostics = collectBrowserDiagnostics({ page });
+    try {
+      const titles = [
+        'Continue with umbrella pigs',
+        'Continue with umbrella dancing pigs',
+        'Continue another task with dancing pigs',
+      ];
+      const sessionIds: string[] = [];
+      for (const title of titles) {
+        sessionIds.push(await createPlainSession({
+          baseUrl: server.baseUrl, token, title, rootPath: repoRootDir(),
+          machineId: SEEDED_MACHINE_ID, tagPrefix: 'session-list-search',
+        }));
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
+      await waitForInitialAppUi({ page, timeoutMs: 120_000 });
+      for (const sessionId of sessionIds) {
+        await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(1, { timeout: 120_000 });
+      }
+      const input = page.getByTestId('session-list-search-input').first();
+      await expect(input).toBeVisible();
+      const cases: ReadonlyArray<readonly [string, readonly number[]]> = [
+        ['"continue with"', [0, 1]],
+        ['"continue a with"', []],
+        ['continue -umbrella', [2]],
+        ['continue -"umbrella pigs"', [1, 2]],
+        ['-"umbrella pigs"', [1, 2]],
+        ['', [0, 1, 2]],
+      ];
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        for (const [query, expected] of cases) {
+          await input.fill(query);
+          for (const [index, sessionId] of sessionIds.entries()) {
+            await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(expected.includes(index) ? 1 : 0);
+          }
+          await expect(input).toBeFocused();
+        }
+      }
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, diagnostics());
+    }
+  });
+
   test('groups linked worktrees with their repository and supports directory grouping', async ({ page }) => {
     test.setTimeout(180_000);
     if (!server || !uiBaseUrl || !token) throw new Error('missing server/ui fixtures');

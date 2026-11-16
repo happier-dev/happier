@@ -19,7 +19,7 @@ function resolveIdleMemorySearchState(
     current: SessionListMemorySearchAugmentationState,
     memorySearchUnavailableReason?: string,
 ): SessionListMemorySearchAugmentationState {
-    const hasMemoryMatches = current.memoryMatchedSessionKeys.size > 0;
+    const hasMemoryMatches = current.memoryMatchedSessionKeys.size > 0 || current.memoryExcludedSessionKeys.size > 0;
     if (
         !hasMemoryMatches
         && current.isSearchingMemory === false
@@ -30,6 +30,7 @@ function resolveIdleMemorySearchState(
     return {
         ...current,
         memoryMatchedSessionKeys: EMPTY_MEMORY_MATCHED_SESSION_KEYS,
+        memoryExcludedSessionKeys: EMPTY_MEMORY_MATCHED_SESSION_KEYS,
         isSearchingMemory: false,
         memorySearchUnavailableReason,
     };
@@ -59,6 +60,7 @@ function resolveRefreshingMemorySearchState(
 
 export type SessionListMemorySearchAugmentationState = Readonly<{
     memoryMatchedSessionKeys: ReadonlySet<string>;
+    memoryExcludedSessionKeys: ReadonlySet<string>;
     isSearchingMemory: boolean;
     memorySearchUnavailableReason?: string;
     lastSuccessfulQuery?: string;
@@ -92,6 +94,7 @@ export function useSessionListMemorySearchAugmentation(input: Readonly<{
     const requestIdRef = React.useRef(0);
     const [state, setState] = React.useState<SessionListMemorySearchAugmentationState>({
         memoryMatchedSessionKeys: EMPTY_MEMORY_MATCHED_SESSION_KEYS,
+        memoryExcludedSessionKeys: EMPTY_MEMORY_MATCHED_SESSION_KEYS,
         isSearchingMemory: false,
     });
 
@@ -155,6 +158,11 @@ export function useSessionListMemorySearchAugmentation(input: Readonly<{
                     }
                     setState({
                         memoryMatchedSessionKeys: nextKeys.size > 0 ? nextKeys : EMPTY_MEMORY_MATCHED_SESSION_KEYS,
+                        memoryExcludedSessionKeys: new Set(
+                            (result.excludedSessionIds ?? [])
+                                .map((sessionId) => sessionTagKey(serverId, sessionId))
+                                .filter((key) => candidateSessionKeys.has(key)),
+                        ),
                         isSearchingMemory: false,
                         lastSuccessfulQuery: normalizedQuery,
                     });

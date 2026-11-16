@@ -6,6 +6,75 @@ import { tmpdir } from 'node:os';
 import { openDeepIndexDb } from './deepIndexDb';
 
 describe('deepIndexDb', () => {
+  it('matches Unicode letter case in phrases and exclusions', () => {
+    const db = openDeepIndexDb({ dbPath: ':memory:' });
+    try {
+      ['ÜMBRELLA PIGS', 'ümbrella pigs'].forEach((text, index) => db.insertChunk({
+        sessionId: `s${index}`, seqFrom: 1, seqTo: 1, createdAtFromMs: 1, createdAtToMs: 1,
+        text,
+      }));
+      expect(db.search({ query: '"ümbrella pigs"', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(2);
+      expect(db.search({ query: '-ümbrella', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+      expect(db.findExcludedSessionIds({ query: '-ümbrella', scope: { type: 'global' } }).sort()).toEqual(['s0', 's1']);
+    } finally {
+      db.close();
+    }
+  });
+  it('excludes terms and phrases across the indexed session, including exclusion-only queries', () => {
+    const db = openDeepIndexDb({ dbPath: ':memory:' });
+    try {
+      const texts = [
+        'Continue with umbrella pigs',
+        'Continue with umbrella dancing pigs',
+        'Continue with dancing pigs',
+        'Unrelated',
+        'umbrella pigs',
+      ];
+      texts.forEach((text, index) => db.insertChunk({
+        sessionId: index === 4 ? 's2' : `s${index}`,
+        seqFrom: index + 1,
+        seqTo: index + 1,
+        createdAtFromMs: index,
+        createdAtToMs: index,
+        text,
+      }));
+      const search = (query: string) => db.search({ query, scope: { type: 'global' }, maxResults: 10 })
+        .map((hit) => hit.sessionId);
+      expect(search('"continue with" -"umbrella pigs"')).toEqual(['s1']);
+      expect(search('"continue with" -umbrella')).toEqual([]);
+      expect(search('-"umbrella pigs"')).toEqual(['s3', 's1']);
+      expect(search('-umbrella')).toEqual(['s3']);
+    } finally {
+      db.close();
+    }
+  });
+  it('requires literal quoted phrases before applying the result limit', () => {
+    const db = openDeepIndexDb({ dbPath: ':memory:' });
+    try {
+      const texts = [
+        'Please CONTINUE WITH the release candidate.',
+        'Continue the release candidate with care.',
+        'Continue a task with the release candidate.',
+        'Continue with another task.',
+      ];
+      texts.forEach((text, index) => db.insertChunk({
+        sessionId: `s${index}`,
+        seqFrom: 1,
+        seqTo: 2,
+        createdAtFromMs: index,
+        createdAtToMs: index,
+        text,
+      }));
+      const search = (query: string) => db.search({ query, scope: { type: 'global' }, maxResults: 1 })
+        .map((hit) => hit.sessionId);
+      expect(search('"continue with" "release candidate"')).toEqual(['s0']);
+      expect(search('"continue a with"')).toEqual([]);
+      expect(search('"continue with"')).toEqual(['s3']);
+      expect(db.search({ query: '"continue with"', scope: { type: 'session', sessionId: 's1' }, maxResults: 10 })).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
   it('indexes chunks and can search by term (global scope)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-deep-index-'));
     try {

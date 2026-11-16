@@ -131,6 +131,21 @@ afterEach(() => {
 });
 
 describe('useSessionListMemorySearchAugmentation', () => {
+    it('publishes indexed exclusions and clears them when the query changes', async () => {
+        vi.useFakeTimers();
+        machineRpcWithServerScopeMock.mockImplementation(async (params: { method?: string }) => {
+            if (params.method === RPC_METHODS.DAEMON_MEMORY_STATUS) return createMemoryStatusResponse(true);
+            return { v: 1, ok: true, querySyntaxVersion: 1, hits: [], excludedSessionIds: ['session-1', 'outside'] };
+        });
+        const candidates = new Set(['server-a:session-1']);
+        const props = { searchQuery: '-umbrella', getCandidateSessionKeys: () => candidates };
+        const hook = await renderMemoryAugmentationHook(props);
+        await flushHookEffects({ advanceTimersMs: 300, cycles: 4 });
+        expect([...hook.getCurrent().memoryExcludedSessionKeys]).toEqual(['server-a:session-1']);
+        await hook.rerender({ ...props, searchQuery: 'another' });
+        expect(hook.getCurrent().memoryExcludedSessionKeys.size).toBe(0);
+    });
+
     it('does not call the daemon when the list surface is not data-active', async () => {
         vi.useFakeTimers();
         const getCandidateSessionKeys = vi.fn(() => new Set(['server-a:session-1']));
