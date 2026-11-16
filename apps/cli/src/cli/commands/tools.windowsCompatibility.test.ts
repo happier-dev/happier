@@ -19,7 +19,16 @@ afterEach(() => {
 });
 
 describe('Windows current-user Agent tools compatibility', () => {
-  it('keeps the credentialed Session RPC route and Agent tool-call attribution without Unix context', async () => {
+  it.each([
+    { outcome: 'success', result: { ok: true, result: { title: 'Windows Session' } },
+      expected: { ok: true, data: { output: { title: 'Windows Session' } } } },
+    { outcome: 'workflow refusal', result: { ok: false, errorCode: 'action_interception_rejected', error: 'PRIVATE',
+      details: { message: 'Review the check Run.', stderr: 'PRIVATE' } },
+      expected: { ok: false, error: { code: 'action_interception_rejected',
+        message: 'Workflow-supplied reason (untrusted): "Review the check Run."' } } },
+    { outcome: 'permission refusal', result: { ok: false, errorCode: 'permission_denied', error: 'Permission is required.' },
+      expected: { ok: false, error: { code: 'permission_denied', message: 'Permission is required.' } } },
+  ])('keeps the credentialed Session RPC route and typed $outcome without Unix context', async ({ result, expected }) => {
     const sessionId = 'c123456789012345678901234';
     const app = fastify({ logger: false });
     const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain',
@@ -31,7 +40,6 @@ describe('Windows current-user Agent tools compatibility', () => {
     const restoreHttp = installAxiosFastifyAdapter({ app, origin: new URL(resolveServerHttpBaseUrl()).origin });
     const channel = await createRequesterCurrentnessSocketHarness();
     const requests: unknown[] = [];
-    const result = { ok: true, result: { title: 'Windows Session' } };
     channel.server.on('connection', socket => socket.on('rpc-call', (request, acknowledge) => {
       requests.push(request);
       acknowledge({ ok: true, result });
@@ -47,7 +55,8 @@ describe('Windows current-user Agent tools compatibility', () => {
       await handleToolsCommand(['call', '--agent-bridge', '--session-id', sessionId,
         '--source', 'happier', '--tool', 'change_title', '--args-json', '{"title":"Windows Session"}',
         '--tool-call-id', 'native-windows-call', '--json'], { readCredentials });
-      expect(output.json()).toMatchObject({ ok: true, data: { output: result.result } });
+      expect(output.json()).toMatchObject(expected);
+      expect(JSON.stringify(output.json())).not.toContain('PRIVATE');
       expect(requests).toEqual([expect.objectContaining({ method: `${sessionId}:${SESSION_RPC_METHODS.SESSION_AGENT_TOOL_CALL_V1}`,
         params: { toolName: 'change_title', args: { title: 'Windows Session' }, toolCallId: 'native-windows-call' } })]);
       expect(readCredentials).toHaveBeenCalled();

@@ -11,6 +11,7 @@ import { ApprovalProfileResolutionV1Schema } from './approvalProfiles.js';
 import { ActionOperationIdentifierV1Schema } from './operations/identifierV1.js';
 import { ActionIdSchema } from './actionIds.js';
 export { readActionErrorCodeV1 } from './actionErrorClassV1.js';
+export { readActionFailurePresentationV1, projectActionFailureForAgentV1, type ActionFailurePresentationV1 } from './actionFailurePresentation.js';
 
 /** Approval conflicts expose only the compared subject's fixed field names. */
 export const ApprovalRequestConflictFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({

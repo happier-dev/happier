@@ -9,6 +9,7 @@ import { fail } from '@happier-dev/cli-common/output';
 import { resolveShellBridgeActionSurfaceV1 as resolveToolsCommandSurface } from '@/cli/actions/shellBridgeActionSurface';
 import { callSessionMcpTool, listSessionMcpTools } from './toolsSessionMcp';
 import { supportsSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalContext';
+import { projectActionFailureForAgentV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 export type { ToolsCommandDeps } from './toolsAccount';
 
 type AccountToolsListing = Awaited<ReturnType<typeof listAccountTools>>;
@@ -163,6 +164,8 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
           ...(signal ? { signal } : {}),
         }, overrides);
       }
+
+      if (source === 'happier' && !result.ok) result = { ...result, ...projectActionFailureForAgentV1(result) };
 
       if (json) {
         if (result.ok) {
