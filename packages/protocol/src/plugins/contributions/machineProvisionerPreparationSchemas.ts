@@ -1,4 +1,5 @@
 import { ManagedNativeOperationReferenceV1Schema, type ManagedNativeOperationReferenceV1 } from '../../machines/managed/providerFactsV1.js';
+import { lazyDefinition } from '../../lazyZodSchema.js';
 import { jsonSchemaContainsReference } from '../../actions/actionInputJsonSchema.js';
 import { projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
 import { PluginLocalizedStringV2Schema, type PluginLocalizedStringV2 } from './publicTypes.js';
@@ -6,9 +7,9 @@ import { createProtocolComposableSchema, embedProtocolJsonSchema, defineProtocol
   defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolComposableSchema } from '../actions/protocolComposableSchema.js';
 
 const referenceSchema: ProtocolComposableSchema<ManagedNativeOperationReferenceV1, ManagedNativeOperationReferenceV1> =
-  projectZodProtocolSchema(ManagedNativeOperationReferenceV1Schema);
+  projectZodProtocolSchema(lazyDefinition(() => ManagedNativeOperationReferenceV1Schema));
 const localizedStatusSchema: ProtocolComposableSchema<PluginLocalizedStringV2, PluginLocalizedStringV2> =
-  projectZodProtocolSchema(PluginLocalizedStringV2Schema);
+  projectZodProtocolSchema(lazyDefinition(() => PluginLocalizedStringV2Schema));
 type PreparationReference<T> = Omit<ManagedNativeOperationReferenceV1, 'value'> & { value: T };
 
 /** Artifact and pending-operation identities share the incumbent qualified reference envelope. */

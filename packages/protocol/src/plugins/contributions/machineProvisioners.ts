@@ -587,7 +587,7 @@ function projectRoleSchema<T>(schema: z.core.$ZodType<T>): ProtocolComposableSch
 }
 export const ManagedGuestCliBuildInputV1Schema = projectRoleSchema(lazyDefinition(() => managedGuestCliBuildInputSchema));
 export const ManagedMachinePresetPreparationBuildInputV1Schema = projectRoleSchema(lazyDefinition(() => managedPresetPreparationBuildInputSchema));
-const preparationReferenceProtocolSchema = projectRoleSchema(ManagedNativeOperationReferenceV1Schema);
+const preparationReferenceProtocolSchema = lazyDefinition(() => projectRoleSchema(ManagedNativeOperationReferenceV1Schema));
 
 function preparationContractFailure(path: readonly string[], message: string): Readonly<{ success: false; error: ProtocolValidationError }> {
   return { success: false, error: new ProtocolValidationError([{ code: 'custom', path, message }]) };
@@ -634,13 +634,13 @@ export function readMachineProvisionerPreparedLaunchV1(input: Readonly<{
   return { success: true, data: launch as ProtocolJsonValue };
 }
 export const MachineProvisionerCheckInputV1Schema = defineProtocolObject({}, { policy: 'closed' });
-export const MachineProvisionerNativeCauseProtocolV1Schema = projectRoleSchema(MachineProvisionerNativeCauseV1Schema);
+export const MachineProvisionerNativeCauseProtocolV1Schema = projectRoleSchema(lazyDefinition(() => MachineProvisionerNativeCauseV1Schema));
 export const MachineProvisionerCheckResultProtocolV1Schema = projectRoleSchema(MachineProvisionerCheckResultV1Schema);
 export const MachineProvisionerOptionsResultProtocolV1Schema = projectRoleSchema(MachineProvisionerOptionsResultV1Schema);
-export const MachineProvisionerAcquireResultV1Schema = projectRoleSchema(AcquireResultV1Schema);
-export const MachineProvisionerBootstrapCarrierV1Schema = projectRoleSchema(ManagedBootstrapCarrierV1Schema);
-export const MachineProvisionerObservationV1Schema = projectRoleSchema(ProviderObservationV1Schema);
-export const MachineProvisionerSizeV1Schema = projectRoleSchema(sizeSchema);
+export const MachineProvisionerAcquireResultV1Schema = projectRoleSchema(lazyDefinition(() => AcquireResultV1Schema));
+export const MachineProvisionerBootstrapCarrierV1Schema = projectRoleSchema(lazyDefinition(() => ManagedBootstrapCarrierV1Schema));
+export const MachineProvisionerObservationV1Schema = projectRoleSchema(lazyDefinition(() => ProviderObservationV1Schema));
+export const MachineProvisionerSizeV1Schema = projectRoleSchema(lazyDefinition(() => sizeSchema));
 export const MachineProvisionerSnapshotResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('unsupported'), code: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('confirmed'), snapshotId: defineProtocolString({ minLength: 1 }),
