@@ -6853,9 +6853,13 @@ export class ApiMachineClient {
                 }
                 // The existing grant/Team Account-change producer wakes current Manage holders. The
                 // worklist reauthorizes these exact resources; a wake never grants key or access authority.
+                // An own `machine` row this daemon already holds is its own content write (the same
+                // proof that skips the refresh above): it changed no recipient.
                 await this.prepareMachineRecipientEnvelopes([
                     ...(reason !== 'live' ? [this.machine.id] : []),
-                    ...changes.filter(change => isMachineProjectionChangeKindV1(change.kind)).map(change => change.entityId),
+                    ...changes.filter(change => isMachineProjectionChangeKindV1(change.kind)
+                        && !(change.kind === 'machine' && change.entityId === this.machine.id && !hasRelevantMachineChange))
+                        .map(change => change.entityId),
                 ], signal);
                 signal.throwIfAborted();
                 await this.prepareSessionRecipientEnvelopes(

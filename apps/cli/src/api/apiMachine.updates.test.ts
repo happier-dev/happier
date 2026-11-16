@@ -252,6 +252,74 @@ describe('ApiMachineClient updates', () => {
     } finally { await client.shutdown(); }
   });
 
+  it('prepares no recipient envelopes for its own Machine row when that row is its own held content write', async () => {
+    const persistence = await import('@/persistence');
+    const { runWithServerHttpBaseUrl } = await import('./client/serverHttpBaseUrl');
+    await Promise.all([
+      import('./machineAccessGrantEnvelopeHost'),
+      import('@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass'),
+    ]);
+    const holder = tweetnacl.box.keyPair();
+    const key = new Uint8Array(32).fill(43);
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`;
+    const credential = { token, encryption: { type: 'dataKey' as const, publicKey: holder.publicKey, machineKey: holder.secretKey } };
+    const caller = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: key, recipientPublicKey: holder.publicKey, randomBytes: getRandomBytes }));
+    const metadata = encodeBase64(encrypt(key, 'dataKey', { host: 'bob', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/bob', happyHomeDir: '/home/bob/.happier' }));
+    let ownWriteCommitted = false;
+    const ownEnvelopeReads: string[] = [];
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json({
+      features: {}, capabilities: { serverIdentity: { serverIdentityId: 'fixture-home' } },
+    })));
+    vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockResolvedValue(credential);
+    let cursor = 0;
+    vi.spyOn(persistence, 'readAccountChangesCursor').mockImplementation(async () => cursor);
+    let acknowledgeFeed!: () => void;
+    const feedCommitted = new Promise<void>(resolve => { acknowledgeFeed = resolve; });
+    vi.spyOn(persistence, 'writeAccountChangesCursor').mockImplementation(async (accountId, next) => {
+      cursor = next;
+      if (accountId === 'bob' && next === 1) acknowledgeFeed();
+    });
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const { pathname } = new URL(url);
+      if (pathname === '/v1/account/profile') return { status: 200, data: { id: 'bob' } };
+      if (pathname === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'e2ee', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (pathname === '/v2/changes') return { status: 200, data: { changes: ownWriteCommitted
+        ? [{ cursor: 1, kind: 'machine', entityId: 'bob-executor', changedAt: 1 }] : [], nextCursor: ownWriteCommitted ? 1 : 0 } };
+      if (pathname.startsWith('/v1/machines/bob-executor')) {
+        ownEnvelopeReads.push(pathname);
+        if (pathname === '/v1/machines/bob-executor/data-key-envelopes') return { status: 200, data: {
+          machineId: 'bob-executor', custodianAccountId: 'bob', encryptionMode: 'e2ee',
+          machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(decodeBase64(caller)), callerDataEncryptionKey: caller,
+          nextCursor: null, content: { metadata, metadataVersion: 1, daemonState: null, daemonStateVersion: 0 }, recipients: [] } };
+      }
+      return { status: 404, data: {} };
+    });
+    const socket = createApiSessionSocketStub();
+    bindApiSessionSocketSequenceMock(ioMock, [socket, createApiSessionSocketStub()]);
+    const { ApiMachineClient } = await import('./apiMachine');
+    const client = runWithServerHttpBaseUrl('https://holder-home.test', () => new ApiMachineClient(token, {
+      id: 'bob-executor', encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: 'dataKey', dataEncryptionKey: caller,
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    }));
+    client.onConnectedServicesProjection(async () => {});
+    await seedActiveAccountSnapshot(token);
+    try {
+      runWithServerHttpBaseUrl('https://holder-home.test', () => client.connect());
+      // Connect recovery prepares the own Machine once.
+      await vi.waitFor(() => expect(ownEnvelopeReads.length).toBeGreaterThan(0));
+      const connectReads = ownEnvelopeReads.length;
+      // The daemon's own content write: its echo carries only fields applied live, then a later
+      // wake reads a page whose own Machine row is that held write.
+      ownWriteCommitted = true;
+      socket.trigger('update', { id: 'own-write', seq: 1, createdAt: 1, body: {
+        t: 'update-machine', machineId: 'bob-executor', metadata: { value: metadata, version: 1 } } });
+      socket.trigger('update', { id: 'session-wake', seq: 1, createdAt: 1, body: { t: 'account-change' } });
+      await feedCommitted;
+      expect(ownEnvelopeReads.length - connectReads).toBe(0);
+    } finally { await client.shutdown(); }
+  });
+
   /** One pushed `share` pass over real preparation modules; the Home serves the row the case names. */
   const runShareWakePass = async (serveSessionRow: (sessionKey: Uint8Array) => ServedSessionRow) => {
     const persistence = await import('@/persistence');
