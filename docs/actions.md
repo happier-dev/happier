@@ -5963,6 +5963,20 @@ health to claim that a backup, Machine setup or certificate recovered.
 
 ## Workflow inputs and complete review reads (0.3 development source)
 
+An Event-triggered Workflow can bind `trigger_event` references to scalar leaves
+of its declared Event payload. Save validates paths with the Event filter's
+scalar-leaf resolver. Create and update may supply `intendedTriggers` for draft
+membership; otherwise validation uses stored triggers, without changing save
+ordering. A removed Event produces a non-blocking `missing_reference` warning;
+an invalid declared path blocks with `invalid_input`. Copies retain references
+even when their triggers are not copied.
+
+Trigger admission seals only referenced leaves in the private accepted snapshot.
+Other Events, Run now, schedules and Session lifecycle admissions leave the value
+absent. Text substitutes an empty string, conditions treat it as unset, and a
+required whole-value Action binding fails with `invalid_input` before execution.
+The editor reads current payload declarations through its trigger-set owner.
+
 `workflow.run.start` also accepts `source: { kind: 'repo_file', path }` against
 its ordinary Project target. The target host reads the file at the observed repository HEAD using
 the existing `happier.workflow` version 1 import/export document format. The

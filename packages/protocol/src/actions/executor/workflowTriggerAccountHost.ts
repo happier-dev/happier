@@ -587,6 +587,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
   };
   return createWorkflowTriggerActions({
     automations: {
+      ...(params.automations.readTriggerEventDeclarations ? { readTriggerEventDeclarations: params.automations.readTriggerEventDeclarations } : {}),
       list: async (input) => {
         const page = await params.automations.list(input);
         return { ...page, automations: await Promise.all(page.automations.map(materializePrivateListItem)) };

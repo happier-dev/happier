@@ -43,6 +43,7 @@ import { admitAgentStartV1 } from '../../account/settings/admitAgentStartV1.js';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 import { materializeWorkflowDefinitionAuthorityV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { isWorkflowTriggerAgentCallerV1 } from './workflowTriggerActions.js';
+import { collectWorkflowTriggerEventReferencesV1 } from '../../workflows/workflowTriggerEventReferenceV1.js';
 
 export type WorkflowDefinitionArtifactHeaderRow = Readonly<{
   artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number; updatedAt: number;
@@ -79,8 +80,9 @@ type ArtifactHeader = z.infer<typeof WorkflowDefinitionArtifactHeaderV1Schema>;
 type DefinitionCaller = WorkflowActionExecuteArgs['context'];
 const PLUGIN_WORKFLOW_CURSOR_PREFIX = WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1;
 
-function normalize(definition: unknown, context?: WorkflowIngressContextV1) {
-  const validated = validateWorkflowDefinition(definition, context ? { context } : {});
+function normalize(definition: unknown, context?: WorkflowIngressContextV1,
+  triggerEvents?: NonNullable<Parameters<typeof validateWorkflowDefinition>[1]>['triggerEvents']) {
+  const validated = validateWorkflowDefinition(definition, { ...(context ? { context } : {}), ...(triggerEvents === undefined ? {} : { triggerEvents }) });
   if (!validated.valid || !validated.normalizedDefinition) {
     throw Object.assign(new Error('workflow_definition_invalid'), { code: 'invalid_input', details: { issues: validated.issues } });
   }
@@ -139,7 +141,17 @@ export function createWorkflowDefinitionActions(params: Readonly<{
   removeWorkflowTriggers?: (definitionId: string, signal?: AbortSignal) => Promise<void>;
   readPluginWorkflows?: WorkflowPluginSourceReaderV1;
   readWorkflowTriggerSummaries?: ReturnType<typeof createWorkflowTriggerActions>['readWorkflowSummaries'];
+  readWorkflowTriggerEvents?: ReturnType<typeof createWorkflowTriggerActions>['readWorkflowTriggerEvents'];
 }>) {
+  const normalizeForSave = async (input: Readonly<{ definitionId: string; definition: unknown;
+    intendedTriggers?: CreateInput['intendedTriggers'] }>, context?: WorkflowIngressContextV1) => {
+    const definition = normalize(input.definition, context);
+    if (collectWorkflowTriggerEventReferencesV1(definition).length === 0) return definition;
+    if (!params.readWorkflowTriggerEvents) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+    const triggerEvents = await params.readWorkflowTriggerEvents({ workflow: input.definitionId,
+      ...(input.intendedTriggers === undefined ? {} : { intendedTriggers: input.intendedTriggers }) });
+    return normalize(definition, context, triggerEvents);
+  };
   const assertWriteAllowed = async (definition: WorkflowDefinitionV1, context?: WorkflowIngressContextV1, caller?: DefinitionCaller) => {
     const unavailable = () => Object.assign(new Error('definition_exceeds_authority'), {
       code: 'definition_exceeds_authority', details: { code: 'definition_exceeds_authority', cause: { code: 'target_unavailable' } },
@@ -421,7 +433,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
     },
     get,
     create: async (input: CreateInput, context?: WorkflowIngressContextV1, caller?: DefinitionCaller) => {
-      const definition = normalize(input.definition, context);
+      const definition = await normalizeForSave(input, context);
       await assertWriteAllowed(definition, context, caller);
       const existingArtifact = await params.artifactStore.read(input.definitionId);
       if (existingArtifact) {
@@ -455,7 +467,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       return receipt(accepted);
     },
     update: async (input: UpdateInput, context?: WorkflowIngressContextV1, caller?: DefinitionCaller) => {
-      const definition = normalize(input.definition, context);
+      const definition = await normalizeForSave(input, context);
       await assertWriteAllowed(definition, context, caller);
       const existing = await read({ definitionId: input.definitionId });
       assertRevisionMatches(existing.revision, input.expectedRevision);
@@ -471,7 +483,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
         });
       }
       const { name, ...candidate } = edited.draft;
-      const definition = normalize(candidate, context);
+      const definition = await normalizeForSave({ definitionId: input.definitionId, definition: candidate }, context);
       await assertWriteAllowed(definition, context, caller);
       const saved = await save({ definitionId: input.definitionId, expectedRevision: input.expectedRevision,
         metadata: { ...existing.metadata, title: name } }, definition, existing, caller);

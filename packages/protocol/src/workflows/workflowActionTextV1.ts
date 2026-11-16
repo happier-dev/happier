@@ -125,9 +125,10 @@ function readLocalSchemaNode(root: Readonly<Record<string, unknown>>, value: unk
 }
 
 function encodeValue(
-  value: JsonValue,
+  value: JsonValue | undefined,
   encoding: WorkflowActionTextEncodingV1,
 ): string {
+  if (value === undefined) return '';
   if (encoding === 'json') return JSON.stringify(value);
   const text = typeof value === 'string' ? value : JSON.stringify(value);
   return encoding === 'url' ? encodeURIComponent(text) : text;
@@ -137,7 +138,7 @@ function encodeValue(
 export function renderWorkflowActionTextV1(
   document: WorkflowActionTextDocumentV1,
   encoding: WorkflowActionTextEncodingV1,
-  valueAt: (index: number) => JsonValue,
+  valueAt: (index: number) => JsonValue | undefined,
 ): Readonly<{ ok: true; value: JsonValue }> | Readonly<{ ok: false }> {
   let text = '';
   let cursor = 0;

@@ -1,3 +1,5 @@
+import { resolveAutomationEventFilterScalarLeafV1 } from '../automations/automationEventV1.js';
+import type { WorkflowTriggerEventDeclarationV1 } from './workflowTriggerEventReferenceV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
@@ -374,6 +376,7 @@ type ScopeLevel = Readonly<{
 }>;
 
 type WalkState = {
+  readonly triggerEvents?: readonly WorkflowTriggerEventDeclarationV1[];
   readonly issues: WorkflowValidationIssue[];
   readonly seenIds: Map<string, string>;
   readonly inputNames: ReadonlySet<string>;
@@ -471,6 +474,22 @@ function validateValueReference(
       if (!options?.conditionOperand) state.issues.push(issue('invalid_reference_scope', path,
         'Session context fields are only available in conditions.', blockId));
       return;
+    case 'trigger_event': {
+      // Stored reads are structural. Save passes the intended/current trigger set explicitly.
+      if (state.triggerEvents === undefined) return;
+      const declared = state.triggerEvents.find(candidate => candidate.event.pluginId === reference.event.pluginId
+        && candidate.event.localId === reference.event.localId);
+      if (!declared || declared.payloadSchema === null) {
+        state.issues.push({ ...issue('missing_reference', path, 'The Event declaration is unavailable in this workflow trigger set.', blockId), severity: 'warning' });
+      } else {
+        const pointer = '/' + reference.path.map(segment => String(segment).replace(/~/g, '~0').replace(/\//g, '~1')).join('/');
+        if (reference.path.length === 0 || reference.path.some(segment => typeof segment !== 'string')
+          || resolveAutomationEventFilterScalarLeafV1(declared.payloadSchema, pointer).kind !== 'declared') {
+          state.issues.push(issue('invalid_input', path, 'The Event path must select a declared scalar leaf.', blockId));
+        }
+      }
+      return;
+    }
     case 'literal':
       return;
     case 'input': {
@@ -1198,6 +1217,7 @@ function validateFinalOutput(state: WalkState, definition: WorkflowDefinitionV1)
 }
 
 export type ValidateWorkflowDefinitionOptions = Readonly<{
+  triggerEvents?: readonly WorkflowTriggerEventDeclarationV1[];
   /** Trusted host context; used only when the definition supplies no effective value. */
   context?: WorkflowIngressContextV1;
   /**
@@ -1249,19 +1269,20 @@ export function validateWorkflowDefinition(
       return { valid: false, issues: [...normalized.issues, ...targetIssues], targetValidation };
     }
     const structural = new Set(normalized.issues.map((entry) => entry.path));
-    const semantic = collectSemanticIssues(reparsed.definition).filter((entry) => !structural.has(entry.path));
+    const semantic = collectSemanticIssues(reparsed.definition, options.triggerEvents).filter((entry) => !structural.has(entry.path));
     return { valid: false, issues: [...normalized.issues, ...semantic, ...targetIssues], targetValidation };
   }
 
   const definition = normalized.definition;
-  const issues = [...collectSemanticIssues(definition), ...targetIssues];
+  const issues = [...collectSemanticIssues(definition, options.triggerEvents), ...targetIssues];
   const valid = issues.every((entry) => entry.severity !== 'error');
   return { valid, normalizedDefinition: definition, issues, targetValidation };
 }
 
 /** The canonical semantic walk over a parsed definition: inputs, ids, blocks, final output. */
-function collectSemanticIssues(definition: WorkflowDefinitionV1): WorkflowValidationIssue[] {
+function collectSemanticIssues(definition: WorkflowDefinitionV1, triggerEvents?: readonly WorkflowTriggerEventDeclarationV1[]): WorkflowValidationIssue[] {
   const state: WalkState = {
+    triggerEvents,
     issues: [],
     seenIds: new Map<string, string>(),
     inputNames: new Set(definition.inputs.map((declared) => declared.name)),

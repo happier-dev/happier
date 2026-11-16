@@ -3675,6 +3675,11 @@ and uses the same content codec without manufacturing record revisions.
 Managed Workflow accepted snapshots, checkpoints, invocation progress, and final
 results follow the Run owner's persisted Account-mode authority. Current 0.3
 development source uses one random per-run data key for E2EE content, with
+Event-triggered Workflow admission retains only referenced scalar payload leaves
+as `triggerEventValues` inside this same private accepted snapshot. The daemon
+resolves these sealed facts without re-reading Event content; no payload leaf is
+added to the server-visible structure or plaintext metadata in E2EE mode.
+
 recipient envelopes in `WorkflowRunDataKeyEnvelope`. Caller Account material
 opens only that caller's recipient envelope; the private binding retains the
 owner Account, Run, purpose and, for progress, exact invocation identity.

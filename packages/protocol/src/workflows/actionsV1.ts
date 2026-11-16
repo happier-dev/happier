@@ -11,6 +11,7 @@ import {
   SessionTriggerListRequestV1Schema, SessionTriggerAddRequestV1Schema,
   SessionTriggerUpdateRequestV1Schema, SessionTriggerRemoveRequestV1Schema, SessionTriggerListResultV1Schema,
   WorkflowTriggerSummaryInputV1Schema,
+  WorkflowIntendedTriggerV1Schema,
 } from './triggers/workflowTriggerActionsV1.js';
 
 import { OPAQUE_CURSOR_SCHEMA } from '../automations/automationActionSpecsV1.js';
@@ -577,9 +578,13 @@ export const WorkflowDefinitionListResultV1Schema = lazyZodSchema(() => z.strict
 export const WorkflowDefinitionGetRequestV1Schema = lazyZodSchema(() => z.strictObject({ definitionId: WorkflowDefinitionIdV1Schema }));
 export const WorkflowDefinitionGetResultV1Schema = lazyZodSchema(() => z.strictObject({ definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema, definition: WorkflowDefinitionV1Schema, destinations: zMini.optional(WorkflowDestinationsV1Schema), metadata: WorkflowDefinitionMetadataV1Schema, access: ArtifactCallerAccessV1Schema, savedBy: zMini.optional(WorkflowDefinitionSavedByV1Schema), savedAt: z.optional(z.number().check(z.int(), z.nonnegative())) }));
 // New definitions use the Artifact creation identity contract; readers retain the broader stored-id schema.
-export const WorkflowDefinitionCreateRequestV1Schema = lazyZodSchema(() => z.strictObject({ definitionId: z.string().check(z.uuid()), definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema }));
+export const WorkflowDefinitionCreateRequestV1Schema = lazyZodSchema(() => z.strictObject({ definitionId: z.string().check(z.uuid()), definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema,
+  intendedTriggers: z.optional(z.array(WorkflowIntendedTriggerV1Schema)),
+}));
 export const WorkflowDefinitionCreateResultV1Schema = WorkflowDefinitionGetResultV1Schema;
-export const WorkflowDefinitionUpdateRequestV1Schema = lazyZodSchema(() => z.strictObject({ definitionId: WorkflowDefinitionIdV1Schema, expectedRevision: WorkflowArtifactRevisionV1Schema, definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema }));
+export const WorkflowDefinitionUpdateRequestV1Schema = lazyZodSchema(() => z.strictObject({ definitionId: WorkflowDefinitionIdV1Schema, expectedRevision: WorkflowArtifactRevisionV1Schema, definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema,
+  intendedTriggers: z.optional(z.array(WorkflowIntendedTriggerV1Schema)),
+}));
 export const WorkflowDefinitionUpdateResultV1Schema = WorkflowDefinitionGetResultV1Schema;
 export const WorkflowDefinitionDeleteRequestV1Schema = lazyZodSchema(() => z.strictObject({ definitionId: WorkflowDefinitionIdV1Schema }));
 export const WorkflowDefinitionDeleteResultV1Schema = lazyZodSchema(() => z.strictObject({ deleted: z.literal(true), definitionId: WorkflowDefinitionIdV1Schema }));

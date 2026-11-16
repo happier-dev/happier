@@ -5,7 +5,7 @@ import { DeploymentBackupRunInputV1Schema } from '../../deployments/deploymentBa
 import { WorkflowDefinitionSavedByV1Schema } from '../workflowDefinitionV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { WorkflowDestinationsV1Schema } from '../workflowDestinationsV1.js';
-import { AutomationTriggerDefinitionInputSchema, AutomationTriggerDefinitionSchema } from '../../automations/automationTriggerDefinition.js';
+import { AutomationTriggerDefinitionInputSchema, AutomationTriggerDefinitionSchema, AutomationPluginEventDefinitionTriggerSchema } from '../../automations/automationTriggerDefinition.js';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
 import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
 import { AutomationManualIdempotencyKeyV1Schema } from '../../automations/automationOccurrenceV1.js';
@@ -51,6 +51,16 @@ export const WorkflowTriggerSummaryInputV1Schema = lazyZodSchema(() => {
   ]);
 });
 export type WorkflowTriggerSummaryInputV1 = z.infer<typeof WorkflowTriggerSummaryInputV1Schema>;
+/** Intended Event membership needs only its current declaration locator, never private source configuration. */
+export const WorkflowIntendedPluginEventV1Schema = lazyZodSchema(() => z.pick(AutomationPluginEventDefinitionTriggerSchema, {
+  kind: true, eventRef: true, observationTransport: true,
+}));
+export type WorkflowIntendedPluginEventV1 = z.infer<typeof WorkflowIntendedPluginEventV1Schema>;
+/** Stored rows retain their identity; pending Event rows carry the declaration's source locator. */
+export const WorkflowIntendedTriggerV1Schema = lazyZodSchema(() => z.union([
+  WorkflowTriggerSummaryInputV1Schema, WorkflowIntendedPluginEventV1Schema,
+]));
+export type WorkflowIntendedTriggerV1 = z.infer<typeof WorkflowIntendedTriggerV1Schema>;
 export const WorkflowTriggerSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   workflowDefinitionId: WorkflowDefinitionRefV1StringSchema,
   triggers: z.array(WorkflowTriggerSummaryInputV1Schema),

@@ -576,7 +576,7 @@ function compileAutomationEventFilterScalarLeafV1(
   }
 }
 
-function resolveAutomationEventFilterScalarLeafV1(
+export function resolveAutomationEventFilterScalarLeafV1(
   payloadSchema: PluginJsonSchemaV2,
   pointer: AutomationJsonPointerV1,
 ): AutomationEventFilterScalarLeafResolutionV1 {

@@ -262,6 +262,35 @@ function fixture(savedDefinition = definition) {
 }
 
 describe('trigger source display provenance', () => {
+  it('reads declared Event schemas from stored identity or intended current source without trusting authored schemas', async () => {
+    const f = fixture();
+    const saved = await f.actions.add({ workflow, project, trigger: deploymentEventTrigger });
+    const payloadSchema = { type: 'object', properties: { title: { type: 'string' } } } as const;
+    const row = f.rows.get(saved.set.automationId)!;
+    f.rows.set(row.id, { ...row, triggers: row.triggers.map(trigger => ({ ...trigger, payloadSchema })) });
+    const pending = { kind: 'pluginEvent' as const,
+      eventRef: { ...deploymentEventTrigger.eventRef, localId: 'pending-event' },
+      observationTransport: deploymentEventTrigger.observationTransport };
+    const pendingReads: unknown[] = [];
+    let savedReadAvailable = true;
+    const actions = createWorkflowTriggerActions({ ...f.deps, automations: { ...f.deps.automations,
+      listDetails: async input => {
+        if (!savedReadAvailable) throw new Error('The first save has no stored workflow trigger set');
+        return f.deps.automations.listDetails(input);
+      },
+      readTriggerEventDeclarations: async input => { pendingReads.push(input);
+        return { triggerEvents: [{ event: pending.eventRef, payloadSchema }] }; } } });
+    expect(await actions.readWorkflowTriggerEvents({ workflow })).toEqual([{ event: deploymentEventTrigger.eventRef, payloadSchema }]);
+    expect(await actions.readWorkflowTriggerEvents({ workflow, intendedTriggers: [] })).toEqual([]);
+    expect(await actions.readWorkflowTriggerEvents({ workflow, intendedTriggers: [{ kind: 'pluginEvent',
+      automationId: row.id, triggerId: row.triggers[0]!.id, eventRef: pending.eventRef }, pending] }))
+      .toEqual([{ event: deploymentEventTrigger.eventRef, payloadSchema }, { event: pending.eventRef, payloadSchema }]);
+    expect(pendingReads).toEqual([{ triggerEventDeclarations: [pending] }]);
+    savedReadAvailable = false;
+    expect(await actions.readWorkflowTriggerEvents({ workflow, intendedTriggers: [pending] }))
+      .toEqual([{ event: pending.eventRef, payloadSchema }]);
+  });
+
   it('reads two saved Environment health sources in one retained definition census', async () => {
     const f = fixture();
     let censusReads = 0;

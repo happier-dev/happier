@@ -28,7 +28,7 @@ import { resolvePermissionPrivilegeOrdinal } from '../actions/permissionPrivileg
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { SessionInputSourceAuthorityV1Schema } from '../sessions/messages/sessionInputAdmission.js';
-import { WorkflowBlockIdSchema, WorkflowInputNameSchema } from './workflowReferenceV1.js';
+import { WorkflowBlockIdSchema, WorkflowInputNameSchema, WorkflowTriggerEventReferenceV1Schema } from './workflowReferenceV1.js';
 import { WorkflowAcceptedWorkspaceTargetV1Schema, WorkflowCommittedRevisionV1Schema } from './workflowWorkspaceV1.js';
 import { resolveWorkflowStepSelectionV1 } from './workflowStepSelectionV1.js';
 import { RoleOverrideV1Schema, ResolvedRoleV1Schema } from '../prompts/roles/rolesV1.js';
@@ -236,6 +236,9 @@ export const WorkflowFrozenChildrenV1Schema = lazyZodSchema(() => z.record(Workf
 const WorkflowAcceptedTargetSessionIdsV1Schema = lazyZodSchema(() => z.optional(z.array(preservedBoundedNfcString(191, 'Session ids'))));
 
 const workflowMaterializationFields = () => ({
+  triggerEventValues: z.optional(z.array(z.strictObject({
+    event: WorkflowTriggerEventReferenceV1Schema.shape.event, path: WorkflowTriggerEventReferenceV1Schema.shape.path, value: StrictJsonValueSchema,
+  }))),
   approvedOperation: z.optional(WorkflowApprovedOperationV1Schema),
   targetSessionIds: WorkflowAcceptedTargetSessionIdsV1Schema,
   requiresMachineStartCapacity: z.optional(z.boolean()),

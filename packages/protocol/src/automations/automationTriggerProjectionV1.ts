@@ -7,6 +7,7 @@ import { AutomationScheduleTriggerSchema } from './automationTriggerDefinition.j
 import { AutomationSessionLifecycleConfigurationSchema } from './automationSessionLifecycle.js';
 import { AutomationRunLifecycleTriggerSchema } from './automationRunLifecycle.js';
 import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
+import { PluginJsonSchemaV2Schema } from '../plugins/contributions/publicTypes.js';
 const TIMESTAMP_SCHEMA = z.number().check(z.int(), z.nonnegative(), z.int());
 const IDENTIFIER_SCHEMA = z.string().check(z.minLength(1));
 
@@ -100,6 +101,8 @@ export const AutomationPluginEventTriggerProjectionSchema = lazyZodSchema(() => 
   ...AutomationPluginEventTriggerSchema.shape,
   sourceStatus: z.nullable(AutomationEventSourceStatusV1Schema),
   sourceCatalogStatus: z.nullable(AutomationEventSourceCatalogStatusSchema),
+  /** Private editor detail only; null when the current Event declaration is unavailable. */
+  payloadSchema: z.optional(z.nullable(PluginJsonSchemaV2Schema)),
   /** Optional list carrier for an observation-only Automation's private display. */
   triggerDefinitionEnvelope: z.optional(z.string().check(z.minLength(1))),
 })));

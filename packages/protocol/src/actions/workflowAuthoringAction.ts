@@ -11,6 +11,7 @@ import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { WorkflowRunIdV1Schema } from '../workflows/workflowIdsV1.js';
 import { WorkflowDecimalV1Schema } from '../workflows/workflowProgressV1.js';
 import { AutomationTriggerDefinitionInputSchema } from '../automations/automationTriggerDefinition.js';
+import { PluginJsonSchemaV2Schema } from '../plugins/contributions/publicTypes.js';
 import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
 import { AutomationStoredWorkflowDefinitionV2Schema } from '../automations/automationWorkflowRecipeV2.js';
 export {
@@ -31,6 +32,8 @@ export const WorkflowDraftTriggerSnapshotV1Schema = lazyZodSchema(() => z.strict
   rows: z.array(z.strictObject({
     identity: z.strictObject({ clientId: z.string().check(z.minLength(1)), triggerId: zMini.optional(AutomationTriggerIdSchema) }),
     trigger: zMini.nullable(AutomationTriggerDefinitionInputSchema), enabled: z.boolean(),
+    /** Declaration metadata for local Event drafts and their Undo/Redo snapshots. */
+    payloadSchema: z.optional(z.nullable(PluginJsonSchemaV2Schema)),
   })).check(z.refine(rows => {
     const clients = new Set(rows.map(row => row.identity.clientId));
     const savedIds = rows.flatMap(row => row.identity.triggerId ? [row.identity.triggerId] : []);

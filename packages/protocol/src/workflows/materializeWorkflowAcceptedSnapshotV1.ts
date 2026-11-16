@@ -1,3 +1,4 @@
+import { sealWorkflowTriggerEventValuesV1, type WorkflowTriggerEventOccurrenceV1 } from './workflowTriggerEventReferenceV1.js';
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import type { AgentStartAdmissionV1, AgentStartRefusalV1, AgentStartRequestV1, MaterializedWorkflowLeafV1, Unresolved } from '../account/settings/admitAgentStartV1.js';
 import { isAgentStartActionV1, projectAgentStartSelectionV1, resolveActionAgentStartRequestsV1 } from '../actions/executor/agentStartAdmission.js';
@@ -77,7 +78,7 @@ export type WorkflowMaterializationAdmissionV1 =
   | Readonly<{ kind: 'user' }>
   | Readonly<{ kind: 'agent'; admitRun?: (facts: Readonly<{ permissionCeiling: AgentPermissionIntentV1 }>) => Promise<WorkflowStartAdmissionV1>; admitLeaf: (leaf: MaterializedWorkflowLeafV1,
     facts: Readonly<{ permissionCeiling: AgentPermissionIntentV1; role?: ResolvedRoleV1 }>) => Promise<WorkflowStartAdmissionV1> }>
-  | Readonly<{ kind: 'trigger'; workDepth: number; admitLeaf: (leaf: MaterializedWorkflowLeafV1,
+  | Readonly<{ kind: 'trigger'; eventOccurrence?: WorkflowTriggerEventOccurrenceV1; workDepth: number; admitLeaf: (leaf: MaterializedWorkflowLeafV1,
     facts: Readonly<{ permissionCeiling: AgentPermissionIntentV1; role?: ResolvedRoleV1 }>) => Promise<WorkflowStartAdmissionV1> }>;
 export type MaterializeWorkflowAcceptedSnapshotV1Input = Readonly<{
   definition: unknown; context: WorkflowMaterializationContextV1; ingressContext?: WorkflowIngressContextV1;
@@ -1066,6 +1067,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
   const snapshot = WorkflowAcceptedSnapshotV1Schema.safeParse({
     ...sharedContext, ...(origin ? { origin } : input.context.source.kind === 'automation' ? {} : { origin: { kind: 'direct' } }),
     ...(resultDelivery ? { resultDelivery } : {}),
+    triggerEventValues: sealWorkflowTriggerEventValuesV1(concrete.values(), input.admission.kind === 'trigger' ? input.admission.eventOccurrence : undefined),
     definition: concrete.get('$root'), authoredDefinition: root, materializedLeaves, frozenChildren, workDepth,
     requiresMachineStartCapacity: workflowRequiresMachineStartCapacityV1(materializedLeaves),
     targetSessionIds: deriveWorkflowDestinationsV1({ definition: concrete.get('$root')!, materializedLeaves,

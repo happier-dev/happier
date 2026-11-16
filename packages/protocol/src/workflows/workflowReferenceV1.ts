@@ -1,3 +1,5 @@
+import type { AutomationQualifiedPluginContributionRefV1 } from '../automations/automationEventDeclarationV1.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
@@ -117,7 +119,15 @@ export const WorkflowLoopTrailingCountReferenceSchema = lazyZodSchema(() => z.st
 }));
 export type WorkflowLoopTrailingCountReference = z.infer<typeof WorkflowLoopTrailingCountReferenceSchema>;
 
+export type WorkflowTriggerEventReferenceV1 = Readonly<{ kind: 'trigger_event'; event: AutomationQualifiedPluginContributionRefV1; path: (string | number)[] }>;
+
+export const WorkflowTriggerEventReferenceV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('trigger_event'), event: asProtocolZod(PluginContributionIdentityV1Schema),
+  path: WorkflowResultPathSchema,
+}));
+
 export type WorkflowValueReference =
+  | WorkflowTriggerEventReferenceV1
   | Readonly<{ kind: 'literal'; value: JsonValue }>
   | Readonly<{ kind: 'input'; name: string; path?: (string | number)[] }>
   | WorkflowAuthoredResultReference
@@ -149,6 +159,7 @@ export const WorkflowInputReferenceV1Schema = z.strictObject({
 export const WorkflowValueReferenceSchema: z.ZodMiniType<WorkflowValueReference> = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('literal'), value: StrictJsonValueSchema }),
   WorkflowInputReferenceV1Schema,
+  WorkflowTriggerEventReferenceV1Schema,
   WorkflowAuthoredResultReferenceSchema,
   WorkflowAuthoredWorkspaceReferenceSchema,
   WorkflowLoopTrailingCountReferenceSchema,

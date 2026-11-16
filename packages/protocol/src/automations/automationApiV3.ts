@@ -56,7 +56,8 @@ export * from './automationRunLifecycle.js';
 import type { AutomationTriggerDetail, AutomationTriggerListItem } from './automationTriggerProjectionV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from '../workflows/workflowDefinitionRefV1.js';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../artifacts/artifactListSelectionV1.js';
-import { WorkflowTriggerSummaryV1Schema } from '../workflows/triggers/workflowTriggerActionsV1.js';
+import { WorkflowTriggerSummaryV1Schema, WorkflowIntendedPluginEventV1Schema } from '../workflows/triggers/workflowTriggerActionsV1.js';
+import { WorkflowTriggerEventDeclarationV1Schema } from '../workflows/workflowTriggerEventReferenceV1.js';
 
 export {
   AutomationEncryptedTriggerDefinitionEnvelopeV1Schema,
@@ -474,6 +475,16 @@ export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.stric
   }
 })));
 export type AutomationDefinitionListRequest = z.infer<typeof AutomationDefinitionListRequestSchema>;
+
+/** Current declarations for unsaved Event source locators; the caller supplies no schema. */
+export const AutomationTriggerEventDeclarationsRequestSchema = lazyZodSchema(() => z.strictObject({
+  triggerEventDeclarations: z.array(WorkflowIntendedPluginEventV1Schema),
+}));
+export type AutomationTriggerEventDeclarationsRequest = z.infer<typeof AutomationTriggerEventDeclarationsRequestSchema>;
+export const AutomationTriggerEventDeclarationsResponseSchema = lazyZodSchema(() => z.strictObject({
+  triggerEvents: z.array(WorkflowTriggerEventDeclarationV1Schema),
+}));
+export type AutomationTriggerEventDeclarationsResponse = z.infer<typeof AutomationTriggerEventDeclarationsResponseSchema>;
 
 /** Explicit private-content demand; ordinary definition queries remain bodyless summaries. */
 export const AutomationDefinitionDetailsRequestSchema = lazyZodSchema(() => z.safeExtend(AutomationDefinitionListRequestSchema, {

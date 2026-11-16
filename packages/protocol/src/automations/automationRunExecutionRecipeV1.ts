@@ -890,7 +890,7 @@ function readRecipeContent(params: Readonly<{
     : { kind: 'contentInvalid' };
 }
 
-function matchesCauseEvidence(
+export function matchesCauseEvidence(
   cause: AutomationRunCause,
   triggerEvidence: AutomationRunTriggerEvidenceV1 | null,
 ): boolean {

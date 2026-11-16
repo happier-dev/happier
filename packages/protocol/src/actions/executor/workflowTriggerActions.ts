@@ -1,6 +1,7 @@
+import type { WorkflowTriggerEventDeclarationV1 } from '../../workflows/workflowTriggerEventReferenceV1.js';
 import type {
   AutomationDefinitionCreateRequest, AutomationDefinitionDetail, AutomationDefinitionListResponse,
-  AutomationDefinitionDetailsResponse,
+  AutomationDefinitionDetailsResponse, AutomationTriggerEventDeclarationsRequest, AutomationTriggerEventDeclarationsResponse,
   AutomationDefinitionReconcileRequest, AutomationTriggerReconcileExistingItem, AutomationDefinitionListRequest, AutomationDeleteResponse,
 } from '../../automations/automationApiV3.js';
 import { AutomationV3RunMutationResponseSchema, type AutomationV3RunMutationResponse } from '../../automations/automationApiV3.js';
@@ -35,7 +36,7 @@ import {
   type SessionTriggerListRequestV1, type SessionTriggerAddRequestV1,
   type SessionTriggerUpdateRequestV1, type SessionTriggerRemoveRequestV1,
   type SessionPullRequestLinkV1, type SessionTriggerDefinitionV1, type SessionTriggerPullRequestLinksV1,
-  type WorkflowTriggerSummaryInputV1,
+  type WorkflowTriggerSummaryInputV1, type WorkflowIntendedTriggerV1, type WorkflowIntendedPluginEventV1,
   type WorkflowTriggerHealthSourceV1,
   WorkflowDeploymentBackupTargetV1Schema,
   summarizeWorkflowTriggerRowsV1,
@@ -85,6 +86,7 @@ type WorkflowTriggerWriteResult = ReturnType<typeof WorkflowTriggerWriteResultV1
 export type WorkflowTriggerAutomationOperations = Readonly<{
   list: (input: Readonly<Partial<AutomationDefinitionListRequest>>) => Promise<AutomationDefinitionListResponse>;
   listDetails: (input: Readonly<Partial<AutomationDefinitionListRequest>>) => Promise<AutomationDefinitionDetailsResponse>;
+  readTriggerEventDeclarations?: (input: AutomationTriggerEventDeclarationsRequest) => Promise<AutomationTriggerEventDeclarationsResponse>;
   get: (automationId: string) => Promise<AutomationDefinitionDetail | null>;
   /** Awaited encoding adapters re-run this owner-supplied check immediately before transport. */
   create: (input: AutomationDefinitionCreateRequest, beforeWrite?: () => Promise<void>, signal?: AbortSignal) => Promise<AutomationDefinitionDetail>;
@@ -140,6 +142,8 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
 }>;
 
 export interface WorkflowTriggerActions {
+  readWorkflowTriggerEvents: (input: Readonly<{ workflow: string; intendedTriggers?: readonly WorkflowIntendedTriggerV1[] }>)
+    => Promise<readonly WorkflowTriggerEventDeclarationV1[]>;
   readSavedConsent: (input: Readonly<{ automationId: string; triggerId: string; ownerAccountId: string;
     operation: WorkflowApprovedOperationV1;
   }>, caller: Caller) => Promise<WorkflowApprovedOperationV1 | null>;
@@ -681,6 +685,34 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         if (receipt.run.automationId !== input.automationId) refuse('content_unavailable');
         return receipt;
       } catch (cause) { return unresolvedWriteReceipt(cause); }
+    },
+    readWorkflowTriggerEvents: async ({ workflow, intendedTriggers }: Parameters<WorkflowTriggerActions['readWorkflowTriggerEvents']>[0]) => {
+      const needsStoredRead = intendedTriggers === undefined || intendedTriggers.some(input => input.kind === 'pluginEvent'
+        && 'automationId' in input && input.automationId !== undefined && input.triggerId !== undefined);
+      const rows = needsStoredRead
+        ? (await automationRows(deps.automations.listDetails, { workflowDefinitionId: workflow }))
+          .filter(row => (row.scopeSessionId ?? null) === null && row.workflowDefinitionId === workflow)
+        : [];
+      const storedEvents = rows.flatMap(row => row.triggers.flatMap(trigger => trigger.kind === 'pluginEvent'
+        ? [{ automationId: row.id, triggerId: trigger.id, event: trigger.eventRef, payloadSchema: trigger.payloadSchema ?? null }] : []));
+      if (intendedTriggers === undefined) return storedEvents.map(({ event, payloadSchema }) => ({ event, payloadSchema }));
+      const pending = intendedTriggers.filter((input): input is WorkflowIntendedPluginEventV1 =>
+        input.kind === 'pluginEvent' && 'observationTransport' in input);
+      const readDeclarations = deps.automations.readTriggerEventDeclarations;
+      if (pending.length && !readDeclarations) refuse('source_unavailable');
+      const declared = pending.length && readDeclarations
+        ? (await readDeclarations({ triggerEventDeclarations: pending })).triggerEvents : [];
+      const storedById = new Map(storedEvents.map(event => [JSON.stringify([event.automationId, event.triggerId]), event]));
+      let pendingIndex = 0;
+      return intendedTriggers.flatMap((input): WorkflowTriggerEventDeclarationV1[] => {
+        if (input.kind !== 'pluginEvent') return [];
+        if ('observationTransport' in input) {
+          const declaration = declared[pendingIndex++];
+          return declaration ? [declaration] : [];
+        }
+        const saved = storedById.get(JSON.stringify([input.automationId, input.triggerId]));
+        return saved ? [{ event: saved.event, payloadSchema: saved.payloadSchema }] : [];
+      });
     },
     readWorkflowSummaries: async (workflowDefinitionIds: readonly string[]): Promise<ReadonlyMap<string, Readonly<{ triggers: readonly WorkflowTriggerSummaryInputV1[]; nextRunAt: number | null }>>> => {
       const summaries = new Map<string, { triggers: WorkflowTriggerSummaryInputV1[]; nextRunAt: number | null }>();

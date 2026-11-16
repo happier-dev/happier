@@ -38,6 +38,14 @@ const run = token('Run', 0);
 const branch = token('Branch', 1);
 
 describe('workflow Action text substitution', () => {
+  it('renders an absent value as empty text while preserving a present null', () => {
+    const document = documentOf(['Event: ', run, '; null: ', branch]);
+    for (const encoding of ['plain', 'url'] as const) {
+      expect(renderWorkflowActionTextV1(document, encoding, index => index === 0 ? undefined : null))
+        .toEqual({ ok: true, value: 'Event: ; null: null' });
+    }
+  });
+
   it('substitutes bound tokens as plain text and leaves unbound token text literal', () => {
     const unbound = formatInlineReferenceTokenV1({
       label: 'Nobody',

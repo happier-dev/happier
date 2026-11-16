@@ -1,5 +1,17 @@
 # Compatibility and version skew
 
+## Workflow trigger Event references (unreleased 0.3)
+
+The closed Workflow value-reference union adds `trigger_event`, and the private
+accepted snapshot optionally carries sealed `triggerEventValues`. Existing
+snapshots without the field read unchanged. Closed create/update inputs optionally
+carry intended trigger locators, and private Event declaration reads expose the
+current payload schema. Matching Protocol, Home, CLI and editor consumers reload
+together under the unpublished 0.3 direct cut; older strict development readers
+reject these new fields. No epoch, migration, gate or compatibility adapter is
+added. The scoped-clean 0.2 frontier at
+`253d4138e2a19c777fd7df027e5b35be3a769002` has no Workflow reference owner.
+
 ## Simulator device Actions (unreleased 0.3)
 
 Simulator discovery optionally carries device state, runtime identity, AVD name,
