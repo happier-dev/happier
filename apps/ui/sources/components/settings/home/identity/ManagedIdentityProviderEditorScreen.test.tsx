@@ -4,32 +4,33 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 
-import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
+import { ManagedIdentityProviderV1Schema, MANAGED_IDENTITY_PROVIDER_ACTION_PATHS_V1, type ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
-const executeMock = vi.hoisted(() => vi.fn());
+const networkResponse = vi.fn<(path: string, input: unknown) => Promise<HomeDomainAnswer>>();
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock().module;
 });
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });
 });
-vi.mock('./managedIdentityProviderClient', () => ({
-    createManagedIdentityProviderClient: () => ({ execute: executeMock }),
-}));
-
-import {
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+const {
     EMPTY_MANAGED_OIDC_PROVIDER_DRAFT,
     ManagedOidcProviderEditorContent,
     validateManagedIdentityProviderDraft,
-} from './ManagedIdentityProviderEditorScreen';
+} = await import('./ManagedIdentityProviderEditorScreen');
+let serverId: string;
 
 function provider(revision: number): ManagedIdentityProviderV1 {
-    return {
+    return ManagedIdentityProviderV1Schema.parse({
         v: 1,
         owner: { kind: 'home' },
         id: 'provider-1',
@@ -59,12 +60,17 @@ function provider(revision: number): ManagedIdentityProviderV1 {
         createdByAccountId: 'account-1',
         createdAt: 1,
         updatedAt: 1,
-    };
+    });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     standardCleanup();
-    executeMock.mockReset();
+    await harness.reset();
+    serverId = await harness.addHome({ name: 'Identity Home', serverUrl: 'https://identity-home.example', accountId: 'account-1' });
+    networkResponse.mockReset();
+    for (const path of Object.values(MANAGED_IDENTITY_PROVIDER_ACTION_PATHS_V1)) {
+        harness.answer(serverId, path, { select: input => networkResponse(path, input) });
+    }
 });
 
 describe('ManagedOidcProviderEditorContent', () => {
@@ -90,7 +96,7 @@ describe('ManagedOidcProviderEditorContent', () => {
         });
         const screen = await renderScreen(
             <ManagedOidcProviderEditorContent
-                scope={{ serverId: 'home-1', accountId: 'account-1' }}
+                scope={{ serverId, accountId: 'account-1' }}
                 owner={{ kind: 'home' }}
                 provider={provider(4)}
                 mutationsAvailable
@@ -109,7 +115,7 @@ describe('ManagedOidcProviderEditorContent', () => {
     it('does not let a read-only administrator create an unsavable provider draft', async () => {
         const screen = await renderScreen(
             <ManagedOidcProviderEditorContent
-                scope={{ serverId: 'home-1', accountId: 'account-1' }}
+                scope={{ serverId, accountId: 'account-1' }}
                 owner={{ kind: 'home' }}
                 provider={provider(4)}
                 mutationsAvailable={false}
@@ -123,10 +129,10 @@ describe('ManagedOidcProviderEditorContent', () => {
     });
 
     it('presents provider validation as validation rather than a sign-in test', async () => {
-        executeMock.mockResolvedValueOnce({ kind: 'succeeded', value: provider(5) });
+        networkResponse.mockResolvedValueOnce({ body: provider(5) });
         const screen = await renderScreen(
             <ManagedOidcProviderEditorContent
-                scope={{ serverId: 'home-1', accountId: 'account-1' }}
+                scope={{ serverId, accountId: 'account-1' }}
                 owner={{ kind: 'home' }}
                 provider={provider(4)}
                 mutationsAvailable
@@ -136,16 +142,16 @@ describe('ManagedOidcProviderEditorContent', () => {
 
         expect(findTestInstanceByTypeContainingText(screen.findByTestId('identity-provider-test')!, 'Text', 'identityAdministration.validate')).toBeDefined();
         await screen.pressByTestIdAsync('identity-provider-test');
-        expect(executeMock).toHaveBeenCalledWith('identity.providers.validate', expect.anything(), expect.anything());
+        expect(networkResponse).toHaveBeenCalledWith('/v1/identity/providers/validate', expect.anything());
         expect(findTestInstanceByTypeContainingText(screen.findByTestId('identity-provider-test')!, 'Text', 'identityAdministration.validated')).toBeDefined();
     });
 
     it('starts only one validation when pressed twice before React renders busy state', async () => {
-        let releaseValidation = (_value: unknown): void => {};
-        executeMock.mockImplementationOnce(() => new Promise((resolve) => { releaseValidation = resolve; }));
+        let releaseValidation = (_value: HomeDomainAnswer): void => {};
+        networkResponse.mockImplementationOnce(() => new Promise((resolve) => { releaseValidation = resolve; }));
         const screen = await renderScreen(
             <ManagedOidcProviderEditorContent
-                scope={{ serverId: 'home-1', accountId: 'account-1' }}
+                scope={{ serverId, accountId: 'account-1' }}
                 owner={{ kind: 'home' }}
                 provider={provider(4)}
                 mutationsAvailable
@@ -157,17 +163,17 @@ describe('ManagedOidcProviderEditorContent', () => {
             screen.pressByTestId('identity-provider-test');
             screen.pressByTestId('identity-provider-test');
         });
-        expect(executeMock).toHaveBeenCalledTimes(1);
+        await waitForHomeGovernance(() => expect(networkResponse).toHaveBeenCalledTimes(1));
 
-        await act(async () => releaseValidation({ kind: 'succeeded', value: provider(5) }));
+        await act(async () => releaseValidation({ body: provider(5) }));
     });
 
     it('starts only one save when pressed twice before React renders busy state', async () => {
-        let releaseSave = (_value: unknown): void => {};
-        executeMock.mockImplementationOnce(() => new Promise((resolve) => { releaseSave = resolve; }));
+        let releaseSave = (_value: HomeDomainAnswer): void => {};
+        networkResponse.mockImplementationOnce(() => new Promise((resolve) => { releaseSave = resolve; }));
         const screen = await renderScreen(
             <ManagedOidcProviderEditorContent
-                scope={{ serverId: 'home-1', accountId: 'account-1' }}
+                scope={{ serverId, accountId: 'account-1' }}
                 owner={{ kind: 'home' }}
                 provider={provider(4)}
                 mutationsAvailable
@@ -180,9 +186,9 @@ describe('ManagedOidcProviderEditorContent', () => {
             screen.pressByTestId('identity-provider-save');
             screen.pressByTestId('identity-provider-save');
         });
-        expect(executeMock).toHaveBeenCalledTimes(1);
+        await waitForHomeGovernance(() => expect(networkResponse).toHaveBeenCalledTimes(1));
 
-        await act(async () => releaseSave({ kind: 'succeeded', value: { ...provider(5), displayName: 'Edited OIDC' } }));
+        await act(async () => releaseSave({ body: { ...provider(5), displayName: 'Edited OIDC' } }));
     });
 
     it('refreshes a server CAS conflict and waits for the newer revision before allowing retry', async () => {
@@ -190,7 +196,7 @@ describe('ManagedOidcProviderEditorContent', () => {
         const onSaved = vi.fn(() => ({ kind: 'completed' as const }));
         const renderEditor = (current: ManagedIdentityProviderV1) => (
             <ManagedOidcProviderEditorContent
-                scope={{ serverId: 'home-1', accountId: 'account-1' }}
+                scope={{ serverId, accountId: 'account-1' }}
                 owner={{ kind: 'home' }}
                 provider={current}
                 mutationsAvailable
@@ -198,7 +204,7 @@ describe('ManagedOidcProviderEditorContent', () => {
                 onSaved={onSaved}
             />
         );
-        executeMock.mockResolvedValueOnce({ kind: 'failed', failure: { code: 'identity_provider_revision_conflict', retryable: false } });
+        networkResponse.mockResolvedValueOnce({ status: 409, body: { error: 'identity_provider_revision_conflict' } });
         const screen = await renderScreen(renderEditor(provider(4)));
         await act(async () => {
             screen.changeTextByTestId('identity-provider-name', 'Edited OIDC');
@@ -222,13 +228,13 @@ describe('ManagedOidcProviderEditorContent', () => {
         await act(async () => {
             screen.changeTextByTestId('identity-provider-name', 'Edited OIDC');
         });
-        executeMock.mockResolvedValueOnce({ kind: 'succeeded', value: { ...provider(6), displayName: 'Edited OIDC' } });
+        networkResponse.mockResolvedValueOnce({ body: { ...provider(6), displayName: 'Edited OIDC' } });
         await screen.pressByTestIdAsync('identity-provider-save');
 
-        expect(executeMock).toHaveBeenLastCalledWith('identity.providers.update', expect.objectContaining({
+        expect(networkResponse).toHaveBeenLastCalledWith('/v1/identity/providers/update', expect.objectContaining({
             expectedRevision: 5,
             displayName: 'Edited OIDC',
-        }), expect.anything());
+        }));
         expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 6 }), expect.objectContaining({ onApprovalFailed: expect.any(Function) }));
     });
 
@@ -236,7 +242,7 @@ describe('ManagedOidcProviderEditorContent', () => {
         const onSaved = vi.fn(() => ({ kind: 'completed' as const }));
         const renderEditor = (current: ManagedIdentityProviderV1) => (
             <ManagedOidcProviderEditorContent
-                scope={{ serverId: 'home-1', accountId: 'account-1' }}
+                scope={{ serverId, accountId: 'account-1' }}
                 owner={{ kind: 'home' }}
                 provider={current}
                 mutationsAvailable
@@ -260,16 +266,16 @@ describe('ManagedOidcProviderEditorContent', () => {
         await act(async () => {
             screen.changeTextByTestId('identity-provider-name', 'Edited OIDC');
         });
-        executeMock.mockResolvedValue({ kind: 'succeeded', value: { ...provider(6), displayName: 'Edited OIDC' } });
+        networkResponse.mockResolvedValue({ body: { ...provider(6), displayName: 'Edited OIDC' } });
         await screen.pressByTestIdAsync('identity-provider-save');
 
-        expect(executeMock).toHaveBeenCalledWith('identity.providers.update', expect.objectContaining({
+        expect(networkResponse).toHaveBeenCalledWith('/v1/identity/providers/update', expect.objectContaining({
             owner: { kind: 'home' },
             id: 'provider-1',
             expectedRevision: 5,
             displayName: 'Edited OIDC',
-        }), expect.anything());
-        expect(executeMock).not.toHaveBeenCalledWith('identity.providers.secret.replace', expect.anything());
+        }));
+        expect(networkResponse).not.toHaveBeenCalledWith('/v1/identity/providers/secret/replace', expect.anything());
         expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 6 }), expect.objectContaining({ onApprovalFailed: expect.any(Function) }));
     });
 
@@ -281,15 +287,15 @@ describe('ManagedOidcProviderEditorContent', () => {
                 allow: { usersAllowlist: [], emailDomains: [], groupsAny: ['server-rule'], groupsAll: [] },
             },
         };
-        executeMock
-            .mockResolvedValueOnce({ kind: 'succeeded', value: serverUpdated })
-            .mockResolvedValueOnce({ kind: 'failed', failure: { code: 'home_unreachable', retryable: true } })
-            .mockResolvedValueOnce({ kind: 'succeeded', value: { ...serverUpdated, revision: 6 } })
-            .mockResolvedValueOnce({ kind: 'succeeded', value: { ...serverUpdated, revision: 7, securityRevision: 4 } });
+        networkResponse
+            .mockResolvedValueOnce({ body: serverUpdated })
+            .mockResolvedValueOnce({ dispatchThenFail: true })
+            .mockResolvedValueOnce({ body: { ...serverUpdated, revision: 6 } })
+            .mockResolvedValueOnce({ body: { ...serverUpdated, revision: 7, securityRevision: 4 } });
         const onSaved = vi.fn(() => ({ kind: 'completed' as const }));
         const screen = await renderScreen(
             <ManagedOidcProviderEditorContent
-                scope={{ serverId: 'home-1', accountId: 'account-1' }}
+                scope={{ serverId, accountId: 'account-1' }}
                 owner={{ kind: 'home' }}
                 provider={provider(4)}
                 mutationsAvailable
@@ -303,16 +309,16 @@ describe('ManagedOidcProviderEditorContent', () => {
         await screen.pressByTestIdAsync('identity-provider-save');
         await screen.pressByTestIdAsync('identity-provider-save');
 
-        expect(executeMock).toHaveBeenNthCalledWith(3, 'identity.providers.update', expect.objectContaining({
+        expect(networkResponse).toHaveBeenNthCalledWith(3, '/v1/identity/providers/update', expect.objectContaining({
             expectedRevision: 5,
             config: expect.objectContaining({
                 allow: expect.objectContaining({ groupsAny: ['server-rule'] }),
             }),
-        }), expect.anything());
-        expect(executeMock).toHaveBeenNthCalledWith(4, 'identity.providers.secret.replace', expect.objectContaining({
+        }));
+        expect(networkResponse).toHaveBeenNthCalledWith(4, '/v1/identity/providers/secret/replace', expect.objectContaining({
             expectedRevision: 6,
             clientSecret: 'replacement-secret',
-        }), expect.anything());
+        }));
         expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 7, securityRevision: 4 }), expect.objectContaining({ onApprovalFailed: expect.any(Function) }));
     });
 
@@ -321,7 +327,7 @@ describe('ManagedOidcProviderEditorContent', () => {
         let currentProvider = provider(4);
         const renderEditor = () => (
             <ManagedOidcProviderEditorContent
-                scope={{ serverId: 'home-1', accountId: 'account-1' }}
+                scope={{ serverId, accountId: 'account-1' }}
                 owner={{ kind: 'home' }}
                 provider={currentProvider}
                 mutationsAvailable
@@ -329,11 +335,11 @@ describe('ManagedOidcProviderEditorContent', () => {
                 onSaved={() => ({ kind: 'completed' })}
             />
         );
-        executeMock
-            .mockResolvedValueOnce({ kind: 'succeeded', value: provider(5) })
+        networkResponse
+            .mockResolvedValueOnce({ body: provider(5) })
             .mockResolvedValueOnce({
-                kind: 'failed',
-                failure: { code: 'identity_provider_revision_conflict', retryable: false },
+                status: 409,
+                body: { error: 'identity_provider_revision_conflict' },
             });
         const screen = await renderScreen(renderEditor());
         await act(async () => {

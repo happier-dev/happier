@@ -25,23 +25,9 @@ import type { HomeAdministrationContext } from './homeAdministrationContext';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
-const homePolicyOperationBoundary = vi.hoisted(() => ({
-    setAuthenticationPolicies: null as null | ((params: unknown) => Promise<unknown>),
-}));
-
-installSettingsViewCommonModuleMocks();
-vi.mock('@/sync/ops/home/homeGovernanceOperations', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/ops/home/homeGovernanceOperations')>();
-    return {
-        ...actual,
-        setHomeAuthenticationPolicies: async (
-            params: Parameters<typeof actual.setHomeAuthenticationPolicies>[0],
-        ): ReturnType<typeof actual.setHomeAuthenticationPolicies> => {
-            const override = homePolicyOperationBoundary.setAuthenticationPolicies;
-            if (!override) return actual.setHomeAuthenticationPolicies(params);
-            return await override(params) as Awaited<ReturnType<typeof actual.setHomeAuthenticationPolicies>>;
-        },
-    };
+installSettingsViewCommonModuleMocks({
+    storage: 'real',
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module,
 });
 // The generated bundled-artifact inventory is an unrelated build product and
 // is deliberately absent from remote source mirrors. Keep this policy suite on
@@ -51,20 +37,12 @@ vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts',
     BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [],
     BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [],
 }));
-// This suite owns the Home policy controller. Provider/App lists are sibling
-// surfaces with their own integration suites; importing their full runtime here
-// would replace a focused policy check with plugin-artifact setup.
-vi.mock('../identity/ManagedIdentityProvidersSection', () => ({
-    ManagedIdentityProvidersSection: () => null,
-}));
-vi.mock('../githubApps/ManagedGitHubAppsSection', () => ({
-    ManagedGitHubAppsSection: () => null,
-    homeManagedGitHubAppSurface: vi.fn(),
-    homeManagedGitHubAppCreatePath: vi.fn(),
-}));
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
-let testStorage: typeof import('@/sync/domains/state/storage')['storage'];
+const { Modal } = await import('@/modal');
+// Import the full real sibling graph before interaction deadlines begin.
+await import('../signInProviders/HomeSignInProviderPolicySections');
+await import('./HomeTeamsPolicySections');
 
 function renderedControlIsDisabled(control: { props: Record<string, unknown> } | null): boolean {
     const props = control?.props;
@@ -80,12 +58,9 @@ function renderedControlIsChecked(control: { props: Record<string, unknown> } | 
 }
 beforeEach(async () => {
     await harness.reset();
-    homePolicyOperationBoundary.setAuthenticationPolicies = null;
-    ({ storage: testStorage } = await import('@/sync/domains/state/storage'));
-    testStorage.setState({ settingsScope: null, settings: {} as never });
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
 });
 afterEach(() => {
-    homePolicyOperationBoundary.setAuthenticationPolicies = null;
     standardCleanup();
 });
 
@@ -274,13 +249,10 @@ describe('HomeAuthenticationPolicySections', () => {
         ).toBe(false));
     });
 
-    it('keeps an approval candidate only while pending and restores the committed Team-provider selection when it terminates', async () => {
+    it('restores the committed Team-provider selection when native confirmation is declined', async () => {
         const { HomeTeamSignInRulesSection } = await import('../signInProviders/HomeSignInProviderPolicySections');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });
-        homePolicyOperationBoundary.setAuthenticationPolicies = async () => ({
-            kind: 'approval_pending',
-            artifactId: 'approval-home-policy-1',
-        });
+        await harness.requireUiApproval(serverId, 'home.policy.set');
         const projection = homeGovernanceProjectionFixture();
         projection.policy = {
             ...projection.policy,
@@ -307,26 +279,18 @@ describe('HomeAuthenticationPolicySections', () => {
         };
         const screen = await renderScreen(<HomeTeamSignInRulesSection context={context} />);
 
+        vi.mocked(Modal.confirm).mockResolvedValue(false);
         await screen.pressByTestIdAsync('home-policy-team-provider:workos_sso');
-        await waitForHomeGovernance(() => expect(requestApproval).toHaveBeenCalledTimes(1));
-        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso-switch'))).toBe(true);
-
-        await screen.update(<HomeTeamSignInRulesSection context={{ ...context, approvalPending: true }} />);
-        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso-switch'))).toBe(true);
-
-        await screen.update(<HomeTeamSignInRulesSection context={{ ...context, approvalPending: false }} />);
-        await waitForHomeGovernance(() => expect(
-            renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso-switch')),
-        ).toBe(false));
+        expect(Modal.confirm).toHaveBeenCalledOnce();
+        expect(requestApproval).not.toHaveBeenCalled();
+        expect(harness.requestsFor('/v1/home/policy/set')).toHaveLength(0);
+        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso-switch'))).toBe(false);
     });
 
-    it('adopts the refreshed authoritative Team-provider selection after approved execution', async () => {
+    it('adopts the refreshed authoritative Team-provider selection after confirmed execution', async () => {
         const { HomeTeamSignInRulesSection } = await import('../signInProviders/HomeSignInProviderPolicySections');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });
-        homePolicyOperationBoundary.setAuthenticationPolicies = async () => ({
-            kind: 'approval_pending',
-            artifactId: 'approval-home-policy-2',
-        });
+        await harness.requireUiApproval(serverId, 'home.policy.set');
         const projection = homeGovernanceProjectionFixture();
         projection.policy = {
             ...projection.policy,
@@ -351,11 +315,6 @@ describe('HomeAuthenticationPolicySections', () => {
             requestApproval,
             refresh: vi.fn(),
         };
-        const screen = await renderScreen(<HomeTeamSignInRulesSection context={context} />);
-        await screen.pressByTestIdAsync('home-policy-team-provider:workos_sso');
-        await waitForHomeGovernance(() => expect(requestApproval).toHaveBeenCalledTimes(1));
-        await screen.update(<HomeTeamSignInRulesSection context={{ ...context, approvalPending: true }} />);
-
         const refreshedProjection = homeGovernanceProjectionFixture();
         refreshedProjection.policy = {
             ...refreshedProjection.policy,
@@ -370,11 +329,13 @@ describe('HomeAuthenticationPolicySections', () => {
                 },
             },
         };
-        await screen.update(
-            <HomeTeamSignInRulesSection
-                context={{ ...context, projection: refreshedProjection, approvalPending: false }}
-            />,
-        );
+        harness.answer(serverId, '/v1/home/policy/set', { body: refreshedProjection.policy });
+        harness.answer(serverId, '/v1/home/governance/get', { body: refreshedProjection });
+        const screen = await renderScreen(<HomeTeamSignInRulesSection context={context} />);
+        await screen.pressByTestIdAsync('home-policy-team-provider:workos_sso');
+        expect(requestApproval).not.toHaveBeenCalled();
+        expect(harness.requestsFor('/v1/home/policy/set')).toHaveLength(1);
+        await screen.update(<HomeTeamSignInRulesSection context={{ ...context, projection: refreshedProjection }} />);
         await waitForHomeGovernance(() => expect(
             renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso-switch')),
         ).toBe(true));

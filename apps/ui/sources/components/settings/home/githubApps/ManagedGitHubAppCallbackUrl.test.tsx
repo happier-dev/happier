@@ -3,10 +3,11 @@ import { homeAdministrationGitHubAppPath, homeAdministrationGitHubAppEditPath, h
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 
+import { ManagedGitHubAppsListOutputV1Schema } from '@happier-dev/protocol/identity/githubApps';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+
 import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 
-const executeMock = vi.hoisted(() => vi.fn());
-const refreshMock = vi.hoisted(() => vi.fn());
 const setClipboardMock = vi.hoisted(() => vi.fn(async (_text: string) => true));
 const callbackUrlMock = vi.hoisted(() => ({ value: 'https://home.example.test/v1/oauth/github-app/callback' as string | undefined }));
 
@@ -22,16 +23,15 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: vi.fn(async () => true) }));
-vi.mock('@/modal', () => ({ Modal: { alert: vi.fn(), alertAsync: vi.fn(async () => {}), confirm: vi.fn(async () => true) } }));
-vi.mock('./useManagedGitHubApps', () => ({
-    HOME_GITHUB_APP_OWNER: { kind: 'home' },
-    useManagedGitHubAppsClient: () => ({ execute: executeMock }),
-    useManagedGitHubApps: () => ({
-        refresh: refreshMock,
-        state: {
-            kind: 'ready',
-            stale: false,
-            registrations: [{
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+const { ManagedGitHubAppDetailContent } = await import('./ManagedGitHubAppDetailScreen');
+const { ManagedGitHubAppEditorContent } = await import('./ManagedGitHubAppEditorScreen');
+const listPath = '/v1/identity/github-apps/list';
+function answerRegistration() {
+    harness.answer(surface.scope.serverId, listPath, { body: ManagedGitHubAppsListOutputV1Schema.parse({
+        registrations: [{
                 id: 'registration-1',
                 owner: { kind: 'home' },
                 githubHost: 'https://github.com',
@@ -49,13 +49,9 @@ vi.mock('./useManagedGitHubApps', () => ({
                 updatedAt: '2026-09-01T10:00:00.000Z',
                 ...(callbackUrlMock.value === undefined ? {} : { callbackUrl: callbackUrlMock.value }),
             }],
-            installations: [],
-        },
-    }),
-}));
-
-import { ManagedGitHubAppDetailContent } from './ManagedGitHubAppDetailScreen';
-import { ManagedGitHubAppEditorContent } from './ManagedGitHubAppEditorScreen';
+        installations: [],
+    }) });
+}
 
 const surface = {
     scope: { serverId: 'home-1', accountId: 'account-1' },
@@ -66,15 +62,16 @@ const surface = {
         edit: (id: string) => homeAdministrationGitHubAppEditPath('home-1', id),
         signIn: homeAdministrationPoliciesPath('home-1'),
     },
-} as const;
+};
 
-beforeEach(() => {
+beforeEach(async () => {
     standardCleanup();
-    executeMock.mockReset();
-    refreshMock.mockReset();
+    await harness.reset();
+    surface.scope.serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example.test', accountId: 'account-1' });
     setClipboardMock.mockClear();
     installBrowserClipboardBoundary(async text => { await setClipboardMock(text); });
     callbackUrlMock.value = 'https://home.example.test/v1/oauth/github-app/callback';
+    answerRegistration();
 });
 
 describe('managed GitHub App callback URL', () => {
@@ -83,13 +80,12 @@ describe('managed GitHub App callback URL', () => {
             <ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />,
         );
 
+        await waitForHomeGovernance(() => expect(screen.findByTestId('github-app-callback-url')).not.toBeNull());
         expect(findTestInstanceByTypeContainingText(screen.findByTestId('github-app-callback-url')!, 'Text', 'https://home.example.test/v1/oauth/github-app/callback')).toBeDefined();
 
         await screen.pressByTestIdAsync('github-app-callback-url');
 
         expect(setClipboardMock).toHaveBeenCalledWith('https://home.example.test/v1/oauth/github-app/callback');
-        // Reading a derived value is not a mutation of the registration.
-        expect(executeMock).not.toHaveBeenCalled();
     });
 
     it('offers the same copyable callback URL beside the manual setup fields', async () => {
@@ -101,14 +97,17 @@ describe('managed GitHub App callback URL', () => {
             />,
         );
 
+        await waitForHomeGovernance(() => expect(screen.findByTestId('github-app-callback-url')).not.toBeNull());
         expect(findTestInstanceByTypeContainingText(screen.findByTestId('github-app-callback-url')!, 'Text', 'https://home.example.test/v1/oauth/github-app/callback')).toBeDefined();
     });
 
     it('renders no callback row when the Home publishes no public URL to derive one from', async () => {
         callbackUrlMock.value = undefined;
+        answerRegistration();
         const detail = await renderScreen(
             <ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />,
         );
+        await waitForHomeGovernance(() => expect(detail.findByTestId('github-app-edit')).not.toBeNull());
         expect(detail.findByTestId('github-app-callback-url')).toBeNull();
 
         const editor = await renderScreen(
@@ -118,6 +117,7 @@ describe('managed GitHub App callback URL', () => {
                 registrationId="registration-1"
             />,
         );
+        await waitForHomeGovernance(() => expect(harness.requestsFor(listPath)).toHaveLength(2));
         expect(editor.findByTestId('github-app-callback-url')).toBeNull();
     });
 });

@@ -10,7 +10,6 @@ import type { TeamInvitationAcceptResultV1 } from '@happier-dev/protocol/teams/i
 // the harness installs its network boundaries with `vi.doMock`, which only
 // reaches modules imported afterwards (see `installHomeGovernanceBoundaries`).
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import {
     createHomeGovernanceHarness,
     installHomeGovernanceBoundaries,
@@ -24,32 +23,13 @@ import {
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createDeferred } from '@/dev/testkit';
 
-/**
- * A deferred invitation admission, end to end.
- *
- * Accepting an invitation is a dangerous, deferred, result-required intent, so an
- * explicit UI-approval requirement produces a durable approval request instead of
- * a join. The real surface asks the shared Action front door, which persists an
- * open approval in the Home's stateful Artifact store; the Inbox decides it
- * through the generic executor, whose replay is the one admission on the Home;
- * and the surface settles only through the real approval reader and the
- * continuation its own operation registered. The network, the credential store,
- * navigation, the separate account-service discovery probe and the platform view
- * layer are the replaced boundaries.
- */
+/** Real invitation admission, Account rebinding and native Ask confirmation over Home HTTP. */
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock().module;
 });
-
-/** The account service is a separate endpoint this page never owns; it publishes nothing here. */
-vi.mock('@/auth/accountDirectory/accountDirectoryAuthClient', () => ({
-    accountDirectoryAuthClient: {
-        discoverAuthenticationMethods: async () => ({ kind: 'unavailable' }),
-    },
-    createVerifiedAccountServiceAuthority: () => null,
-}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -160,14 +140,16 @@ function approvalIds(serverId: string): string[] {
 
 // Load real screen owners after boundary setup, outside behavior deadlines.
 const { TeamAuthEntrySurface } = await import('./TeamAuthEntrySurface');
+const { Modal } = await import('@/modal');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { TeamJoinScreen } = await import('@/components/teams/join/TeamJoinScreen');
 
 let restoredAccount: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
-describe('TeamAuthEntrySurface deferred admission approval', () => {
+describe('TeamAuthEntrySurface admission confirmation', () => {
     beforeEach(async () => {
         await harness.reset();
+        vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
     });
 
     afterEach(async () => {
@@ -307,65 +289,47 @@ describe('TeamAuthEntrySurface deferred admission approval', () => {
         expect(harness.requestsFor(ACCEPT_PATH)).toHaveLength(1);
     });
 
-    it('registers the deferred admission instead of stranding the invitation', async () => {
+    it('waits for the native Ask decision before admitting the invitation', async () => {
         const serverId = await addTeamHome();
+        const decision = createDeferred<boolean>();
+        vi.mocked(Modal.confirm).mockReturnValueOnce(decision.promise);
         const screen = await renderJoin(serverId, () => {});
-
-        await screen.pressByTestIdAsync('team-auth-entry-join');
-
-        await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-admission-approval')).not.toBeNull());
-        expect(approvalIds(serverId)).toHaveLength(1);
-        const stored = JSON.parse(harness.artifacts(serverId).readPlainBody(approvalIds(serverId)[0]!)!) as Record<string, unknown>;
-        expect(stored).toMatchObject({ status: 'open', actionId: 'teams.invitations.accept' });
-        // The durable request never carries the bearer.
-        expect(JSON.stringify(stored)).not.toContain(TOKEN);
-        // Nobody is admitted before the decision, and Join is withheld while this
-        // same request is unresolved, so one admission cannot be asked for twice.
+        const joining = screen.pressByTestIdAsync('team-auth-entry-join');
+        await waitForHomeGovernance(() => expect(Modal.confirm).toHaveBeenCalledOnce());
+        expect(approvalIds(serverId)).toHaveLength(0);
         expect(harness.requestsFor(ACCEPT_PATH)).toHaveLength(0);
-        expect(screen.findAllByTestId('team-auth-entry-join')).toHaveLength(0);
+        await act(async () => decision.resolve(true));
+        await joining;
+        expect(harness.requestsFor(ACCEPT_PATH)).toHaveLength(1);
+        expect(screen.findByTestId('team-auth-entry-admission-complete')).not.toBeNull();
     });
 
-    it('settles an approved admission with the Home answer without redispatching it', async () => {
+    it('settles a confirmed admission with the Home answer without redispatching it', async () => {
         const serverId = await addTeamHome();
         const onAdmissionComplete = vi.fn();
         const screen = await renderJoin(serverId, onAdmissionComplete);
         await screen.pressByTestIdAsync('team-auth-entry-join');
-        await waitForHomeGovernance(() => expect(approvalIds(serverId)).toHaveLength(1));
-
-        await expect(decideApprovalAsInbox(serverId, approvalIds(serverId)[0]!, 'approve')).resolves.toMatchObject({
-            ok: true, result: { status: 'executed' },
-        });
-
         await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-admission-complete')).not.toBeNull());
-        // The Home admitted them once, through the Inbox's replay; settling must
-        // never repeat the intent.
         expect(harness.requestsFor(ACCEPT_PATH)).toHaveLength(1);
+        expect(approvalIds(serverId)).toHaveLength(0);
         expect(onAdmissionComplete).not.toHaveBeenCalled();
         await screen.pressByTestIdAsync('team-auth-entry-admission-complete-action');
         expect(onAdmissionComplete).toHaveBeenCalledWith({ outcome: 'joined', teamId: 'team-1' });
     });
 
-    it('keeps the same invitation retryable after its approval is refused', async () => {
+    it('can reopen the same invitation after native confirmation is declined', async () => {
         const serverId = await addTeamHome();
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
         const screen = await renderJoin(serverId, () => {});
         await screen.pressByTestIdAsync('team-auth-entry-join');
-        await waitForHomeGovernance(() => expect(approvalIds(serverId)).toHaveLength(1));
-
-        await expect(decideApprovalAsInbox(serverId, approvalIds(serverId)[0]!, 'reject')).resolves.toMatchObject({ ok: true });
-
-        await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-admission-approval-refused')).not.toBeNull());
         expect(harness.requestsFor(ACCEPT_PATH)).toHaveLength(0);
-
-        // A refused approval says nothing about the offer, so the same invitation
-        // is asked for again with the same bearer and Account — and, because the
-        // Account still requires approval, it waits on a fresh approval.
-        await screen.pressByTestIdAsync('team-auth-entry-admission-approval-refused-action');
-        await waitForHomeGovernance(() => expect(approvalIds(serverId)).toHaveLength(2));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-admission-approval')).not.toBeNull());
-        const prepared = harness.requestsFor(ACCEPT_PREPARE_PATH);
-        expect(prepared).toHaveLength(2);
-        expect(prepared[1]?.input).toEqual(prepared[0]?.input);
-        expect(prepared[1]?.token).toBe(prepared[0]?.token);
-        expect(harness.requestsFor(ACCEPT_PATH)).toHaveLength(0);
+        expect(approvalIds(serverId)).toHaveLength(0);
+        // A declined ceremony has no inline retry; reopening the existing
+        // invitation route starts a fresh ceremony for the same offer.
+        await screen.unmount();
+        const reopened = await renderJoin(serverId, () => {});
+        await reopened.pressByTestIdAsync('team-auth-entry-join');
+        await waitForHomeGovernance(() => expect(reopened.findByTestId('team-auth-entry-admission-complete')).not.toBeNull());
+        expect(harness.requestsFor(ACCEPT_PATH)).toHaveLength(1);
     });
 });

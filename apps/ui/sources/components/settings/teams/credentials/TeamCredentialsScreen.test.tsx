@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams';
 
-import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialDisplayNameFixture, teamCredentialResourceFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
@@ -104,7 +104,7 @@ describe('TeamCredentialsScreen', () => {
             body: { resources: [], viewer: teamCredentialViewerFixture({ offerOwnCredential: true }) },
         });
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'shared-resource', teamId: 'team-1', displayName: 'Shared Codex', resourceRevision: 1,
+            id: 'shared-resource', teamId: 'team-1', displayName: teamCredentialDisplayNameFixture('Shared Codex'), resourceRevision: 1,
             sourcePresentation: teamCredentialResourceFixture().sourcePresentation,
             readiness,
             recoveryAction: 'source_owner_action', allowedRoutes: ['brokered'],
@@ -385,53 +385,27 @@ describe('TeamCredentialsScreen', () => {
         });
     });
 
-    it('ignores a response from a superseded search and keeps the current query visible', async () => {
+    it('keeps successive private-label searches local and shows the current query', async () => {
         const serverId = await addHome();
-        const initialRows = Array.from({ length: 10 }, (_, index) => teamCredentialResourceFixture({
-            id: `initial-${index}`,
-            displayName: `Initial ${index}`,
-        }));
-        harness.answer(serverId, CREDENTIALS_LIST_PATH, {
-            body: {
-                resources: initialRows,
-                viewer: teamCredentialViewerFixture({ manageCredentials: true }),
-                nextCursor: null,
-            },
-        });
-
+        harness.answer(serverId, CREDENTIALS_LIST_PATH, { body: {
+            resources: [
+                teamCredentialResourceFixture({ id: 'old-search', displayName: 'Old result' }),
+                teamCredentialResourceFixture({ id: 'new-search', displayName: 'New result' }),
+                ...Array.from({ length: 8 }, (_, index) => teamCredentialResourceFixture({ id: `initial-${index}`, displayName: `Initial ${index}` })),
+            ],
+            viewer: teamCredentialViewerFixture({ manageCredentials: true }),
+            nextCursor: null,
+        } });
         const screen = await renderCredentials(serverId);
         await waitForTestId(screen, 'team-credentials-search');
-
-        let releaseOldSearch!: () => void;
-        const oldSearchHeld = new Promise<void>((resolve) => { releaseOldSearch = resolve; });
-        harness.answer(serverId, CREDENTIALS_LIST_PATH, {
-            respondAfter: oldSearchHeld,
-            body: {
-                resources: [teamCredentialResourceFixture({ id: 'old-search', displayName: 'Old result' })],
-                viewer: teamCredentialViewerFixture({ manageCredentials: true }),
-                nextCursor: null,
-            },
-        });
+        const reads = harness.requestsFor(CREDENTIALS_LIST_PATH).length;
         screen.changeTextByTestId('team-credentials-search', 'old');
-        await vi.waitFor(() => {
-            expect(harness.requestsFor(CREDENTIALS_LIST_PATH).at(-1)?.input).toMatchObject({ search: 'old' });
-        });
-
-        harness.answer(serverId, CREDENTIALS_LIST_PATH, {
-            body: {
-                resources: [teamCredentialResourceFixture({ id: 'new-search', displayName: 'New result' })],
-                viewer: teamCredentialViewerFixture({ manageCredentials: true }),
-                nextCursor: null,
-            },
-        });
+        await waitForTestId(screen, 'team-credentials-row:old-search');
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credentials-row:new-search'));
         screen.changeTextByTestId('team-credentials-search', 'new');
         await waitForTestId(screen, 'team-credentials-row:new-search');
-
-        releaseOldSearch();
-        await Promise.resolve();
-        await Promise.resolve();
-        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credentials-row:new-search');
-        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credentials-row:old-search');
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credentials-row:old-search'));
+        expect(harness.requestsFor(CREDENTIALS_LIST_PATH)).toHaveLength(reads);
     });
 
     it('renders the two-line row the Home projected, without manager-private facts or raw source identity', async () => {
@@ -452,7 +426,7 @@ describe('TeamCredentialsScreen', () => {
                     // A manager's own row: the Home disclosed its audience.
                     teamCredentialResourceFixture({
                         id: 'resource-1',
-                        displayName: 'Managed credential',
+                        displayName: teamCredentialDisplayNameFixture('Managed credential'),
                         sourceOwnerDisplayName: 'Ada Lovelace',
                         sessionUsePolicy: 'team_context_required',
                         activeUsageLimitCount: 2,
@@ -469,7 +443,7 @@ describe('TeamCredentialsScreen', () => {
                     // the audience and every manager-private default.
                     teamCredentialResourceFixture({
                         id: 'resource-2',
-                        displayName: 'Offered credential',
+                        displayName: teamCredentialDisplayNameFixture('Offered credential'),
                         sourceOwnerDisplayName: 'Ada Lovelace',
                         allMembersAllowedRoutes: ['direct'],
                         capabilities: {
