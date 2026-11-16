@@ -14,7 +14,7 @@ const workspace = (status = 'running', transition = 'start', id = 'build-create'
   dormant_at: null, latest_build: build(status, transition, id) });
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
-async function fixture(options: { lostCreate?: boolean; lostDelete?: boolean; owner?: string; missing?: boolean; readFails?: boolean; mismatchedVersion?: boolean; postResponse?: 'late-abort' | 'incomplete' } = {}) {
+async function fixture(options: { lostCreate?: boolean; lostDelete?: boolean; owner?: string; missing?: boolean; readFails?: boolean; mismatchedVersion?: boolean; postResponse?: 'late-abort' | 'incomplete'; waitForObservation?: () => Promise<void> } = {}) {
   const requests: Array<{ method: string; path: string; body: unknown }> = [];
   let current = workspace(), deleted = false;
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
@@ -27,7 +27,8 @@ async function fixture(options: { lostCreate?: boolean; lostDelete?: boolean; ow
     if (path === '/api/v2/templateversions/version') return send({ id: 'version', template_id: options.mismatchedVersion ? 'other-template' : 'template', organization_id: 'org' });
     if (path === '/api/v2/users/me') return send({ id: options.owner ?? 'user-a', username: 'alice' });
     if (req.method === 'POST' && path.endsWith('/workspaces')) {
-      current = workspace('starting'); if (options.lostCreate) return req.socket.destroy();
+      current = { ...workspace('starting'), latest_build: { ...build('starting'), job: { status: 'pending' }, resources: [] } };
+      if (options.lostCreate) return req.socket.destroy();
       return send(current, 201);
     }
     if (req.method === 'POST' && path.endsWith('/builds')) {
@@ -52,18 +53,21 @@ async function fixture(options: { lostCreate?: boolean; lostDelete?: boolean; ow
   cleanup.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
   const abort = new AbortController();
   let observations = 0;
-  const client = createCoderClient({ request: async (path, init) => {
+  const createClient = (signal: AbortSignal) => createCoderClient({ request: async (path, init) => {
     const response = await fetch(origin + path, init);
     if (init?.method !== 'POST' || !options.postResponse) return response;
     if (options.postResponse === 'incomplete') return new Response(new ReadableStream({ start(body) { body.error(new Error('body disconnected')); } }));
     const bytes = await response.arrayBuffer();
     abort.abort();
     return new Response(bytes, { status: response.status });
-  }, signal: abort.signal,
+  }, signal,
     observedAt: 1000, waitForObservation: async () => {
-      observations++; current = workspace(current.latest_build.transition === 'stop' ? 'stopped' : 'running', current.latest_build.transition, current.latest_build.id);
+      observations++;
+      await options.waitForObservation?.();
+      current = workspace(current.latest_build.transition === 'stop' ? 'stopped' : 'running', current.latest_build.transition, current.latest_build.id);
     } });
-  return { client, requests, resource, observations: () => observations, setCurrent(value: ReturnType<typeof workspace>) { current = value; }, remove() { deleted = true; } };
+  return { client: createClient(abort.signal), freshClient: () => createClient(new AbortController().signal), abort: () => abort.abort(), requests, resource,
+    observations: () => observations, setCurrent(value: ReturnType<typeof workspace>) { current = value; }, remove() { deleted = true; } };
 }
 
 describe('Coder finite lifecycle through its REST boundary', () => {
@@ -102,9 +106,42 @@ describe('Coder finite lifecycle through its REST boundary', () => {
     await expect(h.client.acquire(launch, managedId)).rejects.toMatchObject({ code: 'resource_mismatch' });
     expect(h.requests.some(request => request.method === 'POST')).toBe(false);
   });
-  it('retains accepted workspace and build identity while acquisition is starting', async () => {
-    const h = await fixture(); const created = RECONCILIATION.result.parse(await h.client.acquire(launch, managedId));
+  it('keeps acquisition open until the accepted native build settles', async () => {
+    let observing!: () => void, release!: () => void;
+    const observationStarted = new Promise<void>(resolve => { observing = resolve; });
+    const observationGate = new Promise<void>(resolve => { release = resolve; });
+    const h = await fixture({ waitForObservation: async () => { observing(); await observationGate; } });
+    const work = h.client.acquire(launch, managedId);
+    const first = await Promise.race([observationStarted.then(() => 'observing'), work.then(() => 'settled')]);
+    release();
+    expect(first).toBe('observing');
+    expect(RECONCILIATION.result.parse(await work)).toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(h.requests.filter(request => request.method === 'POST')).toHaveLength(1);
+  });
+  it('retains an accepted acquisition on cancellation while waiting and recovers the same workspace without another create', async () => {
+    let observing!: () => void, release!: () => void;
+    const observationStarted = new Promise<void>(resolve => { observing = resolve; });
+    const observationGate = new Promise<void>(resolve => { release = resolve; });
+    const h = await fixture({ waitForObservation: async () => { observing(); await observationGate; } });
+    const work = h.client.acquire(launch, managedId);
+    const first = await Promise.race([observationStarted.then(() => 'observing'), work.then(() => 'settled')]);
+    h.abort(); release();
+    expect(first).toBe('observing');
+    const created = RECONCILIATION.result.parse(await work);
     expect(created).toMatchObject({ kind: 'pending', nativeOperationRef: { value: { workspaceId: 'workspace', buildId: 'build-create' } } });
+    if (created.kind !== 'pending') throw new Error('Missing retained acquisition');
+    expect(await h.freshClient().recover(created.nativeOperationRef.value)).toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(h.requests.filter(request => request.method === 'POST')).toHaveLength(1);
+  });
+  it('retains accepted workspace identity when observation is unavailable and recovers without another create', async () => {
+    const options = { readFails: true };
+    const h = await fixture(options);
+    const created = RECONCILIATION.result.parse(await h.client.acquire(launch, managedId));
+    expect(created).toMatchObject({ kind: 'pending', nativeOperationRef: { value: { workspaceId: 'workspace', buildId: 'build-create' } } });
+    if (created.kind !== 'pending') throw new Error('Missing retained acquisition');
+    options.readFails = false;
+    expect(await h.client.recover(created.nativeOperationRef.value)).toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(h.requests.filter(request => request.method === 'POST')).toHaveLength(1);
   });
   it('qualifies recovered resources by the owner, organization, template, version and name', async () => {
     const h = await fixture(); h.setCurrent({ ...workspace(), template_id: 'another-template' });
@@ -146,8 +183,10 @@ describe('Coder finite lifecycle through its REST boundary', () => {
   it('recovers may-exist create before Delete, and never destroys an unqualified or unreadable allocation', async () => {
     const h = await fixture({ lostCreate: true }); const created = await h.client.acquire(launch, managedId);
     if (created.kind !== 'pending') throw new Error('Missing create handle');
-    h.setCurrent(workspace());
+    h.setCurrent(workspace('starting'));
     expect(await h.client.destroy({ nativeOperation: created.nativeOperationRef.value })).toMatchObject({ kind: 'accepted' });
+    expect(h.observations()).toBe(0);
+    expect(h.requests.filter(request => request.method === 'POST')).toHaveLength(2);
     const unavailable = await fixture({ readFails: true });
     expect(await unavailable.client.destroy({ nativeOperation: created.nativeOperationRef.value })).toMatchObject({ kind: 'unknown' });
     expect(unavailable.requests.some(request => request.method === 'POST')).toBe(false);

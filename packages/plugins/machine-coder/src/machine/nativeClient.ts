@@ -94,19 +94,21 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
     if (!inProgress(native.latest_build.status)) return { kind: 'bound', resource: { ...reference(resourceFor(retained, native)), origin: 'created' as const } };
     return pending(retained);
   }
+  async function observeRetainedAcquisition(operation: CoderAcquireOperation): Promise<Acquisition> {
+    await principal(operation.ownerId);
+    const path = operation.workspaceId ? '/workspaces/' + encodeURIComponent(operation.workspaceId)
+      : '/users/' + encodeURIComponent(operation.ownerId) + '/workspace/' + encodeURIComponent(operation.workspaceName);
+    const value = await request(path + '?include_deleted=true', 'GET', undefined, true);
+    // A missing name after uncertain create does not prove the POST never
+    // arrived; no second allocation or absence declaration is authorized.
+    if (value === null) return unknown(operation, 'coder_acquisition_unconfirmed');
+    return observeAcquisition(operation, parseWorkspace(value));
+  }
   async function recover(raw: unknown): Promise<Acquisition> {
     const operation = CoderOperationSchema.parse(raw);
     if (operation.kind === 'delete') return { kind: 'bound', resource: reference(operation.resource) };
-    try {
-      await principal(operation.ownerId);
-      const path = operation.workspaceId ? '/workspaces/' + encodeURIComponent(operation.workspaceId)
-        : '/users/' + encodeURIComponent(operation.ownerId) + '/workspace/' + encodeURIComponent(operation.workspaceName);
-      const value = await request(path + '?include_deleted=true', 'GET', undefined, true);
-      // A missing name after uncertain create does not prove the POST never
-      // arrived; no second allocation or absence declaration is authorized.
-      if (value === null) return unknown(operation, 'coder_acquisition_unconfirmed');
-      return await observeAcquisition(operation, parseWorkspace(value));
-    } catch (error) { return projectMachineProvisionerActionFailure(error, () => unknown(operation, coderFailureCode(error))); }
+    try { return await observeRetainedAcquisition(operation); }
+    catch (error) { return projectMachineProvisionerActionFailure(error, () => unknown(operation, coderFailureCode(error))); }
   }
   async function buildObservation(resource: CoderResource, buildId: string) {
     const value = await request('/workspacebuilds/' + encodeURIComponent(buildId));
@@ -190,7 +192,12 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
         });
         const native = parseWorkspace(value);
         retained = { ...operation, workspaceId: native.id, buildId: native.latest_build.id };
-        return await observeAcquisition(retained, native);
+        let result = await observeAcquisition(retained, native);
+        while (result.kind === 'pending') {
+          await input.waitForObservation(); input.signal.throwIfAborted();
+          result = await observeRetainedAcquisition(retained);
+        }
+        return result;
       } catch (error) { return projectMachineProvisionerActionFailure(error, () => coderFailureCode(error) === 'invalid_request'
         ? { kind: 'rejected', code: 'invalid_request' } : pending(retained)); }
     },
