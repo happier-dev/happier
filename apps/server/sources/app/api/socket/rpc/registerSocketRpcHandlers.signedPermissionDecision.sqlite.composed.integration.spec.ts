@@ -11,6 +11,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import {
   computeExternalActionRequestEnvelopeDigestV1,
   signExternalActionMachineRpcRequestV1,
+  verifyExternalActionMachineRpcRequestV1,
 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
@@ -57,7 +58,10 @@ describe('signed Session permission decision RPC admission', () => {
 
   type Requester = 'present_user' | 'terminal';
 
-  async function fixture(requester: Requester) {
+  async function fixture(
+    requester: Requester,
+    effectActionId: 'session.permission.respond' | 'session.message.send' = 'session.permission.respond',
+  ) {
     const account = await db.account.create({
       data: { publicKey: null, encryptionMode: 'plain' },
     });
@@ -101,7 +105,10 @@ describe('signed Session permission decision RPC admission', () => {
         : { kind: 'account', authority: 'present_user' },
     );
     const target = { kind: 'session' as const, sessionId: session.id };
-    const actionInput = {
+    const actionInput = effectActionId === 'session.message.send' ? {
+      sessionId: session.id,
+      message: 'Follow up',
+    } : {
       sessionId: session.id,
       requestId: 'tool-call-1',
       decision: 'allow',
@@ -120,7 +127,7 @@ describe('signed Session permission decision RPC admission', () => {
           kind: terminal ? 'terminal' : 'account',
           tokenEpoch: account.tokenEpoch,
         },
-        actionId: 'session.permission.respond',
+        actionId: effectActionId,
         machineId: machine.id,
         target,
         requestId: envelope.requestId,
@@ -217,7 +224,6 @@ describe('signed Session permission decision RPC admission', () => {
 
     const signedPacket = (signingKey = keys.secretKey) => {
       const requestId = randomUUID();
-      const effectActionId = 'session.permission.respond';
       return {
         method,
         requestId,
@@ -246,6 +252,7 @@ describe('signed Session permission decision RPC admission', () => {
     };
     return {
       account,
+      machine,
       session,
       caller,
       forwarded,
@@ -278,6 +285,33 @@ describe('signed Session permission decision RPC admission', () => {
       });
     },
   );
+
+  it('refuses a valid signed message effect on the Session permission response method', async () => {
+    const f = await fixture('present_user', 'session.message.send');
+    const packet = f.signedPacket();
+    const execution = packet.externalActionExecution;
+    // The installation signed this exact method and mismatched effect; refusal
+    // must not depend on a substituted signature or terminal credential floor.
+    expect(verifyExternalActionMachineRpcRequestV1({
+      authorizationToken: execution.authorization.token,
+      requesterAccountContext: execution.authorization.requesterAccountContext,
+      effectActionId: execution.effectActionId,
+      target: execution.target,
+      installationId: execution.installationId,
+      event: SOCKET_RPC_EVENTS.CALL,
+      method: packet.method,
+      requestId: packet.requestId,
+      params: packet.params,
+      publicKey: f.machine.installationPublicKey!,
+      signature: execution.machineSignature,
+    })).toBe(true);
+    const ack = vi.fn();
+    await triggerSocketHandler(f.caller, SOCKET_RPC_EVENTS.CALL, packet, ack);
+    expect(ack).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: false, errorCode: 'RPC_FORBIDDEN' }),
+    );
+    expect(f.forwarded).toEqual([]);
+  });
 
   it('refuses an unadmitted terminal decision and a substituted installation signature', async () => {
     const f = await fixture('terminal');
