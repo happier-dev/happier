@@ -205,7 +205,9 @@ export function acquireTriageListWindow(
         let observedClient: AccountDataObserver | null = null;
         let observation: AbortController | null = null;
         const observeChanges = () => {
-          const next = clients.values().next().value?.data ?? null;
+          // Transport-only artifacts still share the window, but must not
+          // suppress the live observation offered by another mounted surface.
+          const next = [...clients.values()].find(client => client.data !== null)?.data ?? null;
           if (next === observedClient) return;
           observation?.abort();
           observation = null;

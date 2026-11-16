@@ -692,7 +692,8 @@ it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page on
     if (selection.kind === 'internalTasks') listener = next;
     return { dispose() { if (selection.kind === 'internalTasks') listener = undefined; } };
   } };
-  const first = acquireTriageListWindow(host, scope, undefined, data);
+  // An earlier artifact can acquire transport before it has a Data observer.
+  const first = acquireTriageListWindow(host, scope, undefined, null);
   const second = acquireTriageListWindow(otherHost, scope, undefined, data);
   const rows = () => readTriageListWindowSnapshot(host, scope).window?.rows ?? [];
   const push = (taskId: string) => { changed = true; listener?.({ kind: 'internalTasks', accountId: 'viewer', tasks: [{ ownerAccountId, taskId }] }); };
@@ -702,9 +703,18 @@ it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page on
     setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'Matching task' }, host, scope);
     expect(rows()[0]?.content?.outcome.snapshot.state).toMatchObject({ stage: 'unstarted' });
     const before = pageReads;
+    // A create must be admitted even after the retained walk is exhausted.
+    push('task-created');
+    await vi.waitFor(() => expect(rows().some(row => row.entryRef.entryId === 'task-created')).toBe(true));
+    expect(exactReads).toEqual(['task-created']);
+    expect(pageReads).toBe(before);
+    absent = true;
+    push('task-created');
+    await vi.waitFor(() => expect(rows().some(row => row.entryRef.entryId === 'task-created')).toBe(false));
+    absent = false;
     push('task-a');
     await vi.waitFor(() => expect(rows()[0]?.content?.outcome.snapshot.state).toMatchObject({ completionReason: 'completed' }));
-    expect(exactReads).toEqual(['task-a']);
+    expect(exactReads).toEqual(['task-created', 'task-created', 'task-a']);
     expect(projectTriageListWindow({ ...TRIAGE_LIST_DEFAULT_LENS_V1, limit: 200 }, otherHost, scope)?.rows.find(row => row.entryRef.entryId === 'task-a')?.content?.outcome.snapshot.state)
       .toMatchObject({ completionReason: 'completed' });
     expect(projectTriageListWindow({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'No match' }, otherHost, scope)?.rows).toEqual([]);
@@ -719,11 +729,11 @@ it.each(['viewer', 'owner'])('reconciles qualified %s Task pushes beyond page on
     setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'Matching task' }, host, scope);
     push('task-b'); // not in the retained page; exact admission discovers a new matching row
     await vi.waitFor(() => expect(rows().map(row => row.entryRef.entryId).sort()).toEqual(['task-a', 'task-b']));
-    expect(exactReads).toEqual(['task-a', 'task-a', 'task-b']);
+    expect(exactReads).toEqual(['task-created', 'task-created', 'task-a', 'task-a', 'task-b']);
     absent = true;
     push('task-a');
     await vi.waitFor(() => expect(rows().map(row => row.entryRef.entryId)).toEqual(['task-b']));
-    expect(exactReads).toEqual(['task-a', 'task-a', 'task-b', 'task-a']);
+    expect(exactReads).toEqual(['task-created', 'task-created', 'task-a', 'task-a', 'task-b', 'task-a']);
     expect(projectTriageListWindow({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'Matching task' }, otherHost, scope)?.rows.map(row => row.entryRef.entryId))
       .toEqual(['task-b']);
     expect(pageReads).toBe(before);
