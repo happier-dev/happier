@@ -762,7 +762,8 @@ describe('Team credential usage-limit administration', () => {
             authentication: TEST_AUTHENTICATION,
             body: {
                 resourceId: f.resource.id,
-                expectedRevision: 1,
+                // A limit edit keeps the authority revision.
+                expectedRevision: 0,
                 limit: {
                     subjectKind: 'team_member', subjectId: f.memberMembership.id, period: 'week',
                     metric: 'inference_requests', maximum: '5', enabled: true,

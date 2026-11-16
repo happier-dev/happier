@@ -186,7 +186,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
                     payload: { resourceId: resource.id, expectedRevision: resource.revision, limitId: limit.id },
                     verify: async () => {
                         expect(await db.teamCredentialUsageLimit.count({ where: { resourceId: resource.id } })).toBe(0);
-                        expect(await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).toMatchObject({ revision: resource.revision + 1 });
+                        expect(await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).toMatchObject({ revision: resource.revision });
                     },
                 };
             }

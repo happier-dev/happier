@@ -281,9 +281,11 @@ export async function upsertTeamCredentialUsageLimitInTx(
         || existing.period !== body.limit.period || existing.metric !== body.limit.metric)) {
         return { ok: false, error: 'limit_identity_immutable' };
     }
+    // CAS only: a limit is enforced by usage admission, not an authority fact,
+    // so it keeps the authority revision and admitted broker jobs stay current.
     const updated = await tx.teamCredentialResource.updateMany({
         where: { id: auth.resource.id, revision: body.expectedRevision },
-        data: { revision: { increment: 1 } },
+        data: { revision: body.expectedRevision },
     });
     if (updated.count !== 1) return { ok: false, error: 'resource_changed' };
     const row = existing
@@ -307,7 +309,7 @@ export async function upsertTeamCredentialUsageLimitInTx(
     return {
         ok: true,
         resourceId: auth.resource.id,
-        revision: body.expectedRevision + 1,
+        revision: body.expectedRevision,
         limit: projectLimit(parseLimitRow(row), decision.recorded, decision.resetsAt),
     };
 }
@@ -328,12 +330,12 @@ export async function deleteTeamCredentialUsageLimitInTx(
     if (!row || row.resourceId !== auth.resource.id) return { ok: false, error: 'not_found_or_not_visible' };
     const updated = await tx.teamCredentialResource.updateMany({
         where: { id: auth.resource.id, revision: parsed.data.expectedRevision },
-        data: { revision: { increment: 1 } },
+        data: { revision: parsed.data.expectedRevision },
     });
     if (updated.count !== 1) return { ok: false, error: 'resource_changed' };
     await tx.teamCredentialUsageLimit.delete({ where: { id: row.id } });
     await deleteTeamCredentialUsageCountersInTx(tx, auth.resource.custodianAccountId, row.id);
     await recordTeamCredentialResourceActivityInTx(tx, { teamId: auth.resource.teamId, resourceId: auth.resource.id, kind: 'limits_changed', actor: { kind: 'account', accountId: input.actorAccountId }, subjectDisplayName: auth.displayName });
     await publishTeamChangedInTx(tx, { teamId: auth.resource.teamId, additionalAccountIds: [auth.resource.custodianAccountId, input.actorAccountId] });
-    return { ok: true, resourceId: auth.resource.id, revision: parsed.data.expectedRevision + 1 };
+    return { ok: true, resourceId: auth.resource.id, revision: parsed.data.expectedRevision };
 }

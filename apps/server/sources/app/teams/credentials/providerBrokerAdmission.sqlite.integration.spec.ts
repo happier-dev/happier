@@ -35,6 +35,7 @@ import { archiveTeamGroupForActorInTx } from '../groups/groupService';
 import { archiveTeamInTx } from '../lifecycle';
 import { setTeamMembershipStatusInTx } from '../memberships/membershipService';
 import { deleteTeamCredentialResourceInTx } from './resourceDelete';
+import { upsertTeamCredentialUsageLimitInTx } from './resourceLimits';
 import { PrismaClient } from '../../../../generated/sqlite-client';
 import { readTeamCredentialCatalogInTx, readTeamCredentialResourceAdministrationInTx } from './resourceRead';
 import { hashPasswordMaterial } from '@/app/auth/password/passwordMaterialVerifier';
@@ -3933,6 +3934,55 @@ describe('Team credential Provider broker admission', () => {
         expect(current.revision).toBe(resource.revision + 1);
         await expect(fixture.admit({ authority: opened.authority, resource: current, requestId: 'after-suspension' }))
             .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+    });
+
+    it('keeps an admitted broker job current across a usage-limit edit and enforces the new limit on its next request', async () => {
+        // TEAM-CRED-LIMIT-1116 (r182): adding an each_member limit retired the
+        // admitted job (operation_not_current on every renewal). A limit is
+        // enforced by usage admission, not by job authority.
+        const fixture = await createBrokerFixture('limit-edit');
+        const resource = await fixture.createResource('connection-limit-edit');
+        const session = await fixture.createSession();
+        await fixture.selectForSession(session.id, resource, TEST_AUTHENTICATION);
+        const opened = await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION });
+        if (!opened.ok) throw new Error(`expected the broker open to succeed: ${opened.reasonCode}`);
+        await expect(fixture.admit({ authority: opened.authority, resource, requestId: 'before-limit' }))
+            .resolves.toMatchObject({ ok: true });
+        const limited = await inTx(tx => upsertTeamCredentialUsageLimitInTx(tx, {
+            actorAccountId: fixture.custodian.id,
+            authentication: { authenticationAuthority: 'present_user', authenticationEvidence: [] },
+            body: {
+                resourceId: resource.id,
+                expectedRevision: resource.revision,
+                limit: { subjectKind: 'each_member', subjectId: '', period: 'day',
+                    metric: 'inference_requests', maximum: '1', enabled: true },
+            },
+        }));
+        if (!limited.ok) throw new Error(`expected the limit edit to succeed: ${limited.error}`);
+        // The fixture clock stamps requests at 2026-09-23T10:00:00.00Nz; the
+        // limit starts right after the pre-limit request (N = 1).
+        await db.teamCredentialUsageLimit.updateMany({ where: { resourceId: resource.id },
+            data: { createdAt: new Date(Date.UTC(2026, 8, 23, 10, 0, 0, 2)) } });
+        const current = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } });
+        // The renewal the Session presents and the broker's next requests stay current.
+        const outcome = (result: Readonly<{ ok: true } | { ok: false; reasonCode: string }>) =>
+            result.ok ? 'ok' : result.reasonCode;
+        expect(outcome(await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION,
+            refreshAuthority: opened.authority }))).toBe('ok');
+        expect(outcome(await fixture.catalog({ authority: opened.authority, resource: current }))).toBe('ok');
+        expect(outcome(await fixture.admit({ authority: opened.authority, resource: current, requestId: 'after-limit-1' })))
+            .toBe('ok');
+        // A limit is not an authority fact; the authority revision stays put.
+        expect(current.revision).toBe(resource.revision);
+        await expect(fixture.admit({ authority: opened.authority, resource: current, requestId: 'after-limit-2' }))
+            .resolves.toMatchObject({ ok: false, reasonCode: 'team_credential_usage_limit' });
+        // Withdrawal still ends the same job on its next request.
+        await expect(inTx(tx => deleteTeamCredentialResourceInTx(tx, {
+            actorAccountId: fixture.custodian.id, resourceId: resource.id, expectedRevision: current.revision,
+            authentication: { authenticationAuthority: 'present_user', authenticationEvidence: [] },
+        }))).resolves.toEqual({ ok: true });
+        await expect(fixture.admit({ authority: opened.authority, resource: current, requestId: 'after-delete' }))
+            .resolves.toMatchObject({ ok: false });
     });
 
     it('serves each request of an admitted turn with one active-job read and accounting, independent of source and roster', async () => {

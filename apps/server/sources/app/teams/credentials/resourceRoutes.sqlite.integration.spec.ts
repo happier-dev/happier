@@ -3623,7 +3623,8 @@ describe("Team credential resource routes (SQLite integration)", () => {
         );
         expect(qualifiedUpsert.statusCode, qualifiedUpsert.body).toBe(200);
         expect(await db.teamCredentialUsageLimit.count({ where: { resourceId: resource.id } })).toBe(1);
-        expect((await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).revision).toBe(1);
+        // A limit is not an authority fact; it keeps the authority revision.
+        expect((await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).revision).toBe(0);
 
         const broker = await db.machine.create({ data: {
             id: `restricted-resource-test-${custodian.id}`,

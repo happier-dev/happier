@@ -328,17 +328,16 @@ async function applyResourceReplacementInTx(
     // broker opens use it as their CAS precondition, and every request presents
     // the revision it evaluated against the current resource. Accepted Session
     // bindings and established operations are not locked to it. It advances
-    // only when an authority fact changes; a display-name edit keeps it (the CAS
-    // precondition still applies).
+    // only when an authority fact changes; a display-name or usage-limit edit
+    // keeps it (the CAS precondition still applies). Limits are enforced by
+    // usage admission, so an edit must not retire admitted broker jobs.
     const authorityChanged = sourceChanged
         || deliveryPolicyChanged
         || !isDeepStrictEqual(storedPlacement.placement, nextPlacement)
         || resource.enabled !== replacement.enabled
         || resource.sessionUsePolicy !== replacement.sessionUsePolicy
         || requestPolicyChanged
-        || nextAudienceChanged
-        || replacement.usageLimitDelta.upserts.length > 0
-        || replacement.usageLimitDelta.deleteIds.length > 0;
+        || nextAudienceChanged;
     const nextRevision = authorityChanged ? input.expectedRevision + 1 : input.expectedRevision;
     const updated = await tx.teamCredentialResource.updateMany({
         where: { id: resource.id, revision: input.expectedRevision },
