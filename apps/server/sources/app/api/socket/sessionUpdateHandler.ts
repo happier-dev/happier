@@ -27,7 +27,7 @@ import {
     SessionTranscriptObservationCapabilityRequestSchema,
     SessionTranscriptObservationInputSchema,
 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
-import { isServerFeatureEnabledForHome } from "@/app/features/catalog/serverFeatureGate";
+import { isServerFeatureEnabledForHome, isServerFeatureEnabledForRequest, readHomeEffectiveEnv } from "@/app/features/catalog/serverFeatureGate";
 import { AsyncLock, isLockAdmissionDeadlineExceededError } from "@/utils/runtime/lock";
 import { debug, error as logError, log } from "@/utils/logging/log";
 import { randomUUID } from 'node:crypto';
@@ -671,7 +671,9 @@ export function sessionUpdateHandler(
         const respond = (response: unknown) => callback?.(SessionFollowObservePendingResponseV1Schema.parse(response));
         const request = SessionFollowObservePendingRequestV1Schema.safeParse(data);
         try {
-            if (!await isServerFeatureEnabledForHome("sessions.following")) {
+            // One Home configuration read decides both Follow gates of this observation.
+            const homeEnv = await readHomeEffectiveEnv();
+            if (!isServerFeatureEnabledForRequest("sessions.following", homeEnv)) {
                 respond({ ok: false, v: 1, error: "unsupported" });
                 return;
             }
@@ -679,7 +681,7 @@ export function sessionUpdateHandler(
                 respond({ ok: false, v: 1, error: request.success ? "forbidden" : "invalid_request" });
                 return;
             }
-            const autonomousExchangeEnabled = await isServerFeatureEnabledForHome('sessions.autonomousExchange');
+            const autonomousExchangeEnabled = isServerFeatureEnabledForRequest('sessions.autonomousExchange', homeEnv);
             const result = await trustedSessionPublisher.presence.runAsCurrentPublisherInTx({
                 socket,
                 authorityMode: "snapshot",

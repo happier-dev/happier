@@ -200,8 +200,10 @@ describe('Admitted Session publisher after Machine grant withdrawal', () => {
             expect(await emit('session-runtime-activity-snapshot', { sessionId: session.id, mutationId: randomUUID(),
                 snapshot: { state: 'active', activeCount: 1 } })).toEqual([expect.objectContaining({ status: 'applied' })]);
             let sessionReads = 0;
+            let homeSettingsReads = 0;
             const stopObserving = observeSqliteRequests({ before: request => {
                 if (request.model === 'Session' && request.action === 'findUnique') sessionReads += 1;
+                if (request.model === 'HomeSettings') homeSettingsReads += 1;
             } });
             try {
                 for (let index = 0; index < 3; index += 1) {
@@ -212,6 +214,8 @@ describe('Admitted Session publisher after Machine grant withdrawal', () => {
             } finally { stopObserving(); }
             // 3 per observation: 1 publisher authority + the observation owner's own reads (was 5: 2 re-reads removed).
             expect(sessionReads).toBe(9);
+            // One Home configuration read decides both Follow feature gates of an observation.
+            expect(homeSettingsReads).toBe(3);
         } finally {
             eventRouter.removeConnection(owner.id, connection);
         }
