@@ -22,6 +22,7 @@ import {
 } from "./apiTokenRouteAdmission";
 import { readBearerCredential, verifyRequestPrincipal, type RequestPrincipalVerification } from "./verifyRequestPrincipal";
 import { isApiTokenRequestOriginAllowed } from "./isApiTokenRequestOriginAllowed";
+import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
 import { PresentUserRequiredResponseSchema } from "./requirePresentUser";
 import { enableExternalActionHttpBody } from "./externalActionHttpBody";
 import {
@@ -69,11 +70,12 @@ function stampApiTokenPrincipal(request: FastifyRequest, principal: NonNullable<
     request.apiTokenPrincipal = principal;
 }
 
-function isApiTokenRequestOriginDenied(request: FastifyRequest): boolean {
+async function isApiTokenRequestOriginDenied(request: FastifyRequest): Promise<boolean> {
     const origin = request.headers.origin;
     return origin !== undefined
         && request.apiTokenPrincipal !== undefined
-        && !isApiTokenRequestOriginAllowed(request.apiTokenPrincipal.grant, origin);
+        && !await isApiTokenRequestOriginAllowed(request.apiTokenPrincipal.grant, origin,
+            () => readRequestHomeEnv(request));
 }
 
 function stampSessionRuntimePrincipal(
@@ -122,7 +124,7 @@ export function enableAuthentication(app: Fastify) {
         earlyRequestPrincipals.set(request, verification);
         if (verification.status !== "verified" || !verification.principal.apiTokenPrincipal) return;
         stampApiTokenPrincipal(request, verification.principal.apiTokenPrincipal);
-        if (isApiTokenRequestOriginDenied(request)) {
+        if (await isApiTokenRequestOriginDenied(request)) {
             return reply.code(403).send({ error: "credential_origin_denied" });
         }
     });
@@ -254,7 +256,7 @@ export function enableAuthentication(app: Fastify) {
                 stampApiTokenPrincipal(request, verified.principal);
             }
             request.authAuthority = narrowCredentialAuthority(verified.effectiveAuthority, request.headers[AUTHORITY_CEILING_HEADER_V1]);
-            if (isApiTokenRequestOriginDenied(request)) {
+            if (await isApiTokenRequestOriginDenied(request)) {
                 return reply.code(403).send({ error: "credential_origin_denied" });
             }
             request.externalActionExecutionAuthorized = true;
@@ -350,7 +352,7 @@ export function enableAuthentication(app: Fastify) {
         }
         if (apiTokenPrincipal) {
             stampApiTokenPrincipal(request, apiTokenPrincipal);
-            if (isApiTokenRequestOriginDenied(request)) {
+            if (await isApiTokenRequestOriginDenied(request)) {
                 return reply.code(403).send({ error: "credential_origin_denied" });
             }
         } else if (principal.sessionRuntimePrincipal) {

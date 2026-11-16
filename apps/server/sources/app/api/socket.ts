@@ -17,6 +17,7 @@ import { verifyCurrentMaterializedRunnerPrincipal } from "@/app/ephemeralRunner/
 import { narrowCredentialAuthority } from "@/app/auth/effectiveCredentialAuthority";
 import { admitApiTokenSessionOperation, isRestrictedAuthTokenKind } from "@/app/api/utils/apiTokenRouteAdmission";
 import { isApiTokenRequestOriginAllowed } from "./utils/isApiTokenRequestOriginAllowed";
+import { readHomeConfigEnv } from "@/app/home/settings/homeSettings";
 import {
     recordSocketAuthHandshake,
     recordSocketAuthHandshakeStageDuration,
@@ -545,7 +546,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
             if (ephemeralRunnerAdmission?.kind === "api-token-session-viewer") {
                 const principal = ephemeralRunnerAdmission.principal;
                 const origin = socket.handshake.headers.origin;
-                if (origin !== undefined && !isApiTokenRequestOriginAllowed(principal.grant, origin)) {
+                if (origin !== undefined && !await isApiTokenRequestOriginAllowed(principal.grant, origin, () => readHomeConfigEnv())) {
                     return rejectHandshake({ statusCode: 403, error: "origin_denied" });
                 }
                 const admitted = await admitApiTokenSessionOperation({ principal,
@@ -944,7 +945,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
                         accountId: userId, sessionId: admission.sessionId,
                     }),
                 });
-                if (!admitted.ok || (origin !== undefined && !isApiTokenRequestOriginAllowed(principal.grant, origin))) {
+                if (!admitted.ok || (origin !== undefined && !await isApiTokenRequestOriginAllowed(principal.grant, origin, () => readHomeConfigEnv()))) {
                     await rejectPostConnectAdmission(); return;
                 }
                 socket.data.apiTokenPrincipal = principal;
