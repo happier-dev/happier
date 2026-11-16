@@ -721,6 +721,15 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
         router.push(buildDiscussionRouteHref({ target: { kind: 'discussion', address: { serverId: props.target.address.serverId },
             discussionId: discussionId!, messageId } }) as Href);
     }, [props.target.address.serverId, discussionId, router]);
+    // A quoted passage opens its Doc there (owner 11-15 C7): this Discussion is that passage's thread when it is
+    // anchored to the same Doc, so the Doc marks the passage and brings its card beside it.
+    const discussionAnchor = discussion?.anchor;
+    const openQuotedPassage = React.useCallback((passage: DocPassageRefV1) => {
+        const artifactId = passage.ref.artifactId;
+        const thread = discussionId && discussionAnchor?.kind === 'doc' && discussionAnchor.doc.ref.artifactId === artifactId
+            ? { thread: discussionId } : undefined;
+        router.push(artifactViewRoute(artifactId, thread) as Href);
+    }, [discussionAnchor, discussionId, router]);
     // A suggested edit is decided through the Doc Actions on this Discussion's own Home.
     const proposalClient = React.useMemo(() => createArtifactActionsClient(props.scope), [props.scope]);
     const participantManagement = useDiscussionParticipantManagement({ accountLifetime: props.accountLifetime,
@@ -1354,6 +1363,7 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
                 workflowRun: workflowRunLabel,
             }, viewer) : null}
             onOpenMessage={openQuotedMessage}
+            onOpenPassage={openQuotedPassage}
             onReply={discussion.archivedAt === null && discussion.capabilities.postMessages ? replyToMessage : undefined}
             speakerLabel={resolveDiscussionMessageSpeakerLabel(item.message, {
                 account: labels.account,
@@ -1689,6 +1699,7 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
     parentMessage?: DiscussionDisplayMessage;
     parentAuthorLabel: string | null;
     onOpenMessage: (messageId: string) => void;
+    onOpenPassage: (passage: DocPassageRefV1) => void;
     /** Choose this message as what the next post answers; absent where nobody can post. */
     onReply?: (messageId: string) => void;
     startsGroup: boolean;
@@ -1831,7 +1842,7 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
                 </Text>}
             </View> : <>
             {props.repeatsPassage ? null : passage || message.replyTarget?.kind === 'doc_passage'
-                        ? <ArtifactPassageQuote testID={`discussion-reply-quote-${message.id}`} passage={passage} />
+                        ? <ArtifactPassageQuote testID={`discussion-reply-quote-${message.id}`} passage={passage} onOpen={props.onOpenPassage} />
                         : message.replyTarget?.kind === 'message' ? <ReplyQuote testID={`discussion-reply-quote-${message.id}`} kind="message"
                             source={props.parentMessage?.content
                                 ? { state: 'available', label: props.parentAuthorLabel ?? t('session.collaboration.discussion.quote.message'),

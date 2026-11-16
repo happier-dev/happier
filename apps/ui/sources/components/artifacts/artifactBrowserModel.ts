@@ -119,8 +119,10 @@ export function resolveArtifactOpenRoute(artifact: Pick<ArtifactBrowserArtifact,
     }
 }
 
-export function artifactViewRoute(artifactId: string): string {
-    return `/artifacts/${encodeURIComponent(artifactId)}`;
+/** A Doc's view; `thread` opens it at that passage thread (its card beside the passage, the passage marked). */
+export function artifactViewRoute(artifactId: string, anchor?: Readonly<{ thread: string }>): string {
+    const path = `/artifacts/${encodeURIComponent(artifactId)}`;
+    return anchor ? `${path}?thread=${encodeURIComponent(anchor.thread)}` : path;
 }
 
 /**

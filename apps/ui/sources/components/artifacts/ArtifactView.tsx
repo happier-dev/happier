@@ -54,6 +54,8 @@ export function ArtifactView(props: Readonly<{
     artifact: DecryptedArtifact | null;
     presentation: 'pane' | 'page';
     onDeleted?: () => void;
+    /** Opened at this passage thread (`artifactViewRoute(…, { thread })`): its passage is marked and its card brought beside it. */
+    focusThreadId?: string;
 }>): React.ReactElement {
     // Retained browser selections can bypass the click-time destination check.
     // Delegate before mounting any Document reader, including for a cached body.
@@ -84,6 +86,16 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView>):
     React.useEffect(() => {
         setThreadMenu(current => current.key === menuKey ? current : { key: menuKey, open: false });
     }, [menuKey]);
+    // Opened at a passage (a Discussion's quote): the Doc's own thread focus marks it once its thread is placed.
+    const focusThreadId = props.focusThreadId;
+    const onFocusThread = collaboration?.margin.onFocus;
+    const focusPlaced = Boolean(focusThreadId && collaboration?.margin.passages.some(passage => passage.id === focusThreadId));
+    const focusedOnOpen = React.useRef<string | null>(null);
+    React.useEffect(() => {
+        if (!focusThreadId || !focusPlaced || !onFocusThread || focusedOnOpen.current === focusThreadId) return;
+        focusedOnOpen.current = focusThreadId;
+        onFocusThread(focusThreadId);
+    }, [focusPlaced, focusThreadId, onFocusThread]);
     // Without thread cards the comments column says where its threads are: coming, none yet, or unavailable.
     const columnStatus = collaboration && collaboration.margin.passages.length === 0 ? collaboration.commentCountStatus : null;
     const margin = React.useMemo(() => collaboration ? {
