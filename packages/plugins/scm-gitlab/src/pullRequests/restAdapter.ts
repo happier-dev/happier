@@ -1,60 +1,22 @@
-import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode, type ScmPullRequestSummary } from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES, type ScmPullRequestSummary } from '@happier-dev/plugin-sdk/scm';
 import type {
   HostingProviderPullRequestCreateInput, HostingProviderPullRequestGetInput,
   HostingProviderPullRequestListInput, HostingProviderPullRequestsCapability,
 } from '@happier-dev/plugin-sdk/scm/hosting';
-import { normalizeGitlabConfiguredBaseUrl } from '../triage/origin.js';
-import { buildGitlabApiUrl, GITLAB_REST_MAX_PAGE_SIZE, requestGitlabJson, type GitlabRequestInput } from '../triage/http/gitlabClient.js';
+import { GitlabHostingError as GitlabPullRequestError, authorizeGitlabHosting, requestGitlabHosting as request } from '../hostingRequest.js';
+import { buildGitlabApiUrl, GITLAB_REST_MAX_PAGE_SIZE } from '../triage/http/gitlabClient.js';
 import { selectGitlabNextPageUrl } from '../triage/http/gitlabLink.js';
 import { mapGitlabMergeRequest } from './gitlabMergeRequestMapping.js';
 
-class GitlabPullRequestError extends Error {
-  constructor(message: string, readonly errorCode: ScmOperationErrorCode, readonly effectNotApplied = false) {
-    super(message);
-    this.name = 'GitlabPullRequestError';
-  }
-}
-
 type InvocationInput = HostingProviderPullRequestCreateInput | HostingProviderPullRequestGetInput | HostingProviderPullRequestListInput;
 
-/** The HTTP/provider contract is shared with GitLab's native detail Actions;
- * credentials are still resolved only by the SCM host's exact Account binding.
- * No glab auth, environment token, CLI retry, or provider-local credential store.
- */
 export function createGitlabRestAdapter(): HostingProviderPullRequestsCapability {
   async function authorize(input: InvocationInput) {
-    const origin = normalizeGitlabConfiguredBaseUrl(input.provider.baseUrl);
     const name = input.provider.nameWithOwner?.trim();
-    if (!origin || !name || name.split('/').some((part) => !part || part === '.' || part === '..' || /[\u0000-\u0020\u007f]/.test(part))) {
-      throw new GitlabPullRequestError('GitLab deployment or repository identity is unavailable.', SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, true);
+    if (!name || name.split('/').some((part) => !part || part === '.' || part === '..' || /[\u0000-\u0020\u007f]/.test(part))) {
+      throw new GitlabPullRequestError('GitLab repository identity is unavailable.', SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, true);
     }
-    const signal = input.signal ?? new AbortController().signal;
-    const resolveToken = input.runtimeServices?.resolveScmHostingTokenMaterialization;
-    if (!resolveToken) throw new GitlabPullRequestError('Connect a GitLab account for this deployment.', SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED, true);
-    const auth = await resolveToken({
-      kind: 'scm_hosting_token', providerId: input.provider.id, host: origin.forgeHostId, provider: input.provider,
-    }, { signal });
-    if (auth.kind !== 'available' || !auth.token.trim()) {
-      throw new GitlabPullRequestError('Connect a GitLab account for this deployment.', SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED, true);
-    }
-    return {
-      origin, name, signal, path: `/projects/${encodeURIComponent(name)}/merge_requests`,
-      invocation: { origin, headers: { Accept: 'application/json', Authorization: `Bearer ${auth.token}` } },
-    };
-  }
-
-  async function request(input: Omit<GitlabRequestInput, 'fetcher' | 'nowMs'>) {
-    const result = await requestGitlabJson({ ...input, fetcher: (url, init) => fetch(url, init), nowMs: Date.now() });
-    if (result.kind === 'ok') return result.response;
-    const errorCode = result.failure.class === 'authentication' || result.failure.class === 'permission'
-      ? SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED
-      : result.failure.code === 'not-found' ? SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND
-      : result.failure.class === 'rateLimit' || result.failure.class === 'transient' ? SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE
-      : SCM_OPERATION_ERROR_CODES.COMMAND_FAILED;
-    // A provider's definite client rejection proves no creation occurred. A lost
-    // transport, server error, cancellation, or unreadable success does not.
-    const effectNotApplied = result.status !== undefined && result.status >= 400 && result.status < 500 && result.status !== 408;
-    throw new GitlabPullRequestError('GitLab merge request operation did not return a usable result.', errorCode, effectNotApplied);
+    return { ...await authorizeGitlabHosting(input), name, path: `/projects/${encodeURIComponent(name)}/merge_requests` };
   }
 
   const adapter: HostingProviderPullRequestsCapability = {

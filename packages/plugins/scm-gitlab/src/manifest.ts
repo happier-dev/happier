@@ -1,3 +1,4 @@
+import { gitlabRepositoryPublishing } from './repositoryPublishing.js';
 import { GITLAB_HOSTING_OPERATION_ACTIONS_V1 } from './hostingActions.js';
 import { GITLAB_HOSTING_OPERATION_ACTION_IDS_V1 } from './hostingActionIds.js';
 import { gitlabPortableAuthentication } from './auth/connectedAccountRuntime.js';
@@ -115,6 +116,7 @@ export const GITLAB_PLUGIN = definePlugin({
         adapter: {
           routing: gitlabHostingProviderAdapter,
           pullRequests: gitlabRestPullRequestAdapter,
+          repositoryPublishing: gitlabRepositoryPublishing,
         },
       },
     },
