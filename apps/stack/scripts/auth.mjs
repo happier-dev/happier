@@ -2124,7 +2124,7 @@ async function main() {
         '',
         sectionTitle('Advanced'),
         bullets([
-          'Recovery-key login: --recovery-key-stdin reads JSON with a recoveryKey field from stdin only; combine with --start-if-needed to bootstrap the listener without device approval.',
+          'Recovery-key login: --recovery-key-stdin reads {"v":1,"secrets":{"recoveryKey":"..."}} from stdin only; combine with --start-if-needed to bootstrap the listener without device approval.',
           `${dim('UX labels only:')} ${cmdFmt('hstack auth login --context=selfhost|dev|stack')}`,
           `${dim('import legacy creds into main:')} ${cmdFmt('hstack auth copy-from legacy --allow-main')} ${dim('[--link] [--force]')}`,
         ]),

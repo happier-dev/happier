@@ -445,7 +445,7 @@ test('recovery-key stdin bootstraps the auth-safe source listener before native 
     } else if (args.includes('auth') && args.includes('login')) process.exit(42);
     ${buildSuccessfulAuthBinScript()}
   `);
-  const input = JSON.stringify({ recoveryKey: 'synthetic-stdin-only-fixture' });
+  const input = JSON.stringify({ v: 1, secrets: { recoveryKey: 'synthetic-stdin-only-fixture' } });
   const result = await runNodeCapture(['--import', registerPath, authScriptPath(rootDir), 'login',
     '--start-if-needed', '--recovery-key-stdin'], { cwd: rootDir,
     env: { ...fixture.env, HAPPIER_STACK_TEST_TTY: '0',
