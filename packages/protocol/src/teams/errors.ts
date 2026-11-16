@@ -79,6 +79,11 @@ export type TeamAuthenticationPolicyUnavailableDetailsV1 = z.infer<
   typeof TeamAuthenticationPolicyUnavailableDetailsV1Schema
 >;
 
+const TeamInputErrorDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  field: z.enum(['name', 'description', 'initialOwnerAccountId']),
+  reason: z.string().check(z.trim(), z.minLength(1)),
+}));
+
 /**
  * The one error body every Team route sends. Clients read `error`; a route that
  * invented its own envelope would make the same domain result unreadable
@@ -86,13 +91,17 @@ export type TeamAuthenticationPolicyUnavailableDetailsV1 = z.infer<
  */
 export const TeamErrorV1Schema = lazyZodSchema(() => z.strictObject({
   error: TeamErrorCodeV1Schema,
-  details: z.optional(TeamAuthenticationPolicyUnavailableDetailsV1Schema),
+  details: z.optional(z.union([TeamAuthenticationPolicyUnavailableDetailsV1Schema, TeamInputErrorDetailsV1Schema])),
 }).check(z.superRefine((value, context) => {
-  if (value.details !== undefined && value.error !== 'team_authentication_policy_unavailable') {
+  if (value.details !== undefined && !(
+    (value.error === 'team_authentication_policy_unavailable'
+      && TeamAuthenticationPolicyUnavailableDetailsV1Schema.safeParse(value.details).success)
+    || (value.error === 'invalid_team_input' && TeamInputErrorDetailsV1Schema.safeParse(value.details).success)
+  )) {
     context.addIssue({
       code: "custom",
       path: ['details'],
-      message: 'Team authentication-policy details require the matching unavailable error',
+      message: 'Team failure details require their matching error code',
     });
   }
 })));

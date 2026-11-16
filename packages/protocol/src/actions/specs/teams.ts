@@ -408,7 +408,7 @@ function createTeamActionSpecs() {
     id: 'teams.create', approval: {result: 'required'},
     mcp: true,
     title: 'Create Team',
-    description: 'Create a Team in this Home. A repeated request key returns the same Team rather than a second one.',
+    description: 'Create a Team in this Home. initialOwnerAccountId is required when Team creation is managed-only. A repeated request key returns the same Team rather than a second one.',
     safety: 'safe',
     sideEffectClass: 'write',
     cliPath: ['teams', 'create'],

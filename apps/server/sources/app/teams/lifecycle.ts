@@ -1,7 +1,7 @@
 import { acquireTeamMutationAccountAdmissionInTx, withTeamSessionAccessEffectsInTx } from "./memberships/sessionAccessEffects";
 import { createHash } from "node:crypto";
 
-import { NO_TEAM_CAPABILITIES_V1, validateTeamDescriptionV1, validateTeamNameV1 } from '@happier-dev/protocol/teams';
+import { NO_TEAM_CAPABILITIES_V1, validateTeamDescriptionV1, validateTeamNameV1, type TeamErrorV1 } from '@happier-dev/protocol/teams';
 import { type TeamSummaryV1 } from '@happier-dev/protocol/teams/projections';
 
 import { isServerFeatureEnabledForHome } from "@/app/features/catalog/serverFeatureGate";
@@ -65,10 +65,10 @@ export type TeamLifecycleError =
 
 export type TeamLifecycleResult<E extends TeamLifecycleError = TeamLifecycleError> =
     | Readonly<{ ok: true; team: TeamSummaryV1 }>
-    | Readonly<{ ok: false; error: E }>;
+    | Readonly<{ ok: false; error: E; details?: TeamErrorV1["details"] }>;
 
-function denied<E extends TeamLifecycleError>(error: E): Readonly<{ ok: false; error: E }> {
-    return { ok: false, error };
+function denied<E extends TeamLifecycleError>(error: E, details?: TeamErrorV1["details"]): Readonly<{ ok: false; error: E; details?: TeamErrorV1["details"] }> {
+    return { ok: false, error, ...(details === undefined ? {} : { details }) };
 }
 
 export type CreateTeamError =
@@ -147,9 +147,9 @@ export async function createTeamInTx(
     if (!teamsEnabled) return denied("teams_unavailable");
 
     const name = validateTeamNameV1(input.name);
-    if (name.status !== "ok") return denied("invalid_team_input");
+    if (name.status !== "ok") return denied("invalid_team_input", { field: "name", reason: name.reason });
     const description = validateTeamDescriptionV1(input.description);
-    if (description.status !== "ok") return denied("invalid_team_input");
+    if (description.status !== "ok") return denied("invalid_team_input", { field: "description", reason: description.reason });
 
     const actor = await readHomeGovernanceAccountInTx(tx, input.actorAccountId);
     if (!actor || actor.status !== AccountStatus.active) return denied("team_forbidden");
@@ -168,7 +168,7 @@ export async function createTeamInTx(
     // another person. Naming themselves stays legal; self-service creation keeps
     // the fallback, and bootstrap already passes the owner explicitly.
     if (policy.teamCreationPolicy === "managed_only" && input.initialOwnerAccountId === undefined) {
-        return denied("invalid_team_input");
+        return denied("invalid_team_input", { field: "initialOwnerAccountId", reason: "required" });
     }
 
     const authority = resolveHomeGovernanceAuthority(actor);
@@ -184,7 +184,9 @@ export async function createTeamInTx(
     // disabled since the picker rendered must fail as input, not as a Team that
     // briefly existed without an owner.
     const initialOwner = await readHomeGovernanceAccountInTx(tx, initialOwnerAccountId);
-    if (!initialOwner || initialOwner.status !== AccountStatus.active) return denied("invalid_team_input");
+    if (!initialOwner || initialOwner.status !== AccountStatus.active) return denied("invalid_team_input", {
+        field: "initialOwnerAccountId", reason: initialOwner ? "account_ineligible" : "account_not_found",
+    });
 
     const dedupeKey = createRequestKey(actor.accountId, input.requestKey);
     const digest = createPayloadDigest({

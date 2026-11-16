@@ -5,6 +5,7 @@ import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { HOME_GOVERNANCE_POLICY_ID } from "@/app/home/governance/governancePolicy";
 import type { HomeRole, TeamCreationPolicy } from "@/storage/enums.generated";
+import { TEAM_DESCRIPTION_MAX_LENGTH_V1 } from "@happier-dev/protocol/teams";
 
 import {
     archiveTeamInTx,
@@ -100,8 +101,18 @@ describe("Team lifecycle (SQLite integration)", () => {
 
             const result = await create(admin.id, { name: "Orphan", initialOwnerAccountId: retired.id });
 
-            expect(result).toEqual({ ok: false, error: "invalid_team_input" });
+            expect(result).toEqual({ ok: false, error: "invalid_team_input",
+                details: { field: "initialOwnerAccountId", reason: "account_ineligible" } });
             expect(await db.team.findFirst({ where: { name: "Orphan" } })).toBeNull();
+        });
+
+        it("identifies a missing initial owner without creating a Team", async () => {
+            await setTeamCreationPolicy("self_service");
+            const admin = await account("admin");
+            const result = await create(admin.id, { name: "Missing initial owner", initialOwnerAccountId: crypto.randomUUID() });
+            expect(result).toEqual({ ok: false, error: "invalid_team_input",
+                details: { field: "initialOwnerAccountId", reason: "account_not_found" } });
+            expect(await db.team.findFirst({ where: { name: "Missing initial owner" } })).toBeNull();
         });
 
         it("never makes a managing Home administrator an implicit member", async () => {
@@ -130,7 +141,8 @@ describe("Team lifecycle (SQLite integration)", () => {
             const admin = await account("admin");
 
             expect(await create(admin.id, { name: "Managed omission" }))
-                .toEqual({ ok: false, error: "invalid_team_input" });
+                .toEqual({ ok: false, error: "invalid_team_input",
+                    details: { field: "initialOwnerAccountId", reason: "required" } });
             expect(await db.team.findFirst({ where: { name: "Managed omission" } })).toBeNull();
 
             // Naming themselves stays legal, and self-service creation keeps the
@@ -220,11 +232,25 @@ describe("Team lifecycle (SQLite integration)", () => {
             expect(first.team.name).toBe(second.team.name);
         });
 
-        it("rejects an empty, oversized, or control-character name", async () => {
+        it.each([
+            { name: "   ", reason: "empty" },
+            { name: "a".repeat(81), reason: "too_long" },
+            { name: "Acme\u0000", reason: "control_characters" },
+        ])("identifies the invalid Team name: $reason", async ({ name, reason }) => {
+            await setTeamCreationPolicy("self_service");
             const founder = await account();
-            expect(await create(founder.id, { name: "   " })).toEqual({ ok: false, error: "invalid_team_input" });
-            expect(await create(founder.id, { name: "a".repeat(81) })).toEqual({ ok: false, error: "invalid_team_input" });
-            expect(await create(founder.id, { name: "Acme\u0000" })).toEqual({ ok: false, error: "invalid_team_input" });
+            expect(await create(founder.id, { name })).toEqual({ ok: false, error: "invalid_team_input",
+                details: { field: "name", reason } });
+        });
+
+        it.each([
+            { description: "a".repeat(TEAM_DESCRIPTION_MAX_LENGTH_V1 + 1), reason: "too_long" },
+            { description: "Ships\u0000rockets", reason: "control_characters" },
+        ])("identifies the invalid Team description: $reason", async ({ description, reason }) => {
+            await setTeamCreationPolicy("self_service");
+            const founder = await account();
+            expect(await create(founder.id, { description })).toEqual({ ok: false, error: "invalid_team_input",
+                details: { field: "description", reason } });
         });
     });
 

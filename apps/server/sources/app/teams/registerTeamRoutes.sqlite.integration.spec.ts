@@ -76,6 +76,23 @@ describe("Team routes (SQLite integration)", () => {
         expect(unauthenticated.statusCode).toBe(401);
     });
 
+    it("preserves the managed-only missing initial owner cause through the Team HTTP envelope", async () => {
+        const admin = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain", homeRole: "admin" } });
+        await db.homeGovernancePolicy.update({ where: { id: HOME_GOVERNANCE_POLICY_ID }, data: { teamCreationPolicy: "managed_only" } });
+        try {
+            const refused = await post("/v1/teams/create", admin.id, { v: 1, name: "Managed owner cause", requestKey: crypto.randomUUID() });
+            expect(refused.statusCode).toBe(400);
+            expect(refused.json()).toEqual({ error: "invalid_team_input",
+                details: { field: "initialOwnerAccountId", reason: "required" } });
+            expect(await db.team.findFirst({ where: { name: "Managed owner cause" } })).toBeNull();
+            const accepted = await post("/v1/teams/create", admin.id, { v: 1, name: "Managed owner chosen",
+                initialOwnerAccountId: admin.id, requestKey: crypto.randomUUID() });
+            expect(accepted.statusCode, accepted.body).toBe(200);
+        } finally {
+            await db.homeGovernancePolicy.update({ where: { id: HOME_GOVERNANCE_POLICY_ID }, data: { teamCreationPolicy: "self_service" } });
+        }
+    });
+
     it("writes and reads typed managed defaults through the existing Team policy transport", async () => {
         const owner = await account();
         const created = await post("/v1/teams/create", owner.id, { v: 1, name: "Managed defaults", requestKey: crypto.randomUUID() });
@@ -743,7 +760,7 @@ describe("Team routes (SQLite integration)", () => {
             v: 1, name: "   ", requestKey: crypto.randomUUID(),
         });
         expect(badInput.statusCode).toBe(400);
-        expect(badInput.json()).toEqual({ error: "invalid_team_input" });
+        expect(badInput.json()).toEqual({ error: "invalid_team_input", details: { field: "name", reason: "empty" } });
 
         const badCursor = await post("/v1/teams/list", owner.id, {
             v: 1, scope: "member", archived: "active", cursor: "not-a-cursor",

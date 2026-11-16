@@ -141,7 +141,7 @@ export function registerTeamRoutes(
             env,
             authentication: readTeamOperationAuthenticationFromRequest(request, env),
         }), { isolationLevel: "ReadCommitted" /* Exclusive ordered creation audience precedes Home policy, owner eligibility and dedupe reads. */ });
-        if (!result.ok) return sendTeamError(reply, result.error);
+        if (!result.ok) return sendTeamError(reply, result.error, result.details);
         return reply.send(result.team);
     });
 
