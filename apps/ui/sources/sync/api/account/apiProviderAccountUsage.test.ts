@@ -101,7 +101,9 @@ describe('apiProviderAccountUsage', () => {
         expect(result.pageFacts?.dayQuotaHistory).toEqual([summary]);
         expect(summaryReads).toBe(1);
     });
-    it.each(['plain', 'e2ee'] as const)('shares admitted %s backfill material across changing readings without dropping accepted witnesses', async accountMode => {
+    it.each((['plain', 'e2ee'] as const).flatMap(accountMode =>
+        (['json', 'stream', 'native', 'truncated'] as const).map(wire => ({ accountMode, wire }))))(
+        'shares admitted $accountMode backfill material over $wire without dropping accepted witnesses', async ({ accountMode, wire }) => {
         const base = makeSnapshot();
         const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ ...base,
             recoveryCredits: { availableCount: 32, credits: Array.from({ length: 32 }, (_, index) => ({ id: `credit-${index}`, kind: 'unknown', status: 'available' })) },
@@ -118,6 +120,7 @@ describe('apiProviderAccountUsage', () => {
             return { content: sealed ? { t: 'encrypted', c: sealed.ciphertext, recoveryCreditDetails: sealed.recoveryCreditDetails }
                 : { t: 'plain', v: value }, metadata: { fetchedAt: value.fetchedAtMs, staleAfterMs: value.staleAfterMs, status: 'ok' }, sources: [source] };
         };
+        let rawReads = 0;
         const request = async (path: string, init?: RequestInit) => {
             if (path.includes('/sources/resolve')) return Response.json({ source, recordId: snapshot.recordId,
                 providerAccountId: snapshot.recordKey.accountSubjectId, fetchedAt: 1, staleAfterMs: snapshot.staleAfterMs });
@@ -125,6 +128,27 @@ describe('apiProviderAccountUsage', () => {
             if (init?.method === 'PUT') return Response.json({ success: true });
             const query = JSON.parse(new URL(path, 'https://test.invalid').searchParams.get('query')!);
             if (query.projection) return Response.json({ projection: null, complete: false });
+            rawReads++;
+            if (wire !== 'json') {
+                const pages = Array.from({ length: Math.ceil(samples.length / query.history.pageSize) }, (_, index) => {
+                    const selected = samples.slice(index * query.history.pageSize, (index + 1) * query.history.pageSize);
+                    const last = selected.at(-1)!;
+                    return { entries: selected.map(value => ({ id: `accepted-${value.fetchedAtMs}`,
+                        observedAtMs: value.fetchedAtMs, record: record(value) })),
+                        nextCursor: last.fetchedAtMs < samples.length || wire === 'truncated'
+                            ? { id: `accepted-${last.fetchedAtMs}`, observedAtMs: last.fetchedAtMs } : null };
+                });
+                const bytes = new TextEncoder().encode(pages.map(page => JSON.stringify(page)).join('\n') + '\n');
+                const body = new ReadableStream<Uint8Array>({ start(controller) {
+                    // HTTP chunks need not align with either JSON or frame boundaries.
+                    for (let offset = 0; offset < bytes.length; offset += 4096) controller.enqueue(bytes.slice(offset, offset + 4096));
+                    controller.close();
+                } });
+                const response = new Response(body,
+                    { headers: { 'Content-Type': 'application/x-ndjson' } });
+                if (wire === 'native') Object.defineProperty(response, 'body', { value: undefined });
+                return response;
+            }
             const selected = samples.filter(value => value.fetchedAtMs > (query.history.cursor?.observedAtMs ?? 0))
                 .slice(0, query.history.pageSize);
             const last = selected.at(-1)!;
@@ -134,9 +158,16 @@ describe('apiProviderAccountUsage', () => {
         };
         const { getProviderAccountUsageQuota } = await loadApi();
         const projectionDocuments: import('./apiProviderAccountUsage').ProviderAccountUsageProjectionDocuments = new Map();
-        const result = await getProviderAccountUsageQuota(credentials,
+        const reading = getProviderAccountUsageQuota(credentials,
             { source, projection: { range: { startAtMs: 0, endAtMs: 1_000 }, resolution: 'accepted_observations' } },
             { accountMode, material, request, projectionDocuments, includePendingWork: false, nowMs: 256 });
+        if (wire === 'truncated') {
+            await expect(reading).rejects.toMatchObject({ code: 'provider_account_usage_content_unavailable' });
+            expect(projectionDocuments.size, 'incomplete streams cannot publish complete projection coverage').toBe(0);
+            return;
+        }
+        const result = await reading;
+        if (wire !== 'json') expect(rawReads, 'all history frames arrive in one cold response').toBe(1);
         const retained = projectionDocuments.get(snapshot.recordId)!.admitted!.opened.history.entries;
         expect(retained.map(entry => [entry.id, entry.observedAtMs, entry.snapshot.meters[0]!.used]))
             .toEqual(samples.map(value => [`accepted-${value.fetchedAtMs}`, value.fetchedAtMs, value.meters[0]!.used]));
@@ -902,7 +933,9 @@ describe('apiProviderAccountUsage', () => {
             expect(cancelledHistoryPublished).toBe(false);
         } finally { await heartbeatFinished; }
     });
-    it.each(['plain', 'e2ee'] as const)('progressively drains accepted %s history with growing pages while opening current and Pending only once', async accountMode => {
+    it.each((['plain', 'e2ee'] as const).flatMap(accountMode =>
+        (['json', 'stream'] as const).map(wire => ({ accountMode, wire }))))(
+        'progressively drains accepted $accountMode history over $wire while opening current and Pending only once', async ({ accountMode, wire }) => {
         const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
         const samples = Array.from({ length: 10 }, (_, index) => ({ ...makeSnapshot(), fetchedAtMs: index + 1,
             observedAtMs: index + 1, planLabel: index < 5 ? 'Standard' : 'Premium' }));
@@ -916,6 +949,7 @@ describe('apiProviderAccountUsage', () => {
                 : { t: 'plain', v: snapshot }, metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: 2, status: 'ok' }, sources: [source] };
         };
         const seen = new Set<string>();
+        const requestedPageSizes: number[] = [];
         const request = vi.fn(async (path: string) => {
             if (!path.includes('/history')) {
                 // Repeated source/current/Pending reads are refused at the real transport boundary.
@@ -925,6 +959,14 @@ describe('apiProviderAccountUsage', () => {
             }
             if (path.includes('/history')) {
                 const query = JSON.parse(new URL(path, 'https://qa.test').searchParams.get('query')!);
+                requestedPageSizes.push(query.history.pageSize);
+                if (wire === 'stream') {
+                    const frames = samples.map((snapshot, index) => ({ entries: [{ id: String(index),
+                        observedAtMs: snapshot.fetchedAtMs, record: record(snapshot) }],
+                        nextCursor: index < samples.length - 1 ? { id: String(index), observedAtMs: snapshot.fetchedAtMs } : null }));
+                    return new Response(frames.map(frame => JSON.stringify(frame)).join('\n'),
+                        { headers: { 'Content-Type': 'application/x-ndjson' } });
+                }
                 const start = query.history.cursor ? Number(query.history.cursor.id) + 1 : 0;
                 const entries = samples.slice(start, start + query.history.pageSize).map((snapshot, index) => ({
                     id: String(start + index), observedAtMs: snapshot.fetchedAtMs, record: record(snapshot) }));
@@ -958,6 +1000,7 @@ describe('apiProviderAccountUsage', () => {
         }
         expect(result.history?.entries.map(entry => entry.id)).toEqual(['0', '4', '5', '9']);
         expect(result.history?.nextCursor).toBeNull();
+        expect(requestedPageSizes).toEqual(wire === 'stream' ? [1] : [1, 2, 4, 8]);
         expect(result.waitingWork).toEqual({ status: 'available', entries: [] });
     });
     it('stops a progressive history producer after its parallel price read fails', async () => {
@@ -1006,6 +1049,40 @@ describe('apiProviderAccountUsage', () => {
             expect(lateHistory).toEqual([]);
             expect(continuationIssued).toBe(false);
         } finally { history.resolve(Response.json(page)); price.resolve(undefined); await reading.catch(() => {}); }
+    });
+    it.each(['json', 'stream'] as const)('does not publish a %s backfill after a parallel read fails during page opening', async wire => {
+        const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+        const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+        const snapshot = makeSnapshot();
+        const record = { content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' }, sources: [source] };
+        const price = createDeferred<undefined>();
+        let writes = 0;
+        const request = async (path: string, init?: RequestInit) => {
+            if (path.includes('/sources/resolve')) return Response.json({ source, recordId: snapshot.recordId,
+                providerAccountId: snapshot.recordKey.accountSubjectId, fetchedAt: 1, staleAfterMs: 2 });
+            if (path.includes('/record?')) return Response.json(record);
+            if (init?.method === 'PUT') { writes++; return Response.json({ success: true }); }
+            const query = JSON.parse(new URL(path, 'https://qa.test').searchParams.get('query')!);
+            if (query.projection) return Response.json({ projection: null, complete: false });
+            // The first crypto chunk opens synchronously; this HTTP-boundary
+            // failure runs during its existing inter-chunk event-loop yield.
+            setTimeout(() => price.reject(new Error('price authority unavailable')), 0);
+            const page = { entries: Array.from({ length: 33 }, (_, index) => ({ id: String(index), observedAtMs: 1, record })), nextCursor: null };
+            return wire === 'json' ? Response.json(page) : new Response(JSON.stringify(page) + '\n',
+                { headers: { 'Content-Type': 'application/x-ndjson' } });
+        };
+        const { getProviderAccountUsageQuota } = await loadApi();
+        const documents: import('./apiProviderAccountUsage').ProviderAccountUsageProjectionDocuments = new Map();
+        await expect(getProviderAccountUsageQuota(credentials, { source,
+            projection: { range: { startAtMs: 0, endAtMs: 2 }, resolution: 'accepted_observations' } }, {
+            accountMode: 'plain', request, projectionDocuments: documents, nowMs: 1, includePendingWork: false,
+            readEnteredMonthlyPrice: () => price.promise, readAllHistory: { onProgress() {} },
+        })).rejects.toMatchObject({ message: 'price authority unavailable' });
+        // The admitted page's already-scheduled opening yield completes before
+        // this turn; no abandoned backfill may acquire publication afterward.
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        expect(writes).toBe(0);
+        expect(documents.size).toBe(0);
     });
     it('reads reset admission facts without unrelated Account-wide Pending work', async () => {
         const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };

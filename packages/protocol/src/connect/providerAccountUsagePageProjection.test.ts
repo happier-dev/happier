@@ -6,6 +6,7 @@ import { openProviderAccountUsagePageProjectionV1, openProviderAccountUsagePageP
 import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
 import { deriveProviderAccountUsagePace, deriveProviderAccountUsageUnusedCapacity, deriveProviderAccountUsageEarlierWindowCurves, hasProviderAccountUsageWitnessedReset } from './deriveProviderAccountUsagePace.js';
 import { projectProviderAccountUsageQuotaReadV1 } from './providerAccountUsageHistory.js';
+import * as pageProjection from './providerAccountUsagePageProjection.js';
 
 const recordKey = { providerId: 'test', accountSubjectId: 'account', subjectKind: 'account' as const, quotaScope: 'account' as const };
 const sample = (at: number, used: number, reset = 1000) => ProviderAccountUsageSnapshotV1Schema.parse({
@@ -22,6 +23,35 @@ const range = { startAtMs: 0, endAtMs: 1200 };
 const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
 
 describe('B page projection', () => {
+  it('admits consecutive bounded pages without reopening prior witnesses or copying unchanged material', () => {
+    const open = pageProjection.createProviderAccountUsagePageProjectionOpenerV1();
+    const pages = Array.from({ length: 4 }, (_, page) => packProviderAccountUsagePageProjectionV1(
+      buildProviderAccountUsagePageProjectionV1({ recordId: sample(1, 1).recordId, range,
+        history: { entries: Array.from({ length: 32 }, (_, index) => {
+          const at = page * 32 + index + 1;
+          const snapshot = sample(at, at / 2);
+          return { id: String(at), observedAtMs: at, snapshot };
+        }), nextCursor: null } }),
+    ));
+    const first = open(pages[0]!);
+    // Prior page inputs are retired after admission. Later pages must neither
+    // reopen them nor replace their accepted witnesses in the retained result.
+    Object.defineProperty(pages[0]!.observations, '0', { get() { throw new Error('retired page reopened'); } });
+    const entries = [...first.history.entries, ...pages.slice(1).flatMap(page => open(page).history.entries)];
+    expect(entries.map(entry => [entry.id, entry.observedAtMs, entry.snapshot.meters[0]!.used]))
+      .toEqual(Array.from({ length: 128 }, (_, index) => [String(index + 1), index + 1, (index + 1) / 2]));
+    expect(entries[0]).toBe(first.history.entries[0]);
+    expect(new Set(entries.map(entry => entry.snapshot.meters[0]!.details)).size).toBe(1);
+    expect(new Set(entries.map(entry => entry.snapshot.recordKey)).size).toBe(1);
+    const changed = sample(129, 70);
+    changed.planLabel = 'Premium';
+    changed.meters[0]!.details = { note: 'Changed allowance' };
+    const changedPage = open(packProviderAccountUsagePageProjectionV1(buildProviderAccountUsagePageProjectionV1({
+      recordId: changed.recordId, range, history: { entries: [{ id: '129', observedAtMs: 129, snapshot: changed }], nextCursor: null },
+    })));
+    expect(changedPage.history.entries[0]!.snapshot).toEqual(changed);
+    expect(changedPage.history.entries[0]!.snapshot.meters[0]!.details).not.toBe(entries[0]!.snapshot.meters[0]!.details);
+  });
   it.each([8, 128])('normalizes each admitted comparison operand once per quota projection with %i observations', observationCount => {
     const duration = observationCount;
     const perWindow = observationCount / 2;

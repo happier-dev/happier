@@ -181,51 +181,74 @@ export function unpackProviderAccountUsagePageProjectionV1(input: z.infer<typeof
 
 /** @internal Decode only after the canonical packed-body schema has admitted the value. */
 export function unpackAdmittedProjection(packed: z.infer<typeof PackedProviderAccountUsagePageProjectionV1Schema>): ProviderAccountUsagePageProjectionV1 {
-  // Validate composite snapshot identity once per admitted base. Meter and
-  // subscription dictionaries were already validated once by the packed schema.
-  const bases = packed.bases.map(base => {
-    const { observedAtMs: _observed, fetchedAtMs: _fetched, meters: _meters, subscription: _subscription, ...validated } =
-      ProviderAccountUsageSnapshotV1Schema.parse({ ...base, observedAtMs: 0, fetchedAtMs: 0, meters: [] });
-    return validated;
-  });
-  const at = <T>(values: T[], index: number): T => {
-    const value = values[index];
-    if (value === undefined) throw new Error('provider_account_usage_content_unavailable');
-    return value;
+  return createProviderAccountUsagePageProjectionOpenerV1()(packed);
+}
+
+function normalizeProjectionBase(base: z.infer<typeof BaseSchema>) {
+  const { observedAtMs: _observed, fetchedAtMs: _fetched, meters: _meters, subscription: _subscription, ...validated } =
+    ProviderAccountUsageSnapshotV1Schema.parse({ ...base, observedAtMs: 0, fetchedAtMs: 0, meters: [] });
+  return validated;
+}
+
+function normalizeProjectionDefinition(material: z.infer<typeof MeterDefinitionSchema>) {
+  const { used: _used, limit: _limit, utilizationPct: _utilization, resetsAt: _reset, ...definition } =
+    ConnectedServiceQuotaMeterV1Schema.parse({ ...material, used: null, limit: null, utilizationPct: null, resetsAt: null });
+  return definition;
+}
+
+/** @internal One drain shares already-admitted material across pages without reopening prior observations. */
+export function createProviderAccountUsagePageProjectionOpenerV1() {
+  const baseMaterials = new Map<string, ReturnType<typeof normalizeProjectionBase>>();
+  const definitionMaterials = new Map<string, ReturnType<typeof normalizeProjectionDefinition>>();
+  const subscriptionMaterials = new Map<string, z.infer<typeof SubscriptionMaterialSchema>>();
+  const intern = <T, U>(value: T, materials: Map<string, U>, normalize: (input: T) => U): U => {
+    const key = JSON.stringify(value);
+    const existing = materials.get(key);
+    if (existing !== undefined) return existing;
+    const admitted = normalize(value);
+    materials.set(key, admitted);
+    return admitted;
   };
-  // Normalize composite definition defaults once. Changing readings have already
-  // passed their owning field schemas and must not clone this material again.
-  const definitions = packed.meterDefinitions.map(material => {
-    const { used: _used, limit: _limit, utilizationPct: _utilization, resetsAt: _reset, ...definition } =
-      ConnectedServiceQuotaMeterV1Schema.parse({ ...material, used: null, limit: null, utilizationPct: null, resetsAt: null });
-    return definition;
-  });
-  const meters = packed.meters.map(([definition, used, limit, utilizationPct, resetsAt, reading]) => {
-    const { detailsRemainingPct, ...values } = reading;
-    const material = at(definitions, definition);
-    return { ...material, used, limit, utilizationPct, resetsAt, ...values,
-      details: detailsRemainingPct === undefined ? material.details : { ...material.details, remainingPct: detailsRemainingPct } };
-  });
-  const projection: ProviderAccountUsagePageProjectionV1 = { v: packed.v, recordId: packed.recordId, resolution: packed.resolution, range: packed.range,
-    history: { entries: packed.observations.flatMap(([base, meterIndexes, subscription, samples]) => {
-      let fetchedAtMs = 0;
-      return samples.map(([id, deltaFetchedAt, deltaObservedAt, deltaSubscriptionAt]) => {
-        fetchedAtMs += deltaFetchedAt;
-        const observedAtMs = fetchedAtMs + deltaObservedAt;
-        const subscriptionAt = deltaSubscriptionAt === null ? null : fetchedAtMs + deltaSubscriptionAt;
-        if (![fetchedAtMs, observedAtMs, ...(subscriptionAt === null ? [] : [subscriptionAt])].every(at => Number.isSafeInteger(at) && at >= 0)) {
-          throw new Error('provider_account_usage_content_unavailable');
-        }
-        if ((subscription === null) !== (subscriptionAt === null)) throw new Error('provider_account_usage_content_unavailable');
-        const subscriptionValue = subscription === null || subscriptionAt === null ? undefined
-          : { ...at(packed.subscriptions, subscription), observedAtMs: subscriptionAt };
-        return { id, observedAtMs: fetchedAtMs, snapshot: { ...at(bases, base), observedAtMs, fetchedAtMs,
-          meters: meterIndexes.map(index => at(meters, index)),
-          ...(subscriptionValue ? { subscription: subscriptionValue } : {}) } };
-      });
-    }), nextCursor: null } };
-  if (invalidProjectionEntries(projection).length) throw new Error('provider_account_usage_identity_mismatch');
-  return projection;
+  return (packed: z.infer<typeof PackedProviderAccountUsagePageProjectionV1Schema>): ProviderAccountUsagePageProjectionV1 => {
+    // Validate composite snapshot identity once per admitted base. Meter and
+    // subscription dictionaries were already validated once by the packed schema.
+    const bases = packed.bases.map(base => intern(base, baseMaterials, normalizeProjectionBase));
+    const at = <T>(values: T[], index: number): T => {
+      const value = values[index];
+      if (value === undefined) throw new Error('provider_account_usage_content_unavailable');
+      return value;
+    };
+    // Normalize composite definition defaults once. Changing readings have already
+    // passed their owning field schemas and must not clone this material again.
+    const definitions = packed.meterDefinitions.map(material => intern(material, definitionMaterials, normalizeProjectionDefinition));
+    const subscriptions = packed.subscriptions.map(material => intern(material, subscriptionMaterials, value => value));
+    const meters = packed.meters.map(([definition, used, limit, utilizationPct, resetsAt, reading]) => {
+      const { detailsRemainingPct, ...values } = reading;
+      const material = at(definitions, definition);
+      return { ...material, used, limit, utilizationPct, resetsAt, ...values,
+        details: detailsRemainingPct === undefined ? material.details : { ...material.details, remainingPct: detailsRemainingPct } };
+    });
+    const projection: ProviderAccountUsagePageProjectionV1 = { v: packed.v, recordId: packed.recordId, resolution: packed.resolution, range: packed.range,
+      history: { entries: packed.observations.flatMap(([base, meterIndexes, subscription, samples]) => {
+        let fetchedAtMs = 0;
+        return samples.map(([id, deltaFetchedAt, deltaObservedAt, deltaSubscriptionAt]) => {
+          fetchedAtMs += deltaFetchedAt;
+          const observedAtMs = fetchedAtMs + deltaObservedAt;
+          const subscriptionAt = deltaSubscriptionAt === null ? null : fetchedAtMs + deltaSubscriptionAt;
+          if (![fetchedAtMs, observedAtMs, ...(subscriptionAt === null ? [] : [subscriptionAt])].every(at => Number.isSafeInteger(at) && at >= 0)) {
+            throw new Error('provider_account_usage_content_unavailable');
+          }
+          if ((subscription === null) !== (subscriptionAt === null)) throw new Error('provider_account_usage_content_unavailable');
+          const subscriptionValue = subscription === null || subscriptionAt === null ? undefined
+            : { ...at(subscriptions, subscription), observedAtMs: subscriptionAt };
+          return { id, observedAtMs: fetchedAtMs, snapshot: { ...at(bases, base), observedAtMs, fetchedAtMs,
+            meters: meterIndexes.map(index => at(meters, index)),
+            ...(subscriptionValue ? { subscription: subscriptionValue } : {}) } };
+        });
+      }), nextCursor: null } };
+    if (invalidProjectionEntries(projection).length) throw new Error('provider_account_usage_identity_mismatch');
+    return projection;
+  };
 }
 
 const openedQuotaPageHistory = new WeakMap<z.infer<typeof PackedProviderAccountUsagePageProjectionV1Schema>, ProviderAccountUsagePageProjectionV1['history']>();
