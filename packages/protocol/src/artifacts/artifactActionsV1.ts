@@ -95,12 +95,12 @@ export const ArtifactPublishFromFileInputV1Schema = lazyZodSchema(() => (<T exte
 export const ArtifactRestoreInputV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, {
   bodyVersion: z.number().check(z.int(), z.positive()), expectedRevision: ArtifactRevisionV1Schema,
 }));
-export const ArtifactHeaderV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, {
+export const ArtifactHeaderV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, {
   ownerAccountId: z.string().check(z.minLength(1)), access: ArtifactCallerAccessV1Schema,
   publicAudience: ArtifactPublicAudienceV1ReadSchema,
   header: ArtifactHeaderMetadataV1Schema, headerVersion: z.number().check(z.int(), z.positive()),
   seq: z.number().check(z.int(), z.nonnegative()), createdAt: z.number().check(z.int(), z.nonnegative()), updatedAt: z.number().check(z.int(), z.nonnegative()),
-}));
+})));
 
 /** Project admitted native document rows onto the ordinary Action's strict header DTO. */
 export function projectArtifactHeaderV1(value: unknown): z.output<typeof ArtifactHeaderV1Schema> {

@@ -65,7 +65,7 @@ export function createManagedConfigurationFactsV1Schema<Choices extends z.core.$
 }
 export const ManagedConfigurationFactsV1Schema = lazyZodSchema(() => createManagedConfigurationFactsV1Schema(PluginJsonValueV2Schema));
 export const ManagedConfigurationFactsV1ReadSchema = createStoredReadSchema(ManagedConfigurationFactsV1Schema);
-export const ProviderPriceFactV1Schema = ProviderPriceV1Schema;
+export const ProviderPriceFactV1Schema = lazyZodSchema(() => ProviderPriceV1Schema);
 export type ProviderPriceFactV1 = z.infer<typeof ProviderPriceV1Schema>;
 export type ManagedConfigurationFactsV1 = z.infer<typeof ManagedConfigurationFactsV1Schema>;
 
