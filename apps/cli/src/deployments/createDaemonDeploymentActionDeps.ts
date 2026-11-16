@@ -82,7 +82,7 @@ import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { ExternalActionInstalledMachineUnavailableSchema, readExternalActionInstalledMachineResult,
     readReviewedActionOperationCancelAddress } from '@/api/externalActionExecutionAuthorization';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
-import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionContext, rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { captureRequesterCurrentnessRefusal } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { ArtifactEncryptionMaterialUnavailableError, createCredentialedAccountArtifactStore, type ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -401,9 +401,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             const child = readRequesterAccountActionContext(authorization)?.deploymentChild;
             if (nativeIncumbentSource && child?.kind === 'review') {
                 if (!authorization || !projection) return refuse('action_forbidden');
-                context = { ...context, externalActionExecutionAuthorization: { ...authorization,
+                // Rebind keeps the admitted requester context (and its forwarded child) on the new carrier;
+                // a bare spread drops it, so the incumbent read was signed as a receipts.get effect and refused.
+                context = { ...context, externalActionExecutionAuthorization: rebindRequesterAccountActionContext({ ...authorization,
                     requesterHttpProjection: { ...projection, createRequestHeaders: request => projection.createRequestHeaders({
-                        ...request, nativeIncumbentSource }) } } };
+                        ...request, nativeIncumbentSource }) } }, authorization) };
             }
             return readDeploymentReceiptForHost({ environmentId, deploymentId, context }, { open, assertCurrent,
                 async readMetadata(request) {
