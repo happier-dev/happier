@@ -10,6 +10,9 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/jsonSchemaValidation';
+import { plugin as neonPlugin } from '../../../../../../packages/plugins/deployment-neon/src/manifest';
+import { plugin as supabasePlugin } from '../../../../../../packages/plugins/deployment-supabase/src/manifest';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -30,6 +33,74 @@ function connectedProfile(service: { pluginId: string; localId: string }, accoun
     status: 'connected', authenticationModeId: 'token', configurationReady: true, configurationRevision: 'configuration',
     revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', providerIdentity: { organizationId }, scopes: [] });
 }
+
+it.each([neonPlugin, supabasePlugin])('dispatches real $manifest.id project and region reads with the selected organization', async plugin => {
+  const manifest = plugin.manifest;
+  const service = { pluginId: manifest.id, localId: manifest.contributes.connectedAccountDescriptors[0]!.id };
+  const serverId = await homes.addHome({ name: 'Managed read', serverUrl: 'https://managed-read.test',
+    serverIdentityId: 'srv_managed_read', accountId: 'owner', currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const execution = { artifactId: 'account-runtime', exportName: 'activateAccount' };
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest,
+    activate: api => plugin.activateAccount(api, execution), accountLifetime: account.accountLifetime, publishProjection: true });
+  const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+  storage.setState({ profileScope: account.accountLifetime.scope,
+    profile: { ...storage.getState().profile, connectedAccountsV4: [connectedProfile(service, 'management-token', 'configured-organization')] } });
+  const calls: string[] = [];
+  await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+    actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required', execute: raw => {
+      const invocation = getActionSpec('action.invoke').inputSchema.parse(raw);
+      const declaration = manifest.contributes.actions.find(action => action.id === invocation.action.localId)!;
+      if (!declaration.inputSchema) throw new Error('Managed read requires its declared input schema');
+      expect(compilePluginJsonSchema(declaration.inputSchema)(invocation.input)).toBe(true);
+      expect(invocation.input).toMatchObject({ environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+        providerAccountId: 'configured-organization',
+        credentialRef: { service, accountId: 'management-token' },
+        credentialPrincipal: { kind: 'account', accountId: account.accountLifetime.scope.accountId,
+          purpose: { consumer: invocation.action, purpose: 'deploy-manage' },
+          target: { kind: 'account', account: { service, accountId: 'management-token' } } } });
+      expect(invocation.input).not.toHaveProperty('providerIdentity');
+      calls.push(invocation.action.localId);
+      const projects = invocation.action.localId.includes('projects-list');
+      return manifest.id === neonPlugin.manifest.id
+        ? projects ? { projects: [], unavailableProjectIds: [] }
+          : { providerAccountId: 'configured-organization', plan: 'standard', regions: [], price: 'unknown' }
+        : projects ? { projects: [] }
+          : { organizationSlug: 'configured-organization', regions: [], subscription: 'organization', price: 'unknown', entitlementsObserved: true };
+    } });
+  const screen = await renderScreen(<DeploymentManagedDataSheet detail={readDetail(detail)} lifetime={account.accountLifetime}
+    actions={createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId)} onApproval={() => {}} onClose={() => {}} />);
+  try {
+    const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+    const operation = () => screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'managed-data.operation');
+    const run = () => screen.findAllByType(RoundButton).find(node => node.props.testID === 'managed-data.run');
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(operation()).toBeDefined(); });
+    const provider = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'managed-data.provider');
+    const providerKey = `${manifest.id}/${manifest.contributes.deploymentTargets[0]!.id}`;
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(provider()!.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: providerKey })]));
+    });
+    await act(async () => provider()!.props.onSelect(providerKey));
+    expect(provider()!.props.selectedId).toBe(providerKey);
+    await act(async () => operation()!.props.onChange('projects.list'));
+    await act(async () => screen.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account', account: { service, accountId: 'management-token' } }));
+    expect(run()!.props.disabled).toBe(false);
+    await act(async () => run()!.props.onPress());
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(calls, JSON.stringify({
+      cards: screen.findAllByType(SurfaceStateCard).map(node => ({ kind: node.props.kind, code: node.props.diagnosticCode })),
+      requests: homes.requests.map(request => `${request.method} ${request.path.split('?')[0]}`),
+    })).toHaveLength(1); expect(run()!.props.loading).toBe(false); });
+    await act(async () => operation()!.props.onChange('projects.provisionOptions'));
+    expect(run()!.props.disabled).toBe(false);
+    await act(async () => run()!.props.onPress());
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(calls).toHaveLength(2); expect(run()!.props.loading).toBe(false); });
+    expect(calls[0]).toContain('projects-list');
+    expect(calls[1]).toContain('provision-options');
+  } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
+});
 
 it.each([false, true])('defaults the saved organization, retains recovery and requires each variable replacement to be selected (existing=%s)', async (existing) => {
   const pooledRef = formatSharedSavedSecretRefV1('pooled');
