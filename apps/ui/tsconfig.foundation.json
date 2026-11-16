@@ -3858,6 +3858,8 @@
     "sources/text/usePreferredLanguage.ts",
     "sources/theme.ts",
     "sources/theme/accentColors.ts",
+    "sources/theme/css/css-tree-parser.d.ts",
+    "sources/theme/css/types.ts",
     "sources/theme/index.ts",
     "sources/theme/parseThemeColor.ts",
     "sources/theme/profiles/baseThemeCatalog.ts",

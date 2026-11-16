@@ -4669,6 +4669,7 @@
     "sources/sync/store/useThemeProfiles.ts",
     "sources/sync/sync.ts",
     "sources/sync/syncEngine.ts",
+    "sources/theme/css/css-tree-parser.d.ts",
     "sources/theme/profiles/themeProfileRuntime.ts",
     "sources/track/index.ts",
     "sources/track/settingsAnalytics/buildFeatureAnalyticsSnapshot.ts",
