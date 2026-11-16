@@ -1,9 +1,12 @@
+import { isSensitiveCliValueFlag, SENSITIVE_CLI_VALUE_FLAG_NAMES } from '@/auth/cliApiToken';
 import { parseHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import { parseWindowsJobCustodyOwnerTag } from '@/subprocess/supervision/processCustody';
 
 // A shell word may join quoted/unquoted fragments or contain escaped whitespace.
 const SECRET_VALUE_SOURCE = String.raw`(?:"(?:\\[\s\S]|[^"\\])*(?:"|$)|'[^']*(?:'|$)|\\[\s\S]|[^\s"'\\])*`;
 const SECRET_FLAG_PATTERN = new RegExp(String.raw`((?:--?|\/)(?:api[-_]?key|auth|bearer|password|passwd|pwd|secret|token)(?:=|\s+))(${SECRET_VALUE_SOURCE})`, 'gi');
+// Happier's own secret flags come from their CLI owner; the generic list above covers other tools.
+const HAPPIER_SECRET_FLAG_PATTERN = new RegExp(String.raw`((?:^|\s)(?:${SENSITIVE_CLI_VALUE_FLAG_NAMES.join('|')})(?:=|\s+))(${SECRET_VALUE_SOURCE})`, 'g');
 const SECRET_ENV_NAME_SOURCE = '(?=[A-Za-z_])[A-Za-z0-9_]*(?:api[-_]?key|auth|bearer|password|passwd|pwd|secret|token)[A-Za-z0-9_]*';
 const QUOTED_SECRET_ENV_ASSIGNMENT_PATTERN = new RegExp(String.raw`(^|\s)(?:"(${SECRET_ENV_NAME_SOURCE})=(?:\\[\s\S]|[^"\\])*(?:"|$)|'(${SECRET_ENV_NAME_SOURCE})=[^']*(?:'|$))`, 'gi');
 const SECRET_ENV_ASSIGNMENT_PATTERN = new RegExp(`((?:^|[\\s{,])${SECRET_ENV_NAME_SOURCE}=)(${SECRET_VALUE_SOURCE})`, 'gi');
@@ -28,6 +31,7 @@ function redactText(command: string): string {
         .replace(SECRET_ENV_ASSIGNMENT_PATTERN, (_match, prefix: string) => `${prefix}[REDACTED]`)
         .replace(URL_USERINFO_PATTERN, (_match, scheme: string) => `${scheme}[REDACTED]@`)
         .replace(SECRET_FLAG_PATTERN, (_match, prefix: string) => `${prefix}[REDACTED]`)
+        .replace(HAPPIER_SECRET_FLAG_PATTERN, (_match, prefix: string) => `${prefix}[REDACTED]`)
         .replace(BEARER_PATTERN, 'Bearer [REDACTED]')
         .replace(PROVIDER_KEY_PATTERN, '[REDACTED]')
         .replace(AWS_ACCESS_KEY_ID_PATTERN, '[REDACTED]')
@@ -51,10 +55,11 @@ export function redactProcessArgv(command: readonly string[]): readonly string[]
             && isPrivateContainer(argument.slice(assignmentIndex + 1))) return `${argument.slice(0, assignmentIndex + 1)}[REDACTED]`;
         if (assignmentIndex >= 0 && (argument.slice(0, assignmentIndex) === 'HAPPIER_PROCESS_OWNER'
             || SECRET_ARGUMENT_NAME.test(argument.slice(0, assignmentIndex))
+            || isSensitiveCliValueFlag(argument.slice(0, assignmentIndex))
             || SECRET_ENV_ARGUMENT_NAME.test(argument.slice(0, assignmentIndex)))) {
             return `${argument.slice(0, assignmentIndex + 1)}[REDACTED]`;
         }
-        secretValue = SECRET_ARGUMENT_NAME.test(argument);
+        secretValue = SECRET_ARGUMENT_NAME.test(argument) || isSensitiveCliValueFlag(argument);
         containerValue = argument === '--unit' || argument === '--job';
         return redactText(argument);
     });

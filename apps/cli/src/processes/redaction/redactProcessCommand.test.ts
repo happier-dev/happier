@@ -92,6 +92,17 @@ describe('redactProcessCommand', () => {
         expect(redactProcessCommand(['env', '-i', value, 'agent'])).not.toContain('private-session');
         expect(redactProcessCommand(`env -i ${value} agent`)).not.toContain('private-session');
     });
+    it.each(['--api-token', '--recovery-key', '--key', '--verification-token', '--invitation-token', '--current-password', '--reauth-proof-json'])
+        ('hides the value of Happier CLI secret flag %s in argv and command strings', flag => {
+            const value = 'hap_v1_ordinarycredentialvalue';
+            for (const command of [['happier', flag, value, 'daemon', 'status'], ['happier', `${flag}=${value}`, 'daemon', 'status'],
+                `happier ${flag} ${value} daemon status`, `happier ${flag}=${value} daemon status`]) {
+                const redacted = redactProcessCommand(command);
+                expect(redacted).not.toContain(value);
+                expect(redacted).toContain(flag);
+                expect(redacted).toContain('daemon status');
+            }
+        });
     it('redacts the whole secret argv value, including whitespace, without dropping valid long arguments', () => {
         const long = 'x'.repeat(1500);
         const command = redactProcessCommand(['agent', '--token=alpha beta', '--password', 'secret words', long]);

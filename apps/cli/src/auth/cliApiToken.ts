@@ -110,7 +110,8 @@ export function takePrefixCliApiTokenFlag(args: readonly string[]): Readonly<{
   return null;
 }
 
-const SENSITIVE_CLI_VALUE_FLAGS = new Set([
+/** Happier CLI flags whose value is a secret; the process-view redactor consumes this list too. */
+export const SENSITIVE_CLI_VALUE_FLAG_NAMES = Object.freeze([
   '--api-token',
   '--password',
   '--current-password',
@@ -121,7 +122,12 @@ const SENSITIVE_CLI_VALUE_FLAGS = new Set([
   '--invitation-token',
   '--verification-token',
   '--reauth-proof-json',
-]);
+] as const);
+const SENSITIVE_CLI_VALUE_FLAGS: ReadonlySet<string> = new Set(SENSITIVE_CLI_VALUE_FLAG_NAMES);
+
+export function isSensitiveCliValueFlag(flag: string): boolean {
+  return SENSITIVE_CLI_VALUE_FLAGS.has(flag);
+}
 
 /** Redacts secret-bearing CLI compatibility spellings before argv reaches logs or command contexts. */
 export function redactCliApiTokenArgv(argv: readonly string[]): string[] {
