@@ -637,9 +637,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // Sentences ("Runs on …", "How much CPU and memory … has free") never say "Unknown": an unnamed controller is the
     // computer that manages it. A delegated receipt also uses that label without reading the controller.
     // A pool-backed preset is managed by whichever connected machine in its pool takes it. Its editor names the pool;
-    // a delegated review never reads the pool list, so it says "its pool".
+    // a delegated review can use the shared availability without reading private pool members.
     const poolId = pooledDraft ? draft?.controllerPoolId ?? creationPreset?.controllerPoolId : undefined;
-    const poolView = useMachinePoolView(props.serverId, delegatedPreset ? undefined : poolId);
+    const poolView = useMachinePoolView(props.serverId, poolId);
     const poolName = useMachinePoolName(props.serverId, props.presetOnly && pooledDraft ? draft?.controllerPoolId || null : null);
     // The shared Pool projection already owns the current availability answer. A known zero-connected
     // pool cannot satisfy Use; show its typed refusal at review instead of waiting for Send to fail.
@@ -964,7 +964,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     </ItemGroup> : null;
     if (delegatedPreset && creationPreset && presetQuery.sameScope) {
         const name = delegatedName ?? creationPreset.launch.name;
-        const maySubmit = !busy && !!activeBinding?.isCurrent() && creationPreset.archivedAt === undefined && !presetQuery.state.error;
+        const maySubmit = !busy && !!activeBinding?.isCurrent() && creationPreset.archivedAt === undefined && !presetQuery.state.error && !poolUnavailableAtReview;
         const submit = async () => {
             if (!maySubmit || !activeBinding || !presetClient || !catalog.homeId) return;
             setBusy(true); setError(null);
@@ -1016,7 +1016,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                             server: { title, spec: creationPreset.name, mark: receiptMark },
                             confirmLabel: t('managedMachines.creationReview.confirm'), onConfirm: () => { void submit(); } });
                     } else void submit();
-                }, disabled: !maySubmit,
+                }, disabled: !maySubmit, ...(poolUnavailableAtReview ? { footnote: t('machinePresets.poolNoMachine') } : {}),
                 loading: busy, testID: props.onUse && !props.createOnUse ? 'managed-config.use' : 'managed-config.create' },
         };
         return <ManagedMachineConfigurator title={title} mark={receiptMark} compact={compact} testID="managed-config"

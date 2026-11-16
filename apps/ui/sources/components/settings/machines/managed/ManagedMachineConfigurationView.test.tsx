@@ -519,6 +519,42 @@ describe('mounted managed configurator', () => {
     expect(harness.requests.filter(request => /machines\.provisioners\.(check|options)|machines\.managed\.acquire/.test(request.path))).toHaveLength(0);
   });
 
+  it.each([
+    { availability: { state: 'known', connectedCount: 0, enabledCount: 1 }, disabled: true },
+    { availability: { state: 'known', connectedCount: 1, enabledCount: 1 }, disabled: false },
+    { availability: { state: 'unknown' }, disabled: false },
+    { availability: null, disabled: false },
+  ] as const)('projects shared availability into delegated pool review ($availability.state, $disabled)', async ({ availability, disabled }) => {
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://delegated-pool.example.test',
+      serverIdentityId: 'srv_delegated_pool', accountId: 'owner', currentAccount: true, teamsEnabled: true, machinePoolsEnabled: true });
+    const poolId = '6be84651-2df7-4125-aac4-0d093217b198';
+    const saved = createPlainManagedMachinePresetFixture({ id: 'delegated-pool', homeId: 'srv_delegated_pool', revision: 0,
+      name: 'Shared machine', owner: { kind: 'team', teamId: 'team-1' }, controllerPoolId: poolId,
+      launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Shared machine', choices: { cpu: 2 } }, teamAcquireDelegated: true });
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: createDelegatedManagedPresetFixture({
+      preset: { ...saved.opened, launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Shared machine', choices: { cpu: 2 } } },
+      descriptor: provisioner.descriptor, installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).publicKey, 'base64url'), custodianAccountId: 'custodian' }) } });
+    const { MachinePoolListOutputV1Schema } = await import('@happier-dev/protocol/machines/pools/v1');
+    harness.answer(serverId, '/v1/machines/pools/list', availability === null ? { status: 503, body: { error: 'unavailable' } } : { body: MachinePoolListOutputV1Schema.parse({ pools: [{ pool: { id: poolId,
+      name: { kind: 'available', label: { content: { t: 'plain', v: 'Shared pool' }, recipientEnvelope: null } }, description: null,
+      revision: 0, createdAt: 1, updatedAt: 1, audience: { kind: 'team', teamId: 'team-1' }, members: [] },
+      availability, access: { canManage: false, canResolve: false, canViewMembers: false } }] }) });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { t } = await import('@/text');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={saved.id} onUse={vi.fn()} />);
+    try {
+      if (availability === null) {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const scopeServerId = resolveServerProfileScopeIdForIdentifier(serverId) ?? serverId;
+        await waitForHomeGovernance(() => expect(storage.getState().machinePoolListStatusByServerId[scopeServerId]).toBe('error'));
+      }
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(disabled));
+      if (disabled) expect(screen.getTextContent()).toContain(t('machinePresets.poolNoMachine'));
+      else expect(screen.getTextContent()).not.toContain(t('machinePresets.poolNoMachine'));
+    } finally { await screen.unmount(); }
+  });
+
   it.each(['cold', 'ready-to-unavailable'] as const)('settles an unavailable delegated review without showing choices loading (%s)', async entry => {
     const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://delegated-refusal.example.test',
       serverIdentityId: 'srv_delegated_refusal', accountId: 'owner', currentAccount: true, teamsEnabled: true });
