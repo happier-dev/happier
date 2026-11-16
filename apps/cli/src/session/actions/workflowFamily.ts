@@ -111,6 +111,7 @@ export type CliWorkflowFamilyHost = Readonly<{
 }>;
 export type CliWorkflowFamily = Readonly<{
   workflowTriggers: ReturnType<typeof createCliWorkflowTriggerActions> | null;
+  prepareNativeGoalOwner: (signal?: AbortSignal) => Promise<void>;
   resolveWorkflowMaterializer: ReturnType<typeof createCredentialedWorkflowMaterializationHostV1> | null;
   readWorkflowApprovedOperation: ReturnType<typeof createWorkflowApprovedOperationReader> | undefined;
   readWorkflowActionStartContext: (context: ActionExecutorContext) => Promise<ActionExecutorContext['agentStartContext'] | null>;
@@ -354,6 +355,22 @@ export function createCliWorkflowFamily(
     return resolved;
   };
 
+  const readWorkflowFeatureDecision = async () => {
+    const snapshot = await readServerFeaturesSnapshot();
+    const [{ getWorkflowRuntimeFeatureDecision }, { isServerFeaturesProbeRetryable }] = await Promise.all([import("@/daemon/automation/workflowFeatureGate"), import("@/features/serverFeaturesClient")]);
+    return { decision: getWorkflowRuntimeFeatureDecision(resolveCliFeatureDecisionEnvironment(), snapshot),
+      retryable: !snapshot || isServerFeaturesProbeRetryable(snapshot) };
+  };
+  const prepareNativeGoalOwner = async (signal?: AbortSignal): Promise<void> => {
+    const { decision } = await readWorkflowFeatureDecision();
+    if (decision.state === 'disabled') return;
+    if (decision.state !== 'enabled') throw Object.assign(new Error('storage_unavailable'), { code: 'storage_unavailable' });
+    if (!workflowTriggers) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
+    await workflowTriggers.removeSessionKeepGoingTriggers({ sessionId: params.sessionId }, {
+      surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' }, ...(signal ? { signal } : {}),
+    });
+  };
+
   const createOwnedWorkflowExecutor = workflowDefinitions && params.credentials
     ? async (args: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0], combined?: WorkflowCombinedRunStartV1) => {
       // Each invocation retains its original proof; concurrent Session calls
@@ -367,10 +384,8 @@ export function createCliWorkflowFamily(
       const execute = createWorkflowActionExecutor({
         onFailureDiagnostic: diagnostic => logger.infoFile(JSON.stringify(diagnostic)),
         isWorkflowFeatureEnabled: async () => {
-          const snapshot = await readServerFeaturesSnapshot();
-          const [{ getWorkflowRuntimeFeatureDecision }, { isServerFeaturesProbeRetryable }] = await Promise.all([import("@/daemon/automation/workflowFeatureGate"), import("@/features/serverFeaturesClient")]);
-          const decision = getWorkflowRuntimeFeatureDecision(resolveCliFeatureDecisionEnvironment(), snapshot);
-          if (decision.state === 'unknown' && (!snapshot || isServerFeaturesProbeRetryable(snapshot))) {
+          const { decision, retryable } = await readWorkflowFeatureDecision();
+          if (decision.state === 'unknown' && retryable) {
             throw Object.assign(new Error('storage_unavailable'), { code: 'storage_unavailable' });
           }
           return decision.state === 'enabled';
@@ -710,6 +725,6 @@ export function createCliWorkflowFamily(
     }
   };
 
-  return { workflowTriggers, resolveWorkflowMaterializer, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort, prepareWorkflowRunStartApproval,
+  return { workflowTriggers, prepareNativeGoalOwner, resolveWorkflowMaterializer, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort, prepareWorkflowRunStartApproval,
     startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations };
 }

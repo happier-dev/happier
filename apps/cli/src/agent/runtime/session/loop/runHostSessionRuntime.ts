@@ -569,6 +569,8 @@ export type HostSessionRuntimeHookRuntime = SessionProviderInputOutcomePort & Re
 export type HostSessionRuntimeFactoryParams = Readonly<{
   directory: string;
   metadata: Metadata;
+  /** Retire retained Keep going before applying a native Goal transition. */
+  prepareNativeGoalOwner?: (signal: AbortSignal) => Promise<void>;
   /** Actual host protocol selected while the admitted Agent opens its Session. */
   onToolNormalizationSource?: (source: ToolNormalizationSourceV3) => void;
   /** Verified invocation placement, never reconstructed from persisted Session metadata. */
@@ -3140,6 +3142,19 @@ async function runHostedSessionRuntime(
   });
   let runtimePublicationMetadata: ReturnType<typeof subscribeSessionRuntimePublicationToMetadata> | null = null;
   const sessionRuntimeParams: HostSessionRuntimeFactoryParams = {
+    prepareNativeGoalOwner: async signal => {
+      const credentials = sessionOpenContext.credentials;
+      if (!credentials) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
+      const { createCliActionDeps } = await import('@/session/actions/createCliActionDeps');
+      await createCliActionDeps({
+        ...currentLifecycleSession.getStoredContentEncryptionContext(),
+        token: credentials.token, credentials, sessionId: currentLifecycleSession.sessionId,
+        serverId: sessionOpenContext.home.serverId,
+        serverIdentityId: sessionOpenContext.serverIdentityId,
+        serverHttpBaseUrl: sessionOpenContext.home.serverUrl,
+        ...(config.runtimeActionSettingsProvider ? { actionsSettingsProvider: config.runtimeActionSettingsProvider } : {}),
+      }).prepareNativeGoalOwner(signal);
+    },
     onToolNormalizationSource: (source) => { toolNormalizationSource = source; },
     directory: runtimeDirectory,
     metadata: runtimeMetadata,

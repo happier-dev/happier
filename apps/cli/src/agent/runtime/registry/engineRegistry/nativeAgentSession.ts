@@ -3,6 +3,8 @@ import { resolveSessionAgentPath, resolveSessionAgentSkills } from '@/subprocess
 import { SessionGoalControlFailureV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readSessionGoalControlDiagnosticDetails } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
+import { resolveNativeAgentSessionGoals } from './nativeAgentSessionGoals';
 import { isSessionModeSelectionUnavailable } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { isForegroundTurnRuntimeTranscriptEvent } from '@/agent/runtime/session/events/runtimeTranscriptScope';
 import { readRegistryCatalogHook } from '@/agent/catalog/runtimeEntry';
@@ -1436,6 +1438,7 @@ type NativeAgentSessionDirectFacets = Readonly<{
     resolveMcpToolPolicy?: HostSessionRuntimeFactoryParams['resolveMcpToolPolicy'];
     prepareRunTeamCredentialProviderBinding?: SessionRuntimeControls['prepareRunTeamCredentialProviderBinding'];
     goals?: AgentSessionGoalControl;
+    prepareNativeGoalOwner?: HostSessionRuntimeFactoryParams['prepareNativeGoalOwner'];
     catalog?: AgentSessionCatalogControl;
     usageLimitRecovery?: AgentSessionUsageLimitRecoveryControl;
     context: AgentSessionRuntimeContext;
@@ -2104,6 +2107,7 @@ export function createNativeAgentSessionInteractionOperations(params: Readonly<{
             context: params.context,
             cwd: params.cwd,
             connectedAccounts: params.connectedAccounts ?? [],
+            goals: resolveNativeAgentSessionGoals(params.session, capabilities),
             capabilities,
             cancellation: resolveNativeAgentSessionCancellation(
                 params.context.agent.id,
@@ -2971,13 +2975,18 @@ export function createNativeAgentSessionOperations(
                 goalControlFailure: { phase: 'native_effect' } };
         }
         const context = createControlContext('active');
+        try {
+            await directFacets?.prepareNativeGoalOwner?.(context.signal);
+        } catch (error) {
+            return { status: 'rejected', diagnostic: { code: readActionErrorCodeV1(error) ?? 'action_failed', severity: 'error' }, retryable: false };
+        }
         const apply = () => effect(Object.freeze({
             ...context,
             goalSource: directFacets.context.workState.publisher(directFacets.capabilities.goals!.source),
         }));
         return await apply();
     });
-    const liveGoals = session.goals ?? directFacets?.goals;
+    const liveGoals = directFacets?.goals;
     const liveUsageLimitRecovery = session.usageLimitRecovery ?? directFacets?.usageLimitRecovery;
     const directHostControls: NativeAgentSessionDirectHostControls = directFacets
         ? Object.freeze({
@@ -3178,7 +3187,7 @@ export function createNativeAgentSessionOperations(
                     },
                 }
                 : {}),
-            ...(directFacets.capabilities.goals?.active && liveGoals && session.nativeGoalControlsSupported !== false
+            ...(liveGoals
                 ? {
                     async refreshGoal() {
                         if (activeControlUnavailable()) {
@@ -5982,9 +5991,11 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             let cancellation: NativeAgentSessionCancellation;
             let configuration: NativeAgentSessionConfiguration;
             let compaction: NativeAgentSessionCompaction;
+            let nativeGoals: AgentSessionGoalControl | undefined;
             try {
                 assertGenerationCurrent();
                 assertNativeAgentSessionModeAvailable(openInputs.configuration, publications);
+                nativeGoals = resolveNativeAgentSessionGoals(session, sessionCapabilities, sessions.goals);
                 await attestOpenOutcome('commit');
                 recordOpenPhase('open_attestation');
                 cancellation = resolveNativeAgentSessionCancellation(
@@ -6165,7 +6176,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             },
                         }
                         : {}),
-                    ...(sessions.goals ? { goals: sessions.goals } : {}),
+                    ...(nativeGoals ? { goals: nativeGoals } : {}),
+                    prepareNativeGoalOwner: hostRuntimeParams.prepareNativeGoalOwner,
                     ...(sessions.catalog ? { catalog: sessions.catalog } : {}),
                     ...(sessions.usageLimitRecovery
                         ? { usageLimitRecovery: sessions.usageLimitRecovery }

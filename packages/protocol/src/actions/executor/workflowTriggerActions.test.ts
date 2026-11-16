@@ -410,6 +410,34 @@ describe('trigger source display provenance', () => {
     expect((await actions.sessionList({ sessionId: 'session-one' }, caller)).sets
       .flatMap(set => set.triggers).some(trigger => trigger.id === other.triggerId)).toBe(true);
   });
+  it('retires only the selected Session Keep going through its trigger owner and preserves a refused detach', async () => {
+    const f = fixture();
+    let refuseDetach = false;
+    const actions = createWorkflowTriggerActions({ ...f.deps,
+      resolveSession: async () => ({ project, nativeGoalOwner: false }),
+      automations: { ...f.deps.automations, reconcile: async (...args) => {
+        if (refuseDetach) throw Object.assign(new Error('write_conflict'), { code: 'currentness_conflict' });
+        return f.deps.automations.reconcile(...args);
+      } } });
+    const caller = { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
+    const attach = (sessionId: string, ref: string) => actions.sessionAdd({ sessionId,
+      target: { kind: 'workflow', ref },
+      trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: sessionId,
+        events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } } }, caller);
+    const opening = await attach('session-one', 'builtin:keep-going');
+    const sibling = await attach('session-two', 'builtin:keep-going');
+    const otherHabit = await attach('session-one', workflow);
+    refuseDetach = true;
+    await expect(actions.removeSessionKeepGoingTriggers({ sessionId: 'session-one' }, caller))
+      .rejects.toMatchObject({ code: 'currentness_conflict' });
+    expect(f.rows.get(opening.set.automationId)?.triggers).toHaveLength(1);
+    refuseDetach = false;
+    await actions.removeSessionKeepGoingTriggers({ sessionId: 'session-one' }, caller);
+    await actions.removeSessionKeepGoingTriggers({ sessionId: 'session-one' }, caller);
+    expect(f.rows.get(opening.set.automationId)?.triggers).toHaveLength(0);
+    expect(f.rows.get(sibling.set.automationId)?.triggers).toHaveLength(1);
+    expect(f.rows.get(otherHabit.set.automationId)?.triggers).toHaveLength(1);
+  });
   it('reports a refused Keep going detach after clearing the Goal and permits an explicit retry', async () => {
     const f = fixture();
     let refuseDetach = false;

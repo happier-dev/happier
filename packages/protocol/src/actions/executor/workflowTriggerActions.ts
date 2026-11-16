@@ -15,7 +15,7 @@ import {
   AutomationStoredWorkflowDefinitionV2ReadSchema,
   type AutomationStoredWorkflowDefinitionRecipeV2, type WorkflowTriggerContextV1,
 } from '../../automations/automationWorkflowRecipeV2.js';
-import { readTriggerTargetV1, type TriggerTargetV1 } from '../../workflows/triggers/triggerTargetV1.js';
+import { isKeepGoingTriggerTargetV1, readTriggerTargetV1, type TriggerTargetV1 } from '../../workflows/triggers/triggerTargetV1.js';
 import { parseWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../../artifacts/artifactListSelectionV1.js';
 import { resolveInheritedApprovalProfileIdV1 } from '../approvalProfiles.js';
@@ -164,6 +164,8 @@ export interface WorkflowTriggerActions {
   sessionAdd: (raw: SessionTriggerAddRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
   sessionUpdate: (raw: SessionTriggerUpdateRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
   sessionRemove: (raw: SessionTriggerRemoveRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
+  /** Native Goal handoff uses the incumbent Session trigger writer. */
+  removeSessionKeepGoingTriggers: (raw: SessionTriggerListRequestV1, caller?: Caller) => Promise<void>;
 }
 
 /** Inline managed scope effects are identified from the incumbent executable target, never extra scope metadata. */
@@ -1173,13 +1175,22 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       triggerId: trigger.id, triggerRevision: trigger.revision, triggerKind: trigger.kind, pullRequest: trigger.pullRequest }, caller);
   };
   const assertContinuationOwner = async (target: TriggerTargetV1, sessionId: string, caller?: Caller) => {
-    if (target.kind !== 'workflow' || target.ref !== 'builtin:keep-going') return;
+    if (!isKeepGoingTriggerTargetV1(target)) return;
     if (!deps.resolveSession) refuse('target_unavailable');
     const { nativeGoalOwner } = await deps.resolveSession(sessionId, caller, { checkNativeGoalOwner: true });
     if (nativeGoalOwner === true) refuse('native_goal_owner');
     if (nativeGoalOwner === null) refuse('target_unavailable');
   };
-  return { ...actions,
+  const sessionActions: WorkflowTriggerActions = { ...actions,
+    removeSessionKeepGoingTriggers: async (raw, caller) => {
+      const listed = await sessionActions.sessionList(raw, caller);
+      for (const set of listed.sets) {
+        if (!isKeepGoingTriggerTargetV1(set.target)) continue;
+        for (const trigger of set.triggers) {
+          await sessionActions.sessionRemove({ sessionId: listed.sessionId, triggerId: trigger.id }, caller);
+        }
+      }
+    },
     prepareSessionInitialTriggers: async (input: Readonly<{ initialTriggers: readonly SessionInitialTriggerV1[];
       project: WorkflowProjectTargetV1; caller?: Caller }>): Promise<SessionInitialTriggerAdmissionV1[]> => {
       const prepared: SessionInitialTriggerAdmissionV1[] = [];
@@ -1304,4 +1315,5 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       return result;
     },
   };
+  return sessionActions;
 }

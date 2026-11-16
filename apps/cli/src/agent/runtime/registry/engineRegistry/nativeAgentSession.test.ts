@@ -5762,6 +5762,8 @@ describe('native Agent session host adapter', () => {
             },
         };
         const agentId = 'acme-direct-controls-agent';
+        const goalOwnerAttestations: unknown[] = [];
+        let nativeGoalRetirements = 0;
         const contributions = createExternalContributionFixtures(agentId);
         const agent: ResolvedAgentContribution = {
             ...contributions.agent,
@@ -5803,6 +5805,9 @@ describe('native Agent session host adapter', () => {
                 }, { sessionConnectedAccounts }),
             }),
             createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            attestSessionOpen: async input => {
+                goalOwnerAttestations.push(input);
+            },
         });
         if (!plan.config.createSessionRuntime) throw new Error('expected a session runtime factory');
         const mutations: SessionTurnMutationV1[] = [];
@@ -5831,12 +5836,14 @@ describe('native Agent session host adapter', () => {
         });
         const created = await plan.config.createSessionRuntime({
             directory: '/tmp/acme-direct-controls-agent', metadata: {}, machineId: 'machine-1',
+            prepareNativeGoalOwner: async () => { nativeGoalRetirements++; },
             session: hostSession, transcriptSession: {}, messageBuffer: {},
             mcpServers: {},
             permissionHandler: new ProviderEnforcedPermissionHandler(hostSession as never, { logPrefix: '[DirectFacetsTest]' }),
             getPermissionMode: () => 'default',
             setThinking: () => undefined, memoryRecallGuidanceEnabled: false,
         } as never);
+        expect(nativeGoalRetirements).toBe(0);
         const controls = created.nativeRuntime as typeof created.nativeRuntime & Readonly<{
             rollbackConversation(request: Readonly<{ v: 1; target: Readonly<{ type: 'latest_turn' }> }>): Promise<unknown>;
             refreshGoal(): Promise<unknown>;
@@ -5885,7 +5892,9 @@ describe('native Agent session host adapter', () => {
             await expect(caller.sessionGoalGet!({ sessionId: hostSession.sessionId })).resolves.toMatchObject({ workState: null });
         } finally { socketBoundary.mockRestore(); settingsBoundary.mockRestore(); }
         await controls.setGoal('Ship direct facets', { status: 'active', tokenBudget: 1000 });
+        expect(nativeGoalRetirements).toBe(1);
         await controls.clearGoal();
+        expect(nativeGoalRetirements).toBe(2);
         const vendorCatalog = await controls.listVendorPlugins();
         expect(getActionSpec('session.vendor_plugin_catalog.list').outputSchema!.parse(vendorCatalog)).toEqual({
             vendorPlugins: [{
@@ -6030,6 +6039,7 @@ describe('native Agent session host adapter', () => {
         });
         const openedWithoutGoals = await plan.config.createSessionRuntime!({
             directory: '/tmp/acme-direct-controls-agent', metadata: {}, machineId: 'machine-1',
+            prepareNativeGoalOwner: async () => { throw new Error('unsupported native Goal open must preserve Keep going'); },
             session: createNativeSessionClientTestPort('session-direct-controls-without-goals'),
             transcriptSession: {}, messageBuffer: {}, mcpServers: {},
             permissionHandler: { cancelByPlugin: vi.fn(async () => undefined) },
@@ -6038,7 +6048,33 @@ describe('native Agent session host adapter', () => {
         } as never);
         expect(openedWithoutGoals.nativeRuntime).not.toHaveProperty('setGoal');
         expect(openedWithoutGoals.nativeRuntime).not.toHaveProperty('clearGoal');
+        expect(nativeGoalRetirements).toBe(4);
         await openedWithoutGoals.operations.resetOrDisposeRuntime();
+        for (const code of ['target_unavailable', 'action_outcome_unknown']) {
+            const detachRefusal = Object.assign(new Error(code), { code });
+            const openedWithRefusal = await plan.config.createSessionRuntime!({
+                directory: '/tmp/acme-direct-controls-agent', metadata: {}, machineId: 'machine-1',
+                session: createNativeSessionClientTestPort('session-direct-controls-detach-refused'),
+                transcriptSession: {}, messageBuffer: {}, mcpServers: {},
+                permissionHandler: { cancelByPlugin: vi.fn(async () => undefined) },
+                getPermissionMode: () => 'default', memoryRecallGuidanceEnabled: false,
+                prepareNativeGoalOwner: async () => { throw detachRefusal; },
+            } as never);
+            const refusedOpen = vi.mocked(runtime.sessions.open).mock.results.at(-1);
+            if (!refusedOpen || refusedOpen.type !== 'return') throw new Error('Expected a native open before detach refusal');
+            const openedSession = await refusedOpen.value;
+            const refusedControls = openedWithRefusal.nativeRuntime as typeof controls;
+            const previousMutations = setGoal.mock.calls.length + clearGoal.mock.calls.length;
+            await expect(refusedControls.setGoal('Refused transition')).resolves.toMatchObject({ ok: false, errorCode: code });
+            await expect(refusedControls.clearGoal()).resolves.toMatchObject({ ok: false, errorCode: code });
+            expect(setGoal.mock.calls.length + clearGoal.mock.calls.length).toBe(previousMutations);
+            expect(openedSession.dispose).not.toHaveBeenCalled();
+            await expect(refusedControls.refreshGoal()).resolves.toMatchObject({ status: 'applied' });
+            await openedWithRefusal.operations.sendTurnPrompt('Session remains ready', { localId: `after-${code}` });
+            expect(openedSession.send).toHaveBeenCalled();
+            await openedWithRefusal.operations.resetOrDisposeRuntime();
+        }
+        expect(goalOwnerAttestations.filter(item => (item as { phase: string }).phase === 'commit')).toHaveLength(4);
     });
 
     it('suppresses native Goal capability after a real Codex ACP open so host Goal fallback remains available', async () => {
@@ -6078,10 +6114,22 @@ describe('native Agent session host adapter', () => {
                 backendTarget: { kind: 'backend', backendId: 'codex' },
                 environmentVariables: { HAPPIER_CODEX_BACKEND_MODE: 'acp' },
             }),
+            createInvocationServices: async ({ signal }) => ({
+                ...createUnavailablePluginServices(),
+                // ACP environment observation uses the real Exec owner. The
+                // substituted ACP transport never resolves or spawns a process.
+                exec: createStablePluginExecService({
+                    signal, isOccurrenceCurrent: () => !signal.aborted,
+                    inheritedEnvironment: {},
+                    resolveExecutable: async () => { throw new Error('ACP transport must not spawn'); },
+                    resolvePath: async () => { throw new Error('ACP transport must not resolve paths'); },
+                }),
+            }),
             createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
         });
         const created = await plan.config.createSessionRuntime!({
             directory: '/tmp/codex-acp-goals', metadata: {}, machineId: 'machine-1',
+            prepareNativeGoalOwner: async () => { throw new Error('ACP must preserve Keep going'); },
             session: createNativeSessionClientTestPort('session-acp-goals'), transcriptSession: {}, messageBuffer: {}, mcpServers: {},
             permissionHandler: { cancelByPlugin: vi.fn(async () => undefined) }, getPermissionMode: () => 'default',
             setThinking: () => undefined, memoryRecallGuidanceEnabled: false,

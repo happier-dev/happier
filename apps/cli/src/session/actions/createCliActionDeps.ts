@@ -282,7 +282,9 @@ export function isControllerDeploymentMutationAction(actionId: string, input: un
       && getActionSpec(DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1).safetyForInput?.(input) !== 'safe';
 }
 
-export type CliActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew' | 'sessionSendMessage' | 'sessionList' | 'daemonMemorySearch' | 'daemonMemoryEnsureUpToDate' | 'executionRunStart' | 'agentsModelsList' | 'sessionActivityGet' | 'executionRunList' | 'detachedExecutionRunSend' | 'executionRunWait' | 'executionRunGet' | 'sessionFork' | 'daemonMemoryGetWindow' | 'sessionOpen' | 'sessionRollback'>>;
+export type CliActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew' | 'sessionSendMessage' | 'sessionList' | 'daemonMemorySearch' | 'daemonMemoryEnsureUpToDate' | 'executionRunStart' | 'agentsModelsList' | 'sessionActivityGet' | 'executionRunList' | 'detachedExecutionRunSend' | 'executionRunWait' | 'executionRunGet' | 'sessionFork' | 'daemonMemoryGetWindow' | 'sessionOpen' | 'sessionRollback'>> & Readonly<{
+  prepareNativeGoalOwner: (signal?: AbortSignal) => Promise<void>;
+}>;
 
 export function projectCliAccountCallerContext(context: ActionExecutorContext, homeAccountId: string | null): ActionExecutorContext {
   const binding = context.externalActionExecutionAuthorization?.binding;
@@ -851,7 +853,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, sessionRead, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, readProjectRows, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId,
   };
   const workflowFamily = createCliWorkflowFamily(params, workflowFamilyHost, workflowRunStorageHost);
-  const { workflowTriggers, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort, prepareWorkflowRunStartApproval,
+  const { workflowTriggers, prepareNativeGoalOwner, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort, prepareWorkflowRunStartApproval,
     startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations } = workflowFamily;
   params.registerWorkflowTriggerList?.(async (input, context) => {
     const requester = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization);
@@ -1050,6 +1052,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
 
   const openPrivateLabel = createCliPrivateLabelActionOpener(params.credentials?.token === params.token ? params.credentials.encryption : null);
   const actionDeps: CliActionDeps = {
+    prepareNativeGoalOwner,
     machinePresetPrepare: params.machinePresetPrepare,
     machinePresetArchive: params.machinePresetArchive,
     privateLabelOpen: async (request, context) => {

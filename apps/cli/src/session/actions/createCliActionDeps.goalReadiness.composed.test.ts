@@ -50,6 +50,31 @@ describe('Keep going capability discovery during native controls installation', 
     vi.restoreAllMocks();
   });
 
+  it.each(['disabled', 'unavailable'] as const)('keeps native Goal cleanup within the Workflow owner when its service is %s', async state => {
+    // Server feature observation and HTTP are genuine transport boundaries.
+    // A disabled service retains its triggers; it must not prevent native Goals.
+    const reads: string[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      reads.push(String(url));
+      throw new Error('Unavailable Workflow service must not receive trigger reads');
+    });
+    vi.spyOn(axios, 'request').mockImplementation(async config => {
+      reads.push(String(config.url));
+      throw new Error('Unavailable Workflow service must not receive trigger writes');
+    });
+    const deps = createCliActionDeps({ token: 'tok', credentials: { token: 'tok', encryption: null },
+      sessionId: 'c123456789012345678901234', mode: 'plain', ctx: null,
+      resolveServerFeaturesSnapshot: () => state === 'disabled'
+        ? { status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({
+          features: { automations: { enabled: true }, workflows: { enabled: false } }, capabilities: {},
+        }) }
+        : { status: 'error', reason: 'network' },
+    });
+    if (state === 'disabled') await expect(deps.prepareNativeGoalOwner()).resolves.toBeUndefined();
+    else await expect(deps.prepareNativeGoalOwner()).rejects.toMatchObject({ code: 'storage_unavailable' });
+    expect(reads).toEqual([]);
+  });
+
   it.each(['native', 'unsupported', 'abort'] as const)('retains caller lifetime until %s installation', async scenario => {
     const sessionId = 'c123456789012345678901234';
     client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: sessionId }));

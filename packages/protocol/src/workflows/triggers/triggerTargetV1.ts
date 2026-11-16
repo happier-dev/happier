@@ -9,6 +9,11 @@ export const TriggerTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('k
   z.strictObject({ kind: z.literal('inline'), definition: WorkflowDefinitionV1Schema }),
 ]));
 export type TriggerTargetV1 = z.infer<typeof TriggerTargetV1Schema>;
+
+export function isKeepGoingTriggerTargetV1(target: TriggerTargetV1 | undefined): boolean {
+  return target?.kind === 'workflow' && target.ref === 'builtin:keep-going';
+}
+
 export type ReadTriggerTargetV1Result =
   | Readonly<{ kind: 'available'; target: TriggerTargetV1 }>
   | Readonly<{ kind: 'unavailable'; code: 'source_unavailable' }>;
