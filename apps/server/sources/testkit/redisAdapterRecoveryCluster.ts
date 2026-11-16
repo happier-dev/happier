@@ -48,28 +48,31 @@ export async function startRedisAdapterRecoveryCluster(options: { redisUrl?: str
     const { redisUrl, redisMemory } = await resolveRedisAdapterValidationRedisUrl({
         env: options.redisUrl ? { REDIS_URL: options.redisUrl } : {},
     });
-    const proxy = await startSilentPartitionProxy(redisUrl);
+    // One proxy per node, so a test can cut a single node's Redis link while its peers stay up.
+    const nodeCount = options.nodeCount ?? 2;
+    const proxies: Awaited<ReturnType<typeof startSilentPartitionProxy>>[] = [];
     const nodes: RecoveryNode[] = [];
     const owners: ProductRedisOwner[] = [];
     const servers: Server[] = [];
     let closePromise: Promise<void> | undefined;
     const close = (afterSocketClose?: () => Promise<void>): Promise<void> => {
         closePromise ??= (async () => {
-            proxy.heal();
+            for (const proxy of proxies) proxy.heal();
             try {
                 for (const io of servers) await io.close();
                 await afterSocketClose?.();
             } finally {
                 for (const owner of owners) owner.closeRedisSocketClusterClient();
-                await proxy.close();
+                for (const proxy of proxies) await proxy.close();
                 await redisMemory?.stop();
             }
         })();
         return closePromise;
     };
     try {
-        const nodeCount = options.nodeCount ?? 2;
         for (let index = 0; index < nodeCount; index++) {
+            const proxy = await startSilentPartitionProxy(redisUrl);
+            proxies.push(proxy);
             const previousUrl = process.env.REDIS_URL;
             let owner: typeof import("@/storage/redis/redis");
             let redis: ReturnType<typeof owner.getRedisSocketClusterClient>;
@@ -126,17 +129,21 @@ export async function startRedisAdapterRecoveryCluster(options: { redisUrl?: str
                     await hooks.duringOutage?.();
                     await redisMemory.start();
                 } else {
-                    proxy.partition();
+                    for (const proxy of proxies) proxy.partition();
                     // A command on each root exercises its real 5-second silent-stall detector.
                     const probes = nodes.map((node) => node.redis.ping().catch(() => undefined));
                     await vi.waitFor(() => {
                         if (nodes.some((node) => node.redis.status === "ready")) throw new Error("Silent stall not detected");
                     }, { timeout: 12_000, interval: 100 });
-                    proxy.heal();
+                    for (const proxy of proxies) proxy.heal();
                     await Promise.all(probes);
                 }
                 await waitForRecovery();
             },
+            /** Cut (and later restore) one node's Redis link; its peers' links stay up. */
+            refuseNode: (index: number) => proxies[index]!.refuse(),
+            acceptNode: (index: number) => proxies[index]!.accept(),
+            waitForRecovery,
             close,
         };
     } catch (error) {

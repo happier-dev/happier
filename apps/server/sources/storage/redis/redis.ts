@@ -261,8 +261,8 @@ function watchAdapterSubscriberResubscription(redis: Redis): void {
     const onClose = (): void => {
         if (redis.mode === "subscriber") subscriptionLost = true;
     };
-    // ioredis has already re-sent SUBSCRIBE when it emits `ready`, so a listener's reads start
-    // after the resubscription is on the wire.
+    // ioredis has already written SUBSCRIBE when it emits `ready` (not yet acknowledged), so a
+    // listener's reads start after the resubscription is on the wire.
     const onReady = (): void => {
         if (!subscriptionLost) return;
         subscriptionLost = false;
@@ -275,6 +275,37 @@ function watchAdapterSubscriberResubscription(redis: Redis): void {
     redis.on("close", onClose);
     redis.on("ready", onReady);
     redis.once("end", detach);
+}
+
+const socketClusterAdapterPublishLostListeners = new Set<() => void>();
+let socketClusterAdapterPublishLossPending = false;
+// Adapter commands that carry a cluster message to the other nodes (Pub/Sub and Stream writes).
+const SOCKET_CLUSTER_MESSAGE_WRITES = new Set<PropertyKey>(["publish", "spublish", "xadd"]);
+
+/**
+ * The adapter drops its PUBLISH/XADD promises. When this node's own root link fails, ioredis
+ * rejects the queued writes after its retries, and the message never reaches the peers, whose
+ * subscribers may have stayed up (so they never resubscribe). Owners subscribe here to announce,
+ * once this node's root is ready again, that peers must reconcile.
+ */
+export function onSocketClusterAdapterPublishLost(listener: () => void): () => void {
+    socketClusterAdapterPublishLostListeners.add(listener);
+    return () => { socketClusterAdapterPublishLostListeners.delete(listener); };
+}
+
+function noteSocketClusterAdapterPublishLost(root: Redis, command: string, error: unknown): void {
+    // Only an outage loses a write this way; an error reply on a ready link (OOM, READONLY) is a
+    // Redis command error, already counted by the command metrics, and no `ready` would follow it.
+    if (root.status === "ready" || socketClusterAdapterPublishLossPending) return;
+    socketClusterAdapterPublishLossPending = true;
+    warn({ module: "redis-socket-cluster", event: "adapter_publish_lost", command,
+        errorName: error instanceof Error ? error.name : typeof error },
+    "A cluster message this node published was lost; peers reconcile when this node's Redis link is ready again");
+    // Announce only at the next ready: the announcement is itself a publish over this link.
+    root.once("ready", () => {
+        socketClusterAdapterPublishLossPending = false;
+        for (const listener of [...socketClusterAdapterPublishLostListeners]) listener();
+    });
 }
 
 /**
@@ -316,9 +347,14 @@ export function getRedisSocketClusterAdapterClient(): Redis {
                     // promises (PUBLISH, XADD, and session SET) while it does
                     // await others. Keep every returned promise unchanged for
                     // callers that do await it, while marking an outage failure
-                    // handled when the adapter drops it.
+                    // handled when the adapter drops it. A lost cluster message write is
+                    // reported to the publish-loss owners.
                     if (result && typeof (result as { then?: unknown }).then === "function") {
-                        void Promise.resolve(result).catch(() => undefined);
+                        void Promise.resolve(result).catch((error: unknown) => {
+                            if (SOCKET_CLUSTER_MESSAGE_WRITES.has(property) && _socketClusterRedis) {
+                                noteSocketClusterAdapterPublishLost(_socketClusterRedis, String(property), error);
+                            }
+                        });
                     }
                     return result;
                 };
@@ -340,6 +376,7 @@ export function closeRedisSocketClusterClient(): void {
     _socketClusterAdapterRedis = null;
     _socketClusterAdapterDuplicateCount = 0;
     _socketClusterRedisUrl = null;
+    socketClusterAdapterPublishLossPending = false;
 
     if (!redis) return;
     try {

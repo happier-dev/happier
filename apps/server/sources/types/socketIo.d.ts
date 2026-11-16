@@ -15,6 +15,8 @@ declare module "socket.io" {
         /** Set only by machine Socket authentication after persisted proof verification. */
         verifiedMachineInstallationId?: string;
         sessionScopedBinding?: SessionScopedSocketBinding;
+        /** The sign-in policy generation read before this socket's eligibility decision. */
+        signInPolicyGeneration?: number;
         sessionPublisherAuthority?: SessionPublisherAuthorityProjectionV1;
         /** Replaced after the post-connect currentness check; exact to this socket credential. */
         authAuthority?: "present_user" | "account_automation";

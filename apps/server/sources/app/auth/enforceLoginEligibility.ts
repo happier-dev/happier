@@ -52,11 +52,20 @@ function getLoginEligibilityPositiveCache(env: NodeJS.ProcessEnv): LRUTtlMap<str
     return loginEligibilityPositiveCache;
 }
 
+// The sign-in policy version this node has applied; a Home sign-in policy change advances it.
+let signInPolicyGeneration = 0;
+
+/** Read before an admission decision, so its owner can tell a decision taken under an older policy. */
+export function readSignInPolicyGeneration(): number {
+    return signInPolicyGeneration;
+}
+
 /**
  * A Home sign-in policy change re-decides eligibility at once: cached positive results were
- * decided under the previous policy.
+ * decided under the previous policy, and a decision still in flight cannot cache its result.
  */
 export function invalidateLoginEligibilityPositiveCache(): void {
+    signInPolicyGeneration += 1;
     loginEligibilityPositiveCache?.clear();
     loginEligibilityInflight = new Map();
 }
@@ -75,6 +84,11 @@ export async function enforceLoginEligibility(params: {
 }): Promise<LoginEligibilityResult> {
     const startedAt = Date.now();
     const accountId = params.accountId.toString().trim();
+    // Captured before the policy is read: a result decided under an older policy is never cached.
+    const generation = signInPolicyGeneration;
+    const cachePositive = (cache: LRUTtlMap<string, true> | null): void => {
+        if (generation === signInPolicyGeneration) cache?.set(accountId, true);
+    };
     if (!accountId || (params.verifiedCredential && params.verifiedCredential.userId !== accountId)) {
         observeLoginEligibilityStage({
             stage: "total",
@@ -176,7 +190,7 @@ export async function enforceLoginEligibility(params: {
         }
         const policy = resolveAuthPolicyFromEnv(env);
         if (policy.requiredLoginProviders.length === 0) {
-            positiveCache?.set(accountId, true);
+            cachePositive(positiveCache);
             observeLoginEligibilityStage({
                 stage: "total",
                 result: "ok",
@@ -257,7 +271,7 @@ export async function enforceLoginEligibility(params: {
         });
 
         const result = { ok: true } satisfies LoginEligibilityResult;
-        positiveCache?.set(accountId, true);
+        cachePositive(positiveCache);
         observeLoginEligibilityStage({
             stage: "total",
             result: "ok",

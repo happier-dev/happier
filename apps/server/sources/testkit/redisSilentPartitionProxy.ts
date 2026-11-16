@@ -4,6 +4,9 @@ type SilentPartitionProxy = Readonly<{
     url: string;
     partition(): void;
     heal(): void;
+    /** A loud outage: drop every connection and refuse new ones (ECONNREFUSED) until `accept()`. */
+    refuse(): Promise<void>;
+    accept(): Promise<void>;
     waitForForwardedCommand(command: string): Promise<void>;
     close(): Promise<void>;
 }>;
@@ -76,6 +79,21 @@ export async function startSilentPartitionProxy(upstreamUrl: string): Promise<Si
         },
         heal: () => {
             partitioned = false;
+        },
+        refuse: async () => {
+            const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+            for (const socket of downstreamSockets) socket.destroy();
+            for (const socket of upstreamSockets) socket.destroy();
+            await closed;
+        },
+        accept: async () => {
+            await new Promise<void>((resolve, reject) => {
+                server.once("error", reject);
+                server.listen(address.port, "127.0.0.1", () => {
+                    server.off("error", reject);
+                    resolve();
+                });
+            });
         },
         waitForForwardedCommand: async (command) => {
             const normalized = command.toLowerCase();

@@ -1,4 +1,4 @@
-import { enforceLoginEligibility, invalidateLoginEligibilityPositiveCache } from "@/app/auth/enforceLoginEligibility";
+import { enforceLoginEligibility, invalidateLoginEligibilityPositiveCache, readSignInPolicyGeneration } from "@/app/auth/enforceLoginEligibility";
 import { readHomeConfigEnv } from "@/app/home/settings/homeSettings";
 import { warn } from "@/utils/logging/log";
 
@@ -13,6 +13,21 @@ type LiveSocket = Readonly<{ data: unknown; disconnect(close?: boolean): unknown
  */
 export async function evictSignInIneligibleSockets(sockets: Iterable<LiveSocket>): Promise<void> {
     invalidateLoginEligibilityPositiveCache();
+    await disconnectSignInIneligibleSockets(sockets);
+}
+
+/**
+ * The eviction pass sees only sockets already connected. A handshake whose eligibility decision
+ * started under an older sign-in policy generation (`socket.data.signInPolicyGeneration`, set by
+ * api/socket.ts before that decision) may connect after the pass, so it is re-decided once here.
+ */
+export async function recheckSocketAdmittedUnderOlderSignInPolicy(socket: LiveSocket): Promise<void> {
+    const admitted = (socket.data as { signInPolicyGeneration?: unknown } | undefined)?.signInPolicyGeneration;
+    if (typeof admitted !== "number" || admitted === readSignInPolicyGeneration()) return;
+    await disconnectSignInIneligibleSockets([socket]);
+}
+
+async function disconnectSignInIneligibleSockets(sockets: Iterable<LiveSocket>): Promise<void> {
     const byAccount = new Map<string, LiveSocket[]>();
     for (const socket of [...sockets]) {
         const accountId = (socket.data as { userId?: unknown } | undefined)?.userId;

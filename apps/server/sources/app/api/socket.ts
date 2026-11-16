@@ -10,7 +10,8 @@ import { ACCOUNT_CHANGE_ROWS_DELIVERY_EVENT, CREDENTIAL_QUALIFIED_SESSION_DELIVE
 import { readAccountChangeRowsDemandV1 } from '@happier-dev/protocol/changes';
 import { registerMachineAccessLossHandler } from '@/app/events/machineAccessLoss';
 import { registerSignInPolicyChangeHandler } from '@/app/events/signInPolicyChange';
-import { evictSignInIneligibleSockets, registerSignInPolicyEviction } from '@/app/auth/signInPolicyEviction';
+import { registerClusterPushReconcile } from '@/app/events/clusterPushReconcile';
+import { evictSignInIneligibleSockets, recheckSocketAdmittedUnderOlderSignInPolicy, registerSignInPolicyEviction } from '@/app/auth/signInPolicyEviction';
 import { LEGACY_MACHINE_HEARTBEAT_EVENT } from '@/app/events/connectionEventRouter';
 import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetadataFromSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
 import { Server, Socket } from "socket.io";
@@ -35,7 +36,7 @@ import {
     untrackWebSocketConnection,
     websocketEventsCounter,
 } from "../monitoring/metrics/index";
-import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
+import { enforceLoginEligibility, readSignInPolicyGeneration } from "@/app/auth/enforceLoginEligibility";
 import { usageHandler } from "./socket/usageHandler";
 import { rpcHandler } from "./socket/rpcHandler";
 import { pingHandler } from "./socket/pingHandler";
@@ -88,6 +89,7 @@ import {
     closeRedisSocketClusterClient,
     createRedisSocketClusterRelayAdmissionClient,
     getRedisSocketClusterAdapterClient,
+    onSocketClusterAdapterPublishLost,
     onSocketClusterAdapterResubscribed,
 } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
@@ -405,14 +407,14 @@ export function startSocket(app: Fastify): () => Promise<void> {
     const releaseSignInPolicyEviction = registerSignInPolicyEviction({ sockets: () => io.of('/').sockets.values(),
         onSignInPolicyChange: listener => eventRouter.onSignInPolicyChange(listener) });
     // Access-loss and sign-in policy pushes between nodes are at-most-once Pub/Sub; re-check this
-    // node's live sockets once when its adapter subscriber is ready again.
-    const releaseAdapterResubscribed = shouldEnableRedisAdapter
-        ? onSocketClusterAdapterResubscribed(() => {
+    // node's live sockets once when its adapter subscriber is ready again, or a peer lost its publish.
+    const releaseClusterPushReconcile = shouldEnableRedisAdapter
+        ? registerClusterPushReconcile({ io, redis: { onSocketClusterAdapterResubscribed, onSocketClusterAdapterPublishLost }, reconcile: () => {
             void reconfirmSessionScopedMachineAccess(io.of('/').sockets.values());
             void evictSignInIneligibleSockets(io.of('/').sockets.values()).catch(error => {
-                log({ module: 'auth-sign-in-policy', error }, 'Sign-in policy socket re-check after Redis resubscription failed');
+                log({ module: 'auth-sign-in-policy', error }, 'Sign-in policy socket re-check after a possibly lost cluster push failed');
             });
-        })
+        } })
         : () => {};
     const tunnelRelayBridge = createPeerTcpTunnelRelayBridge(io);
     const peerMediationObservabilityStore = createPeerMediationObservabilityStore();
@@ -583,6 +585,8 @@ export function startSocket(app: Fastify): () => Promise<void> {
             observeHandshakeStage("ok");
 
             setHandshakeStage("login-eligibility");
+            // A sign-in policy change during this admission re-decides the socket on connection.
+            socket.data.signInPolicyGeneration = readSignInPolicyGeneration();
             const eligibility = await enforceLoginEligibility({
                 accountId: verified.userId,
                 readEnv: () => readHomeConfigEnv(),
@@ -812,6 +816,9 @@ export function startSocket(app: Fastify): () => Promise<void> {
     });
 
     io.on("connection", async (socket) => {
+        void recheckSocketAdmittedUnderOlderSignInPolicy(socket).catch(error => {
+            log({ module: 'auth-sign-in-policy', error }, 'Sign-in policy re-check of a socket admitted under an older policy failed');
+        });
         const connectedAtMs = Date.now();
         const remoteAddress = isIrohIngressRequest(socket.request) ? IROH_REQUEST_IP : socket.handshake.address;
         const remotePort =
@@ -1326,7 +1333,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
         releaseMachineAccessLoss();
         releaseSignInPolicyChange();
         releaseSignInPolicyEviction();
-        releaseAdapterResubscribed();
+        releaseClusterPushReconcile();
         try {
             emitSocketPlannedRestart(io, plannedRestartRetryAfterMs);
         } catch (error) {
