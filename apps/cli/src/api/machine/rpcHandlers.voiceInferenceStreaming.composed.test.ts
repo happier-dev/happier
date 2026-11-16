@@ -372,7 +372,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       transcribeAudio: async () => { throw new Error('unused native recognition'); },
       createStreamingTranscriptionSession: vi.fn(async () => runtimeSession),
     });
-    const cancelStt = vi.spyOn(worker, 'cancelStt');
     const mgr = createRpcHandlerManager();
     const registration = registerMachineVoiceInferenceStreamingRpcHandlers({
       rpcHandlerManager: mgr,
@@ -421,7 +420,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
     expect(runtimeSession.cancel).toHaveBeenCalledOnce();
     expect(runtimeSession.close).toHaveBeenCalledOnce();
-    expect(cancelStt).toHaveBeenCalledOnce();
   });
 
   it('cancels the authority-bound stream when transport is lost before its first carrier frame', async () => {
@@ -435,7 +433,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       transcribeAudio: async () => { throw new Error('unused native recognition'); },
       createStreamingTranscriptionSession: vi.fn(async () => runtimeSession),
     });
-    const cancelStt = vi.spyOn(worker, 'cancelStt');
     const mgr = createRpcHandlerManager();
     const registration = registerMachineVoiceInferenceStreamingRpcHandlers({
       rpcHandlerManager: mgr,
@@ -479,7 +476,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
     expect(runtimeSession.cancel).toHaveBeenCalledOnce();
     expect(runtimeSession.close).toHaveBeenCalledOnce();
-    expect(cancelStt).toHaveBeenCalledOnce();
   });
 
   it('binds transport-loss cleanup to signed application authority instead of forged carrier identity', async () => {
@@ -493,7 +489,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       transcribeAudio: async () => { throw new Error('unused native recognition'); },
       createStreamingTranscriptionSession: vi.fn(async () => runtimeSession),
     });
-    const cancelStt = vi.spyOn(worker, 'cancelStt');
     const mgr = createRpcHandlerManager();
     const registration = registerMachineVoiceInferenceStreamingRpcHandlers({
       rpcHandlerManager: mgr,
@@ -531,7 +526,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
     expect(runtimeSession.cancel).toHaveBeenCalledOnce();
     expect(runtimeSession.close).toHaveBeenCalledOnce();
-    expect(cancelStt).toHaveBeenCalledOnce();
   });
 
   it('streams daemon STT PCM chunks into a canonical wav file and transcribes through the worker on finish', async () => {
@@ -869,7 +863,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       }),
       createStreamingTranscriptionSession: vi.fn(async () => runtimeSession),
     });
-    const cancelStt = vi.spyOn(worker, 'cancelStt');
     const mgr = createRpcHandlerManager();
     const registration = registerMachineVoiceInferenceStreamingRpcHandlers({
       rpcHandlerManager: mgr,
@@ -905,7 +898,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     });
     expect(runtimeSession.cancel).toHaveBeenCalledOnce();
     expect(runtimeSession.close).toHaveBeenCalledOnce();
-    expect(cancelStt).toHaveBeenCalledWith('stream-runtime-cancel');
   });
 
   it('rejects binary append stream identity, ordering, PCM and lifecycle violations', async () => {

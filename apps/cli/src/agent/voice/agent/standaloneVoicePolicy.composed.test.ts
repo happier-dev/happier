@@ -121,7 +121,7 @@ describe('standalone Local Voice policy from UI admission to provider input', ()
     const controllers = new Map<string, ExecutionRunController>();
     const activeManager = manager;
     const dispatch = async (method: string, input: unknown) => {
-      if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1) {
+      if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START) {
         const envelope = input as { start: unknown; runId?: string; resume?: boolean };
         if (envelope.runId) {
           if (retainedReadsUnavailable) ensuredWithoutPolicyRead = envelope.runId;

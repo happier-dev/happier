@@ -4072,7 +4072,7 @@ describe('VoiceAgentManager', () => {
         } });
         expect(JSON.stringify(invalid)).not.toContain('private content');
         await expect(tools[0].call({ t: 'sendSessionMessage', args: { message: 'Repaired request' } }, { callId: 'repaired-request' }))
-          .resolves.toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+          .resolves.toMatchObject({ ok: false, errorCode: 'action_transport_unavailable' });
         publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
       },
     }) });

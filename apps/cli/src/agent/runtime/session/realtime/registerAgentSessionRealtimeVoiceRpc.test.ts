@@ -267,7 +267,7 @@ describe('Agent-session realtime Voice session RPC', () => {
           try {
             return await resolveCliVoicePromptPreparation({
               serverId, sessionId, scope: { serverId, accountId: 'account-a', sessionId },
-              accountEntries: [], profileEntries: [], signal,
+              accountEntries: [], profileEntries: [], projectEntries: [], signal,
               sessionMetadata: { work: { memoryEnabled: false, promptStack: [
                 { id: outcome === 'no_instructions' ? 'ordinary' : 'session.instructions',
                   ref: { kind: 'doc', artifactId: 'persona' }, required: true, enabled: true, placement: 'system_append' },
@@ -535,7 +535,9 @@ describe('Agent-session realtime Voice session RPC', () => {
 
     expect(watchOutcome).toEqual({
       kind: 'settled',
-      result: { error: 'RPC target transport disconnected' },
+      result: { error: 'RPC target transport disconnected', failureCause: {
+        phase: 'rpc.handler', errorClass: 'Error', errorCode: null, httpStatus: null,
+      } },
     });
     expect(idleOutcome).toBe('idle');
 
