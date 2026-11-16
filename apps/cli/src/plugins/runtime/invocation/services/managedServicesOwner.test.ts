@@ -7427,7 +7427,6 @@ describe('managed-services SVC09 owner', () => {
             }), harness.exec);
         const spec = lifecycleSpec({
             id: 'gateway',
-            port: 43_122,
         });
 
         const first = await bindScope(firstScope).supervise(spec);

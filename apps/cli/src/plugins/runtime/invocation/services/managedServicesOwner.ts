@@ -3755,6 +3755,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         resolveManagedExecutable: (executable: ManagedExecutableRef, isCurrent: () => boolean) => input.resolveManagedExecutable!(scope, executable, isCurrent),
                     } : {}),
                     isOccurrenceCurrent: scope.isOccurrenceCurrent, exec,
+                    ...(options?.nativeLaunch ? { nativeLaunch: options.nativeLaunch } : {}),
                     ...(context.authorizePreparedLaunch ? { authorizePreparedLaunch: context.authorizePreparedLaunch } : {}),
                 });
                 // An Agent's original Exec authority authenticates every

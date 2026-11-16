@@ -366,6 +366,7 @@ Readonly<{
     sessionId?: string;
     operationId?: string;
     exec: Pick<ExecService, 'spawn' | 'run'>;
+    nativeLaunch?: NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch'];
     authorizePreparedLaunch?: HostPreparedPluginExecLaunchAuthorizer;
     /** Host-private shared daemon admission, never accepted from an SDK spec. */
     independentInvocation?: true;
@@ -2414,7 +2415,9 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         scope.exec,
                         authorizedLaunchRequest,
                         supervisionLaunch,
-                        scope.authorizePreparedLaunch,
+                        scope.authorizePreparedLaunch
+                            ? (launch, signal) => scope.authorizePreparedLaunch!(launch, signal, scope.nativeLaunch)
+                            : undefined,
                     )
                     : null;
                 const custodyInstall = installManagedProcessCustodyForHost(
@@ -2431,9 +2434,13 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         processOwner,
                     );
                 try {
+                    // Runner qualifiers belong to the original proxy Exec;
+                    // its prepared authorizer consumes them, not physical Exec.
                     return await scope.exec.spawn(
                         authorizedLaunchRequest,
-                        { signal: entry.lifecycle.signal },
+                        { signal: entry.lifecycle.signal,
+                            ...(!scope.authorizePreparedLaunch && scope.nativeLaunch
+                                ? { nativeLaunch: scope.nativeLaunch } : {}) },
                     );
                 } finally {
                     preauthorization?.dispose();

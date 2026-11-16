@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { logger } from '@/ui/logger';
 import type { AgentSessionGoalControlContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { authorizePluginExecLaunchForHost, authorizeResolvedAgentNativeExecLaunchForHost, createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { authorizePluginExecLaunchForHost, authorizeResolvedAgentNativeExecLaunchForHost, createStablePluginExecService, issueAgentNativeLaunchQualifierForHost, type HostPreparedPluginExecLaunchAuthorizer } from '@/plugins/runtime/invocation/services/exec';
 import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
 import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { AgentRuntimeDaemonServiceResponseV1Schema } from './agentRuntimeDaemonServiceProtocol';
@@ -288,6 +288,45 @@ function managedProviderBootstrap(
 }
 
 describe('runner daemon PluginServices proxy', () => {
+    it.skipIf(!process.getuid)('carries the Session MCP context through a native managed-service launch', async () => {
+        const controller = new AbortController();
+        const transport = await prepareSessionMcpLocalTransport({ agentUid: process.getuid!() });
+        const server = createServer();
+        let authorize: HostPreparedPluginExecLaunchAuthorizer | undefined;
+        try {
+            await transport.listen(server);
+            const services = await prepareRunnerDaemonPluginServices({
+                invocationId: 'opencode-native-managed-launch', signal: controller.signal,
+                local: createUnavailablePluginServices(),
+                bindManagedServices: input => {
+                    authorize = input.authorizePreparedLaunch;
+                    return createUnavailablePluginServices().managedServices;
+                },
+                dispatch: async operation => {
+                    if (operation.kind === 'plugin_services.prepare_v1') return preparedSnapshot();
+                    if (operation.kind === 'plugin_services.close_v1') return null;
+                    if (operation.kind === 'plugin_exec.resolved_agent_launch.authorize_v1') {
+                        expect(operation.sessionMcpContext !== undefined
+                            && operation.sessionMcpContext.socketPath === transport.localContext?.socketPath
+                            && operation.sessionMcpContext.bearerToken === transport.localContext?.bearerToken).toBe(true);
+                        return { authorizationId: 'native-managed-launch', launch: operation.launch };
+                    }
+                    if (operation.kind === 'plugin_exec.launch.release_v1') return null;
+                    throw new Error(`Unexpected ${operation.kind}`);
+                },
+            });
+            const nativeLaunch = issueAgentNativeLaunchQualifierForHost(services.exec, () => transport.localContext);
+            if (!authorize) throw new Error('Agent managed launch authorizer was not bound');
+            const launch = await authorize({ command: process.execPath, args: ['--version'], env: {} }, controller.signal, nativeLaunch);
+            await launch.release();
+        } finally {
+            controller.abort();
+            server.closeAllConnections();
+            await new Promise<void>(resolve => server.close(() => resolve()));
+            await transport.retire();
+        }
+    });
+
     it.skipIf(!process.getuid)('decodes the private Agent launch frame separately from binary provider stdin', async () => {
         const controller = new AbortController();
         const providerInput = new Uint8Array([0, 255, 128, 10]);

@@ -20,7 +20,9 @@ export async function openOpenCodeServerExecutionRun(
       message: 'OpenCode detached execution cannot fork without a provider-native checkpoint.',
     });
   }
-  const runtimeContext = createOpenCodeRuntimeContext(request, context);
+  const runtimeContext = createOpenCodeRuntimeContext(
+    request, context, undefined, undefined, undefined, context.executionRun.services.nativeLaunch,
+  );
   const env = request.launchEnvironment?.values ?? {};
   const runtime = await createExecutionRunHostBackendFromConversationRuntime({
     request,

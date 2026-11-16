@@ -35,6 +35,7 @@ export async function openOpenCodeServerSession(
     workState,
     sessionServices?.subagents,
     sessionServices?.transcripts,
+    sessionServices?.nativeLaunch,
   );
   const env = request.launchEnvironment?.values ?? {};
   const assembly = await createOpenCodeServerRuntimeAssembly({

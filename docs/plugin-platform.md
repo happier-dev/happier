@@ -13239,6 +13239,14 @@ Read [runtime ownership](runtime-core.md) before changing runtime core, the plug
 
 - The host runtime owns session/turn lifecycle, prompt custody, transcript writes and work-state; plugins contribute through the single `activate(api)` ABI and the public `packages/plugin-sdk/` seam only.
 
+In unreleased 0.3 source, `managedServices.supervise(spec, { nativeLaunch })`
+accepts the same host-issued native Agent qualifier as Exec and protocol-client
+launches. A managed native Agent carries its Session or execution-run qualifier
+through this option; the existing host launch authorizer then supplies that
+launch's Session MCP context to the isolation guard. OpenCode's managed server
+uses this path. The qualifier is process-local and grants no additional Project
+permission; this changes no serialized contract or wire epoch.
+
 ### Theme-selected typography (unreleased 0.3)
 
 The app's bundled-font catalog owns the families loaded at boot and the face selected

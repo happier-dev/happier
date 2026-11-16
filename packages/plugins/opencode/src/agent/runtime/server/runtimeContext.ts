@@ -6,7 +6,7 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { AgentNativeLaunchQualifier, ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
   InteractionTransientApprovalAuthorRequestV1,
@@ -58,6 +58,7 @@ export type OpenCodeRuntimeContext = Readonly<{
   config: Readonly<{ values: Readonly<Record<string, unknown>> }>;
   env: Readonly<{ list(): Readonly<Record<string, string>> }>;
   managedServices: ManagedServices;
+  nativeLaunch?: AgentNativeLaunchQualifier;
   ui: Pick<AgentRuntimeContext['services']['interactions'], 'askQuestions'>;
   sessions: Readonly<{
     current: Readonly<{
@@ -175,6 +176,7 @@ export function createOpenCodeRuntimeContext(
   workStateService?: AgentSessionRuntimeContext['workState'],
   subagentsService?: AgentSessionRuntimeContext['session']['services']['subagents'],
   transcriptsService?: AgentSessionRuntimeContext['session']['services']['transcripts'],
+  nativeLaunch?: AgentNativeLaunchQualifier,
 ): OpenCodeRuntimeContext {
   const environment = request.launchEnvironment?.values ?? {};
   const workState = workStateService?.publisher('opencode-todos') ?? null;
@@ -205,6 +207,7 @@ export function createOpenCodeRuntimeContext(
     config: { values: environment },
     env: { list: () => environment },
     managedServices: context.services.managedServices,
+    ...(nativeLaunch ? { nativeLaunch } : {}),
     ui: {
       askQuestions: (questions, options) =>
         context.services.interactions.askQuestions(questions, options),

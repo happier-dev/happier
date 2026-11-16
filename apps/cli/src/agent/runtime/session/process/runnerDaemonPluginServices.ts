@@ -2878,8 +2878,8 @@ export async function prepareRunnerDaemonPluginServices(
             const bootstrap = prepared.managedProvider;
             const rebound = input.bindManagedServices!({
                 invocationId: input.invocationId,
-                authorizePreparedLaunch: (launch, signal) => authorizeResolvedAgentNativeExecLaunchForHost(
-                    exec, launch, signal, undefined, 'managedService'),
+                authorizePreparedLaunch: (launch, signal, nativeLaunch) => authorizeResolvedAgentNativeExecLaunchForHost(
+                    exec, launch, signal, nativeLaunch, 'managedService'),
                 connectedAccounts,
                 exec: localExec,
                 managedProvider: bootstrap

@@ -177,7 +177,8 @@ async function resolveOpenCodeServer(params: Readonly<{
   });
   const managedService = await params.ctx.managedServices.supervise(
     spec,
-    { signal: params.signal ?? params.ctx.abort.signal },
+    { signal: params.signal ?? params.ctx.abort.signal,
+      ...(params.ctx.nativeLaunch ? { nativeLaunch: params.ctx.nativeLaunch } : {}) },
   );
   return await observeHealthyManagedService({
     ctx: params.ctx,

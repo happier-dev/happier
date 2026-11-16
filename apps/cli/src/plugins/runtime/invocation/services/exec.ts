@@ -261,6 +261,7 @@ export type ResolvedPluginExecutable = Readonly<{
 export type HostPreparedPluginExecLaunchAuthorizer = (
     launch: HostAuthorizedPluginExecLaunch,
     signal: AbortSignal,
+    nativeLaunch?: AgentNativeLaunchQualifier,
 ) => Promise<HostAuthorizedPluginExecLaunch>;
 
 type PreauthorizedPluginExecSpawn = Readonly<{

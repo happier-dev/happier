@@ -16,6 +16,7 @@ import type {
 } from '../connectedAccounts.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
+import type { AgentNativeLaunchQualifier } from '../exec.js';
 import type { PluginExecSpawnRequest } from '../services/io.js';
 import type { HttpMethod } from '../services/io.js';
 import type { PluginInvocationContext } from '../invocation.js';
@@ -480,7 +481,7 @@ export interface ManagedServices {
     observeWorkload(input: Readonly<{ serviceId: string }>, options?: PluginCancellationOptions): Promise<ManagedWorkloadResultV1>;
     supervise(
         spec: ManagedServiceSpec,
-        options?: PluginCancellationOptions,
+        options?: PluginCancellationOptions & Readonly<{ nativeLaunch?: AgentNativeLaunchQualifier }>,
     ): Promise<ManagedServiceHandle>;
 }
 
