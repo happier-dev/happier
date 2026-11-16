@@ -133,7 +133,7 @@ vi.mock('node:fs', async importOriginal => {
     } }) };
 });
 
-const roots: string[] = [], servers: Server[] = [];
+const roots: string[] = [], servers: Server[] = [], adminFixtureFailures: string[] = [];
 const nativeDocker = new Map<string, ProjectNativeDockerPort>();
 const unavailableAdmin = new Set<string>();
 const refusedAdminWrites = new Set<string>();
@@ -151,6 +151,7 @@ afterEach(async () => {
     unavailableAdmin.clear();
     refusedAdminWrites.clear();
     seedFs.root = '';
+    expect(adminFixtureFailures.splice(0)).toEqual([]);
 });
 const network = (address: string): MachinePrivateNetworkObservationV1 => ({ provider: { kind: 'builtin', id: 'tailscale' },
     networkIdentity: 'tailnet-a', interfaceName: 'tailscale0', addresses: [address], sourceRanges: ['100.64.0.0/10'],
@@ -236,9 +237,11 @@ async function observed(address: string, port: number, edge = false,
                 const key = path.at(-1)!;
                 if (request.method === 'PUT' && Array.isArray(parent)) parent.splice(Number(key), 0, JSON.parse(body));
                 else if (request.method === 'PUT') Reflect.set(parent, key, JSON.parse(body));
+                else if (request.method === 'DELETE' && Array.isArray(parent)) parent.splice(Number(key), 1);
+                else if (request.method === 'DELETE') Reflect.deleteProperty(parent, key);
                 else throw new Error(`Unexpected native method ${request.method}`);
                 response.end('{}');
-            })().catch(error => { response.writeHead(500).end(); throw error; });
+            })().catch(() => { adminFixtureFailures.push(request.method ?? 'unknown'); response.writeHead(500).end(); });
             return;
         }
         expect(request.method).toBe('GET');
@@ -1435,7 +1438,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 .toMatchObject({ ok: true, domain: { state: 'active' } });
             expect(admissions).toHaveLength(1);
             expect(children).toHaveLength(2);
-            expect(transitions).toMatchObject([{ observations: [{ state: 'active' }, { state: recordedReplicaCase ? 'warning' : 'active' }] }]);
+            expect(transitions).toMatchObject([{ observations: [{ state: 'active' }, { state: 'warning' }] }]);
             if (recordedReplicaCase) {
                 expect(transitions).toMatchObject([{ observations: [
                     { routedReplicas: [{ containerName: 'deployed-web-1' }, { containerName: 'deployed-web-2' }] },
@@ -1444,7 +1447,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 ] }]);
                 expect(JSON.stringify(transitions)).not.toContain('deployed-db-1');
             }
-            expect(nativeResults).toMatchObject([{ caddy: { status: 'ready' } }, { state: 'active' }, { state: recordedReplicaCase ? 'warning' : 'active' }]);
+            expect(nativeResults).toMatchObject([{ caddy: { status: 'ready' } }, { state: 'active' }, { state: 'warning' }]);
             if (activationDns) {
                 expect(activationDns).toHaveBeenCalledTimes(2);
                 expect(transitions).toMatchObject([{ observations: [{ state: 'active' }, { state: 'warning',
