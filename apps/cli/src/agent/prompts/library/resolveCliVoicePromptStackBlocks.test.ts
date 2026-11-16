@@ -46,7 +46,7 @@ async function installExactHomeIdentity(profileId: string, homeServerIdentityId:
   await writeSettings({ ...previous, servers: { ...previous.servers, [profileId]: {
     id: profileId, name: 'Receipt Home', serverUrl: 'https://receipt.example.test', webappUrl: 'https://receipt.example.test',
     // A valid stored descriptor is read back with exact authority.
-    createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+    createdAt: 1, updatedAt: 1,
     homeConnectionDescriptor: { v: 1, homeServerIdentityId, canonicalServerUrl: 'https://receipt.example.test', revision: 1,
       endpoints: [{ kind: 'https', url: 'https://receipt.example.test' }] },
   } } });
@@ -211,7 +211,7 @@ describe('resolveCliVoicePromptStackBlocks', () => {
         await writeSettings({ ...settings, servers: { ...settings.servers, target: {
           id: 'target', name: 'Target', serverUrl: 'https://target-auth.example.test',
           localServerUrl: 'http://127.0.0.1:43127', webappUrl: 'https://target-app.example.test',
-          createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+          createdAt: 1, updatedAt: 1,
         } } });
         await writeStoredCredentialsForServerId('target', { token: 'target-home-reader', encryption: null });
         const { adoptServerProfileHomeConnectionDescriptor } = await import('@/server/serverProfiles');
