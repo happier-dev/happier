@@ -243,7 +243,9 @@ describe('Vitals widget (lab rw V, VS)', () => {
     );
     try {
       await flushHookEffects();
-      expect(screen.getTextContent()).toContain(kind === 'vitals' ? 'machineVitals.monitoring.offTitle' : 'machineVitals.monitoring.modes.off');
+      // A list row draws no instruments (owner bar 11-16): with nothing needing attention it says its quiet word.
+      expect(screen.getTextContent()).toContain(kind === 'vitals' ? 'machineVitals.monitoring.offTitle'
+        : kind === 'metric' ? 'machineVitals.monitoring.modes.off' : 'Online');
       expect(screen.getTextContent()).not.toContain('12%');
       expect(boundary.rpc).not.toHaveBeenCalled();
       expect(machineResourceStore.getState(key).summary).toMatchObject({ cpu: { busyPct: 12 } });
@@ -949,9 +951,10 @@ describe('Vitals attention block', () => {
     if (view === 'grid') {
       for (const id of filtered ? ['m2'] : multiple ? ['m1', 'm2'] : ['m1']) {
         const rowId = `machines.index.row.machine:${serverId}:${id}`;
-        // Collection card content is beside its pressable, so inspect the painted description's host.
-        const description = screen.findHostByTestId(`${rowId}:description`)!;
-        expect.soft(description.props.children).toBe('machineAttention.words.memoryCritical');
+        // The card's one status line leads with the reason as a sentence (lab `rm` FC); its name says the word.
+        const status = screen.findByTestId(`machines.index.card.machine:${serverId}:${id}.status`);
+        expect.soft(status).not.toBeNull();
+        expect.soft(findTestInstanceByTypeContainingText(status!, 'Text', 'machineAttention.machine.lead')).toBeDefined();
         expect.soft(screen.findByTestId(rowId)!.props.accessibilityLabel).toContain('machineAttention.words.memoryCritical');
       }
     } else expect(screen.getTextContent()).toContain('machineAttention.words.memoryCritical');

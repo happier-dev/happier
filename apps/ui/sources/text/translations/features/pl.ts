@@ -7018,8 +7018,8 @@ const machineDetailPageTranslations = { pl: translated({
         machineSummary: {
             settingTitle: "Podsumowanie maszyn",
             styleTitle: "Styl",
-            usedHere: "Używane tutaj, na liście maszyn i we Wszystkich maszynach. Zapisane na tym urządzeniu.",
-            appearanceDescription: "Jak zasoby każdej maszyny wyglądają w menu Maszyny, na liście i we Wszystkich maszynach. Zapisane na tym urządzeniu.",
+            usedHere: "Używane tutaj i we Wszystkich maszynach. Zapisane na tym urządzeniu.",
+            appearanceDescription: "Jak zasoby każdej maszyny wyglądają w menu Maszyny i we Wszystkich maszynach. Zapisane na tym urządzeniu.",
             showTitle: "Pokaż",
             showDescription: "Które wskaźniki pokazuje każda maszyna. Żaden pokazuje tylko nazwy.",
             styles: {
@@ -7076,6 +7076,7 @@ const machineDetailPageTranslations = { pl: translated({
             updateToSee: ({ machine }) => `Zaktualizuj ${machine}, aby zobaczyć zasoby`,
         },
         machineVitals: {
+            sectionTitle: "Stan maszyny",
             monitoring: {
                 title: "Monitorowanie",
                 modes: { off: "Wyłączone", whileViewing: "Podczas przeglądania", always: "Zawsze" },

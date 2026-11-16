@@ -4,6 +4,7 @@ import type { MachineResourceAttentionV1, MachineResourceReasonV1 } from '@happi
 import {
     describeFleetDescription,
     describeFleetTitle,
+    describeMachineAttentionFigure,
     describeMachineAttentionWord,
     describeMachineReasonPhrase,
     describeMachineSentence,
@@ -89,6 +90,18 @@ describe('machine sentences (MPG-28)', () => {
         expect(describeMachineSentence({ attention: fleet[1]!.attention, working: 2, nowMs: NOW,
             online: false, offlineLine: 'Offline · last seen yesterday' }))
             .toEqual({ lead: 'Offline · last seen yesterday', rest: '', tone: 'calm' });
+    });
+});
+
+describe('a row’s one labelled value (owner bar 11-16: no unlabelled sparks in rows)', () => {
+    const figures = { cpu: { figure: '41%' }, memory: { figure: '82%' }, disk: { figure: '12 GB' }, network: { figure: '2 MB/s' } };
+    it('gives the value of the metric that needs attention, which its word labels', () => {
+        expect(describeMachineAttentionFigure(memory, figures)).toBe('82%');
+        expect(describeMachineAttentionFigure(disk, figures)).toBe('12 GB');
+    });
+    it('gives no value for a limit, or before a reading arrives', () => {
+        expect(describeMachineAttentionFigure({ key: 'files', level: 'look', since: NOW, metric: 'limits', kind: 'limit_reached', limit: 'files', used: 9, max: 10 }, figures)).toBeNull();
+        expect(describeMachineAttentionFigure(memory, null)).toBeNull();
     });
 });
 

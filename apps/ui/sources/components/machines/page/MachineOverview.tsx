@@ -111,7 +111,7 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
 
             {/* Plan 20's vitals body: live while this tab is shown, its history and Alerts row. */}
             <MachineVitalsOverview serverId={props.serverId} machine={machine} machineName={props.machineName} online={props.online}
-                rangeInBar={props.barAccessoryShown} onOpenProcesses={openProcesses}
+                onOpenProcesses={openProcesses}
                 offlineRetry={runtimePresence.nextAction === 'retry' && !managedRecoveryExplains ? offlineRetry : undefined}
                 offlineTitle={runtimePresence.label} offlineExplained={runtimePresence.nextAction !== 'retry' || managedRecoveryExplains} />
 

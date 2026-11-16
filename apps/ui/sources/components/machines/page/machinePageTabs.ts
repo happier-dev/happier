@@ -14,7 +14,6 @@ import { MachineSetupTab, parseMachineSetupParams } from '@/components/machines/
 import type { TranslationKeyNoParams } from '@/text';
 import type { IconName } from '@/components/ui/icons/Icon';
 
-import { MachineVitalsBarAccessory } from '@/components/machines/vitals/MachineVitalsRangeBar';
 
 import { MachineServicesTab } from '@/components/machines/services/MachineServicesTab';
 
@@ -102,7 +101,7 @@ export function parseStorageParams(raw: Readonly<Record<string, string | undefin
 }
 
 export const MACHINE_PAGE_TABS: readonly MachinePageTabEntry[] = [
-    { id: 'overview', icon: 'desktop', titleKey: 'machineDetailPage.tabs.overview', Body: MachineOverview, BarAccessory: MachineVitalsBarAccessory, parseParams: () => OVERVIEW_PARAMS },
+    { id: 'overview', icon: 'desktop', titleKey: 'machineDetailPage.tabs.overview', Body: MachineOverview, parseParams: () => OVERVIEW_PARAMS },
     { id: 'services', icon: 'stack', titleKey: 'machineServices.tab', Body: MachineServicesTab, suspendWhenHidden: true, parseParams: parseServicesParams },
     { id: 'scheduled', icon: 'clock', titleKey: 'machineScheduled.title', Body: MachineScheduledTab, suspendWhenHidden: true, parseParams: () => SCHEDULED_PARAMS },
     { id: 'processes', icon: 'cpu', titleKey: 'machineProcesses.tab', Body: MachineProcessesTab, hiddenMode: 'activity', parseParams: parseMachineProcessesParams },

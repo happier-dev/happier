@@ -7,6 +7,8 @@ import {
     buildMachineSummaryInstruments,
     fitMachineSummaryMetrics,
     normalizeMachineSummaryMetrics,
+    resolveMachineAttentionWordColor,
+    resolveMachineResourceToneColor,
 } from './machineSummaryStripModel';
 import { t } from '@/text';
 
@@ -24,6 +26,15 @@ function summary(overrides: Partial<MachineResourceSummaryV1> = {}): MachineReso
     };
 }
 
+describe('one severity for a machine that needs you (DESIGN.md: amber is attention, rose is failure only)', () => {
+    const colors = { text: { primary: 'ink' }, state: { attention: { textForeground: 'amber' }, danger: { textForeground: 'rose' } } };
+    it('draws a needs-you meter in the same attention amber as its word and dot, never rose', () => {
+        expect(resolveMachineResourceToneColor('crit', colors)).toBe(resolveMachineAttentionWordColor(colors));
+        expect(resolveMachineResourceToneColor('warn', colors)).toBe('amber');
+        expect(resolveMachineResourceToneColor('calm', colors)).toBe('ink');
+    });
+});
+
 describe('the Machine summary value convention', () => {
     it('accepts omitted provenance and drops unknown memory presentation fields while validating known values', () => {
         const legacy = summary();
@@ -33,7 +44,8 @@ describe('the Machine summary value convention', () => {
         expect(MachineResourceSummaryV1Schema.safeParse({ ...legacy, memory: { ...legacy.memory, totalBytes: -1 } }).success).toBe(false);
     });
     it.each([
-        { capacity: 8 * GB, expected: [0.5, null, 0.25, 1, 0] },
+        // The first sample stands alone before a gap: a sparkline leaves it out rather than draw a stray dot.
+        { capacity: 8 * GB, expected: [null, null, 0.25, 1, 0] },
         { capacity: 0, expected: [null, null, null, null, null] },
         { capacity: null, expected: [null, null, null, null, null] },
     ])('projects daemon byte samples into an in-use memory line with capacity $capacity (OWNER-UI-1115B B1)', ({ capacity, expected }) => {
@@ -89,6 +101,10 @@ describe('the Machine summary value convention', () => {
         expect(instruments.memory.line).toEqual([0.9375, 0.95]);
     });
 
+    it('draws no stray dots: a sample cut off by gaps on both sides is left out of the sparkline (owner bar 11-16)', () => {
+        const gappy = buildMachineSummaryInstruments(summary({ cpu: { busyPct: 80, tone: 'calm', series: line([80, null, 40, null, 40, 80]) } })).cpu.line;
+        expect(gappy).toEqual([null, null, null, null, 0.5, 1]);
+    });
     it('keeps a 2 → 3 % CPU wiggle flat: the line scales to its peak, never below 40 %', () => {
         const flat = buildMachineSummaryInstruments(summary()).cpu.line;
         expect(flat).toEqual([0.05, 0.075, 0.05, 0.075]);

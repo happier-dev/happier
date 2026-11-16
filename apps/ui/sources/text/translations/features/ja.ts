@@ -6995,8 +6995,8 @@ const machineDetailPageTranslations = { ja: translated({
         machineSummary: {
             settingTitle: "マシンの概要",
             styleTitle: "スタイル",
-            usedHere: "ここ、マシン一覧、すべてのマシンで使われます。このデバイスに保存されます。",
-            appearanceDescription: "各マシンのリソースをマシンのポップオーバー、一覧、すべてのマシンでどう表示するか。このデバイスに保存されます。",
+            usedHere: "ここと、すべてのマシンで使われます。このデバイスに保存されます。",
+            appearanceDescription: "各マシンのリソースをマシンのポップオーバーとすべてのマシンでどう表示するか。このデバイスに保存されます。",
             showTitle: "表示",
             showDescription: "各マシンに表示する指標。なしにすると名前だけになります。",
             styles: {
@@ -7053,6 +7053,7 @@ const machineDetailPageTranslations = { ja: translated({
             updateToSee: ({ machine }) => `${machine} を更新するとリソースが表示されます`,
         },
         machineVitals: {
+            sectionTitle: "マシンの状態",
             monitoring: {
                 title: "モニタリング",
                 modes: { off: "オフ", whileViewing: "表示中のみ", always: "常に" },

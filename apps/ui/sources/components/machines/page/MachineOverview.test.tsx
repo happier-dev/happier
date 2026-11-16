@@ -23,7 +23,6 @@ const { storage } = await import('@/sync/domains/state/storageStore');
 const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
 const { MachinePageStateContext } = await import('./machinePageContext');
 const { MachineOverview } = await import('./MachineOverview');
-const { MachineVitalsBarAccessory } = await import('../vitals/MachineVitalsRangeBar');
 const { machineResourceStore } = await import('@/sync/domains/machines/resources/machineResourceStore');
 const { useManagedEnrolledMachine } = await import('@/components/settings/machines/managed/ManagedMachineSections');
 const { recordMachineRequestFailed, recordMachineRequestSucceeded, clearMachineRequestReachabilityForTest,
@@ -34,6 +33,7 @@ const { MachineDaemonSection } = await import('../daemon/MachineDaemonSection');
 const { t } = await import('@/text');
 const { MachineProjectWorkSection } = await import('@/components/projects/workers/MachineProjectWorkSection');
 const { MachineVitalsOverview } = await import('../vitals/MachineVitalsOverview');
+const { ItemList } = await import('@/components/ui/lists/ItemList');
 
 let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 afterEach(async () => { standardCleanup(); machineResourceStore.reset(); boundary.rpc.mockReset(); boundary.rpc.mockImplementation(() => new Promise(() => {})); clearMachineRequestReachabilityForTest(); await accountConnection?.dispose(); accountConnection = null; });
@@ -100,7 +100,7 @@ it('hides daemon Stop from a Use viewer while retaining status facts', async () 
     expect(daemon.findByTestId('machine-detail-stop-daemon')).toBeNull();
 });
 
-it('shares the Account-qualified Overview sample and retries the same retained read from the tab bar', async () => {
+it('shares the Account-qualified Overview sample and retries the same retained read from the range bar on its charts', async () => {
     const homeId = await home.addHome({ name: 'Freshness Home', serverUrl: 'https://overview-freshness.test', accountId: 'owner' });
     // The real resource Action needs the Home's authenticated runtime authority as well as stored credentials.
     home.answer(homeId, '/v1/machines', { body: [], respondAfter: new Promise<void>(() => {}) });
@@ -126,7 +126,7 @@ it('shares the Account-qualified Overview sample and retries the same retained r
         machineName: 'Freshness Machine', machineSentenceName: 'Freshness Machine', isServerSwitching: false, isHydratingMachine: false, switchReady: true },
         managedEnrolled: authority.getCurrent().managedEnrolled, refreshKey: 0, reload: async () => {} } satisfies MachinePageState;
     const screen = await renderScreen(<MachinePageStateContext.Provider value={state}>
-        <MachineVitalsBarAccessory serverId={serverId} machineId={machine.id} online />
+        <ItemList><MachineVitalsOverview serverId={serverId} machine={machine} machineName="Freshness Machine" online /></ItemList>
     </MachinePageStateContext.Provider>);
     expect(screen.findByTestId('machine-vitals-retry')).not.toBeNull();
     expect(screen.findByTestId('machine-vitals-range:1h')).not.toBeNull();
@@ -139,15 +139,19 @@ it('shares the Account-qualified Overview sample and retries the same retained r
     sampledAt = Date.now();
     snapshot = { ...snapshot, sample: { ...snapshot.sample, sampledAt } };
     await act(async () => { pending.resolve(snapshot); await refreshing; });
-    expect(screen.findByTestId('machine-vitals-live')).not.toBeNull();
+    // The retained read settled: no longer checking, and the bar says the sample it now holds. Live also needs a
+    // presented surface's demand, which this bare body render does not hold.
+    await vi.waitFor(() => expect(screen.findByTestId('machine-vitals-checking')).toBeNull());
+    expect(machineResourceStore.getState(key).snapshot?.sample?.sampledAt).toBe(sampledAt);
     boundary.rpc.mockRejectedValue(new Error('transport unavailable'));
     await act(async () => { await machineResourceStore.retry(key); });
     expect(machineResourceStore.getState(key).snapshot?.sample?.sampledAt).toBe(sampledAt);
     expect(screen.findByTestId('machine-vitals-retry')).not.toBeNull();
     boundary.rpc.mockResolvedValue(snapshot);
+    const readsBefore = boundary.rpc.mock.calls.length;
     await screen.pressByTestIdAsync('machine-vitals-retry');
-    await vi.waitFor(() => expect(machineResourceStore.getState(key).status).toBe('ready'));
-    expect(screen.findByTestId('machine-vitals-live')).not.toBeNull();
+    // Retry on the charts' bar reads again through the Machine boundary (the Overview's own read owner).
+    await vi.waitFor(() => expect(boundary.rpc.mock.calls.length).toBeGreaterThan(readsBefore));
 });
 
 it('uses the page Home credential scope rather than treating a reachable Machine as unavailable', async () => {

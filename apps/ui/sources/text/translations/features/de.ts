@@ -6992,8 +6992,8 @@ const machineDetailPageTranslations = { de: translated({
         machineSummary: {
             settingTitle: "Rechnerübersicht",
             styleTitle: "Stil",
-            usedHere: "Gilt hier, in der Rechnerliste und unter „Alle Rechner“. Auf diesem Gerät gespeichert.",
-            appearanceDescription: "Wie die Ressourcen jedes Rechners im Rechner-Menü, in der Liste und unter „Alle Rechner“ erscheinen. Auf diesem Gerät gespeichert.",
+            usedHere: "Gilt hier und unter „Alle Rechner“. Auf diesem Gerät gespeichert.",
+            appearanceDescription: "Wie die Ressourcen jedes Rechners im Rechner-Menü und unter „Alle Rechner“ erscheinen. Auf diesem Gerät gespeichert.",
             showTitle: "Anzeigen",
             showDescription: "Welche Werte jeder Rechner zeigt. Keiner zeigt nur die Namen.",
             styles: {
@@ -7050,6 +7050,7 @@ const machineDetailPageTranslations = { de: translated({
             updateToSee: ({ machine }) => `Aktualisiere ${machine}, um die Ressourcen zu sehen`,
         },
         machineVitals: {
+            sectionTitle: "Rechnerzustand",
             monitoring: {
                 title: "Überwachung",
                 modes: { off: "Aus", whileViewing: "Beim Ansehen", always: "Immer" },

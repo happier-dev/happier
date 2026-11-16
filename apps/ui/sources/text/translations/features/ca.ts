@@ -7000,8 +7000,8 @@ const machineDetailPageTranslations = { ca: translated({
         machineSummary: {
             settingTitle: "Resum de les màquines",
             styleTitle: "Estil",
-            usedHere: "S’usa aquí, a la llista de màquines i a Totes les màquines. Es desa en aquest dispositiu.",
-            appearanceDescription: "Com es mostren els recursos de cada màquina al menú de Màquines, a la llista i a Totes les màquines. Es desa en aquest dispositiu.",
+            usedHere: "S’usa aquí i a Totes les màquines. Es desa en aquest dispositiu.",
+            appearanceDescription: "Com es mostren els recursos de cada màquina al menú de Màquines i a Totes les màquines. Es desa en aquest dispositiu.",
             showTitle: "Mostra",
             showDescription: "Quines mètriques mostra cada màquina. Cap mostra només els noms.",
             styles: {
@@ -7058,6 +7058,7 @@ const machineDetailPageTranslations = { ca: translated({
             updateToSee: ({ machine }) => `Actualitza ${machine} per veure’n els recursos`,
         },
         machineVitals: {
+            sectionTitle: "Estat del computador",
             monitoring: {
                 title: "Supervisió",
                 modes: { off: "Desactivada", whileViewing: "En consultar-la", always: "Sempre" },

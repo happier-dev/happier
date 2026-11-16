@@ -7027,8 +7027,8 @@ const machineDetailPageTranslations = { ru: translated({
         machineSummary: {
             settingTitle: "Сводка по машинам",
             styleTitle: "Стиль",
-            usedHere: "Используется здесь, в списке машин и во «Всех машинах». Сохраняется на этом устройстве.",
-            appearanceDescription: "Как ресурсы каждой машины показываются в меню «Машины», в списке и во «Всех машинах». Сохраняется на этом устройстве.",
+            usedHere: "Используется здесь и во «Всех машинах». Сохраняется на этом устройстве.",
+            appearanceDescription: "Как ресурсы каждой машины показываются в меню «Машины» и во «Всех машинах». Сохраняется на этом устройстве.",
             showTitle: "Показывать",
             showDescription: "Какие показатели видны у каждой машины. Без них — только имена.",
             styles: {
@@ -7085,6 +7085,7 @@ const machineDetailPageTranslations = { ru: translated({
             updateToSee: ({ machine }) => `Обновите ${machine}, чтобы видеть ресурсы`,
         },
         machineVitals: {
+            sectionTitle: "Состояние машины",
             monitoring: {
                 title: "Мониторинг",
                 modes: { off: "Выключен", whileViewing: "При просмотре", always: "Всегда" },

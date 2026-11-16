@@ -15,11 +15,9 @@ export {
 
 export type MachineResourceTone = MachineResourceSummaryV1['cpu']['tone'];
 
-/** Tone → colour, resolved once (§4.9): calm is ink, warn amber, crit rose. Tone always comes from plan 20. */
 /**
  * The colour of a machine's attention word or sentence lead ("Short on memory"), at either level: "Needs you"
- * is the one attention amber wherever it appears, and rose means failure only (DESIGN.md). An instrument's
- * value past its threshold keeps its own `crit` tone through {@link resolveMachineResourceToneColor}.
+ * is the one attention amber wherever it appears, and rose means failure only (DESIGN.md).
  */
 export function resolveMachineAttentionWordColor(colors: Parameters<typeof resolveMachineResourceToneColor>[1]): string {
     return resolveMachineResourceToneColor('warn', colors);
@@ -29,9 +27,9 @@ export function resolveMachineResourceToneColor(
     tone: MachineResourceTone,
     colors: Readonly<{ text: Readonly<{ primary: string }>; state: Readonly<{ attention: Readonly<{ textForeground: string }>; danger: Readonly<{ textForeground: string }> }> }>,
 ): string {
-    if (tone === 'crit') return colors.state.danger.textForeground;
-    if (tone === 'warn') return colors.state.attention.textForeground;
-    return colors.text.primary;
+    // One severity: a resource that needs you (`crit`) or asks for a look (`warn`) is attention, never a failure, so its
+    // meter, word and dot share the attention amber (DESIGN.md; owner bar 11-16). Calm is ink.
+    return tone === 'calm' ? colors.text.primary : colors.state.attention.textForeground;
 }
 
 /** One instrument as every style draws it: the figure, its fill (0–1, by used), its line, its tone and its exact name. */
@@ -80,6 +78,14 @@ function memoryInUseLine(points: MachineResourceSummaryV1['memory']['series']): 
     return scaleLine(points, 100).map(free => (free === null ? null : 1 - free));
 }
 
+/**
+ * A sparkline draws runs, not stray dots: a sample with a gap on both sides (a daemon that skipped readings under load)
+ * would be a lone dot at this size, so it is left out (owner bar 11-16). Runs keep their gaps; nothing is interpolated.
+ */
+function withoutLoneSamples(line: (number | null)[]): (number | null)[] {
+    return line.map((y, index) => y !== null && (line[index - 1] ?? null) === null && (line[index + 1] ?? null) === null ? null : y);
+}
+
 function formatRate(bps: number): string {
     return t('machineSummary.rate', { value: formatHappierDataBytes(bps, { kind: 'storage' }) });
 }
@@ -125,7 +131,7 @@ export function buildMachineSummaryInstruments(summary: MachineResourceSummaryV1
             metric: 'cpu',
             figure: cpuPct === null ? null : `${Math.round(cpuPct)}%`,
             used: cpuPct === null ? null : cpuPct / 100,
-            line: scaleLine(summary.cpu.series, cpuPeak),
+            line: withoutLoneSamples(scaleLine(summary.cpu.series, cpuPeak)),
             tone: summary.cpu.tone,
             exact: cpuPct === null ? null : t('machineSummary.exact.cpu', { percent: Math.round(cpuPct) }),
             detail: describeMachineCpuLoadAndCores(summary.cpu),
@@ -136,7 +142,7 @@ export function buildMachineSummaryInstruments(summary: MachineResourceSummaryV1
             // number's place); a calm one, or one without a pressure signal, says its free memory (OWNER-UI-1115B B1).
             figure: pressured ? (memoryUsed !== null ? `${Math.round(memoryUsed * 100)}%` : pressureWord) : memoryFree,
             used: memoryUsed,
-            line: memoryInUseLine(memory.series),
+            line: withoutLoneSamples(memoryInUseLine(memory.series)),
             tone: memory.tone,
             exact: memoryExact === null ? null
                 : [pressured ? pressureWord : null, memoryExact, formatMachineMemoryPressureSource(memory.pressureSource)].filter(Boolean).join(', '),
@@ -155,7 +161,7 @@ export function buildMachineSummaryInstruments(summary: MachineResourceSummaryV1
             metric: 'network',
             figure: rx === null ? null : formatRate(rx),
             used: null,
-            line: scaleLine(summary.network.rxSeries, rxPeak),
+            line: withoutLoneSamples(scaleLine(summary.network.rxSeries, rxPeak)),
             tone: summary.network.tone,
             exact: rx === null ? null : t('machineSummary.exact.network', {
                 down: formatRate(rx), up: formatRate(summary.network.txBps ?? 0),

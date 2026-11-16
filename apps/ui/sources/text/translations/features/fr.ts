@@ -6998,8 +6998,8 @@ const machineDetailPageTranslations = { fr: translated({
         machineSummary: {
             settingTitle: "Résumé des machines",
             styleTitle: "Style",
-            usedHere: "Utilisé ici, dans la liste des machines et dans Toutes les machines. Enregistré sur cet appareil.",
-            appearanceDescription: "Comment les ressources de chaque machine s’affichent dans le menu Machines, la liste et Toutes les machines. Enregistré sur cet appareil.",
+            usedHere: "Utilisé ici et dans Toutes les machines. Enregistré sur cet appareil.",
+            appearanceDescription: "Comment les ressources de chaque machine s’affichent dans le menu Machines et Toutes les machines. Enregistré sur cet appareil.",
             showTitle: "Afficher",
             showDescription: "Les mesures affichées pour chaque machine. Aucune affiche seulement les noms.",
             styles: {
@@ -7056,6 +7056,7 @@ const machineDetailPageTranslations = { fr: translated({
             updateToSee: ({ machine }) => `Mets à jour ${machine} pour voir ses ressources`,
         },
         machineVitals: {
+            sectionTitle: "État de la machine",
             monitoring: {
                 title: "Surveillance",
                 modes: { off: "Désactivée", whileViewing: "Pendant la consultation", always: "Toujours" },

@@ -66,8 +66,6 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
     machine: Machine;
     machineName: string;
     online: boolean | null;
-    /** The page draws the freshness chip and range at the end of its tab bar; the body leaves them out. */
-    rangeInBar?: boolean;
     /** Opens the Processes tab (VU-7's rows and links); without it "Using the most" is left out. */
     onOpenProcesses?: () => void;
     /**
@@ -146,7 +144,7 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
       <>
         <MachineMonitoringOffCard serverId={props.serverId} machineId={machine.id} machineName={props.machineName}
           held={view.sample !== null} />
-        {view.sample && !props.rangeInBar ? (
+        {view.sample ? (
           <ItemGroup header="none" surface="none">
             <MachineVitalsRangeBar freshness={resolveVitalsFreshnessChip(view, retry)} showRange={false} />
           </ItemGroup>
@@ -182,11 +180,10 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
   return (
     <>
       {offlineBanner}
-      {props.rangeInBar ? null : (
-        <ItemGroup header="none" surface="none">
-          <MachineVitalsRangeBar freshness={freshness} showRange={view.kind === 'ready'} />
-        </ItemGroup>
-      )}
+      {/* One section: its title, then the freshness and range as the action of the charts they scope, so the range
+          never stands apart from them (owner bar 11-16). */}
+      <ItemGroup surface="none" title={t('machineVitals.sectionTitle')} testID="machine-vitals-section"
+        action={<MachineVitalsRangeBar freshness={freshness} showRange={view.kind === 'ready'} />} />
       {view.kind === 'loading' ? (
         <VitalsLoadingSheet />
       ) : (

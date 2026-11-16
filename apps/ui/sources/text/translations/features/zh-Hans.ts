@@ -6990,8 +6990,8 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
         machineSummary: {
             settingTitle: "机器概览",
             styleTitle: "样式",
-            usedHere: "用于此处、机器列表和所有机器。保存在此设备上。",
-            appearanceDescription: "每台机器的资源在机器弹窗、列表和所有机器中的显示方式。保存在此设备上。",
+            usedHere: "用于此处和所有机器。保存在此设备上。",
+            appearanceDescription: "每台机器的资源在机器弹窗和所有机器中的显示方式。保存在此设备上。",
             showTitle: "显示",
             showDescription: "每台机器显示哪些指标。都不选时只显示名称。",
             styles: {
@@ -7048,6 +7048,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             updateToSee: ({ machine }) => `更新 ${machine} 以查看其资源`,
         },
         machineVitals: {
+            sectionTitle: "机器状态",
             monitoring: {
                 title: "监控",
                 modes: { off: "关闭", whileViewing: "查看时", always: "始终" },

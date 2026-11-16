@@ -43,6 +43,16 @@ const LIMIT_NOUN_KEYS = {
     inotify: 'machineAttention.limits.inotify',
 } as const;
 
+/**
+ * The value a row shows beside its attention word: the figure of the metric that needs attention ("Short on memory ·
+ * 82%"), which the word labels. A limit has no instrument; without a reading there is no value yet.
+ */
+export function describeMachineAttentionFigure(reason: MachineResourceReasonV1,
+    figures: Readonly<Record<'cpu' | 'memory' | 'disk' | 'network', Readonly<{ figure: string | null }>>> | null): string | null {
+    if (!figures || reason.metric === 'limits') return null;
+    return figures[reason.metric].figure;
+}
+
 /** The reason in a word or two, for where there is no room for a sentence ("Short on memory", "/data nearly full"). */
 export function describeMachineAttentionWord(reason: MachineResourceReasonV1): string {
     switch (reason.kind) {

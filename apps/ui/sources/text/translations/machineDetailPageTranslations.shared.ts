@@ -604,8 +604,8 @@ export const english = {
     machineSummary: {
         settingTitle: "Machine summary",
         styleTitle: "Style",
-        usedHere: "Used here, in the machine list and in All machines. Saved on this device.",
-        appearanceDescription: "How each machine’s resources show in the Machines popover, the machine list and All machines. Saved on this device.",
+        usedHere: "Used here and in All machines. Saved on this device.",
+        appearanceDescription: "How each machine’s resources show in the Machines popover and All machines. Saved on this device.",
         showTitle: "Show",
         showDescription: "Which metrics each machine shows. None shows machine names only.",
         styles: {
@@ -662,6 +662,7 @@ export const english = {
         updateToSee: ({ machine }: { machine: string }) => `Update ${machine} to see its resources`,
     },
     machineVitals: {
+        sectionTitle: 'Vitals',
         monitoring: {
             title: "Monitoring",
             modes: { off: "Off", whileViewing: "While viewing", always: "Always" },

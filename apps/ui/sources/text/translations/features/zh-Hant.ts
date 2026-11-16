@@ -6989,8 +6989,8 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
         machineSummary: {
             settingTitle: "機器概覽",
             styleTitle: "樣式",
-            usedHere: "用於此處、機器清單和所有機器。儲存在此裝置上。",
-            appearanceDescription: "每台機器的資源在機器彈出視窗、清單和所有機器中的顯示方式。儲存在此裝置上。",
+            usedHere: "用於此處和所有機器。儲存在此裝置上。",
+            appearanceDescription: "每台機器的資源在機器彈出視窗和所有機器中的顯示方式。儲存在此裝置上。",
             showTitle: "顯示",
             showDescription: "每台機器顯示哪些指標。都不選時只顯示名稱。",
             styles: {
@@ -7047,6 +7047,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             updateToSee: ({ machine }) => `更新 ${machine} 以查看其資源`,
         },
         machineVitals: {
+            sectionTitle: "機器狀態",
             monitoring: {
                 title: "監控",
                 modes: { off: "關閉", whileViewing: "檢視時", always: "始終" },

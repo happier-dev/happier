@@ -7,69 +7,61 @@ import { Typography } from '@/constants/Typography';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { storage } from '@/sync/domains/state/storageStore';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
-import { readMachineMonitoringMode } from '@/sync/domains/machines/resources/useMachineMonitoringMode';
 
-import { describeMachineAttentionWord, readMachinePublishedResources, selectHeadlineReason } from './machineResourceSentences';
-import { resolveMachineAttentionWordColor } from './machineSummaryStripModel';
+import { describeMachineAttentionFigure, describeMachineAttentionWord, readMachinePublishedResources, selectHeadlineReason } from './machineResourceSentences';
+import { buildMachineSummaryInstruments, resolveMachineAttentionWordColor } from './machineSummaryStripModel';
 
-import { MachineSummaryStrip } from './MachineSummaryStrip';
-import { useMachineSummarySettingValue } from './useMachineSummarySetting';
-
-/**
- * Whether this machine can show a summary line at all: its daemon publishes vitals as reporting, or its monitoring
- * is Off (which the strip says). A machine that publishes neither (an older daemon) has no line to reserve, so its
- * row keeps the one-line height (OWNER-UI-1115B B2). Selects one boolean, so other publications render nothing.
- */
-export function useMachineCanShowLiveSummary(serverId: string, machineId: string): boolean {
-    return storage(React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]) => {
-        const machine = resolveServerScopedMachine(state, serverId, machineId);
-        if (!machine) return false;
-        if (readMachineMonitoringMode(machine.metadata ?? null) === 'off') return true;
-        const daemonState: unknown = machine.daemonState;
-        const resources = daemonState !== null && typeof daemonState === 'object' ? (daemonState as { resources?: unknown }).resources : null;
-        const vitals = resources !== null && typeof resources === 'object' ? (resources as { vitals?: unknown }).vitals : null;
-        return vitals !== null && typeof vitals === 'object' && (vitals as { state?: unknown }).state === 'reporting';
-    }, [machineId, serverId]));
+/** The Machine's published resources only (retained while unchanged), so other daemon publications leave a row alone. */
+function useMachinePublishedResources(serverId: string, machineId: string | null) {
+    const selectResources = React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]): unknown => {
+        const daemonState: unknown = resolveServerScopedMachine(state, serverId, machineId ?? '')?.daemonState;
+        return daemonState !== null && typeof daemonState === 'object' ? (daemonState as { resources?: unknown }).resources ?? null : null;
+    }, [machineId, serverId]);
+    const resources = storage(selectResources);
+    return React.useMemo(() => resources === null ? null : readMachinePublishedResources({ resources }), [resources]);
 }
 
 /**
- * The right of a machine list column row (MPG-22): an online machine's strip on the name's line once it has
- * a reading, or one quiet word for a machine that is not (Offline, Asleep, the owner's name). Subscribes for this one
- * machine only, so another machine's update never re-renders this row.
+ * Whether this machine's row has a second line: it needs attention, from the facts its daemon publishes (no read or
+ * demand of its own). A calm machine says nothing, so its row keeps the one-line height (OWNER-UI-1115B B2, owner
+ * bar 11-16). Selects one boolean, so other publications render nothing.
+ */
+export function useMachineRowNeedsAttention(serverId: string, machineId: string): boolean {
+    const published = useMachinePublishedResources(serverId, machineId);
+    return published !== null && selectHeadlineReason(published.attention) !== null;
+}
+
+/**
+ * The second line of a machine's row (the list column, a phone's All machines): what needs attention, labelled by its
+ * word, with the one value behind it in the same attention tone ("Short on memory · 82%"); otherwise the quiet word
+ * (Offline, Asleep, the owner's name), or nothing. Rows draw no unlabelled sparklines (owner bar 11-16); the
+ * instruments stand where they are labelled (the table, the cards, the popover). Subscribes for this one machine only.
  */
 export const MachineListRowSummary = React.memo(function MachineListRowSummary(props: Readonly<{
     serverId: string;
     machineId: string | null;
     online: boolean;
-    /** The quiet word when no strip shows. */
+    /** The quiet word when nothing needs attention. */
     quietWord: string | null;
     testID?: string;
 }>) {
     const { theme } = useUnistyles();
-    const setting = useMachineSummarySettingValue();
     const availability = useMachineResourceSummary({ serverId: props.serverId, machineId: props.machineId ?? '' });
-    // Only the published resources (retained while unchanged), so other daemon publications leave this row alone.
-    const selectResources = React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]): unknown => {
-        const daemonState: unknown = resolveServerScopedMachine(state, props.serverId, props.machineId ?? '')?.daemonState;
-        return daemonState !== null && typeof daemonState === 'object' ? (daemonState as { resources?: unknown }).resources ?? null : null;
-    }, [props.machineId, props.serverId]);
-    const resources = storage(selectResources);
-    const published = React.useMemo(() => resources === null ? null : readMachinePublishedResources({ resources }), [resources]);
-    const chosen = props.online && props.machineId !== null && setting.metrics.length > 0;
-    // The strip draws only values it holds: with none yet it would reserve its width as empty tracks and
-    // squeeze the name, so a machine without a reading shows no strip.
-    const strip = chosen && (availability?.kind === 'monitoring_off' || (availability?.kind === 'reporting' && availability.summary))
-        ? <MachineSummaryStrip availability={availability} style={setting.style} metrics={setting.metrics} layout="inline" />
-        : null;
+    const published = useMachinePublishedResources(props.serverId, props.machineId);
     const headline = published && props.online ? selectHeadlineReason(published.attention) : null;
-    // The strip's instruments carry no names, so a machine that needs you says why in a word, in the attention tone,
-    // beside them (DESIGN-2-1114 #17); colour never speaks without its word.
-    const word = headline ? (
-        <Text numberOfLines={1} style={[stylesheet.word, { color: resolveMachineAttentionWordColor(theme.colors) }]}>
-            {describeMachineAttentionWord(headline)}
-        </Text>
-    ) : null;
-    if (strip || word) return <View testID={props.testID} style={stylesheet.line}>{strip}{word}</View>;
+    const summary = availability?.kind === 'reporting' ? availability.summary : null;
+    const instruments = React.useMemo(() => summary ? buildMachineSummaryInstruments(summary) : null, [summary]);
+    if (headline) {
+        const figure = describeMachineAttentionFigure(headline, instruments);
+        return (
+            <View testID={props.testID} style={stylesheet.line}>
+                <Text numberOfLines={1} style={[stylesheet.word, { color: resolveMachineAttentionWordColor(theme.colors) }]}>
+                    {describeMachineAttentionWord(headline)}
+                    {figure ? <Text style={stylesheet.figure}>{` · ${figure}`}</Text> : null}
+                </Text>
+            </View>
+        );
+    }
     return props.quietWord ? <Text testID={props.testID} numberOfLines={1} style={stylesheet.quiet}>{props.quietWord}</Text> : null;
 });
 
@@ -77,12 +69,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     line: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: theme.space.s8,
         minWidth: 0,
     },
     word: {
         ...Typography.variant('meta'),
         flexShrink: 1,
+    },
+    figure: {
+        ...Typography.tabular(),
     },
     quiet: {
         ...Typography.variant('meta'),

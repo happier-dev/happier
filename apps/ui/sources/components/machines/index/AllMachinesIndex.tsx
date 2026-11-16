@@ -57,7 +57,8 @@ import type { MachineAttentionEntry } from '@/components/machines/attention/coll
 import { useMachineAttention } from '@/sync/domains/machines/resources/useMachineAttention';
 import { MachinesNeedsYouList } from '@/components/machines/attention/MachinesNeedsYouList';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
-import { describeFleetDescription, describeFleetTitle, describeMachineAttentionWord, readMachinePublishedResources, selectAttentionSubjects, selectHeadlineReason } from '@/components/machines/summary/machineResourceSentences';
+import { describeFleetDescription, describeFleetTitle, describeMachineAttentionWord, describeMachineReasonDetail, readMachinePublishedResources, selectAttentionSubjects, selectHeadlineReason } from '@/components/machines/summary/machineResourceSentences';
+import { MachineListRowSummary } from '@/components/machines/summary/MachineListRowSummary';
 import { MACHINE_CARD_METRICS_HEIGHT_PX, MachineCardBody } from './MachineCardBody';
 import { useMachineIndexCardAttention } from './machineIndexCardAttention';
 import { MachineSummaryStrip, machineSummaryMetricTitle } from '@/components/machines/summary/MachineSummaryStrip';
@@ -65,6 +66,7 @@ import { useMachineSummaryFreshnessFacts } from '@/components/machines/summary/M
 import { formatMachineBytes, resolveMachineCoreCount } from '@/components/machines/vitals/machineVitalsPresentation';
 import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
 import type { MachineSummaryMetric, MachineSummaryStyle } from '@/components/machines/summary/machineSummaryStripModel';
+import { resolveMachineAttentionWordColor } from '@/components/machines/summary/machineSummaryStripModel';
 import { UPDATES_ROUTE } from '@/components/updates/updatesRoute';
 import { readMachineUpdateFacts, readMachineUpdateWord } from '@/components/machines/updates/machineFleetUpdates';
 import { useMachineField } from '@/sync/store/hooks';
@@ -82,8 +84,11 @@ const NO_METRICS: readonly MachineSummaryMetric[] = [];
 /** The index offers a search field only once the fleet no longer fits at a glance (as the list column does). */
 const SEARCH_THRESHOLD = 8;
 const NEEDS_YOU_GROUP = 'needsYou';
-/** A machine card's narrowest readable width at normal text size: its name, tag and footer facts. */
-const CARD_MIN_WIDTH_PX = 280;
+/**
+ * A machine card's narrowest readable width at normal text size: its status sentence on one line and its three
+ * labelled instruments side by side (lab resources `rm` FC: two cards to a row on a desktop page).
+ */
+const CARD_MIN_WIDTH_PX = 400;
 /** The table's narrowest readable width: the machine with where it runs, its work and its presence. */
 const LIST_MIN_WIDTH_PX = 360;
 /** A metric column holds the strip's line and its figure ("125 GB"). */
@@ -150,6 +155,9 @@ function AllMachinesIndexBody() {
     const attentionSubjects = React.useMemo(() => selectAttentionSubjects(attention.entries), [attention.entries]);
     const needsYouSubjectKeys = useReconciledStableRows(attentionSubjects.map(entry => entry.key), String);
     const needsYouKeys = React.useMemo(() => new Set(needsYouSubjectKeys), [needsYouSubjectKeys]);
+    // The machines whose resources need attention: a phone list row says why on its second line; a calm one has none.
+    const rowAttentionKeys = React.useMemo(() => new Set(attention.entries
+        .filter(entry => selectHeadlineReason(entry.attention) !== null).map(entry => entry.key)), [attention.entries]);
     const fleetTitle = describeFleetTitle({ subjects: attention.entries, reportingCount: attention.reportingCount });
     const fleetDescription = describeFleetDescription({ subjects: attention.entries, reportingCount: attention.reportingCount, onlineCount: attention.onlineCount, nowMs });
     const openAttention = React.useCallback((entry: MachineAttentionEntry, tab: MachinePageTabParams | null) => {
@@ -254,7 +262,7 @@ function AllMachinesIndexBody() {
     // "—", so the table says each machine's presence instead (the no-metrics layout).
     const anyOnline = items.some(item => item.kind === 'machine' && item.online);
     const shownMetrics = anyOnline ? summarySetting.metrics : NO_METRICS;
-    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, shownMetrics, deviceType === 'phone', cardAttention, anyOnline);
+    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, shownMetrics, deviceType === 'phone', cardAttention, anyOnline, rowAttentionKeys);
     // An open page keeps its online machines' summaries live (one batched demand for the whole fleet), owned by a
     // leaf so a hide or a window blur withdraws it without redrawing the page.
     const demandKeys = React.useMemo(() => items.flatMap(item => item.online && item.kind === 'machine'
@@ -472,7 +480,9 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
  */
 function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummaryStyle, metrics: readonly MachineSummaryMetric[], phone: boolean, cardAttention: ReadonlyMap<string, MachineAttentionEntry>,
     /** No listed machine is online: no one has work to show, so the table has no Work column of blanks. */
-    anyOnline: boolean): CollectionAnatomy<MachineIndexItem> {
+    anyOnline: boolean,
+    /** Machines whose resources need attention (attention entry keys). */
+    rowAttentionKeys: ReadonlySet<string>): CollectionAnatomy<MachineIndexItem> {
     const language = usePreferredLanguage();
     const { theme } = useUnistyles();
     return React.useMemo((): CollectionAnatomy<MachineIndexItem> => {
@@ -488,8 +498,11 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         // What the machine is ("64 cores · 251 GiB") gives way before its name, so the part that tells namesakes apart
         // ("· 0c82") stays readable (Collection's inline title line truncates first).
         titleSuffix: (item) => item.facts ? <Text numberOfLines={1} style={stylesheet.quiet}>{item.facts}</Text> : null,
-        // The list's second line (phones): the strip, or why the machine shows none.
-        byline: (item) => <MachineIndexListLine item={item} style={style} metrics={metrics} />,
+        // The list's second line (phones): what needs attention with its one value, or why the machine is quiet
+        // (offline, unreadable). A calm online machine has no second line. The grid's cards carry their own lines.
+        ...(view === 'grid' ? {} : { byline: (item: MachineIndexItem) => item.reason !== null || !item.online
+            || rowAttentionKeys.has(JSON.stringify([item.serverId, machineKeyOf(item).machineId]))
+            ? <MachineIndexListLine item={item} /> : null }),
         // A phone's list says the work on the name's line, where the table gives it a column. A machine that is not
         // online passes no meta (its byline says its presence), as the table's Work cell gives it to the presence too.
         ...(phone ? { titleMeta: (item: MachineIndexItem) => item.online ? <MachineWorkCell item={item} /> : null } : {}),
@@ -523,6 +536,9 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
             description,
             card: {
                 headerRight: (item: MachineIndexItem) => <MachineIndexUpdateAction item={item} />,
+                // Identity, then one status line, then the instruments (lab `rm` FC): why it needs you, as a sentence;
+                // a calm machine says what it is; one that is not online says so.
+                description: (item: MachineIndexItem) => <MachineIndexCardStatus item={item} entry={cardAttention.get(item.key) ?? null} />,
                 facts: (item: MachineIndexItem) => <MachineWorkCell item={item} offlineLabel={describeWhere(item)} services />,
                 ...(metrics.length > 0 ? { body: {
                     heightAtNormalText: MACHINE_CARD_METRICS_HEIGHT_PX,
@@ -534,22 +550,43 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         testID: (item) => `machines.index.row.${item.key}`,
         columnTitles: { title: t('allMachines.columnMachine') },
         };
-    }, [anyOnline, cardAttention, language, metrics, phone, style, theme.colors.text.secondary, view]);
+    }, [anyOnline, cardAttention, language, metrics, phone, rowAttentionKeys, style, theme.colors.text.secondary, view]);
 }
 
-/** The phone list's second line: the machine's strip under its name, or — when it shows none — why. */
-const MachineIndexListLine = React.memo(function MachineIndexListLine(props: Readonly<{
-    item: MachineIndexItem;
-    style: MachineSummaryStyle;
-    metrics: readonly MachineSummaryMetric[];
-}>) {
-    const availability = useMachineResourceSummary(machineKeyOf(props.item));
-    const quiet = props.metrics.length === 0 ? (props.item.reason ?? props.item.presence) : describeQuiet(props.item, availability);
-    return <MachineIndexMeter item={props.item} enabled={props.metrics.length > 0}>
+/**
+ * The phone list's second line: why the machine is quiet (unreadable, not online), or what needs attention with the one
+ * value behind it ("Short on memory · 82%"), never unlabelled instruments (owner bar 11-16).
+ */
+const MachineIndexListLine = React.memo(function MachineIndexListLine(props: Readonly<{ item: MachineIndexItem }>) {
+    const { item } = props;
+    const quiet = item.reason ?? (item.online ? null : item.presence);
+    return <MachineIndexMeter item={item} enabled={quiet === null}>
         {quiet !== null ? <Text numberOfLines={1} style={stylesheet.quiet}>{quiet}</Text>
-            : <MachineSummaryStrip testID={`machines.index.strip.${props.item.key}`}
-                availability={availability} style={props.style} metrics={props.metrics} layout="under" />}
+            : <MachineListRowSummary testID={`machines.index.strip.${item.key}`} serverId={item.serverId}
+                machineId={machineKeyOf(item).machineId} online={item.online} quietWord={null} />}
     </MachineIndexMeter>;
+});
+
+/** A card's one status line: the reason it needs you as a sentence, lead word in the attention tone, then its detail. */
+const MachineIndexCardStatus = React.memo(function MachineIndexCardStatus(props: Readonly<{
+    item: MachineIndexItem;
+    entry: MachineAttentionEntry | null;
+}>) {
+    const { theme } = useUnistyles();
+    const { item } = props;
+    const reason = props.entry ? selectHeadlineReason(props.entry.attention) : null;
+    if (reason) {
+        return (
+            <Text numberOfLines={1} style={stylesheet.cardStatus} testID={`machines.index.card.${item.key}.status`}>
+                <Text style={[stylesheet.cardStatusLead, { color: resolveMachineAttentionWordColor(theme.colors) }]}>
+                    {t('machineAttention.machine.lead', { word: describeMachineAttentionWord(reason) })}
+                </Text>
+                {` ${describeMachineReasonDetail(reason, Date.now())}`}
+            </Text>
+        );
+    }
+    const line = item.reason ?? (item.online ? [item.platformLabel, item.facts].filter(Boolean).join(' · ') : item.presence);
+    return line ? <Text numberOfLines={1} style={stylesheet.quiet}>{line}</Text> : null;
 });
 
 function machineKeyOf(item: MachineIndexItem): Readonly<{ serverId: string; machineId: string }> {
@@ -725,6 +762,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     failing: {
         color: theme.colors.state.danger.foreground,
+    },
+    cardStatus: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.primary,
+    },
+    cardStatusLead: {
+        ...Typography.variant('meta', 'semiBold'),
     },
     cardQuiet: {
         ...Typography.variant('meta'),

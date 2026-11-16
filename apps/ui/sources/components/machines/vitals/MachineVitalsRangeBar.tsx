@@ -9,16 +9,9 @@ import { MACHINE_VITALS_RANGE_UI_KEY, machineVitalsRangeState } from '@/sync/dom
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
-import type { MachinePageTabBarAccessoryProps } from '@/components/machines/page/machinePageTabQuery';
-import { useMachinePageState } from '@/components/machines/page/machinePageContext';
 import { MachineFreshnessChip, type MachineFreshness } from '@/components/machines/page/MachineFreshnessChip';
-import { readMachinePublishedResources } from '@/components/machines/summary/machineResourceSentences';
-import { EMPTY_MACHINE_RESOURCE_STATE, isMachineResourceStateStale, machineResourceStore } from '@/sync/domains/machines/resources/machineResourceStore';
-import { useMachineDaemonReadTarget } from '@/sync/domains/machines/useMachineDaemonReadTarget';
-import { useMachineResourceRefreshing } from '@/sync/domains/machines/resources/useMachineResourceSummary';
-import { useMachineMonitoringMode } from '@/sync/domains/machines/resources/useMachineMonitoringMode';
 
-import { MACHINE_VITALS_RANGES, selectMachineVitalsOverviewView, type MachineVitalsOverviewView } from './machineVitalsPresentation';
+import { MACHINE_VITALS_RANGES, type MachineVitalsOverviewView } from './machineVitalsPresentation';
 
 const RANGE_KEYS = {
   '1h': 'machineVitals.range.hour',
@@ -47,8 +40,6 @@ export const MachineVitalsRangeBar = React.memo(function MachineVitalsRangeBar(
   props: Readonly<{
     freshness: MachineFreshness;
     showRange: boolean;
-    /** At the end of the page's tab bar (lab `rv` O) the bar sits on the tab row, without the body's gap below. */
-    placement?: 'body' | 'bar';
   }>,
 ) {
   const language = usePreferredLanguage();
@@ -58,7 +49,7 @@ export const MachineVitalsRangeBar = React.memo(function MachineVitalsRangeBar(
     [language],
   );
   return (
-    <View style={[styles.bar, props.placement === 'bar' ? styles.inBar : null]} testID="machine-vitals-range-bar">
+    <View style={styles.bar} testID="machine-vitals-range-bar">
       <MachineFreshnessChip freshness={props.freshness} />
       {props.showRange ? (
         <View style={styles.range}>
@@ -87,9 +78,6 @@ const styles = StyleSheet.create({
     minHeight: 32,
     marginBottom: 8,
   },
-  inBar: {
-    marginBottom: 0,
-  },
   range: {
     marginLeft: 'auto',
   },
@@ -105,32 +93,3 @@ export function resolveVitalsFreshnessChip(view: MachineVitalsOverviewView, onRe
     if (view.freshness === 'live') return { kind: 'live' };
     return { kind: 'stale', at: view.sample.sampledAt, onRetry };
 }
-
-/**
- * The Overview's freshness and range at the end of the machine page's tab bar on wide layouts (lab `rv`
- * O). It reads what the Overview body already holds — no read or demand of its own — so it shows exactly
- * the state the tiles below it show.
- */
-export const MachineVitalsBarAccessory = React.memo(function MachineVitalsBarAccessory(props: MachinePageTabBarAccessoryProps) {
-    const { target } = useMachinePageState();
-    const daemonState: unknown = target.machine?.daemonState;
-    const published = React.useMemo(() => readMachinePublishedResources(daemonState), [daemonState]);
-    const [range] = useMachineVitalsRange();
-    const readTarget = useMachineDaemonReadTarget(props);
-    const key = React.useMemo(() => ({ ...readTarget.key, view: 'overview' as const }), [readTarget.key]);
-    const refreshingInputs = React.useMemo(() => [key], [key]);
-    const refreshing = useMachineResourceRefreshing(refreshingInputs, 'overview');
-    const subscribe = React.useCallback((listener: () => void) => machineResourceStore.observe(key, listener), [key]);
-    const getSnapshot = React.useCallback(() => readTarget.accountMatches ? machineResourceStore.getState(key) : EMPTY_MACHINE_RESOURCE_STATE, [key, readTarget.accountMatches]);
-    const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-    const monitoring = useMachineMonitoringMode(props);
-    const view = selectMachineVitalsOverviewView({ online: props.online, published, monitoring,
-        state: { ...state, stale: isMachineResourceStateStale(state, Date.now()) } });
-    const retry = React.useCallback(() => {
-        if (!readTarget.enabled) return;
-        machineResourceStore.retry(key);
-        machineResourceStore.retryHistory({ ...readTarget.key, range });
-    }, [key, readTarget.enabled, readTarget.key, range]);
-    if (view.kind !== 'loading' && view.kind !== 'ready' && !(view.kind === 'monitoring_off' && view.sample)) return null;
-    return <MachineVitalsRangeBar freshness={props.online === null ? { kind: 'none' } : resolveVitalsFreshnessChip(view, retry, refreshing)} showRange={view.kind === 'ready'} placement="bar" />;
-});

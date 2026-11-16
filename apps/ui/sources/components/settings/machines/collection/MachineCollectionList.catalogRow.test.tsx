@@ -99,9 +99,9 @@ it('heads the machines with their own group alone', async () => {
     expect(screen.findByTestId('settings.machines.rail.machinesLabel')).toBeNull();
 });
 
-// Owner 2026-11-15 (B2, ade8e626): an online machine whose daemon publishes no vitals stood at the two-line height
-// with an empty line under its name. Only a machine that can show a summary reserves its line.
-it('keeps a summary line only for an online machine that publishes vitals', async () => {
+// Owner 2026-11-15 (B2, ade8e626) and owner bar 11-16: rows follow their content and draw no unlabelled sparklines.
+// Only a machine that needs attention has a second line (its word and value); a calm or silent one keeps one line.
+it('keeps a second line only for an online machine that needs attention', async () => {
     await home.reset();
     const profileId = await home.addHome({
         name: 'Studio Home', serverUrl: 'https://studio.example',
@@ -119,15 +119,19 @@ it('keeps a summary line only for an online machine that publishes vitals', asyn
         id, active: true, activeAt: Date.now(), daemonState: { ...base.daemonState, ...daemonState },
         metadata: { ...base.metadata!, displayName: id, host: `${id}.internal`, platform: 'linux' },
     });
-    const reporting = online('reporting-machine', { resources: { v: 1, vitals: { state: 'reporting' }, attention: { level: 'calm', reasons: [] } } });
+    const host = { logicalCores: 4, memoryTotalBytes: 100, bootedAt: 1 };
+    const reporting = online('reporting-machine', { resources: { v: 1, vitals: { state: 'reporting' }, host, attention: { level: 'needs_you',
+        reasons: [{ key: 'memory', level: 'needs_you', since: 1, metric: 'memory', kind: 'memory_pressure', pressure: 'critical', swapping: false }] } } });
+    const calm = online('calm-machine', { resources: { v: 1, vitals: { state: 'reporting' }, host, attention: { level: 'calm', reasons: [] } } });
     const silent = online('silent-machine', {});
-    await publishMachineInventoryForTest({ serverId: profileId, accountId: 'account-a' }, [reporting, silent]);
+    await publishMachineInventoryForTest({ serverId: profileId, accountId: 'account-a' }, [reporting, calm, silent]);
     const screen = await renderScreen(<MachineCollectionRail />);
     await waitForHomeGovernance(() => {
         expect(screen.getTextContent()).toContain('silent-machine');
         expect(screen.findByTestId(`settings.machines.row.${profileId}.reporting-machine.summary`)).not.toBeNull();
     });
     expect(screen.findByTestId(`settings.machines.row.${profileId}.silent-machine.summary`)).toBeNull();
+    expect(screen.findByTestId(`settings.machines.row.${profileId}.calm-machine.summary`)).toBeNull();
     const silentRow = screen.tree.findAll(node => typeof node.type !== 'string'
         && node.props.testID === `settings.machines.row.${profileId}.silent-machine` && 'title' in node.props)[0]!;
     expect(silentRow.props.subtitle).toBeUndefined();

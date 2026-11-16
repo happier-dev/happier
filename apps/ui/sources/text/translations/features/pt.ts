@@ -7000,8 +7000,8 @@ const machineDetailPageTranslations = { pt: translated({
         machineSummary: {
             settingTitle: "Resumo das máquinas",
             styleTitle: "Estilo",
-            usedHere: "Usado aqui, na lista de máquinas e em Todas as máquinas. Guardado neste dispositivo.",
-            appearanceDescription: "Como os recursos de cada máquina aparecem no menu Máquinas, na lista e em Todas as máquinas. Guardado neste dispositivo.",
+            usedHere: "Usado aqui e em Todas as máquinas. Guardado neste dispositivo.",
+            appearanceDescription: "Como os recursos de cada máquina aparecem no menu Máquinas e em Todas as máquinas. Guardado neste dispositivo.",
             showTitle: "Mostrar",
             showDescription: "Que métricas cada máquina mostra. Nenhuma mostra só os nomes.",
             styles: {
@@ -7058,6 +7058,7 @@ const machineDetailPageTranslations = { pt: translated({
             updateToSee: ({ machine }) => `Atualize ${machine} para ver os recursos`,
         },
         machineVitals: {
+            sectionTitle: "Estado da máquina",
             monitoring: {
                 title: "Monitorização",
                 modes: { off: "Desligada", whileViewing: "Ao visualizar", always: "Sempre" },

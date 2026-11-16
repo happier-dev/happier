@@ -65,8 +65,7 @@ import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { useMachineResourceFleetAttention } from '@/sync/domains/machines/resources/useMachineResourceFleetAttention';
-import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
-import { MachineListRowSummary, useMachineCanShowLiveSummary } from '@/components/machines/summary/MachineListRowSummary';
+import { MachineListRowSummary, useMachineRowNeedsAttention } from '@/components/machines/summary/MachineListRowSummary';
 import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { useThisComputerServiceSummary } from '../localControl/useThisComputerServiceSummary';
 
@@ -206,16 +205,15 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
     const row = useMachineCollectionRowPresence(props.row);
     const thisComputerMachineId = useThisComputerMachineId();
     const isThisComputer = (row.kind === 'machine' ? row.machineId : row.enrolledMachineId) === thisComputerMachineId;
-    const summaryMetrics = useMachineSummarySettingValue().metrics.length;
     const summaryRef = React.useRef<View>(null);
     const quietWord = row.reason ?? row.presenceWord ?? row.ownership;
     // The rail's one word: a native word (Asleep) as the presence owner says it; a machine that is simply offline
     // says Offline, its last-seen time staying in the accessible name and on its page.
     const railWord = row.reason ?? (row.kind === 'managed' || row.presenceSource?.managedPresence ? row.presenceWord
         : row.fleetPresence?.online === false ? t('machineDetailPage.offline') : row.presenceWord) ?? row.ownership;
-    // Only a reachable machine with instruments chosen, whose daemon can report them, has a live summary to show.
-    const canShowSummary = useMachineCanShowLiveSummary(row.serverId, row.kind === 'machine' ? row.machineId : '');
-    const liveSummary = row.kind === 'machine' && row.online && summaryMetrics > 0 && canShowSummary;
+    // Only a reachable machine that needs attention has a second line: its word and the one value behind it.
+    const needsAttention = useMachineRowNeedsAttention(row.serverId, row.kind === 'machine' ? row.machineId : '');
+    const liveSummary = row.kind === 'machine' && row.online && needsAttention;
     return (
         rail ? (
             // One line (lab m-defaults rail): the name, then its one word at the row's end. A machine whose live summary
