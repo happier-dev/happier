@@ -11,6 +11,7 @@ import {   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckRe
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, connectedAccountPortableRuntime } from './account.js';
 import { nativeFetch } from './machine/credentials.js';
 import { createE2bNativeClient } from './machine/nativeClient.js';
+import { createE2bPreparationClient, E2B_PREPARATION_HOME, E2bPreparationInputSchema, E2bPreparedArtifactSchema, E2bPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 import { BILLING, RETENTION, CONTRIBUTION, ROLE_SCHEMAS, RECONCILIATION, E2bLaunchSchema, E2bOptionsSchema, E2bResourceSchema, E2bOperationSchema } from './machine/schemas.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
@@ -19,6 +20,7 @@ const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAc
 } as const;
 const confirmation = { title: 'Manage this E2B sandbox?', body: 'E2B bills running compute. Pause preserves memory and disk; delete permanently removes both.' };
 const runtime = (context: PluginAccountActionContext | PluginInvocationContext) => createE2bNativeClient(nativeFetch(context), context.signal, context.invokedAtMs);
+const preparationRuntime = (context: PluginAccountActionContext | PluginInvocationContext) => createE2bPreparationClient(nativeFetch(context), context.signal);
 const errorCode = (error: unknown) => error instanceof Error && error.message === 'credential_unavailable' ? 'credential_unavailable' : 'e2b_unavailable';
 
 export const MACHINE_PROVISIONER = {
@@ -30,6 +32,9 @@ export const MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
   reconciliation: { nativeOperationSchema: E2bOperationSchema.jsonSchema, action: 'reconcile' },
+  preparation: { inputSchema: E2bPreparationInputSchema.jsonSchema, artifactSchema: E2bPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: E2bPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
@@ -69,7 +74,10 @@ export const PLUGIN = definePlugin({
         if (!check.available) return { dimensions: { size: [], location: [], network: [], image: [], duration: [] }, code: 'provider_unavailable' };
         const launch = E2bLaunchSchema.parse({ templateId: input.templateId ?? 'base', timeoutSeconds: input.timeoutSeconds ?? 300 });
         return { base: { launch, guestPlatform: 'linux' as const, retention: RETENTION }, dimensions: { size: [], location: [], network: [],
-          image: [{ id: launch.templateId, title: launch.templateId, assignments: [], guestPlatform: 'linux' as const, nativeFacts: { image: { id: launch.templateId, title: launch.templateId } } }],
+          image: [{ id: launch.templateId, title: launch.templateId, assignments: [], guestPlatform: 'linux' as const, nativeFacts: {
+            preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: E2B_PREPARATION_HOME },
+            image: { id: launch.templateId, title: launch.templateId },
+          } }],
           duration: [{ id: String(launch.timeoutSeconds), title: `${launch.timeoutSeconds} s`, assignments: [], nativeFacts: { duration: { id: String(launch.timeoutSeconds), title: `${launch.timeoutSeconds} s`, afterMs: launch.timeoutSeconds * 1000 } } }],
         } };
       } },
@@ -90,6 +98,21 @@ export const PLUGIN = definePlugin({
     destroy: { ...defaults, title: 'Delete E2B sandbox', dangerLevel: 'destructive', confirmation, inputSchema: RECONCILIATION.destroyInput, resultSchema: RECONCILIATION.destroyResult,
       async run(input, context) { try { return await runtime(context).destroy(input); }
         catch (error) { return projectE2bNativeFailure(error, () => ({ kind: 'unknown', code: errorCode(error) })); } } },
+    'prepare-build': { ...defaults, title: 'Build E2B prepared template', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this E2B template?', body: 'Provider charges apply for build, storage, and runtime. See https://e2b.dev/pricing for current pricing.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return preparationRuntime(context).build(input); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect E2B prepared template', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return preparationRuntime(context).inspect('nativeOperation' in input
+        ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...defaults, title: 'Delete E2B prepared template', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this E2B template?', body: 'Deleting the template permanently removes this prepared image. E2B requires its running and paused sandboxes to be deleted first.' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return preparationRuntime(context).destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); } },
     exec: { ...defaults, title: 'Execute E2B guest command', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) { return runtime(context).exec(input); } },
     'put-file': { ...defaults, title: 'Write E2B guest file', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,

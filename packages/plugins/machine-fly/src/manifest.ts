@@ -11,6 +11,8 @@ import { observeMachineProvisionerNativeRead, defineMachineProvisionerReconcilia
   type MachineProvisionerNativeCauseV1, type MachineProvisionerPowerResultV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createFlyNativeClient, isLaunchAvailable, type FlyCleanup } from './machine/nativeClient.js';
+import { createFlyPreparationClient, FlyPreparationInputSchema, FlyPreparationOperationSchema, FlyPreparedArtifactSchema,
+  FLY_PREPARATION_HOME, PREPARATION_SCHEMAS } from './machine/preparation.js';
 import { FLY_DEFAULT_IMAGE, FLY_GUEST_BOOT, FLY_ROLE_SCHEMAS, FlyLaunchQueryV1Schema, FlyLaunchV1Schema, FlyNativeOperationV1Schema, FlyResourceV1Schema, resolveFlyLaunchQueryCandidate, type FlyAcquireOperationV1, type FlyLaunchV1 } from './machine/schemas.js';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, nativeFetch } from './account.js';
 import { FLY_CONFIGURATION_LABELS } from './ui/translations.js';
@@ -80,6 +82,9 @@ export const MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
   reconciliation: { nativeOperationSchema: FlyNativeOperationV1Schema.jsonSchema, action: 'reconcile', cleanup: 'observe-cleanup' },
+  preparation: { inputSchema: FlyPreparationInputSchema.jsonSchema, artifactSchema: FlyPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: FlyPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
@@ -103,7 +108,8 @@ export const PLUGIN = definePlugin({
   description: 'Native Fly Machine control and private buffered bootstrap IO.', entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Operate exact reviewed Fly resources.',
-      scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.machines.dev' }, { kind: 'fixedOrigin', origin: 'https://api.fly.io' }], methods: ['GET', 'POST', 'DELETE'] } },
+      scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.machines.dev' }, { kind: 'fixedOrigin', origin: 'https://api.fly.io' },
+        { kind: 'fixedOrigin', origin: 'https://registry.fly.io' }], methods: ['GET', 'POST', 'DELETE'] } },
     { id: ACCOUNT_PURPOSE, capability: 'connectedAccounts', reason: 'Use only the captured Fly account and native organization.',
       scope: { serviceRefs: [ACCOUNT_ID], operations: ['use'], materializationKinds: ['httpHeaders', 'environment'] } },
   ], optional: [] },
@@ -138,6 +144,31 @@ export const PLUGIN = definePlugin({
     { locale: "ja", resourceId: "i18n-ja" },
   ] },
   actions: {
+    'prepare-build': { ...defaults, title: 'Build Fly prepared image', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this Fly image?', body: 'Fly charges apply while the clean builder runs. See https://fly.io/docs/about/pricing/ for current prices.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) {
+        const client = createFlyPreparationClient(nativeFetch(context), await organization(context), context.signal);
+        const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
+          { kind: 'environment', keys: ['FLY_REGISTRY_TOKEN'] }, { signal: context.signal });
+        if (material.kind !== 'environment' || !material.env.FLY_REGISTRY_TOKEN) throw new PluginError({ code: 'credential_unavailable' });
+        return client.build(input, material.env.FLY_REGISTRY_TOKEN);
+      } },
+    'prepare-inspect': { ...defaults, title: 'Inspect Fly prepared image', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) {
+        return createFlyPreparationClient(nativeFetch(context), await organization(context), context.signal)
+          .inspect('nativeOperation' in input ? { nativeOperation: input.nativeOperation.value } : input);
+      } },
+    'prepare-destroy': { ...defaults, title: 'Delete Fly prepared image', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Fly prepared image?', body: 'This removes the owned builder and the prepared image registry app.' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) {
+        return createFlyPreparationClient(nativeFetch(context), await organization(context), context.signal).destroy({
+          ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+          ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+        });
+      } },
     check: { ...defaults, title: 'Check Fly API access', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
@@ -164,7 +195,8 @@ export const PLUGIN = definePlugin({
           const location = { id: launch.region, title: facts.regions.find(region => region.code === launch.region)?.name ?? launch.region };
           return { base: { launch, guestPlatform: 'linux' as const, available: isLaunchAvailable(launch, facts, organizationSlug) }, dimensions: { ...emptyDimensions,
             size: [{ id: size.id, title: size.title, assignments: [], nativeFacts: { size } }],
-            image: [{ id: image.id, title: image.title, guestPlatform: 'linux' as const, assignments: [], nativeFacts: { image } }],
+            image: [{ id: image.id, title: image.title, guestPlatform: 'linux' as const, assignments: [], nativeFacts: { image,
+              preparationGuest: { target: { os: 'linux' as const, arch: 'x64' as const }, remoteHomeDir: FLY_PREPARATION_HOME } } }],
             location: [{ id: location.id, title: location.title, assignments: [], nativeFacts: { location } }],
           } };
         }
@@ -172,7 +204,8 @@ export const PLUGIN = definePlugin({
         // These catalog facts cannot complete an unreviewed form on their own.
         return { dimensions: { ...emptyDimensions,
           image: [{ id: FLY_DEFAULT_IMAGE, title: 'Ubuntu 24.04', guestPlatform: 'linux' as const, assignments: [],
-            nativeFacts: { image: { id: FLY_DEFAULT_IMAGE, title: 'Ubuntu 24.04' } } }],
+            nativeFacts: { image: { id: FLY_DEFAULT_IMAGE, title: 'Ubuntu 24.04' },
+              preparationGuest: { target: { os: 'linux' as const, arch: 'x64' as const }, remoteHomeDir: FLY_PREPARATION_HOME } } }],
           location: facts.regions.map(region => ({ id: region.code, title: region.name, available: !region.deprecated,
             assignments: [], nativeFacts: { location: { id: region.code, title: region.name } } })),
           size: facts.sizes.map(size => ({ id: size.name, title: `${size.name} · ${size.cpuCores} CPU · ${size.memoryMb} MB`,
