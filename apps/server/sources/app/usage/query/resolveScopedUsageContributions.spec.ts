@@ -135,6 +135,51 @@ describe("resolveScopedUsageContributions", () => {
         expect(result.totalContributions.find(event => event.id === 'partial')?.cost.estimatedUsd).toBeNull();
         expect(result.totalContributions.find(event => event.id === 'latest')?.cost.estimatedUsd).toBeCloseTo(0.2);
     });
+    it('conserves delta categories across snapshots that omit those counters', () => {
+        const baseline = { ...row('baseline', 100, 'session_cumulative', 110),
+            tokens: { ...createEmptyUsageTokens(), input: 100, output: 10, total: 110 } };
+        const delta = { ...row('delta', 150, 'turn_delta', 8),
+            tokens: { ...createEmptyUsageTokens(), input: 5, output: 3, total: 8 } };
+        const partial = { ...row('partial', 200, 'session_cumulative', 0),
+            tokens: { ...createEmptyUsageTokens(), input: 105 }, cost: createEmptyUsageCost() };
+        const latest = { ...row('latest', 300, 'session_cumulative', 121),
+            tokens: { ...createEmptyUsageTokens(), input: 107, output: 14, total: 121 } };
+        const contributions = resolveScopedUsageContributions([baseline, delta, partial, latest]).totalContributions;
+        expect(contributions.find(event => event.id === 'latest')?.tokens).toMatchObject({ input: 2, output: 1, total: 3 });
+        expect(contributions.reduce((sum, event) => sum + (event.tokens.output ?? 0), 0)).toBe(14);
+        expect(contributions.reduce((sum, event) => sum + (event.tokens.total ?? 0), 0)).toBe(121);
+    });
+    it('conserves delta money across snapshots that omit the monetary counter', () => {
+        const baseline = row('baseline', 100, 'session_cumulative', 100);
+        const delta = row('delta', 150, 'turn_delta', 10);
+        baseline.cost.breakdown = { input: 1 };
+        delta.cost.breakdown = { input: 0.1 };
+        const partial = { ...row('partial', 200, 'session_cumulative', 110), cost: createEmptyUsageCost() };
+        const latest = row('latest', 300, 'session_cumulative', 120);
+        latest.cost.breakdown = { input: 1.2 };
+        const contributions = resolveScopedUsageContributions([baseline, delta, partial, latest]).totalContributions;
+        expect(contributions.find(event => event.id === 'latest')?.cost.estimatedUsd).toBeCloseTo(0.1);
+        expect(contributions.find(event => event.id === 'latest')?.cost.breakdown?.input).toBeCloseTo(0.1);
+        expect(contributions.reduce((sum, event) => sum + (event.cost.estimatedUsd ?? 0), 0)).toBeCloseTo(1.2);
+    });
+    it.each([['witnessed', 0], ['witnessed', 3], ['decrease', 0], ['decrease', 3]] as const)(
+        'discards old sparse-snapshot deltas at a %s reset while subtracting %s current-interval tokens', (resetKind, currentDelta) => {
+        const before = { usageAccounting: { counterEpoch: 'before' } };
+        const after = { usageAccounting: { counterEpoch: 'after' } };
+        const baseline = { ...row('baseline', 100, 'session_cumulative', 100), metadata: before };
+        const delta = { ...row('delta', 150, 'turn_delta', 10), metadata: before };
+        const partial = { ...row('partial', 200, 'session_cumulative', 110), metadata: before,
+            tokens: { ...createEmptyUsageTokens(), input: 110 }, cost: createEmptyUsageCost() };
+        const reset = { ...row('reset', 300, 'session_cumulative', 20), metadata: resetKind === 'witnessed' ? after : before };
+        const current = currentDelta ? [{ ...row('current', 250, 'turn_delta', currentDelta), metadata: after }] : [];
+        const result = resolveScopedUsageContributions([baseline, delta, partial, ...current, reset]);
+        const resetContribution = result.totalContributions.find(event => event.id === 'reset');
+        expect(resetContribution?.tokens.total).toBe(20 - currentDelta);
+        expect(resetContribution?.cost.estimatedUsd).toBeCloseTo(0.2 - currentDelta / 100);
+        expect(result.totalContributions.reduce((sum, event) => sum + (event.tokens.total ?? 0), 0)).toBe(130);
+        expect(result.totalContributions.reduce((sum, event) => sum + (event.cost.estimatedUsd ?? 0), 0)).toBeCloseTo(1.3);
+        expect(result.coverageReasons.includes('counter_discontinuity')).toBe(resetKind === 'decrease');
+    });
     it('updates Session fallback eligibility from changed sources while retaining suppressed subject references', () => {
         const legacy = toScopedUsageReplayFact({ ...row('legacy', 1, 'turn_delta', 10), source: 'legacy_usage_report', agentId: 'legacy' });
         const native = toScopedUsageReplayFact(row('native', 2, 'turn_delta', 3));

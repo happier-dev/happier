@@ -28,6 +28,8 @@ function retainSnapshotMeasurements(row: ScopedUsageEventRow, previous?: ScopedU
         reportedUsd: row.cost.reportedUsd ?? previous.cost.reportedUsd,
         estimatedUsd: row.cost.estimatedUsd ?? previous.cost.estimatedUsd,
         invoiceUsd: row.cost.invoiceUsd ?? previous.cost.invoiceUsd,
+        breakdown: row.cost.breakdown || previous.cost.breakdown
+            ? { ...previous.cost.breakdown, ...row.cost.breakdown } : undefined,
     } };
 }
 
@@ -68,6 +70,7 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
     let previousSnapshot: ScopedUsageEventRow | undefined;
     let previousTokenSnapshot: ScopedUsageEventRow | undefined;
     let pendingTokenDeltas = createEmptyUsageTokens();
+    let pendingCostDeltas = createEmptyUsageCost();
     let pending: ScopedUsageEventRow[] = [];
     let intervalStartIndex = 0;
     let reportedCoverageStartIndex = 0;
@@ -106,6 +109,7 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
             && ((row.contextUsedTokens == null && row.contextWindowTokens == null)
                 || usageHasAnyValue(row.tokens, createEmptyUsageCost(row.cost.currency)));
         pendingTokenDeltas = addUsageTokens(pendingTokenDeltas, intervalTokens);
+        pendingCostDeltas = addUsageCost(pendingCostDeltas, intervalCost);
         const epoch = row.accountingEvidence?.accounting?.counterEpoch;
         const previousEpoch = previousSnapshot?.accountingEvidence?.accounting?.counterEpoch;
         const witnessedReset = previousSnapshot && epoch !== undefined && previousEpoch !== undefined && epoch !== previousEpoch;
@@ -113,6 +117,12 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
             && row.tokens.total !== null && previousTokenSnapshot.tokens.total !== null
             && row.tokens.total < previousTokenSnapshot.tokens.total;
         const reset = previousSnapshot && (witnessedReset || tokenReset);
+        if (reset) {
+            // A new epoch cannot settle deltas retained across older snapshots.
+            // Keep only this interval, as with an ordinary counter reset.
+            pendingTokenDeltas = intervalTokens;
+            pendingCostDeltas = intervalCost;
+        }
         if (reset) reportedCoverageStartIndex = intervalStartIndex;
         if (reset && !witnessedReset) snapshotReasons.add('counter_discontinuity');
         const baselineTokens = previousTokenSnapshot && !reset ? previousTokenSnapshot.tokens : createEmptyUsageTokens();
@@ -125,7 +135,7 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
         if (hasTokenSnapshot && increaseTokens.total !== null && pendingTokenDeltas.total !== null
             && increaseTokens.total < pendingTokenDeltas.total) snapshotReasons.add('ambiguous_overlap');
         const tokens = hasTokenSnapshot ? subtractUsageTokens(increaseTokens, pendingTokenDeltas) : row.tokens;
-        const cost = subtractUsageCost(subtractUsageCost(row.cost, baselineCost), intervalCost);
+        const cost = subtractUsageCost(subtractUsageCost(row.cost, baselineCost), pendingCostDeltas);
         const hasReportedTotal = (row.cost.reportedUsd !== null && row.cost.reportedUsd > 0) || row.cost.costSource === 'provider_reported'
             || row.cost.costSource === 'provider_reported_api_equivalent';
         const coveredIds: string[] = [];
@@ -178,8 +188,24 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
         if (hasReportedTotal) reportedCoverageStartIndex = base.length;
         if (hasTokenSnapshot || witnessedReset) {
             previousTokenSnapshot = hasTokenSnapshot ? retainSnapshotMeasurements(row, reset ? undefined : previousTokenSnapshot) : undefined;
-            pendingTokenDeltas = createEmptyUsageTokens();
+            // Only a measured counter settles its pending deltas. Sparse
+            // snapshots leave the other category baselines unchanged.
+            pendingTokenDeltas = reset ? createEmptyUsageTokens() : {
+                input: row.tokens.input === null ? pendingTokenDeltas.input : null,
+                output: row.tokens.output === null ? pendingTokenDeltas.output : null,
+                reasoning: row.tokens.reasoning === null ? pendingTokenDeltas.reasoning : null,
+                cacheRead: row.tokens.cacheRead === null ? pendingTokenDeltas.cacheRead : null,
+                cacheWrite: row.tokens.cacheWrite === null ? pendingTokenDeltas.cacheWrite : null,
+                total: row.tokens.total === null ? pendingTokenDeltas.total : null,
+            };
         }
+        pendingCostDeltas = reset ? createEmptyUsageCost(row.cost.currency) : { ...pendingCostDeltas,
+            reportedUsd: row.cost.reportedUsd === null ? pendingCostDeltas.reportedUsd : null,
+            estimatedUsd: row.cost.estimatedUsd === null ? pendingCostDeltas.estimatedUsd : null,
+            invoiceUsd: row.cost.invoiceUsd == null ? pendingCostDeltas.invoiceUsd : null,
+            breakdown: pendingCostDeltas.breakdown ? Object.fromEntries(Object.entries(pendingCostDeltas.breakdown)
+                .filter(([key]) => !Object.hasOwn(row.cost.breakdown ?? {}, key))) : undefined,
+        };
         previousSnapshot = retainSnapshotMeasurements(row, reset ? undefined : previousSnapshot);
         intervalStartIndex = base.length;
     }
