@@ -11,6 +11,7 @@ import {
     type AgentSessionRuntimeEvent,
     type AgentSessionSkillDelivery,
     type AgentSessionMcpToolPolicy,
+    type SessionContextUsageSnapshotV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { HappierStructuredInputV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import type { AgentSessionInputFilesService } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -1375,6 +1376,27 @@ export function createClaudeAgentSdkTurnOperations(
         for (const listener of usageObservationListeners) listener(observation);
     }
 
+    function publishContextUsage(snapshot: SessionContextUsageSnapshotV1): void {
+        publishRuntimeEvent(ClaudeProviderEventSchema.parse({
+            sessionId: readRuntimeEventSessionId(),
+            emittedAtMs: snapshot.observedAtMs,
+            kind: 'transcript-agent-message-committed',
+            agentId: 'claude',
+            localId: `claude-context-usage-${snapshot.observedAtMs}`,
+            body: {
+                type: 'token_count',
+                source: 'claude-sdk-context-usage',
+                modelId: snapshot.modelId,
+                context_used_tokens: snapshot.usedTokens,
+                context_window_tokens: snapshot.windowTokens,
+                contextSnapshot: snapshot,
+            },
+            meta: {
+                source: 'claude-agent-sdk-context-usage',
+            },
+        }));
+    }
+
     async function requestAndPublishContextUsage(turnQuery: ClaudeSdkQuery): Promise<boolean> {
         if (contextUsageRefreshPromise) return await contextUsageRefreshPromise;
         contextUsageRefreshPromise = (async () => {
@@ -1384,24 +1406,7 @@ export function createClaudeAgentSdkTurnOperations(
                 observedAtMs: Date.now(),
             });
             if (!snapshot) return false;
-            publishRuntimeEvent(ClaudeProviderEventSchema.parse({
-                sessionId: readRuntimeEventSessionId(),
-                emittedAtMs: snapshot.observedAtMs,
-                kind: 'transcript-agent-message-committed',
-                agentId: 'claude',
-                localId: `claude-context-usage-${snapshot.observedAtMs}`,
-                body: {
-                    type: 'token_count',
-                    source: 'claude-sdk-context-usage',
-                    modelId: snapshot.modelId,
-                    context_used_tokens: snapshot.usedTokens,
-                    context_window_tokens: snapshot.windowTokens,
-                    contextSnapshot: snapshot,
-                },
-                meta: {
-                    source: 'claude-agent-sdk-context-usage',
-                },
-            }));
+            publishContextUsage(snapshot);
             return true;
         })().finally(() => {
             contextUsageRefreshPromise = null;
@@ -1604,12 +1609,16 @@ export function createClaudeAgentSdkTurnOperations(
     }>;
 
     function publishResultUsage(message: SDKResultMessage, observedAtMs: number, modelId: string | null): void {
-        publishUsageObservation(buildClaudeSdkResultUsageObservation({
+        const observation = buildClaudeSdkResultUsageObservation({
             modelId,
             ...(currentProviderModel ? { modelSource: 'provider' } : {}),
             observedAtMs,
             result: message,
-        }));
+        });
+        publishUsageObservation(observation);
+        if (params.publishTranscriptMessages === true && observation?.contextSnapshot) {
+            publishContextUsage(observation.contextSnapshot);
+        }
     }
 
     function publishResultEvidence(turn: ResultTurn): void {
@@ -2165,15 +2174,6 @@ export function createClaudeAgentSdkTurnOperations(
                             sessionId: readRuntimeEventSessionId(), turnId: foregroundTurnId, emittedAtMs: Date.now(),
                             ...mcpUsage.finish(Date.now(), !shouldContinueForBackgroundTasks) }));
                     }
-                    const turnEndContextUsageRefresh = params.publishTranscriptMessages === true
-                        ? requestAndPublishContextUsage(turnQuery).catch((error: unknown) => {
-                            params.ctx.logger.debug(
-                                '[ClaudeAgentSdk] Turn-end context usage refresh failed (non-fatal)',
-                                { error },
-                            );
-                            return false;
-                        })
-                        : null;
                     // Native persistence can settle after SessionStart without another hook.
                     // Publish the existing candidate's durable proof before completing this turn.
                     await resumeIdentityOwner?.settleCurrentCandidate();
@@ -2190,9 +2190,6 @@ export function createClaudeAgentSdkTurnOperations(
                         backgroundQueries.add(turnQuery);
                         continue;
                     }
-                    // Keep the control channel alive until the turn-end context request settles,
-                    // without delaying the already-resolved turn.
-                    await turnEndContextUsageRefresh;
                 } else {
                     sawResult = true;
                     publishResultUsage(message, Date.now(), resultModelId);

@@ -3388,7 +3388,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     }
   });
 
-  it('publishes live context at turn end and refreshes it on the session-control request seam', async () => {
+  it('publishes result context with zero turn-end requests and exactly one request on explicit refresh', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const exec = createSdkExecFixture();
@@ -3431,7 +3431,6 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       runtime.beginTurnLifecycle();
       await runtime.sendTurnPrompt('measure context');
       await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledTimes(1));
-      vi.useFakeTimers();
       await exec.emit({
         type: 'result',
         subtype: 'success',
@@ -3441,11 +3440,21 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
         total_cost_usd: 0,
         duration_ms: 10,
         duration_api_ms: 8,
+        usage: {
+          input_tokens: 999_000,
+          iterations: [
+            { type: 'message', input_tokens: 90_000, output_tokens: 10_000 },
+            { type: 'message', input_tokens: 40_000, output_tokens: 2_000,
+              cache_read_input_tokens: 5_000, cache_creation_input_tokens: 1_000 },
+          ],
+        },
+        modelUsage: {
+          'claude-sonnet-4-6': { inputTokens: 999_000, outputTokens: 12_000,
+            cacheReadInputTokens: 5_000, cacheCreationInputTokens: 1_000, contextWindow: 200_000 },
+        },
       });
-      await vi.waitFor(() => expect(contextRequests()).toHaveLength(1));
-      await vi.advanceTimersByTimeAsync(1_501);
-      await respond(contextRequests()[0]!.request_id, 48_000);
-      vi.useRealTimers();
+      await runtime.waitForTurnCompletion();
+      expect(contextRequests()).toHaveLength(0);
       await vi.waitFor(() => {
         expect(runtimeEvents).toContainEqual(expect.objectContaining({
           kind: 'transcript-agent-message-committed',
@@ -3454,8 +3463,9 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
             type: 'token_count',
             contextSnapshot: expect.objectContaining({
               usedTokens: 48_000,
-              source: 'provider_live',
-              categories: [{ key: 'Messages', label: null, tokens: 48_000 }],
+              windowTokens: 200_000,
+              source: 'provider_turn',
+              categories: null,
             }),
           }),
         }));
@@ -3464,8 +3474,8 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       const refresh = runtime.updateSessionRuntimeConfig({
         configOption: { id: 'context_usage_refresh', value: 1 },
       });
-      await vi.waitFor(() => expect(contextRequests()).toHaveLength(2));
-      await respond(contextRequests()[1]!.request_id, 49_000);
+      await vi.waitFor(() => expect(contextRequests()).toHaveLength(1));
+      await respond(contextRequests()[0]!.request_id, 49_000);
       await expect(refresh).resolves.toMatchObject({ status: 'applied' });
       await vi.waitFor(() => {
         expect(runtimeEvents).toContainEqual(expect.objectContaining({
@@ -3474,6 +3484,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
           }),
         }));
       });
+      expect(contextRequests()).toHaveLength(1);
     } finally {
       vi.useRealTimers();
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
