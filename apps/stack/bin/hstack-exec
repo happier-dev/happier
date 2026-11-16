@@ -135,13 +135,15 @@ run_remote_ssh_probe() {
 }
 
 score_load_sample() {
-  # Remote placement reuses admission's achievable capacity: non-admitted
-  # memory cannot be recovered by draining its queue, including for pins.
+  # Physical eligibility is the worker broker's own HSTACK_MEMORY_CAPACITY
+  # bound: its admission ceiling (host memory clamped to the jobs slice, field
+  # 25). Achievable memory below the floor is a wait the broker keeps queued,
+  # so it orders candidates instead of refusing them.
   printf '%s\n' "$1" | awk -v heavy="${2-0}" -v minimum_capacity="${3-0}" '
     {
       if ($1 <= 0 || $2 < 0) exit
       if (minimum_capacity > 0 && $8 < minimum_capacity) exit
-      if (minimum_capacity > 0 && $19 ~ /^[0-9]+$/ && $19 < minimum_capacity) exit
+      if (minimum_capacity > 0 && $25 ~ /^[0-9]+$/ && $25 < minimum_capacity) exit
       ratio = $3
       if ($8 > 0) ratio = $7 / $8
       # Linux admission already accounts for services and unused live-owner
@@ -1350,7 +1352,9 @@ queued_memory=unknown
 total_cpu=unknown
 reserved_cpu=unknown
 unreserved_cpu=unknown
-queued_cpu=unknown"
+queued_cpu=unknown
+ceiling_memory=unknown
+expected_start=unknown"
   if [ "$heavyweight_placement_required" -eq 1 ]; then
     probe="$probe
 if [ \"\$platform\" = linux ]; then
@@ -1368,6 +1372,10 @@ if [ \"\$platform\" = linux ]; then
   [ -n \"\$reserved_cpu\" ] || reserved_cpu=unknown
   [ -n \"\$unreserved_cpu\" ] || unreserved_cpu=unknown
   [ -n \"\$queued_cpu\" ] || queued_cpu=unknown
+  ceiling_memory=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"totalMemoryKiB\":\([0-9][0-9]*\).*/\1/p')
+  expected_start=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"expectedStartMs\":\([0-9][0-9]*\).*/\1/p')
+  [ -n \"\$ceiling_memory\" ] || ceiling_memory=unknown
+  [ -n \"\$expected_start\" ] || expected_start=unknown
 fi"
   fi
   probe="$probe
@@ -1378,7 +1386,7 @@ dependency_busy=0"
 dependency_busy=\$(node --input-type=module -e $(quote_remote "$dependency_probe") $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/proc/dependency_refresh.mjs") $(quote_remote "$remote_repo")) || exit 1"
   fi
   probe="$probe
-printf '%s %s %s %s %s %s %s %s\\n' \"\$unreserved_memory\" \"\$dependency_busy\" \"\$achievable_memory\" \"\$queued_memory\" \"\$total_cpu\" \"\$reserved_cpu\" \"\$unreserved_cpu\" \"\$queued_cpu\""
+printf '%s %s %s %s %s %s %s %s %s %s\\n' \"\$unreserved_memory\" \"\$dependency_busy\" \"\$achievable_memory\" \"\$queued_memory\" \"\$total_cpu\" \"\$reserved_cpu\" \"\$unreserved_cpu\" \"\$queued_cpu\" \"\$ceiling_memory\" \"\$expected_start\""
   remote_command="${path_setup}cd -- $(quote_remote "$remote_cwd") && $availability && { ${capability_setup}bash -lc $(quote_remote "$probe") && printf '%s\\n' \"\$runtime_worker_target\"; }"
   set --
   # Only AUTO candidate placement may abandon a slow connect and choose another
@@ -1430,7 +1438,7 @@ read_fresh_cache() {
     [ "$go_toolchain_required" != 1 ] || return 1
     # Old samples and another command's prerequisites cannot prove this
     # command/cwd/runtime contract. Preserve the first 20 telemetry fields.
-    cached_command_key=$(printf '%s\n' "$cached_sample" | awk '{print (NF >= 26 ? $26 : $22)}')
+    cached_command_key=$(printf '%s\n' "$cached_sample" | awk '{print $NF}')
     [ "$cached_command_key" = "$command_key" ] || return 1
     if [ "$heavyweight_placement_required" -eq 1 ] && printf '%s\n' "$cached_sample" | awk '$16 == "linux" && ($17 == "" || $20 == "" || $20 == "unknown") {exit 0} {exit 1}'; then
       return 1
@@ -1445,7 +1453,7 @@ read_fresh_cache() {
     fi
     available=1
   fi
-  printf '%s %s %s %s\n' "$available" "$score" "$capacity" "$(printf '%s\n' "$cached_sample" | awk '{print (NF >= 26 ? $25 : $21)}')"
+  printf '%s %s %s %s\n' "$available" "$score" "$capacity" "$(printf '%s\n' "$cached_sample" | awk '{print $(NF-1)}')"
 }
 
 report_placement_exclusion() {
@@ -1559,7 +1567,7 @@ EOF
     sample_score=$(score_load_sample "$sample" "$heavyweight_placement_required")
     score=$(score_load_sample "$sample" "$heavyweight_placement_required" "$minimum_memory_capacity_kib")
     capacity=$(printf '%s\n' "$sample" | awk '{if ($1 ~ /^[0-9]+$/ && $1 > 0) print $1}')
-    telemetry=$(printf '%s\n' "$sample" | awk -v heavy="$heavyweight_placement_required" '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform,($17==""?$7:$17),($18==""?0:$18),($19==""?"unknown":$19),($20==""?(heavy?0:"unknown"):$20); for(i=21;i<=24;i++) printf " %s", ($i ~ /^[0-9]+$/ ? $i : "unknown"); printf "\n"}')
+    telemetry=$(printf '%s\n' "$sample" | awk -v heavy="$heavyweight_placement_required" '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform,($17==""?$7:$17),($18==""?0:$18),($19==""?"unknown":$19),($20==""?(heavy?0:"unknown"):$20); for(i=21;i<=26;i++) printf " %s", ($i ~ /^[0-9]+$/ ? $i : "unknown"); printf "\n"}')
     telemetry_cache="$cache_dir/$name.telemetry"
     telemetry_temporary=$(create_cache_temporary "$telemetry_cache" 2>/dev/null || true)
     if [ -n "$telemetry_temporary" ]; then
@@ -1772,6 +1780,7 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
   IFS=' ' read -r candidate_number candidate_name candidate_available candidate_score candidate_capacity candidate_cache candidate_native_preference < "$result_path" || continue
   candidate_queue_pressure=0
   candidate_empty_memory=0
+  candidate_expected_start=-
   case "$candidate_available:$candidate_cache" in
     0:prerequisite|0:capability|0:bun-pin|0:go-toolchain|0:dispatch-sync)
       case " ${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} " in
@@ -1843,10 +1852,41 @@ EOF
     # A same-project follower performs its own flush on the leader's worker;
     # source/compiler equality is established there before heavy admission.
     if [ "$candidate_name" = "$typecheck_running_target" ] && [ "$candidate_memory" -ge "$minimum_memory_capacity_kib" ] && [ "$candidate_queued_memory" = 0 ] && [ "$candidate_cpu_fits" = 1 ]; then candidate_native_preference=-2; fi
+    candidate_base_preference=${candidate_native_preference:-0}
     if [ "$heavyweight_placement_required" -eq 1 ] && { [ "$candidate_memory" -lt "$minimum_memory_capacity_kib" ] || [ "$candidate_cpu_fits" != 1 ]; }; then
       # Fitting workers precede busy workers using the existing preference
       # order (native=0, cross-target=1), then compare backlog and load.
       candidate_native_preference=$(( ${candidate_native_preference:-0} + 2 ))
+    fi
+    if [ "$heavyweight_placement_required" -eq 1 ] && [ "$candidate_name" != local ]; then
+      IFS=' ' read -r candidate_platform candidate_achievable candidate_projected <<EOF
+$(awk '{print $16, $19, ($26 == "" ? "-" : $26)}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null)
+EOF
+      if [ "$candidate_platform" = darwin ]; then
+        # A Mac runs no admission broker, so it never "fits now" ahead of the
+        # Linux fleet. It takes test overflow (projected start 0, ahead of every
+        # queued Linux worker) while its run queue fits its cores and its free
+        # memory still holds this floor beside one floor per active dispatch.
+        candidate_native_preference=$((candidate_base_preference + 4))
+        case "$command_class:$policy_kind" in
+          targeted-validation:runtime|full-validation:runtime|validation:runtime)
+            if awk -v floor="$minimum_memory_capacity_kib" -v active="$candidate_active" \
+              '{memory=($17 ~ /^[0-9]+$/ ? $17 : $7); exit !($2 < $1 && memory - active * floor >= floor)}' \
+              "$cache_dir/$candidate_name.telemetry" 2>/dev/null; then
+              candidate_native_preference=$((candidate_base_preference + 2))
+              candidate_queue_pressure=0
+              candidate_expected_start=0
+            fi ;;
+        esac
+      else
+        # Achievable memory below the floor needs memory outside admission to
+        # leave first: order such a worker after those whose brokers can hold it.
+        case "$candidate_achievable" in
+          ''|*[!0-9]*) ;;
+          *) [ "$candidate_achievable" -ge "$minimum_memory_capacity_kib" ] || candidate_native_preference=$((candidate_native_preference + 2)) ;;
+        esac
+        case "$candidate_projected" in ''|*[!0-9]*) ;; *) candidate_expected_start=$candidate_projected ;; esac
+      fi
     fi
     # Preserve affinity/native/fit priority. Within it, backlog precedes the
     # zero-headroom distinction and the finite CPU/active-dispatch score.
@@ -1859,11 +1899,20 @@ EOF
     candidate_heavyweight_active=0
     candidate_effective=$candidate_score
   fi
-  printf '%s %s %s %s %s %s %s %s %s %s %s %s\n' \
+  printf '%s %s %s %s %s %s %s %s %s %s %s %s %s\n' \
     "$candidate_number" "$candidate_name" "$candidate_available" "$candidate_effective" \
     "$candidate_cache" "$candidate_score" "$candidate_active" "$candidate_capacity" \
-    "$candidate_class_active" "${candidate_native_preference:-0}" "$candidate_queue_pressure" "$candidate_empty_memory" >> "$candidates"
+    "$candidate_class_active" "${candidate_native_preference:-0}" "$candidate_queue_pressure" "$candidate_empty_memory" \
+    "$candidate_expected_start" >> "$candidates"
 done
+# Queued workers compete on projected start: each broker's memory x recorded run
+# time ahead over its achievable memory. Use it only when every candidate
+# reports one; otherwise keep the queued-memory waves for all of them.
+if [ "$heavyweight_placement_required" -eq 1 ] \
+  && awk '($3 == 1 || $3 == "busy") && $13 !~ /^[0-9]+$/ {missing = 1} END {exit missing}' "$candidates"; then
+  awk '{ if ($13 ~ /^[0-9]+$/) $11 = $13; print }' "$candidates" > "$candidates.projected" \
+    && mv -f -- "$candidates.projected" "$candidates"
+fi
 
 selected=$(awk '
   function precedes() {

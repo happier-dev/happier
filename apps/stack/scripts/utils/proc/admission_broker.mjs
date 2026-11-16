@@ -26,9 +26,14 @@ const HEAD_RESERVATION_DELAY_MS = 1_344_000;
 // candidate repairs HEAD is only known after its gate). Derived from the admitted
 // command identity, which the canonical client builds from the payload argv; a
 // caller-supplied flag grants nothing.
+// The rolling HEAD typecheck (P03, 2026-11-16) is the commit compiler for every
+// commit packet since per-commit TS compiles moved to it; it shares that rank.
 const HEAD_PRIORITY_RANKS = new Map([
   ['source-bundle apps/stack/scripts/build/build_source_runtime.mjs', 2],
+  // The shared web export every stack's QA browsers consume (one per revision).
+  ['source-web-export apps/stack/scripts/build/build_source_web_ui.mjs', 2],
   ['compilation scripts/workspaces/checkCommitTypeCoherence.mjs', 1],
+  ['compilation scripts/workspaces/commitPackageTypecheck.mjs', 1],
 ]);
 function headPriorityRank(request) {
   const script = typeof request.entry === 'string' ? request.entry.split(' ')[1] : undefined;
@@ -355,6 +360,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       queuedCpuCores: waiting.reduce((sum, item) => sum + (item.slot ? 0 : accountedCpuCores(item, item.floorOptions?.[0]?.workers)), 0),
       unreservedMemoryKiB: Math.max(0, budget.unreservedMemoryKiB - reservation.memoryKiB),
       queuedMemoryKiB: waiting.reduce((sum, item) => sum + (item.slot ? 0 : item.floorKiB), 0),
+      expectedStartMs: projectedArrivalStartMs(now),
       activeCount: slots.size, waitingCount: waiting.filter(item => !item.slot).length, sampleCount };
   }
   const send = (socket, value, snapshot = status()) => { if (!socket.destroyed) socket.write(JSON.stringify({ ...snapshot, ...value }) + '\n'); };
@@ -408,7 +414,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       // One shared status projection keeps a queue advance proportional to
       // its waiters instead of rescanning the queue for every notice.
       snapshot ??= status();
-      send(item.socket, { kind: 'queued', queuePosition, countAhead: index }, snapshot);
+      // Name the floor this broker reserves (identity peak), not the client's class floor.
+      send(item.socket, { kind: 'queued', queuePosition, countAhead: index, floorKiB: item.floorOptions?.at(-1).floorKiB ?? item.floorKiB }, snapshot);
     }
   }
   async function observe() {
@@ -556,6 +563,10 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   async function release(slot) {
     if (!releaseReservation(slot)) return;
     slot.peer?.destroy();
+    // A closed slot connection means its holder is gone. A killed holder never
+    // unlinks its listener, so remove the path as restart recovery already does
+    // for absent listeners; a filesystem census then shows only held slots.
+    try { unlinkSync(slot.address); } catch (error) { if (error.code !== 'ENOENT') recordFailure(error); }
     // Reuse event/catch-up observations only. These are sampled lower bounds,
     // not kernel lifetime peaks or proof that the payload succeeded. Recovered
     // slots lack a class and full lifetime, so they cannot calibrate a floor.
@@ -577,6 +588,21 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   async function releaseDecision() {
     await observe();
     await drain();
+  }
+  /** AUTO placement compares hosts by when a new arrival would start: the
+   * memory x recorded p99 run time ahead of it (admitted slots' remaining time
+   * plus every waiter's floor x p99) spread over the achievable memory. A slot
+   * or waiter without a recorded p99 takes the mean recorded p99; with
+   * none recorded, or no achievable memory, there is no projection (null). */
+  function projectedArrivalStartMs(now) {
+    const ahead = [...[...slots.values()].map(slot => ({ floorKiB: slot.floorKiB, p99Ms: slot.p99DurationMs,
+      remainingMs: slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt) ? Math.max(0, slot.admittedAt + slot.p99DurationMs - now) : undefined })),
+    ...waiting.filter(item => !item.slot).map(item => ({ floorKiB: item.floorOptions?.at(-1).floorKiB ?? item.floorKiB,
+      p99Ms: item.p99DurationMs, remainingMs: item.p99DurationMs > 0 ? item.p99DurationMs : undefined }))];
+    const recorded = ahead.filter(entry => entry.remainingMs !== undefined);
+    if (!(sample.achievableMemoryKiB > 0) || (ahead.length && !recorded.length)) return ahead.length ? null : 0;
+    const meanMs = recorded.reduce((sum, entry) => sum + entry.p99Ms, 0) / recorded.length;
+    return Math.ceil(ahead.reduce((sum, entry) => sum + entry.floorKiB * (entry.remainingMs ?? meanMs), 0) / sample.achievableMemoryKiB);
   }
   /** EASY backfill projection: the earliest time the head's minimum floor fits
    * if admitted slots release at their recorded p99 run time. A slot without a

@@ -2122,6 +2122,80 @@ test('AUTO sends small suites to a free peer when the broker head reserves the o
     'a small suite must not spend preparation on the head-reserved host');
 });
 
+// P03-ADMISSION-PLACEMENT 2026-11-16. Probe fields 17-26: unreserved, dependency
+// refresh, achievable, queued, total/reserved/unreserved/queued CPU, broker
+// ceiling (its HSTACK_MEMORY_CAPACITY bound) and projected start (ms).
+const placementSample = ({ platform = 'linux', cores = 8, load = 0.1, availableKiB = 0, totalKiB = 33554432, unreservedKiB = 0,
+  achievableKiB = 'unknown', queuedKiB = 0, ceilingKiB = 'unknown', expectedStartMs = 'unknown' }) =>
+  `${cores} ${load} ${availableKiB / totalKiB} 22000000 20 0 ${availableKiB} ${totalKiB} 0 0 0 0 0 0 0 ${platform} ${unreservedKiB} 0 ${achievableKiB} ${queuedKiB} ${cores} 0 ${cores} 0 ${ceilingKiB} ${expectedStartMs}`;
+
+async function placementFleet(t, samples) {
+  const fixture = await memoryRoutingFixture(t);
+  await executable(join(fixture.binDir, 'date'), '#!/bin/sh\ncase "$*" in +%s) printf "1700000000\\n" ;; *) exec /bin/date "$@" ;; esac\n');
+  const names = Object.keys(samples);
+  fixture.config.targets = names.map(name => ({ ...fixture.config.targets[0], name, ssh: `${name}-host` }));
+  fixture.config.commandExecution.targets = names;
+  await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+  await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
+  await executable(join(fixture.binDir, 'ssh'), `#!/bin/sh
+case "$*" in
+  *getconf*) case "$*" in
+${names.map(name => `    *${name}-host*) printf '%s\\n' '${samples[name]}' ;;`).join('\n')}
+  esac ;;
+  *"&& command -v "*|*-O\\ check*|*-MNf*) exit 0 ;;
+  *) for name in ${names.join(' ')}; do case "$*" in *"$name-host"*) printf '%s\\n' "$name" >> "$DISPATCHES"; printf 'remote:%s\\n' "$name"; exit 0 ;; esac; done ;;
+esac
+`);
+  return fixture;
+}
+
+const gibKiB = gib => Math.round(gib * 1024 * 1024);
+
+test('AUTO excludes only workers whose broker ceiling cannot hold the floor; low achievable memory queues', { skip: process.platform !== 'linux' }, async t => {
+  // Reported 2026-11-16: nl1's achievable memory dipped below a UI compiler
+  // floor and placement refused it, although its broker would admit it later.
+  const fixture = await placementFleet(t, {
+    // Host totals fit every UI compiler floor; only the admission ceiling differs.
+    'windows2-linux': placementSample({ totalKiB: gibKiB(25.4), availableKiB: gibKiB(8), achievableKiB: gibKiB(8.5), ceilingKiB: gibKiB(9), queuedKiB: gibKiB(10), expectedStartMs: 60_000 }),
+    nl1: placementSample({ totalKiB: gibKiB(125), availableKiB: gibKiB(9), achievableKiB: gibKiB(9.5), ceilingKiB: gibKiB(100.2), queuedKiB: gibKiB(300), expectedStartMs: 3_600_000 }),
+  });
+  const result = spawnSync('/bin/sh', [launcher, '--', 'node', 'scripts/workspaces/runTypeScriptCli.mjs', '--noEmit', '-p', 'apps/ui/tsconfig.json'], fixture.invocation);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'remote:nl1\n', 'a host that can hold the floor once its memory recovers waits; it is not refused');
+  assert.match(result.stderr, /^HSTACK_PLACEMENT_EXCLUDED target=windows2-linux reason=memory-capacity class=compilation-ui\S*$/m);
+});
+
+test('AUTO ranks waiting workers by projected start, not by memory waves', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await placementFleet(t, {
+    // Few waves of long jobs versus more waves of short ones.
+    nl3: placementSample({ achievableKiB: gibKiB(16), ceilingKiB: gibKiB(200), queuedKiB: gibKiB(8), expectedStartMs: 900_000 }),
+    nl1: placementSample({ achievableKiB: gibKiB(16), ceilingKiB: gibKiB(100), queuedKiB: gibKiB(32), expectedStartMs: 60_000 }),
+  });
+  const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'remote:nl1\n', 'the shortest projected start wins');
+});
+
+test('AUTO sends test overflow to a Mac only while every Linux worker would queue, and keeps compilers on Linux', { skip: process.platform !== 'linux' }, async t => {
+  const busy = placementSample({ achievableKiB: gibKiB(16), ceilingKiB: gibKiB(100), queuedKiB: gibKiB(32), expectedStartMs: 600_000 });
+  const mac = placementSample({ platform: 'darwin', cores: 18, load: 4, totalKiB: gibKiB(128), availableKiB: gibKiB(60), unreservedKiB: gibKiB(60) });
+  const fixture = await placementFleet(t, { nl1: busy, 'mac-host': mac });
+  const test = () => spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+  const overflow = test();
+  assert.equal(overflow.status, 0, overflow.stderr);
+  assert.equal(overflow.stdout, 'remote:mac-host\n', 'a queued Linux fleet overflows tests to the Mac');
+  const compiler = spawnSync('/bin/sh', [launcher, '--', 'node', 'scripts/workspaces/runTypeScriptCli.mjs', '--noEmit', '-p', 'apps/ui/tsconfig.json'], fixture.invocation);
+  assert.equal(compiler.status, 0, compiler.stderr);
+  assert.equal(compiler.stdout, 'remote:nl1\n', 'compilers are not Mac overflow');
+  const fitting = await placementFleet(t, {
+    nl1: placementSample({ achievableKiB: gibKiB(16), ceilingKiB: gibKiB(100), unreservedKiB: gibKiB(8), expectedStartMs: 0 }), 'mac-host': mac });
+  const linux = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fitting.invocation);
+  assert.equal(linux.stdout, 'remote:nl1\n', 'a Linux worker that can start now precedes the Mac');
+  const loaded = await placementFleet(t, { nl1: busy, 'mac-host': placementSample({ platform: 'darwin', cores: 18, load: 244, totalKiB: gibKiB(128), availableKiB: gibKiB(60), unreservedKiB: gibKiB(60) }) });
+  assert.equal(spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], loaded.invocation).stdout, 'remote:nl1\n',
+    'a Mac whose run queue exceeds its cores takes no overflow');
+});
+
 for (const dispatcher of ['native', 'javascript']) {
   test(`AUTO ${dispatcher} ranks preparation-only demand by broker headroom before dispatch`, async t => {
     const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 80 });

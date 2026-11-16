@@ -478,9 +478,16 @@ const priorityIdentity = (root, kind) => ({
   commit: { className: 'compilation', component: '.', entry: `node ${root}/scripts/workspaces/checkCommitTypeCoherence.mjs` },
   producer: { className: 'source-bundle', component: '.', entry: `node ${root}/apps/stack/scripts/build/build_source_runtime.mjs` },
   claimed: { className: 'compilation', component: '.', entry: `node ${root}/scripts/run-tests.mjs`, headPriority: true },
+  // P03 rolling HEAD typecheck: admitted from its warm worktree, outside the repository.
+  // The shared web export every QA browser consumes (repo-dev producer, 2026-11-16).
+  export: { className: 'source-web-export', component: '.', entry: `node ${root}/apps/stack/scripts/build/build_source_web_ui.mjs` },
+  rolling: { className: 'compilation', component: '../../cache/commit-typecheck/wt',
+    entry: `node ${root}/scripts/workspaces/commitPackageTypecheck.mjs` },
 })[kind];
 for (const [scenario, earlier, later, laterFirst] of [
   ['commit compiler before an earlier ordinary job', 'ordinary', 'commit', true],
+  ['rolling HEAD typecheck before an earlier ordinary job', 'ordinary', 'rolling', true],
+  ['shared web export before an earlier commit compiler', 'commit', 'export', true],
   ['runtime producer before an earlier ordinary job', 'ordinary', 'producer', true],
   ['runtime producer before an earlier commit compiler', 'commit', 'producer', true],
   ['an ordinary caller cannot claim priority', 'ordinary', 'claimed', false],
@@ -1523,6 +1530,64 @@ test('broker restart recovers live kernel slots and closes release them without 
   const next = await queued.admit();
   assert.equal(replacement.status().reservedMemoryKiB, 30);
   await next.release();
+});
+
+test('a killed holder releases its slot and leaves no slot socket file behind', linux, async t => {
+  const { root, broker } = await fixture(t);
+  const client = await acquire(root, 60, t);
+  const reserved = await client.next();
+  assert.equal(reserved.kind, 'reserved');
+  // OS boundary: a SIGKILLed holder never closes (or unlinks) its listener.
+  const holder = spawn(process.execPath, ['--input-type=module', '-e',
+    'import { createServer } from "node:net"; createServer().listen(process.argv[1], () => process.stdout.write("listening\\n")); setInterval(() => {}, 1 << 30);',
+    reserved.slotAddress], { stdio: ['ignore', 'pipe', 'ignore'] });
+  t.after(() => holder.kill('SIGKILL'));
+  await once(holder.stdout, 'data');
+  client.socket.write(JSON.stringify({ kind: 'ready' }) + '\n');
+  assert.equal((await client.next()).kind, 'admitted');
+  holder.kill('SIGKILL');
+  await once(holder, 'exit');
+  while (broker.status().activeCount !== 0) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(broker.status().reservedMemoryKiB, 0);
+  await assert.rejects(lstat(reserved.slotAddress), { code: 'ENOENT' },
+    'a released slot leaves no socket file that a filesystem census could count as held');
+});
+
+test('status projects a new arrival\'s start from memory × recorded run time ahead over achievable capacity', linux, async t => {
+  let now = 1_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const { root } = await fixture(t);
+  const durationClass = 'targeted-validation';
+  const held = await (await acquire(root, 60, t, { durationClass, p99DurationMs: 1_000 })).admit();
+  await acquire(root, 50, t, { durationClass, p99DurationMs: 2_000 });
+  await acquire(root, 50, t);
+  const sample = await requestAdmissionSample(root);
+  // Slot: 60 × 1000 remaining. Waiters: 50 × 2000, and 50 × the mean recorded
+  // p99 (1500) for the waiter without one. Achievable capacity is 100.
+  assert.equal(sample.expectedStartMs, (60 * 1_000 + 50 * 2_000 + 50 * 1_500) / 100);
+  now += 400;
+  assert.equal((await requestAdmissionSample(root)).expectedStartMs, (60 * 600 + 50 * 2_000 + 50 * 1_500) / 100,
+    'an admitted slot contributes only its remaining recorded run time; the fill stays the mean recorded p99');
+  await held.release();
+});
+
+test('queued notices report the floor the broker reserves, not the client class floor', linux, async t => {
+  const gib = 1024 * 1024;
+  const notices = [];
+  const nativeWrite = Socket.prototype.write;
+  t.mock.method(Socket.prototype, 'write', function (chunk, ...args) {
+    if (typeof chunk === 'string' && chunk.startsWith('{') && JSON.parse(chunk).kind === 'queued') notices.push(JSON.parse(chunk));
+    return nativeWrite.call(this, chunk, ...args);
+  });
+  const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 0, totalMemoryKiB: 100 * gib }) });
+  const identity = { className: 'compilation', component: '.', entry: 'node scripts/workspaces/commitPackageTypecheck.mjs', projects: ['.'] };
+  await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
+    [JSON.stringify(['compilation', '.', identity.entry, ['.']])]: Math.round(16.9 * gib) }));
+  await acquire(root, 38 * gib, t, identity);
+  const barrier = await request(root, { kind: 'sample' });
+  await barrier.next();
+  barrier.socket.destroy();
+  assert.equal(notices.at(-1)?.floorKiB, 17 * gib, 'the recorded 16.9 GiB peak rounds to a 17 GiB reservation');
 });
 
 test('restart discards crash-stale slot sockets while preserving live slots and unrelated files', linux, async t => {
