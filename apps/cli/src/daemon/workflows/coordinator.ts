@@ -1733,6 +1733,21 @@ async function executeWaitBlock(
   if (row.lifecycle !== 'completed') throw new WorkflowRuntimeInterruption();
 }
 
+async function requireWorkflowWorkspace(
+  resolution: WorkflowWorkspaceResolutionV1,
+  row: WorkflowCoordinatorInvocation,
+  context: ExecutionContext,
+): Promise<WorkflowWorkspaceDescriptorV1> {
+  if (!resolution.ok) {
+    // Workflow frames publish through their container lifecycle owner.
+    if (row.blockKind !== 'workflow') {
+      await context.deps.store.commitFact({ key: row.key, lifecycle: 'needs_attention', reason: resolution.code });
+    }
+    throw new WorkflowLeafFailure('interrupted', resolution.code);
+  }
+  return resolution.workspace;
+}
+
 async function resolveLeafWorkspace(
   leaf: Pick<WorkflowStep, 'id' | 'execution'>,
   row: WorkflowCoordinatorInvocation,
@@ -1748,18 +1763,18 @@ async function resolveLeafWorkspace(
     producerBinding: createWorkflowProducerBinding({ runId: context.runId, store: context.deps.store, frame }),
     defaultWorkspaceOwner: await context.deps.store.readByLogicalInvocation(context.rootOwnerKey),
     ...(context.projectWorkspace ? { projectWorkspace: context.projectWorkspace } : {}) });
-  if (!resolution.ok) throw new WorkflowLeafFailure('failed', resolution.code);
+  const workspace = await requireWorkflowWorkspace(resolution, row, context);
   if (row.blockKind === 'workflow') {
     const current = await context.deps.store.read(row.key);
     if (current?.container?.kind !== 'body') throw new WorkflowRuntimeInterruption();
     await context.deps.store.commitFact({ key: row.key, lifecycle: current.lifecycle,
       container: { ...current.container, frameProjectWorkspace: {
-        ...current.container.frameProjectWorkspace, descriptor: resolution.workspace,
+        ...current.container.frameProjectWorkspace, descriptor: workspace,
       } } });
   } else {
-    await context.deps.store.commitFact({ key: row.key, lifecycle: row.lifecycle, workspace: { descriptor: resolution.workspace } });
+    await context.deps.store.commitFact({ key: row.key, lifecycle: row.lifecycle, workspace: { descriptor: workspace } });
   }
-  return resolution.workspace;
+  return workspace;
 }
 
 async function executePublishedLeaf(
@@ -2488,10 +2503,7 @@ async function executeStepBlock(
         : {}),
     });
     if (!rejoining) assertWorkflowAbortSignal(context);
-    if (!workspaceResolution.ok) {
-      await context.deps.store.commitFact({ key, lifecycle: 'needs_attention', reason: workspaceResolution.code });
-      throw new WorkflowLeafFailure('interrupted', workspaceResolution.code);
-    }
+    const resolvedWorkspace = await requireWorkflowWorkspace(workspaceResolution, admitted, context);
     let execution: WorkflowStepExecutionResult;
     if (!admitted.execution && !rejoining) {
       assertWorkflowAbortSignal(context);
@@ -2518,7 +2530,7 @@ async function executeStepBlock(
       execution: selectedExecution,
       ...(selectedLeaf.participant ? { participant: selectedLeaf.participant } : {}),
       executionTarget,
-      workspace: workspaceResolution.workspace,
+      workspace: resolvedWorkspace,
       ...(preparedStep?.preparedStep !== undefined
         ? { preparedStep: preparedStep.preparedStep }
         : {}),
@@ -2639,7 +2651,7 @@ async function executeStepBlock(
             throw new Error('workflow_invocation_fact_conflict');
           }
           if (!approvalHold && incoming.actionId !== (executionTarget.kind === 'session' ? 'session.spawn_new' : 'execution.run.start')
-            || incoming.awaitedOperations?.some(operation => operation.machineId !== workspaceResolution.workspace.machineId)) {
+            || incoming.awaitedOperations?.some(operation => operation.machineId !== resolvedWorkspace.machineId)) {
             throw new Error('workflow_invocation_fact_conflict');
           }
           const current = await context.deps.store.read(key);

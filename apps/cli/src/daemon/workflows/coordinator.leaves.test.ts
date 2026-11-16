@@ -9,7 +9,7 @@ import { ActionIdSchema, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, ExecutionRunResu
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import type { WorkflowActionLeafV1, WorkflowDefinitionV1, WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows';
-import { WORKFLOW_CANCEL_REQUESTED_ABORT_REASON, WorkflowRuntimeInterruption } from './coordinator';
+import { WORKFLOW_CANCEL_REQUESTED_ABORT_REASON, WorkflowRuntimeInterruption, workflowInvocationKey } from './coordinator';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
@@ -72,6 +72,43 @@ const goal: WorkflowActionLeafV1 = { kind: 'action', id: 'goal', actionId: 'sess
   input: { sessionId: { kind: 'origin_session_id' }, status: { kind: 'literal', value: 'complete' } } };
 
 describe('workflow Action leaves', () => {
+  it('retains a missing recorded workspace as recoverable before the next Action effect', async () => {
+    const runId = 'missing-action-workspace';
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const rootKey = workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 });
+    await store.ensureIntent({ key: rootKey, recordId: 'root', runId, blockId: '$root', blockKind: 'root',
+      path: { blockId: '$root', scope: [] }, attempt: 0, memberOrdinal: '0', acceptedAtMs: 0, lifecycle: 'running' });
+    const recorded = { descriptor: { ...workspace, directory: '/owned-worktree', checkoutRootPath: '/owned-worktree',
+      checkout: { kind: 'git_worktree' as const, branchName: 'owned' } }, creationIntent: {
+      kind: 'git_worktree' as const, sourceDirectory: '/repo', baseRef: 'a'.repeat(40), displayName: 'owned', branchMode: 'new' as const } };
+    await store.commitFact({ key: rootKey, lifecycle: 'running', workspace: recorded });
+    const first: WorkflowActionLeafV1 = { kind: 'action', id: 'first', actionId: 'machines.list', input: {} };
+    const second: WorkflowActionLeafV1 = { ...first, id: 'second' };
+    let present = true;
+    let effects = 0;
+    const executor = createTestActionExecutor({ machinesList: async () => {
+      effects++;
+      present = false;
+      return { items: [] };
+    } });
+    const coordinator = createWorkflowCoordinator({ store,
+      executeStep: async () => { throw new Error('Actions must not start an Agent'); },
+      resolveWorkspace: createCoordinatorWorkspaceResolver({ store, projectWorkspace: workspace,
+        scm: { verifyRecordedWorkspace: async () => present ? 'available' : 'missing' } }),
+      action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true }),
+        observeRun: async () => { throw new Error('Inventory has no awaited execution'); } } });
+    const input = { runId, definition: { ...definition([first, second]), defaults: {
+      workspace: { kind: 'new_worktree' as const, source: { kind: 'original' as const } } } },
+      inputs: {}, executionTarget, authorization, materializedLeaves: [frozen(first), frozen(second)] };
+    expect(await coordinator.run(input)).toEqual({ state: 'interrupted', reason: 'workspace_unavailable' });
+    expect(store.list().find(row => row.blockId === 'second')).toMatchObject({ lifecycle: 'needs_attention',
+      reason: 'workspace_unavailable', attempt: 0 });
+    expect(store.list().find(row => row.blockId === 'second')?.execution).toBeUndefined();
+    expect(store.list().find(row => row.blockId === 'first')).toMatchObject({ lifecycle: 'completed', result: { items: [] } });
+    expect(store.read(rootKey)?.workspace).toEqual(recorded);
+    expect(effects).toBe(1);
+  });
+
   it('retains a failed read-only Action as retryable failure rather than an unknown effect', async () => {
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'machines', actionId: 'machines.list', input: {} };
     const store = createInMemoryWorkflowCoordinatorStore();
