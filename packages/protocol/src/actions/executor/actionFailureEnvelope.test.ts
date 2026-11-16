@@ -1,9 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import { RpcError } from '../../rpc/errors.js';
-import { readActionFailureEnvelope, readMachineActionRpcResult } from './actionFailureEnvelope.js';
+import { projectConfirmedActionHttpRefusal, readActionFailureEnvelope, readMachineActionRpcResult } from './actionFailureEnvelope.js';
 import { normalizeActionExecutorThrownError } from './resultProjection.js';
 
 describe('Machine RPC refusal admission before Action output validation', () => {
+  it.each([
+    [503, 'database_transaction_conflict_exhausted', false],
+    [503, 'database_transaction_timeout', undefined],
+    [503, 'database_connection_unavailable', undefined],
+    [500, 'database_transaction_conflict_exhausted', undefined],
+    [503, 'unrecognized_failure', undefined],
+  ] as const)('preserves the exhausted transaction refusal without declaring arbitrary HTTP failures effect-free (%s %s)', (status, errorCode, effectAttempted) => {
+    const result = projectConfirmedActionHttpRefusal({ ok: false, errorCode, error: errorCode }, status);
+    expect('effectAttempted' in result ? result.effectAttempted : undefined).toBe(effectAttempted);
+  });
+  it('requires the Home rollback witness for a timeout and preserves existing effect evidence', () => {
+    const failure = { ok: false, errorCode: 'database_transaction_timeout', error: 'database_transaction_timeout' };
+    expect(projectConfirmedActionHttpRefusal(failure, 503, {
+      error: failure.errorCode, statusCode: 503, transactionOutcome: 'rolled_back',
+    })).toMatchObject({ effectAttempted: false, failureCause: { phase: 'home.database.transaction',
+      errorClass: 'HttpStatusError', errorCode: failure.errorCode, httpStatus: 503 } });
+    expect(projectConfirmedActionHttpRefusal({ ...failure, effectAttempted: true }, 503, {
+      error: failure.errorCode, statusCode: 503, transactionOutcome: 'rolled_back',
+    })).toMatchObject({ effectAttempted: true });
+  });
+  it('retains an Artifact wrapper code without treating connection loss as rollback', () => {
+    const failure = { ok: false, errorCode: 'artifact_read_unavailable', error: 'artifact_read_unavailable',
+      failureCause: { phase: 'artifacts.read', errorClass: 'HttpStatusError', errorCode: 'database_connection_unavailable', httpStatus: 503 } };
+    expect(projectConfirmedActionHttpRefusal(failure, 503)).toMatchObject({
+      errorCode: 'artifact_read_unavailable',
+      failureCause: { ...failure.failureCause, phase: 'home.database.transaction' } });
+    expect(projectConfirmedActionHttpRefusal(failure, 503)).not.toHaveProperty('effectAttempted');
+    expect(projectConfirmedActionHttpRefusal({ ...failure, effectAttempted: true }, 503))
+      .toMatchObject({ effectAttempted: true });
+  });
   it('retains the request reference when classifying an Action refusal', () => {
     expect(readActionFailureEnvelope({ ok: false, errorCode: 'credential_scope_denied',
       error: 'Request refused', requestId: 'sync-refusal-403' })).toMatchObject({

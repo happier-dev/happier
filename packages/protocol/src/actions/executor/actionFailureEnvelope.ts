@@ -4,6 +4,7 @@ import type { ActionExecuteFailure } from './types.js';
 import { RpcError } from '../../rpc/errors.js';
 import { readActionFailureCauseV1 } from '../actionExecutionResult.js';
 import { carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
+import { readHomeDomainConfirmedRollbackV1 } from '../homeDomainHttpBinding.js';
 
 /** A received client refusal proves this write did not admit new work; a lost reply does not. */
 export function isConfirmedActionWriteRefusal(error: unknown): boolean {
@@ -14,9 +15,24 @@ export function isConfirmedActionWriteRefusal(error: unknown): boolean {
 }
 
 /** Preserve producer evidence; only a confirmed HTTP refusal supplies a missing no-effect fact. */
-export function projectConfirmedActionHttpRefusal<T>(result: T, status: number): T {
-  return result && typeof result === 'object' && 'ok' in result && result.ok === false
-    && !('effectAttempted' in result) && isConfirmedActionWriteRefusal({ status })
+export function projectConfirmedActionHttpRefusal<T>(result: T, status: number, payload?: unknown): T {
+  if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== false) return result;
+  const record = result as Readonly<Record<string, unknown>>;
+  const body = payload && typeof payload === 'object' ? payload as Readonly<Record<string, unknown>> : undefined;
+  const priorCause = record.failureCause === undefined ? undefined : readActionFailureCauseV1(record.failureCause);
+  const code = body?.error ?? priorCause?.errorCode ?? record.errorCode;
+  if (status === 503 && (code === 'database_transaction_conflict_exhausted'
+    || code === 'database_transaction_timeout' || code === 'database_connection_unavailable')) {
+    const rollback = readHomeDomainConfirmedRollbackV1(status, payload ?? { error: code, statusCode: status });
+    const replaceFallback = record.errorCode === 'outcome_unknown' || record.errorCode === 'invalid_action_output'
+      || record.errorCode === 'action_failed';
+    return { ...result,
+      ...(replaceFallback ? { errorCode: code, error: code } : {}),
+      failureCause: { phase: 'home.database.transaction', errorClass: 'HttpStatusError', errorCode: code, httpStatus: status },
+      ...(!('effectAttempted' in result) && rollback ? { effectAttempted: false } : {}),
+    };
+  }
+  return !('effectAttempted' in result) && isConfirmedActionWriteRefusal({ status })
     ? { ...result, effectAttempted: false } : result;
 }
 
