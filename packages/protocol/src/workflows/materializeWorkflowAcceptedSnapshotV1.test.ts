@@ -85,7 +85,7 @@ it.each(['happier.agent.codex/codex', 'external.review/assistant'])('retains sel
   } });
   const result = await materialize({ definition: { ...definition, defaults: {}, blocks: [{ kind: 'step', id: 'review',
     document: { text: 'fixture', references: [], attachments: [] },
-    execution: { engine: { role: 'custom' }, connectedServices } }] },
+    execution: { roleId: 'custom', connectedServices } }] },
     roleSelection: { settingsRoles: { custom: { name: 'Reviewer', instructions: '',
       engine: { agentTargetKey: 'happier.agent.claude/claude' }, runsAs: { kind: 'session' },
       workspaceWrites: 'deny', secondOpinion: 'off', enabled: true } } },
@@ -172,7 +172,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       'external.auth/subscription': { source: 'team_resource', resourceId: 'team-pool', deliveryMode: 'direct',
         disclosedMember: { service: { pluginId: 'external.auth', localId: 'subscription' }, accountId: 'member' } },
     } });
-    await expect(materialize({ definition: { ...definition, defaults: { engine: { agentTarget } } },
+    await expect(materialize({ definition: { ...definition, defaults: { agentTarget } },
       roleSelection: { defaultEngine: { agentTargetKey: 'agent:happier.agent.codex/codex' }, defaultConnectedServices: connectedServices },
     })).resolves.toMatchObject({ ok: false, error: { code: 'execution_run_child_choice_required', blockId: 'work' } });
   });
@@ -317,7 +317,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
   });
 
   it('freezes native continuation and launch environment into the accepted leaf', async () => {
-    const spawn = { conversation: { kind: 'fresh' }, launchEnvironment: { values: { OPENAI_API_KEY: 'retained-value' }, unset: [] },
+    const spawn = { conversation: { kind: 'fresh' }, environmentVariables: { OPENAI_API_KEY: 'retained-value' },
       providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } };
     const result = await materialize({ definition: { ...definition, defaults: { ...definition.defaults, ...spawn } } });
     expect(result).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ selection: spawn }] } });
@@ -326,7 +326,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
   });
   it('checks the existing Agent-start environment policy for a Workflow launch environment', async () => {
     const result = await materialize({ definition: { ...definition, defaults: { ...definition.defaults,
-      conversation: { kind: 'fresh' }, launchEnvironment: { values: { TOKEN: 'retained-value' }, unset: [] } } },
+      conversation: { kind: 'fresh' }, environmentVariables: { TOKEN: 'retained-value' } } },
       admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(
         { ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowEnvironmentVariables: false },
         { kind: 'workflow_run_leaf', leaf }, policyContext,
@@ -358,7 +358,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       selection: { secretReferenceOverlay } }] } });
   });
   it.each([
-    { launchEnvironment: { values: { TOKEN: 'retained-value' }, unset: [] } },
+    { environmentVariables: { TOKEN: 'retained-value' } },
     { providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } },
     { transcriptStorage: 'direct' },
     ...(['title', 'organizationPlacement', 'primaryTeamId', 'memoryEnabled', 'teamCredentialBindings'] as const)
@@ -368,15 +368,10 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       context: { ...context, executionTarget: { kind: 'detached_run' } },
     })).toMatchObject({ ok: false, error: { code: 'target_unavailable', blockId: 'work' } });
   });
-  it('refuses launch environment removal that the Workflow Session spawn owner cannot apply', async () => {
-    expect(await materialize({ definition: { ...definition, defaults: { ...definition.defaults,
-      launchEnvironment: { values: {}, unset: ['TOKEN'] } } },
-    })).toMatchObject({ ok: false, error: { code: 'invalid_input' } });
-  });
   it.each(['existing_session', 'origin_session', 'shared_run'] as const)('admits existing Session restart intent while refusing other reused launch configuration (%s)', async (kind) => {
     const conversation = kind === 'existing_session' ? { kind, sessionId: 'origin', machineId: 'machine' } : { kind };
     for (const spawn of [
-      { launchEnvironment: { values: { TOKEN: 'retained-value' }, unset: [] } },
+      { environmentVariables: { TOKEN: 'retained-value' } },
       { providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } },
     ]) {
       const result = await materialize({ definition: { ...definition, blocks: [{ ...definition.blocks[0], execution: { conversation, ...spawn } }] },
@@ -401,14 +396,13 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
   it('keeps launch defaults on Agent leaves without projecting them onto a human Wait', async () => {
     const result = await materialize({ definition: { ...definition,
       defaults: { ...definition.defaults, conversation: { kind: 'fresh' },
-        launchEnvironment: { values: { TOKEN: 'retained-value' }, unset: [] } },
+        environmentVariables: { TOKEN: 'retained-value' } },
       blocks: [definition.blocks[0], { kind: 'wait', id: 'approve', document: { text: 'Approve', references: [], attachments: [] } }],
     } });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.snapshot.materializedLeaves[0]?.selection.launchEnvironment)
-      .toEqual({ values: { TOKEN: 'retained-value' }, unset: [] });
-    expect(result.snapshot.materializedLeaves[1]?.selection.launchEnvironment).toBeUndefined();
+    expect(result.snapshot.materializedLeaves[0]?.selection.environmentVariables).toEqual({ TOKEN: 'retained-value' });
+    expect(result.snapshot.materializedLeaves[1]?.selection.environmentVariables).toBeUndefined();
     expect(validateWorkflowDefinition(result.snapshot.definition).valid).toBe(true);
   });
   it.each(['origin_session', 'existing_session', 'fresh'] as const)('charges start capacity only for a new Agent (%s)', async kind => {
@@ -443,7 +437,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       runsAs: { kind: 'background_run' as const, intent: 'delegate' as const },
       engine: { agentTargetKey: 'happier.agent.codex/codex' }, workspaceWrites: 'deny' as const,
       enabled: true, secondOpinion: 'off' as const };
-    const authored = { ...definition, defaults: { engine: { role: 'frozen_builder' } }, blocks: [
+    const authored = { ...definition, defaults: { roleId: 'frozen_builder' }, blocks: [
       definition.blocks[0], { kind: 'workflow', id: 'nested', workflowRef: 'builtin:child', input: {} },
     ] };
     const original = await materialize({ definition: authored, roleSelection: { settingsRoles: { frozen_builder: role } },
@@ -477,13 +471,13 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     }) };
     const original = await materialize({ definition: authored, context: { ...context, inputs: { request: 'Before' } }, effects });
     if (!original.ok) throw new Error(original.error.code);
-    const override = { sourceKey: '$root', blockId: 'work', engine: { agentTarget: { kind: 'agent' as const,
-      identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } };
+    const override = { sourceKey: '$root', blockId: 'work', agentTarget: { kind: 'agent' as const,
+      identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
     const replayInput = { definition: original.snapshot.definition, context: { ...context, inputs: { request: 'After' } },
       replay: { snapshot: original.snapshot, agentOverride: override }, effects };
     expect(await materialize(replayInput)).toMatchObject({ ok: true, snapshot: {
       inputs: { request: 'After' }, materializedLeaves: [
-        { blockId: 'work', selection: { agentTarget: override.engine.agentTarget } },
+        { blockId: 'work', selection: { agentTarget: override.agentTarget } },
         { blockId: 'record', actionInput: { objective: 'After' } },
       ],
     } });
@@ -504,7 +498,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     if (!original.ok) throw new Error(original.error.code);
     const explicit = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
     const replay = await materialize({ replay: { snapshot: original.snapshot,
-      agentOverride: { sourceKey: '$root', blockId: 'follow', engine: { role: 'other_agent' } } },
+      agentOverride: { sourceKey: '$root', blockId: 'follow', roleId: 'other_agent' } },
       roleSelection: { settingsRoles: { other_agent: { name: 'Other', instructions: 'Other role',
         runsAs: { kind: 'background_run', intent: 'delegate' }, engine: { agentTargetKey: 'happier.agent.claude/claude' },
         profileId: 'new-profile', workspaceWrites: 'allow', secondOpinion: 'off', enabled: true } } } });
@@ -522,7 +516,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       { kind: 'workflow', id: 'nested', workflowRef: 'builtin:child', input: {} },
     ] }, effects: { resolveTargetAvailability: available,
       readWorkflowDefinition: async () => ({ sourceKey: 'builtin:child', definition: { ...definition, blocks: [
-        { kind: 'action', id: 'review', actionId: 'review.start', execution: { engine: { agentTarget: explicit } },
+        { kind: 'action', id: 'review', actionId: 'review.start', execution: { agentTarget: explicit },
           input: { instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex'] } } },
       ] } }), readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }),
     } });
@@ -764,7 +758,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
   it('freezes an explicit Engine arm into the actual native Action invocation input', async () => {
     const explicit = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
     const result = await materialize({ definition: { ...definition, blocks: [{ kind: 'action', id: 'review', actionId: 'review.start',
-      execution: { engine: { agentTarget: explicit } },
+      execution: { agentTarget: explicit },
       input: { instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex'] }, modelId: { kind: 'literal', value: 'native-model' } } }] },
       effects: { resolveTargetAvailability: available, readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) } });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, agentStartLeaves: [{ engine: { agentTargetKey: 'agent:happier.agent.claude/claude' } }],
@@ -840,7 +834,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
   it('honors an authored profile clear even when the resolved role profile is unavailable', async () => {
     const role = { name: 'Custom', instructions: 'Work', engine: { agentTargetKey: 'agent:happier.agent.codex/codex' },
       runsAs: { kind: 'session' as const }, profileId: 'missing', workspaceWrites: 'allow' as const, secondOpinion: 'off' as const, enabled: true };
-    const result = await materialize({ definition: { ...definition, defaults: { engine: { role: 'custom' }, profileId: null } },
+    const result = await materialize({ definition: { ...definition, defaults: { roleId: 'custom', profileId: null } },
       roleSelection: { settingsRoles: { custom: role }, availableProfileIds: [] },
       admission: { kind: 'agent', admitLeaf: async (leaf, facts) => admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'workflow_run_leaf', leaf },
         { ...policyContext, roles: facts.role ? { custom: facts.role } : {} }) } });
@@ -880,9 +874,9 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
   it('keeps resolved roles paired with their definition when root and child ids collide', async () => {
     const pin = (instructions: string) => ({ roleId: 'custom', name: 'Custom', instructions, runsAs: { kind: 'session' as const },
       engine: { agentTargetKey: 'agent:happier.agent.codex/codex' } });
-    const child = { ...definition, defaults: { engine: { role: 'custom' } }, roles: [pin('child')] };
+    const child = { ...definition, defaults: { roleId: 'custom' }, roles: [pin('child')] };
     const admittedInstructions: string[] = [];
-    const result = await materialize({ definition: { ...definition, defaults: { engine: { role: 'custom' } }, roles: [pin('root')],
+    const result = await materialize({ definition: { ...definition, defaults: { roleId: 'custom' }, roles: [pin('root')],
       blocks: [definition.blocks[0], { kind: 'workflow', id: 'child', workflowRef: 'builtin:child', input: {} }] },
       effects: { resolveTargetAvailability: available, readWorkflowDefinition: async () => ({ definition: child, sourceKey: 'builtin:child' }) },
       admission: { kind: 'agent', admitLeaf: async (leaf, facts) => {
@@ -1020,7 +1014,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       engine: { agentTargetKey: 'happier.agent.codex/codex' }, profileId: 'profile', workspaceWrites: 'allow' as const, secondOpinion: 'off' as const, enabled: true };
     const profile = LaunchProfileV2Schema.parse({ v: 2, id: 'profile', name: 'Profile', createdAt: 0, updatedAt: 0,
       defaultPermissionModeByTargetKey: { 'agent:happier.agent.codex/codex': 'yolo' } });
-    const result = await materialize({ definition: { ...definition, defaults: { engine: { role: 'custom' } }, roles: [{ roleId: 'custom', engine: { agentTargetKey: 'happier.agent.claude/claude' } }] },
+    const result = await materialize({ definition: { ...definition, defaults: { roleId: 'custom' }, roles: [{ roleId: 'custom', engine: { agentTargetKey: 'happier.agent.claude/claude' } }] },
       roleSelection: { settingsRoles: { custom: role } },
       roleOverrides: [{ roleId: 'custom', engine: { agentTargetKey: 'happier.agent.codex/codex', modelId: 'override' } }],
       effects: { resolveTargetAvailability: available, readLaunchProfile: async () => profile },

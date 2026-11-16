@@ -302,7 +302,7 @@ describe('workflow definition normalization', () => {
   it('normalizes role-backed Agent and non-Agent leaves through the canonical owner', () => {
     const result = validateWorkflowDefinition({ version: 1,
       roles: [{ roleId: 'builder', name: 'Builder', instructions: 'Build carefully', runsAs: { kind: 'session' } }],
-      defaults: { engine: { role: 'builder' } },
+      defaults: { roleId: 'builder' },
       blocks: [textStep('build', 'Build'),
         { kind: 'action', id: 'notify', actionId: 'user.notify', input: { message: { kind: 'literal', value: 'Done' } } },
         { kind: 'workflow', id: 'child', workflowRef: 'builtin:keep-going', input: {} },
@@ -311,6 +311,23 @@ describe('workflow definition normalization', () => {
     expect(result.issues).toEqual([]);
     expect(result.valid).toBe(true);
     expect(WorkflowDefinitionSchema.safeParse(result.normalizedDefinition).success).toBe(true);
+  });
+  it('authors who runs a step in the Session spawn vocabulary', () => {
+    const accepts = (selection: unknown) => WorkflowStepSelectionV1Schema.safeParse(selection).success;
+    expect(accepts({ roleId: 'judge' })).toBe(true);
+    expect(accepts({ agentTarget: CLAUDE_AGENT_TARGET, sessionConfigOptionOverrides: { v: 1, updatedAt: 0,
+      overrides: { reasoning_effort: { value: 'high', updatedAt: 0 } } } })).toBe(true);
+    expect(accepts({ engine: { kind: 'input', name: 'engines' } })).toBe(true);
+    expect(accepts({ environmentVariables: { TOKEN: 'value' } })).toBe(true);
+    // The retired arms and the workflow-only environment spelling are gone, not aliased.
+    expect(accepts({ engine: { role: 'judge' } })).toBe(false);
+    expect(accepts({ engine: { agentTarget: CLAUDE_AGENT_TARGET, effort: 'high' } })).toBe(false);
+    expect(accepts({ launchEnvironment: { values: { TOKEN: 'value' }, unset: [] } })).toBe(false);
+    // A Role or a binding decides the Agent; the same selection cannot also name one.
+    expect(accepts({ roleId: 'judge', agentTarget: CLAUDE_AGENT_TARGET })).toBe(false);
+    expect(accepts({ roleId: 'judge', engine: { kind: 'input', name: 'engines' } })).toBe(false);
+    expect(accepts({ engine: { kind: 'input', name: 'engines' }, sessionConfigOptionOverrides: { v: 1, updatedAt: 0,
+      overrides: { reasoning_effort: { value: 'high', updatedAt: 0 } } } })).toBe(false);
   });
   it('accepts portable origin conversation selection without embedded Session authority', () => {
     const originStep = textStep('origin', 'Continue the originating conversation', {
@@ -1340,12 +1357,16 @@ describe('workflow authoring selection round trip', () => {
     }).success).toBe(false);
   });
 
-  it('rejects environment and Machine placement while accepting per-leaf execution classes', () => {
+  it('scopes launch environment to new Sessions and rejects Machine placement while accepting per-leaf execution classes', () => {
+    // Session spawn vocabulary (owner 2026-11-15): environment reaches only a launch it can configure.
     const result = validateWorkflowDefinition({
       defaults: { agentTarget: CLAUDE_AGENT_TARGET },
       blocks: [textStep('a', 'x', { execution: { environmentVariables: { TOKEN: 'secret' } } })],
     });
-    expect(codesOf(result)).toContain('unknown_field');
+    expect(codesOf(result)).toContain('target_unavailable');
+    expect(validateWorkflowDefinition({ defaults: { agentTarget: CLAUDE_AGENT_TARGET },
+      blocks: [textStep('a', 'x', { execution: { conversation: { kind: 'fresh' }, environmentVariables: { TOKEN: 'secret' } } })],
+    }).valid).toBe(true);
 
     const machine = validateWorkflowDefinition({
       defaults: { agentTarget: CLAUDE_AGENT_TARGET, executionTarget: { kind: 'machine', machineId: 'm1' } },
@@ -1366,7 +1387,7 @@ describe('workflow authoring selection round trip', () => {
     { kind: 'wait', document: { text: 'Choose', references: [], attachments: [] } },
   ])('refuses explicit Agent-only launch selection on a $kind leaf', (leaf) => {
     for (const execution of [
-      { launchEnvironment: { values: { TOKEN: 'value' }, unset: [] } },
+      { environmentVariables: { TOKEN: 'value' } },
       { providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } },
       { title: 'Nightly review' },
       { secretReferenceOverlay: { v: 1, bindings: { TOKEN: { ref: 'happier:shared-secret:v1:shared-1', revision: 7 } } } },

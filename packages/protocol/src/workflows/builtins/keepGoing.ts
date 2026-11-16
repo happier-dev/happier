@@ -33,7 +33,7 @@ export const KEEP_GOING_WORKFLOW_V1: WorkflowDefinitionV1 = {
           ...agent('check', 'Check progress', 'judge',
             'Check the supplied goal and most recent turn. Return progress, no_progress, or done with an evidence-based reason. Mark done only when the goal is met.',
             [{ kind: 'session_context', recentTurns: 1 }], true),
-          execution: { engine: { role: 'judge' }, executionTarget: { kind: 'detached_run' },
+          execution: { roleId: 'judge', executionTarget: { kind: 'detached_run' },
             conversation: { kind: 'fresh' }, permissionMode: 'read-only' },
           result: { kind: 'json', schema: { type: 'object', required: ['verdict'], additionalProperties: false,
             properties: { verdict: { type: 'string', enum: ['progress', 'no_progress', 'done'] }, reason: { type: 'string' } } } },
@@ -48,7 +48,7 @@ export const KEEP_GOING_WORKFLOW_V1: WorkflowDefinitionV1 = {
           ...agent('second-opinion', 'Ask for a second opinion', 'second_opinion', 'Before this goal is marked complete, check whether it is really met.',
             [{ kind: 'session_context', recentTurns: 0 }], true),
           onlyWhen: { kind: 'compare', operator: 'eq', left: input('secondOpinion'), right: literal(true) },
-          execution: { engine: { role: 'second_opinion' }, executionTarget: { kind: 'detached_run' },
+          execution: { roleId: 'second_opinion', executionTarget: { kind: 'detached_run' },
             conversation: { kind: 'fresh' }, permissionMode: 'read-only' }, result: SECOND_OPINION_RESULT_V1,
         },
         {

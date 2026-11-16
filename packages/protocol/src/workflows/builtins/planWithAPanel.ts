@@ -28,7 +28,7 @@ export const PLAN_WITH_A_PANEL_WORKFLOW_V1: WorkflowDefinitionV1 = {
       ...agent('synthesis', 'Synthesize the plan', 'planner',
         'Produce the requested plan. Treat planner results as evidence, preserve failed or missing coverage, and resolve disagreements or list them as open questions. Return a document explaining why, risks and open questions, plus a proposed workflow only if valid.',
         [input('request'), input('previousRoundContext'), { ...result('planners'), optional: true }, { ...result('participant-planners'), optional: true }], true),
-      execution: { engine: { role: 'planner' }, executionTarget: { kind: 'detached_run' }, permissionMode: 'read-only' },
+      execution: { roleId: 'planner', executionTarget: { kind: 'detached_run' }, permissionMode: 'read-only' },
       pauseForReview: true,
       result: { kind: 'json', schema: {
         type: 'object', required: ['document'], additionalProperties: false,

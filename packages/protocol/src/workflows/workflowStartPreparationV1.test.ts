@@ -43,7 +43,7 @@ it('prepares an accepted repeat with its concrete target and inputs through the 
   expect(prepared).toMatchObject({ project: acceptedContext.workspaceTarget.project, originSessionId: 'origin-session' });
   expect(definition.blocks[0]).not.toHaveProperty('execution');
   expect(WorkflowRunStartRequestV1Schema.safeParse({ ...request, source: { ...request.source,
-    replay: { ...replay, agentOverride: { sourceKey: '$root', blockId: 'work', engine: { role: 'planner' } } } } }).success).toBe(false);
+    replay: { ...replay, agentOverride: { sourceKey: '$root', blockId: 'work', roleId: 'planner' } } } }).success).toBe(false);
 });
 
 it('selects the first online install target, projects Change choices, and freezes it through real Workflow admission', async () => {

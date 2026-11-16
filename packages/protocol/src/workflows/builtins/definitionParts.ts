@@ -18,7 +18,7 @@ export function agent(id: string, name: string, role: BuiltInRoleIdV1, text: str
   values: WorkflowValueReference[] = [], readOnly = false): WorkflowStep {
   return {
     kind: 'step', id, name, document: document(text), input: values, result: { kind: 'text' },
-    execution: { engine: { role }, ...(readOnly ? { permissionMode: 'read-only' as const } : {}) },
+    execution: { roleId: role, ...(readOnly ? { permissionMode: 'read-only' as const } : {}) },
   };
 }
 

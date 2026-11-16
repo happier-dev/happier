@@ -9,6 +9,7 @@ import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 const agent = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
 const otherAgent = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const model = { v: 1 as const, ref: { agentTargetKey: 'happier.agent.claude/claude', providerConnectionId: null, modelId: 'model' }, updatedAt: 0 };
+const effort = (value: string) => ({ v: 1 as const, updatedAt: 0, overrides: { reasoning_effort: { value, updatedAt: 0 } } });
 
 describe('workflow step selection', () => {
   it.each(['profile', 'connected'] as const)('omits absent inherited fields when only %s is supplied to a stored selection', field => {
@@ -16,7 +17,7 @@ describe('workflow step selection', () => {
       'external.auth/subscription': { source: 'connected', selection: 'profile', profileId: 'origin-account' },
     } });
     const { selection } = selectionOwner.resolveWorkflowStepSelectionV1({
-      defaults: { engine: { agentTarget: agent } },
+      defaults: { agentTarget: agent },
       roleSelection: { defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(agent) },
         ...(field === 'profile' ? { defaultProfileId: 'origin-launch' } : { defaultConnectedServices: connectedServices }),
       },
@@ -32,13 +33,13 @@ describe('workflow step selection', () => {
     } });
     const roleSelection = { defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(agent) },
       defaultConnectedServices: brokered };
-    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { engine: { agentTarget: agent } }, roleSelection })
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { agentTarget: agent }, roleSelection })
       .selection.connectedServices).toEqual(brokered);
     const direct = ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: {
       'external.auth/subscription': { source: 'team_resource', resourceId: 'team-pool', deliveryMode: 'direct',
         disclosedMember: { service: { pluginId: 'external.auth', localId: 'subscription' }, accountId: 'member' } },
     } });
-    expect(() => selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { engine: { agentTarget: agent } },
+    expect(() => selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { agentTarget: agent },
       roleSelection: { ...roleSelection, defaultConnectedServices: direct } }))
       .toThrow(expect.objectContaining({ code: 'execution_run_child_choice_required', name: 'WorkflowStepSelectionErrorV1',
         refusal: { code: 'execution_run_child_choice_required' } }));
@@ -46,7 +47,7 @@ describe('workflow step selection', () => {
   it('resolves a strict input-bound engine without mutating the supplied input', () => {
     const inputs = { choice: { engine: { agentTarget: otherAgent, modelSelection: null } } };
     const before = structuredClone(inputs);
-    const defaults = { engine: { agentTarget: agent, modelSelection: model }, permissionMode: 'read-only' as const };
+    const defaults = { agentTarget: agent, modelSelection: model, permissionMode: 'read-only' as const };
     const step = { engine: { kind: 'input' as const, name: 'choice', path: ['engine'] } };
     expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step, inputs }).selection)
       .toEqual({ agentTarget: otherAgent, modelSelection: null, permissionMode: 'read-only' });
@@ -62,7 +63,7 @@ describe('workflow step selection', () => {
       defaultProfileId: 'origin-launch',
       defaultConnectedServices: connectedServices,
       availableAgentTargetKeys: [buildBackendTargetKeyV2(agent), buildBackendTargetKeyV2(otherAgent)] };
-    const defaults = { engine: { role: 'judge' } };
+    const defaults = { roleId: 'judge' };
     expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, roleSelection }).selection.connectedServices)
       .toEqual(connectedServices);
     expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, roleSelection }).selection.profileId)
@@ -74,13 +75,13 @@ describe('workflow step selection', () => {
     const explicit = { v: 2 as const, bindingsByServiceId: { 'external.auth/subscription': { source: 'native' as const } } };
     expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, roleSelection, step: { connectedServices: explicit } }).selection.connectedServices)
       .toEqual(explicit);
-    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { engine: { role: 'second_opinion' } }, roleSelection }).selection.connectedServices)
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { roleId: 'second_opinion' }, roleSelection }).selection.connectedServices)
       .toBeUndefined();
-    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { engine: { agentTarget: agent, modelSelection: model } }, roleSelection }).selection.connectedServices)
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { agentTarget: agent, modelSelection: model }, roleSelection }).selection.connectedServices)
       .toEqual(connectedServices);
-    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { engine: { agentTarget: otherAgent } }, roleSelection }).selection.connectedServices)
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { agentTarget: otherAgent }, roleSelection }).selection.connectedServices)
       .toBeUndefined();
-    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { engine: { agentTarget: otherAgent } }, roleSelection }).selection.profileId)
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { agentTarget: otherAgent }, roleSelection }).selection.profileId)
       .toBeUndefined();
   });
   it.each([
@@ -91,10 +92,10 @@ describe('workflow step selection', () => {
     const connectedServices = { v: 2 as const, bindingsByServiceId: {
       'external.auth/subscription': { source: 'connected' as const, selection: 'profile' as const, profileId: 'external-origin' },
     } };
-    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { engine: { agentTarget: target } },
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { agentTarget: target },
       roleSelection: { defaultEngine: { agentTargetKey }, defaultConnectedServices: connectedServices } }).selection.connectedServices)
       .toEqual(connectedServices);
-    const resolved = selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { engine: { role: 'workflow-reviewer' } },
+    const resolved = selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { roleId: 'workflow-reviewer' },
       roleSelection: { settingsRoles: { 'workflow-reviewer': {
         roleId: 'workflow-reviewer', name: 'Reviewer', instructions: 'Review the work.',
         engine: { agentTargetKey, modelId: 'review-model' }, enabled: true,
@@ -108,7 +109,7 @@ describe('workflow step selection', () => {
   it('projects unresolved role fields for authoring without weakening admission or inventing an Agent', () => {
     const defaults = { agentTarget: agent, modelSelection: model, permissionMode: 'read-only' as const,
       executionTarget: { kind: 'session' as const } };
-    const step = { engine: { role: 'scout' }, conversation: { kind: 'from_step' as const,
+    const step = { roleId: 'scout', conversation: { kind: 'from_step' as const,
       producer: { blockId: 'prior', scope: { kind: 'current' as const } } } };
     expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step, purpose: 'authoring' }).selection)
       .toEqual({ permissionMode: 'read-only', conversation: step.conversation });
@@ -132,18 +133,27 @@ describe('workflow step selection', () => {
       runsAs: { kind: 'background_run' as const, intent: 'review' },
       profileId: 'role-profile', workspaceWrites: 'deny' as const, secondOpinion: 'off' as const,
     };
-    const defaults = { engine: { agentTarget: agent, modelSelection: model }, profileId: 'workflow-profile' };
+    const defaults = { agentTarget: agent, modelSelection: model, profileId: 'workflow-profile' };
     // A settings-owned role must not collide with ORC's built-in reviewer.
     const roleSelection = { settingsRoles: { 'workflow-reviewer': resolvedRole } };
-    const resolved = selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step: { engine: { role: 'workflow-reviewer' } }, roleSelection });
+    const resolved = selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step: { roleId: 'workflow-reviewer' }, roleSelection });
     expect(resolved.selection).toEqual({ agentTarget: otherAgent, profileId: 'workflow-profile' });
     expect(resolved.role).toEqual(resolvedRole);
-    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step: { engine: { agentTarget: otherAgent } } }).selection)
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step: { agentTarget: otherAgent } }).selection)
       .toEqual({ agentTarget: otherAgent, profileId: 'workflow-profile' });
-    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { engine: { role: 'workflow-reviewer' } }, roleSelection }).selection.profileId)
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { roleId: 'workflow-reviewer' }, roleSelection }).selection.profileId)
       .toBe('role-profile');
-    expect(() => selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { engine: { role: 'workflow-reviewer' } } }))
+    expect(() => selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { roleId: 'workflow-reviewer' } }))
       .toThrow(/role_target_unavailable/);
+    // The step's choice of who runs it replaces the defaults' choice as one unit.
+    const literal = selectionOwner.resolveWorkflowStepSelectionV1({ defaults: { roleId: 'workflow-reviewer' }, step: { agentTarget: agent }, roleSelection });
+    expect(literal).toEqual({ selection: { agentTarget: agent } });
+    const bound = { engine: { kind: 'input' as const, name: 'choice' } };
+    expect(selectionOwner.readWorkflowEngineChoiceV1(bound, { roleId: 'workflow-reviewer' })).toEqual({ roleId: 'workflow-reviewer' });
+    expect(selectionOwner.readWorkflowEngineChoiceV1({ roleId: 'workflow-reviewer' }, { agentTarget: agent })).toBeUndefined();
+    expect(selectionOwner.readWorkflowEngineChoiceV1(bound, { permissionMode: 'read-only' })).toEqual(bound.engine);
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: bound, step: { roleId: 'workflow-reviewer' }, roleSelection }).role)
+      .toEqual(resolvedRole);
   });
 
   it('preserves the existing flat selection contract during consumer migration', () => {
@@ -169,7 +179,7 @@ describe('workflow step selection', () => {
       roleId: 'workflow-reviewer', name: 'Reviewer', instructions: '', engine: { agentTargetKey: 'happier.agent.claude/claude' }, enabled: true,
       runsAs: { kind: 'background_run' as const, intent: 'review' }, workspaceWrites: 'deny' as const, secondOpinion: 'off' as const,
     };
-    const defaults = { engine: { role: 'workflow-reviewer' } };
+    const defaults = { roleId: 'workflow-reviewer' };
     const base = { defaults, roleSelection: { settingsRoles: { 'workflow-reviewer': resolvedRole } }, runExecutionTarget: { kind: 'session' as const } };
     expect(selectionOwner.resolveWorkflowStepSelectionV1(base).executionTarget).toEqual({ kind: 'detached_run' });
     expect(selectionOwner.resolveWorkflowStepSelectionV1({ ...base, step: { conversation: { kind: 'origin_session' } } }).executionTarget)
@@ -187,10 +197,10 @@ describe('workflow step selection', () => {
   });
 
   it('preserves explicit non-engine clears and does not merge model or effort across engine arms', () => {
-    const defaults = { engine: { agentTarget: agent, modelSelection: model, effort: 'high' }, profileId: 'p', terminal: { mode: 'plain' as const } };
-    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step: { engine: { agentTarget: otherAgent }, terminal: null } }).selection)
+    const defaults = { agentTarget: agent, modelSelection: model, sessionConfigOptionOverrides: effort('high'), profileId: 'p', terminal: { mode: 'plain' as const } };
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults, step: { agentTarget: otherAgent, terminal: null } }).selection)
       .toEqual({ agentTarget: otherAgent, profileId: 'p', terminal: null });
-    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: {}, step: { engine: { agentTarget: otherAgent, effort: 'low' } } }).selection)
+    expect(selectionOwner.resolveWorkflowStepSelectionV1({ defaults: {}, step: { agentTarget: otherAgent, sessionConfigOptionOverrides: effort('low') } }).selection)
       .toEqual({ agentTarget: otherAgent, sessionConfigOptionOverrides: { v: 1, updatedAt: 0, overrides: { reasoning_effort: { value: 'low', updatedAt: 0 } } } });
   });
 

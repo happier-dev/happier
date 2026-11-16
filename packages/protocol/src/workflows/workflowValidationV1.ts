@@ -35,7 +35,7 @@ import {
 import { readWorkflowWorkspaceProducerRef } from './workflowWorkspaceV1.js';
 import { createWorkflowResultFieldLocator, walkWorkflowBlocks } from './workflowDefinitionEditV1.js';
 import { readWorkflowClosedResultFieldNames } from './workflowResultFieldsV1.js';
-import { resolveWorkflowStepSelectionV1 } from './workflowStepSelectionV1.js';
+import { readWorkflowEngineChoiceV1, resolveWorkflowStepSelectionV1 } from './workflowStepSelectionV1.js';
 import { WorkflowRoleV1Schema } from '../prompts/roles/rolesV1.js';
 import { MENTION_KIND_V1 } from '../runtime/input/mentionRefV1.js';
 import { readWorkflowStepInputIndexV1 } from './workflowComposerDocumentV1.js';
@@ -328,7 +328,7 @@ function normalizeIngressShape(
   const blocks: readonly WorkflowBlock[] = parsedStructural.data;
 
   const defaults = parsedDefaults.success ? parsedDefaults.data : {};
-  const effectiveDefaults = defaults.agentTarget === undefined && defaults.engine === undefined && context?.agentTarget !== undefined
+  const effectiveDefaults = defaults.agentTarget === undefined && readWorkflowEngineChoiceV1(defaults) === undefined && context?.agentTarget !== undefined
     ? { ...defaults, agentTarget: context.agentTarget }
     : defaults;
 
@@ -598,9 +598,9 @@ function validateCondition(
 
 function validateStepExecution(state: WalkState, step: WorkflowLeafV1, path: string): void {
   const execution = step.execution;
-  // Roles are resolved at admission. Static validation recognizes the role arm
+  // Roles are resolved at admission. Static validation recognizes the chosen Role
   // without consulting mutable Account settings or choosing a target class.
-  const engine = execution?.engine ?? state.workflowDefaults.engine;
+  const engine = readWorkflowEngineChoiceV1(state.workflowDefaults, execution);
   const participant = execution?.participant ?? state.workflowDefaults.participant;
   if (participant) {
     if (participant.kind === 'item' && participant.roster) {
@@ -630,7 +630,7 @@ function validateStepExecution(state: WalkState, step: WorkflowLeafV1, path: str
       'Bind the Action inputs directly, or use an Agent step for an engine binding.', step.id));
   }
   const withoutEngine = (selection: WorkflowStepSelectionV1) => {
-    const { engine: _engine, participant: _participant, executionTarget: _target, ...fields } = selection;
+    const { engine: _engine, roleId: _roleId, participant: _participant, executionTarget: _target, ...fields } = selection;
     return fields;
   };
   // Value-only: validation reads the merged selection fields, never the admission baseline, which
@@ -667,7 +667,7 @@ function validateStepExecution(state: WalkState, step: WorkflowLeafV1, path: str
       'Inputless acquisition requires a fresh or existing Session and no input or structured result.', step.id));
   }
   if (step.kind === 'step' && effectiveConversation?.kind !== 'fresh' && effectiveConversation?.kind !== 'existing_session') {
-    for (const field of ['launchEnvironment', 'providerSessionResume'] as const) {
+    for (const field of ['environmentVariables', 'providerSessionResume'] as const) {
       if (effective[field] !== undefined) state.issues.push(issue('target_unavailable',
         joinPath(path, 'execution', field), 'Agent launch configuration requires a fresh or existing Session conversation.', step.id));
     }
@@ -845,11 +845,11 @@ function validateLeafInputContract(
     for (const field of Object.keys(spec.contextualDefaults ?? {})) {
       if (!Object.hasOwn(leaf.input, field)) deferredFields.add(field);
     }
-    const engine = leaf.execution?.engine ?? state.workflowDefaults.engine;
+    const engine = readWorkflowEngineChoiceV1(state.workflowDefaults, leaf.execution);
     const targetField = readActionWorkflowTargetInputFieldV1(leaf.actionId);
     // Admission resolves the authored Role and supplies its native target.
     // Explicit target bindings and all other required inputs remain checked.
-    if (engine && 'role' in engine && targetField && !Object.hasOwn(leaf.input, targetField)) deferredFields.add(targetField);
+    if (engine && 'roleId' in engine && targetField && !Object.hasOwn(leaf.input, targetField)) deferredFields.add(targetField);
     const selection = resolveWorkflowStepSelectionV1({ defaults: state.workflowDefaults, step: leaf.execution, purpose: 'authoring' }).selection;
     const projected = projectActionWorkflowSelectionInputV1(leaf.actionId, values, selection);
     // A future authored value overrides selection; do not validate inherited

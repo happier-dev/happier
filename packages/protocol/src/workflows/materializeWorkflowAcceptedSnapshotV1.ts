@@ -9,6 +9,7 @@ import { compileActionInputJsonSchema } from '../actions/actionInputJsonSchemaVa
 import { isLaunchProfileV2, type AiLaunchProfile } from '../profiles/read.js';
 import type { ResolvedRoleV1 } from '../prompts/roles/rolesV1.js';
 import { resolveRoleSelectionV1 } from '../prompts/roles/resolveRoleSelectionV1.js';
+import { roleEngineModelFieldsV1 } from '../prompts/roles/roleArtifactV1.js';
 import { parseAgentPermissionIntentV1Alias, type AgentPermissionIntentV1 } from '../runtime/permissionIntentV1.js';
 import { formatWorkflowDefinitionRefV1, parseWorkflowDefinitionRefV1, type WorkflowDefinitionRefV1 } from './workflowDefinitionRefV1.js';
 import { WorkflowAcceptedSnapshotV1Schema, WorkflowMaterializedLeafV1Schema, WorkflowRoleOverridesV1Schema, WorkflowReplayAgentOverrideV1Schema, deriveWorkflowAcceptedPermissionCeilingV1,
@@ -16,7 +17,7 @@ import { WorkflowAcceptedSnapshotV1Schema, WorkflowMaterializedLeafV1Schema, Wor
   type WorkflowMaterializedLeafV1, type WorkflowResolvedInputsV1, type WorkflowRoleOverridesV1,
   type WorkflowReplayAgentOverrideV1,
   type WorkflowRunExecutionTargetV1 } from './workflowDefinitionV1.js';
-import { listWorkflowAcceptedLeafSelectionsV1, parseWorkflowLiteralEngineSelectionV1, resolveWorkflowAcceptedStepSelectionV1, resolveWorkflowEngineSelectionV1, resolveWorkflowStepSelectionV1, WorkflowStepSelectionErrorV1, type ResolveWorkflowStepSelectionV1Input, type WorkflowResolvedStepSelectionV1, type WorkflowStepSelectionRefusalV1, type WorkflowRoleSelectionContextV1 } from './workflowStepSelectionV1.js';
+import { listWorkflowAcceptedLeafSelectionsV1, parseWorkflowLiteralEngineSelectionV1, readWorkflowEngineChoiceV1, resolveWorkflowAcceptedStepSelectionV1, resolveWorkflowEngineSelectionV1, resolveWorkflowStepSelectionV1, WorkflowStepSelectionErrorV1, type ResolveWorkflowStepSelectionV1Input, type WorkflowResolvedStepSelectionV1, type WorkflowStepSelectionRefusalV1, type WorkflowRoleSelectionContextV1 } from './workflowStepSelectionV1.js';
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
 import { WorkflowStepExecutionSelectionSchema, WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS, findWorkflowUnsupportedSelectionFieldV1, type WorkflowBlock, type WorkflowDefinitionV1,
   type WorkflowIngressContextV1, type WorkflowLeafV1, type WorkflowStepSelectionV1,
@@ -201,7 +202,7 @@ function agentLeaf(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineId' | 'wor
   return {
     sourceKey: leaf.sourceKey, blockId: leaf.blockId, kind: leaf.executionTarget.kind,
     ...(leaf.role ? { roleId: leaf.role.roleId } : {}),
-    engine: { agentTargetKey, ...(selection.modelSelection ? { modelId: selection.modelSelection.ref.modelId } : {}),
+    engine: { agentTargetKey, ...roleEngineModelFieldsV1(selection.modelSelection?.ref),
       ...(typeof effort === 'string' ? { effort } : {}) },
     runsAs: leaf.executionTarget.kind === 'session' ? { kind: 'session' }
       : { kind: 'background_run', intent: leaf.role?.runsAs.kind === 'background_run' ? leaf.role.runsAs.intent : 'delegate' },
@@ -212,8 +213,8 @@ function agentLeaf(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineId' | 'wor
       permissionMode: parseAgentPermissionIntentV1Alias(selection.permissionMode ?? 'default') ?? { kind: 'unresolved' },
       ...(selection.acpSessionModeId === undefined ? {} : { agentModeId: selection.acpSessionModeId }),
       ...(selection.profileId === undefined ? {} : { profileId: selection.profileId }),
-      ...(selection.launchEnvironment === undefined ? {} : { hasEnvironmentVariables:
-        Object.keys(selection.launchEnvironment.values).length > 0 || selection.launchEnvironment.unset.length > 0 }),
+      // Same fact Session spawn admission derives from the same `environmentVariables` field.
+      ...(selection.environmentVariables === undefined ? {} : { hasEnvironmentVariables: true }),
       ...(selection.connectedServices !== undefined ? { connectedServices: selection.connectedServices } : {}),
       ...(selection.capabilitySelection !== undefined ? { capabilitySelection: selection.capabilitySelection } : {}),
       ...(selection.transcriptStorage ? { transcriptStorage: selection.transcriptStorage } : {}),
@@ -284,7 +285,7 @@ function projectActionStart(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineI
     const modelRef = model && !('kind' in model) ? ('ref' in model ? model.ref : model) : undefined;
     return [{ sourceKey: leaf.sourceKey, blockId: leaf.blockId, kind: 'action', actionId: leaf.actionId,
       ...(leaf.role ? { roleId: leaf.role.roleId } : request.roleId ? { roleId: request.roleId } : {}),
-      ...(target && target.kind !== 'unresolved' ? { engine: { agentTargetKey: buildBackendTargetKeyV2(target), ...(modelRef ? { modelId: modelRef.modelId } : {}) } } : {}),
+      ...(target && target.kind !== 'unresolved' ? { engine: { agentTargetKey: buildBackendTargetKeyV2(target), ...roleEngineModelFieldsV1(modelRef) } } : {}),
       runsAs: request.kind === 'spawn_new' ? { kind: 'session' } : { kind: 'background_run', intent: request.intent },
       workspaceWrites: leaf.role?.workspaceWrites ?? 'allow', facts,
     }];
@@ -666,7 +667,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
         const roleSelection = leaf.kind === 'step' && (!frozen || agentOverride)
           ? await readRoleSelection() : input.roleSelection;
         const conversation = leaf.execution?.conversation ?? definition.defaults.conversation;
-        const engine = leaf.execution?.engine ?? definition.defaults.engine;
+        const engine = readWorkflowEngineChoiceV1(definition.defaults, leaf.execution);
         const producer = conversation?.kind === 'from_step' ? materializedLeaves.find(candidate => candidate.sourceKey === sourceKey
           && candidate.blockId === conversation.producer.blockId) : undefined;
         const participantBinding = leaf.execution?.participant ?? definition.defaults.participant ?? frozen?.participantBindings?.reference;
@@ -730,7 +731,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                     const roleResult = resolveRoleSelectionV1({ ...await readRoleSelection(chosenLaunch.roleId), workflowRoles: definition.roles,
                       runOverrides: overrides.data, roleId: chosenLaunch.roleId,
                       defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(chosenLaunch.agentTarget),
-                        ...(chosenLaunch.modelSelection ? { modelId: chosenLaunch.modelSelection.ref.modelId } : {}) } });
+                        ...roleEngineModelFieldsV1(chosenLaunch.modelSelection?.ref) } });
                     if (!roleResult.ok) return { ok: false, error: { ...roleResult.refusal, blockId: leaf.id } };
                     role = roleResult.selection;
                   }
@@ -862,8 +863,8 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
         }
         resolved = boundParticipants ? { selection: boundParticipants.selections[0]?.selection ?? {},
           executionTarget: { kind: 'session' }, role: boundParticipants.selections[0]?.role } : frozen ? { selection: agentOverride
-          ? resolveWorkflowStepSelectionV1({ defaults: frozen.selection, step: { engine: agentOverride.engine },
-            roleSelection: 'role' in agentOverride.engine ? await readRoleSelection(agentOverride.engine.role) : roleSelection,
+          ? resolveWorkflowStepSelectionV1({ defaults: frozen.selection, step: (({ sourceKey: _sourceKey, blockId: _blockId, ...choice }) => choice)(agentOverride),
+            roleSelection: agentOverride.roleId !== undefined ? await readRoleSelection(agentOverride.roleId) : roleSelection,
             ...(frozen.selection.conversation?.kind === 'from_step'
               ? { producerExecutionTarget: frozen.executionTarget } : {}) }).selection
           : structuredClone(frozen.selection), executionTarget: frozen.executionTarget, role: frozen.role }
@@ -872,7 +873,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       } catch (error) {
         if (error instanceof WorkflowInputErrorV1) return invalidInput(leaf.id, error.issues);
         if (error instanceof WorkflowStepSelectionErrorV1) {
-          const engine = leaf.execution?.engine ?? definition.defaults.engine;
+          const engine = readWorkflowEngineChoiceV1(definition.defaults, leaf.execution);
           return error.code === 'invalid_input' && engine && 'kind' in engine
             ? invalidInput(leaf.id, [{ code: 'invalid_input', blockId: leaf.id, path: `/blocks/${leaf.id}/execution/engine`,
               severity: 'error', message: 'The selection binding must resolve to a declared engine choice.' }])
@@ -972,7 +973,10 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
         }
         try {
           const projected = projectActionStart(input.context, sidecar,
-            (sourceKey === '$root' ? root : authored).defaults.engine !== undefined || leaf.execution?.engine !== undefined || frozen?.role !== undefined,
+            // A Role, an engine binding or the step's own Agent replaces the Action's authored target;
+            // a workflow default Agent only fills a target the Action leaves open.
+            readWorkflowEngineChoiceV1((sourceKey === '$root' ? root : authored).defaults, leaf.execution) !== undefined
+              || leaf.execution?.agentTarget !== undefined || frozen?.role !== undefined,
             hasDeferredBinding);
           if (projected.effectiveInput) sidecar.actionInput = projected.effectiveInput;
         } catch (error) {
@@ -991,7 +995,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       targetById.set(leaf.id, executionTarget);
       materializedLeaves.push(sidecar);
     }
-    const { engine: _engine, participant: _participant, executionTarget: _target, ...defaults } = definition.defaults;
+    const { engine: _engine, roleId: _roleId, participant: _participant, executionTarget: _target, ...defaults } = definition.defaults;
     concrete.set(sourceKey, { ...definition, defaults });
   }
   let agentStartLeaves: readonly MaterializedWorkflowLeafV1[];

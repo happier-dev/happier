@@ -104,13 +104,13 @@ describe('workflow leaf seam', () => {
   });
 
   it('leaves role resolution at admission while validating Action bindings', () => {
-    expect(validateWorkflowDefinition({ defaults: { engine: { role: 'account_builder' } }, blocks: [{
+    expect(validateWorkflowDefinition({ defaults: { roleId: 'account_builder' }, blocks: [{
       kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Done' } },
     }] }).valid).toBe(true);
   });
 
   it('defers only missing role-selected Action targets to admission', () => {
-    const check = (input: unknown) => validateWorkflowDefinition({ defaults: { engine: { role: 'account_builder' } }, blocks: [{
+    const check = (input: unknown) => validateWorkflowDefinition({ defaults: { roleId: 'account_builder' }, blocks: [{
       kind: 'action', id: 'review', actionId: 'review.start', input,
     }] });
     expect(check({ instructions: { kind: 'literal', value: 'Review the changes' } }).valid).toBe(true);
@@ -189,11 +189,11 @@ describe('workflow leaf seam', () => {
 
   it('accepts only session or detached targets and exactly one engine arm', () => {
     for (const kind of ['session', 'detached_run']) {
-      expect(leaves.WorkflowLeafV1Schema.safeParse({ ...agent, execution: { executionTarget: { kind }, engine: { role: 'reviewer' } } }).success).toBe(true);
+      expect(leaves.WorkflowLeafV1Schema.safeParse({ ...agent, execution: { executionTarget: { kind }, roleId: 'reviewer' } }).success).toBe(true);
     }
     expect(leaves.WorkflowLeafV1Schema.safeParse({ ...agent, execution: { executionTarget: { kind: 'attached_run' } } }).success).toBe(false);
-    expect(leaves.WorkflowLeafV1Schema.safeParse({ ...agent, execution: { engine: { role: 'reviewer', agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } } }).success).toBe(false);
-    expect(leaves.WorkflowLeafV1Schema.safeParse({ ...agent, execution: { engine: { role: 'reviewer' }, agentTarget: null } }).success).toBe(false);
-    expect(leaves.WorkflowLeafV1Schema.safeParse({ ...agent, execution: { engine: { role: 'reviewer', unknown: true } } }).success).toBe(false);
+    expect(leaves.WorkflowLeafV1Schema.safeParse({ ...agent, execution: { roleId: 'reviewer', agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } }).success).toBe(false);
+    expect(leaves.WorkflowLeafV1Schema.safeParse({ ...agent, execution: { roleId: 'reviewer', agentTarget: null } }).success).toBe(false);
+    expect(leaves.WorkflowLeafV1Schema.safeParse({ ...agent, execution: { roleId: 'reviewer', unknown: true } }).success).toBe(false);
   });
 });

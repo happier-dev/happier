@@ -92,7 +92,7 @@ describe('accepted Workflow selection bindings', () => {
       engine: { agentTargetKey: buildBackendTargetKeyV2(agentTarget) }, runsAs: { kind: 'session' },
       workspaceWrites: 'allow', secondOpinion: 'off', enabled: true });
     const withRole = { ...definition, roles: [{ roleId, workspaceWrites: 'deny' }],
-      defaults: { engine: { role: roleId } } };
+      defaults: { roleId: roleId } };
     const launch = { executionTarget: { serverId: 'home', machineId: 'machine' },
       directory: { kind: 'path', path: '/project' }, agentTarget, roleId };
     const authored = kind === 'literal' ? withRole : kind === 'child' ? { ...definition,
