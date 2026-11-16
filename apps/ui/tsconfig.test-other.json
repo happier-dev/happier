@@ -909,6 +909,7 @@
     "sources/registries/pluginRegistrySources.test.ts",
     "sources/registries/registryHostDeps.test.ts",
     "sources/registries/registryProjectSuggestions.test.ts",
+    "sources/registries/themeRegistryInstall.test.ts",
     "sources/registries/useRegistryItems.test.tsx",
     "sources/registries/useRegistrySourcesSlot.test.tsx",
     "sources/scm/core/operationPolicy.test.ts",

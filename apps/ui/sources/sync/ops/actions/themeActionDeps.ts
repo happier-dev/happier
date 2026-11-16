@@ -1,10 +1,12 @@
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
 import type { ThemeActionRequest, ThemeCssCoverage, ThemeCssDetailedCoverage } from '@happier-dev/protocol/actions/themeActionFamily';
-import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { mergeThemeProfileDocumentEdit, type ThemeProfileLibrary, type ThemeProfileMode, type ThemeReference, type ThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 
 import { importThemeProfileFromJson, exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
+import type { BoundThemeRegistryLifecycle } from '@/registries/themeRegistryInstall';
+import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
 
 import type { ThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
 import type { ThemeSurfacePaintDescriptor } from '@happier-dev/plugin-ui';
@@ -24,11 +26,33 @@ export interface ThemeActionHost {
     runtime?: ThemeActionRuntime;
     clientId(): string;
     readSelection(): Readonly<Record<ThemeProfileMode, ThemeReference | null>>;
+    withRegistryLifecycle?<TResult>(operation: (lifecycle: Pick<BoundThemeRegistryLifecycle, 'get' | 'prepareStorePreview' | 'install' | 'uninstall'>) => Promise<TResult>, context: ActionExecutorContext): Promise<TResult>;
     dispatchClientAction?(request: Extract<ThemeActionRequest, { actionId: typeof THEME_ACTION_IDS.list | typeof THEME_ACTION_IDS.apply }>): ReturnType<NonNullable<ActionExecutorDeps['themeAction']>>;
 }
 
 export function createThemeActionExecute(host: ThemeActionHost): NonNullable<ActionExecutorDeps['themeAction']> {
     return async request => {
+        if (request.actionId === THEME_ACTION_IDS.storeGet || request.actionId === THEME_ACTION_IDS.install
+            || request.actionId === THEME_ACTION_IDS.uninstall) {
+            if (!host.withRegistryLifecycle) return clientActionUnavailable(request.actionId);
+            return host.withRegistryLifecycle(async lifecycle => {
+                switch (request.actionId) {
+                    case THEME_ACTION_IDS.storeGet: {
+                        const acquired = await lifecycle.get(request.input.listing);
+                        const { summary, payload } = acquired.item;
+                        return { listing: { pointer: { sourceId: summary.sourceId, itemId: summary.itemId, version: payload.version },
+                            summary, metadata: payload.listing, provenance: acquired.provenance },
+                            faces: payload.themes.map(face => face.document),
+                            coverage: payload.themes.map(face => ({ faceId: face.key,
+                                coverage: prepareThemeProfileCss(face.document.profile).coverage })) };
+                    }
+                    case THEME_ACTION_IDS.install:
+                        return lifecycle.install(request.input);
+                    case THEME_ACTION_IDS.uninstall:
+                        return lifecycle.uninstall(request.input.listing);
+                }
+            }, request.context);
+        }
         if ((request.actionId === THEME_ACTION_IDS.list && request.input.includeDevices)
             || (request.actionId === THEME_ACTION_IDS.apply && request.input.clientId
                 && request.input.clientId !== host.clientId())) {
