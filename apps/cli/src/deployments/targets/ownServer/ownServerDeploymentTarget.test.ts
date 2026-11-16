@@ -1266,7 +1266,7 @@ describe('own-server target at the Action host boundary', () => {
                             createDaemonDeploymentActionDeps({ ...host, resolveRequesterIdentity }).deploymentAction } : {}) };
                     const executor = scenario === 'public_backup_restore' || scenario === 'public_backup'
                         ? createCliActionExecutorFromCredentials({ credentials, serverId: 'home', serverApiUrl: serverHttpBaseUrl,
-                            serverIdentityId: 'srv_health_home', machineId: 'machine-a',
+                            serverIdentityId: host.serverId, machineId: 'machine-a',
                             actionsSettingsProvider: { getActionsSettings: () => actionsSettings },
                             resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
                             ...nativeActions, runActionOperation: runBackupOperation })
