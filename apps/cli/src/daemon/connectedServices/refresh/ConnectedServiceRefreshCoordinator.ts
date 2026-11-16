@@ -1628,6 +1628,11 @@ export class ConnectedServiceRefreshCoordinator {
     // legacy spawn. Never reverse-project a device/OAuth mode into a V2 record.
     const expiresAt = typeof profile.expiresAt === 'number' && Number.isFinite(profile.expiresAt)
       ? profile.expiresAt : null;
+    // Non-expiring tokens are delivered as-is. A transient identity/SCM probe
+    // failure is not evidence that their credential needs refresh or reconnect.
+    if (profile.kind === 'token' && expiresAt === null) {
+      return { status: 'ready', profile: { ...profile, status: 'connected' } };
+    }
     let refreshNeeded = expiresAt !== null && expiresAt - this.params.now()
       <= (input.allowEarlyRefresh === false ? 0 : this.params.refreshWindowMs);
     if (expiresAt === null || profile.status === 'refresh_failed_retryable') {

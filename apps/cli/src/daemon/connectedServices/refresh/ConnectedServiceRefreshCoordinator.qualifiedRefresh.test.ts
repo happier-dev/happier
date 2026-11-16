@@ -96,6 +96,48 @@ afterEach(async () => {
 });
 
 describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () => {
+  it.each(['connected', 'refresh_failed_retryable'] as const)('admits a non-expiring GitHub token with %s health without an SCM identity probe', async status => {
+    const harness = await createBuiltInQualifiedRefreshHarness({ additionalPluginIds: ['happier.scm.forge.github'] });
+    createdRegistries.push(harness);
+    const ref = { service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+      accountId: 'ca_0b16429d-6307-4700-b908-e56aee0e86f8' };
+    const profile: QualifiedConnectedAccountProfileV4 = {
+      ref, authenticationModeId: 'native-import', status, kind: 'token', expiresAt: null,
+      revisionSemantics: 'revisioned', credentialRevision: firstRevision,
+      configurationRevision: null, configurationReady: true, displayName: 'fixture', scopes: [],
+    };
+    const credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref, authenticationModeId: profile.authenticationModeId, revisionSemantics: 'revisioned',
+      credentialRevision: firstRevision, configurationRevision: null, metadata: { scopes: [] },
+      content: sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
+        payload: { v: 1, values: { token: 'github_pat_fixture' } }, randomBytes: length => new Uint8Array(length) }),
+    });
+    if (credential.revisionSemantics !== 'revisioned') throw new Error('Expected revisioned fixture');
+    harness.readCredential.mockImplementation(async () => credential);
+    // Captured r1115i /user response: SCM core rate limiting must not gate token delivery to Pi.
+    const transport = vi.fn(async () => new Response('{}', { status: 403,
+      headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-resource': 'core' } }));
+    vi.stubGlobal('fetch', transport);
+    await expect(harness.coordinator.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({ profile }))
+      .resolves.toMatchObject({ status: 'ready', profile: { ...profile, status: 'connected' } });
+    expect(transport).not.toHaveBeenCalled();
+    expect(harness.mutateCredentialHealth).not.toHaveBeenCalled();
+    await expect(harness.coordinator.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({
+      profile: { ...profile, status: 'needs_reauth' },
+    })).resolves.toMatchObject({ status: 'reconnect_required' });
+  });
+
+  it('still refuses an expired OAuth credential when refresh is unavailable', async () => {
+    const harness = await createBuiltInQualifiedRefreshHarness();
+    createdRegistries.push(harness);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    await expect(harness.coordinator.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({
+      profile: { ref: harness.account, authenticationModeId: 'oauth', status: 'connected', kind: 'oauth',
+        expiresAt: now - 1, revisionSemantics: 'revisioned', credentialRevision: firstRevision,
+        configurationRevision: null, configurationReady: true, displayName: 'fixture', scopes: [] },
+    })).resolves.toMatchObject({ status: 'refresh_failed' });
+  });
+
   it('retains the typed HTTP409 cause when authoritative health settlement fails', async () => {
     const harness = await createBuiltInQualifiedRefreshHarness();
     createdRegistries.push(harness);
