@@ -8,6 +8,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
+import { publishSessionTurnMutationUpdate } from '@/app/session/turns/publishSessionTurnMutationUpdate';
 import { readSessionDetail } from '@/app/api/routes/session/registerSessionListingRoutes';
 import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { parseAccountStoredContentCompatibilityHttpHeadersV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
@@ -84,16 +85,25 @@ describe('pending pipeline operations per turn event (real SQLite)', () => {
     it('applies one turn status update from one Session read', async () => {
         const f = await placedSession();
         const turnId = `turn-${randomUUID()}`;
-        expect(await applySessionTurnMutation({ actorUserId: f.owner.id, authentication, mutation: {
-            v: 1, sessionId: f.session.id, mutationId: randomUUID(), action: 'begin', turnId, observedAt: Date.now() - 1_000 } }))
-            .toMatchObject({ ok: true, didApply: true });
+        const begun = await operations(() => applySessionTurnMutation({ actorUserId: f.owner.id, authentication, mutation: {
+            v: 1, sessionId: f.session.id, mutationId: randomUUID(), action: 'begin', turnId, observedAt: Date.now() - 1_000 } }));
+        expect(begun.result).toMatchObject({ ok: true, didApply: true });
+        // The Turn's Team credential witness reads every delivery route's binding in one read. RED (HEAD 660e99616d9): 3.
+        expect(count(begun.operations, operation => operation.startsWith('SessionTeamCredentialBinding.'))).toBe(1);
         const measured = await operations(() => applySessionTurnMutation({ actorUserId: f.owner.id, authentication, mutation: {
             v: 1, sessionId: f.session.id, mutationId: randomUUID(), action: 'complete', turnId, observedAt: Date.now() } }));
         expect(measured.result).toMatchObject({ ok: true, didApply: true, latestTurnStatus: 'completed' });
-        console.info('TURN_STATUS_OPS', measured.operations.length, JSON.stringify(measured.operations));
+        if (!measured.result.ok) throw new Error('Expected the turn status update to apply');
+        const appliedResult = measured.result;
+        const published = await operations(() => publishSessionTurnMutationUpdate({ sessionId: f.session.id, actorUserId: f.owner.id,
+            result: appliedResult }));
+        console.info('TURN_STATUS_OPS', measured.operations.length, JSON.stringify(measured.operations), JSON.stringify(published.operations));
+        // The after-commit push uses the committed update's own recipient projection. RED (HEAD 660e99616d9): 1 Session read.
+        expect(count(published.operations, sessionRead)).toBe(0);
         // Context, storage authority and turn facts share one locked read; the update returns the publication
         // fields; notify-once acceptance stops at one witness read when nobody holds one. RED: 7 Session reads, 4 Account ops.
-        expect(count(measured.operations, sessionRead)).toBe(2);
+        // The change row links the Session the update just wrote without an existence read. RED (HEAD 660e99616d9): 2.
+        expect(count(measured.operations, sessionRead)).toBe(1);
         expect(count(measured.operations, operation => operation.startsWith('Account.'))).toBe(2);
     });
 

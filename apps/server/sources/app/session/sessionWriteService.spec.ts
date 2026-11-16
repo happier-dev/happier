@@ -1,4 +1,4 @@
-import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
+import { SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { sessionDirectGrantProjectionFixture } from '@/app/session/access/sessionAccess.testkit';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -4591,7 +4591,7 @@ describe("sessionWriteService", () => {
             });
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
-                select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+                select: SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT,
                 data: {
                     latestTurnId: "turn-1",
                     latestTurnStatus: "in_progress",
@@ -4797,7 +4797,7 @@ describe("sessionWriteService", () => {
             });
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
-                select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+                select: SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT,
                 data: {
                     latestTurnId: "turn-1",
                     latestTurnStatus: "in_progress",
@@ -5004,7 +5004,7 @@ describe("sessionWriteService", () => {
 
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
-                select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+                select: SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT,
                 data: expect.objectContaining({
                     latestTurnId: "turn-1",
                     latestTurnStatus: "failed",
@@ -5286,7 +5286,7 @@ describe("sessionWriteService", () => {
 
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
-                select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+                select: SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT,
                 data: expect.objectContaining({
                     latestTurnStatus: "completed",
                     latestTurnStatusObservedAt: BigInt(200),
@@ -5479,7 +5479,7 @@ describe("sessionWriteService", () => {
                 }),
             });
             // Non-current annotation touches recency only (6c42cf6285); exact args prove no lifecycle field moved.
-            expect(currentTx.session.update).toHaveBeenCalledWith({ where: { id: "s1" }, select: SESSION_TRANSCRIPT_PUBLICATION_SELECT, data: { updatedAt: expect.any(Date) } });
+            expect(currentTx.session.update).toHaveBeenCalledWith({ where: { id: "s1" }, select: SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT, data: { updatedAt: expect.any(Date) } });
             expect(res).toMatchObject({
                 ok: true,
                 didApply: true,
@@ -6195,7 +6195,7 @@ describe("sessionWriteService", () => {
 
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
-                select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+                select: SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT,
                 data: {
                     latestTurnId: "turn-2",
                     latestTurnStatus: "in_progress",

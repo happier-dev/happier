@@ -124,7 +124,8 @@ export function transcriptObservationWriteCostContract(provider: "sqlite" | "pos
         const perLine = (count: number) => count / lines;
         const cost = {
             // Publisher fence, one owner context read that also serves its access projection and current
-            // recipients, plus the audience census (PostgreSQL) or the change row's Session link (SQLite).
+            // recipients, plus the audience census (PostgreSQL). The change row links the Session the line's
+            // own update wrote, with no existence read (SQLite; RED at HEAD 660e99616d9: 3).
             sessionRowReads: perLine(inTransaction.filter(isSessionRowRead).length),
             sessionRowWrites: perLine(inTransaction.filter(isSessionRowWrite).length),
             audienceCensusReads: perLine(inTransaction.filter(isAudienceCensusRead).length),
@@ -136,7 +137,7 @@ export function transcriptObservationWriteCostContract(provider: "sqlite" | "pos
         // SQLite: the publisher fence's guarded update is its single-writer lock; PostgreSQL holds
         // the Session row lock from the audience fence. Either way only the sequence write follows.
         expect(cost).toEqual(provider === "sqlite"
-            ? { sessionRowReads: 3, sessionRowWrites: 2, audienceCensusReads: 0, postCommitRequests: 0 }
+            ? { sessionRowReads: 2, sessionRowWrites: 2, audienceCensusReads: 0, postCommitRequests: 0 }
             : { sessionRowReads: 3, sessionRowWrites: 1, audienceCensusReads: 1, postCommitRequests: 0 });
     });
 
@@ -173,12 +174,12 @@ export function transcriptObservationWriteCostContract(provider: "sqlite" | "pos
         }
         const cost = {
             // One Session read serves the mutation context, the access decision and the current recipients.
-            // PostgreSQL adds the audience census; SQLite (no census) adds the change row's Session link
-            // and the read-state stamp's Session read.
+            // PostgreSQL adds the audience census. SQLite (no census) links each change row to the written
+            // Session without an existence read (RED at HEAD 660e99616d9: 3).
             sessionRowReads: inTransaction.filter(isSessionRowRead).length / lines,
         };
         console.info("ACCOUNT_MESSAGE_WRITE_COST", JSON.stringify({ provider, lines, ...cost, transactionRequests: inTransaction.length / lines }));
-        expect(cost).toEqual({ sessionRowReads: provider === "sqlite" ? 3 : 2 });
+        expect(cost).toEqual({ sessionRowReads: provider === "sqlite" ? 1 : 2 });
     });
 
     it("still evaluates remote alerts per line when a follower's policy selects streamed messages", async () => {

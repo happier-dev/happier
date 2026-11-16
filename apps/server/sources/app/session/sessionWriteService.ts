@@ -88,8 +88,10 @@ import { decideSessionTurnMutation, resolveSessionTurnTerminalStatus } from "./t
 import {
     applySessionTranscriptPublicationCeilingToProjection,
     buildSessionMessagePublicationWhere,
+    SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT,
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
     type SessionTranscriptPublicationFields,
+    type SessionTranscriptPublicationRecipientProjectionRow,
 } from "./sessionTranscriptPublicationPolicy";
 import { createPlainTranscriptRecordReader, resolveMessageAttentionImpact, type PlainTranscriptRecordReader } from "./messageAttentionImpact";
 import {
@@ -116,7 +118,7 @@ import { loadSessionRollbackEligibleTurnStartsInTx } from "./turns/sessionRollba
 import { SessionTeamCredentialBindingMetadataPatchV1Schema, type SessionTeamCredentialBindingMetadataPatchV1, type SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 import { TEAM_CREDENTIAL_ROUTES_V1, type TeamCredentialRouteV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import {
-    readSessionTeamCredentialBindingInTx,
+    readSessionTeamCredentialBindingsForSlotInTx,
     isSessionTeamCredentialBindingIntentCurrentInTx,
     validateExistingSessionTeamCredentialResourceInTx,
     writeSessionTeamCredentialBindingsInTx,
@@ -2613,6 +2615,8 @@ export type ApplySessionTurnMutationResult =
         recipientCursors: RecipientCursor[];
         badgeAttentionChanged: boolean;
         rollbackEligibleTurnStarts?: number[];
+        /** Server-internal: an applied mutation's Session recipient projection, returned by its own update (null when nothing applied). */
+        recipientProjection: SessionTranscriptPublicationRecipientProjectionRow | null;
       }
     | {
         ok: false;
@@ -2661,12 +2665,11 @@ async function resolveSessionTurnTeamCredentialWitnessInTx(params: Readonly<{
     teamCredentialResourceId: string | null;
     credentialDeliveryMode: TeamCredentialRouteV1 | null;
 }>> {
-    const bindings = (await Promise.all(TEAM_CREDENTIAL_ROUTES_V1.map(deliveryMode =>
-        readSessionTeamCredentialBindingInTx(params.tx, {
-            sessionId: params.sessionId,
-            slot: { kind: "provider_model" },
-            deliveryMode,
-        })))).filter(binding => binding !== null);
+    const bindings = await readSessionTeamCredentialBindingsForSlotInTx(params.tx, {
+        sessionId: params.sessionId,
+        slot: { kind: "provider_model" },
+        deliveryModes: TEAM_CREDENTIAL_ROUTES_V1,
+    });
     if (bindings.length > 1) {
         throw new SessionTurnTeamCredentialBindingCurrentnessError("resource_corrupt");
     }
@@ -3023,6 +3026,7 @@ function createSessionTurnNoOpResult(params: {
         ...params.state,
         recipientCursors: [],
         badgeAttentionChanged: false,
+        recipientProjection: null,
     };
 }
 
@@ -3034,6 +3038,7 @@ function createSessionTurnAppliedResult(params: {
     recipientCursors: SessionRecipientPublication[];
     badgeAttentionChanged: boolean;
     rollbackEligibleTurnStarts?: number[];
+    recipientProjection: SessionTranscriptPublicationRecipientProjectionRow;
 }): SessionWriteInTxResult<Extract<ApplySessionTurnMutationResult, { ok: true }>> {
     const result = {
         ok: true,
@@ -3045,6 +3050,7 @@ function createSessionTurnAppliedResult(params: {
         lastRuntimeIssue: params.state?.lastRuntimeIssue ?? sessionTurnRowRuntimeIssue(params.turn),
         recipientCursors: params.recipientCursors,
         badgeAttentionChanged: params.badgeAttentionChanged,
+        recipientProjection: params.recipientProjection,
         ...(params.rollbackEligibleTurnStarts !== undefined
             ? { rollbackEligibleTurnStarts: params.rollbackEligibleTurnStarts }
             : {}),
@@ -3171,7 +3177,7 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             // Opening resolves the Session's startup projection, not the failed
             // historical turn. Advance its existing freshness frontier so a late
             // heartbeat of that turn cannot restore the resolved issue.
-            const publication = await tx.session.update({ where: { id: sessionId }, select: SESSION_TRANSCRIPT_PUBLICATION_SELECT, data: {
+            const publication = await tx.session.update({ where: { id: sessionId }, select: SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT, data: {
                 lastRuntimeIssue: null,
                 latestTurnStatusObservedAt: toObservedAtBigInt(params.turnMutation.observedAt),
             } });
@@ -3186,7 +3192,7 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             }) : [];
             return sessionRecipientPublicationResult({ ok: true as const, didApply: true, receipt,
                 ...state, lastRuntimeIssue: null, latestTurnStatusObservedAt: params.turnMutation.observedAt,
-                recipientCursors,
+                recipientCursors, recipientProjection: publication,
                 badgeAttentionChanged: didSessionActivityBadgeSignalChange(toSessionActivityBadgeInputs(session),
                     { ...toSessionActivityBadgeInputs(session), lastRuntimeIssue: null }),
             });
@@ -3444,10 +3450,11 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             ...(shouldMaterialize ? { lastRuntimeIssue: appliedTurn.lastRuntimeIssueJson ?? null } : {}),
         };
         // Non-current settlements and annotations still change stored Turn facts.
-        // The update returns this Session's publication fields for the recipient fanout below.
+        // The update returns this Session's publication fields for the recipient fanout below and its
+        // recipient projection for the after-commit push (no re-read).
         const publication = await tx.session.update({
             where: { id: params.turnMutation.sessionId },
-            select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+            select: SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT,
             data: shouldMaterialize ? {
                 latestTurnId: targetTurnId,
                 latestTurnStatus: appliedTurn.status,
@@ -3491,6 +3498,7 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             ...(!shouldMaterialize ? { state: materializedSessionTurnState(session) } : {}),
             recipientCursors,
             badgeAttentionChanged,
+            recipientProjection: publication,
             ...(rollbackEligibleTurnStarts !== undefined ? { rollbackEligibleTurnStarts } : {}),
         });
 }

@@ -11,6 +11,7 @@ import {
     type ApplySessionTurnMutationResult,
 } from "@/app/session/sessionWriteService";
 import { publishSessionTurnMutationUpdate } from "@/app/session/turns/publishSessionTurnMutationUpdate";
+import { loadSessionTranscriptPublicationRecipientProjection } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { initializeSessionOwnerReadStateInTx } from "@/app/session/personal/readState";
 import { inTx } from "@/storage/inTx";
 import { db } from "@/storage/db";
@@ -242,6 +243,8 @@ describe("session realtime publication privacy (SQLite integration)", () => {
                 rollbackEligibleTurnStarts: [2, 7],
                 recipientCursors,
                 badgeAttentionChanged: false,
+                // The applied mutation's own update returns this row; the fixture reads the committed one.
+                recipientProjection: await loadSessionTranscriptPublicationRecipientProjection(session.id),
             };
             await publishSessionTurnMutationUpdate({
                 sessionId: session.id,

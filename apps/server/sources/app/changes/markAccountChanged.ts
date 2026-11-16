@@ -400,6 +400,8 @@ export async function markAccountsChanged(
         hintForAccount?: (accountId: string) => unknown;
         /** This recipient's current-view publication replaces its duplicate viewer wake. */
         currentViewForAccount?: (accountId: string) => boolean;
+        /** The writer updated this Session row in this transaction: its change rows link it without an existence read. */
+        sessionRowWrittenInTx?: true;
     }>,
 ): Promise<AccountChangePublication[]> {
     const accountIds = [...new Set(params.accountIds
@@ -419,6 +421,7 @@ export async function markAccountsChanged(
         const cursors: AccountChangePublication[] = [];
         for (const accountId of accountIds) {
             cursors.push(await markAccountChanged(tx, { accountId, kind, entityId, hint: hints.get(accountId),
+                ...(params.sessionRowWrittenInTx && kind === "session" ? { sessionRowWrittenInTx: true as const } : {}),
                 ...(params.currentViewForAccount?.(accountId) ? { currentViewSessionId: entityId } : {}) }));
         }
         return cursors;
@@ -617,6 +620,8 @@ export interface MarkAccountChangedParams {
     hint?: unknown;
     /** Retain Machine/other-Session wakes; the current-view publisher covers this Session's viewers. */
     currentViewSessionId?: string;
+    /** A `session` change whose writer updated that Session row in this transaction (the link needs no existence read). */
+    sessionRowWrittenInTx?: true;
     /** The coordinator has already locked this existing activation receipt. */
     accountEncryptionTransitionActivation?: Readonly<{
         transitionId: string;
@@ -644,6 +649,7 @@ export async function markAccountChanged(tx: Tx, params: MarkAccountChangedParam
         kind,
         entityId: params.entityId,
         ...(params.currentViewSessionId ? { currentViewSessionId: params.currentViewSessionId } : {}),
+        ...(params.sessionRowWrittenInTx && kind === "session" ? { sessionRowWrittenInTx: true as const } : {}),
         ...(params.hint === undefined ? {} : { hint: structuredClone(compactHint(kind, params.hint)) }),
         ...(params.accountEncryptionTransitionActivation ? {
             accountEncryptionTransitionActivation: structuredClone(params.accountEncryptionTransitionActivation),
@@ -853,6 +859,7 @@ async function publishAccountChanged(
     let artifactKinds: readonly string[] | null = null;
     const fk = await (async () => {
         if (sessionId) {
+            if (params.sessionRowWrittenInTx) return { sessionId };
             const row = await tx.session.findUnique({ where: { id: sessionId }, select: { id: true } });
             return { sessionId: row?.id ?? null };
         }

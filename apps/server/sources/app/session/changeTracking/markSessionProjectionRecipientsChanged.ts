@@ -94,6 +94,8 @@ export async function markSessionProjectionRecipientsChanged(params: {
         tx: params.tx,
         sessionId: params.sessionId,
         accountIds: recipientAccountIds,
+        // A supplied publication is the writer's own Session update in this transaction: the row exists.
+        ...(params.publication !== undefined ? { sessionRowWrittenInTx: true as const } : {}),
         currentViewForAccount: currentViewPublication || params.sessionAudienceReceivesUpdate ? accountId => {
             const hint = hints.get(accountId);
             return hint?.kind === 'publish' && isSessionSystemRecordUnchangedHintV1(hint.value)

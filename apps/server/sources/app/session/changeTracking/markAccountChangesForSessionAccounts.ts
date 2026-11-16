@@ -26,6 +26,8 @@ export async function markAccountChangesForSessionAccounts(params: {
     hint?: unknown;
     hintForAccount?: (accountId: string) => { kind: "suppress" } | { kind: "publish"; value: unknown };
     currentViewForAccount?: (accountId: string) => boolean;
+    /** The writer updated this Session row in this transaction. */
+    sessionRowWrittenInTx?: true;
 }): Promise<SessionAccountChangePublication[]> {
     const hints = new Map<string, unknown>();
     for (const accountId of params.accountIds) {
@@ -39,5 +41,6 @@ export async function markAccountChangesForSessionAccounts(params: {
         accountIds: [...hints.keys()], kind: "session", entityId: params.sessionId,
         hintForAccount: accountId => hints.get(accountId),
         currentViewForAccount: params.currentViewForAccount,
+        ...(params.sessionRowWrittenInTx ? { sessionRowWrittenInTx: true as const } : {}),
     });
 }

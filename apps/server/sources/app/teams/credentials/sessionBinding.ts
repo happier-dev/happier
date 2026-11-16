@@ -240,6 +240,21 @@ export async function readSessionTeamCredentialBindingInTx(
     return row ? { ...row, deliveryMode: input.deliveryMode } : null;
 }
 
+/** Every delivery route's binding of one slot, in one read (one row per route at most). */
+export async function readSessionTeamCredentialBindingsForSlotInTx(
+    tx: Tx,
+    input: Readonly<{ sessionId: string; slot: SessionTeamCredentialSlotV1; deliveryModes: readonly TeamCredentialRouteV1[] }>,
+): Promise<ReadonlyArray<Readonly<{ resourceId: string; resourceRevision: number; deliveryMode: TeamCredentialRouteV1 }>>> {
+    const modeBySlotKind = new Map(input.deliveryModes.map(deliveryMode => [persistedSlotKind(input.slot, deliveryMode), deliveryMode]));
+    const rows = await tx.sessionTeamCredentialBinding.findMany({
+        where: { sessionId: input.sessionId, slotKind: { in: [...modeBySlotKind.keys()] }, slotKey: Buffer.from(key(input.slot)) },
+        select: { slotKind: true, resourceId: true, resourceRevision: true },
+    });
+    return input.deliveryModes.flatMap(deliveryMode => rows
+        .filter(row => modeBySlotKind.get(row.slotKind) === deliveryMode)
+        .map(row => ({ resourceId: row.resourceId, resourceRevision: row.resourceRevision, deliveryMode })));
+}
+
 /** Only authenticated source-custodian RPC evidence can turn pending into prepared. */
 export async function stampSessionTeamCredentialNativeDeliveryInTx(tx: Tx, input: Readonly<{
     sessionId: string; accountId: string; response: unknown; authentication: SessionAccessAuthentication;

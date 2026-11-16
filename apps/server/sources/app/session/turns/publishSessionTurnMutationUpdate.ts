@@ -4,10 +4,7 @@ import {
     eventRouter,
 } from "@/app/events/eventRouter";
 import { refreshTrackedSessionAccountBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
-import {
-    loadSessionTranscriptPublicationRecipientProjection,
-    projectSessionTranscriptPublicationRealtimeProjection,
-} from "@/app/session/sessionTranscriptPublicationPolicy";
+import { projectSessionTranscriptPublicationRealtimeProjection } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
 import { publishSessionAfterCommit } from "@/app/session/publishSessionAfterCommit";
@@ -28,7 +25,8 @@ export async function publishSessionTurnMutationUpdate(params: {
 }): Promise<void> {
     if (!params.result.didApply) return;
     const skipSenderConnection = resolveSessionTurnUpdateSkipSenderConnection(params.connection);
-    const session = await loadSessionTranscriptPublicationRecipientProjection(params.sessionId);
+    // The committed update's own recipient projection: the push carries the state at its cursor.
+    const session = params.result.recipientProjection;
     if (session) {
         await Promise.all(params.result.recipientCursors.map(async ({ accountId, cursor }) => {
             const projection = projectSessionTranscriptPublicationRealtimeProjection(
