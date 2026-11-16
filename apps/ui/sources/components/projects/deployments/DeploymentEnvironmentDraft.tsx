@@ -750,12 +750,12 @@ export const DeploymentEnvironmentDraft = React.memo(
             {props.copyFrom ? <Item title={deploymentDefinitionLabel(props.copyFrom.content) ?? t('projects.deployments.whatRunsTitle')}
               subtitle={props.copyFrom.content.name} mode="info" /> : props.catalogApp ? <Item testID="project-deployments.draft.catalogApp"
               title={props.catalogApp.title} mode="info" showChevron={false} /> : definitionKind === 'image' ? <>
-              <Item title={t('managedMachines.config.image')} accessoryLayout="stacked" showChevron={false}
+              <Item title={t('managedMachines.config.image')} accessoryLayout={stepped ? 'adaptive' : 'stacked'} showChevron={false}
                 rightElement={<FieldTextInput testID="project-deployments.draft.imageName"
                   accessibilityLabel={t('managedMachines.config.image')} value={imageName}
                   onChangeText={setImageName} monospace autoCapitalize="none" autoComplete="off" />}
               />
-              <Item title={t('projects.deployments.domainFieldPort')} accessoryLayout="stacked" showChevron={false}
+              <Item title={t('projects.deployments.domainFieldPort')} accessoryLayout={stepped ? 'adaptive' : 'stacked'} showChevron={false}
                 rightElement={<FieldTextInput testID="project-deployments.draft.imagePort"
                   accessibilityLabel={t('projects.deployments.domainFieldPort')} value={imagePort}
                   onChangeText={setImagePort} monospace autoCapitalize="none" autoComplete="off" />}
@@ -919,8 +919,9 @@ export const DeploymentEnvironmentDraft = React.memo(
             <View style={draftStep === 'configure' ? null : styles.hiddenStep}>
               {machineAwayNotice}
               {refusalBanner}
-              {projectChoiceGroups}
+              {/* What runs leads Configure; the Project it is listed under follows it (journey-deploy imgCfg). */}
               {configureGroups}
+              {projectChoiceGroups}
               {moreOpen ? <>
                 <ItemGroup title={t('newApp.deploy.moreSettings')}>
                   <Item testID="project-deployments.draft.name" title={t('projects.deployments.name')} accessoryLayout="adaptive"
