@@ -77,6 +77,10 @@ function parseCatalog(value: unknown): Readonly<{
     const defaultEffort = text(row.defaultReasoningEffort) ?? null;
     return {
       id, name: text(row.displayLabel) ?? modelId,
+      // Meta's JSON-schema contract, verified through CLIProxyAPI v8.0.61
+      // with this contributor model (2026-11-16). Unknown models stay unknown.
+      ...(providerId === 'meta' && modelId === 'muse-spark-1.3-contributor'
+        ? { capabilities: { structuredOutput: 'supported' as const } } : {}),
       ...(text(row.description) ? { description: text(row.description) } : {}),
       ...(contextLimit === undefined ? {} : { contextWindowTokens: contextLimit }),
       ...(variants.length === 0 ? {} : { modelOptions: [{ id: 'reasoning_effort', name: 'Reasoning effort',

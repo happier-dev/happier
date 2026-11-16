@@ -38,6 +38,20 @@ async function recordingWithCatalog(result: JsonValue): Promise<JsonValue> {
 }
 
 describe('Muse native model catalog', () => {
+  it('publishes verified contributor JSON support without granting it to unknown models', async () => {
+    const { msp, catalog } = await openCatalog(await recordingWithCatalog({ models: [
+      { providerId: 'meta', modelId: 'muse-spark-1.3-contributor' },
+      { providerId: 'meta', modelId: 'uncharacterized-model' },
+      { providerId: 'other', modelId: 'muse-spark-1.3-contributor' },
+    ] }));
+    try {
+      const { models } = await catalog.refresh();
+      expect(models?.[0]?.capabilities?.structuredOutput).toBe('supported');
+      expect(models?.[1]?.capabilities?.structuredOutput).toBeUndefined();
+      expect(models?.[2]?.capabilities?.structuredOutput).toBeUndefined();
+    } finally { await msp.dispose(); }
+  });
+
   it('offers native models through the real host pre-Session catalog front door', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-muse-model-preflight-'));
     const script = join(directory, 'playback.cjs');
