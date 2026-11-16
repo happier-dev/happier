@@ -358,6 +358,38 @@ describe('useProviderBindingStatus', () => {
         expect(describeProviderBindingStatus).not.toHaveBeenCalled();
     });
 
+    it('a host hidden and shown again renders only when its binding status really changed', async () => {
+        // A phone Session switch hides one Session and shows another: each show re-reads through `active`.
+        const listeners = new Set<() => void>();
+        let active = true;
+        const activity = { get: () => active, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
+        const setActive = (next: boolean) => { active = next; for (const listener of [...listeners]) listener(); };
+        const renders = { unbound: 0, switched: 0 };
+        function Unbound() {
+            renders.unbound += 1;
+            useProviderBindingStatus({ enabled: true, active: activity, machineId: 'machine-a', serverId, selection: null, launchBinding: null });
+            return React.createElement('View');
+        }
+        function Switched() {
+            renders.switched += 1;
+            useProviderBindingStatus({ enabled: true, active: activity, machineId: 'machine-a', serverId, launchBinding,
+                selection: { ...selection, ref: { ...selection.ref, providerConnectionId: ProviderConnectionIdSchema.parse('pc_next') } } });
+            return React.createElement('View');
+        }
+        await renderScreen(<><Unbound /><Switched /></>);
+        // The first show also settles the client's own readiness; count the switch-backs after it.
+        await act(async () => { setActive(false); });
+        await act(async () => { setActive(true); });
+        const settled = { ...renders };
+        for (let switchBack = 0; switchBack < 3; switchBack += 1) {
+            await act(async () => { setActive(false); });
+            await act(async () => { setActive(true); });
+        }
+        expect({ unbound: renders.unbound - settled.unbound, switched: renders.switched - settled.switched })
+            .toEqual({ unbound: 0, switched: 0 });
+        expect(describeProviderBindingStatus).not.toHaveBeenCalled();
+    });
+
     it('classifies a connection switch as changed without sending an invalid launch tuple', async () => {
         const value: { current: ReturnType<typeof useProviderBindingStatus> | null } = { current: null };
         function Harness() {

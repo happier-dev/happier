@@ -31,6 +31,17 @@ type ProviderBindingStatusState = Readonly<{
     loading: boolean;
 }>;
 
+/**
+ * Whether a read settled on what is already shown. Each read builds a new state object (and a selection mismatch a
+ * new `selection_changed` status), so publishing it would render the host on every show of a retained Session.
+ */
+function isSameBindingStatusState(current: ProviderBindingStatusState, next: ProviderBindingStatusState): boolean {
+    return current.scopeKey === next.scopeKey && current.accountLifetime === next.accountLifetime
+        && current.error === next.error && current.loading === next.loading
+        && (current.status === next.status
+            || (current.status?.status === 'selection_changed' && next.status?.status === 'selection_changed'));
+}
+
 const ALWAYS_ACTIVE: ProviderBindingStatusActivity = Object.freeze({ get: () => true, subscribe: () => () => {} });
 
 /** When the binding read may run. While inactive nothing is read and the last status stays as it was shown. */
@@ -51,13 +62,17 @@ export function useProviderBindingStatus(input: Readonly<{
 }>) {
     const { describeProviderBindingStatus, ready, pendingApproval, accountScope: { resolution, binding } } = useProviderActionClient(input.serverId);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
-    const [state, setState] = React.useState<ProviderBindingStatusState>({
+    const [state, setStateValue] = React.useState<ProviderBindingStatusState>({
         scopeKey: null,
         accountLifetime: null,
         status: null,
         error: null,
         loading: false,
     });
+    const setState = React.useCallback((next: React.SetStateAction<ProviderBindingStatusState>) => setStateValue((current) => {
+        const resolved = typeof next === 'function' ? next(current) : next;
+        return isSameBindingStatusState(current, resolved) ? current : resolved;
+    }), []);
     const generation = React.useRef(0);
     const pendingRead = React.useRef<AbortController | null>(null);
     const activity = input.active ?? ALWAYS_ACTIVE;
@@ -122,7 +137,7 @@ export function useProviderBindingStatus(input: Readonly<{
                 : current);
         });
         return () => registration?.dispose();
-    }, [accountLifetime]);
+    }, [accountLifetime, setState]);
 
     const refresh = React.useCallback(async () => {
         const requestGeneration = ++generation.current;
@@ -210,7 +225,7 @@ export function useProviderBindingStatus(input: Readonly<{
                     : current);
             }
         }
-    }, [accountLifetime, activity, binding, describeProviderBindingStatus, ready, bindingKey, input.enabled, input.machineId, input.selectionIntentPresent, input.serverId, scopeKey, selectionKey]);
+    }, [accountLifetime, activity, binding, describeProviderBindingStatus, ready, bindingKey, input.enabled, input.machineId, input.selectionIntentPresent, input.serverId, scopeKey, selectionKey, setState]);
 
     // Reads while active; an inactive host keeps the status it last showed and reads again when active.
     React.useEffect(() => followSignal(activity, (active) => {
