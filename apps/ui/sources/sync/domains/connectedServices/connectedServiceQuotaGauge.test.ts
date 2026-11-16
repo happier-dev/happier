@@ -186,8 +186,21 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
             formatter,
         });
         expect(viewModel?.isStale).toBe(false);
-        expect(viewModel?.subscription).toMatchObject({ renewal: 'off', isLastKnown: false });
+        expect(viewModel?.subscription).toMatchObject({ status: 'ending', isLastKnown: false });
         expect(viewModel?.subscription?.summary).toBe('Ends in 1 day');
+    });
+
+    it('reports an evidenced subscription without renewal or end date as active, without a duplicate summary', () => {
+        const viewModel = computeConnectedServiceQuotaGaugeViewModel({
+            snapshot: {
+                ...snapshot([meter({ meterId: 'daily', label: 'Daily', used: 30, limit: 100 })]),
+                subscription: { status: 'subscribed', renewal: 'unknown', observedAtMs: 1_000, staleAfterMs: 500 },
+            },
+            windowMode: 'most_constrained',
+            nowMs: 2_000,
+            formatter,
+        });
+        expect(viewModel?.subscription).toMatchObject({ status: 'active', summary: null });
     });
 
     it('selects the reliable meter with the least remaining quota for most_constrained mode', () => {

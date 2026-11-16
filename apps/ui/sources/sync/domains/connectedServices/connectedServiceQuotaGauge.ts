@@ -20,6 +20,7 @@ import {
 import { formatResetCountdown, isResetCountdownOutdated } from './formatResetCountdown';
 import { resolveQuotaTone } from './resolveQuotaTone';
 import { resolveSubscriptionEndTime } from './resolveSubscriptionEndTime';
+import { resolveConnectedServiceSubscriptionStatus, type ConnectedServiceSubscriptionStatus } from './subscriptionStatus';
 
 import { resolveQuotaGaugeWindowModes, type ConnectedServiceQuotaGaugeWindowMode } from './quotaGaugeWindows';
 import { projectConnectedServiceQuotaSnapshotForLimitSelection } from './projectConnectedServiceQuotaSnapshotForLimitSelection';
@@ -73,10 +74,10 @@ export type ConnectedServiceQuotaGaugeLabelFormatter = Readonly<{
 
 export type ConnectedServiceQuotaGaugeViewModel = Readonly<{
     subscription?: Readonly<{
-        summary: string;
+        /** End-date sentence; null when the provider exposes no end date (the status already says it all). */
+        summary: string | null;
         period: string | null;
-        renewal: 'on' | 'off' | 'unknown';
-        renewalLabel: string;
+        status: ConnectedServiceSubscriptionStatus;
         checkedLabel: string;
         notice: string | null;
         accessUntilLabel: string | null;
@@ -447,21 +448,17 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         })
         : null;
     const subscription = sourceSubscription ? {
-        summary: sourceSubscription.status === 'none' ? 'No subscription'
-            : sourceSubscription.status === 'unavailable' ? 'Subscription details unavailable'
-                : subscriptionEndTime
-                    ? sourceSubscription.renewal === 'on'
-                        ? subscriptionEndTime.kind === 'relativeDays'
-                            ? params.formatter.subscriptionRenewsInDays({ days: subscriptionEndTime.days })
-                            : params.formatter.subscriptionRenews({ date: subscriptionEndTime.date })
-                        : subscriptionEndTime.kind === 'relativeDays'
-                            ? params.formatter.subscriptionEndsInDays({ days: subscriptionEndTime.days })
-                            : params.formatter.subscriptionEnds({ date: subscriptionEndTime.date })
-                    : 'Subscription active',
+        summary: sourceSubscription.status !== 'subscribed' || !subscriptionEndTime ? null
+            : sourceSubscription.renewal === 'on'
+                ? subscriptionEndTime.kind === 'relativeDays'
+                    ? params.formatter.subscriptionRenewsInDays({ days: subscriptionEndTime.days })
+                    : params.formatter.subscriptionRenews({ date: subscriptionEndTime.date })
+                : subscriptionEndTime.kind === 'relativeDays'
+                    ? params.formatter.subscriptionEndsInDays({ days: subscriptionEndTime.days })
+                    : params.formatter.subscriptionEnds({ date: subscriptionEndTime.date }),
         period: sourceSubscription.currentPeriodStartAtMs && sourceSubscription.currentPeriodEndAtMs
             ? `${new Date(sourceSubscription.currentPeriodStartAtMs).toLocaleDateString()} – ${new Date(sourceSubscription.currentPeriodEndAtMs).toLocaleDateString()}` : null,
-        renewal: sourceSubscription.renewal,
-        renewalLabel: sourceSubscription.renewal === 'on' ? 'On' : sourceSubscription.renewal === 'off' ? 'Off' : 'Unknown',
+        status: resolveConnectedServiceSubscriptionStatus(sourceSubscription),
         checkedLabel: `Checked ${new Date(sourceSubscription.observedAtMs).toLocaleString()}`,
         notice: sourceSubscription.lastRefreshError ? 'Subscription details may be out of date.' : null,
         accessUntilLabel: sourceSubscription.currentPeriodEndAtMs ? `Access continues until ${new Date(sourceSubscription.currentPeriodEndAtMs).toLocaleDateString()}` : null,

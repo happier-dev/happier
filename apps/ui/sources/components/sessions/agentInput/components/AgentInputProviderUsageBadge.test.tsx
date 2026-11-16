@@ -6,6 +6,7 @@ import { computeConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/conne
 
 import type { ConnectedServiceQuotaGaugeLabelFormatter, ConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { renderScreen } from '@/dev/testkit';
+import { t } from '@/text';
 
 import { AgentInputProviderUsageBadge } from './AgentInputProviderUsageBadge';
 
@@ -153,8 +154,7 @@ describe('AgentInputProviderUsageBadge', () => {
             subscription: {
                 summary: 'Renews 15 September',
                 period: '15 August – 15 September',
-                renewal: 'on' as const,
-                renewalLabel: 'On',
+                status: 'renewing' as const,
                 checkedLabel: 'Checked 1 minute ago',
                 notice: null,
                 accessUntilLabel: null,
@@ -163,12 +163,18 @@ describe('AgentInputProviderUsageBadge', () => {
         };
         const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={firstViewModel} />);
         act(() => screen.findByTestId('agent-input-provider-usage-badge')?.props.onPress?.());
-        expect(screen.findByTestId('agent-input-provider-usage-subscription:renewal')?.props.children).toContain('On');
+        expect(screen.findByTestId('agent-input-provider-usage-subscription:renewal')?.props.children).toBe(t('connectedServices.subscription.renewalOn'));
         await screen.update(<AgentInputProviderUsageBadge viewModel={{
             ...firstViewModel,
-            subscription: { ...firstViewModel.subscription, renewal: 'off', renewalLabel: 'Off', summary: 'Ends 15 September' },
+            subscription: { ...firstViewModel.subscription, status: 'ending', summary: 'Ends 15 September' },
         }} />);
-        expect(screen.findByTestId('agent-input-provider-usage-subscription:renewal')?.props.children).toContain('Off');
+        expect(screen.findByTestId('agent-input-provider-usage-subscription:renewal')?.props.children).toBe(t('connectedServices.subscription.renewalOff'));
+        await screen.update(<AgentInputProviderUsageBadge viewModel={{
+            ...firstViewModel,
+            subscription: { ...firstViewModel.subscription, status: 'active', summary: null, period: null },
+        }} />);
+        expect(screen.findByTestId('agent-input-provider-usage-subscription:renewal')?.props.children).toBe(t('connectedServices.subscription.active'));
+        expect(screen.findByTestId('agent-input-provider-usage-subscription:summary')).toBeNull();
         await screen.update(<AgentInputProviderUsageBadge viewModel={viewModel()} />);
         expect(screen.findByTestId('agent-input-provider-usage-subscription')).toBeNull();
     });
@@ -179,8 +185,7 @@ describe('AgentInputProviderUsageBadge', () => {
             subscription: {
                 summary: 'Ends 15 September',
                 period: null,
-                renewal: 'off' as const,
-                renewalLabel: 'Off',
+                status: 'ending' as const,
                 checkedLabel: 'Checked 1 minute ago',
                 notice: null,
                 accessUntilLabel: null,

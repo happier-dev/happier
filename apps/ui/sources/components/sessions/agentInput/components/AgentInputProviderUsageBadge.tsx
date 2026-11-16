@@ -7,6 +7,10 @@ import { Text } from '@/components/ui/text/Text';
 import { TokenUsageRing, type TokenUsageTone } from '@/components/sessions/usage';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import {
+    resolveConnectedServiceSubscriptionStatusLabel,
+    resolveConnectedServiceSubscriptionStatusTone,
+} from '@/sync/domains/connectedServices/subscriptionStatus';
 import type {
     ConnectedServiceQuotaGaugeViewModel,
 } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
@@ -92,8 +96,7 @@ function areProviderUsageViewModelsEqual(
     const subscriptionEqual = leftSubscription === rightSubscription || (!!leftSubscription && !!rightSubscription
         && leftSubscription.summary === rightSubscription.summary
         && leftSubscription.period === rightSubscription.period
-        && leftSubscription.renewal === rightSubscription.renewal
-        && leftSubscription.renewalLabel === rightSubscription.renewalLabel
+        && leftSubscription.status === rightSubscription.status
         && leftSubscription.checkedLabel === rightSubscription.checkedLabel
         && leftSubscription.notice === rightSubscription.notice
         && leftSubscription.accessUntilLabel === rightSubscription.accessUntilLabel
@@ -145,6 +148,8 @@ export const AgentInputProviderUsageBadge = React.memo(function AgentInputProvid
     props: AgentInputProviderUsageBadgeProps,
 ) {
     const styles = stylesheet;
+    const subscriptionTone = props.viewModel.subscription
+        ? resolveConnectedServiceSubscriptionStatusTone(props.viewModel.subscription.status) : null;
     const anchorRef = React.useRef<any>(null);
     const [isPinnedOpen, setIsPinnedOpen] = React.useState(false);
     const [isHovered, setIsHovered] = React.useState(false);
@@ -243,9 +248,9 @@ export const AgentInputProviderUsageBadge = React.memo(function AgentInputProvid
                                     <View style={styles.subscriptionStatus}>
                                         <View style={[
                                             styles.subscriptionStatusDot,
-                                            props.viewModel.subscription.renewal === 'on'
+                                            subscriptionTone === 'on'
                                                 ? styles.subscriptionStatusDotOn
-                                                : props.viewModel.subscription.renewal === 'off'
+                                                : subscriptionTone === 'off'
                                                     ? styles.subscriptionStatusDotOff
                                                     : styles.subscriptionStatusDotUnknown,
                                         ]} />
@@ -253,16 +258,18 @@ export const AgentInputProviderUsageBadge = React.memo(function AgentInputProvid
                                             testID="agent-input-provider-usage-subscription:renewal"
                                             style={styles.subscriptionRenewal}
                                         >
-                                            {props.viewModel.subscription.renewalLabel}
+                                            {resolveConnectedServiceSubscriptionStatusLabel(props.viewModel.subscription.status)}
                                         </Text>
                                     </View>
                                 </View>
-                                <Text
-                                    testID="agent-input-provider-usage-subscription:summary"
-                                    style={styles.subscriptionSummary}
-                                >
-                                    {props.viewModel.subscription.summary}
-                                </Text>
+                                {props.viewModel.subscription.summary ? (
+                                    <Text
+                                        testID="agent-input-provider-usage-subscription:summary"
+                                        style={styles.subscriptionSummary}
+                                    >
+                                        {props.viewModel.subscription.summary}
+                                    </Text>
+                                ) : null}
                                 {props.viewModel.subscription.period ? (
                                     <Text style={styles.subscriptionMeta}>{props.viewModel.subscription.period}</Text>
                                 ) : null}
@@ -411,6 +418,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: 12,
+        marginBottom: 8,
     },
     subscriptionLabel: {
         fontSize: 10,
@@ -446,7 +454,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     subscriptionSummary: {
         fontSize: 13,
         lineHeight: 18,
-        marginTop: 8,
         color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
@@ -498,6 +505,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: 6,
+        marginTop: 12,
         paddingTop: 12,
         borderTopWidth: 1,
         borderTopColor: theme.colors.border.subtle,
