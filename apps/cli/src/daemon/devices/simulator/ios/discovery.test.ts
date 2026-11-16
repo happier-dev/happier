@@ -287,7 +287,7 @@ describe('discoverIosSimulatorResources', () => {
                         stderr: '',
                     };
                 }
-                if (input.command !== 'xcrun' || input.args.join(' ') !== 'simctl list devices booted --json') {
+                if (input.command !== 'xcrun' || input.args.join(' ') !== 'simctl list devices --json') {
                     return { exitCode: 1, stdout: '', stderr: 'unsupported developer tool' };
                 }
                 return {
