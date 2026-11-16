@@ -1,6 +1,7 @@
+// @happier-test-preparation source-condition
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { access, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
@@ -405,4 +406,51 @@ test('revision capture drops stray ignored files and keeps declared generated in
   assert.ok(after.files.includes('node_modules/.prisma/client/index.js'), 'declared generated inputs stay');
   assert.ok(after.files.includes('apps/server/generated/sqlite-client/index.js'));
   assert.equal(after.inputIdentity, before.inputIdentity, 'stray ignored files do not change the build identity');
+});
+
+test('daemon capture retains the real Iroh Cargo workspace independently of npm shipped files', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-real-cargo-capture-' });
+  const repoDir = fixture.path('repo');
+  const iroh = join(repoDir, 'packages/iroh-native');
+  const actual = fileURLToPath(new URL('../../../../packages/iroh-native/', import.meta.url));
+  await mkdir(join(repoDir, 'apps/cli/src'), { recursive: true });
+  await mkdir(iroh, { recursive: true });
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*', 'packages/*'] }));
+  await writeFile(join(repoDir, 'apps/cli/package.json'), JSON.stringify({ name: '@happier-dev/cli',
+    dependencies: { '@happier-dev/iroh-native': 'workspace:*' } }));
+  await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'export {};');
+  const manifest = JSON.parse(await readFile(join(actual, 'package.json'), 'utf8'));
+  // Cargo owns its build closure; npm publication membership must not be a
+  // second, manually synchronized declaration of the workspace's crates.
+  await writeFile(join(iroh, 'package.json'), JSON.stringify({ ...manifest,
+    files: manifest.files.filter(path => path !== 'rust/happier-session-holder') }));
+  await cp(join(actual, 'rust'), join(iroh, 'rust'), { recursive: true,
+    filter: path => !path.split(/[/\\]/).includes('target') });
+  const captured = await captureSourceWebBuildInputs({ repoDir, component: 'daemon', outputDir: fixture.path('guest-workspace') });
+  const rust = join(captured.repoDir, 'packages/iroh-native/rust');
+  // Cargo itself resolves the REAL workspace members and their local targets.
+  // No network, compiler, dependency resolution or fake Cargo layout is involved.
+  const { stdout } = await promisify(execFile)('cargo', ['metadata', '--offline', '--no-deps', '--format-version=1',
+    '--manifest-path', join(rust, 'Cargo.toml')], { env: { ...process.env, CARGO_TARGET_DIR: fixture.path('cargo-target') } });
+  const metadata = JSON.parse(stdout);
+  assert.ok(metadata.workspace_members.length > 0);
+  for (const pkg of metadata.packages) {
+    assert.equal(await readFile(pkg.manifest_path, 'utf8'), await readFile(join(actual, 'rust',
+      ...pkg.manifest_path.slice(rust.length + 1).split(/[/\\]/)), 'utf8'));
+    for (const target of pkg.targets) await access(target.src_path);
+  }
+  assert.equal(captured.files.some(path => path.includes('/target/')), false);
+  const added = join(iroh, 'rust/capture-added-member');
+  await mkdir(join(added, 'src'), { recursive: true });
+  await writeFile(join(added, 'Cargo.toml'), '[package]\nname = "capture-added-member"\nversion = "0.1.0"\nedition = "2021"\n');
+  await writeFile(join(added, 'src/lib.rs'), 'pub const CAPTURED: bool = true;');
+  const workspaceManifest = join(iroh, 'rust/Cargo.toml');
+  await writeFile(workspaceManifest, (await readFile(workspaceManifest, 'utf8')).replace('members = [', 'members = ["capture-added-member", '));
+  const next = await captureSourceWebBuildInputs({ repoDir, component: 'daemon', outputDir: fixture.path('next-guest-workspace') });
+  const nextMetadata = JSON.parse((await promisify(execFile)('cargo', ['metadata', '--offline', '--no-deps', '--format-version=1',
+    '--manifest-path', join(next.repoDir, 'packages/iroh-native/rust/Cargo.toml')],
+  { env: { ...process.env, CARGO_TARGET_DIR: fixture.path('cargo-target') } })).stdout);
+  assert.ok(nextMetadata.packages.some(pkg => pkg.name === 'capture-added-member'));
+  assert.equal(await readFile(join(next.repoDir, 'packages/iroh-native/rust/capture-added-member/src/lib.rs'), 'utf8'),
+    'pub const CAPTURED: bool = true;', 'new Cargo members enter the capture without an npm files edit');
 });
