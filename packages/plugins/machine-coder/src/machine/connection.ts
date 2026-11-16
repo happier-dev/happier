@@ -1,19 +1,24 @@
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRuntime, ConnectedAccountPortableRuntime, ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import { ACCOUNT_PURPOSE, ACCOUNT_SERVICE } from './schemas.js';
+import { completeCoderFirstAdmin } from './firstAdmin.js';
 
 type HttpService = PluginInvocationContext['services']['http'];
 const environmentKeys = ['CODER_URL', 'CODER_SESSION_TOKEN'] as const;
 export function coderCredentialUnavailable() {
   return new PluginError({ code: 'credential_unavailable', remediation: { kind: 'selectAccount', service: ACCOUNT_SERVICE } });
 }
-function connection(values: Readonly<Record<string, unknown>>, token: string | null | undefined) {
-  if (typeof values.endpoint !== 'string' || !token) throw coderCredentialUnavailable();
+function coderEndpoint(values: Readonly<Record<string, unknown>>) {
+  if (typeof values.endpoint !== 'string') throw coderCredentialUnavailable();
   let endpoint: URL;
   try { endpoint = new URL(values.endpoint); } catch { throw coderCredentialUnavailable(); }
   if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash
     || endpoint.pathname !== '/') throw coderCredentialUnavailable();
-  return { endpoint: endpoint.origin, token };
+  return endpoint.origin;
+}
+function connection(values: Readonly<Record<string, unknown>>, token: string | null | undefined) {
+  if (!token) throw coderCredentialUnavailable();
+  return { endpoint: coderEndpoint(values), token };
 }
 function requestWithConnection(selected: ReturnType<typeof connection>, http: HttpService, signal: AbortSignal) {
   return async (path: string, init: RequestInit = {}) => {
@@ -49,7 +54,15 @@ export const CODER_PORTABLE_ACCOUNT_RUNTIME: ConnectedAccountPortableRuntime = {
       return { status: 'rejected', diagnostic: { code: 'credential_unavailable', severity: 'error',
         message: 'Check the Coder deployment URL and your user token.' } };
     }
-  } } } },
+  } },
+    'first-admin': { kind: 'manual', async complete(input, context) {
+      let endpoint: string;
+      try { endpoint = coderEndpoint(context.configuration.values); }
+      catch { return { status: 'rejected', diagnostic: { code: 'coder_first_admin_endpoint_invalid', severity: 'error',
+        message: 'Enter the HTTPS origin of the Coder deployment.' } }; }
+      return completeCoderFirstAdmin(input, context, endpoint);
+    } },
+  } },
 };
 export const CODER_CONNECTED_ACCOUNT_RUNTIME: ConnectedAccountRuntime = {
   authentication: CODER_PORTABLE_ACCOUNT_RUNTIME.authentication,

@@ -84,9 +84,9 @@ describe('Coder finite lifecycle through its REST boundary', () => {
     expect(result.nativeOperationRef.value).not.toHaveProperty('buildId');
   });
 
-  it('retains qualified create correlation after a lost reply and recovers the same allocation without another POST', async () => {
+  it.each([undefined, 'native-prebuild-preset'])('retains qualified create correlation with preset %s after a lost reply and recovers without another POST', async presetId => {
     const h = await fixture({ lostCreate: true });
-    const created = RECONCILIATION.result.parse(await h.client.acquire(launch, managedId));
+    const created = RECONCILIATION.result.parse(await h.client.acquire({ ...launch, ...(presetId ? { presetId } : {}) }, managedId));
     expect(created.kind).toBe('pending'); if (created.kind !== 'pending') throw new Error('Missing native correlation');
     expect(created.nativeOperationRef.value).toMatchObject({ ownerId: 'user-a', workspaceName, managedId });
     h.setCurrent(workspace());
@@ -94,6 +94,8 @@ describe('Coder finite lifecycle through its REST boundary', () => {
     expect(recovered).toMatchObject({ kind: 'bound', resource: { value: resource } });
     expect(h.requests.filter(request => request.method === 'POST')).toHaveLength(1);
     expect(h.requests.find(request => request.method === 'POST')?.body).toMatchObject({ template_version_id: 'version', rich_parameter_values: launch.parameterValues });
+    if (presetId) expect(h.requests.find(request => request.method === 'POST')?.body).toMatchObject({ template_version_preset_id: presetId });
+    else expect(h.requests.find(request => request.method === 'POST')?.body).not.toHaveProperty('template_version_preset_id');
   });
   it('qualifies the selected template version before any create effect even when options are bypassed', async () => {
     const h = await fixture({ mismatchedVersion: true });

@@ -34,6 +34,17 @@ async function deployment(status = 200) {
   return { endpoint, http, paths };
 }
 describe('Coder public authoring entry and portable authentication', () => {
+  it('offers first-administrator setup through native Connected services with a private password field', () => {
+    const service = PLUGIN.manifest.contributes.connectedAccountDescriptors?.find(entry => entry.id === ACCOUNT_SERVICE.localId);
+    const mode = service?.authentication.modes.find(entry => entry.id === 'first-admin');
+    expect(mode).toMatchObject({ kind: 'manual', browserReachability: 'unreachable',
+      fields: [{ id: 'username' }, { id: 'email' }, { id: 'password', secret: true }],
+      configuration: { fields: [{ id: 'endpoint', semantic: 'connectedAccountBase', secret: false }] },
+    });
+    expect(mode).not.toHaveProperty('accountDirectSave');
+    expect(mode).not.toHaveProperty('directExport');
+    expect(mode).not.toHaveProperty('credentialFieldKeys');
+  });
   it.each(['missing', 'ready'] as const)('uses the host dependency %s result and preserves actionable CLI remediation', async state => {
     const h = await deployment();
     // The managed-dependency service is the genuine host boundary for a plugin;

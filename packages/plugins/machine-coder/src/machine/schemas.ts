@@ -6,13 +6,16 @@ const text = defineProtocolString({ minLength: 1 });
 // Coder CLI's workspace.agent selector uses dots and slashes as delimiters.
 const agentName = defineProtocolString({ minLength: 1, pattern: '^[A-Za-z0-9_-]+$' });
 export const ParameterValuesSchema = defineProtocolArray(defineProtocolObject({ name: text, value: defineProtocolString() }, closed));
+// Deliberate configuration of the selected template's workspace host. The
+// Coder deployment origin is independent of where Terraform creates compute.
+const workspaceHost = defineProtocolUnion([defineProtocolLiteral('controller-local'), defineProtocolLiteral('remote'), defineProtocolLiteral('unknown')]);
 export const CoderLaunchSchema = defineProtocolObject({
   organizationId: text, templateId: text, templateVersionId: text, agentName,
-  parameterValues: ParameterValuesSchema, presetId: text.optional(),
+  parameterValues: ParameterValuesSchema, presetId: text.optional(), workspaceHost: workspaceHost.optional(),
 }, closed);
 export const CoderOptionsSchema = defineProtocolObject({
   organizationId: text.optional(), templateId: text.optional(), templateVersionId: text.optional(),
-  agentName: agentName.optional(), parameterValues: ParameterValuesSchema.optional(), presetId: text.optional(),
+  agentName: agentName.optional(), parameterValues: ParameterValuesSchema.optional(), presetId: text.optional(), workspaceHost: workspaceHost.optional(),
 }, closed);
 export const CoderResourceSchema = defineProtocolObject({
   workspaceId: text, ownerId: text, ownerName: text, workspaceName: text,
