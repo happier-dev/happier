@@ -192,6 +192,25 @@ const COLUMN_GROUP_LABEL_HEIGHT_PX = 28;
 const COLUMN_HEADER_GAP_PX = HAPPIER_SHELL_RAIL_STEP_PX - COLUMN_TITLE_ROW_HEIGHT_PX / 2 - COLUMN_ROW_MIN_HEIGHT_PX / 2;
 
 /**
+ * Where a band under a column's title row stands (a spaces strip, a view or grouping switch): one more rail step, centre
+ * to centre, like a row (SHELL-ACCEPT-1116). Its centre stands one step under the title row's and the first row's one
+ * step under its own, whatever the band's height: the slot runs from the title row's foot to the first row's top, less
+ * the gap the content after it keeps itself (`followingGapPx`), and centres the band one step down. A band taller than
+ * the slot grows it.
+ */
+export function resolveHappierColumnBandSlotStyle(followingGapPx = 0): Readonly<{
+  minHeight: number;
+  justifyContent: 'center';
+  paddingTop: number;
+  paddingBottom: number;
+}> {
+  const slotPx = 2 * HAPPIER_SHELL_RAIL_STEP_PX - COLUMN_TITLE_ROW_HEIGHT_PX / 2 - COLUMN_ROW_MIN_HEIGHT_PX / 2 - followingGapPx;
+  const centreFromTopPx = HAPPIER_SHELL_RAIL_STEP_PX - COLUMN_TITLE_ROW_HEIGHT_PX / 2;
+  const offsetPx = 2 * centreFromTopPx - slotPx;
+  return { minHeight: slotPx, justifyContent: 'center', paddingTop: Math.max(0, offsetPx), paddingBottom: Math.max(0, -offsetPx) };
+}
+
+/**
  * Geometry of the list anatomy, at normal text scale: the one rhythm owner for every navigation
  * column (the Sessions, Plugins and Settings columns, a list + detail rail, a plugin's
  * `NavigationList`). A column reads its header, group labels and row insets from here, so switching
@@ -556,6 +575,8 @@ const TITLE_ACCESSORY_GAP = 8;
 // The subtitle shares the title's text edge and closes the header's own gap, so search and the first group
 // keep their distance from the header block, not from the title row.
 const headerWithSubtitleStyle: ViewStyle = { marginBottom: 0 };
+// A band directly under the title row takes its own slot on the rail grid, from the title row's foot.
+const headerWithBandStyle: ViewStyle = { marginBottom: 0 };
 const subtitleStyle: ViewStyle = {
   flexDirection: 'row',
   alignItems: 'center',
@@ -583,6 +604,8 @@ function useToolsStyles(insetPx: number | undefined) {
 }
 // The strip starts on the title's text edge (its first tab under the title's first letter), like Sessions.
 const stripStyle: ViewStyle = { paddingLeft: M.contentInset, paddingRight: M.rowInset, marginBottom: M.headerGap };
+// Directly under the title row the band (its strip row and the conditions line under it) is one slot on the rail grid.
+const bandSlotStyle: ViewStyle = { paddingLeft: M.contentInset, paddingRight: M.rowInset, ...resolveHappierColumnBandSlotStyle() };
 const stripWithAccessoryStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', gap: TITLE_ACCESSORY_GAP };
 const stripLeadStyle: ViewStyle = { flex: 1, minWidth: 0 };
 const scrollerStyle: HappierPortableStyle = { paddingTop: 0 };
@@ -681,6 +704,9 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
   }, []);
   const accessoryInRow = hasAccessory && showHeader && accessoryFits;
   const accessoryYielded = hasAccessory && !accessoryInRow;
+  const band = props.strip != null || accessoryYielded || props.conditions != null;
+  // The band stands on the rail grid when it follows the title row directly; under a subtitle it keeps the header gap.
+  const bandOnGrid = band && showHeader && !props.subtitle;
   const search = props.search ?? null;
   const searchCollapses = search !== null && search.collapsible === true && showHeader && host.SearchToggle !== undefined;
   const onSearchChange = search?.onChangeText;
@@ -694,7 +720,7 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
     <HappierCollectionListRowContext.Provider value>
     <View testID={props.testID} style={[railStyle, surfaceStyle]}>
       {showHeader ? (
-        <View style={props.subtitle ? [headerStyle, headerWithSubtitleStyle] : headerStyle}>
+        <View style={props.subtitle ? [headerStyle, headerWithSubtitleStyle] : bandOnGrid ? [headerStyle, headerWithBandStyle] : headerStyle}>
           <View style={hasAccessory ? [headingStyle, headingWithAccessoryStyle] : headingStyle}
             {...(hasAccessory ? { onLayout: onHeadingLayout } : {})}>
             {props.titleControl != null ? props.titleControl
@@ -723,8 +749,8 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
       ) : null}
       {/* A control that yielded the title row ends the strip's row, or takes a row of its own without one; the
           conditions always take the line under it. */}
-      {props.strip != null || accessoryYielded || props.conditions != null ? (
-        <View style={stripStyle}>
+      {band ? (
+        <View style={bandOnGrid ? bandSlotStyle : stripStyle}>
           {accessoryYielded ? (
             <View style={stripWithAccessoryStyle}>
               {props.strip != null ? <View style={stripLeadStyle}>{props.strip}</View> : null}

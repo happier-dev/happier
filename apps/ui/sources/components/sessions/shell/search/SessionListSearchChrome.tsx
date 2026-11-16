@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Animated, Easing, Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, resolveHappierCollectionTitleAccessoryFits } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, HappierPressable, resolveHappierCollectionTitleAccessoryFits, resolveHappierColumnBandSlotStyle } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
@@ -84,6 +84,8 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
     const phoneMainScreen = usePhoneTabNavRow() !== null && props.presentation !== 'runs';
     return phoneMainScreen ? <SessionListMainScreenHead {...props} /> : <SessionListColumnChrome {...props} />;
 });
+
+const SPACES_BAND_STYLE = resolveHappierColumnBandSlotStyle(HAPPIER_COLLECTION_LIST_METRICS.headerGap);
 
 /** The session list's header as a column (beside a page, or the Runs window): title row, field, strip and lines. */
 const SessionListColumnChrome = React.memo(function SessionListColumnChrome(
@@ -268,7 +270,9 @@ const SessionListColumnChrome = React.memo(function SessionListColumnChrome(
                 </View>
                 {columnControls}
             </View>
-            {spaceChrome ? props.spacesStrip : null}
+            {/* The spaces strip is the column's band: one rail step under the title row and one above the first row,
+                which keeps the column's header gap itself (SHELL-ACCEPT-1116). */}
+            {spaceChrome ? <View testID="session-list-spaces-band" style={SPACES_BAND_STYLE}>{props.spacesStrip}</View> : null}
             </CollectionSpaceSwipeZone>
             {props.filterSummary && props.presentation !== 'runs' && !spaceChrome ? (
                 <View testID="session-list-filter-summary" style={styles.searchChromeStatusRow}>

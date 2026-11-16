@@ -328,6 +328,7 @@ export {
   resolveHappierCollectionListRowPadding,
   resolveHappierCollectionRowRole,
   resolveHappierCollectionTreeChildIndentPx,
+  resolveHappierColumnBandSlotStyle,
   useHappierCollectionListRow,
   HappierCollectionList,
   HappierCollectionListGroupLabel,
