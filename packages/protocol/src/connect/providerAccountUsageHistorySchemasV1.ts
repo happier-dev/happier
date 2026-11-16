@@ -26,6 +26,14 @@ export const QualifiedProviderAccountUsageHistoryRequestV4Schema = lazyZodSchema
   z.strictObject({ recordId: ProviderAccountUsageRecordIdSchema, projection: ProviderAccountUsagePageProjectionDemandV1Schema,
     heldProjection: z.optional(ProviderAccountUsagePageProjectionCoverageV1Schema) }),
 ]));
+/**
+ * JSON returns one page. For exact-history queries, Accept: application/x-ndjson
+ * requests a finite sequence of these same pages; pageSize bounds each frame.
+ * Only a frame with nextCursor:null completes the read. EOF before that frame
+ * is incomplete, including when an error interrupts an already-started response.
+ * Witness and projection queries retain their JSON representations. A Home
+ * returning JSON instead of NDJSON still requires ordinary cursor paging.
+ */
 export const QualifiedProviderAccountUsageHistoryResponseV4Schema = lazyZodSchema(() => z.strictObject({
   entries: z.array(z.strictObject({ id: z.string().check(z.minLength(1)), observedAtMs: z.number().check(z.int(), z.nonnegative()), record: QualifiedProviderAccountUsageRecordResponseV4Schema })),
   nextCursor: z.nullable(ProviderAccountUsageHistoryCursorV1Schema),

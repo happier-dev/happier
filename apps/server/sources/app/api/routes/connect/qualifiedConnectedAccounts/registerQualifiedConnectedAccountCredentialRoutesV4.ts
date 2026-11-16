@@ -1,5 +1,6 @@
 import { z } from "zod/mini";
 import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { QualifiedProviderAccountUsageHistoryRequestV4Schema, QualifiedProviderAccountUsageHistoryResponseV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { ProviderAccountUsagePageProjectionReadV1Schema, ProviderAccountUsagePageProjectionWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { ProviderAccountUsageDaySummaryReadV1Schema, ProviderAccountUsageDaySummaryWriteV1Schema,
@@ -58,6 +59,7 @@ import {
 } from "../providerAccountUsage/types";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
 import { projectGroupPolicyForFeature } from './groupPolicyProjection';
+import { projectQualifiedProviderAccountUsageHistoryPage, streamQualifiedProviderAccountUsageHistory } from './usageHistoryStream';
 
 const StructuredServiceQuerySchema = z.strictObject({
     service: z.union([z.string(), z.array(z.string())]),
@@ -1440,7 +1442,13 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 }
                 return reply.send({ projection: page.projection, complete: page.complete });
             }
-            return reply.send({ entries: page.entries.map(entry => ({ id: entry.id, observedAtMs: entry.observedAtMs, record: projectProviderAccountUsageRecordV4(entry.record, page.sources) })), nextCursor: page.nextCursor });
+            if ('history' in query && request.headers.accept?.includes('application/x-ndjson')) {
+                return reply.type('application/x-ndjson').send(Readable.from(streamQualifiedProviderAccountUsageHistory({
+                    accountId: request.userId, recordId: query.recordId, history: query.history, firstPage: page,
+                    isCancelled: () => reply.raw.destroyed,
+                })));
+            }
+            return reply.send(projectQualifiedProviderAccountUsageHistoryPage(page));
         }
     });
 

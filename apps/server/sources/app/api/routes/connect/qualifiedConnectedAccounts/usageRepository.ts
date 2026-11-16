@@ -47,6 +47,7 @@ import {
     resolveQualifiedConnectedAccountStoredMetadata,
 } from "./credentialStoredMetadataAdapter";
 import { deleteReleasedConnectedServiceQuotaSnapshotInStorage } from "./legacyQuotaSnapshotCompatibility";
+import { parseQualifiedProviderAccountUsageHistoryEntries } from './usageHistoryStream';
 import {
     createQualifiedConnectedAccountGroupDigest,
     createQualifiedConnectedAccountIdentityDigest,
@@ -1409,8 +1410,10 @@ export async function readQualifiedProviderAccountUsageHistory(params: Readonly<
     if (!('historyPage' in captured) || captured.historyPage === undefined) return captured;
     // Admission and row capture share one database snapshot. Decoding large
     // pages must not hold that connection through CPU work or HTTP delivery.
-    const entries = captured.historyPage.entries.map(parseProviderAccountUsageHistoryEntry);
-    if (entries.some(entry => entry.record.accountId !== params.accountId || entry.record.recordId !== params.recordId || entry.record.payloadMode !== captured.payloadMode)) return { status: 'storage_mode_mismatch' as const };
+    const entries = parseQualifiedProviderAccountUsageHistoryEntries(captured.historyPage.entries, {
+        accountId: params.accountId, recordId: params.recordId, payloadMode: captured.payloadMode,
+    });
+    if (!entries) return { status: 'storage_mode_mismatch' as const };
     return { status: 'resolved' as const, entries, nextCursor: captured.historyPage.nextCursor, sources: captured.sources };
 }
 

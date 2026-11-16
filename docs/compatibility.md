@@ -9010,6 +9010,18 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 qualified provider-usage exact history supports an optional finite
+NDJSON response on its existing GET route through `Accept: application/x-ndjson`.
+Every line uses the existing V4 history response schema; the caller's `pageSize`
+bounds a frame, and only `nextCursor: null` proves completion. A truncated stream
+is incomplete. Admission runs once and stored sealed records remain sealed.
+JSON paging, witness reads and page projections keep their existing contracts.
+Clients use the response content type: a Home returning JSON still requires
+cursor paging. The safelisted Accept header adds no CORS preflight requirement.
+This changes no persisted shape or wire epoch. The scoped-clean 0.2 frontier
+at `972cdc0e5978aaf95a2902d4970441590c75b978` has no qualified provider-history
+route or schema; no predecessor adapter is added.
+
 Unreleased 0.3 deployment lifecycle observations and repository receipt investigation
 summaries optionally carry `builtSha`, the provider-observed commit. The requested
 `sourceIntent.sha` stays unchanged; historical observations without `builtSha` remain
