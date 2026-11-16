@@ -15,7 +15,7 @@ import { createPluginSurfaceAccountNetworkServices } from './pluginSurfaceAccoun
 import { createUiConnectedAccountActionServices } from '@/sync/ops/connectedAccounts/connectedAccountActionServices';
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import type { ManagedBootstrapCredentialInvocationBinding } from '@happier-dev/protocol/actions/executor/types';
-import { createManagedBootstrapCredentialByteService } from '@happier-dev/cli-common/machines/managed';
+import { createManagedBootstrapCredentialByteService, createManagedNativeObservationWait } from '@happier-dev/cli-common/machines/managed';
 
 /** Physical UI services over the existing Account Data, Action and admission owners. */
 export function createPluginSurfaceAccountActionServices(input: Readonly<{
@@ -192,11 +192,13 @@ export function createPluginSurfaceAccountActionServices(input: Readonly<{
             credentialCleanups.push(cleanup);
         },
     });
+    const waitForNativeObservation = createManagedNativeObservationWait(invocation.signal);
     const services: PluginAccountActionContext['services'] = {
         http: network.http, secrets: network.secrets,
         connectedAccounts,
         machineProvisioners: {
             establishSshHostTrust: async () => { throw unavailableCredential(); },
+            async waitForNativeObservation() { await waitForNativeObservation(); },
             materializeBootstrapCredential(request) {
                 if (request.kind !== 'bytes') return Promise.reject(unavailableCredential());
                 return byteService.materializeBootstrapCredential();

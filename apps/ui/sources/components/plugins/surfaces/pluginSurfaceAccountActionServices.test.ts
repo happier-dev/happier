@@ -98,6 +98,21 @@ const source = definePlugin({ id: 'example.machine-source', version: '1.0.0', ac
 } } } });
 
 describe('Account Action targeted-contribution services', () => {
+    it('ends native build observation when the Account invocation is disposed', async () => {
+        const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://account-native-observation.test', accountId: 'alice' }], route: () => undefined });
+        let owner: ReturnType<typeof createPluginSurfaceAccountActionServices> | undefined;
+        try {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected Account lifetime');
+            owner = createPluginSurfaceAccountActionServices({ pluginId: target.manifest.id, occurrenceId: 'native-build',
+                accountLifetime: lifetime, signal: new AbortController().signal, isCurrent: () => true, execute: async () => null });
+            const waiting = owner.services.machineProvisioners.waitForNativeObservation();
+            const cancelled = expect(waiting).rejects.toMatchObject({ code: 'cancelled' });
+            await owner.dispose();
+            await cancelled;
+        } finally { await owner?.dispose(); await home.dispose(); }
+    });
+
     it('leases only privately bound managed credentials and zeros them when the Account invocation settles', async () => {
         const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://account-bootstrap-lease.test', accountId: 'alice' }], route: () => undefined });
         let owner: ReturnType<typeof createPluginSurfaceAccountActionServices> | undefined;
