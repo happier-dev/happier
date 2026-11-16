@@ -1121,3 +1121,57 @@ describe('Environment → Domains: where an address leads (DEPLOY-REACCEPT-1113 
     expect(domainRouteMachineIds([replica('own')], null)).toEqual(['own']);
   });
 });
+
+describe('Environment → Domains: the platform\'s built-in address', () => {
+  // A Vercel or Workers Environment keeps its stable *.vercel.app / *.workers.dev address: it leads the list, read-only.
+  async function renderPanel(items: readonly unknown[], builtInUrls: readonly string[]) {
+    const { DeploymentDomainsPanel } = await import('./DeploymentDomainsPanel');
+    const controller = createDeploymentReadControllerV1({ scope, transport: {
+      listDomains: async () => ({ ok: true, value: { items: items as never, nextCursor: null } }),
+    } as Partial<DeploymentReadTransportV1> as DeploymentReadTransportV1 });
+    const screen = await renderScreen(
+      <DeploymentDomainsPanel controller={controller} environmentId="environment-staging"
+        environment={{ runtimeTargetLinkId: 'target-link' }} demand={shown} builtInUrls={builtInUrls} />,
+    );
+    return { screen, controller };
+  }
+
+  it('lists the built-in address first and says what it is', async () => {
+    const { screen, controller } = await renderPanel([domain('custom', 'shop.example.com')], ['https://acme-site.vercel.app']);
+    try {
+      const builtIn = 'project-deployments.environment.domains.builtIn.acme-site.vercel.app';
+      await act(async () => {
+        await Promise.race([
+          waitForTestEvent(screen.subscribe, () => screen.findByTestId(builtIn), node => node !== null),
+          new Promise(resolve => setTimeout(resolve, 5_000)),
+        ]);
+      });
+      expect(screen.findByTestId(builtIn)).not.toBeNull();
+      expect(screen.findByTestId(`${builtIn}.state`)).not.toBeNull();
+      const texts = screen.findAllByType('Text' as never).map(node => String(node.props.children));
+      expect(texts).toContain(t('projects.deployments.editors.domainBuiltIn'));
+      // Rows in document order: the built-in address leads the Environment's own addresses.
+      const custom = 'project-deployments.environment.domains.custom';
+      const order = screen.findAll(node => typeof node.type === 'string'
+        && (node.props.testID === builtIn || node.props.testID === custom)).map(node => node.props.testID);
+      expect(order[0]).toBe(builtIn);
+      expect(order).toContain(custom);
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('does not say there are no domains when only the built-in address exists', async () => {
+    const { screen, controller } = await renderPanel([], ['https://edge-site.workers.dev']);
+    try {
+      const builtIn = 'project-deployments.environment.domains.builtIn.edge-site.workers.dev';
+      await act(async () => {
+        await Promise.race([
+          waitForTestEvent(screen.subscribe, () => screen.findByTestId(builtIn), node => node !== null),
+          new Promise(resolve => setTimeout(resolve, 5_000)),
+        ]);
+      });
+      expect(screen.findByTestId(builtIn)).not.toBeNull();
+      const texts = screen.findAllByType('Text' as never).map(node => String(node.props.children));
+      expect(texts).not.toContain(t('projects.deployments.domainsEmpty'));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});

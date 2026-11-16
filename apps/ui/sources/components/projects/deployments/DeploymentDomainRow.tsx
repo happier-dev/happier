@@ -14,6 +14,7 @@ import { DeploymentDomainCloudflareRecoveryV1Schema, type DeploymentDomainCloudf
 
 import { ApprovalTechnicalDetails } from '@/components/approvals/ActionApprovalFieldsCard';
 import { presentActionFailureTechnicalDetails } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+import { HAPPIER_ICON_BUTTON_SIZE } from '@happier-dev/plugin-ui/presentation';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
@@ -66,7 +67,25 @@ type DomainRowContext = Readonly<{
 const NO_ROLES: readonly DomainCredentialRole[] = Object.freeze([]);
 const NO_NOT_FOUND: ReadonlyMap<string, ActionOperationGetV1Response> = new Map();
 const noop = () => {};
-const keyOf = (item: DomainItem) => item.domain.id;
+const keyOf = (row: DomainItem | BuiltInAddressRow) => isBuiltInAddress(row) ? `builtIn:${row.url}` : row.domain.id;
+
+/**
+ * A platform's own stable address (`*.vercel.app`, `*.workers.dev`): the provider gives it, so it leads the list,
+ * read-only, with no checks, routing or ⋯ of ours.
+ */
+type BuiltInAddressRow = Readonly<{ builtIn: true; url: string; hostname: string }>;
+const NO_BUILT_IN: readonly string[] = Object.freeze([]);
+
+function isBuiltInAddress(row: DomainItem | BuiltInAddressRow): row is BuiltInAddressRow {
+  return 'builtIn' in row;
+}
+
+function builtInAddressRows(urls: readonly string[]): readonly BuiltInAddressRow[] {
+  return urls.flatMap(url => {
+    try { return [{ builtIn: true as const, url, hostname: new URL(url).host }]; }
+    catch { return []; }
+  });
+}
 
 /**
  * The domain list (lab `envDom` / `svcDom`): one row per address with its host and the line that matters (the
@@ -87,11 +106,25 @@ export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonl
   ownMachineId?: string | null;
   machineName?: string | null;
   actions?: DeploymentDomainRowActions | null;
+  /** The platform's own stable addresses (the selected runtime's serving receipt), listed first and read-only. */
+  builtInUrls?: readonly string[];
   testID: string;
 }>) {
   const { theme } = useUnistyles();
   const notFound = useDomainOperationReads(props.items, props.accountId, props.demand);
-  const model = useHappierCollection<Item>({ items: props.items, keyOf, ...(props.groups ? { groups: props.groups } : {}),
+  const builtInUrls = props.builtInUrls ?? NO_BUILT_IN;
+  const rows = React.useMemo<readonly (Item | BuiltInAddressRow)[]>(() => {
+    const builtIn = builtInAddressRows(builtInUrls);
+    return builtIn.length > 0 ? [...builtIn, ...props.items] : props.items;
+  }, [builtInUrls, props.items]);
+  const sourceGroups = props.groups;
+  // A built-in address belongs to the Environment's own list; a banded list (Services → Domains) carries none, and
+  // one would join the first band.
+  const groups = React.useMemo<HappierCollectionGrouping<Item | BuiltInAddressRow> | undefined>(() => sourceGroups ? {
+    ...sourceGroups,
+    groupOf: (row) => isBuiltInAddress(row) ? sourceGroups.axis[0]?.key ?? '' : sourceGroups.groupOf(row),
+  } : undefined, [sourceGroups]);
+  const model = useHappierCollection<Item | BuiltInAddressRow>({ items: rows, keyOf, ...(groups ? { groups } : {}),
     openKey: null, onOpenChange: noop });
   const { environmentTitle } = props;
   const context = React.useMemo<DomainRowContext>(() => ({
@@ -101,32 +134,36 @@ export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonl
   // A platform's addresses have no service route or certificate of ours: without a routed address the two columns
   // would stay empty and squeeze the host and its DNS record, so they are drawn only when some address routes here.
   const routed = props.items.some(item => item.content.target.kind !== 'provider');
-  const anatomy = React.useMemo<CollectionAnatomy<Item>>(() => ({
+  const anatomy = React.useMemo<CollectionAnatomy<Item | BuiltInAddressRow>>(() => ({
     glyph: () => <Icon name="globe" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
     // The host is an identifier (lab envDom): one mono line ending in an ellipsis; the label keeps it whole.
-    title: (item) => item.content.hostname,
+    title: (item) => isBuiltInAddress(item) ? item.hostname : item.content.hostname,
     titleIdentifier: true,
-    byline: (item, layout) => <DomainByline item={item} context={context} columns={layout?.fieldColumns === true}
-      environment={environmentTitle?.(item) ?? null} />,
+    byline: (item, layout) => isBuiltInAddress(item) ? <BuiltInAddressByline /> : <DomainByline item={item} context={context}
+      columns={layout?.fieldColumns === true} environment={environmentTitle?.(item) ?? null} />,
     // The recovery an address needs stands beside it, not only in ⋯ (DEPLOY-REACCEPT-1113): it ends the byline.
-    titleControls: (item) => <DomainRowControls item={item} context={context} />,
+    titleControls: (item) => isBuiltInAddress(item) ? null : <DomainRowControls item={item} context={context} />,
     // A phone folds the columns; the state and ⋯ keep the row's end.
-    titleMeta: (item) => <DomainRowEnd item={item} context={context} />,
+    titleMeta: (item) => isBuiltInAddress(item) ? <BuiltInAddressEnd row={item} context={context} /> : <DomainRowEnd item={item} context={context} />,
     titleMetaAlign: 'row',
     // The facts keep tight columns so the host keeps most of the row (lab envDom: Domain about 45%).
     fields: [
       ...(routed ? [{ key: 'reaches', title: t('projects.deployments.editors.domainColumnReaches'), minWidth: 104, priority: 3,
-        listColumn: true, render: (item: Item) => <DomainReaches item={item} /> }] : []),
+        listColumn: true, render: (item: Item | BuiltInAddressRow) => isBuiltInAddress(item) ? null : <DomainReaches item={item} /> }] : []),
       ...(environmentTitle ? [{ key: 'environment', title: t('projects.deployments.editors.domainColumnEnvironment'), minWidth: 112,
-        priority: 1, listColumn: true, render: (item: Item) => <DomainEnvironment title={environmentTitle(item)} /> }] : []),
+        priority: 1, listColumn: true, render: (item: Item | BuiltInAddressRow) => isBuiltInAddress(item) ? null
+          : <DomainEnvironment title={environmentTitle(item)} /> }] : []),
       ...(routed ? [{ key: 'certificate', title: t('projects.deployments.editors.domainColumnCertificate'), minWidth: 120, priority: 2,
-        listColumn: true, render: (item: Item) => <DomainCertificate item={item} /> }] : []),
+        listColumn: true, render: (item: Item | BuiltInAddressRow) => isBuiltInAddress(item) ? null : <DomainCertificate item={item} /> }] : []),
       // The state and the row's ⋯ share the last column, so the bar's titles stay over their figures.
       { key: 'state', title: t('projects.deployments.editors.domainColumnState'), minWidth: 128, priority: 4, listColumn: true,
-        align: 'end', control: true, render: (item) => <DomainRowEnd item={item} context={context} /> },
+        align: 'end', control: true, render: (item) => isBuiltInAddress(item) ? <BuiltInAddressEnd row={item} context={context} />
+          : <DomainRowEnd item={item} context={context} /> },
     ],
-    accessibilityLabel: (item) => [item.content.hostname, domainRoute(item.content)].filter(Boolean).join(', '),
-    testID: (item) => `project-deployments.environment.domains.${item.domain.id}`,
+    accessibilityLabel: (item) => isBuiltInAddress(item) ? `${item.hostname}, ${t('projects.deployments.editors.domainBuiltIn')}`
+      : [item.content.hostname, domainRoute(item.content)].filter(Boolean).join(', '),
+    testID: (item) => isBuiltInAddress(item) ? `project-deployments.environment.domains.builtIn.${item.hostname}`
+      : `project-deployments.environment.domains.${item.domain.id}`,
     columnTitles: {
       title: t('projects.deployments.editors.domainColumnDomain'),
       titleMeta: t('projects.deployments.editors.domainColumnState'),
@@ -134,7 +171,7 @@ export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonl
   }), [context, environmentTitle, routed, theme.colors.text.secondary]);
   return (
     // The Services page's one list shell (Apps, Databases, Checks, Watched): the same bands, column bar and phone rows.
-    <ServicesPageList<Item> testID={props.testID} model={model} anatomy={anatomy}
+    <ServicesPageList<Item | BuiltInAddressRow> testID={props.testID} model={model} anatomy={anatomy}
       accessibilityLabel={t('projects.deployments.tabDomains')} />
   );
 }
@@ -208,6 +245,28 @@ function DomainStateCell(props: Readonly<{ item: DomainRowItem; context: DomainR
   return state === 'active'
     ? <Status tone="secondary" label={t('projects.deployments.editors.domainServing')} presentation="inline" indicator={false} testID={testID} />
     : null;
+}
+
+/** A built-in address says what it is; the platform keeps it, so there is nothing to check, change or remove. */
+function BuiltInAddressByline() {
+  const { theme } = useUnistyles();
+  return <Text variant="meta" numberOfLines={1} style={{ color: theme.colors.text.secondary }}>
+    {t('projects.deployments.editors.domainBuiltIn')}
+  </Text>;
+}
+
+/** Serving, quietly, like a settled address of ours; no ⋯, but its place is kept so the state column lines up. */
+function BuiltInAddressEnd(props: Readonly<{ row: BuiltInAddressRow; context: DomainRowContext }>) {
+  return <View style={styles.rowEnd}>
+    <Status tone="secondary" label={t('projects.deployments.editors.domainServing')} presentation="inline" indicator={false}
+      testID={`project-deployments.environment.domains.builtIn.${props.row.hostname}.state`} />
+    {rowMenusShown(props.context) ? <View style={styles.menuSlot} /> : null}
+  </View>;
+}
+
+/** Whether the list's rows carry a ⋯: a row without one keeps its place so every state ends on one edge. */
+function rowMenusShown(context: DomainRowContext): boolean {
+  return Boolean(context.actions) && !context.disabled;
 }
 
 function DomainRowEnd(props: Readonly<{ item: DomainRowItem; context: DomainRowContext }>) {
@@ -369,7 +428,8 @@ function DomainRowMenu(props: Readonly<{ item: DomainRowItem; context: DomainRow
     ],
     [chooseCredential, configureChecks, id, missing, removing, theme.colors.text.secondary],
   );
-  if (!actions || context.disabled || removing && !retryRemoval) return null;
+  if (!actions || !rowMenusShown(context)) return null;
+  if (removing && !retryRemoval) return <View style={styles.menuSlot} />;
   return (
     <DropdownMenu
       open={open}
@@ -445,6 +505,7 @@ function credentialChoiceTitle(role: DomainCredentialRole): string {
 
 const styles = StyleSheet.create((theme) => ({
   rowEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
+  menuSlot: { width: HAPPIER_ICON_BUTTON_SIZE },
   controls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
   controlStack: { gap: theme.space.s4 },
 }));

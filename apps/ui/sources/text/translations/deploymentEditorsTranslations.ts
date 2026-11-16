@@ -27,6 +27,7 @@ type DeploymentEditorsTranslations = Readonly<{
   runtimeData: string;
   runtimeDataDescription: string;
   commitsNewer: (params: { count: number }) => string;
+  builtNewer: (params: { sha: string; branch: string }) => string;
   approvalsTitle: string;
   approvalsDescription: string;
   approvalsLoosening: (params: { environment: string }) => string;
@@ -102,6 +103,8 @@ type DeploymentEditorsTranslations = Readonly<{
   domainColumnCertificate: string;
   domainColumnState: string;
   domainServing: string;
+  /** A platform's own stable address (*.vercel.app, *.workers.dev), listed first and read-only. */
+  domainBuiltIn: string;
   domainUnattached: string;
   domainCertificateExpires: (params: { date: string }) => string;
   domainAddRecord: (params: { type: string; name: string; value: string }) => string;
@@ -148,6 +151,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "Runtime and data",
     runtimeDataDescription: "How this version runs, and the folders its services share. Shared data stays until you delete it.",
     commitsNewer: ({ count }) => `${count} commits newer`,
+    builtNewer: ({ sha, branch }) => `Built ${sha}, a newer commit on ${branch}`,
     approvalsTitle: 'Approvals',
     approvalsDescription:
       'Whether an agent asks you first before doing these here. Default follows Settings → Actions. Each person who deploys sets their own.',
@@ -181,6 +185,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificate',
     domainColumnState: 'State',
     domainServing: 'Serving',
+    domainBuiltIn: 'Built-in address',
     domainUnattached: 'Unattached',
     domainCertificateExpires: ({ date }) => `expires ${date}`,
     domainAddRecord: ({ type, name, value }) => `Add ${type} ${name} → ${value}`,
@@ -269,6 +274,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "Среда и данные",
     runtimeDataDescription: "Как работает эта версия и какие папки делят её сервисы. Общие данные остаются, пока вы их не удалите.",
     commitsNewer: ({ count }) => `${count} новых коммитов`,
+    builtNewer: ({ sha, branch }) => `Собран ${sha}, более новый коммит в ${branch}`,
     approvalsTitle: 'Подтверждения',
     approvalsDescription:
       'Спрашивает ли агент вас перед этими действиями здесь. «По умолчанию» следует Настройкам → Действия. Каждый, кто развёртывает, задаёт свои.',
@@ -303,6 +309,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Сертификат',
     domainColumnState: 'Состояние',
     domainServing: 'Работает',
+    domainBuiltIn: 'Встроенный адрес',
     domainUnattached: 'Не привязан',
     domainCertificateExpires: ({ date }) => `истекает ${date}`,
     domainAddRecord: ({ type, name, value }) => `Добавьте ${type} ${name} → ${value}`,
@@ -391,6 +398,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "Środowisko i dane",
     runtimeDataDescription: "Jak działa ta wersja i jakie foldery współdzielą jej usługi. Dane współdzielone zostają, dopóki ich nie usuniesz.",
     commitsNewer: ({ count }) => `${count} nowszych commitów`,
+    builtNewer: ({ sha, branch }) => `Zbudowano ${sha}, nowszy commit na ${branch}`,
     approvalsTitle: 'Zatwierdzenia',
     approvalsDescription:
       'Czy agent pyta Cię przed tymi działaniami tutaj. Domyślnie według Ustawień → Akcje. Każda wdrażająca osoba ustawia własne.',
@@ -424,6 +432,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certyfikat',
     domainColumnState: 'Stan',
     domainServing: 'Działa',
+    domainBuiltIn: 'Wbudowany adres',
     domainUnattached: 'Nieprzypisana',
     domainCertificateExpires: ({ date }) => `wygasa ${date}`,
     domainAddRecord: ({ type, name, value }) => `Dodaj ${type} ${name} → ${value}`,
@@ -512,6 +521,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "Ejecución y datos",
     runtimeDataDescription: "Cómo se ejecuta esta versión y qué carpetas comparten sus servicios. Los datos compartidos permanecen hasta que los elimines.",
     commitsNewer: ({ count }) => `${count} commits más recientes`,
+    builtNewer: ({ sha, branch }) => `Se compiló ${sha}, un commit más reciente en ${branch}`,
     approvalsTitle: 'Aprobaciones',
     approvalsDescription:
       'Si un agente te pregunta antes de hacer esto aquí. Predeterminado sigue Ajustes → Acciones. Cada persona que despliega elige lo suyo.',
@@ -546,6 +556,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificado',
     domainColumnState: 'Estado',
     domainServing: 'Sirviendo',
+    domainBuiltIn: 'Dirección integrada',
     domainUnattached: 'Sin vincular',
     domainCertificateExpires: ({ date }) => `caduca el ${date}`,
     domainAddRecord: ({ type, name, value }) => `Añade ${type} ${name} → ${value}`,
@@ -634,6 +645,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "Exécution et données",
     runtimeDataDescription: "Comment cette version s’exécute et les dossiers que ses services partagent. Les données partagées restent jusqu’à ce que vous les supprimiez.",
     commitsNewer: ({ count }) => `${count} commits plus récents`,
+    builtNewer: ({ sha, branch }) => `${sha} compilé, un commit plus récent sur ${branch}`,
     approvalsTitle: 'Approbations',
     approvalsDescription:
       'Si un agent vous demande avant de faire ceci ici. Par défaut suit Réglages → Actions. Chaque personne qui déploie choisit les siens.',
@@ -668,6 +680,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificat',
     domainColumnState: 'État',
     domainServing: 'En service',
+    domainBuiltIn: 'Adresse intégrée',
     domainUnattached: 'Non rattaché',
     domainCertificateExpires: ({ date }) => `expire le ${date}`,
     domainAddRecord: ({ type, name, value }) => `Ajoute ${type} ${name} → ${value}`,
@@ -756,6 +769,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "Esecuzione e dati",
     runtimeDataDescription: "Come viene eseguita questa versione e le cartelle condivise dai suoi servizi. I dati condivisi restano finché non li elimini.",
     commitsNewer: ({ count }) => `${count} commit più recenti`,
+    builtNewer: ({ sha, branch }) => `Compilato ${sha}, un commit più recente su ${branch}`,
     approvalsTitle: 'Approvazioni',
     approvalsDescription:
       'Se un agente ti chiede prima di farlo qui. Predefinito segue Impostazioni → Azioni. Ogni persona che distribuisce sceglie le proprie.',
@@ -790,6 +804,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificato',
     domainColumnState: 'Stato',
     domainServing: 'Attivo',
+    domainBuiltIn: 'Indirizzo integrato',
     domainUnattached: 'Non collegato',
     domainCertificateExpires: ({ date }) => `scade il ${date}`,
     domainAddRecord: ({ type, name, value }) => `Aggiungi ${type} ${name} → ${value}`,
@@ -878,6 +893,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "Execução e dados",
     runtimeDataDescription: "Como esta versão é executada e as pastas que os serviços compartilham. Os dados compartilhados permanecem até você excluí-los.",
     commitsNewer: ({ count }) => `${count} commits mais recentes`,
+    builtNewer: ({ sha, branch }) => `Compilado ${sha}, um commit mais recente em ${branch}`,
     approvalsTitle: 'Aprovações',
     approvalsDescription:
       'Se um agente pergunta antes de fazer isto aqui. Padrão segue Definições → Ações. Cada pessoa que implanta define as suas.',
@@ -911,6 +927,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificado',
     domainColumnState: 'Estado',
     domainServing: 'Servindo',
+    domainBuiltIn: 'Endereço integrado',
     domainUnattached: 'Não vinculado',
     domainCertificateExpires: ({ date }) => `expira em ${date}`,
     domainAddRecord: ({ type, name, value }) => `Adicione ${type} ${name} → ${value}`,
@@ -999,6 +1016,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "Execució i dades",
     runtimeDataDescription: "Com s’executa aquesta versió i les carpetes que comparteixen els seus serveis. Les dades compartides es mantenen fins que les eliminis.",
     commitsNewer: ({ count }) => `${count} commits més recents`,
+    builtNewer: ({ sha, branch }) => `S'ha compilat ${sha}, un commit més recent a ${branch}`,
     approvalsTitle: 'Aprovacions',
     approvalsDescription:
       'Si un agent et pregunta abans de fer això aquí. Per defecte segueix Configuració → Accions. Cada persona que desplega tria les seves.',
@@ -1033,6 +1051,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificat',
     domainColumnState: 'Estat',
     domainServing: 'En servei',
+    domainBuiltIn: 'Adreça integrada',
     domainUnattached: 'Sense vincular',
     domainCertificateExpires: ({ date }) => `caduca el ${date}`,
     domainAddRecord: ({ type, name, value }) => `Afegeix ${type} ${name} → ${value}`,
@@ -1121,6 +1140,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "Laufzeit und Daten",
     runtimeDataDescription: "Wie diese Version läuft und welche Ordner ihre Dienste teilen. Gemeinsame Daten bleiben, bis du sie löschst.",
     commitsNewer: ({ count }) => `${count} neuere Commits`,
+    builtNewer: ({ sha, branch }) => `${sha} gebaut, ein neuerer Commit auf ${branch}`,
     approvalsTitle: 'Freigaben',
     approvalsDescription:
       'Ob ein Agent dich hier vorher fragt. Standard folgt Einstellungen → Aktionen. Jede Person, die deployt, legt ihre eigenen fest.',
@@ -1154,6 +1174,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Zertifikat',
     domainColumnState: 'Status',
     domainServing: 'Aktiv',
+    domainBuiltIn: 'Integrierte Adresse',
     domainUnattached: 'Nicht verbunden',
     domainCertificateExpires: ({ date }) => `läuft ab am ${date}`,
     domainAddRecord: ({ type, name, value }) => `${type} ${name} → ${value} hinzufügen`,
@@ -1242,6 +1263,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "运行与数据",
     runtimeDataDescription: "此版本的运行方式，以及其服务共享的文件夹。共享数据会保留，直到你删除。",
     commitsNewer: ({ count }) => `比当前新 ${count} 个提交`,
+    builtNewer: ({ sha, branch }) => `已构建 ${sha}，${branch} 上更新的提交`,
     approvalsTitle: '审批',
     approvalsDescription:
       '智能体在这里执行这些操作前是否先询问你。“默认”遵循设置 → 操作。每位部署者各自设置。',
@@ -1275,6 +1297,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: '证书',
     domainColumnState: '状态',
     domainServing: '正在服务',
+    domainBuiltIn: '内置地址',
     domainUnattached: '未关联',
     domainCertificateExpires: ({ date }) => `${date} 到期`,
     domainAddRecord: ({ type, name, value }) => `添加 ${type} ${name} → ${value}`,
@@ -1363,6 +1386,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "執行與資料",
     runtimeDataDescription: "此版本的執行方式，以及其服務共用的資料夾。共用資料會保留，直到你刪除。",
     commitsNewer: ({ count }) => `比目前新 ${count} 個提交`,
+    builtNewer: ({ sha, branch }) => `已建置 ${sha}，${branch} 上較新的提交`,
     approvalsTitle: '審核',
     approvalsDescription:
       '代理程式在這裡執行這些操作前是否先詢問你。「預設」依循設定 → 操作。每位部署者各自設定。',
@@ -1396,6 +1420,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: '憑證',
     domainColumnState: '狀態',
     domainServing: '服務中',
+    domainBuiltIn: '內建位址',
     domainUnattached: '未連結',
     domainCertificateExpires: ({ date }) => `${date} 到期`,
     domainAddRecord: ({ type, name, value }) => `新增 ${type} ${name} → ${value}`,
@@ -1484,6 +1509,7 @@ export const deploymentEditorsTranslations = {
     runtimeData: "実行とデータ",
     runtimeDataDescription: "このバージョンの実行方法と、サービスが共有するフォルダー。共有データは削除するまで残ります。",
     commitsNewer: ({ count }) => `${count} コミット新しい`,
+    builtNewer: ({ sha, branch }) => `${sha} をビルドしました（${branch} の新しいコミット）`,
     approvalsTitle: '承認',
     approvalsDescription:
       'ここでこれらを行う前にエージェントがあなたに確認するかどうか。「デフォルト」は設定 → アクションに従います。デプロイする人ごとに設定します。',
@@ -1517,6 +1543,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: '証明書',
     domainColumnState: '状態',
     domainServing: '稼働中',
+    domainBuiltIn: '組み込みアドレス',
     domainUnattached: '未接続',
     domainCertificateExpires: ({ date }) => `${date} に期限切れ`,
     domainAddRecord: ({ type, name, value }) => `${type} ${name} → ${value} を追加`,

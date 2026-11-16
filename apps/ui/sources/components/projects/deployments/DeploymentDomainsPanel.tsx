@@ -96,6 +96,8 @@ export function DeploymentDomainsPanel(
     /** Absent where the page cannot write: the addresses stay read-only. */
     editing?: DeploymentDomainEditing | null;
     healthSetup?: Readonly<{ controllerMachineId: string; lifetime: ServerAccountScopeLifetime }> | null;
+    /** The platform's own stable addresses (`DeploymentEnvironmentReadDetailV1.builtInUrls`), listed first, read-only. */
+    builtInUrls?: readonly string[];
   }>,
 ) {
   const domains = useDeploymentEnvironmentDomains(
@@ -104,6 +106,7 @@ export function DeploymentDomainsPanel(
     props.demand,
   );
   const { items } = domains.result;
+  const addressCount = items.length + (props.builtInUrls?.length ?? 0);
   const rowItems = React.useMemo(() => items.map(item => ({ ...item,
     attached: isDeploymentDomainAttachedV1(item.domain, props.environment) })), [items, props.environment]);
   const unavailableDockerDesktop = props.runtimeProjections?.some(projection =>
@@ -234,7 +237,8 @@ export function DeploymentDomainsPanel(
   return (
     <ItemGroup
       testID="project-deployments.environment.domains"
-      title={items.length > 0 ? t('projects.deployments.editors.domainsCount', { count: items.length }) : t('projects.deployments.tabDomains')}
+      // Every address the list shows counts, the platform's built-in one too.
+      title={addressCount > 0 ? t('projects.deployments.editors.domainsCount', { count: addressCount }) : t('projects.deployments.tabDomains')}
       description={t('projects.deployments.editors.domainsLede')}
       action={addAction}
       surface="none"
@@ -287,7 +291,7 @@ export function DeploymentDomainsPanel(
           }}
         />
       ) : null}
-      {items.length > 0 ? <DeploymentDomainsList
+      {items.length > 0 || (props.builtInUrls?.length ?? 0) > 0 ? <DeploymentDomainsList
         testID="project-deployments.environment.domains.list"
         items={rowItems}
         accountId={props.controller.scope.accountId}
@@ -297,6 +301,7 @@ export function DeploymentDomainsPanel(
         machineName={editing?.machine ?? null}
         disabled={running}
         actions={rowActions}
+        {...(props.builtInUrls ? { builtInUrls: props.builtInUrls } : {})}
       /> : null}
       {dnsFor && editing?.actions.createDomainDns && editing.actions.inspectPlatformTarget ? (
         <DomainDnsRecordsForm
@@ -327,7 +332,9 @@ export function DeploymentDomainsPanel(
           domain: { domainId: checkSetup.item.domain.id, targetLinkId: checkSetup.item.domain.targetLinkId },
         })}
       /> : null}
-      {unavailableDockerDesktop && domains.result.status === 'empty' || adding && items.length === 0 ? null : <DeploymentTabState
+      {unavailableDockerDesktop && domains.result.status === 'empty' || adding && items.length === 0
+        // The built-in address already fills the list; "no domains yet" would contradict the row above it.
+        || domains.result.status === 'empty' && (props.builtInUrls?.length ?? 0) > 0 ? null : <DeploymentTabState
         result={domains.result}
         testID="project-deployments.environment.domains"
         errorTitle={t('projects.deployments.domainsErrorTitle')}
