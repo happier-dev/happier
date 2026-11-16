@@ -315,6 +315,25 @@ describe('cockpit tab bars', () => {
         expect(screen.findHostByTestId('session-cockpit-tab-chat')).not.toBeNull();
     });
 
+    it('publishes no Session chrome commit for messages arriving in its own Session', async () => {
+        let commits = 0;
+        await renderScreen(<React.Profiler id="session-navigation" onRender={() => { commits++; }}>
+            <MountedSessionCockpitTabBar sessionId="sess_1" serverId="srv_1" activeSurface="chat"
+                terminalTabAvailable openDetailsTabCount={0} onSurfacePress={() => {}} />
+        </React.Profiler>);
+        const before = commits;
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        // Each arriving message advances the Session's seq, updatedAt and activity time; the bar shows none of them.
+        for (let index = 1; index <= 3; index += 1) {
+            await act(async () => {
+                const session = storage.getState().sessions.sess_1!;
+                storage.getState().applySessions([{ ...session, seq: (session.seq ?? 0) + 1,
+                    updatedAt: session.updatedAt + 1, meaningfulActivityAt: session.updatedAt + 1 }]);
+            });
+        }
+        expect(commits - before).toBe(0);
+    });
+
     it('never publishes Collaboration in the Cockpit catalog while admission is loading or refused', async () => {
         collaborationAdmissionState.state = 'loading';
         const bar = () => <MountedSessionCockpitTabBar sessionId="sess_1" serverId="srv_1" activeSurface="chat"

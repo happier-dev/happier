@@ -6,7 +6,9 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
-import { storage, useSession, useSessionProjectScmStatus, useSetting } from '@/sync/domains/state/storage';
+import { storage, useSessionProjectScmStatus, useSessionSelector, useSetting } from '@/sync/domains/state/storage';
+import { useShallow } from 'zustand/react/shallow';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
@@ -93,6 +95,31 @@ function SessionCockpitTabBarPreview(props: Readonly<{
 }
 
 /** Catalog admission and presentation facts shared by both phone bar presenters. */
+type SessionCockpitTabFacts = Readonly<{ serverId: string | null; agentId: string; pendingPermissionCount: number }>;
+
+/**
+ * The three Session facts the cockpit tabs show. A message arriving in the Session moves its seq, updatedAt and
+ * activity time, none of which the tabs show, so the bar subscribes to these facts rather than the whole Session.
+ */
+function useSessionCockpitTabFacts(sessionId: string, serverId?: string | null): SessionCockpitTabFacts {
+    const select = React.useMemo(() => {
+        let source: Session | null | undefined;
+        let facts: SessionCockpitTabFacts = { serverId: null, agentId: '', pendingPermissionCount: 0 };
+        return (session: Session | null): SessionCockpitTabFacts => {
+            if (session === source) return facts;
+            source = session;
+            facts = {
+                serverId: session?.serverId ?? null,
+                // A session whose Agent cannot be named has no brand for this tab (see below).
+                agentId: (session ? readSessionPresentationAgentId(session) : null) ?? '',
+                pendingPermissionCount: session ? listPendingPermissionRequests(session).length : 0,
+            };
+            return facts;
+        };
+    }, []);
+    return useSessionSelector(sessionId, serverId, useShallow(select));
+}
+
 export function useSessionCockpitTabDefinitions(props: Pick<SessionCockpitTabBarProps,
     'sessionId' | 'serverId' | 'catalog' | 'openDetailsTabCount'>) {
     const sessionServerId = usePreferredServerIdForSession({ serverId: props.serverId, sessionId: props.sessionId });
@@ -100,10 +127,10 @@ export function useSessionCockpitTabDefinitions(props: Pick<SessionCockpitTabBar
         () => normalizeSessionAddress(sessionServerId, props.sessionId),
         [props.sessionId, sessionServerId],
     );
-    const session = useSession(props.sessionId, props.serverId);
+    const tabFacts = useSessionCockpitTabFacts(props.sessionId, props.serverId);
     const pendingNavigationAddress = React.useMemo(
-        () => normalizeSessionAddress(props.serverId ?? session?.serverId, props.sessionId),
-        [props.serverId, props.sessionId, session?.serverId],
+        () => normalizeSessionAddress(props.serverId ?? tabFacts.serverId, props.sessionId),
+        [props.serverId, props.sessionId, tabFacts.serverId],
     );
     const scmStatus = useSessionProjectScmStatus(props.sessionId, props.serverId);
     const gitBadgeMode = useSetting('tabBarGitBadgeMode');
@@ -111,20 +138,14 @@ export function useSessionCockpitTabDefinitions(props: Pick<SessionCockpitTabBar
     // A session whose Agent cannot be named has no brand for this tab. The
     // catalog identity owner already renders that neutrally; substituting the
     // product default would label another Agent's session Claude.
-    const agentId = React.useMemo(
-        () => (session ? readSessionPresentationAgentId(session) : null) ?? '',
-        [session],
-    );
+    const agentId = tabFacts.agentId;
     // The session's reachable machine target scopes catalog identity resolution;
     // the same owner the Session header uses, so the capsule and the header
     // cannot resolve one session's Agent through two different machines.
     const reachableMachineTarget = useSessionReachableMachineTarget(props.sessionId, props.serverId);
     const agentCore = isBundledAgentId(agentId) ? getAgentCore(agentId) : null;
     const gitBadge = resolveGitTabBadge(gitBadgeMode, scmStatus);
-    const pendingPermissionCount = React.useMemo(
-        () => (session ? listPendingPermissionRequests(session).length : 0),
-        [session],
-    );
+    const pendingPermissionCount = tabFacts.pendingPermissionCount;
 
     const catalog = props.catalog;
     const tabForEntry = (entry: SessionCockpitMobileCatalogEntry): SessionCockpitTabDefinition => {
