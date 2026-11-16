@@ -362,6 +362,9 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       expect(refused).toMatchObject({ code, message: code });
       expect(readSessionPreparationFailureDiagnostic(refused)).toEqual({
         originalCode: code, reason: 'unknown', contextSource: 'unknown',
+        failureCause: { code, phase: 'authentication', failureReason: 'unknown', providerErrorCode: code,
+          actionCause: { phase: 'providers.team_credential.binding', errorClass: 'Error', errorCode: code, httpStatus: null },
+        },
       });
     } finally {
       await app.close();
