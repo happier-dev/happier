@@ -1335,6 +1335,44 @@ describe("Machine preset relational owner", () => {
         })).rejects.toMatchObject({ code: 'preset_archived' });
     });
 
+    it('reuses only an unoccupied kept local resource from the same custodian and preset revision', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const accountId = 'preset-local-reuse-owner';
+        await db.account.create({ data: { id: accountId, encryptionMode: 'plain', publicKey: null } });
+        const controller = await seedCurrentProvisioner(accountId, homeId);
+        const id = 'preset-local-reuse';
+        const definition = taggedPlainPreset({ id, homeId, owner: { kind: 'account', accountId }, name: 'Kept local',
+            privateFields: { launch }, controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        expect((await requestPreset(accountId, 'create', definition)).statusCode).toBe(200);
+        const request = (requestId: string) => ({ custodianAccountId: accountId, requesterAccountId: accountId,
+            requestEnvelopeDigest: requestId, input: { requestId, continuationPresent: false,
+                acquisitionMode: 'resource-bound' as const, reuseIdle: true as const,
+                input: { selection: { kind: 'preset' as const, homeId, id, revision: 0 }, controller } } });
+        const first = await admitManagedAcquire(request('local-reuse-first'));
+        await db.managedMachine.update({ where: { id: first.machine.id }, data: { allocation: 'bound' } });
+        const pending = await admitManagedAcquire(request('local-reuse-pending'));
+        expect(pending.machine.id).not.toBe(first.machine.id);
+        expect((await admitManagedAcquire(request('local-reuse-first'))).machine.id).toBe(first.machine.id);
+        await db.session.create({ data: { accountId, tag: 'local-reuse-prior-session', metadata: '{}',
+            encryptionMode: 'plain', managedCreationId: first.machine.id, archivedAt: new Date() } });
+        const reused = await admitManagedAcquire(request('local-reuse-second'));
+        expect(reused.machine.id).toBe(first.machine.id);
+        expect(await db.managedMachine.count({ where: { homeId, presetId: id } })).toBe(2);
+
+        const session = await db.session.create({ data: { accountId, tag: 'local-reuse-session', metadata: '{}',
+            encryptionMode: 'plain', managedCreationId: first.machine.id } });
+        const busy = await admitManagedAcquire(request('local-reuse-busy'));
+        expect(busy.machine.id).not.toBe(first.machine.id);
+        await db.session.update({ where: { id: session.id }, data: { archivedAt: new Date() } });
+        expect((await admitManagedAcquire(request('local-reuse-archived'))).machine.id).toBe(first.machine.id);
+
+        await db.managedMachine.update({ where: { id: first.machine.id }, data: { presetRevision: 1 } });
+        expect((await admitManagedAcquire(request('local-reuse-revision'))).machine.id).not.toBe(first.machine.id);
+        await db.managedMachine.update({ where: { id: first.machine.id }, data: { presetRevision: 0,
+            custodianAccountId: (await db.account.create({ data: { encryptionMode: 'plain' } })).id } });
+        expect((await admitManagedAcquire(request('local-reuse-custodian'))).machine.id).not.toBe(first.machine.id);
+    });
+
     it('enforces CAS, archive, replay, and simultaneous capacity without inspecting private content', async () => {
         const homeId = await getOrCreateServerIdentityId();
         const owner = 'preset-structural-cap-owner';

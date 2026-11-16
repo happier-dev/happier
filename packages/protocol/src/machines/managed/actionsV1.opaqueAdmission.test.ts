@@ -16,6 +16,16 @@ import {
 import { isManagedOpaquePresetMachineV1, ManagedMachineFullV1Schema, ManagedMachineV1Schema, ManagedOpaquePresetMachineV1Schema } from './managedMachineV1.js';
 
 describe('managed acquire opaque admission', () => {
+  it('carries native local placement admission without accepting it as a public acquire choice', () => {
+    const input = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 0 } };
+    expect(ManagedAcquireInputV1Schema.safeParse({ ...input, acquisitionMode: 'resource-bound', reuseIdle: true }).success).toBe(false);
+    const admitted = ManagedAdmissionInputV1Schema.parse({ input, requestId: 'start', continuationPresent: false,
+      acquisitionMode: 'resource-bound', reuseIdle: true });
+    expect(admitted).toMatchObject({ acquisitionMode: 'resource-bound', reuseIdle: true });
+    expect(ManagedAdmissionInputV1Schema.safeParse({ input, requestId: 'start', continuationPresent: false,
+      reuseIdle: true }).success).toBe(false);
+  });
+
   it('carries omitted preset policy unchanged until its signed native admission supplies qualified policy', () => {
     const input = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 3 },
       controller: { machineId: 'controller', installationId: 'installation' },

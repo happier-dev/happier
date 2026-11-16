@@ -1,4 +1,4 @@
-import { isActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import { sameStrictJsonValue, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -966,9 +966,12 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             retainedNativeProfile: requestedConfigurationSnapshot?.providerSessionResume !== undefined,
           });
           if (agentSandbox.availability?.status === 'unavailable') {
-            throw Object.assign(new Error('Agent native sandbox is unavailable'), { code: 'target_unavailable',
+            const failure = { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
               failureCause: { phase: 'session.spawn_new', errorClass: 'Error', errorCode: 'target_unavailable', httpStatus: null,
-                nativeErrorReason: agentSandbox.availability.reason } });
+                nativeErrorReason: agentSandbox.availability.reason } } satisfies ActionExecuteFailure;
+            throw Object.assign(new Error('Agent native sandbox is unavailable', { cause: failure }), {
+              code: failure.errorCode, failureCause: failure.failureCause,
+            });
           }
           return agentSandbox.value;
         };

@@ -945,21 +945,7 @@ export async function executeSpawnSessionRequest(
             const sessionTargetRunnerExit = new Promise<void>(resolve => { settleSessionTargetRunnerExit = resolve; });
             let sessionTarget: Extract<Awaited<ReturnType<typeof prepareSessionTargetPlacement>>, { ok: true }> | undefined;
             const sessionTargetKey = optionsWithProviderIsolation.spawnNonce ?? normalizedExistingSessionId ?? randomUUID();
-            if (optionsWithProviderIsolation.managedTargetPlacement) {
-                const placed = await prepareSessionTargetPlacement({ request: optionsWithProviderIsolation.managedTargetPlacement,
-                    sessionKey: sessionTargetKey,
-                    requesterAccountId,
-                    holderVersion: configuration.currentCliVersion,
-                    readTrustedCallerPid: () => sessionTargetRunner?.pid ?? null,
-                    ...(params.openManagedSessionTarget ? { openManagedSessionTarget: params.openManagedSessionTarget } : {}),
-                    // A respawn adopting the crashed runner's held Agent keeps that holder as the Session's primary.
-                    ...(optionsWithProviderIsolation.adoptSessionHolder ? { primarySocketPath: optionsWithProviderIsolation.adoptSessionHolder.socketPath } : {}),
-                    runnerExit: sessionTargetRunnerExit,
-                    launchResourceScope });
-                if (!placed.ok) return await refuseSpawn(placed.result);
-                sessionTarget = placed;
-                recordPreparationPhase('session_target_placement');
-            }
+
 
             // Direct Team launch material is disclosed only to an existing
             // Session carrying its Home-accepted Team binding (lane 10 child 06
@@ -1046,6 +1032,25 @@ export async function executeSpawnSessionRequest(
             }
 
             recordPreparationPhase('session_commit');
+            // The Home has exclusively associated a fresh shared target before guest preparation.
+            if (optionsWithProviderIsolation.managedTargetPlacement) {
+                const placed = await prepareSessionTargetPlacement({ request: optionsWithProviderIsolation.managedTargetPlacement,
+                    sessionKey: sessionTargetKey,
+                    ...(launchExistingSessionId ? { committedSessionId: launchExistingSessionId } : {}),
+                    requesterAccountId,
+                    ...(optionsWithProviderIsolation.projectSetupOperation && !optionsWithProviderIsolation.adoptSessionHolder
+                        ? { operation: optionsWithProviderIsolation.projectSetupOperation } : {}),
+                    holderVersion: configuration.currentCliVersion,
+                    readTrustedCallerPid: () => sessionTargetRunner?.pid ?? null,
+                    ...(params.openManagedSessionTarget ? { openManagedSessionTarget: params.openManagedSessionTarget } : {}),
+                    // A respawn adopting the crashed runner's held Agent keeps that holder as the Session's primary.
+                    ...(optionsWithProviderIsolation.adoptSessionHolder ? { primarySocketPath: optionsWithProviderIsolation.adoptSessionHolder.socketPath } : {}),
+                    runnerExit: sessionTargetRunnerExit,
+                    launchResourceScope });
+                if (!placed.ok) return await refuseSpawn(placed.result);
+                sessionTarget = placed;
+                recordPreparationPhase('session_target_placement');
+            }
             const acceptedTeamBinding = launchSessionAttachPayload?.snapshot?.acceptedTeamCredentialBinding;
             if (acceptedTeamBinding?.slot.kind === 'provider_model' && acceptedTeamBinding.resourceId !== null) {
                 logger.infoFile('[DAEMON RUN] Team credential launch binding', {
@@ -1697,21 +1702,33 @@ export async function executeSpawnSessionRequest(
             };
         }
         };
-        const result = await executeLaunch();
-        // Only this creator's fresh, unlaunched row belongs to this settlement.
-        // Host-seeded births settle at their creator; resumed/running Sessions
-        // keep their existing runner lifecycle.
-        const committed = committedBirth as Pick<CommittedDaemonLaunchSession, 'sessionId' | 'created'> | null;
-        if (committed?.created && !childLaunchSubmitted && !retainResourcesForUntrackedHostedChild && result.type === 'error') {
-            try {
-                await settleCommittedSessionLaunchFailure({ token: params.credentials.token,
-                    sessionId: committed.sessionId, failure: result });
-            } finally {
-                await archiveSessionOnceInactive({ token: params.credentials.token,
-                    sessionId: committed.sessionId }).catch(() => undefined);
+        // Only the operation cancellation owner distinguishes a person's Cancel
+        // from a disconnected transport or failed target preparation.
+        let personCancelled = false;
+        const stopObservingCancellation = options.projectSetupOperation?.operationCancellation?.onRequest(() => {
+            personCancelled = true;
+        });
+        try {
+            const result = await executeLaunch();
+            // Only this creator's fresh, unlaunched row belongs to this settlement.
+            // Host-seeded births settle at their creator; resumed/running Sessions
+            // keep their existing runner lifecycle.
+            const committed = committedBirth as Pick<CommittedDaemonLaunchSession, 'sessionId' | 'created'> | null;
+            if (committed?.created && !childLaunchSubmitted && !retainResourcesForUntrackedHostedChild && result.type === 'error') {
+                try {
+                    await settleCommittedSessionLaunchFailure({ token: params.credentials.token,
+                        sessionId: committed.sessionId, failure: result });
+                } finally {
+                    // An unstarted placed Session retains its resource for same-key
+                    // Retry. Explicit Archive (or person Cancel) ends its scope.
+                    if (!options.managedTargetPlacement || personCancelled) {
+                        await archiveSessionOnceInactive({ token: params.credentials.token,
+                            sessionId: committed.sessionId }).catch(() => undefined);
+                    }
+                }
             }
-        }
-        return result;
+            return result;
+        } finally { stopObservingCancellation?.(); }
     } catch (error) {
         logger.warn('[DAEMON RUN] Failed before spawn session work started', {
             hasExistingSessionId: typeof options.existingSessionId === 'string' && options.existingSessionId.trim().length > 0,

@@ -32,6 +32,20 @@ describe('getOrCreateSessionByTag creation placement transport', () => {
     vi.doUnmock('@/api/session/resolveSessionCreateEncryptionMode');
   });
 
+  it.each(['resolved', 'rejected'] as const)('preserves a busy managed target as the existing creation conflict (%s)', async delivery => {
+    const response = { status: 409, data: { error: 'session-managed-target-busy' } };
+    const post = vi.spyOn(axios, 'post');
+    if (delivery === 'resolved') post.mockResolvedValueOnce(response);
+    else post.mockRejectedValueOnce({ isAxiosError: true, response });
+    const { postSessionCreationRequest } = await import('./sessionCreation');
+    const { readSessionCreationTerminalSpawnErrorDetail } = await import('@/api/session/sessionCreationTerminalSpawnErrorDetail');
+    const error = await postSessionCreationRequest({ serverUrl: 'https://server.example.test', token: 'synthetic', body: {} })
+      .catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ code: 'creation_conflict' });
+    expect(readSessionCreationTerminalSpawnErrorDetail(error)).toEqual({ kind: 'session_creation_correspondence_conflict', code: 'creation_conflict' });
+    expect(post).toHaveBeenCalledOnce();
+  });
+
   it.each([true, false, undefined])('retains affirmative creation provenance independently of legacy created semantics (%s)', async created => {
     const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { encryption: {
       storagePolicy: 'optional', defaultAccountMode: 'plain', allowAccountOptOut: true,

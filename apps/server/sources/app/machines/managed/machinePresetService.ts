@@ -1009,6 +1009,15 @@ function requirePresetCustodianRecipient(preset: Pick<ManagedMachinePresetV1, 'c
     }
 }
 
+/** Capacity is consumed only when admission needs a new allocation. */
+export async function hasMachinePresetAcquireCapacityInTx(tx: Tx, input: Readonly<{
+    homeId: string; id: string; maximum: number | null;
+}>): Promise<boolean> {
+    return input.maximum === null || await tx.managedMachine.count({ where: {
+        homeId: input.homeId, presetId: input.id, allocation: { not: 'confirmed-absent' },
+    } }) < input.maximum;
+}
+
 /** C50 calls this inside its admission transaction, before inserting the resource row. */
 export async function resolveMachinePresetForAcquireInTx(tx: Tx, params: PresetContext & Readonly<{
     homeId: string; id: string; revision: number;
@@ -1029,7 +1038,9 @@ export async function resolveMachinePresetForAcquireInTx(tx: Tx, params: PresetC
     const preset = projectPreset(row);
     const presetContent = { content: preset.content, recipients: preset.recipients } as const;
     // Admission's controller Account fence serializes this preset's count/create.
-    if (params.checkCapacity !== false && row.simultaneousMaximum !== null && await tx.managedMachine.count({ where: { homeId: row.homeId, presetId: row.id, allocation: { not: "confirmed-absent" } } }) >= row.simultaneousMaximum) return { kind: "refused", code: "preset_limit_reached" };
+    if (params.checkCapacity !== false && !await hasMachinePresetAcquireCapacityInTx(tx, {
+        homeId: row.homeId, id: row.id, maximum: row.simultaneousMaximum,
+    })) return { kind: "refused", code: "preset_limit_reached" };
     if (preset.controllerPoolId) {
         const pool = await readManagedPresetPoolCandidatesInTx(tx, params, preset, params.poolSelection?.presence);
         const delegated = pool.custodianAccountId !== params.accountId;

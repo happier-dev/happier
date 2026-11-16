@@ -15,7 +15,7 @@
 //! - client -> holder `I` `[stream][bytes]` (endpoint -> relay), `C` `[stream]` (close).
 //!
 //! The client serves the stream as one MCP session of the Session's endpoint. Other
-//! platforms have no peer proof here: nothing is bound, and the relay reports
+//! platforms without peer proof here bind nothing, and the relay reports
 //! `mcp_socket_access_unavailable` as it does without a context.
 
 pub fn socket_path(socket: &str) -> String {
@@ -66,7 +66,7 @@ pub fn holder_context_from_ancestry() -> Option<String> {
     ancestor_holder_context(
         std::process::id(),
         &own,
-        |pid| linux::parse_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?).map(|(parent, _)| parent),
+        |pid| unix::parse_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?).map(|(parent, _)| parent),
         |pid| std::fs::read_link(format!("/proc/{pid}/exe")).ok(),
         |pid| {
             let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
@@ -75,14 +75,24 @@ pub fn holder_context_from_ancestry() -> Option<String> {
     )
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub fn holder_context_from_ancestry() -> Option<String> {
+    let helper = crate::process_custody::target_helper_path()?;
+    let own = std::env::current_exe().ok()?;
+    let start = std::process::id();
+    let census = crate::process_custody::process_snapshot(&helper, start, true)?;
+    ancestor_holder_context(start, &own, |pid| census.stat(pid).map(|(parent, _)| parent),
+        |pid| census.executable(pid), |pid| census.args(pid))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn holder_context_from_ancestry() -> Option<String> {
     None
 }
 
 /// The relay's upgrade head (`mcp_relay::upgrade_request`): the tool-name budget when
 /// valid, and the bytes after the head. `None` refuses the connection.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
 pub fn parse_upgrade_head(head: &[u8]) -> Option<Option<u32>> {
     let text = std::str::from_utf8(head).ok()?;
     let mut lines = text.split("\r\n");
@@ -107,21 +117,32 @@ pub fn parse_upgrade_head(head: &[u8]) -> Option<Option<u32>> {
     upgrade.then_some(budget)
 }
 
-#[cfg(target_os = "linux")]
-pub use linux::{bind, serve};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use unix::{bind, serve};
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn bind(_socket: &str) -> Option<()> {
     None
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn serve(_listener: (), _agent_pid: u32, _outbox: std::sync::Arc<crate::outbox::Outbox>, _streams: std::sync::Arc<crate::streams::Streams>) {}
 
-#[cfg(target_os = "linux")]
-mod linux {
+/// The same Agent-tree decision on every target; platform owners supply facts.
+pub(super) fn in_agent_tree(pid: u32, agent_pid: u32, read_stat: impl Fn(u32) -> Option<(u32, u32)>) -> bool {
+    let mut current = pid;
+    loop {
+        if current == agent_pid { return true; }
+        let Some((parent, group)) = read_stat(current) else { return false };
+        if group == agent_pid { return true; }
+        if parent <= 1 || parent == current { return false; }
+        current = parent;
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix {
     use std::io::{self, Read, Write};
-    use std::os::fd::AsRawFd;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::sync::Arc;
     use std::thread;
@@ -227,46 +248,31 @@ mod linux {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn peer_in_agent_tree(connection: &UnixStream, agent_pid: u32) -> bool {
-        let mut credentials = libc::ucred { pid: 0, uid: 0, gid: 0 };
-        let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-        let read = unsafe {
-            libc::getsockopt(connection.as_raw_fd(), libc::SOL_SOCKET, libc::SO_PEERCRED,
-                &mut credentials as *mut libc::ucred as *mut libc::c_void, &mut length)
-        };
-        if read != 0 || credentials.pid <= 0 || credentials.uid != unsafe { libc::geteuid() } {
-            return false;
-        }
-        in_agent_tree(credentials.pid as u32, agent_pid, |pid| {
+        let Some(helper) = crate::process_custody::target_helper_path() else { return false };
+        let Some(peer) = crate::process_custody::peer_identity(&helper, connection) else { return false };
+        if peer.uid != unsafe { libc::geteuid() } { return false; }
+        super::in_agent_tree(peer.pid, agent_pid, |pid| {
             let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
             parse_stat(&stat)
         })
     }
 
+    #[cfg(target_os = "macos")]
+    fn peer_in_agent_tree(connection: &UnixStream, agent_pid: u32) -> bool {
+        let Some(helper) = crate::process_custody::target_helper_path() else { return false };
+        crate::process_custody::peer_in_agent_tree(&helper, connection, agent_pid)
+    }
+
     /// `(ppid, pgrp)` from `/proc/<pid>/stat` (the fields after the parenthesised name).
+    #[cfg(target_os = "linux")]
     pub(super) fn parse_stat(stat: &str) -> Option<(u32, u32)> {
         let mut fields = stat.get(stat.rfind(')')? + 1..)?.split_whitespace();
         let _state = fields.next()?;
         Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
     }
 
-    /// The Agent, a process in its group, or a descendant of it; the walk ends at init.
-    pub(super) fn in_agent_tree(pid: u32, agent_pid: u32, read_stat: impl Fn(u32) -> Option<(u32, u32)>) -> bool {
-        let mut current = pid;
-        loop {
-            if current == agent_pid {
-                return true;
-            }
-            let Some((parent, group)) = read_stat(current) else { return false };
-            if group == agent_pid {
-                return true;
-            }
-            if parent <= 1 || parent == current {
-                return false;
-            }
-            current = parent;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -296,13 +302,13 @@ mod tests {
         // a grandchild 40 that left the group; an unrelated process 50 under the holder.
         let table: HashMap<u32, (u32, u32)> = [(10, (1, 10)), (20, (10, 20)), (30, (20, 20)), (40, (30, 40)), (50, (10, 50))].into();
         let read = |pid: u32| table.get(&pid).copied();
-        assert!(linux::in_agent_tree(20, 20, read));
-        assert!(linux::in_agent_tree(30, 20, read));
-        assert!(linux::in_agent_tree(40, 20, read));
-        assert!(!linux::in_agent_tree(50, 20, read));
-        assert!(!linux::in_agent_tree(10, 20, read));
-        assert!(!linux::in_agent_tree(99, 20, read));
-        assert_eq!(linux::parse_stat("123 (a b) c) S 45 67 67 0"), Some((45, 67)));
+        assert!(in_agent_tree(20, 20, read));
+        assert!(in_agent_tree(30, 20, read));
+        assert!(in_agent_tree(40, 20, read));
+        assert!(!in_agent_tree(50, 20, read));
+        assert!(!in_agent_tree(10, 20, read));
+        assert!(!in_agent_tree(99, 20, read));
+        assert_eq!(unix::parse_stat("123 (a b) c) S 45 67 67 0"), Some((45, 67)));
     }
 
     #[test]

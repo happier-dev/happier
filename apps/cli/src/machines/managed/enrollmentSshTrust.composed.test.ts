@@ -12,7 +12,7 @@ import { resolveLumeBootstrap } from '../../../../../packages/plugins/machine-lu
 import { createLumeNativeClient } from '../../../../../packages/plugins/machine-lume/src/machine/nativeClient';
 import { reloadConfiguration } from '@/configuration';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
-import { runManagedMachineEnrollment } from './enrollment';
+import { runManagedMachineEnrollment, runManagedSessionSshTrust } from './enrollment';
 
 const boundary = vi.hoisted(() => ({ key: '', commands: 0 }));
 vi.mock('node:child_process', async original => {
@@ -50,7 +50,7 @@ async function home() {
     return root;
 }
 
-async function enroll(managedId: string, key: string, generated = false, retainedKey = generatedKey) {
+async function enroll(managedId: string, key: string, generated = false, retainedKey = generatedKey, trustOnly = false) {
     boundary.key = key;
     boundary.commands = 0;
     const credentialRef = { kind: 'shared_resource', resourceId: `credential-${managedId}` } as const;
@@ -85,17 +85,34 @@ async function enroll(managedId: string, key: string, generated = false, retaine
     const taskId = new Promise<string>(resolve => { taskReady = resolve; });
     const owner = getLiveSystemTasksRunnerAdapter();
     const correlation = { homeId, managedId, controller, resource, requestId: `request-${managedId}`, expectedIntentRevision: 0 };
-    const result = await runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier, guestHostPublicKey: retainedKey,
+    const input = { correlation, homeCorrelation: correlation, target, carrier, guestHostPublicKey: retainedKey,
+        ...(trustOnly ? { operationId: 'session-operation' } : {}),
         onTask: task => { taskReady(task.taskId); }, onPrompt: prompt => {
             if (!prompt) return;
             prompts.push(prompt.kind);
-            void taskId.then(id => owner.respond({ taskId: id, answer: { trusted: true } }));
+            void taskId.then(id => owner.respond({ taskId: id, answer: { trusted: true }, ...(trustOnly ? {
+                responseAuthorization: { kind: 'machine.managedInstallation.serverOrigin', actorAccountId: 'owner', custodianAccountId: 'owner',
+                    purpose: { ...correlation, operationId: 'session-operation', taskId: id, expectedPromptKind: prompt.kind, phase: 'answer' } },
+            } : {}) }));
         },
-    }, { readCurrentManagedRow: async () => row,
+    } satisfies Parameters<typeof runManagedMachineEnrollment>[0];
+    const deps = { readCurrentManagedRow: async () => row,
         materializeBootstrapCredential: async () => ({ path: '/fixture/login-key', dispose: async () => {} }),
-    }).then(() => 'unexpected_success', (error: unknown) => error instanceof Error && 'code' in error ? error.code : 'unknown_failure');
+    };
+    const result = await (trustOnly ? runManagedSessionSshTrust(input) : runManagedMachineEnrollment(input, deps))
+        .then(() => trustOnly ? 'trusted' : 'unexpected_success', (error: unknown) => error instanceof Error && 'code' in error ? error.code : 'unknown_failure');
     return { result, prompts, commands: boundary.commands };
 }
+
+it('settles observed first-use trust as a standalone task and reuses that decision on replay', async () => {
+    await home();
+    expect(await enroll('session-resource', imageKey, false, generatedKey, true))
+        .toEqual({ result: 'trusted', prompts: ['ssh.trustHost'], commands: 0 });
+    expect(await enroll('session-resource', imageKey, false, generatedKey, true))
+        .toEqual({ result: 'trusted', prompts: [], commands: 0 });
+    expect(await enroll('session-resource', otherKey, false, generatedKey, true))
+        .toEqual({ result: 'trusted_host_key_mismatch', prompts: [], commands: 0 });
+});
 
 it('scopes native observed trust to the managed resource across address reuse and refuses changes to that same resource', async () => {
     const root = await home();

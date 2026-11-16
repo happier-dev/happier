@@ -159,6 +159,8 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                         : rejection.result.error === "manager_cas_conflict" ? 409 : 403).send(rejection.result);
                 case "session-origin-forbidden":
                     return reply.code(403).send({ error: "session-origin-forbidden" });
+                case 'session-managed-target-busy':
+                    return reply.code(409).send({ error: 'session-managed-target-busy' });
                 case "session-initial-trigger-invalid":
                     return reply.code(rejection.code === "invalid_input" ? 400 : 409).send({
                         error: "initial_trigger_admission_failed", code: rejection.code,

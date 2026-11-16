@@ -19,6 +19,7 @@ import type {
     PreparedLayout1SessionCreate,
 } from "./prepareLayout1SessionCreate";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
+import { ManagedCreationBusyError } from '@/app/machines/managed/managedCreationBirth';
 
 /**
  * Classifies a throw from Layout-1 Session creation as a domain rejection.
@@ -33,6 +34,7 @@ export function classifyLayout1SessionCreateThrow(
     error: unknown,
 ): FreshBoundLayout1SessionCreateRejection | null {
     if (error instanceof SessionCreationOriginError) return { reason: "session-origin-forbidden" };
+    if (error instanceof ManagedCreationBusyError) return { reason: 'session-managed-target-busy' };
     if (error instanceof SessionCreationManagerError) return { reason: "session-manager-invalid", result: error.result };
     if (isSessionCreationPlacementError(error)) return { reason: "invalid-organization-placement" };
     if (isSessionOwnerEnvelopeError(error)) return { reason: "invalid-params" };

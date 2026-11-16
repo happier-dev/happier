@@ -8,6 +8,7 @@ import { transitionSessionArchiveStateInTx } from '@/app/session/archive/transit
 import { bindManagedCreationScopeRetentionInTx, validateManagedCreationBirthInTx } from './managedCreationBirth';
 import { cancelWorkflowRun } from '@/app/workflows/workflowRunService';
 import { reportManagedIntent } from './managedMutations';
+import { classifyLayout1SessionCreateThrow } from '@/app/session/create/createFreshBoundLayout1Session';
 
 describe('creation scope retention at the real archive owner', () => {
     let harness: LightSqliteHarness;
@@ -15,6 +16,45 @@ describe('creation scope retention at the real archive owner', () => {
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-scope-retention-',
         env: { HAPPIER_SERVER_IDENTITY_ID: homeId } }); }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it('admits bound local birth only on its controller and reserves the guest until that Session is archived', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const controller = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, installationId: randomUUID(), metadata: '{}' } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: owner.id,
+            controllerMachineId: controller.id, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: randomUUID(), admittedInput: { enrollmentAccountId: owner.id, acquisitionMode: 'resource-bound' },
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Local guest', choices: {} },
+            resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            allocation: 'bound', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const birth = { homeId, managedId: row.id, controller: { machineId: controller.id, installationId: controller.installationId! } };
+        const admit = (accountId = owner.id, executionMachineId = controller.id) =>
+            inTx(tx => validateManagedCreationBirthInTx(tx, { accountId, birth, executionMachineId }));
+        expect(await admit()).not.toBe(false);
+        expect(await admit(other.id)).toBe(false);
+        expect(await admit(owner.id, 'another-machine')).toBe(false);
+        const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}',
+            encryptionMode: 'plain', managedCreationId: row.id } });
+        await expect(admit()).rejects.toMatchObject({ name: 'ManagedCreationBusyError' });
+        await db.session.update({ where: { id: session.id }, data: { archivedAt: new Date() } });
+        expect(await admit()).not.toBe(false);
+        const concurrent = await Promise.allSettled([1, 2].map(() => inTx(async tx => {
+            const admitted = await validateManagedCreationBirthInTx(tx, { accountId: owner.id, birth, executionMachineId: controller.id });
+            if (!admitted) throw new Error('Expected local admission');
+            return tx.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}',
+                encryptionMode: 'plain', managedCreationId: row.id } });
+        })));
+        expect(concurrent.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+        expect(concurrent.filter(result => result.status === 'rejected').map(result => result.reason))
+            .toEqual([expect.objectContaining({ name: 'ManagedCreationBusyError' })]);
+        const rejected = concurrent.find(result => result.status === 'rejected');
+        if (rejected?.status !== 'rejected') throw new Error('Expected competing birth refusal');
+        expect(classifyLayout1SessionCreateThrow(rejected.reason)).toEqual({ reason: 'session-managed-target-busy' });
+        expect(await db.session.count({ where: { managedCreationId: row.id, archivedAt: null } })).toBe(1);
+        await db.session.updateMany({ where: { managedCreationId: row.id }, data: { archivedAt: new Date() } });
+        await db.managedMachine.update({ where: { id: row.id }, data: { admittedInput: { enrollmentAccountId: owner.id } } });
+        expect(await admit()).toBe(false);
+    });
 
     it('binds only the admitted creator choice and cannot attach Delete to a Keep acquisition', async () => {
         const creator = await db.account.create({ data: { encryptionMode: 'plain' } });

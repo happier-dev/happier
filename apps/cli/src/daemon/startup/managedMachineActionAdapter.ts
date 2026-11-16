@@ -1,7 +1,7 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ManagedAcquireInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedMachineActionOutputSchemasV1, ManagedGetOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveAccountExecutionRuntime, type AccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
@@ -33,6 +33,23 @@ import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions
 import type { PrepareExternalActionRequesterAccountContext } from '../externalActions/executeExternalAction';
 import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import type { ManagedGuestLocalStop } from '@/machines/managed/managedRetentionPolicy';
+import type { AcquireSessionIsolationSandbox } from '@/session/actions/cliActionDeps/types';
+import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedAcceptedV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ManagedMachineExecutionOptions } from '@/machines/managed/acquire';
+import axios from 'axios';
+
+const sessionIsolationAcquisition = Symbol('sessionIsolationAcquisition');
+type SessionIsolationAcquisitionOptions = Pick<ManagedMachineExecutionOptions,
+    'acquisitionMode' | 'reuseIdle' | 'expectedProvisioner' | 'onLocalSessionPlacement'>;
+type SessionIsolationAcquisitionContext = ActionExecutorContext & Readonly<{
+    [sessionIsolationAcquisition]?: Readonly<{
+        input: ReturnType<typeof ManagedAcquireInputV1Schema.parse>;
+        take(): SessionIsolationAcquisitionOptions;
+    }>;
+}>;
 
 /** The incumbent daemon factory binds the current controller to its driver. */
 type ManagedMachineActionAdapterParams = Readonly<{
@@ -196,7 +213,15 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             || (context.externalActionExecutionAuthorization && (!params.preflightSessionStart || !await params.preflightSessionStart(context))))) {
             throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
         }
+        const isolation = (context as SessionIsolationAcquisitionContext)[sessionIsolationAcquisition];
+        if (isolation && (actionId !== MANAGED_ACQUIRE_ACTION_ID_V1
+            || !sameStrictJsonValue(isolation.input, input)
+            || !isHostAdmittedReviewedChildPolicyV1(readHostReviewedChildOperationV1(context, actionId, input), actionId, input))) {
+            throw new ManagedMachineControllerError('admission_unavailable');
+        }
+        const isolationOptions = isolation?.take();
         const result = await withBoundDriver(params, signal, async (driver, controllerCredentials) => await driver.execute(actionId, input, { requestId, context, signal,
+                ...isolationOptions,
                 ...(params.subscribeEnvironmentSetupChanges ? { subscribeEnvironmentSetupChanges: callbacks => params.subscribeEnvironmentSetupChanges!(context, callbacks) } : {}),
                 ...(params.executeEnvironmentSetup ? { runEnvironmentSetup: async ({ machine, isCurrent }) => {
                     if (!machine.enrolledMachineId || !machine.preset) throw Object.assign(new Error('intent_changed'), { code: 'intent_changed' });
@@ -275,6 +300,50 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         return await executeNativeAction(request);
     };
     return Object.assign(actionAdapter, {
+        acquireSessionIsolationSandbox: (async request => {
+            const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal);
+            if (!origin || !params.installationIdentity) throw new ManagedMachineControllerError('controller_unavailable');
+            const homeId = origin.serverIdentityId;
+            const response = await axios.post<unknown>(`${params.serverBaseUrl.replace(/\/+$/, '')}/v1/machines/presets/get`,
+                { homeId, id: request.configuredSandbox.presetId },
+                { headers: { Authorization: `Bearer ${(params.controllerCredentials ?? params.credentials).token}` },
+                    ...(request.signal ? { signal: request.signal } : {}) });
+            const read = ManagedMachinePresetGetResultV1Schema.parse(response.data);
+            if (read.kind === 'refused') throw new ManagedMachineControllerError(read.code);
+            const controller = { machineId: params.machineId, installationId: params.installationIdentity.installationId };
+            let sandboxTypeSupportsNativeSandbox = false;
+            let nativeSandbox: 'on' | 'off' | undefined;
+            const acquisition = ManagedAcquireInputV1Schema.parse({
+                selection: { kind: 'preset', homeId, id: read.preset.id, revision: read.preset.revision }, controller,
+                ...(request.lifecycle === 'fresh' ? { creationScopeRetention: { effect: 'delete' as const } }
+                    : { retention: { kind: 'until-delete' as const } }),
+            });
+            const options: SessionIsolationAcquisitionOptions = {
+                acquisitionMode: 'resource-bound', expectedProvisioner: request.configuredSandbox.provisioner,
+                onLocalSessionPlacement: placement => {
+                    sandboxTypeSupportsNativeSandbox = placement.supportsAgentNativeSandbox === true;
+                    nativeSandbox = request.resolveNativeSandbox?.(sandboxTypeSupportsNativeSandbox);
+                },
+                ...(request.lifecycle === 'shared-kept' ? { reuseIdle: true } : {}),
+            };
+            let consumed = false;
+            const result = await invokeHostReviewedChildV1({
+                parent: { ...request.parent, input: projectNativeJsonValueForTransport(request.parent.input) as Record<string, JsonValue> },
+                context: request.context,
+                child: { action: MANAGED_ACQUIRE_ACTION_ID_V1, role: 'acquire-session-sandbox', input: projectNativeJsonValueForTransport(acquisition) },
+                execute: (_input, context) => request.executeSessionIsolationAcquire(acquisition, { ...context,
+                    [sessionIsolationAcquisition]: { input: acquisition, take: () => {
+                        if (consumed) throw new ManagedMachineControllerError('admission_unavailable');
+                        consumed = true;
+                        return options;
+                    } },
+                } as SessionIsolationAcquisitionContext),
+            });
+            if (!result.ok) throw ManagedMachineControllerError.fromActionFailure(result, MANAGED_ACQUIRE_ACTION_ID_V1);
+            const accepted = ManagedAcceptedV1Schema.parse(result.result);
+            return { managedCreation: { homeId, managedId: accepted.managedId, controller }, sandboxTypeSupportsNativeSandbox,
+                ...(nativeSandbox ? { nativeSandbox } : {}) };
+        }) satisfies AcquireSessionIsolationSandbox,
         /**
          * A Session placed on a managed target: the bound driver (and its runtime
          * lease) stays held for the Session's lifetime, because the target's

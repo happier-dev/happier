@@ -72,6 +72,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, strings.TrimSpace(`
 usage:
   happier-process-custody service-io -- <command> [args...]
+  happier-process-custody file-lock [-n] (-s|-x) <path> -- <command> [args...]
   happier-process-custody run --job=<name> [--wait-for-job-empty] [--target-windows-verbatim] [--target-inherited-stdin-arg=<arg>] -- <command> [args...]
   happier-process-custody terminate --job=<name> [--timeout-ms=<ms>]
   happier-process-custody query --job=<name>
@@ -106,6 +107,8 @@ func main() {
 	command, rest := args[0], args[1:]
 	var err error
 	switch command {
+	case "file-lock":
+		err = fileLockCommand(rest)
 	case "service-io":
 		err = serviceIOCommand(rest)
 	case "run":

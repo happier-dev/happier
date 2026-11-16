@@ -15,7 +15,11 @@ export async function installManagedNativePayload(input: ManagedNativePayloadIns
     ...(remoteHomeDir ? { remoteHomeDir } : {}),
   }, {
     resolveRemoteReleaseTarget: async () => ({ os, arch }),
-    runRemoteText: async ({ remoteCommand, signal: commandSignal }) => exec({ command: remoteCommand, signal: commandSignal }),
+    // Enrollment starts its daemon explicitly; payload promotion must never
+    // repair or restart a guest service through an incumbent CLI migration.
+    runRemoteText: async ({ remoteCommand, signal: commandSignal }) => exec({
+      command: `export HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION=1; ${remoteCommand}`, signal: commandSignal,
+    }),
     copyLocalDirectoryToRemote: async ({ localPath, remotePath, signal: copySignal }) => {
       const archiveRoot = posix.resolve(home, remotePath, localPath.split(/[\\/]/u).at(-1)!);
       const mkdirResult = await exec({ command: `mkdir -p ${safeBashSingleQuote(archiveRoot)}`, signal: copySignal });

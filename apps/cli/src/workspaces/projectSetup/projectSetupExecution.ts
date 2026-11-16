@@ -1,4 +1,5 @@
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -26,7 +27,8 @@ import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { resolveProjectNativeCommand } from './projectNativeResolution';
 
-export type ProjectSetupOperationContext = Parameters<Parameters<HostActionOperationRuntime['observeExecution']>[0]['execute']>[0];
+export type ProjectSetupOperationContext = Parameters<Parameters<HostActionOperationRuntime['observeExecution']>[0]['execute']>[0]
+    & Pick<ActionExecutorContext, 'externalActionExecutionAuthorization' | 'externalActionTarget'>;
 export type ProjectSetupExecutionInput = Readonly<{
     preparation: Parameters<typeof prepareProjectSetup>[0];
     requesterAccountId: string;

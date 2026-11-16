@@ -170,7 +170,7 @@ const ActionOperationErrorCodeV1Schema = lazyZodSchema(() => z.string().check(z.
 /** Credential-free controller diagnostics on the current operation read epoch. */
 export const ManagedControllerRequestFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('managedControllerRequest'),
-  path: z.string().check(z.regex(/^\/v1\/machines\/managed\/(?:controller|actions)\/[a-z.-]+$/)),
+  path: z.string().check(z.regex(/^\/v1\/machines\/(?:managed\/(?:controller|actions)\/[a-z.-]+|setup\/report)$/)),
   category: z.enum(['transport', 'status', 'schema', 'currentness']),
   status: z.optional(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
   code: z.optional(z.string().check(z.regex(/^[a-z][a-z0-9_-]*$/i), z.maxLength(ACTION_OPERATION_ERROR_CODE_MAX_LENGTH_V1))),

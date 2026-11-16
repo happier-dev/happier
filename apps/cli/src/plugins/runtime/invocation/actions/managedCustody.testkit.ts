@@ -112,7 +112,7 @@ export function fixture(options: Readonly<{
     cleanupObservation?: { kind: 'confirmed' | 'retryable' } | { kind: 'unknown'; code?: string };
     repairAction?: boolean;
     /** A fixed result, or one computed from the role input (a fixture guest answering commands). */
-    nativeRoleResults?: Partial<Record<NativeFixtureRole | 'check' | 'inspect', JsonValue | ((input: JsonValue | undefined) => JsonValue)>>;
+    nativeRoleResults?: Partial<Record<NativeFixtureRole | 'check' | 'options' | 'inspect', JsonValue | ((input: JsonValue | undefined) => JsonValue)>>;
     supportedIntents?: MachineProvisionerContributionV1['retention']['supportedIntents'];
     platforms?: MachineProvisionerContributionV1['platforms'];
     onInspect?: (input: JsonValue | undefined, context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
@@ -184,6 +184,7 @@ export function fixture(options: Readonly<{
             }
             if (localId === 'cleanup' && options.cleanupObservation) return options.cleanupObservation;
             if (localId === 'check' && options.nativeRoleResults?.check) { const result = options.nativeRoleResults.check; return typeof result === 'function' ? result(_input) : result; }
+            if (localId === 'options' && options.nativeRoleResults?.options) { const result = options.nativeRoleResults.options; return typeof result === 'function' ? result(_input) : result; }
             if (localId === 'inspect') {
                 await options.onInspect?.(_input, context);
                 if (options.nativeRoleResults?.inspect) { const result = options.nativeRoleResults.inspect; return typeof result === 'function' ? result(_input) : result; }

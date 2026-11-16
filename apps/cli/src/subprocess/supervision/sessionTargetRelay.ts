@@ -36,8 +36,10 @@ export type SessionTargetLaunch = Readonly<{
     executables: Readonly<Record<string, string>>;
     env: Readonly<Record<string, string>>;
     workspace?: Readonly<{ hostRoot: string; targetRoot: string }>;
-    /** Held shared by every Agent of the Session for its life (`flock -s`): marks its delivered files live. */
+    /** Held shared by every Agent of the Session for its life: marks its delivered files live. */
     lockPath?: string;
+    /** Digest-verified target custody helper; older issued Linux launches used external `flock`. */
+    lockExecutable?: string;
 }>;
 
 /** What a target Session's runner needs to place its Agents (the runner env carries it). */
@@ -164,7 +166,10 @@ export function prepareTargetAgentLaunch(launch: SessionTargetLaunch | undefined
     const command = launch?.executables[request.command];
     if (!command) throw targetLaunchError('agent_cli_target_unavailable', 'This Agent CLI was not placed in the Session target');
     const cwd = request.cwd === undefined ? undefined : toSessionTargetPath(launch?.workspace, request.cwd);
-    return { command: launch?.lockPath ? 'flock' : command, args: launch?.lockPath ? ['-s', launch.lockPath, command, ...request.args] : request.args,
+    const locked = launch?.lockPath ? launch.lockExecutable
+        ? { command: launch.lockExecutable, args: ['file-lock', '-s', launch.lockPath, '--', command, ...request.args] }
+        : { command: 'flock', args: ['-s', launch.lockPath, command, ...request.args] } : { command, args: request.args };
+    return { ...locked,
         ...(cwd !== undefined ? { cwd } : {}), env: launch?.env ?? {} };
 }
 

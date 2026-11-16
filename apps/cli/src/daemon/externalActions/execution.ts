@@ -830,6 +830,184 @@ resolveServerFeaturesSnapshot?: () =>
           signal, isCurrent,
         };
       };
+      const nativeManagedMachineAdapter = createDaemonManagedMachineActionAdapter({
+          credentials,
+          executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
+          ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
+          machineId: params.machineId,
+          serverBaseUrl: params.serverBaseUrl,
+          serverId: params.serverId,
+          subscribeManagedMachineChanges: listener => {
+            const apiMachine = params.getApiMachineForSessions();
+            if (!apiMachine) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+            return apiMachine.onManagedMachinePolicyInvalidated(listener);
+          },
+          subscribeEnvironmentSetupChanges: async (context, callbacks) => {
+            const runtime = await resolveInstalledObservationRuntime(context);
+            if (!runtime)
+              throw Object.assign(new Error('controller_unavailable'), { code: 'controller_unavailable' });
+            return observeAccountChanges({ token: runtime.credentials.token, serverUrl: runtime.serverHttpBaseUrl }, callbacks);
+          },
+          executeEnvironmentSetup: async (machine, context, isCurrent) => {
+            if (!machine.enrolledMachineId || !machine.preset || !machine.machineSetup) return { ok: false, errorCode: 'intent_changed', error: 'intent_changed' };
+            const preset = machine.preset;
+            const setup = machine.machineSetup.setup;
+            const target = { homeId: machine.homeId, machineId: machine.enrolledMachineId };
+            const authorization = context.externalActionExecutionAuthorization;
+            if (authorization) {
+              if (!externalActionInstallationIdentity || machine.homeId !== authorization.binding.serverIdentityId
+                || machine.controller?.machineId !== authorization.binding.machineId
+                || machine.controller?.installationId !== authorization.binding.installationId) return { ok: false, errorCode: 'intent_changed', error: 'intent_changed' };
+              const requiresMaterial = managedChildRequiresRequesterMaterial(authorization.binding);
+              const encryption = requiresMaterial
+                ? await (requesterAccountContext ? requesterAccountContext.resolveEncryption : externalActionIngressOwner?.resolveEncryption)?.(context.signal, authorization) : undefined;
+              if (requiresMaterial && encryption?.serverIdentityId !== authorization.binding.serverIdentityId)
+                return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+              const child = { serverId: params.serverId, authorization, authority: context.authority, context, observeRecordedApprovalExecution,
+                continuation: { managedId: machine.id, creationRequestId: authorization.binding.requestId, expectedIntentRevision: machine.intentRevision },
+                installationId: externalActionInstallationIdentity.installationId, privateKey: externalActionInstallationIdentity.privateKey,
+                serverHttpBaseUrl: params.serverBaseUrl, ...(encryption ? { material: encryption.material } : {}), ...(context.signal ? { signal: context.signal } : {}) };
+              const input = await prepareManagedMachineSetupApplyInput({ target, creation: { preset, setup },
+                readPlan: input => dispatchManagedMachineSetupPlan({ ...child, input, retainedCreationSetup: { preset, setup } }) });
+              if ('ok' in input) return input;
+              return dispatchManagedMachineSetup({ ...child, input });
+            }
+            const local = { context, credentials, custodianAccountId: machine.custodianAccountId, observeRecordedApprovalExecution,
+              serverHttpBaseUrl: params.serverBaseUrl, isCurrent: async () => await isCurrent()
+                && await isInstalledManagedAccountCurrent(context, machine) };
+            const input = await prepareManagedMachineSetupApplyInput({ target, creation: { preset, setup },
+              readPlan: input => dispatchLocalManagedMachineSetupPlan({ ...local, input, retainedCreationSetup: { preset, setup } }) });
+            if ('ok' in input) return input;
+            return dispatchLocalManagedMachineSetup({ ...local, input });
+          },
+          preflightSessionStart: async (context: RpcActionExecutorContext) => {
+            const root = context.externalActionExecutionAuthorization?.binding;
+            if (
+              !root ||
+              root.actionId !== 'machines.managed.acquire' ||
+              root.machineId !== params.machineId ||
+              root.installationId !==
+                externalActionInstallationIdentity?.installationId ||
+              root.requestId !== context.actionRequestId ||
+              !root.accountEncryptionMode
+            )
+              return false;
+            if (root.sessionActionOrigin) {
+              const requesterHttp = context.externalActionExecutionAuthorization?.requesterHttpProjection;
+              const admission = context.machineAdmission;
+              // The captured HTTP owner already applies accepted-continuation
+              // currentness; an ended source turn must not impose a new cutoff.
+              const requesterCurrent = isSessionActionCallerCurrent
+                ? true
+                : Boolean(admission && context.verifyMachineAdmissionCurrent
+                  && admission.machineId === root.machineId
+                  && admission.installationId === root.installationId
+                  && admission.actorAccountId === root.accountId
+                  && admission.custodianAccountId === root.custodianAccountId
+                  && await context.verifyMachineAdmissionCurrent());
+              if (!root.sessionActionSource || !requesterCurrent
+                || readPreviewAccountIdFromToken(credentials.token) !== root.accountId
+                || !requesterHttp || requesterHttp.accountId !== root.accountId
+                || requesterHttp.serverIdentityId !== root.serverIdentityId
+                || requesterHttp.accountEncryptionMode !== root.accountEncryptionMode
+                || !await requesterHttp.isCurrent()) return false;
+            }
+            const controllerCustody = root.accountId !== root.custodianAccountId;
+            const encryption =
+              root.accountEncryptionMode === 'e2ee' && !controllerCustody
+                ? await (requesterAccountContext ? requesterAccountContext.resolveEncryption : externalActionIngressOwner?.resolveEncryption)?.(
+                    context.signal,
+                    context.externalActionExecutionAuthorization,
+                  )
+                : undefined;
+            return (
+              (controllerCustody || root.accountEncryptionMode === 'plain' ||
+                encryption?.serverIdentityId === root.serverIdentityId) &&
+              isManagedSessionStartTransportAvailable({
+                authorization: context.externalActionExecutionAuthorization,
+                installationId: root.installationId,
+                ...(encryption ? { material: encryption.material } : {}),
+              })
+            );
+          },
+          executeSessionStart: async (input, context, machine) => {
+            const authorization = context.externalActionExecutionAuthorization;
+            if (authorization) {
+              if (
+                !externalActionInstallationIdentity ||
+                machine.homeId !== authorization.binding.serverIdentityId ||
+                machine.controller?.machineId !==
+                  authorization.binding.machineId ||
+                machine.controller?.installationId !==
+                  authorization.binding.installationId ||
+                machine.enrolledMachineId !== input.executionTarget.machineId
+              ) {
+                return {
+                  ok: false,
+                  errorCode: 'intent_changed',
+                  error: 'intent_changed',
+                };
+              }
+              const controllerCustody = authorization.binding.accountId !== authorization.binding.custodianAccountId;
+              const encryption =
+                authorization.binding.accountEncryptionMode === 'e2ee' && !controllerCustody
+                  ? await (requesterAccountContext ? requesterAccountContext.resolveEncryption : externalActionIngressOwner?.resolveEncryption)?.(
+                      context.signal,
+                      authorization,
+                    )
+                  : undefined;
+              if (
+                !controllerCustody && authorization.binding.accountEncryptionMode === 'e2ee' &&
+                encryption?.serverIdentityId !==
+                  authorization.binding.serverIdentityId
+              ) {
+                return {
+                  ok: false,
+                  errorCode: 'admission_unavailable',
+                  error: 'admission_unavailable',
+                };
+              }
+              return await dispatchManagedSessionStart({
+                observeRecordedApprovalExecution,
+                input,
+                authorization,
+                authority: context.authority,
+                context,
+                continuation: {
+                  managedId: machine.id,
+                  creationRequestId: authorization.binding.requestId,
+                  expectedIntentRevision: machine.intentRevision,
+                },
+                serverHttpBaseUrl: params.serverBaseUrl,
+                installationId:
+                  externalActionInstallationIdentity.installationId,
+                privateKey: externalActionInstallationIdentity.privateKey,
+                ...(encryption ? { material: encryption.material } : {}),
+                ...(context.signal ? { signal: context.signal } : {}),
+              });
+            }
+            return await createExternalActionExecutor(
+              credentials,
+              getCurrentTurnWorkDepth,
+              isSessionActionCallerCurrent,
+              input.executionTarget.machineId,
+              requesterRuntime,
+            ).execute('session.spawn_new', projectSessionSpawnNewActionInputV2(input), context);
+          },
+          observeRecordedApprovalExecution,
+          observeActionExecution: request => {
+            if (!apiMachineForSessions) return Promise.resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+            const rpcContext = resolveRequesterIngress(executionContext);
+            return apiMachineForSessions.observeActionExecution({ ...request, ...(rpcContext ? { rpcContext } : {}) });
+          },
+          resolveCurrentMachineExecutionOriginContext:
+            params.resolveCurrentMachineExecutionOriginContext,
+          installationIdentity: externalActionInstallationIdentity,
+          managedProviderOperationAuthority:
+            params.managedProviderOperationAuthority,
+          acquireRuntimeRegistryLease:
+            acquireDaemonPluginRuntimeRegistryLease,
+        });
       const executor: ReturnType<
         typeof createCliActionExecutorFromCredentials
       > = await trace('daemon.cli_factory', () => createCliActionExecutorFromCredentials({
@@ -1114,184 +1292,8 @@ resolveServerFeaturesSnapshot?: () =>
               && lease.registry.isPluginOccurrenceCurrent?.(caller.pluginId, current) === true;
           } finally { await lease.release(); }
         },
-        managedMachineAction: managedPolicyAction?.managedMachineAction ?? createDaemonManagedMachineActionAdapter({
-          credentials,
-          executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
-          ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
-          machineId: params.machineId,
-          serverBaseUrl: params.serverBaseUrl,
-          serverId: params.serverId,
-          subscribeManagedMachineChanges: listener => {
-            const apiMachine = params.getApiMachineForSessions();
-            if (!apiMachine) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
-            return apiMachine.onManagedMachinePolicyInvalidated(listener);
-          },
-          subscribeEnvironmentSetupChanges: async (context, callbacks) => {
-            const runtime = await resolveInstalledObservationRuntime(context);
-            if (!runtime)
-              throw Object.assign(new Error('controller_unavailable'), { code: 'controller_unavailable' });
-            return observeAccountChanges({ token: runtime.credentials.token, serverUrl: runtime.serverHttpBaseUrl }, callbacks);
-          },
-          executeEnvironmentSetup: async (machine, context, isCurrent) => {
-            if (!machine.enrolledMachineId || !machine.preset || !machine.machineSetup) return { ok: false, errorCode: 'intent_changed', error: 'intent_changed' };
-            const preset = machine.preset;
-            const setup = machine.machineSetup.setup;
-            const target = { homeId: machine.homeId, machineId: machine.enrolledMachineId };
-            const authorization = context.externalActionExecutionAuthorization;
-            if (authorization) {
-              if (!externalActionInstallationIdentity || machine.homeId !== authorization.binding.serverIdentityId
-                || machine.controller?.machineId !== authorization.binding.machineId
-                || machine.controller?.installationId !== authorization.binding.installationId) return { ok: false, errorCode: 'intent_changed', error: 'intent_changed' };
-              const requiresMaterial = managedChildRequiresRequesterMaterial(authorization.binding);
-              const encryption = requiresMaterial
-                ? await (requesterAccountContext ? requesterAccountContext.resolveEncryption : externalActionIngressOwner?.resolveEncryption)?.(context.signal, authorization) : undefined;
-              if (requiresMaterial && encryption?.serverIdentityId !== authorization.binding.serverIdentityId)
-                return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-              const child = { serverId: params.serverId, authorization, authority: context.authority, context, observeRecordedApprovalExecution,
-                continuation: { managedId: machine.id, creationRequestId: authorization.binding.requestId, expectedIntentRevision: machine.intentRevision },
-                installationId: externalActionInstallationIdentity.installationId, privateKey: externalActionInstallationIdentity.privateKey,
-                serverHttpBaseUrl: params.serverBaseUrl, ...(encryption ? { material: encryption.material } : {}), ...(context.signal ? { signal: context.signal } : {}) };
-              const input = await prepareManagedMachineSetupApplyInput({ target, creation: { preset, setup },
-                readPlan: input => dispatchManagedMachineSetupPlan({ ...child, input, retainedCreationSetup: { preset, setup } }) });
-              if ('ok' in input) return input;
-              return dispatchManagedMachineSetup({ ...child, input });
-            }
-            const local = { context, credentials, custodianAccountId: machine.custodianAccountId, observeRecordedApprovalExecution,
-              serverHttpBaseUrl: params.serverBaseUrl, isCurrent: async () => await isCurrent()
-                && await isInstalledManagedAccountCurrent(context, machine) };
-            const input = await prepareManagedMachineSetupApplyInput({ target, creation: { preset, setup },
-              readPlan: input => dispatchLocalManagedMachineSetupPlan({ ...local, input, retainedCreationSetup: { preset, setup } }) });
-            if ('ok' in input) return input;
-            return dispatchLocalManagedMachineSetup({ ...local, input });
-          },
-          preflightSessionStart: async (context: RpcActionExecutorContext) => {
-            const root = context.externalActionExecutionAuthorization?.binding;
-            if (
-              !root ||
-              root.actionId !== 'machines.managed.acquire' ||
-              root.machineId !== params.machineId ||
-              root.installationId !==
-                externalActionInstallationIdentity?.installationId ||
-              root.requestId !== context.actionRequestId ||
-              !root.accountEncryptionMode
-            )
-              return false;
-            if (root.sessionActionOrigin) {
-              const requesterHttp = context.externalActionExecutionAuthorization?.requesterHttpProjection;
-              const admission = context.machineAdmission;
-              // The captured HTTP owner already applies accepted-continuation
-              // currentness; an ended source turn must not impose a new cutoff.
-              const requesterCurrent = isSessionActionCallerCurrent
-                ? true
-                : Boolean(admission && context.verifyMachineAdmissionCurrent
-                  && admission.machineId === root.machineId
-                  && admission.installationId === root.installationId
-                  && admission.actorAccountId === root.accountId
-                  && admission.custodianAccountId === root.custodianAccountId
-                  && await context.verifyMachineAdmissionCurrent());
-              if (!root.sessionActionSource || !requesterCurrent
-                || readPreviewAccountIdFromToken(credentials.token) !== root.accountId
-                || !requesterHttp || requesterHttp.accountId !== root.accountId
-                || requesterHttp.serverIdentityId !== root.serverIdentityId
-                || requesterHttp.accountEncryptionMode !== root.accountEncryptionMode
-                || !await requesterHttp.isCurrent()) return false;
-            }
-            const controllerCustody = root.accountId !== root.custodianAccountId;
-            const encryption =
-              root.accountEncryptionMode === 'e2ee' && !controllerCustody
-                ? await (requesterAccountContext ? requesterAccountContext.resolveEncryption : externalActionIngressOwner?.resolveEncryption)?.(
-                    context.signal,
-                    context.externalActionExecutionAuthorization,
-                  )
-                : undefined;
-            return (
-              (controllerCustody || root.accountEncryptionMode === 'plain' ||
-                encryption?.serverIdentityId === root.serverIdentityId) &&
-              isManagedSessionStartTransportAvailable({
-                authorization: context.externalActionExecutionAuthorization,
-                installationId: root.installationId,
-                ...(encryption ? { material: encryption.material } : {}),
-              })
-            );
-          },
-          executeSessionStart: async (input, context, machine) => {
-            const authorization = context.externalActionExecutionAuthorization;
-            if (authorization) {
-              if (
-                !externalActionInstallationIdentity ||
-                machine.homeId !== authorization.binding.serverIdentityId ||
-                machine.controller?.machineId !==
-                  authorization.binding.machineId ||
-                machine.controller?.installationId !==
-                  authorization.binding.installationId ||
-                machine.enrolledMachineId !== input.executionTarget.machineId
-              ) {
-                return {
-                  ok: false,
-                  errorCode: 'intent_changed',
-                  error: 'intent_changed',
-                };
-              }
-              const controllerCustody = authorization.binding.accountId !== authorization.binding.custodianAccountId;
-              const encryption =
-                authorization.binding.accountEncryptionMode === 'e2ee' && !controllerCustody
-                  ? await (requesterAccountContext ? requesterAccountContext.resolveEncryption : externalActionIngressOwner?.resolveEncryption)?.(
-                      context.signal,
-                      authorization,
-                    )
-                  : undefined;
-              if (
-                !controllerCustody && authorization.binding.accountEncryptionMode === 'e2ee' &&
-                encryption?.serverIdentityId !==
-                  authorization.binding.serverIdentityId
-              ) {
-                return {
-                  ok: false,
-                  errorCode: 'admission_unavailable',
-                  error: 'admission_unavailable',
-                };
-              }
-              return await dispatchManagedSessionStart({
-                observeRecordedApprovalExecution,
-                input,
-                authorization,
-                authority: context.authority,
-                context,
-                continuation: {
-                  managedId: machine.id,
-                  creationRequestId: authorization.binding.requestId,
-                  expectedIntentRevision: machine.intentRevision,
-                },
-                serverHttpBaseUrl: params.serverBaseUrl,
-                installationId:
-                  externalActionInstallationIdentity.installationId,
-                privateKey: externalActionInstallationIdentity.privateKey,
-                ...(encryption ? { material: encryption.material } : {}),
-                ...(context.signal ? { signal: context.signal } : {}),
-              });
-            }
-            return await createExternalActionExecutor(
-              credentials,
-              getCurrentTurnWorkDepth,
-              isSessionActionCallerCurrent,
-              input.executionTarget.machineId,
-              requesterRuntime,
-            ).execute('session.spawn_new', projectSessionSpawnNewActionInputV2(input), context);
-          },
-          observeRecordedApprovalExecution,
-          observeActionExecution: request => {
-            if (!apiMachineForSessions) return Promise.resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
-            const rpcContext = resolveRequesterIngress(executionContext);
-            return apiMachineForSessions.observeActionExecution({ ...request, ...(rpcContext ? { rpcContext } : {}) });
-          },
-          resolveCurrentMachineExecutionOriginContext:
-            params.resolveCurrentMachineExecutionOriginContext,
-          installationIdentity: externalActionInstallationIdentity,
-          managedProviderOperationAuthority:
-            params.managedProviderOperationAuthority,
-          acquireRuntimeRegistryLease:
-            acquireDaemonPluginRuntimeRegistryLease,
-        }),
+        managedMachineAction: managedPolicyAction?.managedMachineAction ?? nativeManagedMachineAdapter,
+        acquireSessionIsolationSandbox: nativeManagedMachineAdapter.acquireSessionIsolationSandbox,
         ...(fallbackRuntimeActionExecute
           ? { runtimeActionExecute: async request => {
               const family = resolveRuntimeActionExecutionFamily(request.actionId);

@@ -82,8 +82,11 @@ export function resolveProcessCustodySupportExecutable(
     return resolveStagedCustodyBinaryPath(platform, stagedCustodyExecutableName(platform));
 }
 
-/** The static Linux helper a Session holder bootstrap places in a container target of `arch`. */
-export function resolveProcessCustodyTargetExecutable(arch: 'x64' | 'arm64'): string | null {
+/** Static Linux targets or the matching controller's published Darwin helper. */
+export function resolveProcessCustodyTargetExecutable(arch: 'x64' | 'arm64', platform: 'linux' | 'darwin' = 'linux'): string | null {
+    if (platform === 'darwin') {
+        return process.platform === 'darwin' && process.arch === arch ? resolveProcessCustodySupportExecutable('darwin') : null;
+    }
     return resolveStagedCustodyBinaryPath('linux', join('targets', `${PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME}.linux-${arch}`));
 }
 

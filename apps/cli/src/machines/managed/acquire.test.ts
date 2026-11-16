@@ -85,7 +85,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import * as privateFiles from '@/daemon/privateBearerFile';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createManagedMachinePresetAcquireOverrideV1, createManagedMachinePresetSetupOverrideV1,
-    createManagedMachinePresetResizeOverrideV1,
+    createManagedMachinePresetResizeOverrideV1, ManagedMachinePresetContentV1Schema,
     openManagedMachinePresetContentV1, projectManagedMachinePresetForRecipientV1,
     replaceManagedMachinePresetLaunchNameV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -1403,6 +1403,182 @@ function retainTeamMemberReviewedSnapshot(carrier: ReturnType<typeof createTeamM
 }
 
 describe('opaque managed preset admission', () => {
+    it.each(['warm', 'stale'] as const)('selects the %s prepared execution once and resumes its exact retained acquisition after restart', async freshness => {
+        const { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, defineMachineProvisionerPreparationSchemas } = await import('@happier-dev/protocol/plugins/contributions/machineProvisioners');
+        const { defineProtocolObject, defineProtocolString } = await import('@happier-dev/protocol/plugins/actions/protocol-composable-schema');
+        const { createManagedMachinePresetPreparationBindingV1 } = await import('@happier-dev/cli-common/machines/managed');
+        const launchSchema = defineProtocolObject({ image: defineProtocolString() }, { policy: 'closed' });
+        const nativeResource = defineProtocolObject({ guest: defineProtocolString({ minLength: 1 }).optional() }, { policy: 'closed' });
+        const nativeSchemas = defineMachineProvisionerSchemas({ launch: launchSchema, resource: nativeResource });
+        const nativeOperation = defineProtocolObject({ requestId: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
+        const reconciliation = defineMachineProvisionerReconciliationSchemas({ launch: launchSchema,
+            resource: nativeResource, nativeOperation });
+        const preparationInput = defineProtocolObject({}, { policy: 'closed' });
+        const artifact = defineProtocolObject({ launch: launchSchema }, { policy: 'closed' });
+        const preparation = defineMachineProvisionerPreparationSchemas({ input: preparationInput, launch: launchSchema,
+            artifact, nativeOperation: preparationInput });
+        const template = nativeFixture({ credentialPurposes: [], reconciliation: true, nativeTransport: true }).manifest;
+        const manifest = normalizePluginManifestV2({ ...template, contributes: { ...template.contributes,
+            actions: [...template.contributes.actions.map(action => action.id === 'acquire'
+                ? { ...action, inputSchema: nativeSchemas.acquireInput.jsonSchema, resultSchema: reconciliation.result.jsonSchema }
+                : action.id === 'reconcile' ? { ...action, inputSchema: reconciliation.input.jsonSchema }
+                : action.id === 'options' ? { ...action, inputSchema: launchSchema.jsonSchema } : action),
+                ...([
+                    ['build-image', preparation.buildInput, preparation.buildResult],
+                    ['inspect-image', preparation.inspectInput, preparation.inspectResult],
+                    ['destroy-image', preparation.destroyInput, preparation.destroyResult],
+                ] as const).map(([id, input, result]) => ({ ...template.contributes.actions.find(action => action.id === 'options')!, id,
+                    inputSchema: input.jsonSchema, resultSchema: result.jsonSchema }))],
+            machineProvisioners: template.contributes.machineProvisioners.map(descriptor => ({ ...descriptor,
+                launchSchema: launchSchema.jsonSchema, sessionPlacement: { kind: 'controller-local', supportsAgentNativeSandbox: true },
+                preparation: { inputSchema: preparationInput.jsonSchema,
+                    artifactSchema: artifact.jsonSchema,
+                    nativeOperationSchema: preparationInput.jsonSchema, artifactLaunchPath: 'launch',
+                    actions: { build: 'build-image', inspect: 'inspect-image', destroy: 'destroy-image' } },
+            })),
+        } });
+        const homeId = `srv_${'b'.repeat(32)}`;
+        const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Prepared guest', choices: { image: 'authored-base' } };
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: `warm-${freshness}`, launch, allocation: 'unsubmitted', custodianAccountId: 'owner' });
+        const setup = { items: [{ kind: 'setupRecipe' as const, selection: { ref: { pluginId: 'fixture.recipes', recipeId: 'runtime', revision: '1' }, inputs: {} } }], scripts: [{ body: 'echo deferred' }] };
+        const authored = { v: 1 as const, name: 'Prepared preset', launch, setup, preparation: { enabled: true } };
+        const revision = carrier.acquisition.selection.revision;
+        const content = { ...authored, prepared: { operationId: 'image-build', status: 'ready' as const,
+            binding: createManagedMachinePresetPreparationBindingV1({ content: authored, presetRevision: revision,
+                cliIdentity: freshness === 'warm' ? 'public-release:0.3.0' : 'public-release:0.2.0' }),
+            artifact: { contributionRef: launch.provider, schemaVersion: 1, value: { launch: { image: 'owned-artifact' } } },
+            cliBinaryPath: '/opt/happier/cli/current/happier', bakedSetup: { items: setup.items } } };
+        let retainedContent = { t: 'plain' as const, v: content };
+        let retained = ManagedMachineV1Schema.parse({ ...carrier.admission.machine,
+            preset: { ...carrier.admission.machine.preset, contentEncryptionMode: 'plain' }, machineSetup: { state: 'pending' }, acquisitionMode: 'resource-bound' });
+        const roles: string[] = [], acquired: unknown[] = [], reconciled: unknown[] = [];
+        const nativeOperationRef = { contributionRef: launch.provider, schemaVersion: 1, value: { requestId: 'native-request' } };
+        const resource = { contributionRef: launch.provider, schemaVersion: 1, value: {} };
+        const native = nativeFixture({ credentialPurposes: [], fixtureManifest: manifest, reconciliation: true, nativeTransport: true,
+            nativeRoleResults: { acquire: { kind: 'pending', nativeOperationRef }, reconcile: { kind: 'bound', resource },
+                options: { base: { launch: launch.choices, nativeFacts: { preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' } } },
+                    dimensions: { size: [], image: [], location: [], network: [], duration: [] } } },
+            onNativeRole(role, body) { roles.push(role); if (role === 'acquire') acquired.push(body); if (role === 'reconcile') reconciled.push(body); },
+            onAction(role) { if (role === 'options') roles.push(role); },
+        });
+        const reads: string[] = [];
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async url => { reads.push(String(url)); return Response.json(String(url).endsWith('/v1/features')
+            ? { capabilities: { guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } } }
+            : [{ tag_name: 'cli-v0.3.0', draft: false, prerelease: false, assets: [] }]); });
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = String(url);
+            if (path.endsWith('/presets/get')) return { status: 200, data: { kind: 'found', preset: {
+                id: retained.preset!.id, homeId, revision, owner: { kind: 'account', accountId: 'owner' }, controller,
+                contentEncryptionMode: 'plain', content: { t: 'plain', v: content }, recipients: [] } } };
+            if (path.endsWith('/admit')) return { status: 200, data: { machine: retained, presetContent: { content: retainedContent, recipients: [] }, replayed: false } };
+            if (path.endsWith('/submit')) { const request = body as { presetContent?: typeof retainedContent };
+                if (request.presetContent) retainedContent = request.presetContent;
+                retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'may-exist' });
+                return { status: 200, data: { machine: retained, submitted: true } }; }
+            if (path.endsWith('/report')) { const report = ManagedControllerReportV1Schema.parse(body);
+                if ('presetContent' in report) {
+                    const parsed = ManagedMachinePresetContentV1Schema.parse(report.presetContent.t === 'plain' ? report.presetContent.v : null);
+                    retainedContent = { t: 'plain', v: { ...content, ...parsed, prepared: content.prepared } };
+                }
+                retained = ManagedMachineV1Schema.parse({ ...retained, allocation: report.result.kind === 'bound' ? 'bound' : 'may-exist' });
+            }
+            return { status: 200, data: path.endsWith('/context') ? { machine: retained, requestId: 'warm-create', presetContent: { content: retainedContent, recipients: [] } } : { machine: retained } };
+        });
+        const acquisition = { selection: carrier.acquisition.selection, controller, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
+        const originalActionEnvelope = { v: 1 as const, requestId: 'warm-create', target: { kind: 'machine' as const, machineId: controller.machineId }, input: acquisition };
+        const wire = originAuthorization(homeId, 'warm-create');
+        const { sessionActionOrigin: _origin, sessionActionSource: _source, ...binding } = wire.binding;
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...wire, binding: { ...binding, accountEncryptionMode: 'plain',
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope) } });
+        const keys = tweetnacl.sign.keyPair();
+        const projectedAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization,
+            serverId: 'daemon-local-profile', serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example',
+            target: authorization.binding.target, installationId: controller.installationId, privateKey: keys.secretKey,
+            rootAdmitted: true, isCurrent: async () => true });
+        if (!projectedAuthorization) throw new Error('Fixture requester authorization was not projected');
+        const connection = { ...accountInputs, token: carrier.token, credentials: { token: carrier.token, encryption: null },
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: 'https://home.example', revision: 1,
+                endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }),
+            serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry, guestCliFetch: globalThis.fetch,
+            externalActionMachineRequestPrivateKey: keys.secretKey };
+        const context = { surface: 'cli' as const, runtimeAccountId: 'owner', actionRequestId: 'warm-create',
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }), originalActionEnvelope, externalActionExecutionAuthorization: projectedAuthorization, externalActionTarget: authorization.binding.target,
+            operationAcceptance: { operationId: 'warm-operation', accept() {} }, operationOwnerUpdate: { update() {} } };
+        const first = await createManagedMachineAcquisitionDriver(connection).execute('machines.managed.acquire', acquisition,
+            { requestId: 'warm-create', acquisitionMode: 'resource-bound', context }).catch((error: unknown) => error);
+        if (!(first instanceof Error) || !('code' in first) || first.code !== 'native_acquisition_unconfirmed') throw first;
+        const physical = freshness === 'warm' ? { image: 'owned-artifact' } : launch.choices;
+        expect(acquired).toEqual([expect.objectContaining({ launch: physical })]);
+        const normalizedLaunch = { ...launch, name: 'Virtual machine' };
+        expect(retainedContent.v).toMatchObject({ launch: normalizedLaunch, setup, reviewedFacts: { launch: { ...normalizedLaunch, choices: physical } } });
+        if (freshness === 'warm') expect(retainedContent.v).toHaveProperty('preparationExecution', {
+            launch: { ...normalizedLaunch, choices: physical }, binaryPath: content.prepared.cliBinaryPath, deferredSetup: { scripts: setup.scripts } });
+        else expect(retainedContent.v).not.toHaveProperty('preparationExecution');
+        const readsBeforeRestart = reads.length;
+        const retryInput = { homeId, managedId: retained.id, expectedIntentRevision: 0 };
+        const retryEnvelope = { ...originalActionEnvelope, requestId: 'warm-retry', input: retryInput };
+        const retryAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization: {
+            ...authorization, binding: { ...authorization.binding, actionId: 'machines.managed.bootstrap.retry', requestId: 'warm-retry',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(retryEnvelope) } },
+            serverId: 'daemon-local-profile', serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example',
+            target: authorization.binding.target, installationId: controller.installationId, privateKey: keys.secretKey,
+            rootAdmitted: true, isCurrent: async () => true });
+        if (!retryAuthorization) throw new Error('Fixture Retry authority was not projected');
+        await expect(createManagedMachineAcquisitionDriver(connection).execute('machines.managed.bootstrap.retry',
+            retryInput, { requestId: 'warm-retry', context: { ...context, actionRequestId: 'warm-retry', originalActionEnvelope: retryEnvelope,
+                externalActionExecutionAuthorization: retryAuthorization, operationAcceptance: { operationId: 'retry-operation', accept() {} } } }))
+            .resolves.toMatchObject({ managedId: retained.id });
+        expect(roles.filter(role => role === 'options')).toHaveLength(1);
+        expect(roles.filter(role => role === 'acquire')).toHaveLength(1);
+        expect(reconciled).toHaveLength(1);
+        expect(reads).toHaveLength(readsBeforeRestart);
+    });
+    it.each(['undeclared', 'wrong-provider', 'local'] as const)('attests resource-bound placement only from the opened configured preset (%s)', async kind => {
+        const homeId = 'local-policy-home';
+        const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Local guest', choices: {} };
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'local-policy-guest', launch,
+            allocation: 'unsubmitted', custodianAccountId: 'owner' });
+        const native = nativeFixture({ credentialPurposes: [] });
+        const runtimeRegistry = { ...native.runtimeRegistry, contributes: { ...native.runtimeRegistry.contributes,
+            machineProvisioners: native.runtimeRegistry.contributes.machineProvisioners?.map(entry => ({ ...entry,
+                definition: { ...entry.definition, ...(kind === 'undeclared' ? {} : {
+                    sessionPlacement: { kind: 'controller-local' as const, supportsAgentNativeSandbox: true } }) } })) } };
+        const acquisition = { selection: carrier.acquisition.selection, controller,
+            retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
+        const preset = { id: acquisition.selection.id, homeId, revision: acquisition.selection.revision,
+            owner: { kind: 'account', accountId: 'owner' }, controller, contentEncryptionMode: 'plain',
+            content: { t: 'plain', v: { v: 1, name: launch.name, launch } }, recipients: [] };
+        const admitted: unknown[] = [];
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (String(url).endsWith('/presets/get')) return { status: 200, data: { kind: 'found', preset } };
+            admitted.push(body);
+            throw Object.assign(new Error('Admission boundary refused'), { isAxiosError: true,
+                response: { status: 409, data: { error: 'request_conflict' } } });
+        });
+        const placements: unknown[] = [];
+        const progress: unknown[] = [];
+        const requestId = `local-policy-${kind}`;
+        const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token,
+            serverUrl: 'https://home.example', homeId, controller, runtimeRegistry,
+            credentials: { token: carrier.token, encryption: null } });
+        await expect(driver.execute('machines.managed.acquire', acquisition, { requestId,
+            acquisitionMode: 'resource-bound', reuseIdle: true,
+            expectedProvisioner: { pluginId: 'acme.compute', localId: kind === 'wrong-provider' ? 'another' : 'vm' },
+            onLocalSessionPlacement: placement => { placements.push(placement); },
+            context: { originalActionEnvelope: { v: 1, requestId, target: { kind: 'machine', machineId: controller.machineId }, input: acquisition },
+                operationOwnerUpdate: { update: value => { if (value.progress) progress.push(value.progress); } },
+                operationAcceptance: { operationId: 'local-policy-operation', accept() {} } } })).rejects.toMatchObject({
+                    code: kind === 'undeclared' ? 'provider_unavailable' : kind === 'wrong-provider' ? 'invalid_request' : 'request_conflict' });
+        expect(admitted).toHaveLength(kind === 'local' ? 1 : 0);
+        if (kind === 'local') expect(admitted[0]).toMatchObject({ acquisitionMode: 'resource-bound', reuseIdle: true });
+        expect(placements).toEqual(kind === 'local' ? [{ kind: 'controller-local', supportsAgentNativeSandbox: true }] : []);
+        expect(progress).toEqual(kind === 'local'
+            ? [expect.objectContaining({ kind: 'phase', phase: 'machines.managed.acquire' })] : []);
+        expect(native.effects()).toBe(0);
+    });
     it('accepts a plain preset snapshot without an enrollment identity before native work', async () => {
         const homeId = 'native-plain-no-enrollment';
         const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
@@ -3990,6 +4166,37 @@ describe('managed acquisition durable custody', () => {
         expect(result).toEqual({ managedId: 'managed', operation: { operationId: 'operation' } });
         expect(events).toEqual(['https://home.example/v1/machines/managed/controller/admit', 'accepted']);
         expect(post.mock.calls[0]?.[1]).toEqual({ input, requestId: 'request', continuationPresent: false });
+    });
+    it('refuses resource-bound mode for an unattested one-off before admission', async () => {
+        const post = vi.spyOn(axios, 'post');
+        await expect(driver().execute('machines.managed.acquire', input, { requestId: 'request', acquisitionMode: 'resource-bound',
+            context: { operationAcceptance: { operationId: 'operation', accept() {} } } }))
+            .rejects.toMatchObject({ code: 'invalid_request' });
+        expect(post).not.toHaveBeenCalled();
+    });
+    it('retries a retained bound-only resource without a caller mode or another acquisition', async () => {
+        const nativeRoles: string[] = [];
+        const native = nativeFixture({ credentialPurposes: [], onNativeRole: role => { nativeRoles.push(role); } });
+        const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Retained local', choices: {} };
+        const homeId = 'srv_retained_local';
+        const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, launch, acquisitionMode: 'resource-bound',
+            allocation: 'bound', resource: { contributionRef: launch.provider, schemaVersion: 1, value: { guest: 'retained-local' } } });
+        const paths: string[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            paths.push(String(url));
+            if (String(url).endsWith('/context')) return { status: 200, data: { machine: retained, requestId: 'original-local-request' } };
+            throw new Error('Unexpected native or admission effect on retained retry');
+        });
+        const recovery = createManagedMachineAcquisitionDriver({ ...accountInputs, token: 'token', serverUrl: 'https://home.example',
+            homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
+        await expect(recovery.execute('machines.managed.bootstrap.retry', { homeId, managedId: retained.id, expectedIntentRevision: 0 }, {
+            requestId: 'retry-local-request', context: { operationOwnerUpdate: { update() {} },
+                operationAcceptance: { operationId: 'retry-local-operation', accept() {} } },
+        })).resolves.toEqual({ managedId: retained.id, operation: { operationId: 'retry-local-operation' } });
+        expect(paths).toEqual(['https://home.example/v1/machines/managed/controller/context']);
+        expect(nativeRoles).not.toContain('acquire');
     });
     it('refuses Home/controller mismatch before any HTTP or native effect', async () => {
         const post = vi.spyOn(axios, 'post');

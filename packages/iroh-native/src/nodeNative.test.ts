@@ -13,6 +13,8 @@ import {
   resolveDefaultIrohNodePackageRoot,
   resolveIrohNodeAddonArtifactName,
   resolveIrohNodeAddonPath,
+  resolveSessionHolderExecutablePath,
+  resolveSessionTargetHolderExecutablePath,
   SUPPORTED_IROH_NODE_TARGETS,
 } from './nodeNative';
 import {
@@ -145,6 +147,7 @@ describe('Iroh Node/Bun addon resolution', () => {
         moduleUrl: 'file:///workspace/packages/iroh-native/dist/nodeNative.js',
         executablePath: '/opt/happier/happier',
         pathExists,
+        readPackageName: () => '@happier-dev/iroh-native',
       }),
     ).toBe(modulePackage);
 
@@ -156,6 +159,25 @@ describe('Iroh Node/Bun addon resolution', () => {
         pathExists,
       }),
     ).toBe(packagedRoot);
+  });
+
+  it('does not take a host package that bundled this module in a flat chunk for the native package', () => {
+    const runtimeRoot = mkdtempSync(join(tmpdir(), 'iroh-flat-host-chunk-'));
+    try {
+      // The CLI's flat `dist/<chunk>.mjs`: two levels up is the host package, not iroh-native.
+      writeFileSync(join(runtimeRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/cli' }));
+      const packageRoot = join(runtimeRoot, 'node_modules/@happier-dev/iroh-native');
+      mkdirSync(packageRoot, { recursive: true });
+      writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/iroh-native', exports: { './package.json': './package.json' },
+      }));
+      expect(resolveDefaultIrohNodePackageRoot({
+        moduleUrl: pathToFileURL(join(runtimeRoot, 'dist/daemonControl-chunk.mjs')).href,
+        executablePath: process.execPath,
+      })).toBe(packageRoot);
+    } finally {
+      rmSync(runtimeRoot, { recursive: true, force: true });
+    }
   });
 
   it('reports native_unavailable when the package has no target addon', () => {
@@ -202,6 +224,51 @@ describe('Iroh Node/Bun addon resolution', () => {
       throw new Error('Expected the target triple to be unsupported');
     expect(result.reason).toBe('native_unavailable');
     expect(result.addonPath).toBeNull();
+  });
+});
+
+describe('session holder executable resolution', () => {
+  it('uses the existing published Darwin holder for a matching guest OS and architecture', () => {
+    const packageRoot = mkdtempSync(join(tmpdir(), 'happier-darwin-target-holder-'));
+    try {
+      mkdirSync(join(packageRoot, 'native'), { recursive: true });
+      writeFileSync(join(packageRoot, 'native', 'happier-session-holder.darwin-arm64'), 'darwin-holder');
+      expect(resolveSessionTargetHolderExecutablePath({ packageRoot, platform: 'darwin', arch: 'arm64' }))
+        .toBe(join(packageRoot, 'native', 'happier-session-holder.darwin-arm64'));
+      expect(resolveSessionTargetHolderExecutablePath({ packageRoot, platform: 'darwin', arch: 'x64' })).toBeNull();
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+  it('finds the holder staged beside the addon, and answers null when this build has none', () => {
+    const packageRoot = mkdtempSync(join(tmpdir(), 'happier-holder-resolve-'));
+    try {
+      expect(resolveSessionHolderExecutablePath({ packageRoot, platform: 'linux', arch: 'x64' })).toBeNull();
+      mkdirSync(join(packageRoot, 'native'));
+      writeFileSync(join(packageRoot, 'native', 'happier-session-holder.win32-x64.exe'), '');
+      writeFileSync(join(packageRoot, 'native', 'happier-session-holder.linux-x64'), '');
+      expect(resolveSessionHolderExecutablePath({ packageRoot, platform: 'win32', arch: 'x64' }))
+        .toBe(join(packageRoot, 'native', 'happier-session-holder.win32-x64.exe'));
+      expect(resolveSessionHolderExecutablePath({ packageRoot, platform: 'linux', arch: 'x64' }))
+        .toBe(join(packageRoot, 'native', 'happier-session-holder.linux-x64'));
+      expect(resolveSessionHolderExecutablePath({ packageRoot, platform: 'linux', arch: 'ia32' })).toBeNull();
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('finds the container-target holders for both Linux architectures independently of the host', () => {
+    const packageRoot = mkdtempSync(join(tmpdir(), 'happier-target-holder-resolve-'));
+    try {
+      expect(resolveSessionTargetHolderExecutablePath({ packageRoot, arch: 'arm64' })).toBeNull();
+      mkdirSync(join(packageRoot, 'native', 'targets'), { recursive: true });
+      writeFileSync(join(packageRoot, 'native', 'targets', 'happier-session-holder.linux-arm64-musl'), '');
+      expect(resolveSessionTargetHolderExecutablePath({ packageRoot, arch: 'arm64' }))
+        .toBe(join(packageRoot, 'native', 'targets', 'happier-session-holder.linux-arm64-musl'));
+      expect(resolveSessionTargetHolderExecutablePath({ packageRoot, arch: 'x64' })).toBeNull();
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
   });
 });
 

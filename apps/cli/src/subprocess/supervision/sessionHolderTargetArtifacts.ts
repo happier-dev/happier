@@ -13,14 +13,14 @@ async function artifact(path: string): Promise<SessionHolderArtifact> {
 }
 
 /**
- * The static holder and custody helper this build ships for a Linux target of
- * the guest's architecture (`ensureManagedGuestSessionHolder`'s artifact source).
+ * This build's static Linux target artifacts or its matching published Darwin
+ * artifacts (`ensureManagedGuestSessionHolder`'s artifact source).
  * A build without them is the typed `session_holder_unavailable` refusal.
  */
 export async function readSessionTargetHolderArtifacts(platform: ManagedGuestPlatform): Promise<Readonly<{ holder: SessionHolderArtifact; helper: SessionHolderArtifact }>> {
-    const holderPath = resolveSessionTargetHolderExecutablePath({ arch: platform.arch });
-    const helperPath = resolveProcessCustodyTargetExecutable(platform.arch);
-    if (platform.os !== 'linux' || !holderPath || !helperPath) {
+    const holderPath = resolveSessionTargetHolderExecutablePath({ arch: platform.arch, platform: platform.os });
+    const helperPath = resolveProcessCustodyTargetExecutable(platform.arch, platform.os);
+    if (!holderPath || !helperPath) {
         throw new PluginError({ code: 'session_holder_unavailable', retryable: false,
             message: `This Happier build has no Session holder for a ${platform.os}-${platform.arch} target` });
     }

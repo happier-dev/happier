@@ -530,7 +530,9 @@ release. Existing managed installs and valid `HAPPIER_PNPM_BIN` overrides return
 without network access; the bootstrap pin follows the repository's
 `packageManager` version. This internal prerequisite is prepared on first use
 for Happier-owned managed package installation, rather than eagerly at every
-daemon start.
+daemon start. Tar extraction preserves hardlinks to earlier accepted files through
+the shared archive validator; symlinks remain rejected and other callers retain
+their existing link policies.
 
 In unreleased 0.3 development, managed pnpm and JavaScript runtime bootstrap
 honor cancellation through lock waiting, download and extraction. Bootstrap
@@ -567,6 +569,8 @@ authored index and authentication settings retain their normal child-environment
 priority.
 
 One request-scoped exception exists: `AgentCliSourcePolicy` (`packages/cli-common/src/agents/resolution.ts`). Passing `sourcePolicy: 'managed_only'` to the canonical resolver, install preflight, or `prepareAgentCliForRuntime(...)` restricts that single request to the managed install under its own `HAPPIER_HOME_DIR`: environment overrides, system/global installs and vendor recipes are ignored, and a retry may reuse a valid current managed install. It is a per-request argument, never a persisted or environment-configurable preference, because a composition that may run only what it installed itself (the temporary-computer Runner) must not be widened by the endpoint's environment. Such a composition passes the returned resolution unchanged into the launch through `buildAgentCliLaunchSpecFromResolution(...)`; resolving again at launch would let an override or system binary substitute itself between readiness and launch.
+
+The isolated-member launch path uses the same owner with `sourcePolicy: 'member'`. It ignores endpoint path overrides and inherited `PATH`, then resolves the member's declared user install locations or the managed install. The native member launch boundary qualifies that selected executable before launch, so a vendor-recipe Agent installed for the member can run without allowing an owner-private binary or configuration to substitute.
 
 Model Provider endpoints are not Agent executables. Provider discovery may use only the bounded detector and local-command declarations owned by the Provider contribution and the canonical local-services/runtime abstractions. An adopted local service is observed but never stopped or restarted by Happier. A Provider process started through the managed-local-service path is owned by that path; Provider code must not spawn `node`, package managers, or vendor commands directly. See [Providers](./providers.md#local-discovery-and-process-ownership).
 
@@ -962,6 +966,63 @@ payload. Safe Rust lifecycle entries use that same boundary. Optional Iroh
 failure can therefore settle through the caller's existing unavailable path
 without terminating the daemon. This does not recover poisoned lifecycle state;
 a later explicit restart recreates that process-local state.
+
+In 0.3 development source, the same builder (`buildNodeAddon`, which calls
+`buildSessionHolder`) also builds the per-Session holder executable from
+`packages/iroh-native/rust/happier-session-holder` and stages it beside the addon
+as `native/happier-session-holder.<platform>-<arch>[.exe]`. It is one cargo
+workspace member with no new crates (libc, serde_json, windows-sys are already in
+`rust/Cargo.lock`). The holder's own cargo invocation adds
+`-C target-feature=+crt-static` for `*-linux-gnu` and `*-windows-msvc`, so the
+executable needs no glibc or MSVC runtime in the target; `--musl` builds are static
+by default and macOS links libSystem. The addon build never receives that flag.
+The holder ships through the addon's existing path: the package `files` entry,
+the CLI payload copy of `node_modules/@happier-dev/iroh-native/native`, the per-target
+pruning in `finalizeRuntimeArtifactPayload.ts`, macOS signing of every Mach-O in
+the payload, the payload checksums and minisign signature, and the Cargo.lock
+release evidence. Source runtimes retain it with the addon. The runtime resolver is
+`resolveSessionHolderExecutablePath` in `src/nodeNative.ts`. Every build also ships the
+holders for Session execution targets (Linux containers and sandboxes driven through a
+Machine provider, whatever the host OS): `buildSessionTargetHolders` cross-builds
+`x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` with the toolchain's own
+`rust-lld` (no C cross toolchain) into `native/targets/happier-session-holder.linux-<arch>-musl`
+(pruning keeps both in every payload; `resolveSessionTargetHolderExecutablePath`), and
+`stageProcessCustodyTargetRuntimes` cross-builds the Go helper static for both
+(`tools/unpacked/targets/happier-process-custody.linux-<arch>`, called by the payload
+builder and source runtimes). The two musl standard libraries come from the Rust
+toolchain owner (`ensure-rust-toolchain.mjs`, platform `session-targets`). The holder is a required
+part of every build: an Agent launch on a build without it is refused with the typed
+`session_holder_unavailable` error; nothing spawns an Agent without its holder. Source
+checkouts get it from the one CLI source native preparation (`prepareNativeCustody` in
+`apps/cli/src/test-setup.ts`, used by test setup and dev-target validation), which builds
+the Go process-custody helper and then the holder through this builder. Each is ready
+only when its recorded input identity (the holder: crate sources and manifest, workspace
+manifest and lock, Rust pin, target and flags, `readSessionHolderInputIdentity`) and its
+output digest match (`isPublishedNativeArtifactCurrent`, records in
+`apps/cli/.project/tmp/`), never because the file exists. Source-only test collection
+does not compile: a missing or stale holder or helper is a refusal naming the path, and
+the executor's public preparation (a CLI vitest command run from `apps/cli`) rebuilds it. The holder never reimplements what the
+Go helper owns (Windows Job membership, peer identity, the secure pipe relay, confined
+file operations); it calls that helper. The CLI release
+matrix has no musl target yet, and Windows payloads have no Authenticode signing,
+for the holder as for every other CLI native file.
+Resource-bound Machine sandbox targets consume these same Linux target
+artifacts, or a matching macOS controller's published Darwin holder and custody
+helper, without enrolling a guest daemon. Their Session holder can use the
+provisioner's native stream or its admitted SSH bootstrap carrier. SSH shares
+the existing credential materializer, host-key decision and row-scoped trust
+record; observing a key does not approve it. The channel is non-PTY and byte
+preserving, and the existing Session target lifetime closes it. This adds no
+system Node/package-manager requirement. Agent CLI placement shares the native
+payload owner's ELF/Mach-O interpretation and the Agent install owner's target
+release or vendor recipe. The custody helper holds the Session's existing
+`.live` file lock through Agent execution on Linux and macOS; no guest `flock`
+installation is required. Target MCP uses that staged helper for kernel peer
+identity and the holder's single Agent-tree predicate; Darwin ancestry comes
+from the helper's process census. These are 0.3 development source contracts,
+separate from real-provider qualification. Darwin native compilation and the
+real macOS guest journey require the corresponding toolchain and host during
+release validation.
 Apply changed exclusions to existing mirrors through the routing producer's
 `dev-targets sync-service start --detached`; ordinary flushes use the existing
 project's rules.
@@ -2239,6 +2300,31 @@ an embedded host copy plus physical plugin copies. The payload carries that ESM
 graph and its target support; execution does not require system Node or a package
 manager.
 
+### Package names Bun substitutes (0.3 development)
+
+Bun 1.4.4 resolves these bare specifiers to its own builtins even when the
+package is installed: `undici`, `ws`, `node-fetch`, `isomorphic-fetch`,
+`@vercel/fetch`, `utf-8-validate` and `abort-controller`. `Bun.build` with
+`target: 'bun'` keeps the same names as builtin imports, so the Bun-compiled
+light server (`buildServerBunBinary.mjs`) gets the builtins too. The native CLI
+payload bundles with esbuild, which inlines every one of them, so the shipped
+CLI executable runs the declared packages. The pkgroll `package-dist` and
+source runs leave bare imports to the runtime, so under Bun they get the builtin.
+
+Bun's `undici` builtin is not a compatible substitute: its `Agent` has no
+`close`/`destroy`, and its `fetch`/`request` ignore the dispatcher (socket path,
+timeouts, connector). Undici importers therefore name the package's physical
+entry, `undici/index.js` (Undici publishes no `exports` map, so Node and bundlers
+resolve the same file): `apps/cli/src/utils/loadUndici.ts`, which every CLI
+runtime importer uses, `packages/sdk/src/http/undiciHttp.ts`, and the server's
+peer-pinned outbound transport `apps/server/sources/app/net/outboundIdentityFetch.ts`
+(with the builtin, the light server's fetch skipped the pinned connector and
+resolved the hostname itself). Bun's `ws`
+builtin matched npm `ws` on the features the CLI uses (custom `createConnection`
+over a Unix socket, `unexpected-response`, `maxPayload`, headers); `node-fetch`
+reaches Bun's builtin only through `expo-server-sdk`, which is constructed
+without an agent.
+
 ## Adding a bundled internal workspace to a published package
 
 When introducing a new `packages/<name>` that must ship with a published package:
@@ -2270,8 +2356,16 @@ For automatic publication while authoring source modules, run Protocol's
 `generate:exports --watch` development command. It updates the authored manifest
 through the same generator and existing watcher/lock owners, before subsequent
 capture and Metro consumption. It is never launched from a captured runtime.
-Exact entries retain the source, types and JavaScript resolution used by Metro,
-source tools and published/bundled hosts.
+The map publishes every public module through one `"./*"` subpath pattern
+(source, types and JavaScript targets) plus the explicit aliases; test-like
+suffixes (`.test`, `.spec`, `.testkit`, `.test-d`, `.d`) and the few remaining
+private files map to `null`. Node re-reads the nearest `package.json` for every
+loaded file, so the former enumerated map (3,000+ entries, ~750 KB) cost about
+5 ms CPU and 0.6 MB transient memory per Protocol module on Node. Adding a public
+module no longer changes the map; adding a private file outside those suffixes
+does. Repository resolvers (source runtime, Metro, Vitest) select export keys
+through the one Node-precedence matcher in
+`packages/cli-common/packageExportMatch.cjs`.
 
 Ordinary published package exports include `dist/**` targets. If `dist` is missing,
 public package consumers can fail with invalid-export errors. Native construction

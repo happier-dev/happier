@@ -110,6 +110,7 @@ function projectManagedMachineStructural(row: StoredManagedMachine) {
     const structural = {
         id: row.id, homeId: row.homeId, custodianAccountId: row.custodianAccountId,
         ...(admission.enrollmentAccountId ? { enrollmentAccountId: admission.enrollmentAccountId } : {}),
+        ...(admission.acquisitionMode ? { acquisitionMode: admission.acquisitionMode } : {}),
         ...(row.presetId && row.presetRevision !== null ? { preset: {
             id: row.presetId,
             revision: row.presetRevision,

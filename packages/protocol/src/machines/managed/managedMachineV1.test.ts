@@ -31,6 +31,9 @@ describe('managed resource persistence and input contracts', () => {
       v: { v: 1 as const, name: 'Private preset override', launch: row.launch, enrollmentIdentity },
     },
   };
+  it('retains bound-only provenance in the public resource read', () => {
+    expect(schema.parse({ ...row, acquisitionMode: 'resource-bound' })).toMatchObject({ acquisitionMode: 'resource-bound' });
+  });
   it('retains Account cloud resources and admitted follow-ups without a controller while rejecting partial pairs', () => {
     const { controller, ...portable } = row;
     expect(schema.parse(portable)).toEqual(portable);

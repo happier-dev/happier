@@ -6,6 +6,8 @@ export {
   type DiscoveredSshHostSource,
 } from './discoverConfiguredSshHosts.js';
 export { safeBashSingleQuote } from './shellQuote.js';
+export { REMOTE_SHA256_FILE_FUNCTION } from './shellSha256.js';
+export { openOpenSshRemoteChannel, type OpenSshRemoteChannel } from './openSshChannel.js';
 export { SSH_PASSWORD_ENV, ensureSshAskpassScriptPath, buildSshAskpassEnv } from './sshAskpass.js';
 export {
   SshKnownHostsStore,

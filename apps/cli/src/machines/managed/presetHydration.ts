@@ -1,5 +1,6 @@
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import type { ManagedMachinePresetPreparationExecutionV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { ManagedMachineFullV1Schema, isManagedOpaquePresetMachineV1,
@@ -144,6 +145,15 @@ export function createManagedPresetHydrator(input: Readonly<{
         snapshots.set(machine.id, { ...snapshot, structural: machine });
         return full;
     }
+
+    /** Setup content precedes its lifecycle record on an unenrolled bound target. */
+    function readSetupDefinition(machine: ManagedMachineFullV1) {
+        const snapshot = snapshots.get(machine.id);
+        if (!snapshot) return machine.machineSetup?.setup;
+        return snapshot.opened.preparationExecution ? snapshot.opened.preparationExecution.deferredSetup ?? {} : snapshot.opened.setup;
+    }
+
+    function readPresetDefinition(machine: ManagedMachineFullV1) { return snapshots.get(machine.id)?.opened; }
 
     /**
      * Every opaque preset read shares this one Account-custody/currentness
@@ -330,6 +340,7 @@ export function createManagedPresetHydrator(input: Readonly<{
         observation?: ProviderObservationV1;
         nativeControlResult?: ManagedMachinePresetNativeControlResultV1;
         setupSourceFacts?: MachineSetupSourceFactsMapV1;
+        preparationExecution?: ManagedMachinePresetPreparationExecutionV1;
     }>, signal?: AbortSignal): Promise<ManagedMachinePresetStoredContentV1> {
         if (!machine.preset) throw new ManagedMachineControllerError('credential_unavailable');
         const snapshot = snapshots.get(machine.id);
@@ -347,6 +358,7 @@ export function createManagedPresetHydrator(input: Readonly<{
             ...(input.observation === undefined ? {} : { observation: input.observation }),
             ...(input.nativeControlResult === undefined ? {} : { nativeControlResult: input.nativeControlResult }),
             ...(input.setupSourceFacts === undefined ? {} : { setupSourceFacts: input.setupSourceFacts }),
+            ...(input.preparationExecution === undefined ? {} : { preparationExecution: input.preparationExecution }),
         }));
         if (!prepared) throw new ManagedMachineControllerError('credential_unavailable');
         snapshots.set(machine.id, { ...snapshot, content: prepared.content, opened: prepared.opened,
@@ -363,6 +375,7 @@ export function createManagedPresetHydrator(input: Readonly<{
             throw new ManagedMachineControllerError('intent_changed');
         }
         if ('bootstrapInstalled' in input) return input;
+        if (!isOpaque(machine)) return input;
         const { sourceFacts, ...report } = input;
         const content = await preparePresetContentReport(machine,
             sourceFacts === undefined ? {} : { setupSourceFacts: sourceFacts }, signal);
@@ -505,7 +518,7 @@ export function createManagedPresetHydrator(input: Readonly<{
     }
 
     return { open, openSnapshot, withPresetDefinition, openRecipientProjection, openRead, withE2eeAccountKey, normalize, prepareAdmissionAcquire, prepareResize, preparePresetContentReport, prepareBoundSetupReport, prepareControllerReport, prepareResizeReport,
-        rememberReviewedFacts, readReviewedFacts, isOpaque, structural, projectEnrollmentCorrelation };
+        rememberReviewedFacts, readReviewedFacts, readSetupDefinition, readPresetDefinition, isOpaque, structural, projectEnrollmentCorrelation };
 }
 
 export type ManagedPresetHydrator = ReturnType<typeof createManagedPresetHydrator>;

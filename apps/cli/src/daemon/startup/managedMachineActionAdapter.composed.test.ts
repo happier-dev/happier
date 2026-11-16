@@ -26,7 +26,7 @@ import { createConnectedAccountRequestAuthSubjectRegistry } from '../connectedSe
 import { createManagedProviderOperationAuthority } from '../connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createDaemonManagedMachineActionAdapter } from './managedMachineActionAdapter';
 import { createDaemonApprovalExecutionAuthorizationPreparer } from '../externalActions/approvalExecutionAuthorization';
-import { prepareInstalledRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionProjection';
+import { prepareInstalledRequesterAccountActionContext, prepareRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionProjection';
 import { createDaemonSessionAccountActionExecutor } from '../agentRuntime/createDaemonSessionAccountActionExecutor';
 import { dispatchManagedMachineSetup, dispatchManagedSessionStart, prepareExternalActionRequesterAccountAuthorization, projectExternalActionRequesterHttpAuthorization, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
@@ -113,6 +113,11 @@ import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 
 const approvalWire = vi.hoisted(() => ({ sockets: [] as Array<{ update(value: unknown): void }>,
     registrations: new Map<string, { deliver(packet: unknown, acknowledge: (value: unknown) => void): void }>(),
@@ -209,6 +214,205 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
 }
 
 describe('daemon managed Machine Action factory', () => {
+    it.each(['supported', 'unsupported'] as const)(
+      'runs a Machine isolation preset through native Sandbox qualification (%s)', async nativeSandbox => {
+        const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+        const accountCredentials = { token, encryption: null };
+        const settings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1,
+            approvalWaivedSurfaces: { 'session.spawn_new': ['cli'], 'machines.managed.acquire': ['cli'] } } });
+        setActiveAccountSettingsSnapshot({ source: 'network', settings, rawSettings: {}, settingsVersion: 1,
+            loadedAtMs: Date.now(), settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(accountCredentials) });
+        const signing = nacl.sign.keyPair();
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Local sandbox', choices: {} };
+        const content = sealManagedMachinePresetContentV1({ presetId: 'isolation-preset', mode: 'plain',
+            content: { v: 1, name: launch.name, launch } });
+        const preset = { id: 'isolation-preset', homeId: 'srv_home', revision: 1, owner: { kind: 'account', accountId: 'account' },
+            controller, contentEncryptionMode: 'plain', ...content };
+        let machine = ManagedMachineV1Schema.parse({ id: 'isolation-resource', homeId: 'srv_home', custodianAccountId: 'account',
+            controller, preset: { id: preset.id, revision: 1, contentEncryptionMode: 'plain' }, acquisitionMode: 'resource-bound',
+            allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const roles: string[] = [];
+        const nativeInputs: unknown[] = [];
+        const native = nativeFixture({ privateNative: true, credentialPurposes: [], onNativeRole: (role, input) => {
+            roles.push(role);
+            nativeInputs.push({ role, input });
+        } });
+        const registry = { ...native.runtimeRegistry, contributes: { ...native.runtimeRegistry.contributes,
+            machineProvisioners: native.runtimeRegistry.contributes.machineProvisioners?.map(entry => ({ ...entry,
+                definition: { ...entry.definition, sessionPlacement: { kind: 'controller-local' as const,
+                    supportsAgentNativeSandbox: nativeSandbox === 'supported' } } })) } };
+        // Home persistence, installed-machine RPC and native plugin effects are
+        // system boundaries. Session defaults, admission, preset opening,
+        // controller custody and native role qualification remain real.
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            if (new URL(String(request.url)).pathname === '/v1/home/governance/get') return { status: 200, data: { homeDefaults: null } };
+            throw new Error(`Unexpected isolation Home request ${String(request.url)}`);
+        });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (new URL(String(url)).pathname.endsWith('/connected-accounts/purposes')) return { status: 200,
+                data: { status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes',
+                    value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }) } } } };
+            if (new URL(String(url)).pathname === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (new URL(String(url)).pathname === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: 'account' }) };
+            if (new URL(String(url)).pathname === '/v2/account/settings') return { status: 200,
+                data: { content: { t: 'plain', v: settings }, version: 1 } };
+            if (new URL(String(url)).pathname === ACCOUNT_SECURITY_PATH_V1) return { status: 200,
+                data: AccountSecurityGetResponseV1Schema.parse({ v: 1, encryptionMode: 'plain', nativeEmail: null,
+                    password: { status: 'not_enrolled', revision: null } }) };
+            if (new URL(String(url)).pathname === '/v1/account/encryption/currentness') return { status: 200,
+                data: createAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }) };
+            throw new Error(`Unexpected isolation GET ${String(url)}`);
+        });
+        const isolationAdmissions: unknown[] = [];
+        const isolationReports: unknown[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/execution-authorization')) {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                return { status: 200, data: { v: 1, token: 'isolation-root-proof', binding: { accountId: 'account', custodianAccountId: 'account',
+                    authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain', serverIdentityId: 'srv_home',
+                    ...controller, actionId: 'session.spawn_new', requestId: request.envelope.requestId,
+                    target: { kind: 'machine', machineId: 'controller' }, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
+            }
+            if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
+            if (path.endsWith('/presets/get')) return { status: 200, data: { kind: 'found', preset } };
+            if (path.endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
+            if (path.endsWith('/admit')) {
+                isolationAdmissions.push(body);
+                return { status: 200, data: { machine, presetContent: content, replayed: false } };
+            }
+            if (path.endsWith('/current')) return { status: 200, data: { machine, current: true } };
+            if (path.endsWith('/submit')) return { status: 200, data: { machine, submitted: true } };
+            if (path.endsWith('/report')) {
+                isolationReports.push(body);
+                const report = ManagedControllerReportV1Schema.parse(body);
+                machine = ManagedMachineV1Schema.parse({ ...machine,
+                    allocation: report.result.kind === 'bound' ? 'bound' : machine.allocation });
+                return { status: 200, data: { machine } };
+            }
+            throw new Error(`Unexpected isolation POST ${path}`);
+        });
+        const nativeRpc = async (method: string) => {
+            if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT || method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE)
+                return { ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null };
+            if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1, projection: {
+                v: 2, generation: 1, familiesById: {}, agentsById: { codex: { id: 'codex', title: 'Codex',
+                    capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true }, nativeSandbox: { off: true } } } } } };
+            if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: {
+                installed: true, version: '1.0', latestVersion: null, update: { supported: false, command: null },
+                signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
+                install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [] } } } };
+            throw new Error(`Unexpected isolation native RPC ${method}`);
+        };
+        vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(request => nativeRpc(request.method));
+        vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(request => nativeRpc(request.method));
+        const managed = adapter(true, undefined, undefined, signing.secretKey, accountCredentials, undefined, undefined, undefined, registry);
+        const launched: unknown[] = [];
+        const isolationChildResults: unknown[] = [];
+        const isolationQualifications: boolean[] = [];
+        let isolationFailure: unknown;
+        let nextIsolationOperationId = 0;
+        const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account',
+            generateOperationId: () => `isolation-operation-${nextIsolationOperationId++}` });
+        const deps = createCliActionDeps({ credentials: accountCredentials, token, sessionId: '', mode: 'plain', ctx: null,
+            serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+            externalActionMachineRequestPrivateKey: signing.secretKey, externalActionMachineInstallationId: 'installation',
+            actionsSettingsProvider: createActionSettingsProvider({ accountSettings: settings }),
+            savedSecretOperationContext: createInvocationSavedSecretOperationContextV1({ credentials: accountCredentials,
+                serverHttpBaseUrl: serverUrl, isCurrent: async () => true, snapshot: { settings, settingsVersion: 1,
+                    loadedAtMs: 1, settingsSecretsReadKeys: [], source: 'network', scopeKey: resolveAccountSettingsScopeKey(accountCredentials),
+                    whenRefreshed: null, connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes',
+                        value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }) } } } }),
+            acquireSessionIsolationSandbox: async request => {
+                try {
+                    const resolveNativeSandbox = request.resolveNativeSandbox;
+                    return await managed.acquireSessionIsolationSandbox({ ...request,
+                        ...(resolveNativeSandbox ? { resolveNativeSandbox: supports => {
+                            isolationQualifications.push(supports);
+                            return resolveNativeSandbox(supports);
+                        } } : {}),
+                        executeSessionIsolationAcquire: async (input, context) => {
+                            const result = await request.executeSessionIsolationAcquire(input, context);
+                            isolationChildResults.push(result);
+                            return result;
+                        },
+                    });
+                } catch (error) {
+                    isolationFailure = error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error;
+                    throw error;
+                }
+            },
+            sessionSpawnDirectTargetTransport: { machineId: 'controller', readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1,
+                metadata: { isolationPolicyV1: { agentNativeSandboxEnabled: true,
+                    configuredSandboxes: { local: { provisioner: launch.provider, presetId: preset.id } },
+                    workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
+                        botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } } } } }),
+                prepare: async () => ({ ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
+                spawnedSession: { spawn: async request => { launched.push(request); return { type: 'success', sessionId: 'created',
+                    sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } }; },
+                    resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) } },
+            machineActionDirectTargetTransport: { machineId: 'controller', invoke: nativeRpc },
+        });
+        const executor = createActionExecutor({ ...deps, managedMachineAction: managed,
+            runActionOperation: operations.runActionOperation });
+        const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'isolation-spawn',
+            executionTarget: { serverId: configuration.activeServerId, machineId: 'controller' }, directory: { kind: 'path', path: '/tmp' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, memoryEnabled: false,
+            configuration: { mode: { value: null, updatedAtMs: 1 },
+                model: { value: null, updatedAtMs: 1, selectionSource: 'inherited' },
+                permissionIntent: { value: null, updatedAtMs: 1 }, options: {} } });
+        const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId: 'session.spawn_new', input,
+            requestId: 'isolation-spawn', target: { kind: 'machine', machineId: 'controller' }, machineId: 'controller',
+            accountId: 'account', accountEncryptionMode: 'plain', tokenEpochHint: 0, token, serverId: configuration.activeServerId,
+            serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl, installationId: 'installation', privateKey: signing.secretKey });
+        if (!authorization) throw new Error('Home did not admit the Session isolation root');
+        const requester = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
+            machineId: 'controller', installationId: 'installation', installationPrivateKey: signing.secretKey,
+            serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+            ownCredentials: accountCredentials, isCurrent: async () => true, createExecutor: () => executor });
+        if (!requester) throw new Error('The receiving host must open its admitted requester custody');
+        onTestFinished(() => requester.dispose());
+        const rootContext: ActionExecutorContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+            actionsSettings: normalizeActionsSettingsV1(settings.actionsSettingsV1), runtimeAccountId: 'account', actionRequestId: 'isolation-spawn',
+            serverId: configuration.activeServerId, externalActionExecutionAuthorization: requester.authorization, externalActionTarget: authorization.binding.target,
+            originalActionEnvelope: { v: 1, requestId: 'isolation-spawn', target: authorization.binding.target, input } };
+        const result = await operations.observeExecution({ actionId: 'session.spawn_new', input, actionRequestId: 'isolation-spawn',
+            actionContext: rootContext,
+            execute: operation => executor.execute('session.spawn_new', input, { ...rootContext, ...operation }) });
+        // Native acquisition retains its own operation after returning acceptance.
+        // The root Session's terminal result does not settle that child effect.
+        const isolationChildOperation = nativeSandbox === 'supported'
+            ? await operations.handlers.getV2({ operationId: 'isolation-operation-1', waitForTerminal: true })
+            : undefined;
+        const diagnostic = JSON.stringify({ result, isolationChildResults, isolationQualifications, isolationFailure,
+            isolationAdmissions, isolationReports, isolationChildOperation, roles, launched });
+        if (nativeSandbox === 'unsupported') {
+            expect(result, diagnostic).toMatchObject({ ok: true, result: { type: 'error', code: 'target_unavailable',
+                failureCause: { nativeErrorReason: 'not_available_in_sandbox_type' } } });
+            expect(isolationAdmissions).toEqual([]);
+            expect(roles).toEqual([]);
+            expect(launched).toEqual([]);
+            return;
+        }
+        expect(result, diagnostic).toMatchObject({ ok: true, result: { type: 'success' } });
+        expect(await operations.handlers.getV2({ operationId: 'isolation-operation-0', waitForTerminal: true }))
+            .toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+        expect(isolationChildOperation, diagnostic).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+        expect(isolationAdmissions, diagnostic).toEqual([expect.objectContaining({ acquisitionMode: 'resource-bound' })]);
+        expect(machine.acquisitionMode).toBe('resource-bound');
+        // Bootstrap opens a transport carrier; installing a CLI or daemon would
+        // also require native exec/file effects or enrollment HTTP, which the
+        // real boundary recorders expose or reject.
+        expect(roles, diagnostic).toEqual(['acquire', 'bootstrap']);
+        expect(nativeInputs, diagnostic).toContainEqual({ role: 'bootstrap', input: { resource: {} } });
+        expect(machine.enrolledMachineId).toBeUndefined();
+        expect(launched).toHaveLength(1);
+        expect(launched[0]).toMatchObject({ nativeSandbox: 'on' });
+    });
+
     it.each(['spawn-child', 'release', 'ordinary'] as const)('receives %s native admission without borrowing another Account or repeating its approved effect', async kind => {
         const keys = nacl.sign.keyPair();
         const actionId = 'machines.managed.credentials.install' as const;

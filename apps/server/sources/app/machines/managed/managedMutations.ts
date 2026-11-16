@@ -54,6 +54,14 @@ function projectManagedAdmissionCarrier(row: StoredManagedMachine, machine = pro
         ...(presetContentOverride ? { presetContentOverride } : {}) };
 }
 
+/** The controller owns private content; Home validates its existing envelope mode. */
+function replaceOpaquePresetContent(row: StoredManagedMachine, content: NonNullable<ManagedControllerSubmitInputV1['presetContent']>) {
+    if (!isStoredOpaquePresetMachine(row)) throw new ManagedMachineError('invalid_request');
+    const stored = readStoredOpaquePresetLaunch(row.launch);
+    if ((stored.contentEncryptionMode === 'plain') !== (content.t === 'plain')) throw new ManagedMachineError('account_mode_mismatch');
+    return { ...stored, content };
+}
+
 /** Declared reconciliation can recover partial cleanup; native submission still requires its concrete target. */
 async function hasPendingManagedCleanupTargetInTx(tx: Tx, row: StoredManagedMachine, allowCorrelation = false): Promise<boolean> {
     if (row.allocation !== 'may-exist' || row.resource !== null) return false;
@@ -108,6 +116,14 @@ export async function requireManagedPolicyPurposeInTx(tx: Tx, row: StoredManaged
     if (machine.retention.kind === 'deadline') {
         if (Date.now() < machine.retention.at) throw new ManagedMachineError('intent_changed');
         return await retentionIntent(machine.retention.effect);
+    }
+    // An unenrolled Fresh target is occupied by its authoritative Session.
+    // The archive owner stamps this scope end; restoring the Session removes it
+    // and changes the intent revision before a new deletion can be admitted.
+    if (machine.acquisitionMode === 'resource-bound' && machine.creationScopeRetention?.source?.kind === 'session'
+        && machine.creationScopeRetention.endedAt !== undefined && machine.creationScopeRetention.effect === 'delete'
+        && machine.retention.effect === 'delete' && machine.retention.afterMs === 0) {
+        return await retentionIntent('delete');
     }
     const evidence = purpose.evidence;
     if (!evidence) throw new ManagedMachineError('permission_denied');
@@ -707,11 +723,14 @@ export async function submitManagedAcquire(input: ManagedControllerSubmitInputV1
     const canonical = ManagedControllerSubmitInputV1Schema.parse(input);
     return await inManagedMachinePublicationTx(canonical, async (tx) => {
         const row = await requireCurrentManagedMachineInTx(tx, canonical, { requestAuthority: 'creation' });
+        const launch = canonical.presetContent === undefined ? undefined : replaceOpaquePresetContent(row, canonical.presetContent);
+        const { presetContentOverride: _override, ...admittedInput } = readManagedAdmissionState(row.admittedInput);
         // Admission already owns the exact account selections in row.launch.
         // Credential rotation is handled by the next secret acquisition, not
         // by capturing a second configuration authority before native spend.
         const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: canonical.expectedIntentRevision, creationState: "active", allocation: "unsubmitted" }, data: {
             allocation: "may-exist",
+            ...(launch === undefined ? {} : { launch, admittedInput }),
         } });
         const current = changed.count ? await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } }) : row;
         if (changed.count) await invalidateManagedMachineInTx(tx, current);
@@ -731,13 +750,9 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
             // A controller snapshots its locally validated opaque content.
             // Native provider identity, recovery and diagnostics stay in that
             // sealed snapshot; Home retains only lifecycle state.
-            const storedPreset = readStoredOpaquePresetLaunch(row.launch);
-            if ((storedPreset.contentEncryptionMode === 'plain') !== (canonical.presetContent.t === 'plain')) {
-                throw new ManagedMachineError('account_mode_mismatch');
-            }
+            const replacementLaunch = replaceOpaquePresetContent(row, canonical.presetContent);
             const admitted = readManagedAdmissionState(row.admittedInput);
             const { presetContentOverride: _override, ...nextAdmission } = admitted;
-            const replacementLaunch = { ...storedPreset, content: canonical.presetContent };
             if (canonical.result.kind === "bound") {
                 if (row.allocation !== "may-exist" && row.allocation !== "bound") throw new ManagedMachineError("intent_changed");
                 const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: row.intentRevision,

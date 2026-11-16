@@ -23,6 +23,9 @@ import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/conne
 import { createManagedMachineAcquisitionDriver } from './acquire';
 import { readManagedMachinePolicyCensus } from '@/daemon/startup/managedMachinePolicyRuntime';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { settleCommittedSessionLaunchFailure } from '@/session/services/settleCommittedSessionLaunchFailure';
+import { registerSessionTurnMutationRoute } from '../../../../server/sources/app/api/routes/session/registerSessionTurnMutationRoute';
 
 let database: LightSqliteHarness;
 beforeAll(async () => {
@@ -31,9 +34,11 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { if (database) await database.close(); });
 
-it.each([false, true])('archives the admitted shared creator source through Home policy admission, reopened=%s', async reopened => {
+it.each([{ reopened: false, bound: false }, { reopened: true, bound: false },
+    { reopened: false, bound: true }, { reopened: true, bound: true }])(
+    'retains failed birth until explicit Archive and executes its retained deletion (bound=$bound, reopened=$reopened)', async ({ reopened, bound }) => {
     const creator = await db.account.create({ data: { encryptionMode: 'plain' } });
-    const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const custodian = bound ? creator : await db.account.create({ data: { encryptionMode: 'plain' } });
     const homeId = await getOrCreateServerIdentityId();
     const controllerKeys = nacl.sign.keyPair(), guestKeys = nacl.sign.keyPair();
     const createMachine = (accountId: string, keys: typeof controllerKeys) => db.machine.create({ data: {
@@ -58,8 +63,9 @@ it.each([false, true])('archives the admitted shared creator source through Home
         trustState: 'trusted', observedAt: new Date() } });
     const sourceId = randomUUID();
     const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: custodian.id,
-        controllerMachineId: controller.id, controllerInstallationId: controller.installationId!, enrolledMachineId: guest.id,
+        controllerMachineId: controller.id, controllerInstallationId: controller.installationId!, ...(bound ? {} : { enrolledMachineId: guest.id }),
         admittedActionRequestId: randomUUID(), admittedInput: { enrollmentAccountId: creator.id,
+            ...(bound ? { acquisitionMode: 'resource-bound' } : {}),
             creationScopeRetention: { effect: 'delete', source: { kind: 'session', sessionId: sourceId } } },
         allocation: 'bound', creationState: 'active', desired: 'stop', retention: { kind: 'until-delete' },
         launch: { provider: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
@@ -69,7 +75,15 @@ it.each([false, true])('archives the admitted shared creator source through Home
         tag: sourceId, metadata: '{}', encryptionMode: 'plain' } });
     const token = await auth.createToken(custodian.id, undefined, { kind: 'account', authority: 'present_user' });
     const app = createAuthenticatedTestApp({ authentication: 'real' });
+    const mutationResponses: { status: number; body: unknown }[] = [];
+    app.addHook('onSend', (request, reply, payload, done) => {
+        if (request.url.endsWith('/turns/mutations') && typeof payload === 'string') {
+            mutationResponses.push({ status: reply.statusCode, body: JSON.parse(payload) });
+        }
+        done(null, payload);
+    });
     registerManagedMachineRoutes(app);
+    registerSessionTurnMutationRoute(app);
     await app.ready();
     const serverUrl = 'https://archive-retention.example';
     const restore = installAxiosFastifyAdapter({ app, origin: serverUrl });
@@ -83,6 +97,7 @@ it.each([false, true])('archives the admitted shared creator source through Home
         createRedactionLease: () => ({ add() {}, close() {} }) });
     // Guest RPC is an OS/network boundary. Home verifies its genuine installation proof.
     const readIdle = async (machine: ManagedMachineV1) => {
+        if (bound) throw new Error('An unenrolled Session target has no guest activity RPC');
         const context = { actorAccountId: custodian.id, custodianAccountId: creator.id, machineId: guest.id,
             installationId: guest.installationId!, role: 'manage' as const, encryptionMode: 'plain' as const };
         const method = `${guest.id}:managed.admission.drain.confirm`;
@@ -107,6 +122,22 @@ it.each([false, true])('archives the admitted shared creator source through Home
     });
     try {
         expect(projectManagedMachine(row).retention).toEqual({ kind: 'until-delete' });
+        const creatorToken = bound ? token : await auth.createToken(creator.id, undefined, { kind: 'account', authority: 'present_user' });
+        await runWithServerHttpBaseUrl(serverUrl, () => settleCommittedSessionLaunchFailure({ token: creatorToken, sessionId: sourceId,
+            failure: { type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'Target preparation failed',
+                errorDetail: { kind: 'launch_error', code: 'managed_target_unavailable', message: 'Target preparation failed' } } }));
+        expect(mutationResponses).toEqual([expect.objectContaining({ status: 200 }), expect.objectContaining({ status: 200 })]);
+        expect(await db.sessionTurn.findMany({ where: { sessionId: sourceId }, select: { status: true } })).toEqual([
+            { status: 'failed' },
+        ]);
+        expect(await db.session.findUniqueOrThrow({ where: { id: sourceId } })).toMatchObject({
+            archivedAt: null, active: false, runtimeActivityRevision: BigInt(0), latestTurnStatus: 'failed',
+        });
+        expect((await db.sessionTurn.findFirstOrThrow({ where: { sessionId: sourceId } })).lastRuntimeIssueJson).toBeTruthy();
+        expect(projectManagedMachine(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })))
+            .toMatchObject({ retention: { kind: 'until-delete' }, creationScopeRetention: { effect: 'delete' } });
+        expect(projectManagedMachine(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).creationScopeRetention)
+            .not.toHaveProperty('endedAt');
         let restoreArchiveDatabaseSpies = () => {};
         try { await inTx(async tx => {
             expect(await tx.managedMachine.findUnique({ where: { id: row.id } })).toMatchObject({

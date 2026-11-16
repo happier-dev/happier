@@ -8,6 +8,7 @@ import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/act
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 import type { ManagedBootstrapCarrierV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { safeBashSingleQuote } from '../../ssh/shellQuote.js';
+import { REMOTE_SHA256_FILE_FUNCTION } from '../../ssh/shellSha256.js';
 import { buildRemoteHappierInvocationCommand } from '../../systemTasks/ssh/remoteBootstrapCommandBuilder.js';
 import { normalizeRemoteReleaseArch, normalizeRemoteReleaseOs } from '../../systemTasks/ssh/remoteFirstPartyInstallPath.js';
 
@@ -107,12 +108,12 @@ function stagingSuffix(): string {
 const SESSION_HOLDER_FILES = { holder: 'happier-session-holder', helper: 'happier-process-custody' } as const;
 
 /**
- * Places the static Session holder and the process-custody helper in a guest
+ * Places the Session holder and the process-custody helper in a guest
  * that runs no Happier daemon (placement "target"), through the provider's
  * `exec` and `putFile` roles: `~/.happier/holder/<version>/`, each file verified
  * by sha256 inside the guest before it is promoted. Files already present with
  * the expected digest are reused. The architecture comes from the shared probe;
- * the binaries are static, so no libc probe is needed.
+ * Linux binaries are static; Darwin binaries use the platform's libSystem.
  */
 export async function ensureManagedGuestSessionHolder(input: Readonly<{
     io: Pick<ManagedNativeBootstrapIO, 'exec' | 'putFile'>;
@@ -122,9 +123,6 @@ export async function ensureManagedGuestSessionHolder(input: Readonly<{
 }>): Promise<ManagedGuestSessionHolder> {
     if (!/^[A-Za-z0-9._+-]+$/u.test(input.version)) throw new SystemTaskExecutionError('invalid_request', 'Session holder version is not a plain name.');
     const platform = await probeManagedNativeGuestPlatform(input.io.exec, input.signal);
-    if (platform.os !== 'linux') {
-        throw Object.assign(new Error('Session holder targets are Linux guests'), { code: 'session_holder_target_unsupported' });
-    }
     const artifacts = await input.resolveArtifacts(platform);
     const q = safeBashSingleQuote;
     const directory = `${platform.home}/.happier/holder/${input.version}`;
@@ -135,14 +133,14 @@ export async function ensureManagedGuestSessionHolder(input: Readonly<{
         return result.stdout;
     };
     await run(`umask 077; mkdir -p ${q(directory)} ${q(socketDirectory)} && chmod 700 ${q(socketDirectory)}`);
-    const present = new Map((await input.io.exec({ command: `cd ${q(directory)} && sha256sum ${Object.values(SESSION_HOLDER_FILES).map(q).join(' ')} 2>/dev/null`, signal: input.signal }))
+    const present = new Map((await input.io.exec({ command: `${REMOTE_SHA256_FILE_FUNCTION}; cd ${q(directory)} && sha256_files ${Object.values(SESSION_HOLDER_FILES).map(q).join(' ')} 2>/dev/null`, signal: input.signal }))
         .stdout.split('\n').map(line => line.trim().split(/\s+/u)).filter(parts => parts.length === 2).map(([digest, name]) => [name!, digest!]));
     for (const [key, name] of Object.entries(SESSION_HOLDER_FILES) as [keyof typeof SESSION_HOLDER_FILES, string][]) {
         const artifact = artifacts[key];
         if (present.get(name) === artifact.sha256) continue;
         const staged = `${directory}/.${name}.${stagingSuffix()}`;
         await input.io.putFile({ path: staged, bytes: artifact.bytes, signal: input.signal });
-        const verified = await run(`if [ "$(sha256sum ${q(staged)} | cut -d' ' -f1)" = ${q(artifact.sha256)} ]; then chmod 755 ${q(staged)} && mv -f ${q(staged)} ${q(`${directory}/${name}`)} && echo promoted; else rm -f ${q(staged)}; echo mismatch; fi`);
+        const verified = await run(`${REMOTE_SHA256_FILE_FUNCTION}; if [ "$(sha256_file ${q(staged)})" = ${q(artifact.sha256)} ]; then chmod 755 ${q(staged)} && mv -f ${q(staged)} ${q(`${directory}/${name}`)} && echo promoted; else rm -f ${q(staged)}; echo mismatch; fi`);
         if (verified.trim() !== 'promoted') {
             throw Object.assign(new Error(`The ${name} payload did not verify in the guest`), { code: 'session_holder_digest_mismatch' });
         }

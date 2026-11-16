@@ -1,3 +1,5 @@
+import { prepareMachineSetupSecretEnvironment } from './secretEnvironment';
+import { observeMachineSetupInitialPresence } from './initialPresence';
 import { homedir } from 'node:os';
 import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
@@ -6,23 +8,15 @@ import { MachineSetupResolveResultV1Schema, MachineSetupResolvedSourceV1Schema, 
 import type { MachineSetupNativeSshHostKeyV1 } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
 import type { MachineSetupApplyTargetV1, MachineSetupRemoveInputV1, MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { machineSetupSourceOriginKeyV1, machineSetupItemKeyV1, reviewMachineSetupSourceChangeV1,
-  MachineSetupSourceV1Schema, type MachineSetupSourceV1, type MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol';
-import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { machineSetupSourceOriginKeyV1, reviewMachineSetupSourceChangeV1,
+  MachineSetupSourceV1Schema, type MachineSetupSourceV1 } from '@happier-dev/protocol';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
-import { refreshSavedSecretCatalogForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
-import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { createProjectNativeInvocationCustody, type ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
-import { applyMachineSetup, removeMachineSetup, prepareMachineSetupStages } from './applyMachineSetup';
+import { applyMachineSetup, removeMachineSetup, prepareMachineSetupStages, isMachineSetupResultUnsettled } from './applyMachineSetup';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { projectBackupReceiverPlanResults } from './backupReceiverResult';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
@@ -35,7 +29,7 @@ import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
 import { machineSetupTargetUnavailable, requestMachineSetupHome, type MachineSetupInstallation } from './machineSetupHomeRequest';
 import { prepareMachineSetupApps, type MachineSetupAppPreparationHost } from './prepareMachineSetupApps';
 import { prepareMachineSetupAcceptedAppRuns } from './acceptedAppRuns';
-import { machineSetupPlansRequireAdministratorV1, readMachineSetupInitialPresenceV1 } from '@happier-dev/cli-common/machineSetup';
+import { machineSetupPlansRequireAdministratorV1 } from '@happier-dev/cli-common/machineSetup';
 import { prepareMachineSetupUpdatesPlanV1 } from './machineSetupUpdatesAction';
 import { logger } from '@/ui/logger';
 import type { AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
@@ -49,32 +43,6 @@ export type MachineSetupTargetAction = (params: Readonly<{
   input: MachineSetupApplyTargetV1; context: RpcActionExecutorContext; signal?: AbortSignal;
 }>) => Promise<unknown>;
 
-function observeInitialPresence(sources: MachineSetupSourceV1,
-  recipePlans: readonly { sourceIndex: number; itemIndex: number; plan: MachineSetupEffectPlanV1;
-    initialPresence?: 'present' | 'absent' | 'unknown' }[]): MachineSetupSourceFactsMapV1 {
-  const observed = new Map<string, 'present' | 'absent' | undefined>();
-  for (const entry of recipePlans) {
-    const item = sources[entry.sourceIndex]?.setup.items?.[entry.itemIndex];
-    if (!item || item.kind === 'app') continue;
-    const key = machineSetupItemKeyV1(item);
-    const next = entry.initialPresence === 'unknown' ? undefined
-      : entry.initialPresence ?? readMachineSetupInitialPresenceV1(entry.plan);
-    observed.set(key, observed.get(key) === 'present' || next === 'present' ? 'present'
-      : observed.has(key) && observed.get(key) !== next ? undefined : next);
-  }
-  const sourceFacts: MachineSetupSourceFactsMapV1 = {};
-  for (const source of sources) {
-    const firstPresence: Record<string, 'present' | 'absent'> = {};
-    for (const item of source.setup.items ?? []) {
-      if (item.kind === 'app') continue;
-      const key = machineSetupItemKeyV1(item);
-      const first = observed.get(key);
-      if (first !== undefined) firstPresence[key] = first;
-    }
-    if (Object.keys(firstPresence).length) sourceFacts[machineSetupSourceOriginKeyV1(source)] = { firstPresence };
-  }
-  return sourceFacts;
-}
 
 function actionSourcesForHome(sources: MachineSetupSourceApplyV1): MachineSetupSourceApplyV1 {
   // Bundled presets are already locally declared and checked below. The Home
@@ -326,7 +294,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
       const cancellationSignal = AbortSignal.any([operation.signal, lifetime]);
       if (!operationId || cancellationSignal.aborted) return fail(cancellationSignal.aborted ? 'cancelled' : 'admission_unavailable');
       const custody = createProjectNativeInvocationCustody(operation);
-      let secretContext: ReturnType<typeof createInvocationSavedSecretOperationContextV1> | undefined;
+      let secrets: Awaited<ReturnType<typeof prepareMachineSetupSecretEnvironment>> | undefined;
       let creation: Readonly<{ managedId: string; preset: Readonly<{ id: string; revision: number }> }> | undefined;
       let recipeLease: PluginRuntimeRegistryLease | undefined;
       const acquireRecipes = async () => recipeLease ??= await (
@@ -471,7 +439,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
               || entry.plan.planDigest !== reviewed.plan.planDigest;
           })) return fail('plan_changed');
         }
-        const observedSourceFacts = observeInitialPresence(sources, planned.recipePlans ?? []);
+        const observedSourceFacts = observeMachineSetupInitialPresence(sources, planned.recipePlans ?? []);
         if (prepared && !prepared.ok) return prepared;
         if (mode !== 'remove') {
           const appFacts = await prepareMachineSetupAcceptedAppRuns({ input, localSources: sources, context, isCurrent: isActive,
@@ -481,25 +449,10 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             observedSourceFacts[origin] = { ...observedSourceFacts[origin], ...facts };
           }
         }
-        let secretEnvironment: Parameters<typeof applyMachineSetup>[0]['secretEnvironment'];
-        const scriptSources = prepared?.sources.filter(setup => setup.scripts?.some(script => script.body)) ?? [];
-        if (scriptSources.some(setup => setup.secretRefs)) {
-          const snapshot = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => bootstrapAccountSettingsContext({
-            credentials: runtime.credentials, mode: 'blocking', refresh: 'force', publication: 'invocation', honorAccountSettingsModeEnv: false,
-            shouldCommit: () => !cancellationSignal.aborted }));
-          if (snapshot.source !== 'network' || cancellationSignal.aborted) throw Object.assign(new Error('saved_secret_unavailable'), { code: 'saved_secret_unavailable' });
-          secretContext = createInvocationSavedSecretOperationContextV1({ credentials: runtime.credentials, snapshot,
-            serverHttpBaseUrl: runtime.serverHttpBaseUrl, isCurrent: isActive });
-          const references = scriptSources.flatMap(setup => setup.secretRefs
-            ? listSecretReferenceOverlayV1BindingNames(setup.secretRefs).map(name => readSecretReferenceOverlayV1Reference(setup.secretRefs!, name)!) : []);
-          const secrets = await refreshSavedSecretCatalogForOperation({ expectedScopeKey: resolveAccountSettingsScopeKeyForToken(runtime.credentials.token),
-            references, operationContext: secretContext, signal: cancellationSignal });
-          if (cancellationSignal.aborted) throw Object.assign(new Error('saved_secret_unavailable'), { code: 'saved_secret_unavailable' });
-          secretEnvironment = { accountSettings: secrets.settings, settingsSecretsReadKeys: secrets.settingsSecretsReadKeys,
-            savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(secrets,
-              { operationContext: secretContext }),
-            savedSecretResources: secrets.savedSecretResources };
-        }
+        secrets = await prepareMachineSetupSecretEnvironment({ credentials: runtime.credentials,
+          serverHttpBaseUrl: runtime.serverHttpBaseUrl, sources: prepared?.sources ?? [],
+          signal: cancellationSignal, isCurrent: isActive });
+        const secretEnvironment = secrets.environment;
         if (cancellationSignal.aborted) return fail('cancelled');
         const io = createProjectNativeIo({ ownerRemainder: params.ownerRemainder }).environmentIo.createInvocation({ signal: cancellationSignal, retainCapture: custody.retain });
         let elevation: Parameters<typeof applyMachineSetup>[0]['elevation'];
@@ -517,7 +470,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             receiverHostKeys = result.sshHostKeys ?? [];
             if (!result.initialPresence) return;
             const firstPresence = result.initialPresence;
-            const nativeSourceFacts = observeInitialPresence(sources, reviewedRecipePlans.map(entry => ({ ...entry,
+            const nativeSourceFacts = observeMachineSetupInitialPresence(sources, reviewedRecipePlans.map(entry => ({ ...entry,
               initialPresence: firstPresence[plans.indexOf(entry.plan)] ?? 'unknown',
             })));
             for (const source of sources) {
@@ -566,8 +519,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         await custody.release();
         // An unconfirmed physical outcome is retained by the same finite
         // owner; it is not a failed creation stage or permission to retry.
-        if (!result.ok && (result.errorCode === 'outcome_uncertain' || result.errorCode === 'outcome_unknown' || result.errorCode === 'stop_unconfirmed'
-          || result.errorCode === 'native_toolchain_termination_incomplete' || result.errorCode === 'plugin_exec_termination_incomplete')) return result;
+        if (isMachineSetupResultUnsettled(result)) return result;
         // A confirmed script failure also proves recipes and toolchain finished,
         // even when the first script failed before any completion callback.
         if (result.ok || completedScripts.size > 0 || result.errorCode === 'machine_setup_setup_failed') {
@@ -617,7 +569,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
       } finally {
         try { await recipeLease?.release(); }
         finally {
-          custody.dispose(); secretContext?.withdrawCatalog();
+          custody.dispose(); secrets?.dispose();
           if (nativeStarted) {
             try { await params.apiMachine.refreshMachineSetupUpdates(); }
             catch (error) { logger.warn('[Machine setup] Updates observation refresh failed after settlement', error); }

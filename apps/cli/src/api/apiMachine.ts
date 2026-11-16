@@ -7069,16 +7069,17 @@ export class ApiMachineClient {
                 }
                 if (reason !== 'live' || hasTeamChange) {
                     await this.notifyManagedMachinePolicyInvalidated(signal);
+                } else if (hasRelevantMachineChange) {
+                    // Controller withdrawal applies to every held target. A
+                    // mixed page also schedules its changed managed policies.
+                    await this.notifyManagedMachinePolicyInvalidated(signal,
+                        managedPolicyIds.length ? undefined : { kind: 'currentness' });
                 } else if (managedPolicyIds.length) {
                     await this.notifyManagedMachinePolicyInvalidated(signal, { kind: 'managed', managedIds: managedPolicyIds });
                 } else {
                     const machineIds = changes.filter(change => change.kind === 'machine' && change.entityId !== this.machine.id)
                         .map(change => change.entityId);
                     if (machineIds.length) await this.notifyManagedMachinePolicyInvalidated(signal, { kind: 'machines', machineIds });
-                    // A controller Machine change can retire held native/currentness
-                    // work (including a moved controller). Its own operation/activity
-                    // publications cannot create a new automatic policy operation.
-                    if (hasRelevantMachineChange) await this.notifyManagedMachinePolicyInvalidated(signal, { kind: 'currentness' });
                 }
                 signal.throwIfAborted();
                 if (this.projectionSchedulingClosed || !this.isActiveTransportGeneration(transportGeneration)) return;

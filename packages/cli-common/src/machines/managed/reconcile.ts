@@ -1,6 +1,6 @@
 import type { JsonValue } from '@happier-dev/protocol';
 import type { ActionOperationProgressV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { ManagedEnrollmentFullCorrelationV1Schema, type ManagedControllerCurrentnessV1, type ManagedEnrollmentCorrelationV1, type ManagedEnrollmentFullCorrelationV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedEnrollmentFullCorrelationV1Schema, type ManagedControllerPresetContentV1, type ManagedControllerCurrentnessV1, type ManagedEnrollmentCorrelationV1, type ManagedEnrollmentFullCorrelationV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, type AcquireResultV1, type ManagedBootstrapCarrierV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -38,7 +38,7 @@ export type ManagedReconciliationHome = Readonly<{
     correlation(machine: ManagedMachineFullV1): ManagedControllerCurrentnessV1;
     projectEnrollmentCorrelation(machine: ManagedMachineFullV1, correlation: ManagedEnrollmentFullCorrelationV1): ManagedEnrollmentCorrelationV1;
     row(path: string, body: unknown, signal?: AbortSignal | null): Promise<ManagedMachineFullV1>;
-    submit(machine: ManagedMachineFullV1): Promise<Readonly<{ submitted: boolean; machine: ManagedMachineFullV1 }>>;
+    submit(machine: ManagedMachineFullV1, presetContent?: ManagedControllerPresetContentV1): Promise<Readonly<{ submitted: boolean; machine: ManagedMachineFullV1 }>>;
     reportIssuedAcquireFact(machine: ManagedMachineFullV1, result: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, configurationFacts?: ManagedConfigurationFactsV1): Promise<ManagedMachineFullV1>;
     preparePendingAcquireBoundReport(machine: ManagedMachineFullV1): Promise<(result: Extract<AcquireResultV1, { kind: 'bound' }>) => Promise<ManagedMachineFullV1>>;
 }>;
@@ -72,6 +72,10 @@ export type ManagedMachineReconciliation = Readonly<{
     home: ManagedReconciliationHome;
     /** The host maps role names using that selected authority, never raw caller review facts. */
     createNative(readMachine: () => ManagedMachineFullV1, readCredentialRevision: () => number | undefined): ManagedReconciliationNative;
+    /** Select and seal private execution choices at the existing submit boundary. */
+    prepareAcquire?(machine: ManagedMachineFullV1, configuration: Awaited<ReturnType<typeof captureManagedAcquireConfiguration>>): Promise<Readonly<{
+        machine: ManagedMachineFullV1; presetContent?: ManagedControllerPresetContentV1;
+    }>>;
     bootstrap: Readonly<{
         preflight(): Promise<void>;
         prepareCredential(machine: ManagedMachineFullV1, kind: 'ssh' | 'native-token'): Promise<Readonly<{
@@ -114,9 +118,9 @@ function acquisitionFailure(result: Exclude<AcquireResultV1, { kind: 'bound' }>)
 }
 
 /** Initial issued acquisitions retain the same facts as the configurator, without changing admitted input. */
-async function captureIssuedConfigurationFacts(machine: ManagedMachineFullV1, provisioner: MachineProvisionerContributionV1 | undefined,
-    native: ManagedReconciliationNative): Promise<ManagedConfigurationFactsV1 | undefined> {
-    if (machine.reviewedFacts || !provisioner) return undefined;
+export async function captureManagedAcquireConfiguration(machine: ManagedMachineFullV1, provisioner: MachineProvisionerContributionV1 | undefined,
+    native: ManagedReconciliationNative) {
+    if (!provisioner) return undefined;
     let check: ReturnType<typeof MachineProvisionerCheckResultV1Schema.parse> | undefined;
     let options: MachineProvisionerOptionsResultV1 | undefined;
     let optionProjection: Parameters<typeof buildManagedConfigurationFactsV1>[0]['optionProjection'];
@@ -130,13 +134,14 @@ async function captureIssuedConfigurationFacts(machine: ManagedMachineFullV1, pr
                 selection: readMachineProvisionerSelectionForLaunchV1(options, machine.launch.choices) });
         } catch { /* The receipt retains exact choices and an explicit unavailable option status. */ }
     }
-    return buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema),
+    const facts = buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema),
         launch: machine.launch, controller: machine.controller, provisioner, optionProjection,
         optionStatus: optionProjection ? 'current' : 'unavailable', prerequisites: readMachineProvisionerPrerequisitesV1(check, options),
         localResources: check?.localResources, billing: provisioner.billing, retentionCapabilities: provisioner.retention,
         machineOverride: { retention: machine.retention, wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage },
         ...(machine.preset ? { preset: machine.preset } : {}),
     });
+    return { facts, optionProjection };
 }
 
 /** Observe an issued acquisition by its retained handle, never by issuing another allocation. */
@@ -306,6 +311,10 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
     if (machine.allocation === 'unsubmitted') {
         if (input.acquisitionMode !== 'resource-bound') await input.bootstrap.preflight();
         await native.prepareRoles();
+        const configuration = input.acquisitionMode === 'resource-bound'
+            ? await captureManagedAcquireConfiguration(machine, provisioner, native) : undefined;
+        const preparedAcquire = await input.prepareAcquire?.(machine, configuration);
+        if (preparedAcquire) machine = preparedAcquire.machine;
         let bootstrapPublicKey: string | undefined;
         let guestHostPublicKey: string | undefined;
         if (bootstrapCredentialKind) {
@@ -315,7 +324,7 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
             guestHostPublicKey = prepared.guestHostPublicKey;
             credentialRevision = prepared.credentialRevision;
         }
-        const submitted = await input.home.submit(machine);
+        const submitted = await input.home.submit(machine, preparedAcquire?.presetContent);
         machine = submitted.machine;
         if (!submitted.submitted) return machine;
         let result: AcquireResultV1;
@@ -337,7 +346,9 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
             throw error;
         }
         machine = result.kind === 'bound' || result.kind === 'pending'
-            ? await input.home.reportIssuedAcquireFact(machine, result, await captureIssuedConfigurationFacts(machine, provisioner, native))
+            ? await input.home.reportIssuedAcquireFact(machine, result, configuration
+                ? machine.reviewedFacts ?? configuration.facts : !machine.reviewedFacts
+                    ? (await captureManagedAcquireConfiguration(machine, provisioner, native))?.facts : undefined)
             : await input.home.row('report', { ...input.home.correlation(machine), result }, null);
         if (result.kind !== 'bound') throw acquisitionFailure(result);
         // Cancel can settle Home's row while the provider allocates. The late

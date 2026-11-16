@@ -98,11 +98,16 @@ export function createBoundMachineSetupTarget(input: Readonly<{
     } } satisfies Pick<BoundMachineSetupTarget, 'applyPlans'> : {}),
     async run(request) {
       request.signal?.throwIfAborted();
-      const command = `cd ${safeBashSingleQuote(request.cwd)} && exec env ${[
-        ...Object.entries(request.env).map(([key, value]) => `${key}=${value}`), request.command, ...request.args,
-      ].map(safeBashSingleQuote).join(' ')}`;
-      const result = await input.transport.exec({ command, signal: request.signal,
-        ...(request.stdin ? { input: Buffer.from(request.stdin).toString('utf8') } : {}) });
+      const environment = Object.entries(request.env).map(([key, value]) => safeBashSingleQuote(`${key}=${value}`));
+      const command = [request.command, ...request.args].map(safeBashSingleQuote).join(' ');
+      // The bootstrap command becomes provider/SSH argv. Keep environment values
+      // in its input, as the Session target execution owner does for Agent args.
+      // POSIX printf's octal form preserves arbitrary command stdin bytes.
+      const stdin = request.stdin === undefined ? undefined
+        : [...request.stdin].map(byte => `\\0${byte.toString(8).padStart(3, '0')}`).join('');
+      const script = `cd ${safeBashSingleQuote(request.cwd)} && ${environment.length ? `export ${environment.join(' ')} && ` : ''}`
+        + (stdin === undefined ? `exec ${command} </dev/null` : `printf '%b' ${safeBashSingleQuote(stdin)} | ${command}`);
+      const result = await input.transport.exec({ command: 'exec sh -s', input: script + '\n', signal: request.signal });
       return { exitCode: result.status, stdout: result.stdout, stderr: result.stderr };
     },
     async writeConfiguration(path, content, signal) {

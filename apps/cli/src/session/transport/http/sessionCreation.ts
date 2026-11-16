@@ -20,6 +20,7 @@ import { assertSessionEncryptionModeAllowedByEffectiveClientRequirement } from '
 import { encodeBase64 } from '@/api/encryption';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { addSessionInitialAccessTeamShareStatement, buildSessionInitialAccessCreateFields, materializeSessionInitialAccessCreateFields, prepareSessionInitialAccessDataKeyEnvelopes, readSessionTeamCredentialBindingUpdateRequiredError, readSessionInitialAccessServerError } from '@/api/session/sessionCreationInitialAccess';
+import { SessionCreationCorrespondenceConflictError } from '@/api/session/sessionCreationCorrespondenceConflictError';
 
 /** One HTTP boundary for the API client's and seeded creator's Session birth. */
 export async function postSessionCreationRequest<T>(params: Readonly<{
@@ -34,6 +35,10 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
 }>): Promise<AxiosResponse<T>> {
   params.signal?.throwIfAborted();
   const refuseConfirmedRollback = (status: number, data: unknown): void => {
+    if (status === 409 && data !== null && typeof data === 'object'
+      && 'error' in data && data.error === 'session-managed-target-busy') {
+      throw new SessionCreationCorrespondenceConflictError();
+    }
     const rollback = readHomeDomainConfirmedRollbackV1(status, data);
     if (rollback) throw createHttpStatusError(status, 'Session creation transaction rolled back', rollback.code);
   };

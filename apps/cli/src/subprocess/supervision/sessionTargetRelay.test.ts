@@ -11,6 +11,7 @@ import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/nod
 
 import { spawnSupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { resolveProcessCustodySupportExecutable } from './processCustody';
 
 import { SESSION_HOLDER_ADOPT_ENV_KEY, resolveAgentSessionHolderLaunch, type SessionHolderChild } from './sessionHolder';
 import { SESSION_TARGET_PLACEMENT_ENV_KEY, connectSessionTarget, serveSessionTargetRelay, type SessionTargetOperations } from './sessionTargetRelay';
@@ -72,12 +73,19 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session targ
             socketPath: join(directory, 'relay.sock') });
         const targetRoot = join(directory, 'target-workspace');
         await mkdir(join(targetRoot, 'sub'), { recursive: true });
+        const helperPath = resolveProcessCustodySupportExecutable();
+        if (!helperPath) throw new Error('The publicly prepared custody helper is required');
+        const lockPath = join(directory, '.live');
+        const probeLive = () => new Promise<number | null>((resolve, reject) => {
+            const probe = spawn(helperPath, ['file-lock', '-n', '-x', lockPath, '--', 'true'], { stdio: 'ignore' });
+            probe.once('error', reject); probe.once('close', resolve);
+        });
         // Target-native launch facts from the daemon's launch step: the Agent's executable in the target,
         // its environment (credential home delivered into the target), and the workspace root there.
         sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
             id: 'managed:row-1', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
             launch: { executables: { [process.execPath]: process.execPath }, env: { HAPPIER_TEST_AGENT_HOME: '/target/agent-home' },
-                workspace: { hostRoot: directory, targetRoot } } });
+                workspace: { hostRoot: directory, targetRoot }, lockPath, lockExecutable: helperPath } });
 
         const launch = resolveAgentSessionHolderLaunch({ role: 'primary' });
         expect(launch).toMatchObject({ kind: 'spawn', executablePath: holderExecutable, target: { id: 'managed:row-1' } });
@@ -98,9 +106,11 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session targ
         await expect.poll(() => output.trim().split('\n').filter(Boolean).length, { timeout: 10_000 }).toBe(31);
         expect(JSON.parse(output.split('\n')[0]!)).toEqual({ cwd: join(targetRoot, 'sub'), home: '/target/agent-home', leaked: null });
         expect(channels.length).toBeGreaterThanOrEqual(1);
+        expect(await probeLive()).not.toBe(0);
 
         await supervised.dispose();
         await supervised.handle.waitForExit();
+        expect(await probeLive()).toBe(0);
         session.abort();
         await expect.poll(() => existsSync(socketPath)).toBe(false);
         await expect.poll(() => channels.every(channel => channel.exitCode !== null || channel.signalCode !== null)).toBe(true);

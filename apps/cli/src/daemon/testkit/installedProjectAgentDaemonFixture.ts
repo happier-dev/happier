@@ -51,7 +51,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   controller?: PluginReloadController,
   requesterOptions?: Partial<Pick<Parameters<typeof createRequesterSessionRuntimeContext>[0], 'resolveQualifiedConnectedAccountV4Support'>>
   & { reattachedFromDiskMarker?: true }
-    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'processEnv' | 'openTeamCredentialProviderBinding' | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady'>>
+    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'resolveSessionSpawnDirectTargetTransport' | 'processEnv' | 'openTeamCredentialProviderBinding' | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady'>>
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'managedProviderOperationAuthority'
       | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'externalSessionHostOperationOwner' | 'runtimeActionExecute'>>
     & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'accountActionCredentials' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods' | 'agentIsolationEnabled'>
@@ -149,6 +149,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     await skillStore.collectSkillCache({ libraryDigests: [] });
   });
   const daemon = await startDaemonSessionControlRuntime({ machineId: 'machine', serverId, serverBaseUrl: 'https://session-home.test',
+    resolveSessionSpawnDirectTargetTransport: requesterOptions?.resolveSessionSpawnDirectTargetTransport,
     externalSessionHostOperationOwner: requesterOptions?.externalSessionHostOperationOwner,
     agentIsolation: requesterOptions?.agentIsolation,
     managedProviderOperationAuthority: requesterOptions?.managedProviderOperationAuthority,

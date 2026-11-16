@@ -1,0 +1,2 @@
+/** One portable guest SHA-256 function for target placement and release installation. */
+export const REMOTE_SHA256_FILE_FUNCTION = 'if command -v sha256sum >/dev/null 2>&1; then sha256_files() { sha256sum "$@"; }; elif command -v shasum >/dev/null 2>&1; then sha256_files() { shasum -a 256 "$@"; }; else echo "missing required command: sha256sum or shasum" >&2; exit 127; fi; sha256_file() { sha256_files "$1" | awk \'{print $1}\'; }';

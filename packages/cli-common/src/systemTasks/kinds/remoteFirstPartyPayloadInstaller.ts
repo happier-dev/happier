@@ -1,7 +1,8 @@
-import { access, open, readFile, stat } from 'node:fs/promises';
+import { access, readFile, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { basename, join } from 'node:path';
 import { quoteRemotePathWithHomeExpansion } from '../../ssh/shellQuote.js';
+import { readExecutablePlatform } from '../../process/executablePlatform.js';
 
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
@@ -139,18 +140,11 @@ async function resolveLocalCliPayloadRoot(root: string, target: Readonly<{ os: '
   const targetId = `${target.os}-${target.arch}`;
   const payloadRoot = await resolveLocalCliPayloadDirectory(root, target);
   const binaryPath = join(payloadRoot, getFirstPartyComponentCatalogEntry('happier-cli').binaryRelativePath);
-  let header: Buffer;
+  let executable: Awaited<ReturnType<typeof readExecutablePlatform>>;
   try {
     if (!(await stat(binaryPath)).isFile()) throw new Error('Not a file');
     await access(binaryPath, constants.R_OK);
-    const file = await open(binaryPath, 'r');
-    try {
-      // ELF e_machine and Mach-O cputype are in the fixed executable header.
-      // Read only that header, not a potentially large Bun executable.
-      const bytes = Buffer.alloc(20);
-      const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
-      header = bytes.subarray(0, bytesRead);
-    } finally { await file.close(); }
+    executable = await readExecutablePlatform(binaryPath);
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       throw new SystemTaskExecutionError('guest_payload_missing', `The local CLI payload has no executable for ${targetId}.`);
@@ -159,13 +153,8 @@ async function resolveLocalCliPayloadRoot(root: string, target: Readonly<{ os: '
   }
   // An explicit operator script is interpreted on the guest. Native payloads
   // must match its ABI even when the guest could emulate a foreign executable.
-  if (header.subarray(0, 2).toString() === '#!') return payloadRoot;
-  const elf = header.length === 20 && header.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
-  const macho = header.length === 20 && header.readUInt32LE(0) === 0xfeedfacf;
-  const matches = (elf && target.os === 'linux' && header[4] === 2 && header[5] === 1
-    && header.readUInt16LE(18) === (target.arch === 'arm64' ? 183 : 62))
-    || (macho && target.os === 'darwin' && header.readUInt32LE(4) === (target.arch === 'arm64' ? 0x0100000c : 0x01000007));
-  if (!matches) {
+  if (executable === 'script') return payloadRoot;
+  if (executable?.os !== target.os || executable.arch !== target.arch) {
     throw new SystemTaskExecutionError('guest_architecture_unsupported', `The local CLI executable does not support ${targetId}. Prepare a matching guest payload and retry setup.`);
   }
   return payloadRoot;

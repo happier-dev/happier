@@ -106,6 +106,13 @@ export type RemoveMachineSetupInput = Omit<ApplyMachineSetupInput, 'setup' | 're
   plans: readonly MachineSetupEffectPlanV1[];
 }>;
 
+/** Unconfirmed physical settlement cannot publish a failed Setup or permit a
+ * new attempt. Both enrolled and bound targets consume this result owner. */
+export function isMachineSetupResultUnsettled(result: ActionExecuteResult): boolean {
+  return !result.ok && (result.errorCode === 'outcome_uncertain' || result.errorCode === 'outcome_unknown' || result.errorCode === 'stop_unconfirmed'
+    || result.errorCode === 'native_toolchain_termination_incomplete' || result.errorCode === 'plugin_exec_termination_incomplete');
+}
+
 /** The native owner normalizes shared tools/refs once; script bodies remain separate. */
 export function prepareMachineSetupStages(sources: readonly MachineSetupV1[], recipePlans?: NonNullable<MachineSetupPlanResultV1['recipePlans']>,
   exclusions: readonly MachineSetupExclusionV1[] = [], sourceChange?: ApplyMachineSetupInput['sourceChange'],

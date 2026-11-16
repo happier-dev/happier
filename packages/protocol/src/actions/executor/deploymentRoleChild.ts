@@ -206,15 +206,18 @@ export function retainHostReviewedChildCredentialScopeAdmissionV1(policy: HostRe
 }
 
 function matchesManagedOpaquePresetCustodianProof(proof: ManagedOpaquePresetCustodianProof | undefined,
-  parent: Pick<HostReviewedParentV1, 'actionId'>, context: ActionExecutorContext,
+  parent: Readonly<{ actionId: string; input: unknown }>, context: ActionExecutorContext,
   binding: NonNullable<ActionExecutorContext['externalActionExecutionAuthorization']>['binding'] | undefined): boolean {
+  const child = binding?.actionId === parent.actionId ? null : readProof(context, parent.actionId, parent.input);
+  const admittedChild = child?.rootActionId === binding?.actionId
+    && isHostAdmittedReviewedChildPolicyV1(child?.operation, parent.actionId, parent.input);
   if (!proof || !binding || !isManagedOpaquePresetReviewedChildRootActionV1(parent.actionId)
-    || binding.actionId !== parent.actionId
+    || (binding.actionId !== parent.actionId && !admittedChild)
     || binding.accountId !== proof.requesterAccountId
     || binding.custodianAccountId !== proof.custodianAccountId
     || context.runtimeAccountId !== proof.requesterAccountId
     || context.actionRequestId !== proof.requestId
-    || binding.requestId !== proof.requestId
+    || binding.requestId !== (admittedChild ? context.originalActionEnvelope?.requestId : proof.requestId)
     || binding.serverIdentityId !== proof.homeId
     || binding.machineId !== proof.controller.machineId
     || binding.installationId !== proof.controller.installationId
@@ -231,7 +234,7 @@ function matchesManagedOpaquePresetCustodianProof(proof: ManagedOpaquePresetCust
  * transport owns placement admission.
  */
 export function retainManagedOpaquePresetCustodianAdmissionV1(policy: HostReviewedChildPolicyV1,
-  params: Readonly<{ parent: Pick<HostReviewedParentV1, 'actionId'>; context: ActionExecutorContext;
+  params: Readonly<{ parent: Readonly<{ actionId: string; input: unknown }>; context: ActionExecutorContext;
     admission: ManagedOpaquePresetCustodianAdmissionV1 }>): HostReviewedChildPolicyV1 | null {
   const binding = params.context.externalActionExecutionAuthorization?.binding;
   if (!binding || !matchesManagedOpaquePresetCustodianProof({ ...params.admission,
@@ -446,8 +449,11 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   const callerProof = readProof(context, parent.actionId, parentInput);
   const parentProof = callerProof?.operation?.[deploymentRoleChild] === true
     && (!binding || binding.actionId === callerProof.rootActionId) ? callerProof : undefined;
+  const admittedParent = readHostAdmittedReviewedParentV1(context.hostReviewedChild);
+  const reviewAdmitted = params.admittedReview !== undefined || parentProof !== undefined
+    || admittedParent?.actionId === parent.actionId && sameStrictJsonValue(admittedParent.input, parentInput);
   const rootActionId = parentProof?.rootActionId ?? parent.actionId;
-  const reviewedChild = params.admittedReview && binding?.actionId === rootActionId
+  const reviewedChild = reviewAdmitted && binding?.actionId === rootActionId
     ? createReviewedChildProof(qualifiedActionId, child.role, proofInput, rootActionId,
       parentProof?.reviewedChild?.deploymentNativeAdmission ?? binding?.deploymentNativeAdmission, params.environmentId) : undefined;
   const proof: ChildProof = {
@@ -463,7 +469,7 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
     } : {}),
     operation: {
       ...(params.approvedBy ? { approvedBy: structuredClone(params.approvedBy), approvedRequestId: context.actionRequestId ?? undefined } : {}),
-      ...(params.admittedReview ? { [deploymentRoleChild]: true as const } : {}),
+      ...(reviewAdmitted ? { [deploymentRoleChild]: true as const } : {}),
       parent: { actionId: parent.actionId, input: parentInput as Record<string, JsonValue> },
       // Contributed operands can be any JSON value. Keep their single ordinary
       // Action envelope, not a scalar cast into the stored Workflow record shape.

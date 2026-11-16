@@ -457,27 +457,7 @@ export function createRemoteSshBootstrapMachineTaskKind(
         knownHostsMode,
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       });
-      const trust = trustResolution.status === 'prompt'
-        ? normalizeRemoteHostTrustResolution(trustResolution)
-        : trustResolution;
-
-      if (trust.status === 'prompt') {
-        if (shouldAutoAcceptHostTrust(parsedRemote, trust)) {
-          await trust.accept();
-        } else {
-          const answer = await ctx.prompt({
-            kind: trust.promptKind,
-            stepId: 'ssh.hostTrust',
-            message: trust.promptMessage,
-            data: trust.promptData,
-          }) as { trusted?: boolean };
-          if (answer?.trusted !== true) {
-            await trust.decline?.();
-            throw new SystemTaskExecutionError('host_trust_declined', 'SSH host trust was declined.');
-          }
-          await trust.accept();
-        }
-      }
+      await settleRemoteSshHostTrust(ctx, trustResolution, parsedRemote);
 
         ctx.emit({
           type: 'progress',
@@ -794,7 +774,7 @@ function parseRemoteBootstrapPromptResolution(
 }
 
 function shouldAutoAcceptHostTrust(
-  parsed: RemoteBootstrapMachineParams,
+  parsed: Pick<RemoteBootstrapMachineParams, 'promptResolution'>,
   trust: Extract<RemoteHostTrustResolution, { status: 'prompt' }>,
 ): boolean {
   const resolution = parsed.promptResolution?.hostTrust;
@@ -1251,4 +1231,31 @@ export function createRemoteNativeBootstrapMachineTaskKind(input: Readonly<{
       });
     },
   };
+}
+
+/** Settle the existing SSH host question without installing or enrolling a machine. */
+export async function settleRemoteSshHostTrust(ctx: Pick<InteractiveSystemTaskContext, 'prompt'>,
+  trustResolution: RemoteHostTrustResolution, parsed: Pick<RemoteBootstrapMachineParams, 'promptResolution'> = {}): Promise<void> {
+  const trust = trustResolution.status === 'prompt'
+    ? normalizeRemoteHostTrustResolution(trustResolution)
+    : trustResolution;
+
+  if (trust.status === 'prompt') {
+    if (shouldAutoAcceptHostTrust(parsed, trust)) {
+      await trust.accept();
+    } else {
+      const answer = await ctx.prompt({
+        kind: trust.promptKind,
+        stepId: 'ssh.hostTrust',
+        message: trust.promptMessage,
+        data: trust.promptData,
+      }) as { trusted?: boolean };
+      if (answer?.trusted !== true) {
+        await trust.decline?.();
+        throw new SystemTaskExecutionError('host_trust_declined', 'SSH host trust was declined.');
+      }
+      await trust.accept();
+    }
+  }
+
 }

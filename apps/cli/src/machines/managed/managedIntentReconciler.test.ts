@@ -2736,9 +2736,16 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.effects).toEqual([]);
         expect(test.waitForChange).not.toHaveBeenCalled();
     });
-    it('refuses unused retention for an unenrolled guest before opening its activity socket', async () => {
+    it.each(['ordinary', 'bound-live', 'bound-delay'] as const)(
+        'refuses unenrolled unused retention without an ended immediate Session scope before opening its activity socket (%s)', async kind => {
         const test = setup();
-        test.setMachine({ enrolledMachineId: undefined, retention: { kind: 'unused', afterMs: 60_000, effect: 'delete' } });
+        test.setMachine({ enrolledMachineId: undefined,
+            retention: { kind: 'unused', afterMs: kind === 'bound-live' ? 0 : 60_000, effect: 'delete' },
+            ...(kind === 'ordinary' ? {} : { acquisitionMode: 'resource-bound', creationScopeRetention: {
+                effect: 'delete', source: { kind: 'session', sessionId: 'source-session' },
+                ...(kind === 'bound-delay' ? { endedAt: 1, afterMs: 60_000 } : {}),
+            } }),
+        });
         // Network allocation is forbidden for a refusal already established by the retained row.
         const socket = vi.spyOn(activitySocket, 'createUserScopedSocketConnection').mockImplementation(() => {
             throw new Error('Unexpected activity socket allocation');

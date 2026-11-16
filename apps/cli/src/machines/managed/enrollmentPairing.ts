@@ -19,7 +19,7 @@ type ManagedEnrollmentResponseOwner = Readonly<{
 }>;
 
 async function assertManagedEnrollmentResponse(
-  input: ManagedEnrollmentResponseOwner,
+  input: Omit<ManagedEnrollmentResponseOwner, 'enrollmentAccountId'>,
   authorization: unknown,
   phase: 'answer' | 'delivery',
   prompt: Readonly<{ kind: string; promptId?: string }>,
@@ -52,7 +52,7 @@ async function assertManagedEnrollmentResponse(
 
 /** Every managed installer answer, not just secret delivery, belongs to this task's creation. */
 export function createManagedEnrollmentResponseValidation(
-  input: ManagedEnrollmentResponseOwner,
+  input: Omit<ManagedEnrollmentResponseOwner, 'enrollmentAccountId'>,
   prompt: Readonly<{ kind: string; promptId?: string }>,
 ): (authorization: unknown) => Promise<void> {
   return async (authorization) => {

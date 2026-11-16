@@ -11,11 +11,16 @@ import { createBoundMachineSetupTarget } from './boundMachineSetup';
 it.skipIf(process.platform === 'win32')('executes quoted target commands and delivers configuration through the existing bootstrap transport', async () => {
   const home = await mkdtemp(join(tmpdir(), 'bound-setup-'));
   try {
+    const transportCommands: string[] = [];
     const target = createBoundMachineSetupTarget({ administrator: false, transport: {
       // OS transport boundary: a local shell stands in for the guest shell.
       exec: async request => {
+        transportCommands.push(request.command);
         try {
-          const result = await promisify(execFile)('/bin/sh', ['-c', request.command], { signal: request.signal });
+          const child = promisify(execFile)('/bin/sh', ['-c', request.command], { signal: request.signal });
+          child.child.stdin?.on('error', () => {});
+          child.child.stdin?.end(request.input);
+          const result = await child;
           return { status: 0, stdout: result.stdout, stderr: result.stderr };
         } catch (error) {
           if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'number') throw error;
@@ -29,6 +34,11 @@ it.skipIf(process.platform === 'win32')('executes quoted target commands and del
     const value = "literal ' $() `command`\nvalue";
     expect(await target.run({ command: '/bin/sh', args: ['-c', 'printf %s "$VALUE"'], cwd, env: { VALUE: value } }))
       .toMatchObject({ exitCode: 0, stdout: value });
+    expect(transportCommands[0]).toBe('exec sh -s');
+    const binaryInput = await target.run({ command: '/usr/bin/od', args: ['-An', '-tx1'], cwd, env: {},
+      stdin: new Uint8Array([0, 1, 10, 255]) });
+    expect(binaryInput.exitCode).toBe(0);
+    expect(binaryInput.stdout.replace(/\s/g, '')).toBe('00010aff');
     expect(await target.run({ command: '/bin/sh', args: ['-c', 'exit 19'], cwd, env: {} }))
       .toMatchObject({ exitCode: 19 });
     const path = join(cwd, '.config/mise/config.toml');

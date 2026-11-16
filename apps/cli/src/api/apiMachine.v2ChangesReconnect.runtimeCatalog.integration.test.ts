@@ -669,9 +669,13 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             changes = [entry];
             await sync();
             expect(notifications).toEqual([{ kind: 'managed', managedIds: [entry.entityId] }]);
-            changes = [{ ...entry, kind: 'machine', entityId: machine.id, hint: null }];
+            // The selected target listener must see controller withdrawal even
+            // when the same feed page also names an unrelated managed row.
+            changes = [entry, { ...entry, kind: 'machine', entityId: machine.id, hint: null }];
             await sync();
-            expect(notifications).toEqual([{ kind: 'managed', managedIds: [entry.entityId] }, { kind: 'currentness' }]);
+            // Completeness also schedules the managed row's changed policy;
+            // currentness-only would merely refresh an existing operation.
+            expect(notifications).toEqual([{ kind: 'managed', managedIds: [entry.entityId] }, undefined]);
             changes = [entry];
             await sync('reconnect');
             expect(notifications).toHaveLength(3);

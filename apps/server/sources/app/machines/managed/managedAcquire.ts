@@ -20,7 +20,8 @@ import {
     storeOpaquePresetLaunch,
     inManagedMachinePublicationTx,
 } from "./managedRows";
-import { resolveMachinePresetForAcquireInTx, validateManagedLaunchInTx } from "./machinePresetService";
+import { hasMachinePresetAcquireCapacityInTx, resolveMachinePresetForAcquireInTx, validateManagedLaunchInTx } from "./machinePresetService";
+import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
 
@@ -59,11 +60,17 @@ export async function admitManagedAcquire(params: Readonly<{
     try {
         const request = ManagedAdmissionInputV1Schema.parse(params.input);
         const review = resolveManagedAcquireReviewV1(request.input);
+        if (request.acquisitionMode && (!isManagedPresetAcquireInputV1(request.input) || !review.controller
+            || params.custodianAccountId !== params.requesterAccountId)) {
+            throw new ManagedMachineError('invalid_request');
+        }
         if (!review.controller && params.custodianAccountId !== params.requesterAccountId) throw new ManagedMachineError('permission_denied');
         // Dedupe includes the private continuation without retaining its prompt,
         // attachments, or startup instructions in a Home-visible resource row.
         const admittedInputIdentity = { computeInput: projectManagedAcquisitionComputeInput(request.input),
-            continuation: request.continuationPresent ? { requestEnvelopeDigest: params.requestEnvelopeDigest } : null };
+            continuation: request.continuationPresent ? { requestEnvelopeDigest: params.requestEnvelopeDigest } : null,
+            ...(request.acquisitionMode ? { acquisitionMode: request.acquisitionMode } : {}),
+            ...(request.reuseIdle ? { reuseIdle: true } : {}) };
         const existingAdmission = async (tx: Tx) => {
             const existing = await tx.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: { homeId: review.homeId, admittedActionRequestId: request.requestId } } });
             if (!existing) return null;
@@ -104,18 +111,20 @@ export async function admitManagedAcquire(params: Readonly<{
             if (existing) return existing;
             if (isManagedPresetAcquireInputV1(request.input)) {
                 const selected = await resolveMachinePresetForAcquireInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication,
-                    ...request.input.selection, boundController: review.controller });
+                    ...request.input.selection, boundController: review.controller,
+                    ...(request.reuseIdle ? { checkCapacity: false } : {}) });
                 if (selected.kind === "conflict") throw new ManagedMachineError("request_conflict");
                 if (selected.kind === "refused") throw new ManagedMachineError(selected.code);
                 if (selected.delegated && params.managedAcquireDelegation !== true) throw new ManagedMachineError('permission_denied');
-                if (!sameManagedInput(selected.preset.controller, review.controller)) throw new ManagedMachineError("controller_retired");
+                const controller = selected.preset.controller ?? (request.acquisitionMode ? review.controller : undefined);
+                if (!sameManagedInput(controller, review.controller)) throw new ManagedMachineError("controller_retired");
+                if (request.acquisitionMode && selected.custodianAccountId !== params.custodianAccountId) throw new ManagedMachineError('permission_denied');
                 const preset = { id: selected.preset.id, revision: selected.preset.revision } as const;
                 const presetContent = ManagedAdmissionPresetContentV1Schema.parse(selected.presetContent);
                 const presetContentOverride = request.input.presetContentOverride;
                 if (presetContentOverride && presetContentOverride.content.t !== presetContent.content.t) {
                     throw new ManagedMachineError('account_mode_mismatch');
                 }
-                const controller = selected.preset.controller;
                 const retention = selected.preset.retention
                     ?? (selected.delegated ? request.presetPolicy?.retention : review.retention ?? request.presetPolicy?.retention);
                 const wakeOnAcceptedMessage = selected.preset.wakeOnAcceptedMessage
@@ -129,6 +138,30 @@ export async function admitManagedAcquire(params: Readonly<{
                 }
                 if (request.presetPolicy && (!sameManagedInput(request.presetPolicy.retention, retention)
                     || request.presetPolicy.wakeOnAcceptedMessage !== wakeOnAcceptedMessage)) throw new ManagedMachineError('permission_denied');
+                if (request.reuseIdle) {
+                    if (retention.kind !== 'until-delete' || request.input.creationScopeRetention) throw new ManagedMachineError('invalid_request');
+                    // Selection is optimistic. Session birth locks this exact row and
+                    // excludes an incumbent nonarchived Session before guest execution.
+                    // A never-born resource remains owned by its creating request's Retry.
+                    const idle = await tx.managedMachine.findFirst({ where: {
+                        homeId: review.homeId, custodianAccountId: selected.custodianAccountId,
+                        controllerMachineId: controller?.machineId, controllerInstallationId: controller?.installationId,
+                        presetId: preset.id, presetRevision: preset.revision, allocation: 'bound', creationState: 'active',
+                        archivedAt: null, desired: 'start', birthSessions: {
+                            some: { archivedAt: { not: null } }, none: { archivedAt: null },
+                        },
+                        AND: [{ admittedInput: jsonPathEquals(['acquisitionMode'], 'resource-bound') },
+                            { admittedInput: jsonPathEquals(['reuseIdle'], true) },
+                            { admittedInput: jsonPathEquals(['enrollmentAccountId'], params.requesterAccountId) },
+                            { retention: jsonPathEquals(['kind'], 'until-delete') }],
+                    }, orderBy: { createdAt: 'asc' } });
+                    if (idle) return { machine: projectManagedMachineOpaque(idle),
+                        presetContent: readManagedOpaquePresetContent(idle), replayed: true };
+                    if (!await hasMachinePresetAcquireCapacityInTx(tx, { homeId: review.homeId,
+                        id: preset.id, maximum: selected.preset.simultaneousLimit?.maximum ?? null })) {
+                        throw new ManagedMachineError('preset_limit_reached');
+                    }
+                }
                 const scopeChoice = request.input.creationScopeRetention;
                 const creationScopeRetention = scopeChoice ? { ...scopeChoice } : undefined;
                 const admittedInput = { ...admittedInputIdentity,

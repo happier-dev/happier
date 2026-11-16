@@ -132,7 +132,7 @@ export function buildOpenSshCommand(params: Readonly<{
     portFlag: '-p',
   });
 
-  const nextArgs = [...args, ...(params.tty ? ['-t'] : []), target, ...params.remoteCommand];
+  const nextArgs = [...args, ...(params.tty === false ? ['-T'] : params.tty ? ['-t'] : []), target, ...params.remoteCommand];
   const commandLabel = params.remoteCommand.length >= 2
     ? `${params.remoteCommand[0]} ${params.remoteCommand[1]} …`
     : `${params.remoteCommand[0] ?? 'remote'} …`;

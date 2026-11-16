@@ -1,4 +1,5 @@
 export type { CommandInvocation } from './windows/resolveWindowsCommandInvocation.js';
+export { readExecutablePlatform, type ExecutablePlatform } from './executablePlatform.js';
 export { parseDaemonLockSnapshot, type DaemonLockRecord, type DaemonLockSnapshot } from './daemonLockRecord.js';
 export { closeStdioWhenCommandExits } from './closeStdioWhenCommandExits.js';
 export { readLocalHostIdentity, readPreferredHostName, readHomeHostFact } from './homeHostFact.js';

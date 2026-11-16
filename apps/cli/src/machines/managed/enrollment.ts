@@ -10,14 +10,15 @@ import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/manage
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { SavedSecretRefV1 } from '@happier-dev/protocol';
 import type { ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { ManagedMachineControllerError } from './controllerErrors';
+import { createManagedBootstrapTaskRunner } from './enrollmentTask';
 import { REMOTE_HOME_ENROLLMENT_POLL_INTERVAL_MS, TERMINAL_AUTH_POLL_INTERVAL_MS, type HomeOperationRetry } from '@/api/client/retryHomeOperation';
-import { createManagedEnrollmentPairingDelivery, createManagedEnrollmentResponseValidation } from './enrollmentPairing';
+import { createManagedEnrollmentPairingDelivery } from './enrollmentPairing';
 import { installManagedNativePayload } from './enrollmentPayload';
 import { resolveManagedEnrollmentSshTrust } from './enrollmentSshTrust';
 import type { StoredCredentials } from '@/persistence';
 
 export { projectManagedMachineBootstrapPrompt };
+export { runManagedSessionSshTrust } from './enrollmentSshTrust';
 export type { ManagedNativeBootstrapIO };
 export type ManagedMachineEnrollmentDependencies = Readonly<{
   readCurrentManagedRow(): Promise<ManagedMachineFullV1>;
@@ -47,7 +48,6 @@ export async function runManagedMachineEnrollment(input: Readonly<{
   onPrompt?: (prompt: ManagedMachineBootstrapPromptV1 | null) => void;
 }>, deps: ManagedMachineEnrollmentDependencies): Promise<Readonly<{ machineId: string }>> {
   const correlation = input.correlation;
-  let liveTaskId: string | undefined;
   const approveLocalAuthRequest: PortableEnrollmentDependencies['approveLocalAuthRequest'] = async ({ publicKey, pairing, supportsTokenOnly, signal }) => {
     input.signal?.throwIfAborted();
     const { approveTerminalAuthRequest } = await import('@/auth/terminalAuthApproval');
@@ -55,57 +55,12 @@ export async function runManagedMachineEnrollment(input: Readonly<{
       accountCredentials: input.accountCredentials, signal });
   };
   let responseOwner: Parameters<typeof createManagedEnrollmentPairingDelivery>[0] | undefined;
+  const taskRunner = createManagedBootstrapTaskRunner({ ...input, readResponseOwner: () => responseOwner });
   const runPreparedTask = async (kind: InteractiveSystemTaskKind) => {
-    const { getLiveSystemTasksRunnerAdapter } = await import('@/capabilities/systemTasks/liveSystemTasksRunner');
-    const owner = getLiveSystemTasksRunnerAdapter();
-    let taskFailure: ManagedMachineControllerError | SystemTaskExecutionError | undefined;
-    const task = await owner.startAdmitted({ run: async (ctx) => {
-      try {
-        return await kind.run({ ...ctx, emit: (event) => {
-          ctx.emit(event);
-          input.onEvent?.(event);
-        }, prompt: async (prompt) => {
-          input.onPrompt?.(projectManagedMachineBootstrapPrompt(prompt));
-          const data = prompt.data;
-          const promptId = data && typeof data === 'object' && !Array.isArray(data) && 'promptId' in data
-            && typeof data.promptId === 'string' ? data.promptId : undefined;
-          try { return await ctx.prompt({ ...prompt, ...(responseOwner ? {
-            validateResponse: createManagedEnrollmentResponseValidation(responseOwner, { kind: prompt.kind, promptId }),
-          } : {}) }); } finally { input.onPrompt?.(null); }
-        } });
-      } catch (error) {
-        if (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError) {
-          taskFailure = error;
-        }
-        if (error instanceof ManagedMachineControllerError) {
-          throw new SystemTaskExecutionError(error.code, error.code);
-        }
-        throw error;
-      }
-    } });
-    liveTaskId = task.taskId;
-    const cancel = () => { void owner.cancel(task); };
-    input.signal?.addEventListener('abort', cancel, { once: true });
-    if (input.signal?.aborted) cancel();
-    try {
-      await input.onTask?.({ ...task, kind: 'remote.ssh.bootstrapMachine.v1' });
-      const result = await owner.wait(task);
-      if (!result.ok) {
-        // The task keeps its existing public error contract; its invoking
-        // operation retains the original typed failure and its private cause.
-        if (taskFailure && result.error?.code === taskFailure.code) throw taskFailure;
-        throw new SystemTaskExecutionError(result.error?.code ?? 'system_task_failed', result.error?.message ?? 'Managed guest setup failed.');
-      }
-      const data = result.data;
-      const machineId = data && typeof data === 'object' && !Array.isArray(data) && 'machineId' in data && typeof data.machineId === 'string' ? data.machineId : '';
-      if (!machineId) throw new SystemTaskExecutionError('machine_registration_unconfirmed', 'Managed guest registration was not confirmed.');
-      input.signal?.throwIfAborted();
-      return { machineId };
-    } catch (error) {
-      await owner.cancel(task);
-      await owner.wait(task);
-      throw error;
-    } finally { input.signal?.removeEventListener('abort', cancel); }
+    const data = await taskRunner.run(kind);
+    const machineId = data && typeof data === 'object' && !Array.isArray(data) && 'machineId' in data && typeof data.machineId === 'string' ? data.machineId : '';
+    if (!machineId) throw new SystemTaskExecutionError('machine_registration_unconfirmed', 'Managed guest registration was not confirmed.');
+    return { machineId };
   };
   return await runSharedManagedMachineEnrollment({ ...input,
     channel: input.channel ?? resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label,
@@ -120,7 +75,7 @@ export async function runManagedMachineEnrollment(input: Readonly<{
         ? TERMINAL_AUTH_POLL_INTERVAL_MS : REMOTE_HOME_ENROLLMENT_POLL_INTERVAL_MS, signal: input.signal }),
     createPairingDelivery: enrollmentAccountId => {
       if (!input.operationId) return undefined;
-      responseOwner = { correlation: input.homeCorrelation, operationId: input.operationId, enrollmentAccountId, readTaskId: () => liveTaskId,
+      responseOwner = { correlation: input.homeCorrelation, operationId: input.operationId, enrollmentAccountId, readTaskId: taskRunner.readTaskId,
         reviewedChild: input.reviewedChild };
       return createManagedEnrollmentPairingDelivery(responseOwner);
     },

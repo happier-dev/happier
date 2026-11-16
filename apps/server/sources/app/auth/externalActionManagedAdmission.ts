@@ -5,6 +5,9 @@ import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionReque
 import { ExternalActionManagedRecoveryAdmissionV1Schema, ExternalActionManagedControlAdmissionV1Schema, projectExternalActionManagedAdmissionV1,
     type ExternalActionManagedControlAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
@@ -156,11 +159,21 @@ export async function qualifyExternalActionManagedAccountExecutorInTx(reader: Tx
 
 /** A creation root addresses its retained allocation, never its controller's other guests. */
 export async function readExternalActionManagedAcquireResourceInTx(reader: Tx,
-    binding: ExternalActionExecutionAuthorizationBindingV1): Promise<StoredManagedMachine | null> {
-    if (binding.actionId !== 'machines.managed.acquire') return null;
-    const row = await reader.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: {
-        homeId: binding.serverIdentityId, admittedActionRequestId: binding.requestId,
-    } } });
+    binding: ExternalActionExecutionAuthorizationBindingV1,
+    reviewedChild?: Readonly<{ managedId: string; requestId?: string; inputDigest: string }>): Promise<StoredManagedMachine | null> {
+    if (reviewedChild ? binding.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 : binding.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1) return null;
+    const row = reviewedChild
+        ? await reader.managedMachine.findUnique({ where: { id: reviewedChild.managedId } })
+        : await reader.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: {
+            homeId: binding.serverIdentityId, admittedActionRequestId: binding.requestId,
+        } } });
+    if (reviewedChild && row) {
+        const retained = readManagedAdmissionState(row.admittedInput);
+        if (row.homeId !== binding.serverIdentityId
+            || reviewedChild.requestId !== undefined && reviewedChild.requestId !== row.admittedActionRequestId
+            || retained.requestEnvelopeDigest !== binding.requestEnvelopeDigest || !retained.computeInput
+            || computeActionInputApprovalDigestV1(MANAGED_ACQUIRE_ACTION_ID_V1, retained.computeInput) !== reviewedChild.inputDigest) return null;
+    }
     if (!row || row.custodianAccountId !== binding.custodianAccountId
         || (row.controllerMachineId === null ? resolveManagedMachineRole(row, binding.accountId) !== 'manage'
             : row.controllerMachineId !== binding.machineId || row.controllerInstallationId !== binding.installationId)

@@ -22,7 +22,7 @@ import { createHappierJsonExecutorFromTextRunner } from '../executors/happierJso
 import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '../executors/enrollMachineFlowExecutor.js';
 import { resolveLocalHappierCommandTimeoutMs } from '../executors/happierJsonExecutorFromTextRunner.js';
 import type { InteractiveSystemTaskPromptRequest } from '../interactiveTaskKinds.js';
-import { parseSshKnownHostLine } from './sshKnownHostLine.js';
+import { readManagedSshTrustedHostKey } from './sshHostTrustResolution.js';
 import { buildManagedNativeGuestCommand, probeManagedNativeGuestPlatform, startManagedNativeGuestDaemon } from '../../machines/managed/nativeBootstrap.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
@@ -152,14 +152,9 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     if (!sameStrictJsonValue(carrier.credentialRef, row.bootstrapCredentialRef) || !deps.runSshTask) {
       throw new SystemTaskExecutionError('credential_unavailable', 'The retained bootstrap credential is unavailable.');
     }
-    const host = carrier.port && carrier.port !== 22 ? `[${carrier.address}]:${carrier.port}` : carrier.address;
     // Generating a credential does not prove the provider installed its host
     // identity. Native images (including Lume) retain their own SSH host keys.
-    const trustedHostKey = carrier.hostKeySource === 'retained-credential' && input.guestHostPublicKey !== undefined
-      ? parseSshKnownHostLine(`${host} ${input.guestHostPublicKey}`)?.line : undefined;
-    if (carrier.hostKeySource === 'retained-credential' && trustedHostKey === undefined) {
-      throw new SystemTaskExecutionError('credential_unavailable', 'The installed guest host identity is unavailable.');
-    }
+    const trustedHostKey = readManagedSshTrustedHostKey(carrier, input.guestHostPublicKey);
     return await deps.runSshTask({ configuration, reviewedChild: input.reviewedChild, carrier, assertCurrent, deliverAuthApproval, onEnrollmentDeadline,
       ...(trustedHostKey === undefined ? {} : { trustedHostKey }),
       prepareDedicatedBootstrap: async ({ exec, binaryPath, context, channel }) => {

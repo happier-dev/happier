@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { DeploymentDomainCaddyFailureDetailsV1Schema } from '../../deployments/deploymentDomainCaddyFailureV1.js';
+import { ManagedControllerRequestFailureDetailsV1Schema } from './v1.js';
+
+it('retains the exact bound Setup report path while rejecting URL, query and credential-bearing diagnostic paths', () => {
+  const failure = { kind: 'managedControllerRequest', category: 'transport', path: '/v1/machines/setup/report' };
+  expect(ManagedControllerRequestFailureDetailsV1Schema.parse(failure)).toEqual(failure);
+  for (const path of ['https://home.example/v1/machines/setup/report', '/v1/machines/setup/report?token=secret', '/v1/machines/setup/credentials']) {
+    expect(ManagedControllerRequestFailureDetailsV1Schema.safeParse({ ...failure, path }).success).toBe(false);
+  }
+});
 
 import {
   ACTION_OPERATION_RPC_METHODS_V1,
@@ -75,10 +84,15 @@ describe('Action operation v1 contract', () => {
   it('retains content-free finite command failure facts in V2 and omits them for V1 readers', () => {
     const details = { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23, signal: 0 };
     const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.setup.apply',
+      actor: { actorKind: 'agent', sessionId: 'requesting-session', onBehalfOf: { serverId: 'requester-home', accountId: 'requester' } },
       state: 'failed', startedAt: 110, settledAt: 120,
       error: { errorCode: 'machine_setup_setup_failed', error: 'machine_setup_setup_failed', details } });
     expect(ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify(snapshot))).error?.details).toEqual(details);
-    expect(projectActionOperationSnapshotForV1Reader(snapshot).error).not.toHaveProperty('details');
+    const current = ActionOperationGetV1ResponseSchema.parse(JSON.parse(JSON.stringify({ kind: 'found', operation: snapshot })));
+    expect(current).toMatchObject({ kind: 'found', operation: { actor: snapshot.actor } });
+    const predecessor = projectActionOperationSnapshotForV1Reader(snapshot);
+    expect(predecessor).not.toHaveProperty('actor');
+    expect(predecessor.error).not.toHaveProperty('details');
     for (const extra of [{ body: 'PRIVATE_COMMAND' }, { env: { TOKEN: 'PRIVATE_ENV' } }, { stdout: 'PRIVATE_OUTPUT' }]) {
       expect(ActionOperationFailureV1Schema.safeParse({ ...snapshot.error, details: { ...details, ...extra } }).success).toBe(false);
     }

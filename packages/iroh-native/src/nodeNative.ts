@@ -198,14 +198,16 @@ export function resolveSessionHolderExecutablePath({
 }
 
 /**
- * The static musl holder for a Session execution target (a Linux container of
- * `arch`), shipped by every build in `native/targets/` whatever the host.
+ * Linux targets use the static musl holder shipped by every build. A Darwin
+ * target uses the existing published host holder when that artifact is present.
  */
 export function resolveSessionTargetHolderExecutablePath({
   arch,
+  platform = 'linux',
   packageRoot = resolveDefaultIrohNodePackageRoot(),
   pathExists = existsSync,
-}: Readonly<{ arch: 'x64' | 'arm64'; packageRoot?: string; pathExists?: (path: string) => boolean }>): string | null {
+}: Readonly<{ arch: 'x64' | 'arm64'; platform?: 'linux' | 'darwin'; packageRoot?: string; pathExists?: (path: string) => boolean }>): string | null {
+  if (platform === 'darwin') return resolveSessionHolderExecutablePath({ platform, arch, packageRoot, pathExists });
   const path = join(packageRoot, 'native', 'targets', `happier-session-holder.linux-${arch}-musl`);
   return pathExists(path) ? path : null;
 }

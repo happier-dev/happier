@@ -185,7 +185,7 @@ describe('portable managed reconciliation', () => {
         expect(result).toMatchObject({ allocation: 'bound', resource });
         expect(result.enrolledMachineId).toBeUndefined();
         expect(run.events).toEqual(['prepare-roles', 'submit', 'report-bound']);
-        expect(run.roles).toEqual(['acquire', 'check', 'bootstrap']);
+        expect(run.roles).toEqual(['check', 'acquire', 'bootstrap']);
         expect(prepared).toBe(true);
     });
 

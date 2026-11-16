@@ -107,7 +107,7 @@ describe('Session holder bootstrap in a managed guest', () => {
     });
     // The guest is this host's shell in a private HOME: putFile and exec are the
     // provider's two native roles, implemented at the OS boundary.
-    async function guest() {
+    async function guest(os: 'linux' | 'darwin' = 'linux') {
         const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
         const { tmpdir } = await import('node:os');
         const { join } = await import('node:path');
@@ -120,7 +120,9 @@ describe('Session holder bootstrap in a managed guest', () => {
                 puts.push(path);
                 await writeFile(path, tamperUpload ? Buffer.from('tampered') : bytes);
             },
-            exec: ({ command }) => new Promise((resolve, reject) => {
+            exec: ({ command }) => command.startsWith('uname')
+                ? Promise.resolve({ status: 0, stdout: `${os === 'darwin' ? 'Darwin' : 'Linux'}\nx86_64\n${home}\n`, stderr: '' })
+                : new Promise((resolve, reject) => {
                 const child = spawn('sh', ['-c', command], { env: { ...process.env, HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] });
                 let stdout = ''; let stderr = '';
                 child.stdout.on('data', (chunk: Buffer) => { stdout += chunk; });
@@ -134,10 +136,10 @@ describe('Session holder bootstrap in a managed guest', () => {
     const artifact = (text: string) => ({ bytes: new TextEncoder().encode(text), sha256: createHash('sha256').update(text).digest('hex') });
     const artifacts = { holder: artifact('#!/bin/sh\necho holder\n'), helper: artifact('#!/bin/sh\necho helper\n') };
 
-    it('places both binaries once, digest-checked, in ~/.happier/holder/<version>/, and reuses them', async () => {
-        const g = await guest();
+    it.each(['linux', 'darwin'] as const)('places both %s binaries once, digest-checked, and reuses them', async os => {
+        const g = await guest(os);
         try {
-            const resolve = vi.fn(async (platform: Readonly<{ os: string; arch: string }>) => { expect(platform.os).toBe('linux'); return artifacts; });
+            const resolve = vi.fn(async (platform: Readonly<{ os: string; arch: string }>) => { expect(platform.os).toBe(os); return artifacts; });
             const placed = await ensureManagedGuestSessionHolder({ io: g.io, version: '0.3.0-test', resolveArtifacts: resolve });
             expect(placed.holderPath).toBe(`${g.home}/.happier/holder/0.3.0-test/happier-session-holder`);
             expect(placed.helperPath).toBe(`${g.home}/.happier/holder/0.3.0-test/happier-process-custody`);
@@ -150,8 +152,8 @@ describe('Session holder bootstrap in a managed guest', () => {
         } finally { await g.dispose(); }
     });
 
-    it('refuses a payload whose digest does not verify and promotes nothing', async () => {
-        const g = await guest();
+    it.each(['linux', 'darwin'] as const)('refuses a tampered %s payload and promotes nothing', async os => {
+        const g = await guest(os);
         try {
             g.tamper();
             await expect(ensureManagedGuestSessionHolder({ io: g.io, version: 'v', resolveArtifacts: async () => artifacts }))

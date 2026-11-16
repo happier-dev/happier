@@ -2,8 +2,20 @@ import { resolveSshHostTrust } from '@happier-dev/protocol/ssh/hostTrust';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { parseSshKnownHostLine, type ParsedSshKnownHostLine } from './sshKnownHostLine.js';
 import type { SystemTaskSshConnectionConfig } from './relayRuntimeKinds.js';
+import type { ManagedBootstrapCarrierV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 
 export { extractFirstScannedSshKnownHostLine, parseSshKnownHostLine, type ParsedSshKnownHostLine } from './sshKnownHostLine.js';
+
+/** Only a provider-installed retained identity supplies an automatic managed SSH pin. */
+export function readManagedSshTrustedHostKey(carrier: Extract<ManagedBootstrapCarrierV1, { kind: 'ssh' }>, guestHostPublicKey?: string): string | undefined {
+  const host = carrier.port && carrier.port !== 22 ? `[${carrier.address}]:${carrier.port}` : carrier.address;
+  const trustedHostKey = carrier.hostKeySource === 'retained-credential' && guestHostPublicKey !== undefined
+    ? parseSshKnownHostLine(`${host} ${guestHostPublicKey}`)?.line : undefined;
+  if (carrier.hostKeySource === 'retained-credential' && trustedHostKey === undefined) {
+    throw new SystemTaskExecutionError('credential_unavailable', 'The installed guest host identity is unavailable.');
+  }
+  return trustedHostKey;
+}
 
 export type ResolvedSshHostTrust =
   | Readonly<{

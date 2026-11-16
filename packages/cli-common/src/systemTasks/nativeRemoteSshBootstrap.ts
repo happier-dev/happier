@@ -13,10 +13,11 @@ export {
 } from './ssh/remoteSelfDownloadFirstPartyInstallCommand.js';
 export {
   createRemoteSshBootstrapMachineTaskKind,
+  settleRemoteSshHostTrust,
   createRemoteNativeBootstrapMachineTaskKind,
   parseRemoteBootstrapMachineParams,
 } from './kinds/remoteSshBootstrapMachineKind.js';
-export { resolveSshBootstrapHostKeyPin } from './kinds/sshHostTrustResolution.js';
+export { resolveSshBootstrapHostKeyPin, readManagedSshTrustedHostKey } from './kinds/sshHostTrustResolution.js';
 export {
   runManagedMachineEnrollment,
   projectManagedMachineBootstrapPrompt,

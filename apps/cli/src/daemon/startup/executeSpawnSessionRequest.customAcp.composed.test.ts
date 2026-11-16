@@ -32,6 +32,7 @@ import { resolveAccountConfiguredAcpLaunchForAgent } from '@/agent/runtime/regis
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { executeSpawnSessionRequest, type ExecuteSpawnSessionRequestParams } from './executeSpawnSessionRequest';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { prepareCgroupProcessLaunchScope } from '../platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import { SpawnSessionControlErrorResponseSchema, projectSpawnSessionControlErrorResponse } from '@/session/shared/spawnSessionContract';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -430,11 +431,76 @@ function readFixtureCatalogResponse(path: string) {
 }
 
 describe('Custom ACP fresh daemon launch composition', () => {
-  it('uses the admitted bootstrap requester for both isolation and managed target custody', async () => {
+  it('refuses a busy local guest at Session birth before any target preparation or runner launch', async () => {
+    const effects: string[] = [];
+    const originalFetch = globalThis.fetch;
+    onTestFinished(() => { vi.stubGlobal('fetch', originalFetch); });
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {
+        encryption: { storagePolicy: 'plaintext_only', allowAccountOptOut: false, defaultAccountMode: 'plain' },
+      } }));
+      if (path === '/v1/account/profile') return Response.json({ id: 'df38-owner' });
+      throw new Error(`Unexpected busy target Home fetch ${path}`);
+    });
+    const previousPost = vi.mocked(axios.post).getMockImplementation()!;
+    vi.mocked(axios.post).mockImplementation(async (url, body, config) => {
+      if (new URL(String(url)).pathname === '/v1/sessions') {
+        effects.push('birth');
+        throw Object.assign(new Error('Incumbent Session owns this guest'), { isAxiosError: true,
+          response: { status: 409, data: { error: 'session-managed-target-busy' } } });
+      }
+      return previousPost(url, body, config);
+    });
+    const launch = params('alpha', async () => { effects.push('runner'); return false; });
+    launch.openManagedSessionTarget = async () => { effects.push('guest'); throw new Error('Guest must not open before birth'); };
+    const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'local-sandbox', creationKey: 'busy' });
+    const correspondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1, sessionCreationTag, recipe: {
+      execution: { machineId: 'df38-machine', directory: { kind: 'path', path: storage.home } },
+      organization: { folderId: null, tagIds: [] }, agentTarget: launch.options.agentTarget,
+      modelSelection: null, profileId: null, requestedPermissionMode: null, agentModeId: null,
+      configuration: null, connectedServices: null, capabilitySelection: null, transcriptStorage: 'persisted', terminal: null,
+      agentSessionStartupInstructionsMarkerV1: null, checkout: null,
+      managedCreation: { homeId: 'srv_df38_owner', managedId: 'busy-local', controller: { machineId: 'df38-machine', installationId: 'local-installation' } },
+    } });
+    const result = await executeSpawnSessionRequest({ ...launch, options: { ...launch.options,
+      sessionCreationTag, sessionCreationCorrespondence: correspondence,
+      managedTargetPlacement: { managedId: 'busy-local', workspaceRoot: '/workspace' } } });
+    expect(result).toMatchObject({ type: 'error', errorDetail: { code: 'creation_conflict' } });
+    expect(effects).toEqual(['birth']);
+  });
+  it.each(['failure', 'transport-disconnect', 'person-cancel'] as const)(
+    'uses the admitted bootstrap requester and retains failed target birth for Retry unless the person Cancels (%s)', async outcome => {
     const attribution = { serverId: 'df38-home', accountId: 'df38-owner', machineId: 'df38-machine', installationId: 'requester-installation' };
+    const sessionId = 'clocalcustody0000000000001';
+    const targetEffects: string[] = [];
+    const mutations: SessionTurnMutationV1[] = [];
+    let row: V2SessionByIdResponse['session'] | undefined;
+    const previousPost = vi.mocked(axios.post).getMockImplementation()!;
+    vi.mocked(axios.post).mockImplementation(async (url, body, config) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/sessions') {
+        targetEffects.push('birth');
+        row = createFixturePlainSession(body, sessionId);
+        return homeResponse({ session: row, created: true, organizationPlacement: { folderId: null, tagIds: [] } });
+      }
+      if (path === `/v1/sessions/${sessionId}/turns/mutations`) {
+        const mutation = SessionTurnMutationV1Schema.parse(body);
+        mutations.push(mutation);
+        return homeResponse({ ok: true, receipt: { v: mutation.v, sessionId, mutationId: mutation.mutationId,
+          action: mutation.action, ...('turnId' in mutation ? { turnId: mutation.turnId } : {}),
+          observedAt: mutation.observedAt, appliedAt: mutation.observedAt, decision: 'applied' } });
+      }
+      if (path === `/v2/sessions/${sessionId}/archive` && row) {
+        row = { ...row, archivedAt: 123 };
+        return homeResponse({ success: true, archivedAt: 123 });
+      }
+      return previousPost(url, body, config);
+    });
     const previousRead = vi.mocked(axios.get).getMockImplementation()!;
     vi.mocked(axios.get).mockImplementation(async (url, config) => {
       const path = new URL(String(url)).pathname;
+      if (path === `/v2/sessions/${sessionId}` && row) return homeResponse({ session: row });
       if (path === '/v1/account/profile') return homeResponse({ id: attribution.accountId });
       if (path === '/v2/account/settings') return homeResponse({ content: { t: 'plain', v: {} }, version: 0 });
       return previousRead(url, config);
@@ -467,15 +533,36 @@ describe('Custom ACP fresh daemon launch composition', () => {
       const launch = params('alpha', async () => { throw new Error('Target refusal must prevent runner launch'); });
       const isolated: unknown[] = [];
       const placed: string[] = [];
+      const placedBirths: unknown[] = [];
+      const operations = createHostActionOperationRuntime({ machineId: attribution.machineId,
+        resolveAccountId: async () => attribution.accountId, generateOperationId: () => 'placed-target-operation',
+        supportsCoreCancellation: () => true });
       launch.prepareAgentIsolationMember = async input => { isolated.push(input.requesterWorkAttributionV1); return undefined; };
-      launch.openManagedSessionTarget = async input => { placed.push(input.requesterAccountId); throw Object.assign(new Error('unavailable'), { code: 'managed_target_unavailable' }); };
-      const result = await executeSpawnSessionRequest({ ...launch, requesterSessionRuntimeContext: requester,
-        options: { ...launch.options, requesterSessionBootstrap: prepared.admitted,
-          requesterWorkAttributionV1: { ...attribution, accountId: 'different-inherited-account' },
-          managedTargetPlacement: { managedId: 'unavailable-target', workspaceRoot: '/workspace' } } });
+      launch.openManagedSessionTarget = async input => {
+        targetEffects.push('guest'); placed.push(input.requesterAccountId);
+        placedBirths.push(input);
+        if (outcome === 'person-cancel') expect(operations.runner.cancel({ accountId: attribution.accountId,
+          machineId: attribution.machineId }, 'placed-target-operation')).toEqual({ kind: 'requested' });
+        throw Object.assign(new Error('unavailable'), { code: 'managed_target_unavailable',
+          ...(outcome === 'transport-disconnect' ? { name: 'AbortError' } : {}) });
+      };
+      let result: Awaited<ReturnType<typeof executeSpawnSessionRequest>> | undefined;
+      await operations.observeExecution({ actionId: 'session.spawn_new', input: {}, actionRequestId: 'placed-target-request',
+        execute: async operation => {
+          result = await executeSpawnSessionRequest({ ...launch, requesterSessionRuntimeContext: requester,
+            options: { ...launch.options, requesterSessionBootstrap: prepared.admitted, projectSetupOperation: operation,
+              spawnNonce: 'target-holder-nonce',
+              requesterWorkAttributionV1: { ...attribution, accountId: 'different-inherited-account' },
+              managedTargetPlacement: { managedId: 'unavailable-target', workspaceRoot: '/workspace' } } });
+          return { ok: true, result: {} };
+        } });
       expect(result).toMatchObject({ type: 'error', errorDetail: { code: 'managed_target_unavailable' } });
       expect(isolated).toEqual([prepared.admitted.attribution]);
       expect(placed).toEqual([prepared.admitted.attribution.accountId]);
+      expect(placedBirths).toEqual([expect.objectContaining({ sessionId: 'target-holder-nonce', committedSessionId: sessionId })]);
+      expect(targetEffects).toEqual(['birth', 'guest']);
+      expect(mutations.map(mutation => mutation.action)).toEqual(['begin', 'fail']);
+      expect(row?.archivedAt).toBe(outcome === 'person-cancel' ? 123 : null);
     } finally {
       if (requester) await releaseUnretainedRequesterSessionRuntimeContext(requester, []);
       vi.stubGlobal('fetch', originalFetch);
@@ -543,7 +630,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
     } finally { memberRunAs.resolvedPath = ''; memberRunAs.sessionLaunches = null; input.destroy(); output.destroy(); }
   });
 
-  it.each(['quota', 'target', 'attach'] as const)('settles a committed Home Voice carrier, but refuses an unavailable target before birth (%s)', async refusal => {
+  it.each(['quota', 'target', 'attach'] as const)('settles a committed Home Voice carrier after a pre-runner refusal (%s)', async refusal => {
     const sessionId = 'cvoiceretrydir111200000001';
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const accountId = '92fe29be-575b-4551-8e90-edaacc3ec7a4';
@@ -647,10 +734,11 @@ describe('Custom ACP fresh daemon launch composition', () => {
         ...(refusal === 'target' ? { managedTargetPlacement: { managedId: 'unavailable-target', workspaceRoot: '/workspace' } } : {}),
       } });
       if (refusal === 'target') {
-        expect(row).toBeUndefined();
+        expect(row).toMatchObject({ archivedAt: 123 });
         expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
           errorDetail: { kind: 'launch_error', code: 'managed_target_unavailable' } });
-        expect(mutations).toEqual([]);
+        expect(mutations.filter(mutation => mutation.action === 'fail')).toEqual([expect.objectContaining({ issue: expect.objectContaining({ status: 'failed' }) })]);
+        expect((await directories.listRecords()).find(record => record.allocationId === allocation.allocationId)).toMatchObject({ sessionId });
         return;
       }
       if (refusal === 'attach') {

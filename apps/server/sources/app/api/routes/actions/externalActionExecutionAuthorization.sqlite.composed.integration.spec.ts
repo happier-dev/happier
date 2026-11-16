@@ -11168,6 +11168,154 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it('admits the exact reviewed Session preset Acquire through real Home HTTP', async () => {
+        const { fixture, homeId, controller, input: oneOff } = await createManagedNativeAuthFixture();
+        await db.machine.update({ where: { id: controller.machineId }, data: {
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] },
+                requesterExecutionIsolation: { protocolVersions: [1] } },
+        } });
+        const { storeOpaquePresetLaunch } = await import('@/app/machines/managed/managedRows');
+        const { ManagedAcquireInputV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+        const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: fixture.account.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            name: '', launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', recipients: [],
+                content: { t: 'plain', v: { v: 1, name: 'Session sandbox', launch: oneOff.selection.launch } } }) } });
+        const acquisition = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId,
+            id: preset.id, revision: preset.revision }, controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const rootInput = SessionSpawnNewInputV2Schema.parse({ creationKey: crypto.randomUUID(),
+            executionTarget: { serverId: homeId, machineId: controller.machineId }, directory: { kind: 'path', path: '/workspace' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
+        const actionId = 'session.spawn_new';
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(),
+            target: { kind: 'machine', machineId: controller.machineId }, input: rootInput });
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, registerManagedMachineRoutes);
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        try {
+            const authorization = await mint(app, fixture, actionId, envelope, token);
+            const projected = await projectExternalActionRequesterHttpAuthorization({ authorization,
+                serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: origin, target: authorization.binding.target,
+                installationId: controller.installationId, privateKey: fixture.keyPair.secretKey, isCurrent: async () => true });
+            if (!projected) throw new Error('session_acquire_http_projection_required');
+            const result = await invokeHostReviewedChildV1({ parent: { actionId, input: rootInput },
+                context: { surface: 'cli', serverId: homeId, runtimeAccountId: fixture.account.id,
+                    externalActionTarget: authorization.binding.target, externalActionExecutionAuthorization: projected },
+                child: { action: 'machines.managed.acquire', role: 'acquire-session-sandbox', input: acquisition },
+                admittedReview: { action: 'machines.managed.acquire', role: 'acquire-session-sandbox', surface: 'cli' },
+                execute: async (_input, context) => {
+                    const port = context.externalActionExecutionAuthorization?.requesterHttpProjection;
+                    if (!port) throw new Error('session_acquire_child_http_required');
+                    const path = '/v1/machines/managed/controller/admit';
+                    const body = { input: acquisition, requestId: crypto.randomUUID(), continuationPresent: false, acquisitionMode: 'resource-bound',
+                        presetPolicy: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, originalActionEnvelope: envelope };
+                    const { acquisitionMode: _resourceBoundMode, ...ordinaryEnrollmentBody } = body;
+                    for (const [changed, expectedStatus] of [
+                        [ordinaryEnrollmentBody, 401],
+                        [{ ...body, input: { ...acquisition, selection: { ...acquisition.selection, revision: preset.revision + 1 } } }, 401],
+                        [{ ...body, input: { ...acquisition, controller: { ...controller, installationId: crypto.randomUUID() } } }, 401],
+                        [{ ...body, originalActionEnvelope: { ...envelope, requestId: crypto.randomUUID() } }, 401],
+                        [{ ...body, presetPolicy: { ...body.presetPolicy, wakeOnAcceptedMessage: true } }, 403],
+                    ] as const) {
+                        const changedHeaders = await port.createRequestHeaders({ effectActionId: 'machines.managed.acquire', method: 'POST', path, body: changed });
+                        if (!changedHeaders) throw new Error('session_acquire_negative_headers_required');
+                        const refused = await app.inject({ method: 'POST', url: path, payload: changed, headers: changedHeaders });
+                        expect(refused.statusCode, refused.body).toBe(expectedStatus);
+                    }
+                    const headers = await port.createRequestHeaders({ effectActionId: 'machines.managed.acquire', method: 'POST', path, body });
+                    if (!headers) throw new Error('session_acquire_child_headers_required');
+                    const otherAccount = await db.account.create({ data: { encryptionMode: 'plain' } });
+                    const otherToken = await auth.createToken(otherAccount.id, undefined, { kind: 'account', authority: 'present_user' });
+                    for (const changedHeaders of [
+                        { ...headers, [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: 'invalid-installation-signature' },
+                        { ...headers, [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: otherToken },
+                        { ...headers, [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1({ kind: 'machine', machineId: crypto.randomUUID() }) },
+                    ]) {
+                        const refused = await app.inject({ method: 'POST', url: path, payload: body, headers: changedHeaders });
+                        expect(refused.statusCode, refused.body).toBe(401);
+                    }
+                    const wrongRole = await invokeHostReviewedChildV1({ parent: { actionId, input: rootInput },
+                        context: { surface: 'cli', serverId: homeId, runtimeAccountId: fixture.account.id,
+                            externalActionTarget: authorization.binding.target, externalActionExecutionAuthorization: projected },
+                        child: { action: 'machines.managed.acquire', role: 'unrelated-placement', input: acquisition },
+                        admittedReview: { action: 'machines.managed.acquire', role: 'unrelated-placement', surface: 'cli' },
+                        execute: async (_input, childContext) => {
+                            const signed = await childContext.externalActionExecutionAuthorization?.requesterHttpProjection
+                                ?.createRequestHeaders({ effectActionId: 'machines.managed.acquire', method: 'POST', path, body });
+                            if (!signed) throw new Error('wrong_role_headers_required');
+                            const refused = await app.inject({ method: 'POST', url: path, payload: body, headers: signed });
+                            expect(refused.statusCode, refused.body).toBe(401);
+                            return { ok: true, result: null };
+                        } });
+                    expect(wrongRole).toMatchObject({ ok: true });
+                    const admitted = await app.inject({ method: 'POST', url: path, payload: body, headers });
+                    expect(admitted.statusCode, admitted.body).toBe(200);
+                    expect(admitted.json()).toMatchObject({ machine: { preset: { id: preset.id, revision: preset.revision },
+                        controller, acquisitionMode: 'resource-bound', allocation: 'unsubmitted' }, replayed: false });
+                    const correlation = { homeId, managedId: admitted.json().machine.id, expectedIntentRevision: 0,
+                        requestId: body.requestId, controller };
+                    const submitPath = '/v1/machines/managed/controller/submit';
+                    const submitHeaders = await port.createRequestHeaders({ effectActionId: 'machines.managed.acquire',
+                        method: 'POST', path: submitPath, body: correlation });
+                    if (!submitHeaders) throw new Error('session_acquire_submit_headers_required');
+                    const submitted = await app.inject({ method: 'POST', url: submitPath, payload: correlation, headers: submitHeaders });
+                    expect(submitted.statusCode, submitted.body).toBe(200);
+                    const reportPath = '/v1/machines/managed/controller/report';
+                    const resource = { contributionRef: oneOff.selection.launch.provider, schemaVersion: 1, value: { id: 'session-resource' } };
+                    const report = { ...correlation, result: { kind: 'bound' }, presetContent: { t: 'plain', v: {
+                        v: 1, name: 'Session sandbox', launch: oneOff.selection.launch, nativeResult: { kind: 'bound', resource } } } };
+                    for (const changed of [{ ...report, managedId: crypto.randomUUID() }, { ...report, requestId: crypto.randomUUID() }]) {
+                        const signed = await port.createRequestHeaders({ effectActionId: 'machines.managed.acquire', method: 'POST', path: reportPath, body: changed });
+                        if (!signed) throw new Error('session_acquire_report_negative_headers_required');
+                        const refused = await app.inject({ method: 'POST', url: reportPath, payload: changed, headers: signed });
+                        expect(refused.statusCode, refused.body).toBe(401);
+                    }
+                    const reportHeaders = await port.createRequestHeaders({ effectActionId: 'machines.managed.acquire', method: 'POST', path: reportPath, body: report });
+                    if (!reportHeaders) throw new Error('session_acquire_report_headers_required');
+                    const settled = await app.inject({ method: 'POST', url: reportPath, payload: report, headers: reportHeaders });
+                    expect(settled.statusCode, settled.body).toBe(200);
+                    expect(settled.json()).toMatchObject({ machine: { allocation: 'bound', acquisitionMode: 'resource-bound' } });
+                    const refuseAnotherRoot = async (rootAction: string, rootEnvelope: ExternalActionRequestEnvelopeV1,
+                        rootToken = token, rootAccountId = fixture.account.id, childInput = acquisition) => {
+                        const otherAuthorization = await mint(app, fixture, rootAction, rootEnvelope, rootToken);
+                        const otherProjection = await projectExternalActionRequesterHttpAuthorization({ authorization: otherAuthorization,
+                            serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: origin, target: otherAuthorization.binding.target,
+                            installationId: controller.installationId, privateKey: fixture.keyPair.secretKey, isCurrent: async () => true });
+                        if (!otherProjection) throw new Error('other_root_projection_required');
+                        const child = await invokeHostReviewedChildV1({ parent: { actionId: rootAction, input: rootEnvelope.input },
+                            context: { surface: 'cli', serverId: homeId, runtimeAccountId: rootAccountId,
+                                externalActionTarget: otherAuthorization.binding.target, externalActionExecutionAuthorization: otherProjection },
+                            child: { action: 'machines.managed.acquire', role: 'acquire-session-sandbox', input: childInput },
+                            admittedReview: { action: 'machines.managed.acquire', role: 'acquire-session-sandbox', surface: 'cli' },
+                            execute: async (_input, childContext) => {
+                                const signed = await childContext.externalActionExecutionAuthorization?.requesterHttpProjection
+                                    ?.createRequestHeaders({ effectActionId: 'machines.managed.acquire', method: 'POST', path: reportPath, body: report });
+                                if (!signed) throw new Error('other_root_report_headers_required');
+                                const refused = await app.inject({ method: 'POST', url: reportPath, payload: report, headers: signed });
+                                expect(refused.statusCode, refused.body).toBe(401);
+                                return { ok: true, result: null };
+                            } });
+                        expect(child).toMatchObject({ ok: true });
+                    };
+                    // A freshly issued token for the same root still cannot
+                    // substitute a different reviewed child operand.
+                    await refuseAnotherRoot(actionId, envelope, token, fixture.account.id, {
+                        ...acquisition, selection: { ...acquisition.selection, revision: preset.revision + 1 } });
+                    await refuseAnotherRoot(actionId, { ...envelope, requestId: crypto.randomUUID() });
+                    await refuseAnotherRoot('machines.managed.inspect', ExternalActionRequestEnvelopeV1Schema.parse({
+                        v: 1, requestId: crypto.randomUUID(), target: envelope.target, input: { homeId, managedId: correlation.managedId } }));
+                    expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: fixture.account.id,
+                        machineId: controller.machineId, principal: { kind: 'account', accountId: otherAccount.id }, level: 'view' })))
+                        .toMatchObject({ kind: 'saved' });
+                    expect(await resolveMachineAdmission({ actorAccountId: otherAccount.id, machineId: controller.machineId, requiredRole: 'use' }))
+                        .toMatchObject({ kind: 'admitted' });
+                    await refuseAnotherRoot(actionId, { ...envelope, requestId: crypto.randomUUID() }, otherToken, otherAccount.id);
+                    return { ok: true, result: null };
+                } });
+            expect(result).toMatchObject({ ok: true });
+        } finally { await app.close(); }
+    });
+
     async function createManagedNativeAuthFixture(rebuild = false) {
         const fixture = await createFixture({ qualifiedPat: false });
         const homeId = await getOrCreateServerIdentityId();

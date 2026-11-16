@@ -3,7 +3,7 @@ import { readManagedCreationBirthInTx } from './managedCreationBirth';
 import { isSessionSpawnNewActionIdV1, getManagedBoundSetupReportActionIdsV1 } from '@happier-dev/protocol/actions/actionIds';
 import { ManagedControllerResizeReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { reportManagedResize } from './managedMutations';
-import { isManagedEnrollmentRecoveryChildV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isManagedEnrollmentRecoveryChildV1, MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { z } from 'zod/mini';
 import type { Fastify } from "@/app/api/types";
@@ -382,12 +382,15 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             });
             authority = requireManagedControllerProof(request, machine.id, ['machines.managed.acquire']);
         } else { requireManagedPresentUser(request); authority = { requestId: request.body.requestId, custodianAccountId: request.userId }; }
-        const { requestId, custodianAccountId } = authority;
+        const reviewedSessionAcquire = isSessionSpawnNewActionIdV1(request.externalActionExecutionAuthorizationBinding?.actionId ?? '')
+            && request.externalActionReviewedChildAdmission?.actionId === MANAGED_ACQUIRE_ACTION_ID_V1;
+        const custodianAccountId = authority.custodianAccountId;
+        const requestId = reviewedSessionAcquire ? request.body.requestId : authority.requestId;
         if (requestId !== request.body.requestId) throw new ManagedMachineError("request_conflict");
         const requestEnvelopeDigest = request.externalActionExecutionRequestEnvelopeDigest ?? request.body.requestEnvelopeDigest;
         if (!requestEnvelopeDigest || (request.externalActionExecutionRequestEnvelopeDigest && request.body.requestEnvelopeDigest
             && request.externalActionExecutionRequestEnvelopeDigest !== request.body.requestEnvelopeDigest)) throw new ManagedMachineError('permission_denied');
-        if (request.body.presetPolicy !== undefined || request.body.originalActionEnvelope !== undefined) {
+        if (!reviewedSessionAcquire && (request.body.presetPolicy !== undefined || request.body.originalActionEnvelope !== undefined)) {
             const root = request.body.originalActionEnvelope;
             const projected = root && readExternalActionManagedAcquireAdmission(root);
             const binding = request.externalActionExecutionAuthorizationBinding;

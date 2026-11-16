@@ -11,7 +11,7 @@ import { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMach
 import { createManagedNativeInvocation, reconcileManagedAcquisitionIdentity, reconcileManagedMachine, type ManagedMachineReconciliationInput } from './reconcile';
 import { createManagedGuestActivityTransport } from './managedActivityTransport';
 import { waitForChangeOrDeadline } from '@/daemon/lifecycle/waitForChangeOrDeadline';
-import { canPrepareManagedRetentionPolicy, hasSubmittedManagedRetentionEffect } from './managedRetentionPolicy';
+import { canPrepareManagedRetentionPolicy, hasEndedBoundSessionDeletion, hasSubmittedManagedRetentionEffect } from './managedRetentionPolicy';
 import { assertManagedDeleteNativeResult, canObserveAcceptedManagedDelete, observeAcceptedManagedDelete } from './deleteObservation';
 import { createManagedNativeObservationWait, executeManagedMachinePowerIntent, executeManagedMachineDeleteIntent, prepareManagedMachineDeleteIntent, reconcileManagedBoundNativeIntent } from '@happier-dev/cli-common/machines/managed';
 import type { MachineProvisionerRenewResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -161,6 +161,7 @@ export async function prepareManagedRetentionPolicy(params: Readonly<{
         throw new ManagedMachineControllerError('admission_unavailable');
     }
     if (purpose.evidence || continuesRetention) return { purpose };
+    if (hasEndedBoundSessionDeletion(machine)) return { purpose };
     if (machine.retention.kind === 'unused' && !machine.enrolledMachineId) {
         throw new ManagedMachineControllerError('admission_unavailable');
     }
@@ -401,7 +402,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
             throw new ManagedMachineControllerError('admission_unavailable');
         }
         const unusedPolicy = options.policyPurpose?.kind === 'retention' && machine.retention.kind === 'unused';
-        const needsIdle = machine.desiredWhen === 'after-idle' || unusedPolicy;
+        const needsIdle = machine.desiredWhen === 'after-idle' || unusedPolicy && !hasEndedBoundSessionDeletion(machine);
         const idleDuration = unusedPolicy && machine.retention.kind === 'unused'
             ? machine.retention.afterMs : machine.desiredAfterMs ?? 0;
         for (;;) {

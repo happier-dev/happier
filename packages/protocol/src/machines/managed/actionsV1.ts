@@ -676,6 +676,7 @@ export const ManagedControllerSubmitOutputV1Schema = lazyZodSchema(() => z.stric
 /** Only the admitted controller captures this source-owned metadata before native spend. */
 export const ManagedControllerSubmitInputV1Schema = lazyZodSchema(() => z.strictObject({ ...current(),
   credentials: mini.optional(RetainedManagedCredentialSelectionsV1Schema),
+  presetContent: z.optional(ManagedControllerPresetContentV1Schema),
 }));
 export const ManagedBootstrapCredentialCreateV1Schema = lazyZodSchema(() => z.strictObject({ ...current(), credential: SharedSavedSecretCreateInputV1Schema }));
 

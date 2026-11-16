@@ -20,6 +20,8 @@ mod mcp_relay;
 mod outbox;
 mod platform;
 mod session_mcp;
+#[cfg(any(target_os = "linux", target_os = "macos", all(test, unix)))]
+mod process_custody;
 mod streams;
 mod terminal;
 

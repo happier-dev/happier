@@ -3,6 +3,13 @@ import type { RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/man
 
 type RetentionPolicyMachine = Pick<ManagedMachineV1, 'retention' | 'submittedNativeEffect' | 'desired' | 'creationScopeRetention'>;
 
+/** Home's archived Session scope ends an unenrolled Fresh target's use. */
+export function hasEndedBoundSessionDeletion(machine: RetentionPolicyMachine & Pick<ManagedMachineV1, 'acquisitionMode'>): boolean {
+    return machine.acquisitionMode === 'resource-bound' && machine.creationScopeRetention?.source?.kind === 'session'
+        && machine.creationScopeRetention.endedAt !== undefined && machine.creationScopeRetention.effect === 'delete'
+        && machine.retention.kind === 'unused' && machine.retention.effect === 'delete' && machine.retention.afterMs === 0;
+}
+
 /** Native OS boundary; unavailable preparation preserves the existing provider API path. */
 export type ManagedGuestLocalStop = Readonly<{
     prepare(effect: NonNullable<RetentionCapabilitiesV1['guestLocalStop']>, signal?: AbortSignal):

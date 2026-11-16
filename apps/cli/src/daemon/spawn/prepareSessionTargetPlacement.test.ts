@@ -167,21 +167,32 @@ describe('Session placement on a managed target at spawn', () => {
 });
 
 describe('Session target launch step (credentials + Agent CLI into the target)', () => {
+    const macho = (arch: 'x64' | 'arm64') => {
+        const header = Buffer.alloc(64);
+        header.writeUInt32LE(0xfeedfacf, 0);
+        header.writeUInt32LE(arch === 'arm64' ? 0x0100000c : 0x01000007, 4);
+        return header;
+    };
     async function localGuest() {
         const guest = await mkdtemp(join(tmpdir(), 'stl-guest-')); directories.push(guest);
         const { spawn } = await import('node:child_process');
         const { Duplex } = await import('node:stream');
         const { writeFile: writeFileAsync } = await import('node:fs/promises');
+        const { resolveProcessCustodySupportExecutable } = await import('@/subprocess/supervision/processCustody');
+        const helperPath = resolveProcessCustodySupportExecutable();
+        if (!helperPath) throw new Error('The publicly prepared custody helper is required');
         const channels: string[][] = [];
         // A fixture guest at the provider boundary: like the real Session authority, nothing runs once its signal ended,
         // and a file put does not create parent directories (devcontainer/Coder `cat > path`).
-        const target = { id: 'managed:row-1', holderPath: `${guest}/h`, helperPath: `${guest}/p`, socketDirectory: `${guest}/run`, home: guest,
+        const target = { id: 'managed:row-1', holderPath: `${guest}/h`, helperPath, socketDirectory: `${guest}/run`, home: guest,
             platform: { os: 'linux' as const, arch: process.arch === 'arm64' ? 'arm64' as const : 'x64' as const, home: guest },
             exec: (command: string, signal?: AbortSignal) => new Promise<{ status: number; stdout: string; stderr: string }>((resolve, reject) => {
                 if (signal?.aborted) { reject(Object.assign(new Error('authority ended'), { code: 'intent_changed' })); return; }
                 const child = spawn('sh', ['-c', command], { stdio: ['ignore', 'pipe', 'pipe'] });
-                let stdout = ''; child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
-                child.once('error', reject); child.once('close', status => resolve({ status: status ?? 1, stdout, stderr: '' }));
+                let stdout = ''; let stderr = '';
+                child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+                child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+                child.once('error', reject); child.once('close', status => resolve({ status: status ?? 1, stdout, stderr }));
             }),
             putFile: async (path: string, bytes: Uint8Array) => { await writeFileAsync(path, bytes); },
             openChannel: (argv: readonly string[]) => {
@@ -206,6 +217,48 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
         await writeFileAsync(join(home, 'plugins', 'p', 'x.js'), '');
         return home;
     }
+
+    it('copies a matching Mach-O Agent CLI into a Darwin target and replaces a corrupted target copy', async () => {
+        const { guest, target, channels } = await localGuest();
+        const { writeFile, readFile } = await import('node:fs/promises');
+        const command = join(guest, 'controller-agent');
+        await writeFile(command, macho(target.platform.arch));
+        const input = { target: { ...target, platform: { ...target.platform, os: 'darwin' as const } },
+            runnerEnvironment: {}, materializedRoot: null, requestAuthMaterializedRoot: null, agent: null,
+            agentCommand: command, workspace: { hostRoot: '/h', targetRoot: '/t' }, onSessionEnd: () => undefined };
+        const launch = await deliverSessionTargetLaunch({ ...input, sessionKey: 'darwin-local' });
+        const placed = launch.executables[command]!;
+        expect(await readFile(placed)).toEqual(macho(target.platform.arch));
+        await writeFile(placed, 'corrupted');
+        const retry = await deliverSessionTargetLaunch({ ...input, sessionKey: 'darwin-retry' });
+        expect(retry.executables[command]).toBe(placed);
+        expect(await readFile(placed)).toEqual(macho(target.platform.arch));
+        expect(channels).toHaveLength(2);
+    });
+
+    it('keeps a Darwin Agent home live across runner exit without an external flock utility', async () => {
+        const { guest, target } = await localGuest();
+        const { spawn } = await import('node:child_process');
+        const ended = sessionEnd();
+        const launch = await deliverSessionTargetLaunch({ target: { ...target, platform: { ...target.platform, os: 'darwin' },
+            exec: (command, signal) => command.includes('command -v flock')
+                ? Promise.resolve({ status: 0, stdout: '', stderr: '' }) : target.exec(command, signal) },
+            sessionKey: 'darwin-live', onSessionEnd: ended.onSessionEnd, agent: null,
+            runnerEnvironment: {}, materializedRoot: null, requestAuthMaterializedRoot: null, agentCommand: null,
+            workspace: { hostRoot: '/h', targetRoot: '/t' } });
+        const base = join(guest, '.happier', 'sessions', 'darwin-live');
+        expect(launch.lockPath).toBe(join(base, '.live'));
+        const agent = spawn(launch.lockExecutable!, ['file-lock', '-s', launch.lockPath!, '--', 'sh', '-c', 'printf "ready\\n"; read -r end'], { stdio: ['pipe', 'pipe', 'ignore'] });
+        try {
+            await new Promise<void>((resolve, reject) => { agent.once('error', reject); agent.stdout.once('data', () => resolve()); });
+            await ended.end();
+            expect(existsSync(base)).toBe(true);
+            agent.stdin.end();
+            await new Promise(resolve => agent.once('close', resolve));
+            await ended.end();
+            expect(existsSync(base)).toBe(false);
+        } finally { agent.kill(); }
+    });
 
     it('delivers only the provider-declared credential entries and the Agent CLI; the Session end removes them', async () => {
         const { guest, target, channels } = await localGuest();
@@ -253,7 +306,7 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
         const sessions = join(guest, '.happier', 'sessions');
         await mkdirAsync(join(sessions, 'crashed-1', 'agent-home'), { recursive: true });
         await mkdirAsync(join(sessions, 'live-1', 'agent-home'), { recursive: true });
-        const holder = spawn('flock', ['-s', join(sessions, 'live-1', '.live'), 'sleep', '30'], { stdio: 'ignore' });
+        const holder = spawn(target.helperPath, ['file-lock', '-s', join(sessions, 'live-1', '.live'), '--', 'sleep', '30'], { stdio: 'ignore' });
         try {
             await expect.poll(async () => (await readdirAsync(join(sessions, 'live-1'))).includes('.live')).toBe(true);
             await deliverSessionTargetLaunch({ target, sessionKey: 'spawn-3', onSessionEnd: () => undefined,
@@ -274,7 +327,7 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
             workspace: { hostRoot: '/h', targetRoot: '/t' } });
         const base = join(guest, '.happier', 'sessions', 'spawn-8');
         // The Session's Agent runs under the shared `.live` lock (as the target launch starts it) and outlives its runner.
-        const agent = spawn('flock', ['-s', launch.lockPath!, 'sleep', '30'], { stdio: 'ignore', detached: true });
+        const agent = spawn(launch.lockExecutable!, ['file-lock', '-s', launch.lockPath!, '--', 'sleep', '30'], { stdio: 'ignore', detached: true });
         try {
             await expect.poll(async () => (await readdirAsync(base)).includes('.live')).toBe(true);
             await ended.end();
@@ -287,8 +340,9 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
         await expect(readdirAsync(base)).rejects.toMatchObject({ code: 'ENOENT' });
     }, 60_000);
 
-    it('installs the Agent CLI for the target through the provider\'s Linux install recipe when this Machine\'s CLI cannot run there', async () => {
-        const { guest, target, channels } = await localGuest();
+    it.each(['linux', 'darwin'] as const)('installs the Agent CLI through its %s vendor recipe with the delivered login', async os => {
+        const { guest, target: nativeTarget, channels } = await localGuest();
+        const target = { ...nativeTarget, platform: { ...nativeTarget.platform, os } };
         const home = await agentHome();
         const { readFile: readFileAsync, writeFile: writeFileAsync } = await import('node:fs/promises');
         // This Machine's CLI is a launcher script (like Muse's), which no target can be handed.
@@ -299,7 +353,7 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
             + '&& chmod 700 "$HOME/.local/bin/fake-agent" && echo run >> "$HOME/recipe-runs"';
         const agentRuntime = { id: 'fake', title: 'Fake CLI', binaryName: 'fake-agent', knownUserBinDirSuffixes: ['.local/bin'],
             sourcePreferenceDefault: 'system-first' as const, managedInstall: null, manualInstallKind: 'vendor_recipe' as const,
-            manualInstallRecipes: { linux: [{ cmd: 'sh', args: ['-c', recipe] }] }, acceptsJavaScriptFileOverride: false };
+            manualInstallRecipes: { [os]: [{ cmd: 'sh', args: ['-c', recipe] }] }, acceptsJavaScriptFileOverride: false };
         const base = { target, runnerEnvironment: { CODEX_HOME: home }, materializedRoot: home, agent: leasedAgent('fake', ['auth.json'], agentRuntime),
             requestAuthMaterializedRoot: null, agentCommand: launcher, workspace: { hostRoot: '/h', targetRoot: '/t' } };
         const launch = await deliverSessionTargetLaunch({ ...base, sessionKey: 'spawn-5',
@@ -315,36 +369,37 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
 
         // A recipe that cannot complete in the target (missing tool, failed download) is a typed refusal.
         const { guest: other, target: bare } = await localGuest();
-        await expect(deliverSessionTargetLaunch({ ...base, target: bare, sessionKey: 'spawn-7',
-            agent: leasedAgent('fake', ['auth.json'], { ...agentRuntime, manualInstallRecipes: { linux: [{ cmd: 'sh', args: ['-c', 'exit 3'] }] } }),
+        await expect(deliverSessionTargetLaunch({ ...base, target: { ...bare, platform: { ...bare.platform, os } }, sessionKey: 'spawn-7',
+            agent: leasedAgent('fake', ['auth.json'], { ...agentRuntime, manualInstallRecipes: { [os]: [{ cmd: 'sh', args: ['-c', 'exit 3'] }] } }),
             onSessionEnd: () => undefined }))
             .rejects.toMatchObject({ code: 'agent_cli_target_unavailable' });
         expect(existsSync(join(other, '.local', 'bin', 'fake-agent'))).toBe(false);
     }, 60_000);
 
-    it('stages a GitHub-release Agent CLI for the target\'s architecture on this Machine and streams its declared files into the target once', async () => {
+    it.each(['linux', 'darwin'] as const)('stages a %s Agent release through its catalog and verifies all streamed files in the target', async os => {
         const { guest, target, channels } = await localGuest();
         const { mkdir: mkdirAsync, readFile: readFileAsync, writeFile: writeFileAsync } = await import('node:fs/promises');
         // The target runs the other CPU architecture than this Machine (arm64 container on an x64 host, or the reverse).
         const foreign = target.platform.arch === 'x64' ? 'arm64' as const : 'x64' as const;
-        const elf = (arch: 'x64' | 'arm64') => { const header = Buffer.alloc(64); header.writeUInt32BE(0x7f454c46, 0); header.writeUInt16LE(arch === 'arm64' ? 0xb7 : 0x3e, 18); return header; };
+        const elf = (arch: 'x64' | 'arm64') => { const header = Buffer.alloc(64); header.writeUInt32BE(0x7f454c46, 0); header[4] = 2; header[5] = 1; header.writeUInt16LE(arch === 'arm64' ? 0xb7 : 0x3e, 18); return header; };
+        const binary = os === 'darwin' ? macho : elf;
         // This Machine's own CLI: an executable for this Machine's architecture (no target of the other arch can run it).
         const hostCli = join(await mkdtemp(join(tmpdir(), 'stl-h-')), 'fakerel'); directories.push(dirname(hostCli));
-        await writeFileAsync(hostCli, elf(target.platform.arch));
+        await writeFileAsync(hostCli, binary(target.platform.arch));
         const tools = await mkdtemp(join(tmpdir(), 'stl-tools-')); directories.push(tools);
         const runtimeSpec = { id: 'fakerel', title: 'Fake release CLI', binaryName: 'fakerel', knownUserBinDirSuffixes: null,
             sourcePreferenceDefault: 'system-first' as const, manualInstallKind: null, manualInstallRecipes: null, acceptsJavaScriptFileOverride: false,
             managedInstall: { kind: 'github_release_binary' as const, githubRepo: 'example/fakerel', releaseTag: 'v1', binaryName: 'fakerel',
-                assetNameByPlatform: { darwin: { arm64: 'd-a', x64: 'd-x' }, win32: { arm64: 'w-a', x64: 'w-x' },
+                assetNameByPlatform: { darwin: { arm64: 'fakerel-aarch64-apple-darwin.tar.gz', x64: 'fakerel-x86_64-apple-darwin.tar.gz' }, win32: { arm64: 'w-a', x64: 'w-x' },
                     linux: { arm64: 'fakerel-aarch64-unknown-linux-musl.tar.gz', x64: 'fakerel-x86_64-unknown-linux-musl.tar.gz' } },
-                archiveEntriesByPlatform: { darwin: [], win32: [], linux: [
+                archiveEntriesByPlatform: { win32: [], ...Object.fromEntries(['linux', 'darwin'].map(platform => [platform, [
                     { archivePath: 'bin/fakerel', destinationPath: 'bin/fakerel' },
-                    { archivePath: 'resources/helper', destinationPath: 'resources/helper' }] } } };
+                    { archivePath: 'resources/helper', destinationPath: 'resources/helper' }]])) } } };
         // Only GitHub (release listing, asset download) is the boundary; selection, staging, promotion are the installer's own.
         const downloads: string[] = [];
         const agentCliInstall = { env: { ...process.env, HAPPIER_MANAGED_TOOLS_ROOT: tools },
             deps: {
-                fetchGitHubReleaseByTag: async () => ({ assets: ['aarch64', 'x86_64'].map(arch => ({ name: `fakerel-${arch}-unknown-linux-musl.tar.gz`,
+                fetchGitHubReleaseByTag: async () => ({ assets: ['aarch64', 'x86_64'].map(arch => ({ name: `fakerel-${arch}-${os === 'darwin' ? 'apple-darwin' : 'unknown-linux-musl'}.tar.gz`,
                     browser_download_url: `https://example.test/${arch}`, digest: `sha256:${'c'.repeat(64)}` })) }),
                 downloadGitHubReleaseAsset: async (params: { url: string; destinationPath: string }) => { downloads.push(params.url); await writeFileAsync(params.destinationPath, 'archive'); },
                 extractGitHubReleaseAsset: async (params: { outputDir?: string; archiveEntries?: ReadonlyArray<{ destinationPath: string }> }) => {
@@ -352,10 +407,10 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
                     for (const entry of params.archiveEntries ?? []) {
                         const path = join(params.outputDir!, ...entry.destinationPath.split('/'));
                         await mkdirAsync(dirname(path), { recursive: true });
-                        await writeFileAsync(path, entry.destinationPath === 'bin/fakerel' ? elf(arch) : 'helper-bytes', { mode: 0o755 });
+                        await writeFileAsync(path, entry.destinationPath === 'bin/fakerel' ? binary(arch) : 'helper-bytes', { mode: 0o755 });
                     }
                 } } };
-        const base = { target: { ...target, platform: { ...target.platform, arch: foreign } }, runnerEnvironment: {}, materializedRoot: null,
+        const base = { target: { ...target, platform: { ...target.platform, os, arch: foreign } }, runnerEnvironment: {}, materializedRoot: null,
             agent: leasedAgent('fakerel', [], runtimeSpec), requestAuthMaterializedRoot: null, agentCommand: hostCli,
             workspace: { hostRoot: '/h', targetRoot: '/t' }, onSessionEnd: () => undefined, agentCliInstall };
         const launch = await deliverSessionTargetLaunch({ ...base, sessionKey: 'spawn-20' });
@@ -363,10 +418,10 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
         expect(placedCli).toMatch(new RegExp(`^${join(guest, '.happier', 'agent-cli')}/[0-9a-f]{64}/bin/fakerel$`));
         // The target-architecture release, not this Machine's: one download, staged apart from this Machine's managed CLI.
         expect(downloads).toEqual([`https://example.test/${foreign === 'arm64' ? 'aarch64' : 'x86_64'}`]);
-        expect((await readFileAsync(placedCli)).equals(elf(foreign))).toBe(true);
+        expect((await readFileAsync(placedCli)).equals(binary(foreign))).toBe(true);
         await expect(readFileAsync(join(dirname(dirname(placedCli)), 'resources', 'helper'), 'utf8')).resolves.toBe('helper-bytes');
         // Under its pinned release: a catalog pin change stages the new release instead of reusing this one.
-        expect(existsSync(join(tools, 'targets', `linux-${foreign}`, 'providers', 'fakerel', 'v1'))).toBe(true);
+        expect(existsSync(join(tools, 'targets', `${os}-${foreign}`, 'providers', 'fakerel', 'v1'))).toBe(true);
         expect(existsSync(join(tools, 'providers', 'fakerel'))).toBe(false);
         const transfers = channels.length;
         expect(transfers).toBe(2);
