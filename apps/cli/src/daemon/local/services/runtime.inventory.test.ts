@@ -12,16 +12,18 @@ import { createTerminalProcessRegistry } from './inventory/terminalRegistry';
 import type { LocalServiceProcessFact } from './inventory/provenance';
 
 describe('Services inventory admission', () => {
-    it('lists an unclassified product Shell listener from canonical inventory without inferring its runtime or probing on refresh', async () => {
-        // Captured r98-C39-listed-final.json + r98-C39-owner-projection.json:
+    it.each([
+        { scope: 'Session', sessionId: 'session-a' },
+        { scope: 'Project', sessionId: undefined },
+    ])('lists an unclassified $scope Shell listener from canonical inventory without inferring its runtime or probing on refresh', async ({ sessionId }) => {
+        // Captured r98-C39-listed-final.json + ready96s C39-inventory-owner.json:
         // this file-based listener is listening and attributed to the product Shell,
         // but has no recognized dev-server kind and produces no launcher target.
         const machineId = 'machine-a';
-        const sessionId = 'session-a';
         const cwd = '/tmp/Q94-SERVICES-94f-owned';
         const terminalRegistry = createTerminalProcessRegistry();
         terminalRegistry.registerTerminalProcesses({ terminalKey: 'shell-a', terminalId: 'shell-run-a',
-            pids: [15472], workspacePath: cwd, sessionId });
+            pids: [15472], workspacePath: cwd, ...(sessionId ? { sessionId } : {}) });
         const probes: number[] = [];
         const runtime = createLocalServicesDaemonRuntime({
             machineId, accountId: 'owner', inventoryEnabled: () => true, startLoop: false, now: () => 2_000,
@@ -57,11 +59,12 @@ describe('Services inventory admission', () => {
             const shell = inventory.entries.find(entry => entry.port === 39537)!;
             expect(shell).toMatchObject({ state: 'listening', classification: { confidence: 'medium', signals: [] },
                 provenance: { process: { pid: 16276, processStartTimeMs: 114312360, command: 'python3 -u r98-shell.py' },
-                    session: { id: sessionId }, workspace: { path: cwd, association: 'process_tree' } } });
+                    workspace: { path: cwd, association: 'process_tree' } } });
+            expect(shell.provenance?.session).toEqual(sessionId ? { id: sessionId } : undefined);
             expect(shell.classification?.kind).toBeUndefined();
             const launcher = LocalServiceLauncherSnapshotV1Schema.parse(await runtime.launcherRoutes.getSnapshot({ scope: 'machine' }));
             const rows = buildLocalServiceRows({ inventoryRows: inventory.entries, launchTargets: launcher.targets,
-                scope: 'machine', sessionId });
+                scope: 'machine', sessionId: sessionId ?? null });
             expect(rows.filter(row => row.status === 'running').map(row => row.portLabel).sort()).toEqual([':39537', ':41417']);
             expect(runtime.getSummary()).toEqual({ v: 1, state: 'ready', runningCount: 2 });
             const client = applyLocalServiceInventorySnapshot(createLocalServiceInventoryState(),

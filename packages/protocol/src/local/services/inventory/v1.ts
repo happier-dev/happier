@@ -159,7 +159,7 @@ export const LocalServiceMachineSummaryV1Schema = lazyZodSchema(() => z.discrimi
 ]));
 export type LocalServiceMachineSummaryV1 = z.infer<typeof LocalServiceMachineSummaryV1Schema>;
 
-/** Listing a Session-owned listener does not infer its runtime or endpoint scheme. */
+/** Listing a Happier-owned listener does not infer its runtime or endpoint scheme. */
 export function isLocalServiceInventoryTargetV1(entry: Readonly<{
   classification?: unknown;
   provenance?: unknown;
@@ -172,10 +172,8 @@ export function isLocalServiceInventoryTargetV1(entry: Readonly<{
   }
   const provenance = entry.provenance;
   if (!provenance || typeof provenance !== 'object') return false;
-  const session = 'session' in provenance ? provenance.session : undefined;
   const workspace = 'workspace' in provenance ? provenance.workspace : undefined;
-  return !!session && typeof session === 'object' && 'id' in session && typeof session.id === 'string' && session.id.length > 0
-    && !!workspace && typeof workspace === 'object' && 'association' in workspace && workspace.association === 'process_tree';
+  return !!workspace && typeof workspace === 'object' && 'association' in workspace && workspace.association === 'process_tree';
 }
 
 /** Shared by the daemon publication and admitted client inventory snapshots. */
