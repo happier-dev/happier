@@ -12,6 +12,8 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
+import type { PluginUiActionProjection } from '@/sync/domains/plugins/ui/projection';
+
 const machineRpc = vi.hoisted(() => vi.fn());
 // Only the machine transport leaves this deterministic palette/Action owner.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
@@ -139,6 +141,59 @@ it('reads only Agent declarations for a restored producer model and delivers cha
     expect(installedAgent()?.entry.title).toBe('Changed Agent');
     expect([...sections].sort()).toEqual(['base', 'installedPackagesById'].sort());
     console.info('RESTORED_MODEL_PACKAGE_DEMAND', JSON.stringify({ changedSectionReads: sections, consumedPackageTitle: packageTitle }));
+});
+
+it('lists an Account release Action in Home Search without a Machine origin and retires its removed form', async () => {
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
+    const { buildCommandPaletteCommands } = await import('./buildCommandPaletteCommands');
+    const serverId = await homes.addHome({ name: 'Account Search', serverUrl: 'https://palette-account.test', accountId: 'search-account', currentAccount: true });
+    storage.setState({ profileScope: { serverId, accountId: 'search-account' }, settingsScope: { serverId, accountId: 'search-account' } });
+    publishAppliedActiveServerSnapshot({ serverId, serverUrl: 'https://palette-account.test', generation: 1 });
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Search Account must be current');
+    const pluginId = 'qa.account-search';
+    const sourceCustody = { kind: 'account_release' as const, pluginId, version: '1.0.0', archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
+    const hostAccountOrigin = { serverId, accountId: lifetime.scope.accountId, custodyId: 'account-search-release', sourceCustody };
+    const action = { id: 'echo', pluginId, occurrenceId: hostAccountOrigin.custodyId,
+        hostAccountOrigin, title: 'Account Search Echo', scopes: ['global'], surfaces: ['ui'], placementBindings: ['commandPalette'],
+        execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'echo' }, invokingUi: true },
+        dangerLevel: 'safe', available: true,
+        inputHints: { fields: [{ path: 'message', title: 'Message', widget: 'text', required: true }] },
+    } satisfies PluginUiActionProjection;
+    let projection = normalizePluginUiProjection({ v: 2, generation: 1,
+        installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Account Search', enabled: true, version: '1.0.0',
+            source: { kind: 'archive', locator: 'account-search.tgz' }, occurrenceId: hostAccountOrigin.custodyId, sourceCustody } },
+        agentsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [], familiesById: {},
+        actionsById: { [`${pluginId}/echo`]: action },
+    });
+    function Wrapper({ children }: React.PropsWithChildren) {
+        return React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
+            pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
+            machineId: null, serverId, platform: 'web', accountLifetime: lifetime,
+            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {}, reloadConnectedAccountProjection() {},
+        }, children });
+    }
+    const mounted = await renderHook(() => useCommandPalettePluginActionPresentation(null, true), { wrapper: Wrapper });
+    await flushHookEffects();
+    const presentation = mounted.getCurrent();
+    if (!presentation) throw new Error('Home Search must consume the Account publication');
+    const actions = presentation.controller.list({ placement: 'commandPalette', scope: 'global' });
+    expect(actions.map(action => action.qualifiedActionId)).toEqual([`${pluginId}/echo`]);
+    const commands = buildCommandPaletteCommands({ sessionsById: {}, isDev: false, activeSessionId: null,
+        features: { executionRunsEnabled: false, voiceEnabled: false },
+        nav: { push() {}, openNewSession() {}, navigateToSession() {} }, actions: { execute: async () => ({ ok: true, result: {} }) },
+        alert: async () => {}, pluginActionPresentation: presentation });
+    expect(commands.filter(command => command.id.startsWith('plugin-action:')).map(command => command.title)).toEqual(['Account Search Echo']);
+    const opened = await presentation.controller.open(actions[0]!);
+    expect(opened.kind).toBe('form');
+    if (opened.kind !== 'form') throw new Error('Account Action form must open');
+    expect(opened.form.pickerContext).toMatchObject({ machineId: null, serverId });
+    expect(machineRpc).not.toHaveBeenCalled();
+    projection = { ...projection, actionsById: {} };
+    await mounted.rerender();
+    expect(opened.form.isRetired()).toBe(true);
+    expect(mounted.getCurrent()!.controller.list({ placement: 'commandPalette', scope: 'global' })).toHaveLength(0);
 });
 
 beforeEach(async () => {

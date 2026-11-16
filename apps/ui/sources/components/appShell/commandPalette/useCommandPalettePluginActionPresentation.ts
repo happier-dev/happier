@@ -13,6 +13,7 @@ import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/us
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
+import { readPluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { usePluginExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
@@ -175,6 +176,9 @@ export function useCommandPalettePluginActionPresentation(activeSessionId: strin
                     const projectedAction = appShellProjectionRef.current.pluginUiProjection?.actionsById[
                         buildQualifiedPluginContributionKey(identity)
                     ];
+                    // Account release custody is already selected by AppShell;
+                    // it does not borrow a Machine execution origin.
+                    if (readPluginUiAccountExecutableOrigin(projectedAction)) return true;
                     const origin = readPluginUiContributionOrigin(projectedAction);
                     const exactRef = origin?.executionOrigin ? getPluginMachineExecutionOriginRef(origin.executionOrigin) : null;
                     return origin?.interactionEnabled === true && origin.phase === 'current'
@@ -203,6 +207,8 @@ export function useCommandPalettePluginActionPresentation(activeSessionId: strin
             const current = snapshotRef.current;
             if (!current || current.host.sessionId || !identity) return current;
             const action = current.resolveContributedAction?.(identity);
+            const accountOrigin = readPluginUiAccountExecutableOrigin(action);
+            if (accountOrigin) return { ...current, host: { ...current.host, machineId: null, serverId: accountOrigin.serverId } };
             const origin = readPluginUiContributionOrigin(action);
             return origin ? { ...current, host: { ...current.host, machineId: origin.machineId, serverId: origin.serverId } } : null;
         },
