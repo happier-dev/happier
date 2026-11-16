@@ -24,7 +24,7 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import { fetchAndApplySessionById, type SessionByIdContentDemand, type SessionByIdEncryption, type SessionByIdPrefetchedRead } from '@/sync/engine/sessions/sessionById';
 import { fetchOperationAccountEncryptionIdentity, fetchAccountEncryptionIdentity, captureAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { readSessionDetailAccessProjectionVersion } from '@/sync/api/session/sessionDetailAccessProjection';
-import { readAccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
+import { bindCurrentAccountEncryptionObservation, readAccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
 
 import {
     createServerRequestForResolvedServerScope,
@@ -471,9 +471,12 @@ async function completeAuthorizedFullRead(params: Parameters<typeof maintainAuth
     // Adopt the read's admitted HTTP witness and subscribe before any await, so
     // disposing the parent observation neither loses invalidation nor adds a read.
     let maintenanceRequest = params.request;
+    // The forwarding request lends whichever carrier currently owns maintenance its socket Account
+    // observation, so maintenance borrows the settled witness instead of reading currentness per Session.
     const source = createOperationAccountCurrentnessSource({ credentials: params.credentials, serverId,
         initial: params.accountCurrentnessSource.peek(),
-        request: (path, init) => maintenanceRequest(path, init),
+        request: bindCurrentAccountEncryptionObservation((path: string, init: RequestInit) => maintenanceRequest(path, init),
+            credentials => readAccountEncryptionObservationBinding(maintenanceRequest, credentials)),
     });
     fireAndForget(runWithServerRequestAuthorityForServerAccountScope({ serverId, activeRequest: params.request,
         signal: params.signal }, async authority => {

@@ -847,3 +847,50 @@ it('lets finite operations share the reconnect observation while its read is sti
         await expect(fetchOperationAccountEncryptionIdentity(context.credentials, { request: context.request })).resolves.toMatchObject({ mode: 'plain' });
     } finally { context.dispose(); }
 });
+
+it('lets owner display maintenance after a full legacy Session read borrow the settled Account observation', async () => {
+    // A full read of an owned legacy-layout Session (0.2 data) needs no Account currentness itself,
+    // but schedules owner display maintenance, which does. That maintenance must borrow the socket
+    // observation through its request instead of reading currentness over HTTP once per Session
+    // (iOS signed-in cold start: 15 of 21 currentness reads).
+    const accountId = 'maintenance-borrows-observation';
+    const serverUrl = 'https://maintenance-borrows-observation.test';
+    const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }) };
+    const serverId = await home.addHome({ name: 'Maintenance borrows', serverUrl, accountId, credentials,
+        accountEncryptionMode: 'plain', currentAccount: true });
+    const sessionIds = ['legacy-a', 'legacy-b', 'legacy-c'];
+    const legacyRecord = (id: string) => {
+        const { ownerMetadata: _ownerMetadata, ...record } = createPlainSessionCurrentProjectionRecordFixture({ id });
+        return { ...record, metadataLayoutVersion: 0,
+            metadata: JSON.stringify({ name: id, path: `/legacy/${id}`, host: 'legacy-host' }) };
+    };
+    let reads = 0;
+    setRuntimeFetch(createSessionReadBatchFetchBoundary(async (rawUrl, init) => {
+        const path = new URL(String(rawUrl)).pathname;
+        if (path === '/v1/account/encryption/currentness') {
+            reads++;
+            return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        }
+        const id = sessionIds.find(candidate => path === `/v2/sessions/${candidate}`);
+        if (id && (init?.method ?? 'GET') === 'GET') return Response.json({ session: legacyRecord(id) });
+        return home.request(rawUrl, init);
+    }));
+    let socket: Socket | undefined;
+    installDisconnectedServerSocketBoundary(current => { socket = current; configureConnectedServerSocketBoundary(current); });
+    apiSocket.initialize({ endpoint: serverUrl, token: credentials.token, credentials, serverId,
+        generation: getActiveServerSnapshot().generation,
+        request: createServerFetchAtEndpoint({ endpointUrl: serverUrl, serverId, credentials }), isCurrent: () => true }, null);
+    await waitForHomeGovernance(() => expect(socket?.connected).toBe(true));
+    const context = await captureLazyActionAccountContext(serverId);
+    try {
+        await context.resolveAccountMode();
+        const before = reads;
+        const { readSessionSnapshotsForAuthority } = await import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority');
+        const results = await runWithServerRequestAuthorityForServerAccountScope({ scope: context.accountLifetime.scope,
+            activeRequest: context.request }, authority => readSessionSnapshotsForAuthority({ authority, sessionIds, includeTurns: false }));
+        expect([...results.values()].every(result => result.ok)).toBe(true);
+        // Maintenance runs after each read returns; give it the chance to read before asserting.
+        await vi.waitFor(() => expect(reads).toBeGreaterThan(before), { timeout: 750 }).catch(() => undefined);
+        expect(reads - before).toBe(0);
+    } finally { context.dispose(); }
+});
