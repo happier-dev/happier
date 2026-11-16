@@ -2,9 +2,11 @@ import type {
     TriageEntryRefV1,
     TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
+import { isPluginActionHandlerInvocationNotStartedAdvisory } from '@happier-dev/plugin-sdk/actions';
 
 import type { TriageEntrySessionStartRequestV1 } from '../../sessions/entrySessionOrchestrator.js';
 import { isHostCancellation } from '../../hostCancellation.js';
+import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from '../header/newSessionSeedCommand.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
 import {
     planTriageOfferedActionsV1,
@@ -223,7 +225,7 @@ export type TriageBulkSessionUnitResultV1<TOutcome, TEntry = TriageBulkEntrySele
 }> & (
     | Readonly<{ status: 'settled'; outcome: TOutcome }>
     | Readonly<{ status: 'unknownOutcome' }>
-    | Readonly<{ status: 'notStarted' }>
+    | Readonly<{ status: 'notStarted'; failure?: TriageNewSessionFailureV1 }>
 );
 
 /**
@@ -261,10 +263,12 @@ export async function runTriageBulkEntrySessions<
             const outcome = await input.start(unit);
             results.push(outcome === undefined ? { status: 'notStarted', unit } : { status: 'settled', unit, outcome });
         } catch (error) {
-            // The key is retained on the unit this result carries, so a retry
-            // re-sends the SAME key and the canonical creator rejoins rather
-            // than creating a second Session for one entry.
-            results.push({ status: 'unknownOutcome', unit });
+            // The host can prove admission refused before the handler ran.
+            // Only an unproven rejection leaves creation uncertain. Both retain
+            // the original key for the person's explicit recovery.
+            results.push(isPluginActionHandlerInvocationNotStartedAdvisory(error)
+                ? { status: 'notStarted', unit, failure: projectTriageNewSessionFailureV1(error) }
+                : { status: 'unknownOutcome', unit });
             if (isHostCancellation(error, input.signal)) cancelled = true;
         }
     }

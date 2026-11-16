@@ -110,6 +110,13 @@ export type TriageBulkSessionOutcomeV1 = TriageBulkSessionUnitResultV1<
     TriageBulkSelectedEntryV1
 >;
 
+function readBulkStartFailure(results: readonly TriageBulkSessionOutcomeV1[]) {
+    for (const result of results) {
+        if (result.status === 'notStarted' && result.failure !== undefined) return result.failure;
+    }
+    return undefined;
+}
+
 export type TriageBulkSettledPhaseV1 = Readonly<{
     kind: 'settled';
     failure?: TriageNewSessionFailureV1;
@@ -960,6 +967,7 @@ export function createTriageBulkEntrySessionsController(
                 setPhase(Object.freeze({
                     kind: 'settled',
                     results,
+                    failure: readBulkStartFailure(results),
                     selectionKeys: Object.freeze([
                         ...request.entries.map((entry) => entry.key),
                         ...(request.unavailableKeys ?? []),
@@ -1035,10 +1043,11 @@ export function createTriageBulkEntrySessionsController(
                         }
                     },
                 });
+                const results = mergeTriageBulkRetryResultsV1(prior.results, retried);
                 setPhase(Object.freeze({
                     ...prior,
-                    failure: undefined,
-                    results: mergeTriageBulkRetryResultsV1(prior.results, retried),
+                    failure: readBulkStartFailure(results),
+                    results,
                 }));
             } catch (error) {
                 if (!retired.current) setPhase(stopped || isHostCancellation(error, controller.signal) ? prior

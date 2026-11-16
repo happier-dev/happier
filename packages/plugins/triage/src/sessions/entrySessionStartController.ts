@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginActionHandlerInvocationNotStartedAdvisory } from '@happier-dev/plugin-sdk/actions';
 import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
@@ -790,7 +791,8 @@ export function createTriageEntrySessionStartController(
                     ));
                     if (!retired.current) setPhase(Object.freeze({ kind: 'handoffSettled', result }));
                 } catch (error) {
-                    if (!retired.current) setPhase(unavailable(submitted ? 'handoffOutcomeUnknown' : 'dispatch', projectTriageNewSessionFailureV1(error)));
+                    if (!retired.current) setPhase(unavailable(submitted && !isPluginActionHandlerInvocationNotStartedAdvisory(error)
+                        ? 'handoffOutcomeUnknown' : 'dispatch', projectTriageNewSessionFailureV1(error)));
                 } finally {
                     inFlight.current = false;
                     notify();
@@ -1153,7 +1155,8 @@ export function createTriageEntrySessionStartController(
                 await settle(request, input, result, reviewInstructions);
             } catch (error) {
                 if (!retired.current) {
-                    setPhase(unavailable(submitted ? 'startOutcomeUnknown' : 'dispatch', projectTriageNewSessionFailureV1(error)));
+                    setPhase(unavailable(submitted && !isPluginActionHandlerInvocationNotStartedAdvisory(error)
+                        ? 'startOutcomeUnknown' : 'dispatch', projectTriageNewSessionFailureV1(error)));
                 }
             } finally {
                 inFlight.current = false;

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { createPluginActionHandlerUnavailableFixture } from '@happier-dev/plugin-sdk/testing';
 
 import { testkitEntryRef } from '../../corpus/testkit/observations.test-support.js';
 import { TESTKIT_LINK_DISPLAY } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
@@ -209,6 +211,13 @@ describe('planTriageBulkEntrySessions', () => {
 });
 
 describe('runTriageBulkEntrySessions', () => {
+    it('retains a known pre-handler refusal as not started instead of uncertain creation', async () => {
+        const unit = { creationKey: 'admission-refused', entries: [selected('17')] };
+        const result = await runTriageBulkEntrySessions({ units: [unit], start: async () => {
+            throw createPluginActionHandlerUnavailableFixture();
+        } });
+        expect(result).toEqual([{ unit, status: 'notStarted', failure: { codes: ['plugin_action_handler_missing'] } }]);
+    });
     it('keeps a unit not started when Stop arrives during its input selection', async () => {
         const unit = { creationKey: 'not-dispatched', entries: [selected('17')] };
         const results = await runTriageBulkEntrySessions({ units: [unit], start: async () => undefined });
@@ -239,13 +248,14 @@ describe('runTriageBulkEntrySessions', () => {
         expect(results.map((result) => result.status)).toEqual(['settled', 'settled', 'settled']);
     });
 
-    it('keeps starting the remaining units when one start rejects, and does not claim its outcome', async () => {
+    it.each([new Error('transport'), new PluginError({ code: 'plugin_action_handler_missing' })])(
+        'keeps an unproven rejection uncertain and starts the remaining units (%#)', async error => {
         const attempted: string[] = [];
         const results = await runTriageBulkEntrySessions({
             units,
             start: async (unit) => {
                 attempted.push(unit.creationKey);
-                if (unit.creationKey === 'key-2') throw new Error('transport');
+                if (unit.creationKey === 'key-2') throw error;
                 return `opened:${unit.creationKey}`;
             },
         });

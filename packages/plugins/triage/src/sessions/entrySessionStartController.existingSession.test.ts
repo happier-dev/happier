@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { createPluginActionHandlerUnavailableFixture } from '@happier-dev/plugin-sdk/testing';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { ActionSessionAddressV1 } from '@happier-dev/plugin-sdk/sessions';
@@ -107,6 +108,13 @@ function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncert
 }
 
 describe('entry existing Session handoff', () => {
+    it('does not describe a known pre-handler refusal as an uncertain handoff', async () => {
+        const f = fixture('send', false, false, createPluginActionHandlerUnavailableFixture());
+        await f.controller.getSnapshot().startInSession(f.request, { serverId: 'home-a', sessionId: 'same-session' });
+        expect(f.controller.getSnapshot().phase).toMatchObject({ kind: 'unavailable', reason: 'dispatch',
+            failure: { codes: ['plugin_action_handler_missing'] } });
+        expect(f.sends).toEqual([]);
+    });
     it('retains the dispatch refusal and request identity for the existing failure presenter', async () => {
         const f = fixture('send', false, false, new PluginError({ code: 'target_unavailable',
             diagnostics: [{ code: 'daemon_forward_not_ok' }], details: { requestId: 'send-request' } }));
