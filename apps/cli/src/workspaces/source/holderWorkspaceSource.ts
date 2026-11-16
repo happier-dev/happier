@@ -253,6 +253,10 @@ export function createHolderWorkspaceSource(input: Readonly<{
     resolveExecutable: async (command: string) => {
       if (path.posix.isAbsolute(command)) return command;
       const reply = await input.holder.request({ op: 'which', command });
+      if (reply.ok !== true) {
+        throw new PluginError({ code: 'agent_cli_target_unavailable', retryable: false,
+          message: 'The Session target could not resolve a workspace executable' });
+      }
       return reply.ok === true && typeof reply.value === 'string' ? reply.value : null;
     },
     spawn,

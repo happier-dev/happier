@@ -280,7 +280,9 @@ export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
     input = resolveScmCommandOperationInput(input);
     const startedAt = performance.now();
     const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
-    const runner = readScmCommandRunner() ?? lease?.registry.scmCommandRunner;
+    // Placement owns execution before any requester identity or registry host runner.
+    const targetSource = currentWorkspaceSource().kind === 'target';
+    const runner = targetSource ? undefined : readScmCommandRunner() ?? lease?.registry.scmCommandRunner;
     const failure = (error: unknown): ScmExecResult => {
         const data: unknown = error && typeof error === 'object' ? Reflect.get(error, 'data') : undefined;
         const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
@@ -290,7 +292,8 @@ export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
         // callers outside a route keep their command-result contract.
         if (error instanceof ScmExecutionRefusedError) throw error;
         if (isWithinScmCommandOperation() && error && typeof error === 'object'
-            && Reflect.get(error, 'execLaunch') === 'notStarted' && typeof code === 'string') {
+            && (Reflect.get(error, 'execLaunch') === 'notStarted'
+                || (targetSource && code === 'agent_cli_target_unavailable')) && typeof code === 'string') {
             throw new ScmExecutionRefusedError(code);
         }
         return { success: false, stdout: '', exitCode: -1,
@@ -362,7 +365,7 @@ function runResolvedScmCommand(input: ScmCommandInput, source: ReturnType<typeof
             stderr: 'SCM stdout file cannot be combined with a stdout consumer or interaction', exitCode: -1 });
     }
 
-    return new Promise((resolvePromise) => {
+    return new Promise((resolvePromise, rejectPromise) => {
         let stdoutDescriptor: number | undefined;
         let child: WorkspaceChildProcess;
         try {
@@ -371,6 +374,7 @@ function runResolvedScmCommand(input: ScmCommandInput, source: ReturnType<typeof
                 ...(stdoutDescriptor !== undefined ? { stdoutFd: stdoutDescriptor } : {}) });
         } catch (error) {
             if (stdoutDescriptor !== undefined) closeSync(stdoutDescriptor);
+            if (source.kind === 'target') { rejectPromise(error); return; }
             resolvePromise({ success: false, stdout: '',
                 stderr: error instanceof Error ? error.message : String(error), exitCode: -1,
                 ...(workingDirectoryMissing() ? { workingDirectoryMissing: true as const } : {}) });
@@ -551,6 +555,12 @@ function runResolvedScmCommand(input: ScmCommandInput, source: ReturnType<typeof
 
         child.on('error', (error) => {
             clearTimeout(timer);
+            if (source.kind === 'target') {
+                // Preserve the holder's typed refusal through the operation boundary.
+                rejectPromise(error);
+                done({ success: false, stdout, stderr: '', exitCode: -1 });
+                return;
+            }
             done({
                 success: false,
                 stdout,
