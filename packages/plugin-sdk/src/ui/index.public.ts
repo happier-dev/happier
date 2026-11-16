@@ -1,3 +1,5 @@
+export { FailureAgentActionV1Schema, FailureActionOutcomeV1Schema, FailureActionPlacementV1Schema } from '../ui.js';
+export type { FailureActionOutcome, FailureActionPlacement, FailureAgentAction } from '../ui.js';
 export { THEME_SURFACE_REGISTRY, themeSurfaceDataSet, isThemeSurfaceAddress, getThemeSurfacePaintMap } from './themeSurfaceRegistry.js';
 export type { SurfaceId, SurfacePart, ThemeSurfaceState, SurfaceAddress, ThemeSurfacePaintRole, ThemeSurfacePaintDescriptor } from './themeSurfaceRegistry.js';
 export type { PluginUiActionBinding } from './actionBinding.js';
