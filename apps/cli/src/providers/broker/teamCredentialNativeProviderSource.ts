@@ -1,4 +1,5 @@
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import type { ProviderBindingAuthorizationTicketV1, ProviderCredentialTransportV1, ProviderErrorV1, ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol';
 import type { TeamCredentialDeliveryPolicyV1, TeamCredentialResourceSummaryV1, TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams';
 
@@ -110,9 +111,15 @@ export async function prepareTeamCredentialNativeProviderSource(
     let snapshot = input.getAccountSettingsSnapshot();
     if (closed || input.signal.aborted || !snapshot || snapshot.scopeKey !== input.accountScopeKey
       || snapshot.providerConnectionsCatalog?.status !== 'ready') return fail();
-    // Metadata consumes a warm catalog without another acquisition. A cold
-    // catalog must enter the same source admission before fingerprint reads.
-    if (snapshot.savedSecretCatalogState !== 'ready') {
+    let providerSettings = readProviderSettingsForCli(snapshot).settings;
+    let savedSecretMaterializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+      isCurrent: () => !closed && !input.signal.aborted,
+    });
+    const selectedRef = resolveProviderSecretBindingIdV1(providerSettings, resource.source.connectionId,
+      input.controllerMachineId, resource.source.credentialSlotId);
+    // The catalog can contain another operation's selected subset. Consume
+    // warm selected material; let source admission acquire an absent reference.
+    if (selectedRef !== null && savedSecretMaterializer.inspect(selectedRef).status !== 'ready') {
       const admitted = await resolveAdmittedProviderConnectionSourceSnapshot({
         source: resource.source, machineId: input.controllerMachineId, expectedScopeKey: input.accountScopeKey,
         registry, dnsEvidenceByEndpointUrl, getAccountSettingsSnapshot: input.getAccountSettingsSnapshot,
@@ -121,11 +128,11 @@ export async function prepareTeamCredentialNativeProviderSource(
       if (!admitted.ok) return admitted;
       snapshot = input.getAccountSettingsSnapshot();
       if (!snapshot || snapshot.scopeKey !== input.accountScopeKey) return fail();
+      providerSettings = readProviderSettingsForCli(snapshot).settings;
+      savedSecretMaterializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+        isCurrent: () => !closed && !input.signal.aborted,
+      });
     }
-    const providerSettings = readProviderSettingsForCli(snapshot).settings;
-    const savedSecretMaterializer = createSavedSecretMaterializerFromSnapshotV1(snapshot, {
-      isCurrent: () => !closed && !input.signal.aborted,
-    });
     const authorized = resolveProviderSpawnAuthorization({ ...input.binding, machineId: input.controllerMachineId,
       accountSettings: snapshot.settings, savedSecretMaterializer, providerSettings,
       teamCredentialResource: { resourceId: resource.resourceId, resourceRevision: resource.resourceRevision },

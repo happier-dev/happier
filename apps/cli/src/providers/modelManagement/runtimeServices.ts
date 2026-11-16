@@ -60,7 +60,9 @@ import type { ProviderModelSettingsMutationIntent } from '@/providers/connection
 import { resolveProviderModelPickerVisibility } from '@happier-dev/protocol/providers/catalog/modelPickerVisibility';
 import {
   resolveProviderSpawnAuthorization,
+  resolveProviderSpawnSelection,
 } from '@/providers/spawn/resolve';
+import { admitRuntimeProviderSavedSecret } from '@/providers/spawn/runtimeCredential';
 import {
   resolveProviderRuntimeCatalogSelectionObservation,
   type ProviderRuntimeModelProjectionReader,
@@ -1545,7 +1547,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
     try {
       return await awaitAbortableWithinProviderOperation(async (signal): Promise<DaemonProviderBindingStatusResponseV1> => {
         const operationLifetime = { ...lifetime, signal };
-        const snapshot = await observeProviderOperationPhase(operationLifetime, 'catalog', () =>
+        let snapshot = await observeProviderOperationPhase(operationLifetime, 'catalog', () =>
           awaitWithinProviderOperation(readAdmittedSnapshot(undefined, signal), operationLifetime));
         if (!snapshot) {
           return {
@@ -1607,6 +1609,24 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             registry,
             dnsEvidenceByEndpointUrl,
           });
+          if (connectionResolution.status === 'resolved'
+            && connectionResolution.record.deployment.kind === 'external') {
+            const scope = {
+              lifetime: operationLifetime, registry,
+              dnsEvidenceByConnectionId: new Map([[connectionId, dnsEvidenceByEndpointUrl]]),
+            };
+            // Presentation owns probe selection and readiness. A ready catalog
+            // may still contain only another operation's selected references.
+            const presented = await sharedRuntime.resolvePresentationCatalogContext({ connectionId, machineId: request.machineId }, undefined, scope);
+            if (presented.status === 'error' && presented.error.savedSecretReason !== undefined) {
+              const admitted = await sharedRuntime.resolveCatalogContext({ connectionId, machineId: request.machineId }, undefined, scope);
+              if (admitted.status === 'error') return { status: 'incompatible', error: admitted.error };
+              const current = await readAdmittedSnapshot(undefined, signal, false);
+              if (!current) return { status: 'connection_missing',
+                error: createProviderErrorV1('provider_connection_not_found', errorContext) };
+              snapshot = current;
+            }
+          }
           let managedPurposeBindingSnapshot:
             import('@happier-dev/protocol').QualifiedConnectedAccountPurposeBindingsV1
             | undefined;
@@ -1676,16 +1696,13 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             return { status: 'incompatible', error: parsed.success ? parsed.data
               : createProviderErrorV1('provider_endpoint_unavailable', errorContext, error) };
           }
-          const resolved = resolveProviderSpawnAuthorization({
+          const authorizationInput = {
             selection: request.selection,
             machineId: request.machineId,
             agentTargetKey: request.agentTargetKey,
             agentId,
             accountSettings: snapshot.settings,
             savedSecretResources: snapshot.savedSecretResources,
-            savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
-              isCurrent: () => !operationLifetime.signal?.aborted,
-            }),
             providerSettings,
             registry,
             dnsEvidenceByEndpointUrl,
@@ -1700,7 +1717,26 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             ...(runtimeCatalogSelection !== null
               ? { runtimeCatalogSnapshotExists: true }
               : {}),
+          };
+          let resolved = resolveProviderSpawnAuthorization({ ...authorizationInput,
+            savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+              isCurrent: () => !operationLifetime.signal?.aborted,
+            }),
           });
+          if (!resolved.ok && resolved.error.savedSecretReason !== undefined) {
+            const selected = resolveProviderSpawnSelection(authorizationInput);
+            if (selected.ok) {
+              const admitted = await admitRuntimeProviderSavedSecret({ connection: selected.selection.record,
+                providerSettings, snapshot, getAccountSettingsSnapshot: input.getAccountSettingsSnapshot ?? getActiveAccountSettingsSnapshot,
+                lifetime: operationLifetime, additionalCredentials: selected.selection.selectedCredentialTransport?.additionalCredentials });
+              resolved = admitted.ok ? resolveProviderSpawnAuthorization({ ...authorizationInput,
+                accountSettings: admitted.snapshot.settings, savedSecretResources: admitted.snapshot.savedSecretResources,
+                savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(admitted.snapshot, {
+                  isCurrent: () => !operationLifetime.signal?.aborted,
+                }),
+              }) : admitted;
+            }
+          }
           if (resolved.ok) {
             return resolved.authorization.bindingSecurityFingerprint === request.launchBinding.bindingSecurityFingerprint
               ? { status: 'current' }

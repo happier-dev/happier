@@ -26,6 +26,8 @@ import {
   splitProviderSettingsV1,
   formatSharedSavedSecretRefV1,
   sealSavedSecretResourceStoredContentV1,
+  projectPrivateLabelForRecipientV1,
+  sealPrivateLabelV1,
   ProviderConnectionsRowMutationV1Schema,
   type ProviderSettingsV1,
 } from '@happier-dev/protocol';
@@ -474,7 +476,11 @@ async function registeredProviderProjectionFixture(
     sourceRevision: 'team-source', availability: 'available',
   });
   const teamCredentialResource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-    id: 'resource', teamId: 'team', displayName: 'Team source', resourceRevision: 1,
+    id: 'resource', teamId: 'team', displayName: projectPrivateLabelForRecipientV1({
+      stored: sealPrivateLabelV1({ mode: 'plain',
+        binding: { entity: 'team_credential_resource', field: 'displayName', id: 'resource' }, value: 'Team source' }),
+      recipientAccountId: 'requester',
+    }), resourceRevision: 1,
     readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: true,
     directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
     connectedServiceSelections: [], sourcePresentation: null, deliveryPolicy: { preferredAllowedModes: ['direct', 'brokered'] },
@@ -886,7 +892,11 @@ describe('runtime provider model-management composition', () => {
           sourceRevision: produced.sourceRevision, availability: 'available',
         });
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-          id: 'resource', teamId: 'team', displayName: 'Pool source', resourceRevision: 1,
+          id: 'resource', teamId: 'team', displayName: projectPrivateLabelForRecipientV1({
+            stored: sealPrivateLabelV1({ mode: 'plain',
+              binding: { entity: 'team_credential_resource', field: 'displayName', id: 'resource' }, value: 'Pool source' }),
+            recipientAccountId: 'requester',
+          }), resourceRevision: 1,
           readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
           directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
           connectedServiceSelections: [], sourcePresentation: null, providerModels: [teamModel],
@@ -1227,6 +1237,7 @@ describe('runtime provider model-management composition', () => {
     let observedCatalog = splitProviderSettingsV1(settings).catalog;
     let observedRevision = 1;
     let catalogReadGate: Promise<void> | undefined;
+    let materialAvailability: 'ready' | 'missing' | 'forbidden' = 'ready';
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
@@ -1238,6 +1249,11 @@ describe('runtime provider model-management composition', () => {
       }
       if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
       if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
+      if (path === '/v1/account/saved-secrets/resources/materials' && materialAvailability !== 'ready') {
+        return { status: 200, data: { resources: materialAvailability === 'missing' ? []
+          : materialResponse.data.resources.map(row => ({ ...row, storedContent: null,
+            entry: { ...row.entry, materialStatus: 'access_removed', capabilities: { ...row.entry.capabilities, use: false } } })) } };
+      }
       const history = emptyAccountSettingsHistoryCaptureResponse(path);
       return history ?? materialResponse;
     });
@@ -1553,6 +1569,35 @@ describe('runtime provider model-management composition', () => {
       registry, dnsEvidenceByEndpointUrl: new Map([['https://models.example/v1', ['1.1.1.1']]]), lease,
     }));
     if (!authorization.ok) throw new Error('Expected provider authorization');
+    const bindingRequest = { machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', selection,
+      launchBinding: authorization.authorization.sessionBindingMetadata };
+    const materialReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) =>
+      new URL(String(url)).pathname === '/v1/account/saved-secrets/resources/materials').length;
+    const warmReads = materialReads();
+    await expect(services.resolveBindingStatus(bindingRequest)).resolves.toEqual({ status: 'current' });
+    expect(materialReads()).toBe(warmReads);
+    const warmSnapshot = getActiveAccountSettingsSnapshot()!;
+    for (const savedSecretCatalogState of [undefined, 'ready'] as const) {
+      const before = materialReads();
+      resetActiveAccountSettingsSnapshotForTests();
+      setActiveAccountSettingsSnapshot({ ...warmSnapshot, savedSecretResources: [], savedSecretCatalogState });
+      await expect(services.resolveBindingStatus(bindingRequest)).resolves.toEqual({ status: 'current' });
+      expect(materialReads()).toBe(before + 1);
+      const reads = vi.mocked(axios.get).mock.calls.filter(([url]) =>
+        new URL(String(url)).pathname === '/v1/account/saved-secrets/resources/materials');
+      expect(reads.at(-1)?.[1]).toMatchObject({ params: { resourceIds: [resourceId] } });
+    }
+    for (const unavailable of ['missing', 'forbidden'] as const) {
+      materialAvailability = unavailable;
+      resetActiveAccountSettingsSnapshotForTests();
+      setActiveAccountSettingsSnapshot({ ...warmSnapshot, savedSecretResources: [], savedSecretCatalogState: undefined });
+      await expect(services.resolveBindingStatus(bindingRequest)).resolves.toMatchObject({
+        status: 'incompatible', error: { code: 'provider_secret_missing', savedSecretReason: 'reference_forbidden' },
+      });
+    }
+    materialAvailability = 'ready';
+    resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot(warmSnapshot);
     if (custody === 'ambient') {
       let releaseCatalog!: () => void;
       catalogReadGate = new Promise<void>(resolve => { releaseCatalog = resolve; });

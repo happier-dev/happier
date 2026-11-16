@@ -226,11 +226,12 @@ describe('Provider direct source admits its shared Saved Secret before preparati
     expect(vi.mocked(axios.get).mock.calls[0]?.[1]).toMatchObject({ params: { resourceIds: [resourceId] } });
   });
 
-  it.each(['warm', 'cold'] as const)('prepares private native metadata from a %s catalog, refreshes the selected key before rendering and refuses missed revocation', async (catalogState) => {
-    if (catalogState === 'cold') {
+  it.each(['warm', 'cold', 'partial'] as const)('prepares private native metadata from a %s catalog, refreshes the selected key before rendering and refuses missed revocation', async (catalogState) => {
+    if (catalogState !== 'warm') {
       resetActiveAccountSettingsSnapshotForTests();
       setActiveAccountSettingsSnapshot({ source: 'network', settings, providerConnectionsCatalog,
-        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey });
+        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey,
+        ...(catalogState === 'partial' ? { savedSecretCatalogState: 'ready' } : {}) });
     }
     const runtime = await createManagedRunLaunchFixture();
     try {
@@ -272,7 +273,7 @@ describe('Provider direct source admits its shared Saved Secret before preparati
     expect(prepared, prepared.ok ? 'prepared' : prepared.error.code).toMatchObject({ ok: true });
     if (!prepared.ok) throw new Error(prepared.error.code);
     try {
-      const metadataReads = catalogState === 'cold' ? 2 : 1;
+      const metadataReads = catalogState === 'warm' ? 1 : 2;
       expect(axios.get).toHaveBeenCalledTimes(metadataReads);
       expect(prepared.source.providerTicket).toMatch(/^[A-Za-z0-9_-]{43}$/);
       expect(prepared.source.endpoint.publicHeaders).toEqual({ 'http-referer': 'https://happier.dev', 'x-title': 'Happier' });
@@ -322,7 +323,8 @@ describe('Provider direct source admits its shared Saved Secret before preparati
       settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey });
     vi.mocked(axios.get).mockClear();
     vi.mocked(axios.get).mockResolvedValue({ status: 200, data: {
-      resources: reason === 'missing' ? [] : [{ resourceId, status: 'unavailable', reason: 'forbidden' }],
+      resources: reason === 'missing' ? [] : [{ ...sharedRow, storedContent: null, entry: { ...sharedRow.entry,
+        materialStatus: 'access_removed', capabilities: { ...sharedRow.entry.capabilities, use: false } } }],
     } });
 
     await expect(resolve()).resolves.toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
