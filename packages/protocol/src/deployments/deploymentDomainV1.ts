@@ -2,6 +2,10 @@ import { z } from '../zodRuntimePolicy.js';
 import { DeploymentDomainNativeRequiredFactV1Schema } from './deploymentDomainFailureV1.js';
 import { DeploymentDomainContentV1Schema } from './deploymentDomainContentV1.js';
 export { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from './deploymentDomainContentV1.js';
+export { DeploymentDomainTunnelOwnershipV1Schema, DeploymentDomainTunnelOwnershipV1ProtocolSchema,
+    DeploymentDomainTunnelDispositionV1Schema, DeploymentDomainTunnelDispositionV1ProtocolSchema,
+    type DeploymentDomainTunnelOwnershipV1, type DeploymentDomainTunnelDispositionV1 }
+    from './deploymentDomainProviderResultV1.js';
 export { DeploymentDomainHealthCheckV1Schema, type DeploymentDomainHealthCheckV1 } from './deploymentDomainHealthCheckV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision,
@@ -103,7 +107,7 @@ export const DeploymentDomainNetworkExposureV1Schema = lazyZodSchema(() => z.dis
 ]));
 export type DeploymentDomainNetworkExposureV1 = z.infer<typeof DeploymentDomainNetworkExposureV1Schema>;
 /** Semantic DNS facts only: observation clocks must not turn equal verification into a write. */
-const domainDnsHealth = () => z.pick(HealthCheckResultV1Schema, { status: true, evidence: true });
+const domainDnsHealth = () => z.pick(HealthCheckResultV1Schema, { status: true, cause: true, evidence: true });
 /** Replica dial identities recorded by a successful native Domain apply, never a live inventory. */
 const domainRoutedReplicas = lazyZodSchema(() => z.array(z.strictObject({ containerName: id })));
 export const DeploymentDomainCapturedPlacementsV1Schema = lazyZodSchema(() => z.array(z.extend(DeploymentDomainPlacementV1Schema, {

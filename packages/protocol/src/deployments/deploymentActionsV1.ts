@@ -1,4 +1,5 @@
 import { DeploymentDomainDnsInputV1Schema, DeploymentDomainDnsResultV1Schema } from './deploymentDomainDnsV1.js';
+import { DeploymentDomainTunnelDispositionV1Schema } from './deploymentDomainProviderResultV1.js';
 export * from './deploymentDomainDnsV1.js';
 export { isDeploymentDomainDnsActionIdV1, isDeploymentDomainDnsVerifyActionIdV1, DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1, DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
 import { DeploymentBindingsSetInputV1Schema } from './deploymentBindingPatchV1.js';
@@ -424,7 +425,7 @@ export const DeploymentActionFailureV1Schema = lazyZodSchema(() => z.union([
 export type DeploymentActionFailureV1 = z.infer<typeof DeploymentActionFailureV1Schema>;
 const result = { ok: z.literal(true), environmentId: DeploymentIdentifierV1Schema, revision: DeploymentRevisionV1Schema };
 export const DeploymentDomainMutationResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ...result, domain: DeploymentDomainHeaderV1Schema }), DeploymentActionFailureV1Schema,
+  z.strictObject({ ...result, domain: DeploymentDomainHeaderV1Schema, tunnel: z.optional(DeploymentDomainTunnelDispositionV1Schema) }), DeploymentActionFailureV1Schema,
 ]));
 export const DeploymentDomainListResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, domains: z.array(DeploymentDomainHeaderV1Schema), nextCursor: z.nullable(DeploymentIdentifierV1Schema) }),

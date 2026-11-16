@@ -3,7 +3,8 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AccessProviderSelectionV1Schema } from '../plugins/contributions/accessProviders.js';
 import { DeploymentDomainHealthCheckV1Schema } from './deploymentDomainHealthCheckV1.js';
 import { DeploymentTextV1Schema as text } from './storedAppInputV1.js';
-import { DeploymentDomainProviderResultV1Schema, DeploymentDomainProviderZoneV1Schema } from './deploymentDomainProviderResultV1.js';
+import { DeploymentDomainProviderResultV1Schema, DeploymentDomainProviderZoneV1Schema,
+    DeploymentDomainTunnelOwnershipV1Schema } from './deploymentDomainProviderResultV1.js';
 export { DeploymentDomainProviderResultV1Schema, type DeploymentDomainProviderResultV1 } from './deploymentDomainProviderResultV1.js';
 
 const path = z.string().check(z.startsWith('/'));
@@ -21,6 +22,7 @@ export const DeploymentDomainContentV1Schema = lazyZodSchema(() => z.strictObjec
     ingress: z.optional(AccessProviderSelectionV1Schema),
     cloudflarePreparation: z.optional(z.strictObject({
         tunnelId: text,
+        tunnelOwnership: z.optional(DeploymentDomainTunnelOwnershipV1Schema),
         owned: z.array(z.strictObject({ hostname: text, path: z.optional(path), expectedService: text })),
         dnsOwnership: z.array(z.strictObject({ hostname: text, recordId: text })),
         connectors: z.optional(z.array(z.strictObject({ machineId: text, installationId: text,
