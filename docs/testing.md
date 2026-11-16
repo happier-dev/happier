@@ -873,9 +873,13 @@ compilation identity and every one kept the 38 GiB class floor (sampled peaks th
 day: median 1.5 GiB, p90 17.9 GiB, max 35.9 GiB over 270 completions). The commit
 compiler names the owner programs it will compile (changed files plus importers)
 as its project set, so each program set is sized by its own recorded peak.
-Event-sampled RSS peaks never size a reservation. An unrecorded identity reserves
-its class's maximum kernel peak; a class without kernel history keeps the client's
-floor, as do dynamic export floors. Maxima live in the broker root's
+Event-sampled RSS peaks never size a reservation. An unrecorded identity starts
+from related records in its class: the smallest recorded peak of the same command
+over a superset of its projects, else that command's maximum, else the maximum over
+runs of its exact project set. Only with no related record does it reserve the
+class's maximum kernel peak. Its first completion records its own peak, which sizes
+every later run. A class without kernel history keeps the client's floor, as do
+dynamic export floors. Maxima live in the broker root's
 `identity-kernel-peaks.json`. At succession each recovered slot reserves
 max(its job scope's `memory.current`, its identity kernel peak) instead of its old
 floor; the identity peak applies when the live client re-advertises its identity on

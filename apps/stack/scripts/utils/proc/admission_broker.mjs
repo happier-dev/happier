@@ -187,14 +187,53 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     }
     return maximum;
   }
-  function recordedIdentityFloorKiB(item) {
-    if (item.floorOptions) return item.floorKiB;
+  // A project contains another when it is the same path, an ancestor directory, or the whole repository.
+  const projectContains = (outer, inner) => outer === '.' || outer === inner || inner.startsWith(`${outer}/`);
+  /** An unrecorded identity starts from its relatives in the same class, most specific first: recorded
+   * runs of the same command (entry) over a superset of its projects (the smallest such peak bounds
+   * it); otherwise that command's maximum; otherwise the maximum over runs of its exact project set.
+   * Only with no related record does it take the class kernel maximum. Its own first completion then
+   * records its real peak, which sizes every later run. */
+  function relatedIdentityPeakKiB(item) {
+    const resourceClass = item.resourceClass ?? item.className;
+    const projects = [...(item.projects ?? [])].sort();
+    let supersetMinimum; let familyMaximum; let projectSetMaximum;
+    for (const [key, peak] of recordedIdentityPeaks()) {
+      const [recordedClass, , entry, recordedProjects] = JSON.parse(key);
+      if (recordedClass !== resourceClass) continue;
+      if (entry === item.entry) {
+        familyMaximum = Math.max(familyMaximum ?? 0, peak);
+        if (projects.length && projects.every(inner => recordedProjects.some(outer => projectContains(outer, inner)))) {
+          supersetMinimum = Math.min(supersetMinimum ?? Infinity, peak);
+        }
+      } else if (projects.length && JSON.stringify(recordedProjects) === JSON.stringify(projects)) {
+        projectSetMaximum = Math.max(projectSetMaximum ?? 0, peak);
+      }
+    }
+    return supersetMinimum ?? familyMaximum ?? projectSetMaximum ?? classKernelMaximumKiB(resourceClass);
+  }
+  function recordedIdentityPeakKiB(item) {
     const key = identityKey(item);
     // Never below the identity's observed maximum, even above the class floor.
-    // Unrecorded identities take the class's kernel maximum; no history, the floor.
-    const peak = (key === null ? undefined : recordedIdentityPeaks().get(key))
+    // Unrecorded identities start from related records (relatedIdentityPeakKiB); no history, none.
+    return (key === null ? undefined : recordedIdentityPeaks().get(key) ?? relatedIdentityPeakKiB(item))
       ?? classKernelMaximumKiB(item.resourceClass ?? item.className);
+  }
+  function recordedIdentityFloorKiB(item) {
+    const peak = recordedIdentityPeakKiB(item);
     return peak === undefined ? item.floorKiB : roundPeak(peak);
+  }
+  /** Worker-count options follow the same identity rule: with a recorded peak,
+   * offer the worker counts whose modelled floor fits inside it (else the
+   * smallest), each reserving that peak, never the modelled maximum. */
+  function recordedIdentityFloorOptions(item) {
+    const peak = item.floorOptions && recordedIdentityPeakKiB(item);
+    if (peak === undefined || !item.floorOptions) return item.floorOptions;
+    const floorKiB = roundPeak(peak);
+    const within = item.floorOptions.filter(option => option.floorKiB <= floorKiB);
+    const offered = within.length ? within
+      : [item.floorOptions.reduce((smallest, option) => option.workers < smallest.workers ? option : smallest)];
+    return offered.map(option => ({ ...option, floorKiB }));
   }
   function recordIdentityPeak(identity, peakKiB) {
     const key = identityKey(identity);
@@ -771,6 +810,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       item = { ...request, socket, locks: request.locks ?? [], env: request.env ?? {}, settled: false,
         arrivedAt: request.arrivedAt ?? Date.now(), arrivalOrder: ++arrivalOrder, headPriority: headPriorityRank(request) };
       item.floorKiB = recordedIdentityFloorKiB(item);
+      item.floorOptions = recordedIdentityFloorOptions(item);
       item.observation = createWorkspaceBuildResourceObservation({ locks: item.locks });
       if (item.floorOptions) item.floorOptions = [...item.floorOptions].sort((left, right) => right.floorKiB - left.floorKiB || right.workers - left.workers);
       // The existing client carries its first arrival through reconnects.

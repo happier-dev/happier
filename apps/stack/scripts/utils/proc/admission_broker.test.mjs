@@ -750,7 +750,7 @@ test('completed slots retain sampled RSS peaks by class without extra process wa
   assert.deepEqual(Object.keys(rows[0]).sort(), ['className', 'completedAt', 'floorKiB', 'maxGapMs', 'method', 'peakRssKiB', 'samples'].sort());
 });
 
-test('identity keys on component and entry, never the argument list; unrecorded identities reserve the class kernel maximum', linux, async t => {
+test('identity keys on component and entry, never the argument list; unrecorded identities reserve their package set maximum', linux, async t => {
   const gib = 1024 * 1024;
   const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
     admitDisk: () => ({ admitted: true }) });
@@ -767,12 +767,45 @@ test('identity keys on component and entry, never the argument list; unrecorded 
   assert.equal(await run(entryA, ['alpha.test.mjs'], 1 * gib), 0); await settle();
   assert.equal(await admittedFloor(), 38 * gib, 'a class without kernel history reserves its floor');
   assert.equal(await run(entryB, ['beta.test.mjs'], 9 * gib), 0); await settle();
-  assert.equal(await admittedFloor(), 1 * gib, 'an unrecorded identity reserves the class kernel maximum (1 GiB so far), not the floor');
+  assert.equal(await admittedFloor(), 1 * gib, 'an unrecorded identity reserves its package set maximum (1 GiB so far), not the floor');
   assert.equal(await run(entryA, ['gamma.test.mjs', 'delta.test.mjs'], 1 * gib), 0); await settle();
   assert.equal(await admittedFloor(), 1 * gib, 'new arguments for a recorded entry keep its identity');
   await writeFile(join(root, 'entry-c.mjs'), record);
   assert.equal(await run(join(root, 'entry-c.mjs'), ['x.test.mjs'], 1 * gib), 0); await settle();
-  assert.ok(await admittedFloor() >= 9 * gib, 'an unrecorded entry reserves at least the class kernel maximum');
+  assert.ok(await admittedFloor() >= 9 * gib, 'an unrecorded entry reserves at least its package set maximum');
+});
+
+test('an unrecorded identity starts from its command family or package set, not the class kernel maximum', linux, async t => {
+  const gib = 1024 * 1024;
+  const { root, broker } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
+    admitDisk: () => ({ admitted: true }) });
+  const key = (entry, projects, component = '.') => JSON.stringify(['compilation', component, entry, [...projects].sort()]);
+  const fixtureCompile = 'node scripts/workspaces/runTypeScriptCli.mjs';
+  const checker = 'node scripts/workspaces/checkCommitTypeCoherence.mjs';
+  await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
+    [key(fixtureCompile, ['packages/plugin-sdk/fixtures/a/tsconfig.json'])]: Math.round(1.4 * gib),
+    [key(checker, ['.'])]: Math.round(32.7 * gib),
+    [key(checker, ['apps/cli', 'apps/ui'])]: 17 * gib,
+    [key(checker, ['apps/bootstrap', 'apps/cli', 'apps/desktop', 'apps/server'])]: Math.round(39.9 * gib),
+    [key('pnpm run typecheck:local', ['packages/plugins/machine-lima'], 'packages/plugins/machine-lima')]: Math.round(4.8 * gib),
+  }));
+  const reserved = async identity => {
+    const held = await (await acquire(root, 38 * gib, t, { className: 'compilation', resourceClass: 'compilation',
+      commandClass: 'compilation', component: '.', ...identity })).admit();
+    const floorKiB = broker.status().reservedMemoryKiB;
+    await held.release();
+    return floorKiB;
+  };
+  assert.equal(await reserved({ entry: fixtureCompile, projects: ['packages/plugin-sdk/fixtures/b/tsconfig.json'] }), 1.5 * gib,
+    'a new fixture compile takes its command family maximum (1.4 GiB), not the 39.9 GiB class maximum');
+  assert.equal(await reserved({ entry: checker, projects: ['apps/cli'] }), 17 * gib,
+    'a package set inside recorded runs of the same command takes the smallest such superset');
+  assert.equal(await reserved({ entry: 'pnpm run typecheck:local', projects: ['packages/plugins/machine-lima'],
+    component: 'packages/plugins/machine-lima-copy' }), 5 * gib, 'the same command in another component is the same family');
+  assert.equal(await reserved({ entry: 'node other-checker.mjs', projects: ['apps/cli', 'apps/ui'] }), 17 * gib,
+    'an unknown command on a recorded package set takes that package set\'s maximum');
+  assert.equal(await reserved({ entry: 'node other-checker.mjs', projects: ['apps/website'] }), 40 * gib,
+    'with no related record the class kernel maximum still applies');
 });
 
 test('succession re-sizes a recovered slot to max(its scope memory.current, its identity kernel peak)', linux, async t => {
@@ -843,6 +876,23 @@ test('an identity whose history includes a 38.9 GiB kernel peak never reserves l
   assert.ok(successor.recordedIdentityFloorKiB({ className: 'compilation', resourceClass: 'compilation', projects: ['.'], ...identity,
     floorKiB: 38 * gib }) >= peakKiB, 'broker succession keeps the recorded maximum');
   void broker;
+});
+
+test('a web export with a recorded kernel peak reserves that peak, not its largest worker-count floor', linux, async t => {
+  const gib = 1024 * 1024;
+  const { root, broker } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }) });
+  const identity = { className: 'source-web-export', resourceClass: 'source-web-export', component: '.',
+    entry: 'node apps/stack/scripts/build/build_source_web_ui.mjs', projects: ['apps/stack'] };
+  // The persisted maximum kernel peak of this export identity (broker record).
+  await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
+    [JSON.stringify([identity.resourceClass, identity.component, identity.entry, identity.projects])]: Math.round(16.25 * gib) }));
+  const floorOptions = [{ floorKiB: 32 * gib, workers: 47 }, { floorKiB: 16 * gib, workers: 20 }, { floorKiB: 8 * gib, workers: 1 }];
+  const held = await (await acquire(root, 32 * gib, t, { ...identity, commandClass: 'source-web-export', floorOptions })).admit();
+  assert.equal(broker.status().reservedMemoryKiB, 16.5 * gib, 'reserves the recorded peak (rounded), not the 32 GiB maximum');
+  assert.equal(held.admitted.workers, 20, 'runs the most workers whose modelled floor fits inside the recorded peak');
+  const fresh = await (await acquire(root, 32 * gib, t, { ...identity, entry: 'node other-export.mjs', commandClass: 'source-web-export',
+    floorOptions })).admit();
+  assert.equal(fresh.admitted.workers, 20, 'an unrecorded export identity takes the class kernel maximum');
 });
 
 for (const resourceClass of ['focused-validation-ui', 'entry-loads']) {
