@@ -1,5 +1,130 @@
 # Changelog
 
+## Release 2026-11-16.1 - 2026-11-16
+
+<!-- happier-release-note-projections:v1
+{
+  "expo": { "message": "Start several sessions back to back without leaving New Session, keep typing after you send, and get browser notifications when an Agent finishes or needs you. Claude and Codex accounts can keep going on credits and extra usage, Claude history retention is now a setting, Markdown tables are readable on every screen, and long sessions load and update faster. Plus many fixes for Claude, Codex, OpenCode, session cleanup, the keyboard and self-hosting. Install the new app from the store to get this release." },
+  "appStore": { "whatsNew": "Start several sessions back to back: send, stay on New Session and start the next one while the first spins up. Keep typing after you send, and swipe the composer to reuse earlier messages. Read Markdown tables comfortably, open them full screen and copy them as CSV. Claude and Codex accounts can keep going on credits and extra usage once included quota runs out, and Claude history retention is now a setting. Long sessions load and update faster. Plus fixes for Claude questions, Codex history and reviews, the keyboard, session deletion and Back." },
+  "playStore": { "whatsNew": "Start sessions back to back, keep typing after you send and swipe through earlier messages. Swipe wide code, diffs and tables sideways, read tables full screen, and connect to self-hosted servers that use your own certificate authority. Accounts can keep going on credits, and long sessions are faster. Plus fixes for Back, the keyboard and session deletion." },
+  "storyDeck": { "summary": "Start sessions back to back, type anywhere to write, browser and Windows notifications, readable tables, credits after included quota, and Claude history retention." }
+}
+-->
+
+Start sessions back to back, type anywhere to write, and hear from your Agents in the browser and on Windows. Accounts keep going on credits once included quota runs out, long conversations are easier to read, and a long list of Claude, Codex and self-hosting fixes makes everyday work more dependable.
+
+### Starting and sending
+
+- **Start sessions back to back:** send from New Session and stay there to start the next one while the first spins up in the background. A "Session started · Open" notice takes you to it. Prefer to jump straight in? Pick that in Settings, or flip it for one message by holding Send, using the send menu or pressing Mod+Shift+Enter.
+- **Keep typing after you send:** the composer can stay focused after sending, so you can follow up right away. Turn it on from the composer or your device settings; it is on by default with a hardware keyboard.
+- **Reuse earlier messages:** on iOS and Android, swipe the composer to step through what you sent before.
+- **No more empty drafts:** opening New Session and leaving without typing no longer saves a draft.
+- **Type anywhere to write:** on web and desktop, start typing outside a text field and your keystrokes go straight into the session's composer, first character included. Shortcuts, editors and dialogs keep their keys, and you can turn it off in device settings.
+
+### Notifications
+
+- **Notifications in the browser:** get a system notification when a turn finishes or an Agent needs a permission or an answer. Turn on Device notifications to allow them; clicking one opens the session. Notifications keep working while Happier is visible in its own window, but hidden tabs pause.
+- **Quieter when you are already looking:** web and desktop stay silent for the session you are viewing, and Silent and Off apply to your other sessions.
+- **Click a Windows notification to open its session:** Happier comes to the front and opens the session the notification was about.
+
+### Reading conversations
+
+- **Readable Markdown tables:** tables wrap to fit the screen, open in a full-screen viewer with pinned headers, and copy as Markdown or CSV.
+- **Open linked files anywhere:** files an Agent links to outside the workspace now open, including links to a specific line. Editing and Git actions still stay inside the workspace.
+- **Smoother switching between long conversations:** revisiting a long session loads faster, and transcript navigation and message actions do less work up front.
+- **Lighter tool groups and clearer themes:** tool groups use a lighter look by default (the card style is still in Settings), and prompts and secondary text stand out better in every theme.
+- **Worktrees grouped by repository:** sessions in linked Git worktrees now sit under their repository in the session list.
+- **Faster long sessions:** live updates are applied once per frame and long transcripts no longer slow down as they grow, especially on web.
+- **Read replies aloud:** with Voice set up, any message has a Read aloud button. Speaking to your Agent takes over from a readout, and Stop stays reachable while you move around the app.
+- **Subagents stay visible:** subagent progress and their nested tool updates keep showing through to the end.
+
+### Sessions
+
+- **Deleted sessions stay gone:** sessions that were deleted or that you can no longer access disappear from the app and no longer come back after a refresh.
+- **Honest stop results:** stopping a session whose process is already gone only says "already stopped" once the server confirms it.
+- **Right sender on every message:** messages sent by another Agent keep their sender through approvals, steering and edits to queued messages.
+- **Steering wakes stopped sessions:** steering a stopped session starts it again, and queued work resumes on a machine that replaced the original one.
+- **Clean account switches:** signing into another account on the same server clears the previous account's sessions, machines and organization data.
+- **Long turns survive daemon updates:** a turn that is still running is no longer treated as idle when the daemon refreshes.
+- **Permission answers are not lost:** if an answer can't be delivered, it is kept so you can retry instead of disappearing.
+- **Session modes carry over:** continuing a session with another Agent no longer invents a mode you didn't choose.
+
+### Phone and desktop
+
+- **Swipe sideways on Android:** scroll wide code blocks, diffs and tables horizontally without the page scrolling instead.
+- **Back closes dialogs first on Android,** and closing a dialog puts the composer back above the keyboard.
+- **Steadier keyboard:** scrolling a multiline input no longer pops the keyboard back up, profile environment fields stay visible above it, and typing with a Japanese or Chinese keyboard on the web no longer makes the composer jump.
+- **Menus and hints that fit:** long dropdowns use the full window height, keyboard hints only appear with a hardware keyboard, and question actions fit on narrow screens.
+- **Clean desktop uninstall:** uninstalling the desktop app removes the CLI, background service and PATH entries it installed, and leaves anything you installed yourself. It warns you first, since stopping the service can interrupt running sessions.
+- **Your own certificate authority on Android:** connect to self-hosted servers that use a certificate authority installed on your device, with full certificate and hostname checks.
+- **Desktop pet stays out of the way:** it no longer keeps stealing focus, and Windows no longer tries unsupported taskbar badge commands.
+- **The desktop app remembers where you left it:** window size and position are kept between launches on Windows and Linux.
+- **Clearer usage rings:** choose which number sits in the centre of the usage ring, and selected options now show a visible dot in every theme.
+- **Steadier session reordering:** dragging sessions to reorder them lands where the indicator shows.
+
+### Claude
+
+- **Choose how long Claude keeps local history:** set it once in Claude settings and every connected machine applies it, with a status for each machine. Your Happier transcripts are not affected.
+- **API key helpers work for model discovery:** Claude models load when you use an `apiKeyHelper`, including gateway setups.
+- **Answers that stick:** your answers to Claude's questions survive screen redraws and slow confirmations, and Japanese text, emoji and pasted tabs are read correctly in the terminal.
+- **`/clear` no longer blocks the queue:** local Claude commands finish their turn so your queued messages go out, and prompts stay visible after you take over a session.
+
+### Accounts and usage limits
+
+- **Keep going on credits:** when included quota runs out, accounts can continue on Codex credits or Claude extra usage. Balances show on accounts and pools, and accounts with included quota or a free reset are still used first.
+- **See your Claude plan:** Claude accounts show their subscription plan and whether it is active.
+- **Account switching that recovers:** after a usage limit, switching to another account carries on through server hiccups and retries, and the Agent gets the "continue" prompt instead of sitting stuck. If the recovery stops, you get a Retry button.
+- **Pick who handles Claude's usage-limit wait:** Claude account pools can use Claude's built-in wait or let Happier switch accounts, which is the default.
+- **Quota stays visible:** the last known usage stays on screen when a background refresh fails.
+- **Better accounts come back first:** when a higher-priority account in a pool has quota again, Happier switches back to it.
+- **One subscription status everywhere:** the composer's usage badge and the account screen now show the same subscription status.
+
+### Codex, OpenCode and other Agents
+
+- **Codex history that holds up:** resume compressed Codex sessions, and keep text, images, audio, file references and tool records when history is reloaded.
+- **Cleaner Codex reviews:** review findings come through intact and are no longer confused with quoted examples. Answered questions offer Dismiss instead of a Submit button that does nothing.
+- **OpenCode installs and reconnects:** the current OpenCode CLI is installed and detected correctly, and a managed server is reused with its saved credentials and stays attached after a reset.
+- **ACP Agents can work outside the repo:** Agents connected over ACP can read files outside the workspace as you, and write there after the usual permission prompt. They could already reach those files through their shell, so blocking them only caused failed tool calls.
+
+### Reliability
+
+- **No more forever-busy sessions:** an Agent that exits while its terminal stays open now shows as failed instead of looking busy forever.
+- **Smoother daemon restarts:** the daemon stays ready while it restarts, waits properly between retries instead of waking constantly, and skips unchanged updates.
+- **Your files are safe across updates:** settings, profiles and queued messages that an update cannot read are kept instead of discarded, and one rejected message no longer stops an offline replay.
+- **Windows launches that just work:** tools such as Docker get the system variables they need, the runtime starts directly, and tmux commands no longer flash console windows.
+- **Huge repositories no longer drop the connection:** Git status for a working tree with very large untracked output is trimmed instead of disconnecting the machine.
+- **Logs stay small:** log files are capped by size, with an overall budget of 1 GiB per install, instead of growing for as long as the daemon runs.
+- **Safer Windows updates:** updating the CLI from inside a Happier session on Windows is refused before anything is changed, so it can't stop the session running it. Process detection on Windows is faster and more reliable, and managed Agent installs keep working after they move into place.
+
+### Self-hosting
+
+- **Healthy servers stay healthy:** a slow database read no longer fails the server's health check, and PostgreSQL write conflicts retry with staggered delays (tune with `HAPPIER_DB_TX_MAX_RETRIES`).
+- **Machines stay online:** machines no longer blink offline while their connection is replaced.
+- **Dev-box image fix:** Pi and other managed Agent runtimes start correctly in the dev-box image.
+- **Update your server first:** the new Claude usage-limit setting needs this server version, and downgrading the server afterwards resets that pool's settings to their defaults.
+- **Retention cleanup that actually runs:** the 14-day subagent history cleanup now finds expired data without scanning every message.
+- **Ready-made web app image:** `ghcr.io/happier-dev/webapp` serves the web app. Set `HAPPIER_WEBAPP_SERVER_URL` to point it at your server; no rebuild needed. API and worker can both run from the `relay-server` image.
+
+### Smaller fixes
+
+- **What's New shows every release,** including releases with the current heading format.
+- **Unread stays visible** on sessions whose machine is offline, and the session navigator follows your theme.
+- **File tabs load in full-screen sessions,** and shared-control notices name the right Agent.
+- **Stable server web app:** the web app bundled with a stable self-hosted server uses the stable name and CLI instructions.
+
+### Updating
+
+- **Update your machines:** update the Happier CLI and daemon on each machine to get Claude retention, account recovery and the Agent fixes.
+- **Get the new app from the store:** this release uses a new native app build on iOS and Android. Older app builds keep working but stay on the previous release.
+
+### App contributors
+
+Thanks to Interfish for browser notifications; Dax Liniere for dropdown menus; Wang Dong for input-method handling and session recovery; john-sickmeyer for Android profile editing; Hao for transcript file access; Zac Fias for What’s New; Lukiya for session deletion; Yash for Agent message attribution; Deff for Android certificate support; Dax Liniere for Windows notification clicks, type-anywhere, usage ring centres, window position memory, radio dots and session reordering; Hao for faster subagent updates; Serge De Coster for reading messages aloud; and saviour2048 for session modes on continuation.
+
+### CLI and self-hosting contributors
+
+Thanks to Anton Ermak for Claude model discovery with API key helpers; Takashi Saito for Unicode terminal input; OutmanSay for Claude prompts after takeover; bnschz for native Codex review findings; kairan for Codex history; RogueKostas for compressed Codex sessions; Denis Usanov and Jacob Lasky for OpenCode and service fixes; Søren Guldmund for daemon retry scheduling; Lukiya for Windows environment handling; Winter Snow for settings preservation and offline replay; Andrew for Claude command completion; Wang Dong for terminal Agent exit handling; no-hup for metadata traffic reductions; Aron Gates for PostgreSQL transaction retries; hubikj for stable server web builds; Vitaly Polonetsky for dev-box runtime support; Raazi Faisal for Windows process discovery and provider version caching; Shawn for relocatable Windows managed installs; Wang Dong for keeping active turns across daemon refreshes; and Dax Liniere for session idle detection.
+
 ## Release 2026-11-02.1 - 2026-11-02
 
 <!-- happier-release-note-projections:v1

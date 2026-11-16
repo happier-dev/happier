@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Happier",
   "mainBinaryName": "happier-desktop",
-  "version": "0.2.21",
+  "version": "0.2.22",
   "identifier": "dev.happier.app",
   "build": {
     "frontendDist": "../dist",
@@ -54,8 +54,12 @@
         "installerHooks": "installer/windows/uninstall-hooks.nsh"
       },
       "wix": {
-        "fragmentPaths": ["installer/windows/desktop-uninstall.wxs"],
-        "componentGroupRefs": ["HappierDesktopCleanupIntegration"]
+        "fragmentPaths": [
+          "installer/windows/desktop-uninstall.wxs"
+        ],
+        "componentGroupRefs": [
+          "HappierDesktopCleanupIntegration"
+        ]
       }
     },
     "icon": [
