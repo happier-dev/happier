@@ -857,7 +857,7 @@ export function createActiveDaemonComposerMediaStageStore(input: Readonly<{
     rootDirectory: join(configuration.activeServerDir, 'composer-media-stages'),
     executionTarget: {
       serverId: configuration.activeServerId,
-      machineId: input.machineId,
+      get machineId() { return input.machineId; },
     },
   });
 }

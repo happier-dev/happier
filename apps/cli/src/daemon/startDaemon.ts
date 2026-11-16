@@ -1517,7 +1517,7 @@ export async function startDaemon(
       registerAcceptedWorkspace: createAcceptedSessionWorkspaceRegistration({
         credentials,
         serverId: configuration.activeServerId,
-        machineId,
+        get machineId() { return machineId; },
         signal: homeTransportCancellation.signal,
         requesterSessionCustody: {
           resolve: async sessionId => {
@@ -1554,7 +1554,7 @@ export async function startDaemon(
     const stopSessionProjectReclassification = subscribeMachineSessionProjectReclassification({
       subscribe: subscribeActiveProjectAccountRowsSnapshot,
       reclassify: createMachineSessionProjectReclassification({
-        credentials, machineId, signal: homeTransportCancellation.signal,
+        credentials, get machineId() { return machineId; }, signal: homeTransportCancellation.signal,
         resolveHomeServerId: () => resolveServerProfileHomeIdentityId(configuration.activeServerId),
       }),
       onError: (error) => {
@@ -1669,7 +1669,7 @@ export async function startDaemon(
       readAccountEncryptionMode: signal => api.getAccountEncryptionMode({ signal }),
     });
     const executeTeamCredentialBrokerAction = createTeamCredentialBrokerActionPurposeExecutor({
-      initiatorMachineId: machineId,
+      get initiatorMachineId() { return machineId; },
       openBroker: async (request, signal, requestHeaders) => await runWithServerHttpBaseUrl(
         readDaemonHomeServerHttpBaseUrl(), () => api.openTeamCredentialProviderBroker(request, { signal, requestHeaders })),
       openTunnel: async request => {
@@ -1684,7 +1684,7 @@ export async function startDaemon(
     const connectedAccountPurposeBindingRuntime = createDaemonConnectedAccountPurposeBindingRuntime({
       credentialOwnerAccountId: readAccountIdFromToken(credentials.token) ?? undefined,
       coordinatorInventoryIsObserved: () => apiMachine?.hasCurrentAccountChangesObserver() === true,
-      workerMachineId: machineId,
+      get workerMachineId() { return machineId; },
       establishedRuntimeOwner: establishedConnectedAccountRuntimeOwner,
       openTeamDirect: teamCredentialDirectMaterialClient.open,
       executeTeamCredentialBrokerAction,
@@ -1834,7 +1834,7 @@ export async function startDaemon(
     const pluginRemovalOrigin = await resolveCurrentMachineExecutionOriginContext();
     const managedPolicyHomeId = pluginRemovalOrigin?.serverIdentityId ?? null;
     const { installation: pluginRemovalInstallation, managedResourcePreflight } = await prepareDaemonPluginRemoval({
-      credentials, machineId, origin: pluginRemovalOrigin, readServerUrl: readManagedPolicyServerHttpBaseUrl,
+      credentials, get machineId() { return machineId; }, origin: pluginRemovalOrigin, readServerUrl: readManagedPolicyServerHttpBaseUrl,
       signal: homeTransportCancellation.signal,
     });
     const readCurrentManagedPolicyController = () => {
@@ -2579,7 +2579,8 @@ export async function startDaemon(
       requesterSessionCustodyServerId: requesterRuntimeServerId,
       readLiveWorkInventory: managedActivity.read,
       projectManagedServiceActivity: serviceActivity,
-      machineId,
+      // Registration can replace the bootstrap identity after this runtime starts.
+      get machineId() { return machineId; },
       managedProviderOperationAuthority,
       executeTeamCredentialBrokerAction,
       prepareTeamCredentialNativeSource: async (request, signal) => {
@@ -2666,7 +2667,7 @@ export async function startDaemon(
           return release;
         },
         releaseSessionOwnedNativeBindings: createDaemonSessionTeamCredentialNativeRelease({
-          machineId, accountId: externalActionAccountId, credentials, get serverHttpBaseUrl() { return readRequesterRuntimeServerHttpBaseUrl(); },
+          get machineId() { return machineId; }, accountId: externalActionAccountId, credentials, get serverHttpBaseUrl() { return readRequesterRuntimeServerHttpBaseUrl(); },
           readInstallationIdentity: readInstallationIdentityIfExistsSync, resolveCurrentMachineExecutionOriginContext,
         }),
       } : {}),
@@ -3525,7 +3526,7 @@ export async function startDaemon(
       logger,
       processEnv: process.env,
       controlPort,
-      machineId,
+      get machineId() { return machineId; },
       machineIdProvider: () => machineId,
       runtimeId,
       cliVersion: packageJson.version,
@@ -4401,6 +4402,8 @@ export async function startDaemon(
                       serverId: stamp.serverId, awaitAgentSessionOpen });
                     return await runObservedWorkflowSessionStartup(request, { serverId: stamp.serverId, machineId: input.machineId,
                       machineActionDirectTargetTransport: input.machineActionDirectTargetTransport,
+                      readMachineMetadataSnapshot: () => client.getMachineMetadataSnapshot(),
+                      acquireSessionIsolationSandbox: managedMachinePolicyAdapter.acquireSessionIsolationSandbox,
                       ...(installation ? { sessionCreationInstallation: installation } : {}),
                       observeExecution: observed => client.observeActionExecution(observed),
                       rpcContext: prepared ? { requesterSessionBootstrap: prepared.admitted } : {},

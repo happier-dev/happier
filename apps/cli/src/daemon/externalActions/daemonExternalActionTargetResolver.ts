@@ -462,7 +462,7 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
   };
   const checker = createDaemonApprovalExecutionOriginCurrentness({
     accountId,
-    machineId: input.machineId,
+    get machineId() { return input.machineId; },
     serverId: input.serverId,
     resolveCurrentMachineExecutionOriginContext: input.resolveCurrentMachineExecutionOriginContext ?? createCurrentMachineExecutionOriginContextResolver({
       get serverUrl() { return input.serverApiUrl; },

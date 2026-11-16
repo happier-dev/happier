@@ -630,7 +630,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     const readStartOperations = () => startOperations?.store.list({ accountId: startOperations.accountId,
         machineId: params.machineId, states: ['accepted', 'running'] }).items ?? [];
     const scannedLauncherFeed = createLocalServiceLauncherFeed({
-        machineId: params.machineId,
+        get machineId() { return params.machineId; },
         accountId: params.accountId,
         inventoryRegistry,
         previewRegistry,
@@ -718,7 +718,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     // Launcher leaf actions (LSV-1): openPreview/registerPreview reuse the canonical launcher
     // feed + private-preview owner; history.clear empties the daemon-owned launcher history.
     const launcherLeafRoutes = createLocalServiceLauncherLeafRoutes({
-        machineId: params.machineId, accountId: params.accountId, serverId: params.serverId,
+        get machineId() { return params.machineId; }, accountId: params.accountId, serverId: params.serverId,
         feed: launcherFeed,
         previewRoutes,
         history: launcherHistory,
@@ -764,7 +764,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
             ...(params.processOwnershipRuntime ? { processOwnershipRuntime: params.processOwnershipRuntime } : {}) }),
     );
     const actionRoutes = createLocalServiceActionRoutes({
-        machineId: params.machineId,
+        get machineId() { return params.machineId; },
         inventoryRegistry,
         projectManagedServices: params.projectManagedServices,
         launcherHistory,

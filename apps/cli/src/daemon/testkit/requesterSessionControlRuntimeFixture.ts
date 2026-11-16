@@ -90,7 +90,7 @@ export async function createRequesterSessionControlRuntimeFixture(input: Readonl
             : Promise.resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
         },
       }),
-      machineId: input.machineId,
+      get machineId() { return input.machineId; },
       credentials: input.credentials,
       api,
       externalActionAccountId: input.custodianAccountId,

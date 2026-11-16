@@ -293,9 +293,9 @@ export async function startDaemonRuntimeBootstrap(
     composerMediaStage: {
       executionTarget: {
         serverId: configuration.activeServerId,
-        machineId: params.machineId,
+        get machineId() { return params.machineId; },
       },
-      store: createActiveDaemonComposerMediaStageStore({ machineId: params.machineId }),
+      store: createActiveDaemonComposerMediaStageStore({ get machineId() { return params.machineId; } }),
     },
     ...(stackDebugDirectPeerStartServer
       ? { startServer: stackDebugDirectPeerStartServer }

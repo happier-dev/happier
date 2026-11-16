@@ -21,7 +21,7 @@ export async function prepareDaemonPluginRemoval(params: Readonly<{
     params.origin?.machineId === params.machineId
       ? { credentials: params.credentials, get serverUrl() { return params.readServerUrl(); },
           homeId: params.origin.serverIdentityId,
-          controller: { machineId: params.machineId, installationId: installation.installationId },
+          controller: { get machineId() { return params.machineId; }, installationId: installation.installationId },
           signal: params.signal }
       : undefined;
   return { installation, managedResourcePreflight };

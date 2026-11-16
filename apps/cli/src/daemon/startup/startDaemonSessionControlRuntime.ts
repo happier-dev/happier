@@ -1,4 +1,5 @@
 import { stageObservedExit } from '@/daemon/sessions/stageObservedExit';
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createSparedHeldAgentCustody } from '@/daemon/processSupervision/sparedHeldAgents';
 import { reachHeldTargetAgent, restoreSessionTargetRelay, type OpenManagedSessionTarget } from '@/daemon/spawn/prepareSessionTargetPlacement';
@@ -1629,11 +1630,11 @@ export async function startDaemonSessionControlRuntime(
       ? { releaseRequesterSessionRuntimeContext: params.releaseRequesterSessionRuntimeContext } : {}),
     externalActionAccountId: params.externalActionAccountId ?? null,
     serverId: params.serverId,
-    machineId: params.machineId,
+    get machineId() { return params.machineId; },
     isRetired: () => controlRuntimeResourcesDisposed || isRuntimePublicationQuiescing(),
   });
   const prepareSessionAgentIsolationMember = createSessionAgentIsolationMemberPreparation({
-    machineId: params.machineId, custodianAccountId: params.externalActionAccountId,
+    get machineId() { return params.machineId; }, custodianAccountId: params.externalActionAccountId,
     agentIsolation: params.agentIsolation,
     resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext,
   });
@@ -3103,7 +3104,7 @@ export async function startDaemonSessionControlRuntime(
       runnerIdentity: object;
     }>,
   ) => Promise<void> = async () => {};
-  const runnerExecutionRunSnapshots = createRunnerExecutionRunSnapshots({ machineId: params.machineId,
+  const runnerExecutionRunSnapshots = createRunnerExecutionRunSnapshots({ get machineId() { return params.machineId; },
     controller: pluginRuntimeController,
     withNativeModelAccount: async (context, read) => {
       return await withSessionAccountContext(context.sessionId, async (requester) => {
@@ -4603,7 +4604,7 @@ export async function startDaemonSessionControlRuntime(
         const result = resolveExternalActionServerRequestHeaders({ context: managerContext, effectActionId: 'session.open',
           ...request, daemonToken: requester.credentials.token, serverIdentityId: binding.serverIdentityId,
           privateKey: installation.privateKey, installationId: installation.installationId });
-        if (!result.ok) throw new Error('Manager Resume metadata authorization unavailable');
+        if (!result.ok) throw createExternalActionHeaderRefusalError(result);
         return result.headers;
       };
       const readAdmission = async () => await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, async () => {
@@ -6780,6 +6781,7 @@ export async function startDaemonSessionControlRuntime(
             : undefined;
           const prepared = await withSessionAccountHome(requester, () =>
             prepareForegroundAgentRuntimeAdmission(request, {
+              readMachineMetadataSnapshot: () => params.getApiMachineForSessions()?.getMachineMetadataSnapshot() ?? { status: 'unavailable' },
               agentIsolation: params.agentIsolation,
               prepareAgentIsolationMember: prepareSessionAgentIsolationMember(requester,
                 AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]), accountSource),
@@ -7109,7 +7111,7 @@ export async function startDaemonSessionControlRuntime(
   };
   const runnerAgentDaemonFacetService = createRunnerAgentDaemonFacetService({
     externalSessionHostOperationOwner,
-    machineId: params.machineId,
+    get machineId() { return params.machineId; },
     authorizeCurrent: async ({ sessionId, runner, retainedAgent }) => {
       const tracked = findTrackedSessionByHappySessionId(
         params.trackedSessionsByKey.values(),
@@ -8870,7 +8872,7 @@ export async function startDaemonSessionControlRuntime(
   const localServicesRuntime = createLocalServicesDaemonRuntime({
     processOwnershipRuntime,
     serverId: params.serverId,
-    machineId: params.machineId,
+    get machineId() { return params.machineId; },
     projectManagedServices,
     projectServiceStarter: {
       resolveRuntime: async (ingress) =>
@@ -9130,7 +9132,7 @@ export async function startDaemonSessionControlRuntime(
   const localServicesMachineRpcRoutes: DaemonLocalServicesMachineRpcRoutes & Readonly<{
     localServicesInventory: LocalServicesDaemonRuntime['inventoryRoutes'];
   }> = {
-    machineId: params.machineId,
+    get machineId() { return params.machineId; },
     serverId: params.serverId,
     accountId:
       readPreviewAccountIdFromToken(params.credentials.token) ?? undefined,
@@ -9514,7 +9516,7 @@ export async function startDaemonSessionControlRuntime(
     return parentSessionId === null || tracked ? params.connectedServicesMaterializationBaseDir : null;
   };
   const captureExecutionRunConnectedServicesRunnerIdentity = createExecutionRunConnectedServicesRunnerIdentityCapture({
-    machineId: params.machineId, serverId: params.serverId ?? undefined, externalActionAccountId: params.externalActionAccountId ?? undefined,
+    get machineId() { return params.machineId; }, serverId: params.serverId ?? undefined, externalActionAccountId: params.externalActionAccountId ?? undefined,
     trackedSessionsByKey: params.trackedSessionsByKey, getApiMachineForSessions: params.getApiMachineForSessions,
     isCurrent: () => !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing(),
   });
@@ -11407,7 +11409,7 @@ export async function startDaemonSessionControlRuntime(
   const externalActionApprovalExecutionOriginCurrentness =
     createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
       credentials: params.credentials,
-      machineId: params.machineId,
+      get machineId() { return params.machineId; },
       serverId: params.serverId,
       get serverApiUrl() { return params.serverBaseUrl; },
       ...(params.resolveCurrentMachineExecutionOriginContext
@@ -11430,7 +11432,7 @@ export async function startDaemonSessionControlRuntime(
             externalActionApprovalExecutionOriginCurrentness,
         })
       : null;
-  const requesterAccountOperationContext = createRequesterAccountOperationContext({ machineId: params.machineId,
+  const requesterAccountOperationContext = createRequesterAccountOperationContext({ get machineId() { return params.machineId; },
     custodianAccountId: externalActionAccountId, installationIdentity: externalActionInstallationIdentity });
   const observeContributedPluginExecution = (request: Parameters<ApiMachineClient['observePluginActionExecution']>[0]) => {
     const client = params.getApiMachineForSessions();
@@ -11479,7 +11481,7 @@ export async function startDaemonSessionControlRuntime(
       captureElevation: () => params.getApiMachineForSessions()?.captureMachineAdminAccess() ?? null,
       requestProcessExit: () => params.requestShutdown('happier-cli'),
     }),
-    machineId: params.machineId,
+    get machineId() { return params.machineId; },
     get serverBaseUrl() { return params.serverBaseUrl; },
     serverId: params.serverId,
     prepareRequesterAccountContext: request => externalActionIngressOwner?.prepareRequesterAccountContext?.(request) ?? Promise.resolve(null),
@@ -12393,7 +12395,7 @@ export async function startDaemonSessionControlRuntime(
       runtimeActionExecute: params.runtimeActionExecute,
       trackedSessionsByKey: params.trackedSessionsByKey,
       getChildren: () => Array.from(params.trackedSessionsByKey.values()),
-      machineId: params.machineId,
+      get machineId() { return params.machineId; },
       runtimeId: params.runtimeId ?? '',
       readDoctorResourceVitals: params.readDoctorResourceVitals,
       ...(params.readPluginCatalogProjection ? { readPluginCatalogProjection: params.readPluginCatalogProjection } : {}),
