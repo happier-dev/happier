@@ -41,6 +41,7 @@ const HEAD_PRIORITY_RANKS = new Map([
 // commit compilers (between ranks 2 and 1): they are small (1-3 GiB) and short.
 const FOCUSED_TEST_PRIORITY_RANK = 1.5;
 const FOCUSED_TEST_CLASSES = new Set(FOCUSED_TEST_ADMISSION_CLASSES);
+const PRODUCER_RANK = 2;
 function headPriorityRank(request) {
   if (FOCUSED_TEST_CLASSES.has(request.resourceClass ?? request.className)) return FOCUSED_TEST_PRIORITY_RANK;
   const script = typeof request.entry === 'string' ? request.entry.split(' ')[1] : undefined;
@@ -305,9 +306,13 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     // A priority head pledges releases at once; ordinary heads after the aging bound.
     const active = Boolean(head && (head.headPriority > 0 || Date.now() - head.arrivedAt >= HEAD_RESERVATION_DELAY_MS));
     const pledged = active && headPledge?.item === head;
+    const floorKiB = head?.floorOptions?.at(-1).floorKiB ?? head?.floorKiB;
     return {
       active,
-      memoryKiB: pledged ? Math.min(head.floorOptions?.at(-1).floorKiB ?? head.floorKiB, headPledge.memoryKiB) : 0,
+      // Systemic 18:35Z: a shared-producer head holds every unit up to its
+      // floor, free or released, so nothing backfills past it once it is next.
+      // Other heads hold only released memory (priority ranks at once).
+      memoryKiB: !active ? 0 : head.headPriority >= PRODUCER_RANK ? floorKiB : pledged ? Math.min(floorKiB, headPledge.memoryKiB) : 0,
       cpuCores: pledged ? Math.min(minimumCpuCores(head), headPledge.cpuCores) : 0,
     };
   }
@@ -693,7 +698,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
             head = item;
             reserveHead(head);
             const reservation = headReservation(head);
-            lendableKiB = Math.min(reservation.memoryKiB, availableMemoryKiB);
+            // A producer head lends nothing (no EASY backfill past it).
+            lendableKiB = head.headPriority >= PRODUCER_RANK ? 0 : Math.min(reservation.memoryKiB, availableMemoryKiB);
             availableMemoryKiB = Math.max(0, availableMemoryKiB - reservation.memoryKiB);
             availableCpuCores = Math.max(0, availableCpuCores - reservation.cpuCores);
             if (lendableKiB > 0) headStartAt = projectedHeadStartAt(head, Date.now());

@@ -78,6 +78,43 @@ test('watch pushes a deadline crossing without new commands or resource observat
   await watch.return();
 });
 
+test('real clients waiting across a broker succession re-register with their arrival and are admitted by the successor', linux, async t => {
+  // windows2-linux 2026-11-16: are queued clients stranded after a succession?
+  let availableMemoryKiB = 0;
+  const readMemory = () => ({ availableMemoryKiB, totalMemoryKiB: 100 });
+  const { root, broker, sampleResources } = await fixture(t, { readMemory });
+  const order = [];
+  const finished = Promise.withResolvers();
+  t.after(() => finished.resolve());
+  const waiter = name => runAdmittedTask({ root, className: 'validation', floorKiB: 60, repoDir: root, env: {} }, async () => {
+    order.push(name);
+    await finished.promise;
+  });
+  const older = waiter('older');
+  while (broker.status().waitingCount !== 1) await new Promise(resolve => setImmediate(resolve));
+  const younger = waiter('younger');
+  while (broker.status().waitingCount !== 2) await new Promise(resolve => setImmediate(resolve));
+  // Hold the startup lock across the swap, as a cutover does: a client that
+  // reconnects in the gap and starts its own broker waits on this lock, then
+  // finds the successor listening and exits.
+  const lockFd = openSync(join(root, 'broker-start.lock'), 'a', 0o600);
+  assert.equal(spawnSync('flock', ['--exclusive', '3'], { stdio: ['ignore', 'ignore', 'ignore', lockFd] }).status, 0);
+  await broker.close();
+  const successor = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources, startupLockFd: lockFd });
+  t.after(() => successor.close());
+  await successor.start();
+  while (successor.status().waitingCount !== 2) await new Promise(resolve => setTimeout(resolve, 10));
+  availableMemoryKiB = 70;
+  const sample = await requestAdmissionSample(root);
+  assert.equal(sample.activeCount + sample.waitingCount, 2, 'both waiters are in the successor\'s table');
+  while (order.length === 0) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(order, ['older'], 'the older waiter keeps its place and is admitted first');
+  finished.resolve();
+  await older;
+  await younger;
+  assert.deepEqual(order, ['older', 'younger']);
+});
+
 test('current admission clients retain duration metadata across broker succession', linux, async t => {
   let now = Date.now();
   t.mock.method(Date, 'now', () => now);
@@ -508,7 +545,9 @@ for (const [scenario, earlier, later, laterFirst] of [
     const pledged = await requestAdmissionSample(root);
     assert.equal(pledged.head.headPriority > 0, pledging, 'the sample names a priority head');
     assert.equal(pledged.head.reservationActive, pledging, 'a priority head pledges releases at once, without the aging bound');
-    assert.equal(pledged.head.reservationKiB, pledging ? 30 : 0);
+    const producerHead = ['producer', 'export'].includes(laterFirst ? later : earlier);
+    assert.equal(pledged.head.reservationKiB, !pledging ? 0 : producerHead ? 60 : 30,
+      'a producer head holds its whole floor; other priority heads hold released memory');
     assert.equal(pledged.waitingCount, 2, 'floors still apply: neither 60-unit waiter starts in 30 free units');
     const follower = await acquire(root, 5, t, { noWait: true });
     if (pledging) assert.equal((await follower.next()).reason, 'HSTACK_MEMORY_BUSY', 'ordinary backfills cannot spend the priority pledge');
@@ -521,6 +560,21 @@ for (const [scenario, earlier, later, laterFirst] of [
     await waiting.admit();
   });
 }
+
+test('a producer-ranked head holds free capacity too: nothing backfills past it once it is next', linux, async t => {
+  // Systemic 18:35Z: repo-dev's 18.5 GiB server bundle sat at position 1 while
+  // smaller validation jobs were admitted into memory that was already free.
+  const { root } = await fixture(t);
+  const holder = await (await acquire(root, 50, t)).admit();
+  const producer = await acquire(root, 60, t, priorityIdentity(root, 'producer'));
+  const sample = await requestAdmissionSample(root);
+  assert.equal(sample.head.headPriority, 2);
+  assert.equal(sample.unreservedMemoryKiB, 0, 'the free 50 units are held for the producer');
+  const small = await acquire(root, 10, t, { noWait: true });
+  assert.equal((await small.next()).reason, 'HSTACK_MEMORY_BUSY', 'a small job cannot start past the producer');
+  await holder.release();
+  await producer.admit();
+});
 
 // Coordination 2026-11-13 11:22Z: host-bound reloads may use a relocatable head's pledge.
 for (const scenario of ['nl3 reload', 'head resumes', 'relocatable order', 'host-bound head']) {
