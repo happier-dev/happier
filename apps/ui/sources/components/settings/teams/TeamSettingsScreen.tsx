@@ -379,7 +379,6 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
     const canEdit = context.team.capabilities.managePolicy && context.canMutate && !busy;
     // Nobody changes an archived Team, and a viewer without the capability never could.
     const readOnly = !context.team.capabilities.managePolicy || context.archived;
-    const teamName = context.team.name;
 
     const patch = React.useCallback(async (
         next: Parameters<typeof setTeamPolicy>[0] extends infer P
@@ -438,7 +437,7 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
                         <Item
                             testID="team-settings-session-creation"
                             title={t('teams.settings.sessionDefaultsSection')}
-                            subtitle={sessionCreationConsequence(policy.sessionCreationPolicy, teamName)}
+                            subtitle={sessionCreationConsequence(policy.sessionCreationPolicy)}
                             subtitleLines={0}
                             detail={sessionCreationLabel(policy.sessionCreationPolicy)}
                             mode="info"
@@ -446,8 +445,8 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
                         />
                         <Item
                             testID="team-settings-external-sharing"
-                            title={t('teams.settings.sharingOutsideTeam', { team: teamName })}
-                            subtitle={externalSharingConsequence(policy.externalSharingPolicy, teamName)}
+                            title={t('teams.settings.sharingOutsideTeam')}
+                            subtitle={externalSharingConsequence(policy.externalSharingPolicy)}
                             subtitleLines={0}
                             detail={externalSharingLabel(policy.externalSharingPolicy)}
                             mode="info"
@@ -456,7 +455,7 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
                         <Item
                             testID="team-settings-history-default"
                             title={t('teams.settings.historyDefaultSection')}
-                            subtitle={historyConsequence(policy.defaultSessionHistoryAccess, teamName)}
+                            subtitle={historyConsequence(policy.defaultSessionHistoryAccess)}
                             subtitleLines={0}
                             detail={historyLabel(policy.defaultSessionHistoryAccess)}
                             mode="info"
@@ -472,7 +471,7 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
                             options={SESSION_CREATION_OPTIONS.map((option) => ({
                                 id: option,
                                 label: sessionCreationLabel(option),
-                                description: sessionCreationConsequence(option, teamName),
+                                description: sessionCreationConsequence(option),
                             }))}
                             value={policy.sessionCreationPolicy}
                             onChange={(option) => choose('sessionCreationPolicy', option)}
@@ -481,12 +480,12 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
                         />
                         <SegmentedChoiceItem<TeamExternalSharingPolicyV1>
                             testID="team-settings-external-sharing"
-                            title={t('teams.settings.sharingOutsideTeam', { team: teamName })}
+                            title={t('teams.settings.sharingOutsideTeam')}
                             subtitleLines={0}
                             options={EXTERNAL_SHARING_OPTIONS.map((option) => ({
                                 id: option,
                                 label: externalSharingLabel(option),
-                                description: externalSharingConsequence(option, teamName),
+                                description: externalSharingConsequence(option),
                             }))}
                             value={policy.externalSharingPolicy}
                             onChange={(option) => choose('externalSharingPolicy', option)}
@@ -500,7 +499,7 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
                             options={HISTORY_OPTIONS.map((option) => ({
                                 id: option,
                                 label: historyLabel(option),
-                                description: historyConsequence(option, teamName),
+                                description: historyConsequence(option),
                             }))}
                             value={policy.defaultSessionHistoryAccess}
                             onChange={(option) => choose('defaultSessionHistoryAccess', option)}

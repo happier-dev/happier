@@ -9,6 +9,7 @@ import {
   buildMemberDefaultsPatch,
   memberDefaultsAccess,
   memberDefaultsConflicts,
+  memberDefaultsSummary,
   readMemberDefaults,
   withPermissionMode,
   withPlacement,
@@ -183,5 +184,20 @@ describe('member defaults', () => {
     const conflicts = [...memberDefaultsConflicts(current, { kind: 'team' }, CLAUDE).connectedServices];
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0]).toContain('git');
+  });
+});
+
+describe('memberDefaultsSummary', () => {
+  it('says nothing is set for an empty layer', () => {
+    expect(memberDefaultsSummary({})).toEqual({ machine: false, agents: 0 });
+  });
+
+  it('counts each Agent once whatever it sets, and the Machine apart', () => {
+    expect(memberDefaultsSummary({
+      placement: machineA,
+      permissionModeByAgentTargetKey: { [CLAUDE]: 'read-only', codex: 'read-only' },
+      modelByAgentTargetKey: { [CLAUDE]: {} as never, cursor: {} as never },
+      connectedServicesByAgentTargetKey: { gemini: [], opencode: [{ purpose: 'git' } as never] },
+    } as ManagedSessionDefaultsV1)).toEqual({ machine: true, agents: 4 });
   });
 });

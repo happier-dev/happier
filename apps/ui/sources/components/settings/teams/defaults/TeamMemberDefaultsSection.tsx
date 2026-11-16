@@ -198,8 +198,9 @@ export const TeamMemberDefaultsSection = React.memo(
         ) : null}
         <ItemGroup
           testID={props.testID}
-          title={t('teams.settings.memberDefaults.title')}
-          description={description}
+          // The Home's defaults are a page of their own whose header already names and explains them.
+          title={home ? undefined : t('teams.settings.memberDefaults.title')}
+          description={home ? undefined : description}
         >
           <TeamMemberMachineDefaultRow
             state={row}

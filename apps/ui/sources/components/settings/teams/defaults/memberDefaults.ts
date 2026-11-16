@@ -39,6 +39,23 @@ export function readMemberDefaults(
   return layer ?? NO_DEFAULTS;
 }
 
+/**
+ * What a defaults layer sets, for a row that summarizes it before opening the editor: whether it
+ * names a Machine, and how many Agents carry any default (each Agent once, whatever it sets).
+ */
+export function memberDefaultsSummary(
+  defaults: ManagedSessionDefaultsV1,
+): Readonly<{ machine: boolean; agents: number }> {
+  const agents = new Set<string>([
+    ...Object.keys(defaults.permissionModeByAgentTargetKey ?? {}),
+    ...Object.keys(defaults.modelByAgentTargetKey ?? {}),
+    ...Object.entries(defaults.connectedServicesByAgentTargetKey ?? {})
+      .filter(([, services]) => services.length > 0)
+      .map(([key]) => key),
+  ]);
+  return { machine: defaults.placement !== undefined, agents: agents.size };
+}
+
 function withAgentEntry<
   K extends
     | 'permissionModeByAgentTargetKey'

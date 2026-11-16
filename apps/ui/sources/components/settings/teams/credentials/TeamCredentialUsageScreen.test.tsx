@@ -257,7 +257,7 @@ describe('TeamCredentialUsageScreen', () => {
         expect(screen.getTextContent()).toContain(subject.kind === 'home'
             ? 'teams.credentials.usage.homeAdminRequired'
             : 'teams.credentials.usage.teamCredentialManagerRequired');
-        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-tokens');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage.tokens');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-series');
     });
 
@@ -321,7 +321,7 @@ describe('TeamCredentialUsageScreen', () => {
         harness.answer(serverId, USAGE_QUERY_PATH, { status: 403, body: { error: 'forbidden' } });
         screen.pressByTestId('team-credential-usage-refresh');
         await waitForTestId(screen, 'team-credential-usage-error');
-        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-tokens');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage.tokens');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-export');
     });
 
@@ -382,7 +382,8 @@ describe('TeamCredentialUsageScreen', () => {
         const screen = await renderUsage(serverId);
         await waitForTestId(screen, 'team-credential-usage-series');
 
-        expect(screen.findAllHostsByTestId('usage-volume-point-trigger')).toHaveLength(2);
+        // The axis is contiguous (a slot per day of the range, recorded or not); the table lists recorded days.
+        expect(screen.findAllHostsByTestId('usage-volume-point-trigger').length).toBeGreaterThanOrEqual(2);
         expect(screen.findAllHostsByTestId('team-credential-usage-series-list-row')).toHaveLength(0);
 
         await screen.pressByTestIdAsync('team-credential-usage-series-list-toggle');
@@ -409,7 +410,7 @@ describe('TeamCredentialUsageScreen', () => {
         harness.answer(serverId, USAGE_QUERY_PATH, { body });
         const screen = await renderUsage(serverId);
         await waitForTestId(screen, 'team-credential-usage-series');
-        expect.soft(screen.findAllByTestId('team-credential-usage-tokens')[0]?.props.detail).toBe(String(expected));
+        expect.soft(screen.findAllByTestId('team-credential-usage.tokens')[0]?.props.value).toBe(expected);
         expect.soft(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-usage-metric:tokens');
         if (collectRenderedTestIds(screen.tree.toJSON()).includes('team-credential-usage-metric:tokens')) {
             await screen.pressByTestIdAsync('team-credential-usage-metric:tokens');
@@ -433,13 +434,13 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-cost');
+        await waitForTestId(screen, 'team-credential-usage.cost');
 
         const text = screen.getTextContent();
-        expect(text).toContain('teams.credentials.usage.costUnknown');
-        // A missing price is not a free request, so no zero amount may appear.
+        expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.value).toBe('—');
+        // A missing price is not a free request, so no zero amount may appear; the figure says why.
         expect(text).not.toContain('$0.00');
-        expect(text).toContain('teams.credentials.usage.costIncomplete');
+        expect(text).toContain('teams.credentials.usage.costPartialShort');
     });
 
     it('offers the API-equivalent cost mode when the totals carry it and asks the Home for it', async () => {
@@ -457,7 +458,7 @@ describe('TeamCredentialUsageScreen', () => {
             expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ costMode: 'api_equivalent' });
         });
         await vi.waitFor(() => {
-            expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.subtitle)
+            expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.caption)
                 .toBe('usage.board.page.factApiEquivalent');
         });
     });
@@ -471,9 +472,9 @@ describe('TeamCredentialUsageScreen', () => {
         const screen = await renderUsage(serverId);
         await waitForTestId(screen, 'team-credential-usage-cost-mode:estimated');
         // A mixed automatic total names both of its components.
-        expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.subtitle)
+        expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.caption)
             .toBe('usage.reported + usage.estimated');
-        expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.detail).toBe('$2.00');
+        expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.value).toBe(2);
         expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ costMode: 'auto' });
 
         harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ estimatedUsd: 3, reportedUsd: 2 }) });
@@ -482,9 +483,9 @@ describe('TeamCredentialUsageScreen', () => {
             expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ costMode: 'estimated' });
         });
         await vi.waitFor(() => {
-            expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.subtitle).toBe('usage.estimated');
+            expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.caption).toBe('usage.estimated');
         });
-        expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.detail).toBe('$3.00');
+        expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.value).toBe(3);
 
         harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ estimatedUsd: 3, reportedUsd: 2 }) });
         await screen.pressByTestIdAsync('team-credential-usage-cost-mode:reported');
@@ -492,9 +493,9 @@ describe('TeamCredentialUsageScreen', () => {
             expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ costMode: 'reported' });
         });
         await vi.waitFor(() => {
-            expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.subtitle).toBe('usage.reported');
+            expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.caption).toBe('usage.reported');
         });
-        expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.detail).toBe('$2.00');
+        expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.value).toBe(2);
     });
 
     it('keeps a real zero a real zero when the Home priced the whole period', async () => {
@@ -504,22 +505,25 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-cost');
+        await waitForTestId(screen, 'team-credential-usage.cost');
 
         expect(screen.getTextContent()).toContain('$0.00');
         expect(screen.getTextContent()).toContain('teams.credentials.usage.recordedByHappier');
     });
 
-    it('retains a measured zero beside incomplete coverage', async () => {
+    // TH-VISUAL-ACCEPT-8 N5: a partly priced period's cost is unknown (a dash and why), never "$0.00";
+    // a partial token total stays a floor that says so.
+    it('keeps a partial token floor but never shows a partly priced cost as zero', async () => {
         const serverId = await addHome();
         harness.answer(serverId, USAGE_QUERY_PATH, {
             body: usageResult({ costIncomplete: true, estimatedUsd: 0, totalTokens: 0, tokenCoverage: 'partial' }),
         });
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-cost');
-        expect(screen.getTextContent()).toContain('$0.00');
-        expect(screen.findAllByTestId('team-credential-usage-tokens')[0]?.props.detail).toBe('0');
-        expect(screen.getTextContent()).toContain('teams.credentials.usage.costIncomplete');
+        await waitForTestId(screen, 'team-credential-usage.cost');
+        expect(screen.getTextContent()).not.toContain('$0.00');
+        expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.value).toBe('—');
+        expect(screen.findAllByTestId('team-credential-usage.tokens')[0]?.props.value).toBe(0);
+        expect(screen.findAllByTestId('team-credential-usage.tokens')[0]?.props.caption).toBe('teams.credentials.usage.tokenPartialShort');
     });
 
     it('retains empty-population zeros without claiming observation coverage', async () => {
@@ -541,10 +545,10 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-tokens');
+        await waitForTestId(screen, 'team-credential-usage.tokens');
 
-        expect(screen.findAllByTestId('team-credential-usage-tokens')[0]?.props.detail).toBe('0');
-        expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.detail).toBe('$0.00');
+        expect(screen.findAllByTestId('team-credential-usage.tokens')[0]?.props.value).toBe(0);
+        expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.value).toBe(0);
         const testIds = collectRenderedTestIds(screen.tree.toJSON());
         expect(testIds).toContain('team-credential-usage-metric:tokens');
         expect(testIds).toContain('team-credential-usage-metric:cost');
@@ -562,7 +566,7 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-requests');
+        await waitForTestId(screen, 'team-credential-usage.requests');
 
         // Happier records nothing that happens on a recipient's own machine, so
         // presenting these totals as complete would be a lie.
@@ -577,7 +581,7 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-tokens');
+        await waitForTestId(screen, 'team-credential-usage.tokens');
 
         expect(screen.getTextContent()).toContain('teams.credentials.usage.directIncomplete');
         expect(screen.getTextContent()).not.toContain('teams.credentials.usage.recordedByHappier');
@@ -588,7 +592,7 @@ describe('TeamCredentialUsageScreen', () => {
         harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult() });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-requests');
+        await waitForTestId(screen, 'team-credential-usage.requests');
 
         expect(screen.findAllHostsByTestId('team-credential-usage-breakdown:member')).toHaveLength(0);
         await screen.pressByTestIdAsync('team-credential-usage-breakdown-trigger');
@@ -630,7 +634,7 @@ describe('TeamCredentialUsageScreen', () => {
         const serverId = await addHome();
         harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult() });
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-requests');
+        await waitForTestId(screen, 'team-credential-usage.requests');
 
         await screen.pressByTestIdAsync('team-credential-usage-breakdown-trigger');
         await waitForTestId(screen, 'team-credential-usage-breakdown:external_api_key');
@@ -655,7 +659,7 @@ describe('TeamCredentialUsageScreen', () => {
         harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult() });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-requests');
+        await waitForTestId(screen, 'team-credential-usage.requests');
 
         harness.answer(serverId, USAGE_QUERY_PATH, {
             body: usageResult({
@@ -699,7 +703,7 @@ describe('TeamCredentialUsageScreen', () => {
         harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult() });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-requests');
+        await waitForTestId(screen, 'team-credential-usage.requests');
         harness.answer(serverId, USAGE_QUERY_PATH, {
             body: usageResult({
                 breakdown: [{ key: 'account-maya', label: 'Maya Chen', requestCount: 7, tokens: 900 }],
@@ -740,12 +744,12 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-requests');
+        await waitForTestId(screen, 'team-credential-usage.requests');
 
         // Requests come from broker admission, so a resource that also hands
         // out material has requests Happier never saw. Calling the total
         // "requests" would present a partial measurement as the whole.
-        expect(screen.findAllByTestId('team-credential-usage-requests')[0]?.props.title)
+        expect(screen.findAllByTestId('team-credential-usage.requests')[0]?.props.label)
             .toBe('teams.credentials.usage.recordedRequests');
     });
 
@@ -756,9 +760,9 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-tokens');
+        await waitForTestId(screen, 'team-credential-usage.tokens');
 
-        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-requests');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage.requests');
         expect(screen.getTextContent()).toContain('teams.credentials.usage.requestIncomplete');
     });
 
@@ -777,12 +781,13 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-requests');
+        await waitForTestId(screen, 'team-credential-usage.requests');
 
-        expect(screen.findAllByTestId('team-credential-usage-requests')[0]?.props.detail).toContain('3');
-        expect(screen.findAllByTestId('team-credential-usage-tokens')[0]?.props.detail).toBe('—');
-        expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.detail)
-            .toBe('teams.credentials.usage.costUnknown');
+        expect(screen.findAllByTestId('team-credential-usage.requests')[0]?.props.value).toBe(3);
+        expect(screen.findAllByTestId('team-credential-usage.tokens')[0]?.props.value).toBe('—');
+        expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.value).toBe('—');
+        expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.caption)
+            .toBe('teams.credentials.usage.costUnavailable');
         expect(screen.getTextContent()).toContain('teams.credentials.usage.externalObservationsIncomplete');
     });
 
@@ -832,7 +837,7 @@ describe('TeamCredentialUsageScreen', () => {
         await waitForTestId(screen, 'team-credential-usage-error');
 
         expect(screen.findAllByTestId('team-credential-usage-error').some(node => node.props.kind === 'denied')).toBe(true);
-        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-tokens');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage.tokens');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-export');
     });
 
@@ -871,9 +876,10 @@ describe('TeamCredentialUsageScreen', () => {
         // The chart and the list must show the same measurement; a chart-only
         // metric is not reachable without sight.
         expect(screen.findAllByTestId('team-credential-usage-series')
-            .find((node) => Array.isArray(node.props.series))?.props.series).toMatchObject([
-                { id: 'cost', points: [{ y: 0 }] },
-            ]);
+            .find((node) => Array.isArray(node.props.series))?.props.series[0]).toMatchObject({ id: 'cost' });
+        expect(screen.findAllByTestId('team-credential-usage-series')
+            .find((node) => Array.isArray(node.props.series))?.props.series[0].points
+            .find((point: { x: number }) => point.x === Date.UTC(2026, 8, 1) / 1000)).toMatchObject({ y: 0 });
         expect(screen.findAllByTestId('team-credential-usage-series-list-row')[0]?.props.detail)
             .not.toContain('usage.tokens');
     });
@@ -894,9 +900,10 @@ describe('TeamCredentialUsageScreen', () => {
         await screen.pressByTestIdAsync('team-credential-usage-metric:requests');
 
         expect(screen.findAllByTestId('team-credential-usage-series')
-            .find((node) => Array.isArray(node.props.series))?.props.series).toMatchObject([
-                { id: 'requests', points: [{ y: 2 }] },
-            ]);
+            .find((node) => Array.isArray(node.props.series))?.props.series[0]).toMatchObject({ id: 'requests' });
+        expect(screen.findAllByTestId('team-credential-usage-series')
+            .find((node) => Array.isArray(node.props.series))?.props.series[0].points
+            .find((point: { x: number }) => point.x === Date.UTC(2026, 8, 1) / 1000)).toMatchObject({ y: 2 });
         expect(screen.findAllByTestId('team-credential-usage-series-list-row')[0]?.props.detail)
             .toContain('2');
     });
@@ -1011,7 +1018,7 @@ describe('TeamCredentialUsageScreen', () => {
         harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult() });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-requests');
+        await waitForTestId(screen, 'team-credential-usage.requests');
 
         screen.pressByTestId('team-credential-usage-period:today');
         await vi.waitFor(() => {
@@ -1091,6 +1098,6 @@ describe('TeamCredentialUsageScreen', () => {
         });
         screen.pressByTestId('team-credential-usage-resource-retry');
 
-        await waitForTestId(screen, 'team-credential-usage-requests');
+        await waitForTestId(screen, 'team-credential-usage.requests');
     });
 });

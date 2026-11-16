@@ -54,7 +54,7 @@ export function UsagePeriodSummaryBody(props: UsagePeriodSummaryBodyProps) {
       rowGap: props.spacing?.statRows ?? HAPPIER_SPACE_STEPS.s16 }}>
       {/* Equal columns: six stats share one row on a wide page and pair evenly on a phone, rows aligned, no value cut. */}
       {props.stats.map((stat) => <View key={stat.id} style={{ flexGrow: 1, flexBasis: USAGE_SUMMARY_STAT_BASIS_PX, minWidth: 0 }}>
-        <SummaryFigure metric={stat} testID={props.testID ? `${props.testID}.${stat.id}.detail` : undefined}><HappierDataMetric {...metricProps(stat)} theme={props.theme} size="stat" showLabel /></SummaryFigure>
+        <SummaryFigure metric={stat} testID={props.testID ? `${props.testID}.${stat.id}.detail` : undefined}><HappierDataMetric {...metricProps(stat)} testID={props.testID ? `${props.testID}.${stat.id}` : undefined} theme={props.theme} size="stat" showLabel /></SummaryFigure>
       </View>)}
     </View>
     {props.coverage}

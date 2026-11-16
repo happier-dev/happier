@@ -271,17 +271,22 @@ export function canInvitePeople(context: HomeAdministrationContext): boolean {
 }
 
 /**
- * Invite people as a page's primary action (Overview and People). Their labs draw it quietly beside the
- * page's content on wide layouts; on a phone it is the navigation header's primary, so the Home's name
- * keeps the width. Absent when this viewer cannot invite.
+ * Invite people as a page's primary action. Overview and People draw it quietly beside the page's content
+ * on wide layouts (`secondary`, their labs); Teams, where people are admitted, draws it filled (`primary`,
+ * lab `hcTeams-A`). On a phone it is the navigation header's primary either way, so the Home's name keeps
+ * the width. Absent when this viewer cannot invite.
  */
-export function homeInvitePeopleAction(context: HomeAdministrationContext, testID: string): PageHeaderPrimaryAction | undefined {
+export function homeInvitePeopleAction(
+    context: HomeAdministrationContext,
+    testID: string,
+    presentation: 'primary' | 'secondary' = 'secondary',
+): PageHeaderPrimaryAction | undefined {
     if (!canInvitePeople(context)) return undefined;
     const serverId = context.scope.serverId;
     return {
         title: t('homeGovernance.invite.action'),
         icon: 'plus',
-        presentation: 'secondary',
+        ...(presentation === 'secondary' ? { presentation } : {}),
         testID,
         onPress: () => { presentHomeInvitePeople({ serverId }); },
     };

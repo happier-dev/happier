@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { HappierMiddleEllipsisText } from '@happier-dev/plugin-ui/presentation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
@@ -55,7 +56,6 @@ import {
     publicAddressCaption,
     reachAddressHost,
     reachCanRetireIroh,
-    reachWrappableHost,
     resolveReachExposure,
     type ReachExposure,
 } from './homeReachPresentation';
@@ -166,9 +166,12 @@ const ReachPathDiagram = React.memo(function ReachPathDiagram(props: Readonly<{
                     {arrow}
                     <View testID="home-reach-diagram-address-node" style={[styles.node, styles.addressNode]}>
                         <Icon name="globe" color={theme.colors.text.secondary} />
-                        <Text testID="home-reach-diagram-address" style={[Typography.variant('label', 'semiBold'), styles.center, { color: theme.colors.text.primary }]}>
-                            {host ? reachWrappableHost(host) : t('homeGovernance.reach.noAddress')}
-                        </Text>
+                        {/* One line: a long address gives up its middle, never its port to a second line. */}
+                        <HappierMiddleEllipsisText
+                            testID="home-reach-diagram-address"
+                            value={host ?? t('homeGovernance.reach.noAddress')}
+                            style={[Typography.variant('label', 'semiBold'), styles.center, styles.addressLine, { color: theme.colors.text.primary }]}
+                        />
                         <Text style={[Typography.variant('meta'), styles.center, { color: theme.colors.text.secondary }]}>{props.addressCaption}</Text>
                     </View>
                     {arrow}
@@ -466,7 +469,7 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
                     kind="error"
                     title={t('homeGovernance.reach.loadFailed')}
                     reason={homeGovernanceFailureNotice(loadFailure, { effect: 'read' }).body}
-                    action={{ testID: 'home-reach-retry', label: t('homeGovernance.retry'), onPress: reads.reload }}
+                    action={{ testID: 'home-reach-retry', label: t('homeGovernance.retry'), onPress: () => { void reads.reload(); } }}
                 />
             );
         }
@@ -513,7 +516,7 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
                     tone="warning"
                     reason={homeGovernanceFailureNotice(readFailure, { effect: 'read' }).body}
                     busy={reads.loading || reads.companionLoading}
-                    action={{ label: t('homeGovernance.retry'), onPress: reads.reload }}
+                    action={{ label: t('homeGovernance.retry'), onPress: () => { void reads.reload(); } }}
                 />
             ) : null}
             <ExposureBanner exposure={exposure} onOpenPolicies={() => router.push(homeAdministrationPoliciesPath(context.scope.serverId))} />
@@ -719,6 +722,9 @@ const styles = StyleSheet.create(() => ({
     },
     center: {
         textAlign: 'center',
+    },
+    addressLine: {
+        maxWidth: '100%',
     },
     editor: {
         flexDirection: 'row',

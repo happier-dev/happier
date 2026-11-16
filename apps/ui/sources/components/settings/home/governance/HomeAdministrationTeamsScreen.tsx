@@ -16,10 +16,10 @@ import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
 import { t } from '@/text';
 
 import { HomeAdministrationSection } from './HomeAdministrationSection';
-import { canInvitePeople, presentHomeInvitePeople } from './HomeInvitePeopleDialog';
+import { homeInvitePeopleAction } from './HomeInvitePeopleDialog';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { segmentHomeAdministrationRows } from './homeAdministrationVirtualizedSegments';
-import { HomeSessionDefaultsSection, TeamCreationPolicyEditor, TeamsVisibilityPolicyEditor } from './HomeTeamsPolicySections';
+import { HomeMemberDefaultsRow, TeamCreationPolicyEditor, TeamsVisibilityPolicyEditor } from './HomeTeamsPolicySections';
 import { homeAdministrationFeaturesPath } from './homeAdministrationRoutes';
 
 type HomeTeamsVirtualizedRow = Readonly<{
@@ -99,14 +99,15 @@ const HomeTeams = React.memo(function HomeTeams(
             ));
             return result;
         }
-        // Who creates Teams, and who sees them, head the Teams page (DR-09, lab `hcTeams-A`).
+        // Who creates Teams, and who sees them, head the Teams page (DR-09, lab `hcTeams-A`); the Teams
+        // follow, and what members' new sessions start with closes it as one row that opens its editor.
         add('policies', () => (
             <>
                 <TeamCreationPolicyEditor context={context} />
                 <TeamsVisibilityPolicyEditor context={context} />
-                <HomeSessionDefaultsSection context={context} />
             </>
         ));
+        const addMemberDefaults = () => add('member-defaults', () => <HomeMemberDefaultsRow context={context} />);
         if (!mayGovern) {
             add('forbidden', () => (
                 <ItemGroup>
@@ -119,6 +120,7 @@ const HomeTeams = React.memo(function HomeTeams(
                     />
                 </ItemGroup>
             ));
+            addMemberDefaults();
             return result;
         }
 
@@ -145,6 +147,7 @@ const HomeTeams = React.memo(function HomeTeams(
                     <ItemLoadStateRows testID="home-teams-loading" state={{ kind: 'loading' }} rows={3} accessibilityLabel={t('homeGovernance.teams')} />
                 </ItemGroup>
             ));
+            addMemberDefaults();
             return result;
         }
 
@@ -271,6 +274,7 @@ const HomeTeams = React.memo(function HomeTeams(
                 </ItemGroup>
             ));
         }
+        addMemberDefaults();
         return result;
     }, [archived, archivedLoading, archivedRetryable, context, directory, mayGovern, offerArchived, openTeam, router, serverId, showArchived, teamsEnabled, theme.colors.text.secondary]);
 
@@ -301,16 +305,8 @@ export const HomeAdministrationTeamsScreen = React.memo(function HomeAdministrat
             title={t('homeGovernance.teams')}
             description={t('homeGovernance.pages.teams')}
             presentation="virtualized-list"
-            // Teams is where people are admitted, so Invite people is its primary (lab `hcTeams-A`).
-            pageActions={(context) => (canInvitePeople(context)
-                ? {
-                    primaryAction: {
-                        title: t('homeGovernance.invite.action'),
-                        testID: 'home-teams-invite',
-                        onPress: () => { presentHomeInvitePeople({ serverId: context.scope.serverId }); },
-                    },
-                }
-                : {})}
+            // Teams is where people are admitted, so Invite people is its filled primary (lab `hcTeams-A`).
+            pageActions={(context) => ({ primaryAction: homeInvitePeopleAction(context, 'home-teams-invite', 'primary') })}
         >
             {(context, header) => <HomeTeams context={context} header={header} />}
         </HomeAdministrationSection>

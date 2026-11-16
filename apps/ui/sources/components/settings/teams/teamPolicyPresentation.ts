@@ -47,32 +47,32 @@ export function historyLabel(access: SessionHistoryAccessV1): string {
         : t('teams.settings.option.fromJoining');
 }
 
-export function sessionCreationConsequence(policy: TeamSessionCreationPolicyV1, team: string): string {
+export function sessionCreationConsequence(policy: TeamSessionCreationPolicyV1): string {
     switch (policy) {
         case 'private_default':
-            return t('teams.settings.consequence.sessionsPrivate', { team });
+            return t('teams.settings.consequence.sessionsPrivate');
         case 'team_default':
-            return t('teams.settings.consequence.sessionsShared', { team });
+            return t('teams.settings.consequence.sessionsShared');
         case 'team_required':
-            return t('teams.settings.consequence.sessionsAlwaysShared', { team });
+            return t('teams.settings.consequence.sessionsAlwaysShared');
     }
 }
 
-export function externalSharingConsequence(policy: TeamExternalSharingPolicyV1, team: string): string {
+export function externalSharingConsequence(policy: TeamExternalSharingPolicyV1): string {
     switch (policy) {
         case 'allowed':
-            return t('teams.settings.consequence.outsideAnyone', { team });
+            return t('teams.settings.consequence.outsideAnyone');
         case 'team_admins_only':
-            return t('teams.settings.consequence.outsideAdmins', { team });
+            return t('teams.settings.consequence.outsideAdmins');
         case 'disabled':
-            return t('teams.settings.consequence.outsideNobody', { team });
+            return t('teams.settings.consequence.outsideNobody');
     }
 }
 
-export function historyConsequence(access: SessionHistoryAccessV1, team: string): string {
+export function historyConsequence(access: SessionHistoryAccessV1): string {
     return access === 'all_existing'
-        ? t('teams.settings.consequence.historyEarlier', { team })
-        : t('teams.settings.consequence.historyFromJoining', { team });
+        ? t('teams.settings.consequence.historyEarlier')
+        : t('teams.settings.consequence.historyFromJoining');
 }
 
 /** How people become members, in words: the one label for an admission mode wherever it is named. */

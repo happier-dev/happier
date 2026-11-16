@@ -68,6 +68,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'people/[accountId]', navigator: 'home/[serverId]', titleKey: 'homeGovernance.people' },
     { name: 'policies', navigator: 'home/[serverId]', titleKey: 'homeGovernance.policies' },
     { name: 'teams', navigator: 'home/[serverId]', titleKey: 'homeGovernance.teams' },
+    { name: 'teams/member-defaults', navigator: 'home/[serverId]', titleKey: 'teams.settings.memberDefaults.title' },
     { name: 'reach', navigator: 'home/[serverId]', titleKey: 'homeGovernance.reach.title' },
     { name: 'email', navigator: 'home/[serverId]', titleKey: 'homeGovernance.email.title' },
     { name: 'features', navigator: 'home/[serverId]', titleKey: 'homeGovernance.features.title' },

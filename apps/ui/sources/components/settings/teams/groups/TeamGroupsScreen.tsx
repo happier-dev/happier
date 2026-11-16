@@ -110,7 +110,8 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
         () => presentTeamGroups(archived.rows, archivedNames, query),
         [archived.rows, archivedNames, query],
     );
-    const searchable = active.rows.length > 0 || (showArchived && archived.rows.length > 0);
+    // Search filters the active Groups; archived Groups alone are a short list that needs none.
+    const searchable = active.rows.length > 0;
     const loadedRows = active.rows.length + (showArchived ? archived.rows.length : 0);
     const visibleRows = activeRows.length + (showArchived ? archivedRows.length : 0);
     const queryHasNoVisibleRows = query.trim() !== '' && loadedRows > 0 && visibleRows === 0;

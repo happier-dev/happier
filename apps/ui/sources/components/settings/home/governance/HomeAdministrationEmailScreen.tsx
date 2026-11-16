@@ -264,12 +264,14 @@ const EmailStatusSection = React.memo(function EmailStatusSection(props: Readonl
     host: string;
     /** Where a missing link target is fixed: the Home's addresses (Reach). */
     onOpenReach: () => void;
+    /** The page's "Email isn't set up" notice already says mail can't be sent; the row would repeat it. */
+    sendingStatedAbove: boolean;
 }>) {
     const { readiness } = props;
     const linkHost = originHost(readiness.linkOrigin);
     return (
         <ItemGroup title={t('homeGovernance.email.status')}>
-            <Item
+            {props.sendingStatedAbove ? null : <Item
                 testID="home-email-status-sending"
                 title={t('homeGovernance.email.sendingMail')}
                 subtitle={readiness.transportConfigured
@@ -277,7 +279,7 @@ const EmailStatusSection = React.memo(function EmailStatusSection(props: Readonl
                     : t('homeGovernance.email.sendingNotSetUp')}
                 mode="info"
                 showChevron={false}
-            />
+            />}
             <Item
                 testID="home-email-status-links"
                 title={t('homeGovernance.email.links')}
@@ -601,6 +603,7 @@ const EmailPage = React.memo(function EmailPage(props: Readonly<{ context: HomeA
                     readiness={readiness}
                     host={homeSettingText(entries.host)}
                     onOpenReach={openReach}
+                    sendingStatedAbove={!readOnly && !readiness.transportConfigured}
                 />
             ) : null}
 

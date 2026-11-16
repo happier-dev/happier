@@ -496,12 +496,46 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         ) : undefined;
 
         if (archived) {
+            const restoreGroup = async () => {
+                if (mutationInFlightRef.current) return;
+                mutationInFlightRef.current = true;
+                setBusy(true);
+                try {
+                    const outcome = await restoreTeamGroup({
+                        scope: context.scope,
+                        address: context.address,
+                        groupId,
+                    });
+                    if (outcome.kind === 'failed') {
+                        setNotice(teamMutationFailureLabel(outcome.failure));
+                        if (outcome.failure.kind === 'outcome_unknown') void detail.reload();
+                    }
+                } catch (cause) {
+                    if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.artifactId);
+                    else setNotice(t('teams.errors.generic'));
+                } finally {
+                    mutationInFlightRef.current = false;
+                    setBusy(false);
+                }
+            };
+            // One notice, one cause and its one action: Restore is the archived notice's own button.
             add('archived', () => (
                 <AttentionBanner
                     testID="team-group-archived"
                     tone="neutral"
                     title={t('teams.directory.archivedBadge')}
                     description={t('teams.groups.archivedReadOnly')}
+                    action={group.capabilities.restore ? {
+                        testID: 'team-group-restore',
+                        label: t('teams.groups.restoreAction', { name: groupName ?? t('common.unavailable') }),
+                        // Restore is legitimate *because* the Group is archived, so it gates on host
+                        // readiness rather than on the ordinary-write rule — but an unresolved approval
+                        // for this exact restore is still custody the shell holds, and offering the
+                        // control again would request one restore twice. Same expression as the Team's
+                        // own restore in `TeamSettingsScreen`.
+                        disabled: busy || !context.mutationsAvailable || context.approvalPending || !groupCurrent,
+                        onPress: () => { void restoreGroup(); },
+                    } : null}
                 />
             ));
         }
@@ -909,55 +943,6 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                 });
                                 if (outcome.kind === 'succeeded') router.back();
                                 else {
-                                    setNotice(teamMutationFailureLabel(outcome.failure));
-                                    if (outcome.failure.kind === 'outcome_unknown') void detail.reload();
-                                }
-                            } catch (cause) {
-                                if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.artifactId);
-                                else setNotice(t('teams.errors.generic'));
-                            } finally {
-                                mutationInFlightRef.current = false;
-                                setBusy(false);
-                            }
-                        }}
-                    />
-                    </SectionButtonRow>
-                </ItemGroup>
-            ));
-        }
-
-        if (group.capabilities.restore && archived) {
-            add('restore', () => (
-                <ItemGroup surface="none">
-                    <SectionButtonRow>
-                    <RoundButton
-                        testID="team-group-restore"
-                        size="small"
-                        display="secondary"
-                        title={t('teams.groups.restoreAction', { name: groupName ?? t('common.unavailable') })}
-                        titleNumberOfLines="complete"
-                        // Restore is legitimate *because* the Group is archived,
-                        // so it gates on host readiness rather than on the
-                        // ordinary-write rule — but an unresolved approval for
-                        // this exact restore is still custody the shell holds,
-                        // and offering the control again would request one
-                        // restore twice. Same expression as the Team's own
-                        // restore in `TeamSettingsScreen`.
-                        disabled={busy
-                            || !context.mutationsAvailable
-                            || context.approvalPending
-                            || !groupCurrent}
-                        onPress={async () => {
-                            if (mutationInFlightRef.current) return;
-                            mutationInFlightRef.current = true;
-                            setBusy(true);
-                            try {
-                                const outcome = await restoreTeamGroup({
-                                    scope: context.scope,
-                                    address: context.address,
-                                    groupId,
-                                });
-                                if (outcome.kind === 'failed') {
                                     setNotice(teamMutationFailureLabel(outcome.failure));
                                     if (outcome.failure.kind === 'outcome_unknown') void detail.reload();
                                 }

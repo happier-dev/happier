@@ -501,7 +501,7 @@ describe('TeamSettingsScreen', () => {
 
         const selectedChoices = [
             ['team-settings-session-creation:team_default', 'teams.settings.sessionDefaultsSection'],
-            ['team-settings-external-sharing:allowed', 'teams.settings.sharingOutsideTeam(team=Platform)'],
+            ['team-settings-external-sharing:allowed', 'teams.settings.sharingOutsideTeam'],
             ['team-settings-history-default:from_membership', 'teams.settings.historyDefaultSection'],
         ] as const;
 

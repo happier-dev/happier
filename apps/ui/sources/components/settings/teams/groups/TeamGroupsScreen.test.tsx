@@ -209,6 +209,30 @@ describe('TeamGroupsScreen', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-groups-archived-empty');
     });
 
+    it('offers search only while the Team has active Groups', async () => {
+        const serverId = await addManagedHome(2);
+        harness.answer(serverId, GROUPS_LIST_PATH, {
+            body: { items: [], nextCursor: null },
+        });
+
+        const screen = await renderGroups(serverId);
+        await waitForTestId(screen, 'team-groups-toggle-archived');
+
+        harness.answer(serverId, GROUPS_LIST_PATH, {
+            body: {
+                items: [
+                    teamGroupFixture({ id: 'group-a', name: 'Platform on-call', archivedAt: 1 }),
+                    teamGroupFixture({ id: 'group-b', name: 'Release engineers', archivedAt: 1 }),
+                ],
+                nextCursor: null,
+            },
+        });
+        await screen.pressByTestIdAsync('team-groups-toggle-archived');
+        await waitForTestId(screen, 'team-groups-archived-row:group-b');
+
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-groups-search');
+    });
+
     it('names the source that owns a directory-created Group without hiding its roster', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, GROUPS_LIST_PATH, {

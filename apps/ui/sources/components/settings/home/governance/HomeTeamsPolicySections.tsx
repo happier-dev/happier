@@ -5,7 +5,9 @@ import {
   SettingAnchor,
   SettingRow,
 } from '@/components/settings/shell/SettingRow';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Switch } from '@/components/ui/forms/Switch';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -21,6 +23,8 @@ import { t } from '@/text';
 
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { TeamMemberDefaultsSection } from '@/components/settings/teams/defaults/TeamMemberDefaultsSection';
+import { memberDefaultsSummary } from '@/components/settings/teams/defaults/memberDefaults';
+import { homeAdministrationMemberDefaultsPath } from './homeAdministrationRoutes';
 import {
   homeGovernanceFailureNotice,
   teamCreationPolicyDescription,
@@ -279,6 +283,33 @@ export const HomeSessionDefaultsSection = React.memo(function HomeSessionDefault
       homeDefaults={props.context.projection.policy.sessionDefaults ?? null}
       testID="home-session-defaults"
     />
+  );
+});
+
+/**
+ * "Defaults for members" on the Teams page: one destination row that says what is set and opens
+ * the editor, so the Machine and per-Agent rows never stand between the page and its Teams.
+ */
+export const HomeMemberDefaultsRow = React.memo(function HomeMemberDefaultsRow(
+  props: Readonly<{ context: HomeAdministrationContext }>,
+) {
+  const router = useRouter();
+  const serverId = props.context.scope.serverId;
+  const summary = memberDefaultsSummary(props.context.projection.policy.sessionDefaults ?? {});
+  const parts = [
+    summary.machine ? t('teams.settings.memberDefaults.machine') : null,
+    summary.agents > 0 ? t('teams.settings.memberDefaults.summaryAgents', { count: summary.agents }) : null,
+  ].filter((part): part is string => part !== null);
+  return (
+    <ItemGroup title={t('teams.settings.sessionDefaultsSection')}>
+      <Item
+        testID="home-session-defaults-open"
+        icon={<Icon name="sliders-horizontal" />}
+        title={t('teams.settings.memberDefaults.title')}
+        subtitle={parts.length > 0 ? parts.join(' · ') : t('teams.settings.memberDefaults.summaryNone')}
+        onPress={() => router.push(homeAdministrationMemberDefaultsPath(serverId) as never)}
+      />
+    </ItemGroup>
   );
 });
 

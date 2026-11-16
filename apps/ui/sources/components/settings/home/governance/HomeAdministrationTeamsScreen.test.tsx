@@ -261,6 +261,31 @@ describe('HomeAdministrationTeamsScreen', () => {
         );
     });
 
+    it('leads with its Teams and keeps members\' session defaults behind one row that opens their editor', async () => {
+        const home = await harness.addHome({
+            name: 'Home A',
+            serverUrl: 'https://home-a.example',
+            teamsEnabled: true,
+        });
+        await harness.selectHomes([home]);
+        harness.answer(home, GOVERNANCE_PATH, { body: homeGovernanceProjectionFixture() });
+        harness.answer(home, TEAMS_LIST_PATH, { body: { items: [teamSummary('team-1', 'Platform')], nextCursor: null } });
+
+        const screen = await renderHomeTeams(home);
+        await waitForHomeGovernance(() => {
+            expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-session-defaults-open');
+        });
+
+        const keys = (virtualizedBoundary.props?.data as readonly { key: string }[]).map((row) => row.key);
+        expect(keys.indexOf('active:team-1')).toBeGreaterThan(keys.indexOf('policies'));
+        expect(keys.at(-1)).toBe('member-defaults');
+        // The Machine and per-Agent rows live on the editor's own page, not here.
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-session-defaults-machine');
+
+        screen.pressByTestId('home-session-defaults-open');
+        expect(routerPush).toHaveBeenCalledWith(`/settings/home/${encodeURIComponent(home)}/teams/member-defaults`);
+    });
+
     it('keeps the Teams section and its create action when the Home could not list its Teams', async () => {
         const home = await harness.addHome({
             name: 'Home A',

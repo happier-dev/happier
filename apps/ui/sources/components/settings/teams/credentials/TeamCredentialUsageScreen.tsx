@@ -3,9 +3,10 @@ import type {
     TeamCredentialUsageBreakdownDimensionV1,
     TeamCredentialUsageLimitV1,
     TeamCredentialUsageQueryInputV1,
+    TeamCredentialUsageQueryResultV1,
 } from '@happier-dev/protocol/teams';
 
-import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { StackedSeriesChart, UsagePeriodSummaryBody, type UsageSummaryMetric } from '@happier-dev/plugin-ui/presentation';
 import { useUnistyles } from 'react-native-unistyles';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { usageSeriesFrame, usageSeriesTooltip, usageSeriesValueFormatter, useUsageSeriesMotion, usageVolumeLens } from '@/components/settings/usage/usageSeriesPresentation';
@@ -14,6 +15,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -62,6 +64,12 @@ import {
     resolveTeamCredentialUsageStartTimeSeconds,
 } from './teamCredentialPresentation';
 import { exportTeamCredentialUsageCsv } from './teamCredentialUsageExport';
+import {
+    contiguousTeamCredentialUsageBuckets,
+    teamCredentialUsageCaveat,
+    teamCredentialUsageCost,
+    teamCredentialUsageTokens,
+} from './teamCredentialUsagePresentation';
 import { useTeamCredentialResourceView, type TeamCredentialResourceView } from './useTeamCredentialResourceView';
 
 type UsageSubject = NonNullable<TeamCredentialUsageQueryInputV1['subject']>;
@@ -322,26 +330,8 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
             ...(costChartAvailable ? ['cost' as const] : []),
         ];
     const selectedMetric = chartMetrics.includes(metric) ? metric : chartMetrics[0] ?? 'tokens';
-    const completeness = [
-        coverage?.directRecordedUseOnly === true ? t('teams.credentials.usage.directIncomplete') : null,
-        coverage?.requestCountCoverage === 'brokered_only' ? t('teams.credentials.usage.requestIncomplete') : null,
-        (coverage?.unobservedExternalRequestCount ?? 0) > 0
-            ? t('teams.credentials.usage.externalObservationsIncomplete', {
-                count: coverage?.unobservedExternalRequestCount ?? 0,
-            })
-            : null,
-        coverage?.tokenCoverage === 'partial' ? t('teams.credentials.usage.tokenIncomplete') : null,
-        coverage?.tokenCoverage === 'unavailable' ? t('teams.credentials.usage.tokenUnavailable') : null,
-        coverage?.costCoverage === 'partial' ? t('teams.credentials.usage.costIncomplete') : null,
-        coverage?.costCoverage === 'unavailable' ? t('teams.credentials.usage.costUnavailable') : null,
-        coverage !== null
-            && coverage.directRecordedUseOnly === false
-            && coverage.requestCountCoverage === 'complete'
-            && coverage.tokenCoverage === 'complete'
-            && coverage.costCoverage === 'complete'
-            ? t('teams.credentials.usage.recordedByHappier')
-            : null,
-    ].filter((part): part is string => part !== null).join('\n');
+    // One line under the totals; token and cost gaps are said by their own figures.
+    const completeness = teamCredentialUsageCaveat(coverage) ?? '';
 
     const costUsd = resolvedCost;
 
@@ -357,13 +347,19 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     // including when that refresh FAILED, which leaves the old numbers on
     // screen under the new labels with `status === 'error'`.
     const exportUnavailable = exportBusy || !usage.resultIsCurrentQuery;
-    const series = result?.series.map((bucket) => ({
-        timestamp: Math.floor(bucket.bucketStartMs / 1000),
-        tokens: resolveUsageMeasuredTokens(bucket.totals.tokens).total,
-        cost: resolveAnalyticsCost(bucket.totals.cost, costMode),
-        requests: bucket.totals.requestCount,
-        reportCount: bucket.totals.eventCount,
-    })) ?? [];
+    // One slot per bucket of the range: a period the Home recorded nothing for is an empty slot, not a skipped one.
+    const recordedBuckets = new Map((result?.series ?? []).map((bucket) => [bucket.bucketStartMs, bucket] as const));
+    const series = contiguousTeamCredentialUsageBuckets([...recordedBuckets.keys()], range).map(({ bucketStartMs }) => {
+        const bucket = recordedBuckets.get(bucketStartMs);
+        return {
+            timestamp: Math.floor(bucketStartMs / 1000),
+            tokens: bucket ? resolveUsageMeasuredTokens(bucket.totals.tokens).total : 0,
+            cost: bucket ? resolveAnalyticsCost(bucket.totals.cost, costMode) : 0,
+            requests: bucket?.totals.requestCount ?? 0,
+            reportCount: bucket?.totals.eventCount ?? 0,
+            recorded: bucket !== undefined,
+        };
+    });
     const resourceName = view?.displayName ?? props.displayName;
 
     return (
@@ -608,6 +604,48 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
 });
 
 
+const UNKNOWN_VALUE = '—';
+
+/** The period's headline figures: requests when the Home can count them, tokens, and cost. */
+function teamCredentialUsageStats(input: Readonly<{
+    result: NonNullable<ReturnType<typeof useTeamCredentialUsage>['result']>;
+    coverage: TeamCredentialUsageQueryResultV1['coverage'] | null;
+    showRequests: boolean;
+    costUsd: number | null;
+    costMode: UsageCostMode;
+}>): UsageSummaryMetric[] {
+    const { result, coverage } = input;
+    // Nothing recorded at all is a known zero, not an unpriced or unobserved period.
+    const nothingRecorded = result.totals.eventCount === 0 && (coverage?.requestAdmissionCount ?? 0) === 0;
+    const tokens = teamCredentialUsageTokens(resolveUsageMeasuredTokens(result.totals.tokens).total, coverage, nothingRecorded);
+    const cost = teamCredentialUsageCost(input.costUsd, coverage, nothingRecorded);
+    const currency = result.totals.cost.currency;
+    return [
+        ...(input.showRequests && coverage !== null ? [{
+            id: 'requests',
+            // The Home names completeness; the UI never derives it from the resource's delivery settings.
+            label: usageRequestMetricLabel(coverage.requestCountCoverage),
+            value: coverage.requestAdmissionCount,
+            valueFormatter: formatTokenCountLong,
+        }] : []),
+        {
+            id: 'tokens',
+            label: limitMetricLabel('total_tokens'),
+            value: tokens.tokens ?? UNKNOWN_VALUE,
+            valueFormatter: formatTokenCountLong,
+            ...(tokens.caption ? { caption: tokens.caption } : {}),
+        },
+        {
+            id: 'cost',
+            label: limitMetricLabel('cost_usd'),
+            // An unknown or partly priced cost is never a zero: a missing price is not a free request.
+            value: cost.amountUsd ?? UNKNOWN_VALUE,
+            valueFormatter: (value: number) => formatUsageCost(value, currency),
+            caption: cost.amountUsd === null ? cost.caption : costProvenanceLabel(result.totals.cost, input.costMode),
+        },
+    ];
+}
+
 /** The real usage totals and chart, without the Account-bound resource reader. */
 export function TeamCredentialUsageSummary(props: Readonly<{
     result: ReturnType<typeof useTeamCredentialUsage>['result'];
@@ -616,7 +654,8 @@ export function TeamCredentialUsageSummary(props: Readonly<{
     showRequests: boolean;
     completeness: string;
     costUsd: number | null;
-    series: readonly (UsageTrendPoint & { requests: number })[];
+    /** `recorded: false` is an empty slot of the time axis; the table lists recorded periods only. */
+    series: readonly (UsageTrendPoint & { requests: number; recorded?: boolean })[];
     chartMetrics: readonly UsageVolumeMetric[];
     selectedMetric: UsageVolumeMetric;
     seriesMotion: ReturnType<typeof useUsageSeriesMotion>;
@@ -646,35 +685,15 @@ export function TeamCredentialUsageSummary(props: Readonly<{
                         />
                     )}
                 >
-                    {!showRequests || coverage === null ? null : (
-                        <Item
-                            testID="team-credential-usage-requests"
-                            // The Home names completeness. The UI never derives
-                            // it from the resource's current delivery settings.
-                            title={usageRequestMetricLabel(coverage.requestCountCoverage)}
-                            detail={formatTokenCountLong(coverage.requestAdmissionCount)}
-                            showChevron={false}
+                    {/* The headline figures, as on the account Usage page: one stat each, unknown as a dash with why. */}
+                    <SectionContentRow>
+                        <UsagePeriodSummaryBody
+                            testID="team-credential-usage"
+                            theme={projectPluginUiTheme(theme)}
+                            spacing={{ body: theme.space.s20, statColumns: theme.space.s24, statRows: theme.space.s16 }}
+                            stats={teamCredentialUsageStats({ result, coverage, showRequests, costUsd, costMode })}
                         />
-                    )}
-                    <Item
-                        testID="team-credential-usage-tokens"
-                        title={limitMetricLabel('total_tokens')}
-                        detail={formatTokenCountLong(resolveUsageMeasuredTokens(result.totals.tokens).total)}
-                        showChevron={false}
-                    />
-                    <Item
-                        testID="team-credential-usage-cost"
-                        title={limitMetricLabel('cost_usd')}
-                        // An unavailable cost is never rendered as zero: a
-                        // missing price is not a free request. The amount itself
-                        // comes from the shared usage owner so the same events
-                        // cannot read differently here and on the dashboard.
-                        detail={costUsd === null
-                            ? t('teams.credentials.usage.costUnknown')
-                            : formatUsageCost(costUsd, result.totals.cost.currency)}
-                        subtitle={costUsd === null ? undefined : costProvenanceLabel(result.totals.cost, costMode)}
-                        showChevron={false}
-                    />
+                    </SectionContentRow>
                 </ItemGroup>
             ) : null}
 
@@ -704,7 +723,7 @@ export function TeamCredentialUsageSummary(props: Readonly<{
                         onPress={onToggleSeriesList}
                         showChevron={false}
                     />
-                    {showSeriesList ? series.map((point) => (
+                    {showSeriesList ? series.filter((point) => point.recorded !== false).map((point) => (
                         <Item
                             key={point.timestamp}
                             testID="team-credential-usage-series-list-row"
@@ -741,6 +760,7 @@ export const TeamCredentialUsageScreen = React.memo(function TeamCredentialUsage
     const featureEnabled = useFeatureEnabled('teams.credentialResources', { scopeKind: 'spawn', serverId: props.serverId });
     if (props.subject?.kind === 'home') {
         return <HomeAdministrationSection serverId={props.serverId} title={t('teams.credentials.usage.title')}
+            description={t('homeGovernance.pages.usage')}
             forbiddenBody={t('teams.credentials.usage.homeAdminRequired')}>
             {(context) => <CredentialUsage scope={context.scope} address={null} target={{ subject: props.subject }}
                 featureEnabled={featureEnabled} displayName={context.homeName} />}

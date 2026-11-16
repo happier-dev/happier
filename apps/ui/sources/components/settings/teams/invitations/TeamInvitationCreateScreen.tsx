@@ -389,7 +389,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
     const historyOptions = HISTORY_CHOICES.map((option) => ({
         id: option,
         label: historyLabel(option),
-        description: historyConsequence(option, context.team.name),
+        description: historyConsequence(option),
     }));
     return (
         <>

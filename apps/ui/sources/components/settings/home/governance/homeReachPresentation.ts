@@ -23,15 +23,6 @@ export function reachAddressHost(url: string | null): string | null {
     }
 }
 
-/**
- * A host with line-break opportunities after each dot and before the port (zero-width spaces), so the
- * narrow diagram column wraps `leeroy-mbp.tailfce179.ts.net:8443` into readable pieces instead of
- * overflowing into its neighbours. Display only: never use the result as an address.
- */
-export function reachWrappableHost(host: string): string {
-    return host.replace(/\./g, '.\u200B').replace(/:(?=\d+$)/, '\u200B:');
-}
-
 /** Whether anyone who reaches this Home can create an account right now (the effective sign-in decision). */
 export function homeAdmitsStrangers(projection: HomeGovernanceProjectionV1): boolean {
     return projection.authenticationOptions.methods.some((method) => (

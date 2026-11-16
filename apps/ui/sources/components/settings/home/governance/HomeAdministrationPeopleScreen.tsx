@@ -63,7 +63,7 @@ const PeopleRosterRow = React.memo(function PeopleRosterRow(props: Readonly<{
         <Item
             testID={`home-people-row:${row.accountId}`}
             title={person.name}
-            leftElement={<Avatar id={row.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={row.profile.avatarUrl ?? null} />}
+            leftElement={<Avatar id={row.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={row.profile.avatarUrl ?? null} monogram={person.named ? person.name : null} />}
             subtitle={[
                 homeRoleLabel(row.homeRole),
                 person.viewer && person.named ? t('homeGovernance.person.you') : null,

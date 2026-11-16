@@ -44,6 +44,11 @@ export function homeAdministrationTeamsPath(serverId: string): `/settings/home/$
     return `${homeAdministrationOverviewPath(serverId)}/teams`;
 }
 
+/** What new sessions of this Home's members start with: the Machine and per-Agent defaults. */
+export function homeAdministrationMemberDefaultsPath(serverId: string): `/settings/home/${string}/teams/member-defaults` {
+    return `${homeAdministrationTeamsPath(serverId)}/member-defaults`;
+}
+
 export function homeAdministrationPoliciesPath(serverId: string): `/settings/home/${string}/policies` {
     return `${homeAdministrationOverviewPath(serverId)}/policies`;
 }

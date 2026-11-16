@@ -89,7 +89,7 @@ async function renderEmail(serverId: string) {
     resetHomeGovernanceEngineForTests();
     const screen = await renderScreen(<HomeAdministrationEmailScreen serverId={serverId} />);
     await waitForHomeGovernance(() => {
-        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-email-status-sending');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-email-status-links');
     });
     return screen;
 }
@@ -310,6 +310,9 @@ describe('HomeAdministrationEmailScreen', () => {
 
         expect(ids).toContain('home-email-not-set-up');
         expect(ids).not.toContain('home-email-test-send');
+        // The notice says mail can't be sent; the status keeps only what it adds (where links open).
+        expect(ids).not.toContain('home-email-status-sending');
+        expect(ids).toContain('home-email-status-links');
         // With nothing stored, the password is a plain field rather than Saved · Replace · Clear.
         expect(ids).toContain('home-email-password-input');
         expect(ids).not.toContain('home-email-password-saved');
