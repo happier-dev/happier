@@ -48,6 +48,14 @@ export function getAccountStoredContentV3SocketRoom(userId: string): string {
     return `account-stored-content-v3:${userId}`;
 }
 
+/** Machine sockets that declared Account change-row demand: they receive their own authorized page, not the bare wake. */
+export function getAccountChangeRowsSocketRoom(userId: string): string {
+    if (!userId) {
+        throw new Error("getAccountChangeRowsSocketRoom: userId is required");
+    }
+    return `account-change-rows:${userId}`;
+}
+
 export function getSocketRooms(params: {
     userId: string;
     clientType: SocketClientType;

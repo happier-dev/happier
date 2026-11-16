@@ -324,6 +324,22 @@ entity hints remain in the durable feed. Attempt-local state is discarded on
 rollback/replay. Exact-Machine plugin-webhook wakes are a separate audience and
 do not join this coalescing.
 
+A machine socket with an unrestricted Account credential may declare
+change-row demand in its socket auth (`accountChangeRows`: the kinds it
+consumes). Such a socket leaves the bare wake's room and instead receives the
+wake with `rows`: the page `GET /v2/changes` would return to that socket's own
+credential, read once at fan-out by the same owner
+(`app/changes/readAccountChangesPage.ts`), including the per-credential Session
+access witness. Each socket's pages are read in order, each starting at the
+`nextCursor` of the last page that socket received, so a wake the socket was
+excluded from (its own Machine write) is covered by its next page. A failed
+read sends the bare wake. The daemon applies a page only when its own cursor
+lies in `[after, nextCursor)` and reads the feed for reconnect catch-up, a gap,
+a full page or a malformed page. A Session the credential cannot reach keeps
+its row as the access-loss event (cursor, `unavailable` witness, and an
+authoritative deletion fact when that is what happened) with none of its other
+change facts, in the read and pushed feed alike.
+
 Settings-only allocations in current 0.3 development use the existing
 `account-settings-changed` body with the latest committed Settings version.
 The shared Protocol reader accepts only an exact, nonnegative integer

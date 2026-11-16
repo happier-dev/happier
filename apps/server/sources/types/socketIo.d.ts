@@ -3,6 +3,7 @@ import type { SocketClientType } from "@/app/api/socketRooms";
 import type { SessionPublisherAuthorityProjectionV1 } from "@/app/presence/sessionPublisherPresence";
 import type { AuthTokenAuthenticationEvidenceV1 } from "@happier-dev/protocol";
 import type { SessionHumanPresencePendingMessageEditV1 } from "@happier-dev/protocol/sessions";
+import type { ChangeKind } from "@happier-dev/protocol/changes";
 
 declare module "socket.io" {
     interface SocketData {
@@ -25,6 +26,11 @@ declare module "socket.io" {
         humanPresenceVisibleSessionIds?: readonly string[];
         /** Admitted edits live with this socket; queue observers declare an empty array. */
         humanPresencePendingMessageEdits?: readonly SessionHumanPresencePendingMessageEditV1[];
+        /**
+         * Declared Account change-row demand of an unrestricted machine socket. `cursor` is the
+         * nextCursor of the last page pushed to this socket; `tail` orders this socket's page reads.
+         */
+        accountChangeRows?: { readonly kinds: readonly ChangeKind[]; cursor?: number; tail?: Promise<void> };
     }
 }
 

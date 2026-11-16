@@ -120,6 +120,10 @@ describe('Account changes under a Team authentication policy (SQLite)', () => {
       expect(
         page.changes.map((change: { entityId: string }) => change.entityId),
       ).toEqual(expect.arrayContaining([teamSession.id, ownSession.id]));
+      // The withheld Session's row is only its access-loss event: none of its change facts.
+      expect(page.changes.find((change: { entityId: string }) => change.entityId === teamSession.id).hint).toBeNull();
+      expect(page.changes.find((change: { entityId: string }) => change.entityId === ownSession.id).hint)
+        .toEqual(expect.objectContaining({ pendingExecutionRunIds: [] }));
       expect(page.sessionAccessWitness.entries).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

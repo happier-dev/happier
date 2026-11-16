@@ -6,7 +6,8 @@ import { registerSessionConsumptionSocketEvent, retireSessionConsumptionAfterAcc
 import { registerSocketRoomDiscovery } from '@/app/api/socket/socketRoomDiscovery';
 import { Fastify } from "./types";
 import { buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
-import { CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT } from "@/app/events/socketRoomEmitter";
+import { ACCOUNT_CHANGE_ROWS_DELIVERY_EVENT, CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT } from "@/app/events/socketRoomEmitter";
+import { readAccountChangeRowsDemandV1 } from '@happier-dev/protocol/changes';
 import { registerMachineAccessLossHandler } from '@/app/events/machineAccessLoss';
 import { LEGACY_MACHINE_HEARTBEAT_EVENT } from '@/app/events/connectionEventRouter';
 import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetadataFromSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
@@ -74,6 +75,7 @@ import { rejectSocket, resolveSocketAuthUnavailableError } from "./socket/socket
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
 import {
     getAccountRevocationSocketRoom,
+    getAccountChangeRowsSocketRoom,
     getApiTokenRevocationSocketRoom,
     getMachineInstallationSocketRoom,
     getProtectedSocketRooms,
@@ -384,6 +386,9 @@ export function startSocket(app: Fastify): () => Promise<void> {
     });
     io.on(CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT, (delivery: unknown) => {
         void eventRouter.receiveCredentialQualifiedSessionDelivery(io.local, delivery);
+    });
+    io.on(ACCOUNT_CHANGE_ROWS_DELIVERY_EVENT, (delivery: unknown) => {
+        void eventRouter.receiveAccountChangeRowsDelivery(io.local, delivery);
     });
     const releasePresenceDeadlineNotifications = registerPresenceDeadlineNotifications(io, schedulePresenceDeadline);
     io.on(LEGACY_MACHINE_HEARTBEAT_EVENT, (observation: unknown) => {
@@ -889,6 +894,15 @@ export function startSocket(app: Fastify): () => Promise<void> {
         });
         if (clientType === 'machine-scoped' && machineId && typeof socket.data.verifiedMachineInstallationId === 'string') {
             protectedRooms.push(getMachineInstallationSocketRoom(userId, machineId, socket.data.verifiedMachineInstallationId));
+        }
+        // Pushed change pages are read with this socket's credential through the feed owner. Only an
+        // unrestricted Account credential reads the whole Account feed; restricted admissions keep the wake.
+        const accountChangeRowsDemand = clientType === 'machine-scoped' && !handshakeEphemeralRunnerAdmission
+            && readAccountStoredContentCompatibilityForSocket(socket).supportsPluginDataProtocol
+            ? readAccountChangeRowsDemandV1(socket.handshake.auth) : null;
+        if (accountChangeRowsDemand) {
+            socket.data.accountChangeRows = { kinds: accountChangeRowsDemand.kinds };
+            protectedRooms.push(getAccountChangeRowsSocketRoom(userId));
         }
 
         log(

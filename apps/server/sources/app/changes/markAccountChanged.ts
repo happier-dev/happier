@@ -21,6 +21,8 @@ export interface AccountChangePublication {
 
 interface AccountChangeWake {
     cursor: number;
+    /** First cursor this transaction allocated for the Account: where a pushed page may start. */
+    fromCursor: number;
     /** Null after a coalesced fact needs the ordinary Account-wide wake. */
     currentViewSessionId: string | null;
     settingsVersion?: number;
@@ -216,9 +218,10 @@ function scheduleAccountChangeWake(
     const wakes: NonNullable<AccountPublicationPhase['wakes']> = state.wakes ??= new Map();
     const pending = wakes.get(accountId);
     const wake: AccountChangeWake = pending ?? {
-        cursor, currentViewSessionId: currentViewSessionId ?? null, changeKinds: new Set(), entityIds: new Set(),
+        cursor, fromCursor: cursor, currentViewSessionId: currentViewSessionId ?? null, changeKinds: new Set(), entityIds: new Set(),
     };
     wake.cursor = Math.max(wake.cursor, cursor);
+    wake.fromCursor = Math.min(wake.fromCursor, cursor);
     if (wake.currentViewSessionId !== currentViewSessionId) wake.currentViewSessionId = null;
     const settingsVersion = entityIds.length === 1
         ? readAccountSettingsVersionChangeV1({ kind, entityId: entityIds[0]!, hint }) : null;
@@ -246,6 +249,7 @@ function scheduleAccountChangeWake(
         if (wake.changeKinds.size === 0) return;
         eventRouter.emitUpdate({
             userId: accountId,
+            accountChangeFromCursor: wake.fromCursor,
             payload: buildAccountChangeWakeUpdate(wake.cursor, randomKeyNaked(12), {
                 changeKinds: [...wake.changeKinds], entityIds: [...wake.entityIds],
                 ...(wake.artifactKinds ? { artifactKinds: [...wake.artifactKinds] } : {}),
@@ -325,9 +329,14 @@ function scheduleAccountProjectionWakes(
     }
     // Both providers return Account/cursor-sorted allocations. The last cursor
     // per Account is its maximum; retain the same Account callback order.
+    let firstCursor: number | undefined;
     for (const [index, row] of cursors.entries()) {
+        firstCursor ??= row.cursor;
         if (cursors[index + 1]?.accountId === row.accountId) continue;
         scheduleAccountChangeWake(tx, row.accountId, row.cursor, kind, entityIdsByAccountId.get(row.accountId)!, hint);
+        const wake = publicationPhase(tx).wakes!.get(row.accountId)!;
+        wake.fromCursor = Math.min(wake.fromCursor, firstCursor);
+        firstCursor = undefined;
     }
 }
 

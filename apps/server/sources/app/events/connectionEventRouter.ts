@@ -10,8 +10,11 @@ import {
     type EphemeralPayload,
 } from "./eventPayloadTypes";
 import {
+    ACCOUNT_CHANGE_ROWS_DELIVERY_EVENT,
     CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT,
+    parseAccountChangeRowsDelivery,
     parseCredentialQualifiedSessionDelivery,
+    type AccountChangeRowsDeliveryV1,
     type CredentialQualifiedSessionDeliveryV1,
     type LocalSocketRoomEmitter,
     type SocketRoomBroadcastOperator,
@@ -34,10 +37,13 @@ import { MACHINE_ACCESS_LOSS_EVENT, type MachineAccessLoss } from './machineAcce
 import { PRESENCE_DEADLINE_EVENT, type PresenceDeadlineNotification } from '@/app/presence/presenceDeadlineNotification';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
 import { db } from '@/storage/db';
+import { readAccountChangesPage } from '@/app/changes/readAccountChangesPage';
+import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, type PushedAccountChangesPageV1 } from '@happier-dev/protocol/changes';
 
 export const LEGACY_MACHINE_HEARTBEAT_EVENT = 'happier:legacy-machine-heartbeat:v1';
 
 import {
+    getAccountChangeRowsSocketRoom,
     getAccountRevocationSocketRoom,
     getApiTokenRevocationSocketRoom,
     getAccountSessionSocketRoom,
@@ -299,7 +305,13 @@ class EventRouter {
         payload: UpdatePayload;
         recipientFilter?: RecipientFilter;
         skipSenderConnection?: ClientConnection;
+        /** An Account wake: the first cursor its transaction committed (row-demand sockets get their page). */
+        accountChangeFromCursor?: number;
     }): void | Promise<void> {
+        if (params.accountChangeFromCursor !== undefined && params.recipientFilter?.type === 'account-stored-content-v3') {
+            return this.emitAccountChangeWake({ userId: params.userId, fromCursor: params.accountChangeFromCursor,
+                payload: params.payload, recipientFilter: params.recipientFilter });
+        }
         return this.emit({
             userId: params.userId,
             eventName: 'update',
@@ -395,6 +407,8 @@ class EventRouter {
         payload: any;
         recipientFilter: RecipientFilter;
         skipSenderConnection?: ClientConnection;
+        /** Row-demand sockets receive their own authorized page from `emitAccountChangeWake`. */
+        exceptAccountChangeRowsSockets?: boolean;
     }): void | Promise<void> {
         if (params.recipientFilter.type === "all-interested-in-session") {
             return this.emitToCredentialQualifiedSessionConnections({
@@ -418,6 +432,9 @@ class EventRouter {
                 for (const room of Array.isArray(coveredRooms) ? coveredRooms : [coveredRooms]) {
                     if (emitter.except) emitter = emitter.except(room);
                 }
+            }
+            if (params.exceptAccountChangeRowsSockets && emitter.except) {
+                emitter = emitter.except(getAccountChangeRowsSocketRoom(params.userId));
             }
             if (skipSocketId && typeof (emitter as any).except === "function") {
                 (emitter as any).except(skipSocketId).emit(params.eventName, params.payload);
@@ -469,6 +486,9 @@ class EventRouter {
             if (!this.shouldSendToConnection(connection, params.recipientFilter)) {
                 continue;
             }
+            if (params.exceptAccountChangeRowsSockets && connection.socket.data?.accountChangeRows) {
+                continue;
+            }
 
             connection.socket.emit(params.eventName, params.payload);
             deliveredCount += 1;
@@ -488,6 +508,110 @@ class EventRouter {
             targetCount: deliveredCount,
             payloadType,
             ...(payloadBytes !== undefined ? { payloadBytes } : {}),
+        });
+    }
+
+    /**
+     * The committed Account wake. The server is the authority for what each recipient may see,
+     * so a socket that declared change-row demand receives the page the feed owner reads for that
+     * socket's own credential, once, here at fan-out; every other socket keeps the bare wake.
+     */
+    private emitAccountChangeWake(params: {
+        userId: string;
+        /** First cursor the wake's transaction committed. */
+        fromCursor: number;
+        payload: UpdatePayload;
+        recipientFilter: Extract<RecipientFilter, { type: 'account-stored-content-v3' }>;
+    }): void {
+        this.emit({ userId: params.userId, eventName: 'update', payload: params.payload,
+            recipientFilter: params.recipientFilter, exceptAccountChangeRowsSockets: true });
+        const delivery: AccountChangeRowsDeliveryV1 = {
+            v: 1, accountId: params.userId, fromCursor: params.fromCursor, payload: params.payload,
+            recipientFilter: params.recipientFilter as AccountChangeRowsDeliveryV1['recipientFilter'],
+        };
+        if (this.io?.sessionDeliveryMode === "forward_only") {
+            // A headless publisher holds no sockets: every API node reads for its own.
+            void Promise.resolve(this.broadcastServerSideEvent?.(ACCOUNT_CHANGE_ROWS_DELIVERY_EVENT, delivery)).catch((error: unknown) => {
+                log({ module: "websocket", level: "warn", error }, "Account change-row forwarding unavailable");
+            });
+            return;
+        }
+        if (this.io?.in) {
+            const localIo = this.io.local ?? { in: this.io.in.bind(this.io), to: this.io.to.bind(this.io) };
+            try {
+                this.broadcastServerSideEvent?.(ACCOUNT_CHANGE_ROWS_DELIVERY_EVENT, delivery);
+            } finally {
+                void this.receiveAccountChangeRowsDelivery(localIo, delivery);
+            }
+            return;
+        }
+        for (const connection of this.userConnections.get(params.userId) ?? []) {
+            if (connection.socket.data?.accountChangeRows) {
+                this.deliverAccountChangeRows(delivery, connection.socket, connection.connectionType,
+                    (payload) => connection.socket.emit('update', payload));
+            }
+        }
+    }
+
+    /** Each receiving node reads pages for its own row-demand sockets with their own credentials. */
+    async receiveAccountChangeRowsDelivery(localIo: LocalSocketRoomEmitter, rawDelivery: unknown): Promise<void> {
+        const delivery = parseAccountChangeRowsDelivery(rawDelivery);
+        if (!delivery) {
+            recordEventFanoutDrop({ eventName: "update", reason: "no_matching_connections" });
+            return;
+        }
+        try {
+            const sockets = await localIo.in(getAccountChangeRowsSocketRoom(delivery.accountId)).fetchSockets();
+            for (const socket of sockets) {
+                if (socket.data.userId !== delivery.accountId || !socket.data.accountChangeRows) continue;
+                this.deliverAccountChangeRows(delivery, socket, socket.data.clientType,
+                    (payload) => localIo.to(socket.id).emit('update', payload));
+            }
+        } catch (error) {
+            recordEventFanoutDrop({ eventName: "update", reason: "no_matching_connections" });
+            log({ module: "websocket", level: "warn", error }, "Account change-row delivery unavailable");
+        }
+    }
+
+    /**
+     * One socket's page, ordered after its previous page so each page starts where the last one
+     * this socket received ended. Wakes this socket was excluded from (its own Machine write) are
+     * covered by its next page. A failed read sends the bare wake: the consumer reads the feed,
+     * whose own refusal (cursor gone, indeterminate access) stays the feed's.
+     */
+    private deliverAccountChangeRows(
+        delivery: AccountChangeRowsDeliveryV1,
+        socket: Pick<Socket, 'data'>,
+        clientType: unknown,
+        emit: (payload: UpdatePayload) => void,
+    ): void {
+        const state = socket.data.accountChangeRows;
+        if (!state) return;
+        const connection = { connectionType: clientType, machineId: socket.data.machineId,
+            sessionId: socket.data.sessionId, socket } as unknown as ClientConnection;
+        if (!this.shouldSendToConnection(connection, delivery.recipientFilter as RecipientFilter)) return;
+        const payload = delivery.payload as UpdatePayload;
+        state.tail = (state.tail ?? Promise.resolve()).then(async () => {
+            const after = state.cursor ?? delivery.fromCursor - 1;
+            try {
+                const read = await readAccountChangesPage({
+                    accountId: delivery.accountId, after, limit: ACCOUNT_CHANGES_PAGE_LIMIT_V1, kinds: state.kinds,
+                    compatibility: readAccountStoredContentCompatibilityForSocket(socket),
+                    readAuthentication: () => readSessionAccessAuthenticationFromSocket(socket),
+                });
+                if (read.status === 'ok') {
+                    state.cursor = read.page.nextCursor;
+                    const rows: PushedAccountChangesPageV1 = { v: 1, after, page: read.page };
+                    emit({ ...payload, body: { ...payload.body, rows } });
+                    return;
+                }
+            } catch (error) {
+                log({ module: "websocket", level: "warn", error }, "Account change-row page read failed; sending the bare wake");
+            }
+            state.cursor = undefined;
+            emit(payload);
+        }).catch((error: unknown) => {
+            log({ module: "websocket", level: "warn", error }, "Account change-row delivery failed");
         });
     }
 

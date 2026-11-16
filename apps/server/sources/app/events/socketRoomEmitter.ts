@@ -61,3 +61,48 @@ export function parseCredentialQualifiedSessionDelivery(
         ...(record.skipSocketId === undefined ? {} : { skipSocketId: record.skipSocketId }),
     };
 }
+
+export const ACCOUNT_CHANGE_ROWS_DELIVERY_EVENT =
+    "happier:account-change-rows-delivery:v1";
+
+/**
+ * Routing intent for one committed Account wake. Each receiving node reads the
+ * page for its own row-demand sockets with their own credentials; the envelope
+ * carries no rows, credential or access decision.
+ */
+export type AccountChangeRowsDeliveryV1 = Readonly<{
+    v: 1;
+    accountId: string;
+    /** First cursor this wake committed; a socket with no pushed page yet starts from it. */
+    fromCursor: number;
+    payload: Readonly<{ id: string; seq: number; body: Readonly<Record<string, unknown>>; createdAt: number }>;
+    /** The wake's `account-stored-content-v3` filter; its exclusions apply to row-demand sockets too. */
+    recipientFilter: Readonly<{ type: "account-stored-content-v3" } & Record<string, string>>;
+}>;
+
+export function parseAccountChangeRowsDelivery(value: unknown): AccountChangeRowsDeliveryV1 | null {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const record = value as Readonly<Record<string, unknown>>;
+    const allowedKeys = new Set(["v", "accountId", "fromCursor", "payload", "recipientFilter"]);
+    if (Object.keys(record).some((key) => !allowedKeys.has(key))) return null;
+    if (record.v !== 1) return null;
+    if (typeof record.accountId !== "string" || record.accountId.length === 0) return null;
+    if (typeof record.fromCursor !== "number" || !Number.isSafeInteger(record.fromCursor) || record.fromCursor < 1) return null;
+    const payload = record.payload;
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
+    const update = payload as Readonly<Record<string, unknown>>;
+    if (typeof update.id !== "string" || typeof update.seq !== "number" || !Number.isSafeInteger(update.seq)
+        || typeof update.createdAt !== "number" || typeof update.body !== "object" || update.body === null
+        || (update.body as Readonly<Record<string, unknown>>).t !== "account-change") return null;
+    const filter = record.recipientFilter;
+    if (typeof filter !== "object" || filter === null || Array.isArray(filter)
+        || (filter as Readonly<Record<string, unknown>>).type !== "account-stored-content-v3"
+        || Object.values(filter).some((entry) => typeof entry !== "string" || entry.length === 0)) return null;
+    return {
+        v: 1,
+        accountId: record.accountId,
+        fromCursor: record.fromCursor,
+        payload: { id: update.id, seq: update.seq, body: update.body as Readonly<Record<string, unknown>>, createdAt: update.createdAt },
+        recipientFilter: filter as AccountChangeRowsDeliveryV1["recipientFilter"],
+    };
+}
