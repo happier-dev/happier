@@ -6,6 +6,7 @@ import { AccessibleMachineAccessV1Schema, type AccessibleMachineAccessV1 } from 
 import { DevcontainerChildProjectionV1Schema, type DevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { isMachineReachableV1, type MachinePresenceV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { StoredMachinePublishedMetadataV1Schema, type MachinePublishedMetadataV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { readMachineName, resolveMachineDisplayNameParts, type MachineNameMetadata } from '@happier-dev/protocol/machines/machineDisplayNames';
 import { ManagedMachineInputRuntimeV1Schema, type ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -98,6 +99,7 @@ export async function listCurrentAccountMachines(params: Readonly<{
       || !await projection.isCurrent())) throw new Error('Requester Machine inventory authority is unavailable');
     if (!params.authorization && !params.token) throw new Error('Machine inventory authentication is unavailable');
     const demandedIds = params.machineIds === undefined ? undefined : new Set(params.machineIds);
+    if (!params.authorization && demandedIds?.size === 0) return [];
     // A selected host uses the exact read under its incumbent credential;
     // requester projections retain the admitted root and reviewed child proof.
     const exactId = (params.credentials || params.authorization) && demandedIds?.size === 1 ? [...demandedIds][0] : undefined;
@@ -107,16 +109,23 @@ export async function listCurrentAccountMachines(params: Readonly<{
       ...(params.signal ? { signal: params.signal } : {}),
     }) : { Authorization: `Bearer ${params.token}` };
     if (!headers) throw new Error('Requester Machine inventory authority is unavailable');
-    const response = await axios.get<unknown>(`${serverHttpBaseUrl}${path}`, {
+    const config = {
       headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...headers,
         ...(params.projection === 'hostFacts' ? { Accept: 'application/json;happier-machine-projection=host-facts' } : {}) },
       timeout: 20_000,
       ...(exactId === undefined ? {} : { validateStatus: (status: number) => status === 404 || status >= 200 && status < 300 }),
       ...(params.signal ? { signal: params.signal } : {}),
-    });
+    };
+    const batch = !params.authorization && demandedIds !== undefined && exactId === undefined;
+    const response = batch
+      ? await axios.post<unknown>(`${serverHttpBaseUrl}/v1/machines/read-batch`,
+        MachineReadBatchRequestV1Schema.parse({ machineIds: [...demandedIds] }), config)
+      : await axios.get<unknown>(`${serverHttpBaseUrl}${path}`, config);
     params.signal?.throwIfAborted();
     if (projection && !await projection.isCurrent()) throw new Error('Requester Machine inventory authority retired');
-    const inventory = ACCOUNT_MACHINE_INVENTORY_SCHEMA.safeParse(exactId === undefined ? response.data
+    const data = batch ? MachineReadBatchResponseV1Schema.parse(response.data).results
+      .flatMap(result => result.status === 'found' ? [result.machine] : []) : response.data;
+    const inventory = ACCOUNT_MACHINE_INVENTORY_SCHEMA.safeParse(exactId === undefined ? data
       : response.status === 404 ? [] : [z.object({ machine: ACCOUNT_MACHINE_ROW_SCHEMA }).parse(response.data).machine]);
     if (!inventory.success) throw new Error('invalid machine inventory');
     const rows = demandedIds === undefined ? inventory.data : inventory.data.filter(row => demandedIds.has(row.id));

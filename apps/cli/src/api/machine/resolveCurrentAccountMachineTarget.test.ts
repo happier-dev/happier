@@ -83,6 +83,40 @@ describe('plugin-aware Account administration Machine selection', () => {
 });
 
 describe('resolveCurrentAccountMachineTarget', () => {
+  it('transfers only demanded Machine rows as unrelated fleet inventory grows', async () => {
+    for (const unrelatedCount of [128, 1024]) {
+      let delivered = 0;
+      let requests = 0;
+      const selected = ['selected-a', 'selected-b'].map(id => ({ ...currentMachine(id),
+        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }));
+      const fleet = [...selected, ...Array.from({ length: unrelatedCount }, (_, i) => currentMachine(`unrelated-${i}`))];
+      boundaries.axiosGet.mockImplementation(async () => {
+        requests += 1; delivered += fleet.length;
+        return { data: fleet };
+      });
+      boundaries.axiosPost.mockImplementation(async (_url, body: { machineIds: string[] }) => {
+        requests += 1;
+        const results = body.machineIds.map(machineId => {
+          const machine = fleet.find(row => row.id === machineId);
+          if (!machine) return { machineId, status: 'not_found' };
+          delivered += 1;
+          return { machineId, status: 'found', machine };
+        });
+        return { data: { results } };
+      });
+      const input = { token: 'token', projection: 'hostFacts' as const,
+        machineIds: ['selected-a', 'selected-b', 'selected-a', 'missing'] };
+      expect((await listCurrentAccountMachines(input)).map(row => row.id)).toEqual(['selected-a', 'selected-b']);
+      expect({ requests, delivered }).toEqual({ requests: 1, delivered: 2 });
+      expect(await listCurrentAccountMachines({ ...input, machineIds: [] })).toEqual([]);
+      expect({ requests, delivered }).toEqual({ requests: 1, delivered: 2 });
+      expect((await listCurrentAccountMachines({ ...input, machineIds: ['selected-a'] })).map(row => row.id)).toEqual(['selected-a']);
+      expect({ requests, delivered }).toEqual({ requests: 2, delivered: 3 });
+      expect((await listCurrentAccountMachines({ ...input, credentials: { token: 'token', encryption: null } })).map(row => row.id))
+        .toEqual(['selected-a', 'selected-b']);
+      expect({ requests, delivered }).toEqual({ requests: 3, delivered: 5 });
+    }
+  });
   it('reads released Home ordinary Machines without a managed reference and refuses malformed explicit references', async () => {
     // 0.2 Home serializeMachineRow at 1321319f omits managedMachineRef.
     const legacy = { id: 'legacy-machine', active: true, activeAt: Date.now(), revokedAt: null, replacedByMachineId: null };
