@@ -27,7 +27,11 @@ describe('compiled Memory process placement', () => {
   let lazyImports: boolean[];
 
   beforeAll(async () => {
-    outputDir = await createTempDir('happier-memory-bundle-');
+    // Emitted chunks keep host-visible dependencies bare (source-runtime resolver), so the
+    // output must sit where Node resolves the installed tree, like the canonical layout.
+    const cacheDir = fileURLToPath(new URL('../../../node_modules/.cache', import.meta.url));
+    await mkdir(cacheDir, { recursive: true });
+    outputDir = await createTempDir('happier-memory-bundle-', cacheDir);
     const home = join(outputDir, 'home');
     await mkdir(home);
     applyEnvValues({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'https://api.example.test', HAPPIER_WEBAPP_URL: 'https://app.example.test' });
