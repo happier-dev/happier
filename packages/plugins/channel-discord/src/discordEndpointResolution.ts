@@ -1,6 +1,7 @@
-import type {
-  ConversationEndpointKindV1,
-  ConversationResolvedEndpointV1,
+import {
+  compareCanonicalConversationResolutionCandidatesV1,
+  type ConversationEndpointKindV1,
+  type ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
 
 import { createDiscordChannelEndpointId } from './discordPluginConstants.js';
@@ -91,5 +92,5 @@ export function resolveDiscordEndpointCandidates(input: Readonly<{
     seen.add(dedupeKey);
     resolved.push(candidate);
   }
-  return resolved;
+  return resolved.sort(compareCanonicalConversationResolutionCandidatesV1);
 }
