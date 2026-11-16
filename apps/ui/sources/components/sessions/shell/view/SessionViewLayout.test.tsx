@@ -100,7 +100,6 @@ describe('SessionViewLayout', () => {
             <PaneMainBodyPresentationContext.Provider value={false}>
                 <SessionViewLayout
                     content={null} input={null} placeholder={null}
-                    shouldShowCliWarning={false} onDismissCliWarning={() => {}}
                     isLandscape deviceType="phone" onBackPress={() => {}}
                 />
             </PaneMainBodyPresentationContext.Provider>,
@@ -126,8 +125,6 @@ describe('SessionViewLayout', () => {
             content: null,
             input: null,
             placeholder: null,
-            shouldShowCliWarning: false,
-            onDismissCliWarning: () => {},
             isLandscape: false,
             deviceType: 'phone',
             onBackPress: () => {},
@@ -145,8 +142,6 @@ describe('SessionViewLayout', () => {
                 content={null}
                 input={null}
                 placeholder={null}
-                shouldShowCliWarning={false}
-                onDismissCliWarning={() => {}}
                 isLandscape={false}
                 deviceType="phone"
                 onBackPress={() => {}}
@@ -166,8 +161,6 @@ describe('SessionViewLayout', () => {
                 content={null}
                 input={null}
                 placeholder={null}
-                shouldShowCliWarning={false}
-                onDismissCliWarning={() => {}}
                 isLandscape={false}
                 deviceType="phone"
                 onBackPress={() => {}}
@@ -186,8 +179,6 @@ describe('SessionViewLayout', () => {
                 content={null}
                 input={null}
                 placeholder={null}
-                shouldShowCliWarning={false}
-                onDismissCliWarning={() => {}}
                 isLandscape={false}
                 deviceType="phone"
                 onBackPress={() => {}}
@@ -206,8 +197,6 @@ describe('SessionViewLayout', () => {
                 content={null}
                 input={null}
                 placeholder={null}
-                shouldShowCliWarning={false}
-                onDismissCliWarning={() => {}}
                 isLandscape={false}
                 deviceType="phone"
                 onBackPress={() => {}}
@@ -235,8 +224,6 @@ describe('SessionViewLayout', () => {
                     content={null}
                     input={null}
                     placeholder={null}
-                    shouldShowCliWarning={false}
-                    onDismissCliWarning={() => {}}
                     isLandscape={false}
                     deviceType="tablet"
                     onBackPress={() => {}}

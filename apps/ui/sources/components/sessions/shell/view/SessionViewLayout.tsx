@@ -1,14 +1,11 @@
-import { Typography } from '@/constants/Typography';
 import { resolveThemeColor } from '@/theme/parseThemeColor';
 import * as React from 'react';
-import { Platform, Pressable, View, type LayoutChangeEvent, useWindowDimensions } from 'react-native';
+import { Platform, View, type LayoutChangeEvent, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
-import { Text } from '@/components/ui/text/Text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { shadowLevelStyle } from '@/shadowElevation';
-import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { usePaneMainBodyPresentation } from '@/components/ui/panels/paneMainComposerAnchor';
 import { useSessionViewContentBottomSpacing } from './useSessionViewContentBottomSpacing';
@@ -18,8 +15,6 @@ export type SessionViewLayoutProps = Readonly<{
     content: React.ReactNode;
     input: React.ReactNode;
     placeholder: React.ReactNode;
-    shouldShowCliWarning: boolean;
-    onDismissCliWarning: () => void;
     isLandscape: boolean;
     deviceType: string;
     onBackPress: () => void;
@@ -55,35 +50,6 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
 
     return (
         <>
-            {props.shouldShowCliWarning && !showBackButton && (
-                <Pressable
-                    {...hiddenProps}
-                    testID="session-view-cli-warning"
-                    onPress={props.onDismissCliWarning}
-                    style={{
-                        position: 'absolute',
-                        top: 8,
-                        alignSelf: 'center',
-                        backgroundColor: theme.colors.state.warning.background,
-                        borderWidth: 1,
-                        borderColor: theme.colors.state.warning.border,
-                        borderRadius: 100,
-                        paddingHorizontal: 14,
-                        paddingVertical: theme.space.s6,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        zIndex: 998,
-                        ...shadowLevelStyle(theme.colors.shadowLevels[3]),
-                    }}
-                >
-                    <Icon name="warning" size={14} color={theme.colors.state.warning.foreground} style={{ marginRight: theme.space.s6 }} />
-                    <Text style={{ ...Typography.variant('meta', 'semiBold'), color: theme.colors.state.warning.textForeground }}>
-                        {t('sessionInfo.cliVersionOutdated')}
-                    </Text>
-                    <Icon name="x" size={14} color={theme.colors.state.warning.foreground} style={{ marginLeft: theme.space.s8 }} />
-                </Pressable>
-            )}
-
             <View
                 style={{
                     flex: 1,

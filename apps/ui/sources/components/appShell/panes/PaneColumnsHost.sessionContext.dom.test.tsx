@@ -47,7 +47,7 @@ it('withdraws the covered session body while retaining its composer and the cata
         <SessionPaneHeader title="Session" showBackButton={false} rightElement={<Control name="header" />} />
         <SessionViewLayout content={<Control name="transcript" />} placeholder={null}
             input={<PaneMainComposerAnchor><Control name="composer" /></PaneMainComposerAnchor>}
-            shouldShowCliWarning onDismissCliWarning={() => {}} isLandscape deviceType="tablet" onBackPress={() => {}} />
+            isLandscape deviceType="tablet" onBackPress={() => {}} />
     </>;
     const render = async (contextOpen: boolean, arrangement: 'editor' | 'session' = 'editor') => {
         const context = { scope: 'session', arrangement } as const;
@@ -72,9 +72,6 @@ it('withdraws the covered session body while retaining its composer and the cata
     expect(container.querySelector('[data-testid="multi-pane-right-main"]')).not.toBeNull();
     expect(transcript.closest('[inert][aria-hidden="true"]')).not.toBeNull();
     expect(header.closest('[inert][aria-hidden="true"]')).not.toBeNull();
-    const warning = container.querySelector('[data-testid="session-view-cli-warning"]');
-    expect(warning).not.toBeNull();
-    expect(warning!.closest('[inert][aria-hidden="true"]')).not.toBeNull();
     expect(composer.closest('[inert], [aria-hidden="true"]')).toBeNull();
     expect(facts.transcript).toEqual({ presented: false, focusable: false });
     expect(facts.header).toEqual({ presented: false, focusable: false });

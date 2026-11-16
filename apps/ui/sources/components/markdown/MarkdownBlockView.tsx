@@ -676,9 +676,9 @@ const style = StyleSheet.create((theme) => ({
     // Code Block
     //
 
+    // The code frame (`CodeBlockViewFrame`) owns the block's one fill and edge: a fill here showed through its
+    // translucent glass fill as a grey slab (owner 11-16: a faint tint like 0.2).
     codeBlock: {
-        backgroundColor: theme.colors.surface.elevated,
-        borderRadius: 8,
         marginVertical: 8,
         width: '100%',
         alignSelf: 'stretch',

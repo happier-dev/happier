@@ -676,6 +676,37 @@ describe('SessionView (control switch timeout)', () => {
     await screen.unmount();
   });
 
+  it('says an outdated CLI as a status-row chip that opens its notice above the composer, never a transcript pill (owner 11-16)', async () => {
+    resetSession({
+      active: true,
+      metadata: { path: '/tmp', homeDir: '/tmp', host: 'test-home', machineId: 'm1', flavor: 'claude', version: '0.0.1' },
+    });
+
+    const screen = await renderSessionView();
+
+    expect(screen.findByTestId('session-view-cli-warning')).toBeNull();
+    expect(screen.findByTestId('session-cliVersion-notice')).toBeNull();
+    const chip = findStatusBadge('cli-version-outdated');
+    expect(chip).toEqual(expect.objectContaining({ testID: 'session-cliVersion-status-badge', tone: 'warning', onPress: expect.any(Function) }));
+
+    await act(async () => {
+      chip.onPress();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(screen.findByTestId('session-cliVersion-notice')).toBeTruthy();
+    expect(findStatusBadge('cli-version-outdated')).toEqual(expect.objectContaining({ accessibilityState: { expanded: true } }));
+
+    await act(async () => {
+      getBannerHideAction('session-cliVersion-notice').onPress();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+    expect(screen.findByTestId('session-cliVersion-notice')).toBeNull();
+    expect(findStatusBadge('cli-version-outdated')).toBeTruthy();
+
+    await screen.unmount();
+  });
+
   it('shows the stale runner banner or its badge, one at a time, and clears after successful restart', async () => {
     resetSession({
       active: true,

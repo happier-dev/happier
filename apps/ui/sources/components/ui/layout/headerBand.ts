@@ -23,5 +23,5 @@ export const HEADER_BAND_TITLE_TEXT = {
 
 export const HEADER_BAND_SUBTITLE_TEXT = {
     ...Typography.variant('meta'),
-    marginTop: 1,
+    marginTop: 0,
 } as const;

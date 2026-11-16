@@ -8313,6 +8313,8 @@ export const ru: TranslationStructure = {
     peerUnnamedSender: "другого агента",
     cliVersion: "Версия CLI",
     cliVersionOutdated: "Требуется обновление CLI",
+    cliVersionOutdatedBadge: "Старый CLI",
+    cliVersionOutdatedTitle: "Сеанс всё ещё работает на старом CLI",
     cliVersionOutdatedMessage: ({
       currentVersion,
       requiredVersion,

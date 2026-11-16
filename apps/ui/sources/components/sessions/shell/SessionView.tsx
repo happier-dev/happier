@@ -66,7 +66,6 @@ import { deriveTranscriptInteractionFromSession } from "@/utils/sessions/deriveT
 import { AppSessionTranscriptSourceProvider } from "@/components/sessions/transcript/source/appSessionTranscriptSource";
 import { SessionDiscussionSourceLinksProvider } from "@/components/discussions/SessionDiscussionSourceLinks";
 import { useSessionTranscriptSource } from "@/components/sessions/transcript/source/SessionTranscriptSourceContext";
-import { useCliVersionAcknowledgement } from "./useCliVersionAcknowledgement";
 import { fireAndForget } from "@/utils/system/fireAndForget";
 import { runAfterInteractionsWithFallback } from "@/utils/timing/runAfterInteractionsWithFallback";
 import type { BrowserContextState } from "@/sync/domains/browser/context";
@@ -2334,9 +2333,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
         typeof forkV1.parentSessionId === 'string' &&
         forkV1.parentSessionId.trim().length > 0;
 
-    // Check if CLI version is outdated and not already acknowledged
-    const cliVersion = ownerMetadata?.version;
-    const { shouldShowCliWarning, handleDismissCliWarning } = useCliVersionAcknowledgement(machineId, cliVersion);
     const isVoiceConversationSession = isVoiceConversationSystemSessionMetadata(ownerMetadata);
     const viewerDestination = useSessionViewerDestinationScope(sessionId, sessionRouteServerId);
     const viewerAccountLifetime = viewerDestination?.accountLifetime ?? sessionAccountLifetime;
@@ -2871,8 +2867,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                     content={content}
                     input={inputWithTranscriptSelection}
                     placeholder={placeholder}
-                    shouldShowCliWarning={shouldShowCliWarning}
-                    onDismissCliWarning={handleDismissCliWarning}
                     isLandscape={isLandscape}
                     deviceType={deviceType}
                     onBackPress={onBackPress}

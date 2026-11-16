@@ -9236,6 +9236,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         peerUnnamedSender: 'un altre agent',
         cliVersion: 'Versió del CLI',
         cliVersionOutdated: 'Actualització del CLI requerida',
+        cliVersionOutdatedBadge: "CLI antic",
+        cliVersionOutdatedTitle: "La sessió encara s'executa amb un CLI antic",
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
             `Versió ${currentVersion} instal·lada. Actualitzeu a ${requiredVersion} o posterior`,
         updateCliInstructions: 'Si us plau executeu happier self update',

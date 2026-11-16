@@ -9753,6 +9753,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     peerUnnamedSender: "innego agenta",
     cliVersion: "Wersja CLI",
     cliVersionOutdated: "Wymagana aktualizacja CLI",
+    cliVersionOutdatedBadge: "Starsze CLI",
+    cliVersionOutdatedTitle: "Sesja nadal działa na starszym CLI",
     cliVersionOutdatedMessage: ({
       currentVersion,
       requiredVersion,

@@ -264,8 +264,6 @@ export function EmbeddedSessionStandardLayout(props: Readonly<{ testID?: string 
                     content={parts.transcript}
                     input={input}
                     placeholder={parts.placeholder}
-                    shouldShowCliWarning={false}
-                    onDismissCliWarning={noop}
                     isLandscape={false}
                     deviceType={deviceType}
                     onBackPress={noop}

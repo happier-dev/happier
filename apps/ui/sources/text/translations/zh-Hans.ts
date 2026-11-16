@@ -9582,6 +9582,8 @@ export const zhHans: TranslationStructure = {
     peerUnnamedSender: "另一个代理",
     cliVersion: "CLI 版本",
     cliVersionOutdated: "需要更新 CLI",
+    cliVersionOutdatedBadge: "旧版 CLI",
+    cliVersionOutdatedTitle: "会话仍在旧版 CLI 上运行",
     cliVersionOutdatedMessage: ({
       currentVersion,
       requiredVersion,

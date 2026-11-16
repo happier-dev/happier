@@ -61,9 +61,6 @@ export function useHomesJourneyAcknowledgements(): readonly string[] {
     return usePersistentUiStateValue(homesJourneyAcknowledgementsState, 'acknowledged') ?? EMPTY_IDS;
 }
 
-export function useCliVersionAcknowledgements(): Readonly<Record<string, string>> {
-    return usePersistentUiStateValue(cliVersionAcknowledgementsState, 'machines') ?? EMPTY_VERSIONS;
-}
 
 export function usePetActivityDismissals(): readonly string[] {
     return usePersistentUiStateValue(petActivityDismissalsState, 'tray') ?? EMPTY_IDS;
