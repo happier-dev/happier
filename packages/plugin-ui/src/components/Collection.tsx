@@ -656,12 +656,6 @@ function groupBandFrame(heightPx: number, textInsetPx: number) {
   } as const;
 }
 
-/** A group's band on a page list's shared sheet: the table's band, growing with a phone's stacked heading. */
-function sheetGroupBandStyle(heightPx: number, fill: string | undefined) {
-  const { height, ...frame } = groupBandFrame(heightPx, HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx);
-  return { ...frame, minHeight: height, justifyContent: 'center' as const, ...(fill === undefined ? {} : { backgroundColor: fill }) };
-}
-
 /**
  * A full-bleed table's group band (a page table on its own sheet edge, whose rows run edge to edge): square and flush,
  * straight under the column headings and onto its rows, in the same planned height (owner 2026-11-15, A3). Only a
@@ -2738,10 +2732,6 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         flatSheet: enclosingPageSheet === null && !narrowRows,
         ...(enclosingPageSheet === null && narrowRows ? { rowInsetPx: HAPPIER_PAGE_METRICS.headingOpticalInsetPx } : {}),
         stackedHeadings: narrowRows,
-        // A group sharing the sheet is banded the way the wide table bands its groups, on the page rows' inset; its band
-        // grows with a phone's stacked line rather than clipping it.
-        // A phone keeps the resting list's plain heading on its rows' inset (the app's phone group), not a band.
-        ...(narrowRows ? {} : { groupBand: { titleRole: 'micro' as const, style: sheetGroupBandStyle(metrics.groupHeader, palette.inset) } }),
       } }),
     } : wrapTitles || catalogSideList ? {
       // The resting list (a phone, a narrow page) groups on the page canvas: a plain heading over rows parted by

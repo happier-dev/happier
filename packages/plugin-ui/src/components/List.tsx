@@ -1952,11 +1952,13 @@ function VirtualizedList<Item>(
       {indexInPart === 0 ? sheetHeader : null}
       {/* A sub-heading names one part of its section, so it keeps its end (the part) and shrinks its shared start
           first ("customer-portal · Production"). An untitled group groups its rows without a label, so it draws none. */}
+      {/* Its title and how many rows it holds, on its rows' edge: a section title, never a filled band (owner rule
+          11-15 "no card chrome on lists", lab monitoring-1115 `.msec`; MONITOR-ACCEPT F3). */}
       {section.title === '' || pageSheet === undefined ? null : (
-        <HappierListSection title={section.title} titleRole={pageSheet.groupBand?.titleRole ?? 'group'} titleEllipsizeMode="middle"
+        <HappierListSection title={section.title} titleRole="group" titleEllipsizeMode="middle"
           {...(pageSheet.stackedHeadings === true ? { stacked: true } : {})}
-          {...(pageSheet.groupBand === undefined || section.count === undefined ? {} : { count: section.count })}
-          style={pageSheet.groupBand?.style ?? [indexInPart === 0 ? sheetGroupFirstHeadingStyle : sheetGroupHeadingStyle,
+          {...(section.count === undefined ? {} : { count: section.count })}
+          style={[indexInPart === 0 ? sheetGroupFirstHeadingStyle : sheetGroupHeadingStyle,
             // A flat phone sheet's rows stand on their own inset: the heading starts on their marks' edge (owner D1).
             pageSheet.rowInsetPx === undefined ? null : { paddingHorizontal: pageSheet.rowInsetPx }]}
           {...(section.description === undefined ? {} : { description: section.description })}

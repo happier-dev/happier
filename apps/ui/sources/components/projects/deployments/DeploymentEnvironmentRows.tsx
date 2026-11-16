@@ -14,7 +14,7 @@ import { HAPPIER_PAGE_METRICS, HappierColumnEdgeContext } from '@happier-dev/plu
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemGroup, ItemGroupDefaultSurfaceProvider } from '@/components/ui/lists/ItemGroup';
 import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
@@ -335,9 +335,10 @@ export function deploymentEnvironmentRowLeadState<T extends Pick<Row, 'state'>>(
 export const SERVICES_ONE_SHEET = { key: 'services', title: '' } as const;
 
 /**
- * The Services page's list shell (lab `rd-erl`): a page-scrolling Collection list whose groups are bands on one sheet
- * under the bar that names its columns, recomposing into two-line rows on a phone. Apps, Databases, Checks and
- * Watched draw their rows through it.
+ * The Services page's list shell: a page-scrolling Collection list that lies flat on the page (DESIGN "browse flat";
+ * owner rule 11-15 "no card chrome on lists", lab monitoring-1115): the bar that names its columns, then each group's
+ * title with its count over its rows, recomposing into two-line rows on a phone. Apps, Databases, Domains, Checks,
+ * Watched and Monitoring draw their rows through it.
  */
 export function ServicesPageList<Item>(props: Readonly<{
   testID: string;
@@ -358,7 +359,9 @@ export function ServicesPageList<Item>(props: Readonly<{
   return (
     <HappierColumnEdgeContext.Provider value={inSection ? HAPPIER_PAGE_METRICS.sheetInsetPx : enclosingEdgePx}>
     <ListPresentationProvider value="page" pageInsets="contained">
-      <ItemGroup header="none" surface="none" testID={props.testID}>
+      {/* On the page, the list is the flat page section (no card); inside a page section it takes that section's sheet. */}
+      <ItemGroupDefaultSurfaceProvider value="flat">
+      <ItemGroup header="none" {...(inSection ? { surface: 'none' as const } : {})} testID={props.testID}>
         <CoreCollectionScope>
           <Collection<Item>
             testID={`${props.testID}.table`}
@@ -376,6 +379,7 @@ export function ServicesPageList<Item>(props: Readonly<{
           />
         </CoreCollectionScope>
       </ItemGroup>
+      </ItemGroupDefaultSurfaceProvider>
     </ListPresentationProvider>
     </HappierColumnEdgeContext.Provider>
   );

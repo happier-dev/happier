@@ -7517,15 +7517,24 @@ describe('an ungrouped page list (a phone)', () => {
     view.unmount();
   });
 
-  it('draws each group sharing a page section as the table\'s group band, its rows counted at its end (owner D1)', () => {
-    const view = mountTree({ presentation: 'list', scroll: 'page', sectioned: true });
-    view.measure(1200);
-    const rows = view.rows();
-    let sheet = view.rowElement(rows[0]!).parentElement!;
-    while (!sheet.contains(view.rowElement(rows[rows.length - 1]!))) sheet = sheet.parentElement!;
-    // The same band the wide table draws ("Your machines 8"): its title, then how many rows it holds.
-    expect(sheet.textContent?.replace(/\s/gu, ' ')).toContain('Started by Happier7');
-    view.unmount();
+  it('titles each group sharing a page section with its count on its rows\' edge, never a filled band (owner rule 11-15, MONITOR-ACCEPT F3)', () => {
+    for (const width of [1200, 390]) {
+      const view = mountTree({ presentation: 'list', scroll: 'page', sectioned: true });
+      view.measure(width);
+      const rows = view.rows();
+      let sheet = view.rowElement(rows[0]!).parentElement!;
+      while (!sheet.contains(view.rowElement(rows[rows.length - 1]!))) sheet = sheet.parentElement!;
+      // Its title, then how many rows it holds (lab monitoring-1115 `.msec` "Checks 5"), on a phone too.
+      expect(sheet.textContent?.replace(/\s/gu, ' ')).toContain('Started by Happier7');
+      // No group heading is a filled band: from the title up to the sheet, nothing paints a fill of its own.
+      // The deepest element that holds the whole title (a web middle ellipsis splits it into runs).
+      const title = [...sheet.querySelectorAll('*')].filter((node) => node.textContent?.replace(/\s/gu, ' ') === 'Left behind').at(-1)!;
+      expect(title).toBeDefined();
+      for (let node: Element | null = title; node !== null && node !== sheet; node = node.parentElement) {
+        expect(getComputedStyle(node).backgroundColor).toMatch(/^(|transparent|rgba\(0, 0, 0, 0\))$/);
+      }
+      view.unmount();
+    }
   });
 
   it('gives each group sharing a page section its own action, beside its own sub-heading', () => {
