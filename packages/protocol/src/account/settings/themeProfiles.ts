@@ -188,7 +188,8 @@ export function parseThemeProfileDocument(value: unknown): ThemeProfileDocumentR
             if (Object.hasOwn(ThemeProfileSeedsSchema.shape, key)) seeds[key] = content;
             else unsupportedPaths.push(`seeds.${key}`);
         }
-        known.seeds = seeds;
+        if (Object.keys(seeds).length) known.seeds = seeds;
+        else delete known.seeds;
     }
     if (isJsonObject(raw.style)) {
         const style: Record<string, unknown> = {};
@@ -199,7 +200,8 @@ export function parseThemeProfileDocument(value: unknown): ThemeProfileDocumentR
         if (typeof style.radius === 'string' && !ThemeRadiusScaleNameSchema.safeParse(style.radius).success) {
             unsupportedPaths.unshift('style.radius'); delete style.radius;
         }
-        known.style = style;
+        if (Object.keys(style).length) known.style = style;
+        else delete known.style;
     }
     const parsed = ThemeProfileV1Schema.safeParse(known);
     if (!parsed.success) return { ok: false, error: 'invalid_known_envelope' };
@@ -211,13 +213,39 @@ export function parseThemeProfileDocument(value: unknown): ThemeProfileDocumentR
 }
 
 /** Overlay deliberate edits, retaining presentation this build cannot interpret. */
-export function mergeThemeProfileDocumentEdit(document: ThemeProfileDocument, edit: ThemeProfileKnownEdit): ThemeProfileDocument {
+export function mergeThemeProfileDocumentEdit(document: ThemeProfileDocument, edit: ThemeProfileKnownEdit,
+    options?: Readonly<{ retainedPresentation?: ThemeProfileDocument; removeKnownFields?: readonly ('seeds' | 'style' | 'css')[] }>): ThemeProfileDocument {
     const checked = z.partial(ThemeProfileV1Schema).parse(edit);
-    const raw = { ...document.raw, ...checked,
-        ...(checked.seeds ? { seeds: { ...(isJsonObject(document.raw.seeds) ? document.raw.seeds : {}), ...checked.seeds } } : {}),
-        ...(checked.style ? { style: { ...(isJsonObject(document.raw.style) ? document.raw.style : {}), ...checked.style } } : {}),
+    const retained = options?.retainedPresentation;
+    const unknown = retained ? Object.fromEntries(Object.entries(retained.raw)
+        .filter(([key]) => !Object.hasOwn(ThemeProfileV1Schema.shape, key))) : {};
+    const retainedSection = (section: 'seeds' | 'style') => {
+        const value = retained?.raw[section];
+        return isJsonObject(value) ? Object.fromEntries(Object.entries(value)
+            .filter(([key]) => retained?.compatibility.unsupportedPaths.includes(`${section}.${key}`))) : {};
+    };
+    const seeds = retainedSection('seeds');
+    const style = retainedSection('style');
+    const raw = { ...document.raw, ...unknown, ...checked, schemaVersion: document.raw.schemaVersion,
+        ...(checked.seeds || Object.keys(seeds).length ? { seeds: { ...(isJsonObject(document.raw.seeds) ? document.raw.seeds : {}), ...seeds, ...checked.seeds } } : {}),
+        ...(checked.style || Object.keys(style).length ? { style: { ...(isJsonObject(document.raw.style) ? document.raw.style : {}), ...style, ...checked.style } } : {}),
     };
     const result = parseThemeProfileDocument(raw);
     if (!result.ok) throw new Error('invalid_known_envelope');
-    return result.document;
+    if (!options?.removeKnownFields?.length) return result.document;
+    const cleared = { ...result.document.raw };
+    for (const field of options.removeKnownFields) {
+        const value = cleared[field];
+        if (field === 'css' || !isJsonObject(value)) {
+            delete cleared[field];
+            continue;
+        }
+        const unsupported = Object.fromEntries(Object.entries(value).filter(([key]) =>
+            result.document.compatibility.unsupportedPaths.includes(`${field}.${key}`)));
+        if (Object.keys(unsupported).length) cleared[field] = unsupported;
+        else delete cleared[field];
+    }
+    const reset = parseThemeProfileDocument(cleared);
+    if (!reset.ok) throw new Error('invalid_known_envelope');
+    return reset.document;
 }

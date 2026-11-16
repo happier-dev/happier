@@ -60,6 +60,27 @@ describe('portable theme presentation', () => {
 
 
 describe('theme document retention', () => {
+    it('resets known presentation while retaining future children and preserving omitted partial edits', () => {
+        const parsed = themes.parseThemeProfileDocument({ ...profile('reset_theme'), schemaVersion: 2,
+            seeds: { canvas: '#112233', accent: '#abcdef', futureTone: '#fedcba' },
+            style: { radius: 'round', fontFamily: 'Inter', futureInset: true }, css: '.card{}', futureTone: 'warm' });
+        if (!parsed.ok) throw new Error('reset source rejected');
+        const partial = themes.mergeThemeProfileDocumentEdit(parsed.document, { name: 'Renamed' });
+        expect(partial.raw.seeds).toEqual(parsed.document.raw.seeds);
+        const reset = themes.mergeThemeProfileDocumentEdit(parsed.document, { name: 'Reset', overrides: { light: {}, dark: {} } },
+            { removeKnownFields: ['seeds', 'style', 'css'] });
+        expect(reset.profile).not.toHaveProperty('seeds');
+        expect(reset.profile).not.toHaveProperty('style');
+        expect(reset.profile).not.toHaveProperty('css');
+        expect(reset.raw).toMatchObject({ schemaVersion: 2, name: 'Reset', seeds: { futureTone: '#fedcba' },
+            style: { futureInset: true }, futureTone: 'warm' });
+        expect(reset.raw).not.toHaveProperty('css');
+        expect(reset.raw.seeds).not.toHaveProperty('canvas');
+        expect(reset.raw.style).not.toHaveProperty('radius');
+        expect(themes.parseThemeProfileDocument({ ...profile('invalid_reset'), seeds: { accent: '#abcdef', futureTone: true } }).ok).toBe(false);
+        expect(themes.parseThemeProfileDocument({ ...profile('invalid_reset'), style: { radius: 4, futureInset: true } }).ok).toBe(false);
+    });
+
     it('preserves future raw presentation through a known edit and recovers supported stored siblings', () => {
         const raw = { ...profile('future_theme'), style: { radius: 'round', futureGlow: { amount: 2 } }, futurePresentation: { blur: true } };
         const result = themes.parseThemeProfileDocument(raw);
@@ -70,6 +91,15 @@ describe('theme document retention', () => {
         expect(edited.raw).toMatchObject({ name: 'Renamed', style: { radius: 'sharp', futureGlow: { amount: 2 } }, futurePresentation: { blur: true } });
         expect(themes.ThemeProfileLibraryStoredSchema.parse([raw, profile('sibling')])[0])
             .toMatchObject({ id: 'future_theme', style: { radius: 'round' } });
+        const newer = themes.parseThemeProfileDocument({ ...raw, schemaVersion: 2 });
+        const pending = themes.parseThemeProfileDocument({ ...profile('future_theme'),
+            style: { radius: 'round', futureInset: true }, futureTone: '#abcdef' });
+        if (!newer.ok || !pending.ok) throw new Error('retained source rejected');
+        const inherited = themes.mergeThemeProfileDocumentEdit(newer.document, { ...pending.document.profile, name: 'Latest' },
+            { retainedPresentation: pending.document });
+        expect(inherited.raw).toMatchObject({ schemaVersion: 2, name: 'Latest',
+            style: { radius: 'round', futureGlow: { amount: 2 }, futureInset: true },
+            futurePresentation: { blur: true }, futureTone: '#abcdef' });
     });
     it('rejects malformed known fields and source authority while partially projecting future versions', () => {
         for (const change of [{ id: 'new' }, { seeds: { canvas: 'url(external)', accent: '#abcdef' } }, { source: { kind: 'yours', pluginId: 'other' } }]) {
