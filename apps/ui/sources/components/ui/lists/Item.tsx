@@ -1321,7 +1321,9 @@ export const Item = React.memo<ItemProps>((props) => {
     const alignsToFirstLine = contentAlign === 'start';
     const containerCore = [alignsToFirstLine ? [containerBase, styles.containerAlignStart] : containerBase,
         catalogGeometry ? { minHeight: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.minHeight }
-            : columnDescribedRow ? { minHeight: HAPPIER_COLLECTION_LIST_METRICS.describedRowMinHeight } : null];
+            // The described floor holds only a row that has its line beneath: an undescribed one (a column's Defaults,
+            // a machine without its summary) keeps the one-line pitch, so its height follows its content (A5, B2).
+            : columnDescribedRow && hasSubtitleContent ? { minHeight: HAPPIER_COLLECTION_LIST_METRICS.describedRowMinHeight } : null];
     const iconBoxSizeOverride = leadingMediaBox
         ? { width: leadingMediaBox.width, height: leadingMediaBox.height }
         : iconBoxSize != null

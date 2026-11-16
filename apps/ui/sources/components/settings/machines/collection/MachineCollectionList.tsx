@@ -47,7 +47,7 @@ import {
 import { recordMachineCollectionVisit, readLastVisitedMachine } from './machineCollectionVisit';
 import { useMachineAddOptions, type MachineAddOption } from './useMachineAddOptions';
 import { useMachineAddDraftRow } from '@/components/machines/add/useMachineAddFlow';
-import { CollectionDraftRow, CollectionList, CollectionListGroupLabel, CollectionSkeletonRows, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import { COLLECTION_LIST_SEARCH_THRESHOLD, CollectionDraftRow, CollectionList, CollectionListGroupLabel, CollectionRowOrder, CollectionRows, CollectionSkeletonRows, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { CollectionIndexRow } from '@/components/ui/lists/collection/CollectionIndexRow';
 import { useRevealSelectedRow } from '@/components/ui/lists/collection/useRevealSelectedRow';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
@@ -72,8 +72,8 @@ import { useThisComputerServiceSummary } from '../localControl/useThisComputerSe
 
 const FIRST_READ = Object.freeze({ kind: 'loading' } as const);
 
-/** The collection offers a search field only once it no longer fits at a glance. */
-const SEARCH_THRESHOLD = 8;
+/** The collection offers a search field only once it no longer fits at a glance (the one list threshold). */
+const SEARCH_THRESHOLD = COLLECTION_LIST_SEARCH_THRESHOLD;
 
 /** The directory batches known owners; an owner beyond its current page uses the same exact Team reader as detail. */
 function MachinePresetTeamCollectionRow(props: Readonly<{
@@ -587,23 +587,30 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                 onChangeText: setQuery,
                 placeholder: t('settingsMachines.searchPlaceholder'),
                 testID: 'settings.machines.rail.search',
+                // Behind the magnifier beside "+" until pressed, as every main column's search (Store/Services ruling, A5).
+                collapsible: true,
             } : null}
         >
-            {/* The fleet first (lab `R`): the Overview is the index of both doors. */}
-            <CollectionIndexRow
-                testID="settings.machines.rail.all"
-                detail={fleetLookCount > 0 ? t('machineAttention.listNeedLook', { count: fleetLookCount }) : undefined}
-                selected={selectedKey === 'allMachines'}
-                onPress={() => openHref(router, doorRoot, onDetailRoute, 'MachineCollectionList.allMachines')}
-            />
-            {/* Defaults head the list, above the machines they apply to (lab m-defaults). */}
-            {defaultsRow}
-            {updatesRow}
-            {activityRow}
+            {/* The fleet first (lab `R`): the Overview is the index of both doors. Defaults head the list, above the
+                machines they apply to (lab m-defaults). The rows state their order (Updates draws inside its own leaf),
+                so the one list-row rule runs between them. */}
+            <CollectionRowOrder followed precedesSelected={selectedKey === 'defaults'}>
+                <CollectionIndexRow
+                    testID="settings.machines.rail.all"
+                    detail={fleetLookCount > 0 ? t('machineAttention.listNeedLook', { count: fleetLookCount }) : undefined}
+                    selected={selectedKey === 'allMachines'}
+                    onPress={() => openHref(router, doorRoot, onDetailRoute, 'MachineCollectionList.allMachines')}
+                />
+            </CollectionRowOrder>
+            <CollectionRowOrder followed precedesSelected={selectedKey === 'updates'}>{defaultsRow}</CollectionRowOrder>
+            <CollectionRowOrder followed precedesSelected={selectedKey === 'activity'}>{updatesRow}</CollectionRowOrder>
+            <CollectionRowOrder followed={false} precedesSelected={false}>{activityRow}</CollectionRowOrder>
             {renderManagedReadFailures()}
             {managedReadApprovals}
-            {/* The machines are one section (owner 11-11): the one being added, this computer, then the fleet. */}
-            <CollectionListGroupLabel testID="settings.machines.rail.machinesLabel" title={t('settings.machines')} />
+            {/* The machines are one section (owner 11-11): the one being added, this computer, then the fleet. A first group
+                that names itself ("Your machines") heads them; a second "Machines" over it said the same thing (A5). */}
+            {collection.sections.find(section => !section.archived)?.title ? null
+                : <CollectionListGroupLabel testID="settings.machines.rail.machinesLabel" title={t('settings.machines')} />}
             <MachineDraftRow selected={selectedKey === 'machineDraft'} replace={replaceConfiguration} />
             {thisComputerRow}
             {loading ? (
@@ -757,7 +764,8 @@ function MachineRowsFold(props: Readonly<{
             ) } : {})}
             // Off the rail the Item draws the canonical disclosure caret itself.
             density={props.rail ? 'compact' : undefined} {...(props.rail ? { showChevron: false } : {})} /> }>
-        {props.rows.map(props.renderRow)}
+        {/* In the rail the folded rows are a run of the column's rows: they state their order for the one list-row rule. */}
+        {props.rail ? <CollectionRows>{props.rows.map(props.renderRow)}</CollectionRows> : props.rows.map(props.renderRow)}
     </ExpandableItem>;
 }
 
