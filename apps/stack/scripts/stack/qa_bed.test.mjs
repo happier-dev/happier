@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { projectQaBedReadiness, resolveQaBedDaemonHost, startQaBedStack } from './qa_bed.mjs';
+import { ensureQaBedRunning, projectQaBedReadiness, readQaBedProfile, resolveQaBedDaemonHost, startQaBedStack } from './qa_bed.mjs';
 
 const targets = [
   { name: 'nl3', repoDir: '/home/happier/happier-dev/', platform: 'posix' },
@@ -60,4 +60,22 @@ test('a failed bed start stops what it started through the Stack lifecycle, so a
   // The bed serves its revision's shared web export: borrowed dev Metro never
   // served the fleet's beds on 2026-11-16 (P03-UI-REQUESTS, servers-deploy).
   assert.ok(calls[0].includes('--ui=export'), 'a bed start requests its revision export');
+});
+
+test('a bed whose marker cannot be read is reported as unreadable, never as a foreign Stack', async () => {
+  // P03-RELOAD-RUNNER 19:08Z: a retry of a failed create refused "exists and is not a QA bed".
+  const answer = result => async () => result;
+  assert.equal(await readQaBedProfile({ rootDir: '/r', stackName: 'b' }, { runStackImpl: answer({ ok: true, out: 'small\n' }) }), 'small');
+  assert.equal(await readQaBedProfile({ rootDir: '/r', stackName: 'b' }, { runStackImpl: answer({ ok: true, out: '\n' }) }), null);
+  await assert.rejects(readQaBedProfile({ rootDir: '/r', stackName: 'b' }, { runStackImpl: answer({ ok: false, exitCode: 1 }) }),
+    error => error.code === 'qa_bed_marker_unreadable');
+});
+
+test('reset starts a stopped bed before seeding its fresh Account', async () => {
+  // A failed create stops its bed; reset must still work (P03-RELOAD-RUNNER 19:08Z: qa_bed_server_url_missing).
+  const starts = [];
+  const start = async input => { starts.push(input.step); };
+  await ensureQaBedRunning({ rootDir: '/r', stackName: 'b' }, { readServerUrlImpl: async () => '', startImpl: start });
+  await ensureQaBedRunning({ rootDir: '/r', stackName: 'b' }, { readServerUrlImpl: async () => 'http://x', startImpl: start });
+  assert.deepEqual(starts, ['start']);
 });

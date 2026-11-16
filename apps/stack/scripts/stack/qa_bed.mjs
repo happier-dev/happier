@@ -60,9 +60,14 @@ export function projectQaBedReadiness({ roles, keyLogin, auth, seeded, agentTurn
 }
 
 /** The bed marker, read through the Stack env owner (one key, never the whole file). */
-async function readQaBedProfile({ rootDir, stackName }) {
-  const result = await runStack({ rootDir, args: ['env', stackName, 'get', QA_BED_PROFILE_ENV_KEY] });
-  const value = result?.ok === true ? String(result.out ?? '').trim().split(/\r?\n/).at(-1)?.trim() : '';
+export async function readQaBedProfile({ rootDir, stackName }, { runStackImpl = runStack } = {}) {
+  const result = await runStackImpl({ rootDir, args: ['env', stackName, 'get', QA_BED_PROFILE_ENV_KEY] });
+  // A failed read is not an absent marker: never call our own bed foreign.
+  if (result?.ok !== true) {
+    throw Object.assign(new Error(`[qa-bed] could not read ${stackName}'s bed marker (exit ${result?.exitCode ?? result?.code ?? 'unknown'}); retry`),
+      { code: 'qa_bed_marker_unreadable' });
+  }
+  const value = String(result.out ?? '').trim().split(/\r?\n/).at(-1)?.trim() ?? '';
   return QA_BED_PROFILES.includes(value) ? value : null;
 }
 
@@ -194,7 +199,7 @@ async function seedAndSignIn({ rootDir, stackName, profile }) {
   const { readStackInfoSnapshot } = await import('./stack_info_snapshot.mjs');
   const { resolveStackEnvPath } = await import('../utils/paths/paths.mjs');
   const info = await readStackInfoSnapshot({ rootDir, stackName });
-  const serverUrl = String(info?.urls?.canonicalServerUrl ?? info?.urls?.internalServerUrl ?? '').replace(/\/+$/, '');
+  const serverUrl = serverUrlOf(info);
   if (!serverUrl) throw Object.assign(new Error('[qa-bed] the Stack reports no server URL; is it running?'), { code: 'qa_bed_server_url_missing' });
   const dir = qaBedDir(resolveStackEnvPath(stackName).baseDir);
   await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -256,6 +261,21 @@ export async function createQaBed({ rootDir, stackName, profile, repoDir }) {
     daemonHost: host.target ?? 'local', totalMs: Date.now() - startedAt };
 }
 
+function serverUrlOf(info) {
+  return String(info?.urls?.canonicalServerUrl ?? info?.urls?.internalServerUrl ?? '').replace(/\/+$/, '');
+}
+
+async function readQaBedServerUrl({ rootDir, stackName }) {
+  const { readStackInfoSnapshot } = await import('./stack_info_snapshot.mjs');
+  return serverUrlOf(await readStackInfoSnapshot({ rootDir, stackName }));
+}
+
+/** Seeding needs the bed's server; a bed a failed create stopped is started first. */
+export async function ensureQaBedRunning({ rootDir, stackName }, { readServerUrlImpl = readQaBedServerUrl, startImpl = startBed } = {}) {
+  if (await readServerUrlImpl({ rootDir, stackName })) return;
+  await startImpl({ rootDir, stackName, step: 'start' });
+}
+
 export async function resetQaBed({ rootDir, stackName, profile: requestedProfile }) {
   const startedAt = Date.now();
   const currentProfile = await readQaBedProfile({ rootDir, stackName });
@@ -266,6 +286,7 @@ export async function resetQaBed({ rootDir, stackName, profile: requestedProfile
   if (requestedProfile && requestedProfile !== currentProfile) {
     requireOk(await runStack({ rootDir, args: ['env', stackName, 'set', `${QA_BED_PROFILE_ENV_KEY}=${requestedProfile}`] }), 'env');
   }
+  await ensureQaBedRunning({ rootDir, stackName });
   // A fresh Account is the known state: no database deletion, no stale rows.
   await seedAndSignIn({ rootDir, stackName, profile });
   await startBed({ rootDir, stackName, step: 'restart' });
