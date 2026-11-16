@@ -1735,6 +1735,7 @@ export async function claudeRemoteLauncher(
                         if (updated) await apply(updated);
                     },
                     canCallTool: permissionHandler.handleToolCall,
+                    onBeforeProviderPrompt: () => captureClaudeRuntimeAuthRequestIdentity(session),
                     isAborted: (toolCallId: string) => {
                         return permissionHandler.isAborted(toolCallId);
                     },
@@ -1761,7 +1762,6 @@ export async function claudeRemoteLauncher(
                                 : null;
                             permissionHandler.handleModeChange(p.mode.permissionMode);
                             const providerMessage = await resolveQueuedPromptForProvider(p);
-                            if (p.pendingProviderAction !== 'steer') await captureClaudeRuntimeAuthRequestIdentity(session);
                             if (p.pendingProviderAction !== 'steer' && !shouldDeferTurnStartUntilTerminalInjection(p.mode)) {
                                 await beginPromptTurn();
                             } else {
@@ -1804,7 +1804,6 @@ export async function claudeRemoteLauncher(
                         unifiedTerminalLaunchOptionsHash = nextUnifiedTerminalLaunchOptionsHash;
                         permissionHandler.handleModeChange(nextMode.permissionMode);
                         const providerMessage = await resolveQueuedPromptForProvider(msg);
-                        if (msg.pendingProviderAction !== 'steer') await captureClaudeRuntimeAuthRequestIdentity(session);
                         if (msg.pendingProviderAction !== 'steer' && !shouldDeferTurnStartUntilTerminalInjection(nextMode)) {
                             await beginPromptTurn();
                         } else {

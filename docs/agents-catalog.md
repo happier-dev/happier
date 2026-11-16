@@ -680,9 +680,10 @@ Runtime failure attribution and direct-account recovery compare that same
 context; an ambiguous live identity cannot authorize mutation of the runner's
 old launch profile. The public Session runtime-issue shape is unchanged.
 
-Claude runtime quota windows share the existing request-auth context. SDK dispatch
-and authenticated `UserPromptSubmit` replace that context, so measured windows
-cannot carry into the next request or selected account. A later failure supplements
+Claude runtime quota windows share the existing request-auth context. SDK/legacy
+submission and authenticated `UserPromptSubmit` replace that context, so queued
+read-ahead preserves the active request and measured windows cannot carry into the
+next request or selected account. A later failure supplements
 its scalar details with that request's observed windows; one resolved collection
 feeds both the Session runtime issue and the account-usage snapshot. Matching
 failure resets stay on their own window, and missing utilization remains unknown.

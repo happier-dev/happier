@@ -180,6 +180,8 @@ export async function claudeRemoteAgentSdk(opts: {
     /** Authenticated SDK hooks share the existing workflow observation channel without transcript output. */
     onSessionHook?: (data: SessionHookData) => void;
     onThinkingChange?: (thinking: boolean) => void;
+    /** Capture request-scoped evidence at submission, never while reading queued input ahead. */
+    onBeforeProviderPrompt?: () => void | Promise<void>;
     onProviderPromptStarted?: () => void | Promise<void>;
     onMessage: (message: SDKMessage) => void;
     /** Live provider ingress, before transcript filtering or buffering. */
@@ -1043,6 +1045,7 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
     };
 
 	    try {
+            if (initial.pendingProviderAction !== 'steer' && opts.onBeforeProviderPrompt) await opts.onBeforeProviderPrompt();
 	        response = createQuery({
 	            prompt: messages,
 	            options: queryOptions,
@@ -1650,6 +1653,7 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                         }
 
                         if (pendingProviderAction !== 'steer') {
+                            if (opts.onBeforeProviderPrompt) await opts.onBeforeProviderPrompt();
                             resetForegroundTurn();
                         }
                         foregroundTurnInterruptActive = true;

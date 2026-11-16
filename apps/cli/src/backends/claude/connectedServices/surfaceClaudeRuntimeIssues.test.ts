@@ -386,52 +386,77 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
     }
   });
 
-  it.each(['assistant', 'result'] as const)('preserves both windows through the SDK quota then %s failure path', async (failureType) => {
+  it.each(['assistant', 'result'] as const)('preserves both windows through SDK queued-prompt read-ahead then %s failure', async (failureType) => {
     const previous = process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
     delete process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
     const failTurn = createClaudeFailTurnSpy();
     const session = { client: { sessionId: 'review-sdk-path', sessionTurnLifecycle: { failTurn } } };
-    let sent = false;
+    let inputCount = 0;
+    let releaseQueuedPrompt!: () => void;
+    const queuedPromptAvailable = new Promise<void>(resolve => { releaseQueuedPrompt = resolve; });
+    let markQueuedPromptRead!: () => void;
+    const queuedPromptRead = new Promise<void>(resolve => { markQueuedPromptRead = resolve; });
+    let providerPrompts: AsyncIterator<unknown> | null = null;
     // Only the external Agent SDK query is replaced; all mapping and projection stay real.
     const query = {
       async *[Symbol.asyncIterator]() {
+        if (!providerPrompts) throw new Error('Missing provider prompt iterable');
+        await providerPrompts.next();
         yield { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour',
           unifiedWindows: { five_hour: { utilization: 1, resetsAt: 1790378400 }, seven_day: { utilization: 0.42, resetsAt: 1790928000 } } } };
+        await queuedPromptRead;
         if (failureType === 'result') {
           yield { type: 'result', subtype: 'error_during_execution', is_error: true,
             errors: ['Usage limit reached'], apiErrorStatus: 429, error: 'rate_limit', providerLimitId: 'five_hour',
             uuid: '00000000-0000-4000-8000-000000000944', session_id: 'review-sdk-path' };
           return;
         }
-        yield { type: 'assistant', parent_tool_use_id: null, isApiErrorMessage: true, apiErrorStatus: 429,
+        const failureMessage = { type: 'assistant', parent_tool_use_id: null, isApiErrorMessage: true, apiErrorStatus: 429,
           error: 'rate_limit', providerLimitId: 'five_hour', utilization: 100,
           uuid: '00000000-0000-4000-8000-000000000943', session_id: 'review-sdk-path',
           message: { id: 'review-error', type: 'message', role: 'assistant', model: 'claude',
             content: [{ type: 'text', text: 'Usage limit reached' }], stop_reason: 'end_turn',
             usage: { input_tokens: 0, output_tokens: 0 } } };
+        yield failureMessage;
+        yield { type: 'result', subtype: 'success', is_error: false, session_id: 'review-sdk-path',
+          result: '', num_turns: 1, total_cost_usd: 0, duration_ms: 1, duration_api_ms: 1 };
+        // Read-ahead did not submit this prompt; the result now admits its actual send.
+        expect((await providerPrompts.next()).done).toBe(false);
+        yield { ...failureMessage, utilization: null, uuid: '00000000-0000-4000-8000-000000000945' };
       },
       close() {}, async setPermissionMode() {}, async setModel() {}, async setMaxThinkingTokens() {},
       supportedCommands: async () => [], supportedModels: async () => [],
     };
     try {
-      await captureClaudeRuntimeAuthRequestIdentity(session);
       const run = claudeRemoteAgentSdk({ sessionId: null, transcriptPath: null, path: '/tmp',
         claudeExecutablePath: '/tmp/claude', canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
         isAborted: () => false, nextMessage: async () => {
-          if (sent) return null;
-          sent = true;
-          return { message: 'hello', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
+          inputCount++;
+          if (inputCount > 2) return null;
+          if (inputCount === 2) {
+            await queuedPromptAvailable;
+            markQueuedPromptRead();
+          }
+          return { message: inputCount === 1 ? 'hello' : 'next request', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
         }, onReady() {}, onSessionFound() {}, onMessage() {},
-        onQuotaEvidence: async windows => { await recordClaudeRateLimitQuotaEvidence(session, windows, '[review]'); },
+        onBeforeProviderPrompt: () => captureClaudeRuntimeAuthRequestIdentity(session),
+        onQuotaEvidence: async windows => {
+          await recordClaudeRateLimitQuotaEvidence(session, windows, '[review]');
+          releaseQueuedPrompt();
+        },
         onRateLimitEvent: async details => {
           await surfaceClaudeRateLimitRuntimeIssue(session, details, '[review]');
         },
-        createQuery: () => query as unknown as Query,
+        createQuery: ({ prompt }) => {
+          if (typeof prompt === 'string') throw new Error('Expected streaming provider prompts');
+          providerPrompts = prompt[Symbol.asyncIterator]();
+          return query as unknown as Query;
+        },
       });
       if (failureType === 'result') await expect(run).rejects.toBeInstanceOf(Error);
       else await run;
       expect(ConnectedServiceQuotaSnapshotV1Schema.parse(mockNotifyDaemonConnectedServiceQuotaSnapshot.mock.calls[0]?.[0].snapshot).meters).toHaveLength(2);
-      expect(ConnectedServiceQuotaSnapshotV1Schema.parse(mockNotifyDaemonConnectedServiceQuotaSnapshot.mock.lastCall?.[0].snapshot).meters).toEqual([
+      expect(ConnectedServiceQuotaSnapshotV1Schema.parse(mockNotifyDaemonConnectedServiceQuotaSnapshot.mock.calls[1]?.[0].snapshot).meters).toEqual([
         expect.objectContaining({ meterId: 'five_hour', remainingPct: 0 }),
         expect.objectContaining({ meterId: 'seven_day', remainingPct: 58 }),
       ]);
@@ -439,6 +464,12 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
         expect.objectContaining({ meterId: 'five_hour', remainingPct: 0 }),
         expect.objectContaining({ meterId: 'seven_day', remainingPct: 58 }),
       ]);
+      if (failureType === 'assistant') {
+        expect(failTurn.mock.lastCall?.[0].issue?.usageLimit?.allWindows).toBeUndefined();
+        expect(ConnectedServiceQuotaSnapshotV1Schema.parse(
+          mockNotifyDaemonConnectedServiceQuotaSnapshot.mock.lastCall?.[0].snapshot,
+        ).meters).toEqual([expect.objectContaining({ meterId: 'five_hour', remainingPct: null })]);
+      }
     } finally { restoreClaudeSelectionEnv(previous); }
   });
 
