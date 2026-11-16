@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -60,12 +61,12 @@ export const ThemeProfileSeedsSchema = z.strictObject({ canvas: ThemeProfileColo
 export type ThemeProfileSeeds = z.infer<typeof ThemeProfileSeedsSchema>;
 export const ThemeProfileStyleSchema = z.strictObject({ radius: z.optional(ThemeRadiusScaleNameSchema), fontFamily: z.optional(z.string()) });
 export type ThemeProfileStyle = z.infer<typeof ThemeProfileStyleSchema>;
-export const ThemeProfileSourceSchema = z.discriminatedUnion('kind', [
+export const ThemeProfileSourceSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('yours') }),
     z.strictObject({ kind: z.literal('store'), provenance: RegistryProvenanceV1Schema, contributionId: z.string() }),
     z.strictObject({ kind: z.literal('plugin'), pluginId: asProtocolZod(PluginIdSchema), contributionId: asProtocolZod(PluginContributionLocalIdSchema) }),
     z.strictObject({ kind: z.literal('built-in'), presetId: z.enum(BUILT_IN_THEME_PROFILE_PRESET_IDS) }),
-]);
+]));
 export type ThemeProfileSource = z.infer<typeof ThemeProfileSourceSchema>;
 
 export const ThemeProfileV1Schema = z.strictObject({
