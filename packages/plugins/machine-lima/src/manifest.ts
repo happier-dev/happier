@@ -19,6 +19,7 @@ import { createLimaSdkExecutor } from './machine/nativeExecutor.js';
 import { limaArchiveSource } from './machine/dependency.js';
 import { createLimaProvider, limaAcquisitionResource, LIMA_DEPENDENCY_ID, LIMA_PLUGIN_ID, LIMA_PROVISIONER_ID, LIMA_QEMU_DEPENDENCY_IDS } from './machine/provider.js';
 import { LimaLaunchSchema, LimaOptionsInputSchema, LimaResourceSchema } from './machine/schemas.js';
+import { createLimaPreparationClient, LimaPreparationInputSchema, LimaPreparedArtifactSchema, LimaPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 
 export const LIMA_ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: LimaLaunchSchema, resource: LimaResourceSchema });
 export const LIMA_RECONCILIATION_SCHEMAS = defineMachineProvisionerReconciliationSchemas({
@@ -39,11 +40,13 @@ async function provider(context: PluginInvocationContext) {
   if ((status.state !== 'ready' && status.state !== 'updateAvailable') || !status.executable) {
     throw Object.assign(new Error('declared native Lima executable is unavailable'), { code: 'lima_unavailable' });
   }
-  return createLimaProvider(createLimaSdkExecutor({ exec: context.services.exec, executable: status.executable, signal: context.signal }), context.invokedAtMs,
+  const executor = createLimaSdkExecutor({ exec: context.services.exec, executable: status.executable, signal: context.signal });
+  const current = createLimaProvider(executor, context.invokedAtMs,
     async (dependencyId) => {
       const tool = await context.services.managedServices.dependencies.status(dependencyId, { signal: context.signal });
       return (tool.state === 'ready' || tool.state === 'updateAvailable') && tool.executable !== undefined;
     });
+  return { ...current, preparation: createLimaPreparationClient(executor, current) };
 }
 
 export const LIMA_MACHINE_PROVISIONER = {
@@ -64,6 +67,9 @@ export const LIMA_MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', resize: 'resize' },
   reconciliation: { action: 'reconcile', nativeOperationSchema: LimaResourceSchema.jsonSchema },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file', stream: 'stream' },
+  preparation: { inputSchema: LimaPreparationInputSchema.jsonSchema, artifactSchema: LimaPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: LimaPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const LIMA_PLUGIN = definePlugin({
@@ -123,6 +129,21 @@ export const LIMA_PLUGIN = definePlugin({
   ] },
   machineProvisioners: { [LIMA_PROVISIONER_ID]: LIMA_MACHINE_PROVISIONER },
   actions: {
+    'prepare-build': { ...actionDefaults, title: 'Build Lima prepared base', dangerLevel: 'writesLocal',
+      confirmation: { title: 'Prepare this Lima base?', body: 'This creates a VM, installs the selected CLI and setup, then retains its stopped disk. It uses CPU, network and local disk storage.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return (await provider(context)).preparation.build(input); } },
+    'prepare-inspect': { ...actionDefaults, title: 'Inspect Lima prepared base', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return (await provider(context)).preparation.inspect('nativeOperation' in input
+        ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...actionDefaults, title: 'Delete Lima prepared base', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Lima prepared base?', body: 'This permanently removes the exact owned base disk. Existing Session clones are retained.' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return (await provider(context)).preparation.destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); } },
     install: {
       title: 'Install Lima', scopes: ['machine'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       execution: { target: 'daemon' }, dangerLevel: 'writesLocal',

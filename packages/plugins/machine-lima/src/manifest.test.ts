@@ -56,6 +56,13 @@ async function activatedAction(id: string, exec: Pick<ExecService, 'run'> & Part
 
 // The native filesystem store contract is POSIX; Lima supports Darwin and Linux hosts.
 describe.skipIf(process.platform === 'win32')('activated public Lima actions', () => {
+  it('recovers an absent credential-free Prepare through the public role', async () => {
+    const exec = { run: async () => processResult() };
+    const { handler, context } = await activatedAction('prepare-inspect', exec);
+    const { memoryBytes, diskBytes, instance: _instance, ...identity } = resource;
+    expect(await handler({ operationId: 'prepare-test', launch: { ...identity,
+      memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 } }, context)).toEqual({ kind: 'absent' });
+  });
   it.each(['check', 'options', 'acquire', 'reconcile', 'inspect', 'resize', 'power', 'destroy', 'put-file'])(
     'retains authored failures from dependency acquisition and native execution in %s', async action => {
       const failure = new PluginError({ code: 'credential_unavailable', message: 'Repair the native service.',

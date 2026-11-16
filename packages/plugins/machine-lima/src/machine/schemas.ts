@@ -11,6 +11,7 @@ const architecture = defineProtocolUnion([defineProtocolLiteral('aarch64'), defi
 const vmType = defineProtocolUnion([defineProtocolLiteral('vz'), defineProtocolLiteral('qemu')]);
 const positiveInteger = defineProtocolNumber({ integer: true, minimum: 1 });
 const image = defineProtocolString({ minLength: 1 });
+const preparedBase = defineProtocolObject({ operationId: defineProtocolString({ minLength: 1 }) }, closed);
 const mounts = defineProtocolArray(defineProtocolObject({
   location: absolutePath, mountPoint: absolutePath, writable: defineProtocolUnion([
     defineProtocolLiteral(true), defineProtocolLiteral(false),
@@ -21,6 +22,7 @@ export const LimaLaunchSchema = defineProtocolObject({
   store: absolutePath, image, arch: architecture, vmType,
   cpus: positiveInteger, memoryGiB: positiveInteger, diskGiB: positiveInteger,
   mounts,
+  preparedBase: preparedBase.optional(),
 }, closed);
 
 // Draft fields keep the executable launch paths so retained recipes use the
@@ -29,6 +31,7 @@ export const LimaOptionsInputSchema = defineProtocolObject({
   store: absolutePath.optional(), image: image.optional(),
   arch: architecture.optional(), vmType: vmType.optional(), cpus: positiveInteger.optional(),
   memoryGiB: positiveInteger.optional(), diskGiB: positiveInteger.optional(), mounts: mounts.optional(),
+  preparedBase: preparedBase.optional(),
 }, closed);
 
 export const LimaResourceSchema = defineProtocolObject({

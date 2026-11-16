@@ -97,13 +97,26 @@ function sameCreationFacts(instance: LimaInstance, expected: LimaResource) {
 }
 
 export function limaAcquisitionResource(launch: LimaLaunch, managedId: string): LimaResource {
-  const { memoryGiB, diskGiB, ...identity } = launch;
+  const { memoryGiB, diskGiB, preparedBase: _preparedBase, ...identity } = launch;
   // Lima v2.1.0 pkg/identifiers/validate.go permits only single internal
   // separators. Base36 keeps the full opaque-id digest alphanumeric and the
   // prefixed name below our existing 63-character native identity boundary.
   const nativeId = BigInt(`0x${createHash('sha256').update(managedId).digest('hex')}`).toString(36);
   return LimaResourceSchema.parse({ ...identity, instance: `happier-${nativeId}`,
     memoryBytes: memoryGiB * gib, diskBytes: diskGiB * gib });
+}
+
+export const limaPreparationMessage = (operationId: string) => `Happier prepared base: ${operationId}`;
+
+/** A stopped partial build is not an image. Lima's native config records
+ * completion only after successful installation, setup and graceful stop. */
+export async function inspectLimaPreparation(executor: LimaExecutor, launch: LimaLaunch, operationId: string) {
+  const resource = limaAcquisitionResource({ ...launch, mounts: [] }, `prepare:${operationId}`);
+  const native = await inspectLimaInstance({ executor, ...resource });
+  if (native && !sameCreationFacts(native, resource)) throw Object.assign(new Error('prepared base facts differ'), { code: 'resource_mismatch' });
+  const ready = native !== null && String(limaInstanceField(native, 'status')).toLowerCase() === 'stopped'
+    && record(native.config).message === limaPreparationMessage(operationId);
+  return { resource, native, ready };
 }
 
 export function buildCreateArgs(launch: LimaLaunch & Readonly<{ instance: string }>) {
@@ -242,7 +255,9 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
         ...(nativeRefusalCode === 'lima_driver_unavailable' ? { fieldPath: 'vmType' } : {}),
       } : undefined;
       return { base: { launch, guestPlatform: 'linux', available: availability.available,
-        ...(image ? { nativeFacts: { image } } : {}),
+        nativeFacts: { ...(image ? { image } : {}), ...(launch.arch ? { preparationGuest: {
+          target: { os: 'linux', arch: launch.arch === 'aarch64' ? 'arm64' : 'x64' }, remoteHomeDir: '/opt/happier',
+        } } : {}) },
         ...(unavailableReason ? { unavailableReason } : {}) }, dimensions: { ...emptyDimensions,
         size: size ? [{ id: size.id, title: size.title, nativeFacts: { size }, assignments: [{ path: 'cpus', value: size.cpuCores },
           { path: 'memoryGiB', value: size.memoryBytes / gib }, { path: 'diskGiB', value: size.diskBytes / gib }] }] : [],
@@ -261,7 +276,23 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
           throw Object.assign(new Error('reviewed native launch unavailable'), { code: 'code' in availability ? availability.code : 'lima_driver_unavailable' });
         }
         const nativeLaunch = { ...launch, instance: expected.instance };
-        const created = await createLimaInstance({ executor, ...nativeLaunch, createArgs: buildCreateArgs(nativeLaunch) });
+        let created: Awaited<ReturnType<typeof createLimaInstance>>;
+        if (launch.preparedBase) {
+          const source = await inspectLimaPreparation(executor, launch, launch.preparedBase.operationId);
+          if (!source.ready) throw Object.assign(new Error('prepared base is incomplete'), { code: 'lima_preparation_incomplete' });
+          if (await inspectLimaInstance({ executor, ...expected })) return { kind: 'rejected' as const, code: 'resource_mismatch' as const };
+          // Lima 2.2.1 clone requires a stopped source and refuses an existing
+          // destination. Only our clean build can supply this source identity.
+          const cloned = await runLimaCommand({ executor, store: launch.store, interactive: true,
+            args: ['clone', '--tty=false', '--start=false', '--set', `.mounts = ${JSON.stringify(launch.mounts)}`,
+              source.resource.instance, expected.instance] });
+          if (cloned.exitCode !== 0) throw Object.assign(new Error('native clone failed'), { code: 'lima_clone_failed' });
+          const instance = await inspectLimaInstance({ executor, ...expected });
+          if (!instance) throw Object.assign(new Error('native clone was not observed'), { code: 'lima_clone_unconfirmed' });
+          created = { created: true, reconciled: false, instance };
+        } else {
+          created = await createLimaInstance({ executor, ...nativeLaunch, createArgs: buildCreateArgs(nativeLaunch) });
+        }
         // Matching native configuration is not this acquisition's creation
         // custody. Existing row-owned guests are recovered through reconcile.
         if (!created.created) return { kind: 'rejected' as const, code: 'resource_mismatch' as const };
