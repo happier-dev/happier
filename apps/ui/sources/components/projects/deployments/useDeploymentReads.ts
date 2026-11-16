@@ -282,7 +282,7 @@ export function useDeploymentReceipt(controller: DeploymentReadControllerV1 | nu
         ? selectDeploymentReceiptRetainedHistoryV1({ receipt: value.deployment, items: history.snapshot.value.items,
             complete: !history.snapshot.value.hasNextPage && history.snapshot.value.coverage !== 'partial',
             runtime, targetLinks: detail.targetLinks.map(row => row.targetLink),
-            retainPreviousDeployments: detail.content.retainPreviousDeployments }) : null,
+            retainPreviousDeployments: detail.content.retainPreviousDeployments, placement: value.facts.placement }) : null,
     [value, detail, runtime, history.snapshot]);
     const snapshot = React.useMemo(() => !value ? read.snapshot : { ...read.snapshot, value: { ...value,
         facts: selection ? { ...value.facts, ...selection } : value.facts } }, [read.snapshot, value, selection]);

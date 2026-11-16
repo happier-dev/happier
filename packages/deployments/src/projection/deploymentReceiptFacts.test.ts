@@ -133,14 +133,27 @@ describe('receipt facts', () => {
             createDeploymentReceiptHeaderV1({ id: 'failed', state: 'failed' }),
             createDeploymentReceiptHeaderV1({ id: 'other-link', targetLinkId: 'unrelated' }), { ...previous, source: previousVersion.revision }];
         expect(selectDeploymentReceiptRetainedHistoryV1({ receipt: current, items, complete: true,
-            runtime, targetLinks: [runtime], retainPreviousDeployments: 1 }))
+            runtime, targetLinks: [runtime], retainPreviousDeployments: 1, placement: 'machine' }))
             .toEqual({ previousVersion, retainedPreviousCount: 1, retainedRollbackTarget: previousVersion });
         expect(selectDeploymentReceiptRetainedHistoryV1({ receipt: current, items: [current], complete: true,
-            runtime, targetLinks: [runtime], retainPreviousDeployments: 1 }))
+            runtime, targetLinks: [runtime], retainPreviousDeployments: 1, placement: 'machine' }))
             .toEqual({ previousVersion: null, retainedPreviousCount: 0, retainedRollbackTarget: null });
         expect(selectDeploymentReceiptRetainedHistoryV1({ receipt: current, items: [current], complete: false,
-            runtime, targetLinks: [runtime], retainPreviousDeployments: 1 }))
+            runtime, targetLinks: [runtime], retainPreviousDeployments: 1, placement: 'machine' }))
             .toEqual({ previousVersion: undefined, retainedPreviousCount: null, retainedRollbackTarget: null });
+    });
+    it.each(['machine', 'platform'] as const)('uses %s retention when selecting a rollback with Docker retention off', placement => {
+        const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: 'current' });
+        const current = createDeploymentReceiptHeaderV1({ id: 'current', requestedAtMs: 2000, startedAtMs: 2001, settledAtMs: 2002 });
+        const previous = createDeploymentReceiptHeaderV1({ id: 'previous', requestedAtMs: 1000 });
+        const revision = { kind: 'repository' as const, sha: 'a'.repeat(40) };
+        const input = { receipt: current, items: [{ ...current, source: { kind: 'repository' as const, sha: 'b'.repeat(40) } },
+            { ...previous, source: revision }], complete: true, runtime, targetLinks: [runtime],
+            retainPreviousDeployments: 0, placement };
+        expect(selectDeploymentReceiptRetainedHistoryV1(input)).toMatchObject(placement === 'platform'
+            ? { retainedPreviousCount: null, previousVersion: { deploymentId: 'previous', revision },
+                retainedRollbackTarget: { deploymentId: 'previous', revision } }
+            : { retainedPreviousCount: 0, previousVersion: null, retainedRollbackTarget: null });
     });
     it('names a history attempt by its revision and carries its recorded failure as a fact, never a title word', () => {
         const base = createDeploymentReceiptDetailV1();

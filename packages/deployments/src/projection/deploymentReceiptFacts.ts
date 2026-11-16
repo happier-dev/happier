@@ -12,7 +12,7 @@ export function deploymentRevisionLabelV1(revision: DeploymentReviewRevisionV1):
 }
 /** Shared with native release retention: eligible settled receipts, newest first, within the authored policy. */
 export function selectDeploymentRetainedPreviousV1<T extends DeploymentReceiptHeaderV1>(receipts: readonly T[],
-    activeDeploymentId: string | undefined, retainPreviousDeployments: number): readonly T[] {
+    activeDeploymentId: string | undefined, retainPreviousDeployments: number | undefined): readonly T[] {
     return receipts.filter(row => row.id !== activeDeploymentId && isDeploymentRollbackSourceEligibleV1(row.state))
         .sort((left, right) => right.requestedAtMs - left.requestedAtMs || right.id.localeCompare(left.id))
         .slice(0, retainPreviousDeployments);
@@ -25,6 +25,7 @@ export type DeploymentReceiptRetainedHistoryV1 = Readonly<{
     runtime: DeploymentTargetLinkHeaderV1;
     targetLinks: readonly DeploymentTargetLinkHeaderV1[];
     retainPreviousDeployments: number;
+    placement: DeploymentReceiptFactsV1['placement'];
 }>;
 
 /** Every displayed retained-history fact comes from the same opened history page. */
@@ -32,7 +33,8 @@ export function selectDeploymentReceiptRetainedHistoryV1(input: DeploymentReceip
     Pick<DeploymentReceiptFactsV1, 'previousVersion' | 'retainedPreviousCount' | 'retainedRollbackTarget'> {
     const lineage = getDeploymentTargetLinkLineageV1(input.runtime, input.targetLinks);
     const retained = selectDeploymentRetainedPreviousV1(input.items.filter(row => row.environmentId === input.receipt.environmentId
-        && lineage.has(row.targetLinkId)), input.runtime.activeDeploymentId, input.retainPreviousDeployments);
+        && lineage.has(row.targetLinkId)), input.runtime.activeDeploymentId,
+        input.placement === 'machine' ? input.retainPreviousDeployments : undefined);
     const predecessors = retained.filter(row => row.id !== input.receipt.id
         && (row.requestedAtMs < input.receipt.requestedAtMs
             || row.requestedAtMs === input.receipt.requestedAtMs && row.id.localeCompare(input.receipt.id) < 0));
@@ -47,7 +49,7 @@ export function selectDeploymentReceiptRetainedHistoryV1(input: DeploymentReceip
     const sameRevision = source && servingSource && (source.kind === 'repository' && servingSource.kind === 'repository'
         ? source.sha === servingSource.sha : source.kind === 'stored' && servingSource.kind === 'stored'
             && source.composeDigest === servingSource.composeDigest);
-    return { previousVersion, retainedPreviousCount: input.complete ? predecessors.length : null,
+    return { previousVersion, retainedPreviousCount: input.placement === 'machine' && input.complete ? predecessors.length : null,
         retainedRollbackTarget: candidate && active && source && servingSource && candidate.id !== active.id && !sameRevision
             ? { deploymentId: candidate.id, revision: source } : null };
 }
@@ -126,7 +128,7 @@ export function projectDeploymentReceiptUrlFactsV1(content: DeploymentReceiptDet
 
 /** Historical evidence comes from the receipt; optional current retention facts share the opened history page. */
 export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetailV1,
-    retainedHistory?: DeploymentReceiptRetainedHistoryV1): DeploymentReceiptFactsV1 {
+    retainedHistory?: Omit<DeploymentReceiptRetainedHistoryV1, 'placement'>): DeploymentReceiptFactsV1 {
     const { deployment, content } = receipt;
     const logs: DeploymentReceiptLogFactV1[] = (content.ownServer?.stageLogs ?? []).map(log => ({
         scope: 'operation', reference: { kind: 'build', environmentId: deployment.environmentId, deploymentId: deployment.id,
@@ -154,10 +156,8 @@ export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetail
     const rollout = content.ownServer?.approvedInputBasis.ownServer?.rollout;
     const placement = content.platform !== undefined ? 'platform' as const : 'machine' as const;
     return {
-        ...(retainedHistory ? selectDeploymentReceiptRetainedHistoryV1(retainedHistory)
+        ...(retainedHistory ? selectDeploymentReceiptRetainedHistoryV1({ ...retainedHistory, placement })
             : { previousVersion: undefined, retainedPreviousCount: null, retainedRollbackTarget: null }),
-        // A platform keeps its own releases: the Machine keep count is not a fact about it (rollback stays the reader's).
-        ...(placement === 'platform' ? { retainedPreviousCount: null } : {}),
         placement,
         failure: content.failure ?? null,
         restoration: projectRestoration(content),

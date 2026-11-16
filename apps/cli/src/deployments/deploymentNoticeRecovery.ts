@@ -1,5 +1,5 @@
 import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
-import { deploymentRevisionLabelV1, projectDeploymentReceiptSourceFactsV1, selectDeploymentReceiptRetainedHistoryV1 } from '@happier-dev/deployments';
+import { deploymentRevisionLabelV1, projectDeploymentReceiptSourceFactsV1, projectDeploymentReceiptFactsV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { AccountNoticeRecoveryChoiceV1 } from '@happier-dev/protocol/activity/accountNoticeRecoveryV1';
 import { logger } from '@/ui/logger';
@@ -23,7 +23,7 @@ export function deploymentNoticeRollbackChoice(environment: DeploymentEnvironmen
     receipt: DeploymentReceiptDetailV1 | undefined, history: readonly DeploymentReceiptDetailV1[]): AccountNoticeRecoveryChoiceV1 | null {
     const link = environment.targetLinks.find(value => value.targetLink.id === environment.environment.runtimeTargetLinkId)?.targetLink;
     if (!receipt || !link) return null;
-    const { retainedRollbackTarget: target } = selectDeploymentReceiptRetainedHistoryV1({ receipt: receipt.deployment,
+    const { retainedRollbackTarget: target } = projectDeploymentReceiptFactsV1(receipt, { receipt: receipt.deployment,
         items: history.map(row => ({ ...row.deployment, source: projectDeploymentReceiptSourceFactsV1(row.content).source })),
         complete: true, runtime: link, targetLinks: environment.targetLinks.map(value => value.targetLink),
         retainPreviousDeployments: environment.content.retainPreviousDeployments });
