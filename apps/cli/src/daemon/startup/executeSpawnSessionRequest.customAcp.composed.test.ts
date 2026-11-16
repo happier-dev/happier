@@ -1128,6 +1128,13 @@ describe('Custom ACP fresh daemon launch composition', () => {
     const originalCredentials = storage.credentials;
     const originalStoredCredentials = storage.ordinaryStoredCredentials;
     const originalIo = storage.io.getMockImplementation();
+    onTestFinished(() => {
+      storage.credentials = originalCredentials;
+      storage.ordinaryStoredCredentials = originalStoredCredentials;
+      storage.persistedToken = originalCredentials.token;
+      if (originalIo) storage.io.mockImplementation(originalIo); else storage.io.mockReset();
+      preflightHome.database = null;
+    });
     const actualIo = await vi.importActual<typeof import('socket.io-client')>('socket.io-client');
     storage.io.mockImplementation(actualIo.io);
     storage.credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'df38-owner', tokenEpoch: 1,
@@ -1160,6 +1167,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
       if (originalGet) return originalGet(url, options);
       throw new Error(`Unexpected preflight GET ${path}`);
     });
+    onTestFinished(() => get.mockRestore());
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
       const path = new URL(String(url)).pathname;
       const availability = readBundledPluginAvailabilityHttpFixture(path, body);
@@ -1185,7 +1193,9 @@ describe('Custom ACP fresh daemon launch composition', () => {
       if (path === '/v1/home/governance/get') return homeResponse({ homeDefaults: null });
       throw new Error(`Unexpected preflight POST ${path}`);
     });
+    onTestFinished(() => post.mockRestore());
     const originalFetch = globalThis.fetch;
+    onTestFinished(() => { vi.stubGlobal('fetch', originalFetch); });
     vi.stubGlobal('fetch', async (url: Parameters<typeof fetch>[0]) => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/profile') return Response.json({ id: 'df38-owner' });
@@ -1197,9 +1207,11 @@ describe('Custom ACP fresh daemon launch composition', () => {
     });
     const requesterChannel = requesterHome;
     const restoreRequestAdapter = installAxiosRequestMethodAdapter();
+    onTestFinished(restoreRequestAdapter);
     const machine = new ApiMachineClient(storage.credentials.token, { id: 'df38-machine', encryptionMode: 'plain',
       metadata: fixtureMachineMetadata(), metadataVersion: 1, daemonState: null, daemonStateVersion: 0 }, undefined,
       { resolveCurrentServerIdentityId: () => 'srv_preflight_owner' });
+    onTestFinished(() => machine.shutdown());
     const preflightDirectories: string[] = [];
     const ownerDirectory = join(storage.home, 'first-owner-directory');
     await activateSessionsRoleForMachineClient(machine, machine.setRPCHandlers({ spawnSession: async options => {
@@ -1226,13 +1238,6 @@ describe('Custom ACP fresh daemon launch composition', () => {
       stopForwarding();
       await relay.close();
       await machine.shutdown();
-      get.mockRestore(); post.mockRestore(); vi.stubGlobal('fetch', originalFetch);
-      restoreRequestAdapter();
-      storage.credentials = originalCredentials;
-      storage.ordinaryStoredCredentials = originalStoredCredentials;
-      storage.persistedToken = originalCredentials.token;
-      if (originalIo) storage.io.mockImplementation(originalIo); else storage.io.mockReset();
-      preflightHome.database = null;
     })();
     onTestFinished(close);
     const request = (actor: string, directory: string) => SessionSpawnNewInputV2Schema.parse({ creationKey: `preflight-${actor}`,
