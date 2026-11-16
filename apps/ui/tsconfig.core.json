@@ -2579,6 +2579,7 @@
     "sources/components/store/catalog/storeKinds.ts",
     "sources/components/store/catalog/storeSoftware.ts",
     "sources/components/store/catalog/storeSoftwareInstalled.ts",
+    "sources/components/store/catalog/storeThemes.ts",
     "sources/components/store/storeThemeViewTypes.ts",
     "sources/components/stream/LiveStreamPlayer.tsx",
     "sources/components/stream/StreamDiagnosticsOverlay.tsx",

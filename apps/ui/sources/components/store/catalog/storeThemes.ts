@@ -1,0 +1,58 @@
+import type { ThemeRegistryItemKey } from '@happier-dev/protocol/actions/themeActionFamily';
+import type { ThemeLibraryEntry, ThemeMiniatureData, ThemeProfileMode } from '@happier-dev/protocol/account/settings/themeProfiles';
+import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
+import { t } from '@/text';
+import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { StoreThemeCardView } from '../storeThemeViewTypes';
+
+const NO_FACES: readonly ThemeMiniatureData[] = [];
+
+/** A browse summary never acquires a package to discover modes or draw a preview. */
+export function themeSummaryMatchesMode(item: RegistryCatalogItemSummary, mode: ThemeProfileMode | null): boolean {
+    return mode === null || item.themeMetadata?.includes.some(face => face.mode === mode) === true;
+}
+
+export function projectStoreThemeCard(item: RegistryCatalogItemSummary, sourceTitle: string): StoreThemeCardView {
+    return {
+        key: `theme|${item.sourceId}|${item.itemId}`,
+        name: item.title,
+        byline: item.publisher ? `${item.publisher.name} · ${sourceTitle}` : sourceTitle,
+        summary: [...new Set(item.themeMetadata?.includes.flatMap(face => face.mode ? [face.mode] : []))]
+            .map(mode => t(mode === 'light' ? 'themeCard.light' : 'themeCard.dark')).join(' · '),
+        faces: item.themeMetadata?.preview ?? NO_FACES,
+        ...(item.brandMark ? { mark: item.brandMark } : {}),
+    };
+}
+
+export type InstalledStoreThemeGroup = Readonly<{
+    key: string;
+    listing: ThemeRegistryItemKey;
+    /** Keep every face's own provenance, including a partially updated listing's differing versions. */
+    entries: readonly ThemeLibraryEntry[];
+}>;
+
+/** Installed lists a Store listing once; editable copies belong to Yours and carry no upstream demand. */
+export function groupInstalledStoreThemes(entries: readonly ThemeLibraryEntry[]): readonly InstalledStoreThemeGroup[] {
+    const groups = new Map<string, { key: string; listing: ThemeRegistryItemKey; entries: ThemeLibraryEntry[] }>();
+    for (const entry of entries) {
+        if (entry.source.kind !== 'store') continue;
+        const { sourceId, itemId } = entry.source.provenance;
+        const key = JSON.stringify([sourceId, itemId]);
+        const held = groups.get(key);
+        if (held) held.entries.push(entry);
+        else groups.set(key, { key, listing: { sourceId, itemId }, entries: [entry] });
+    }
+    return [...groups.values()];
+}
+
+export type InstalledThemeRow = Readonly<{
+    kind: 'theme';
+    key: string;
+    scope: ServerAccountScope;
+    native: InstalledStoreThemeGroup;
+}>;
+
+export function projectInstalledStoreThemeRows(entries: readonly ThemeLibraryEntry[], scope: ServerAccountScope): readonly InstalledThemeRow[] {
+    return groupInstalledStoreThemes(entries).map(native => ({ kind: 'theme',
+        key: serverAccountScopedResourceKey(scope, 'theme', native.key), scope, native }));
+}
