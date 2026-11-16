@@ -16,7 +16,6 @@ import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
-import type { DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
@@ -60,8 +59,11 @@ import { DeploymentSourceMethodChoice } from './DeploymentSourceMethodChoice';
 import { DeploymentPlatformInspectState } from './DeploymentPlatformInspectState';
 import {
   buildPlatformTargetDraft,
+  buildPlatformTargetCreateLinkInput,
   buildPlatformTargetLinkInput,
   readDeploymentPlatformTargets,
+  readProviderCreate,
+  type PreparedPlatformTargetLink,
   readPlatformInspectOutcome,
   type PlatformInspectOutcome,
   applyPlatformFieldPatch,
@@ -209,7 +211,8 @@ export function DeploymentPlatformTargetEditor(
   props: Omit<DeploymentPlatformTargetSheetInput, 'environment'> & CustomModalInjectedProps & Readonly<{
     environment: Readonly<{ id?: string; revision?: number; projectSourceId: string; controllerMachineId?: string }>;
     /** Drafts review the same provider result in place; the creating page commits the association. */
-    onPrepared?: (provider: DeploymentTargetLinkProviderContentV1 | null) => void;
+    /** Inside the new-Environment draft: the chosen existing resource or reviewed create intent, linked after Create. */
+    onPrepared?: (prepared: PreparedPlatformTargetLink | null) => void;
   }>,
 ) {
   const shouldContinue = useMountedShouldContinue();
@@ -296,7 +299,9 @@ export function DeploymentPlatformTargetEditor(
   const target = provisioned
     ? targets.find(entry => entry.pluginId === provisioned.source.contribution.pluginId && entry.targetId === provisioned.source.contribution.localId) ?? null
     : targets.find((entry) => entry.key === targetKey) ?? targets[0] ?? null;
-  const create = mode === 'create' && !props.onPrepared && props.environment.id && props.environment.revision !== undefined ? target?.create : undefined;
+  // Create new makes the resource for an existing Environment here, or for the draft's Environment once it exists.
+  const createAvailable = Boolean(props.onPrepared || (props.environment.id && props.environment.revision !== undefined));
+  const create = mode === 'create' && createAvailable ? target?.create : undefined;
   const form = React.useMemo(() => create && target
     ? { ...target, ...create, inspectLocalId: create.localId, inspectActionId: create.actionId } : target, [target, create]);
   const [selectedMethod, setSourceMethod] = React.useState<DeploymentSourceMethodV1>('gitIntegration');
@@ -470,7 +475,7 @@ export function DeploymentPlatformTargetEditor(
     setBusy(null);
     const inspected = readPlatformInspectOutcome(result);
     setOutcome(inspected);
-    props.onPrepared?.(inspected.kind === 'ready' ? inspected.provider : null);
+    props.onPrepared?.(inspected.kind === 'ready' ? { kind: 'existing', provider: inspected.provider } : null);
   };
   const link = async () => {
     if (!target || outcome?.kind !== 'ready' || busy || !props.environment.id || props.environment.revision === undefined) return;
@@ -521,16 +526,11 @@ export function DeploymentPlatformTargetEditor(
         if (!target || !create || !draft) return;
         const key = requestKey ?? randomUUID();
         setRequestKey(key);
-        const { DeploymentTargetLinkCreateIntentInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
-        const { v: _v, serverId: _serverId, environmentId: _environmentId, expectedRevision: _revision, ...providerCreate } = draft;
-        const parsed = DeploymentTargetLinkCreateIntentInputV1Schema.safeParse({
-          serverId: props.lifetime.scope.serverId, environmentId: props.environment.id,
-          expectedRevision: props.environment.revision, requestKey: key, targetId: target.targetId,
-          role: 'runtime', targetKind: target.targetKind, machines: [],
-          source: { kind: 'plugin', contribution: { pluginId: target.pluginId, localId: target.targetId } }, providerCreate,
-        });
-        if (!parsed.success) { setLinkRefused({ code: 'invalid_parameters' }); return; }
-        input = parsed.data;
+        const parsed = await buildPlatformTargetCreateLinkInput({ serverId: props.lifetime.scope.serverId, target,
+          environment: { id: props.environment.id, revision: props.environment.revision }, requestKey: key,
+          providerCreate: readProviderCreate(draft) });
+        if (!parsed) { setLinkRefused({ code: 'invalid_parameters' }); return; }
+        input = parsed;
       }
       const result = await actions.link(input, { confirmed: true });
       if (!shouldContinue()) return;
@@ -563,7 +563,18 @@ export function DeploymentPlatformTargetEditor(
   const providerUrl = provisioned?.provider.providerUrl;
   const disclosedProvider = provisioned?.provider ?? (outcome?.kind === 'ready' || outcome?.kind === 'needsGitAccess' ? outcome.provider : null);
   const ready = outcome?.kind === 'ready';
-  const primary = createdBranchOutcome || provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink ? null : {
+  // In the draft, a ready create intent is the editor's whole answer: the draft's Create makes the resource with it.
+  const preparedCreateKey = React.useRef<string | null>(null);
+  const createIntentReady = Boolean(create && draft && target && !missing && !needsConnect && drawn.canCheck);
+  const { onPrepared } = props;
+  React.useEffect(() => {
+    if (!onPrepared || !create) return;
+    if (!createIntentReady || !draft) { onPrepared(null); return; }
+    preparedCreateKey.current ??= randomUUID();
+    onPrepared({ kind: 'create', requestKey: preparedCreateKey.current, providerCreate: readProviderCreate(draft) });
+  }, [onPrepared, create, createIntentReady, draft]);
+  const primary = createdBranchOutcome || provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink
+    || (create && props.onPrepared) ? null : {
     testID: create ? 'project-deployments.platform.create'
       : ready && !props.onPrepared ? 'project-deployments.platform.link' : 'project-deployments.platform.check',
     loading: busy !== null,
@@ -632,7 +643,7 @@ export function DeploymentPlatformTargetEditor(
               description: t('projects.deployments.platformLink.onPlatformBody'),
               ...(primary ? { action: <SectionActionButton {...primary} /> } : {}),
             } : { header: 'none' as const })}>
-              {target.create && !props.onPrepared && props.environment.id && props.environment.revision !== undefined ? <SegmentedChoiceItem<'existing' | 'create'>
+              {target.create && createAvailable ? <SegmentedChoiceItem<'existing' | 'create'>
                 testID="project-deployments.platform.mode" title={t('projects.deployments.platformLink.platform')}
                 value={mode} disabled={busy !== null || reviewingCreate}
                 options={[{ id: 'existing', label: t('projects.deployments.platformLink.modeExisting') },

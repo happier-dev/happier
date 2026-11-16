@@ -1110,6 +1110,99 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); await receiver.dispose(); await installed.dispose(); account.dispose(); storage.setState(previous); }
   });
 
+  // COR6 #4 (UI refinements 11-15 19:41Z): a new provider project or Worker is made from the draft itself, through the
+  // platform editor's Create new and the same create intent the editor sends, once the Environment exists to link it to.
+  it('creates a new platform resource from the draft through the same create intent, after the Environment exists', async () => {
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-platform-create.test', accountId: 'alice',
+      serverIdentityId: `srv_${'e'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    let committed = false;
+    const creates: unknown[] = [];
+    const saved: Array<[string, unknown]> = [];
+    const pluginId = 'com.example.draft-platform-create';
+    const { DeploymentTargetLinkCreateIntentInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true });
+    const installed = await installPortableAccountPluginReleaseForTest({ manifest: authoredPlugin.manifest,
+      activate: api => authoredPlugin.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
+      accountLifetime: account.accountLifetime, publishProjection: true });
+    const receiver = await answerDeploymentTargetInspectForHome({ homes, serverId, accountId: 'alice', machineId: 'runtime', plugin: authoredPlugin });
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0,
+        execute: input => {
+          if (typeof input === 'object' && input !== null && 'mode' in input) {
+            const authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input) as Record<string, unknown>;
+            const { mode: _mode, name: _name, definition: _definition, ...selectors } = authored;
+            return DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
+              ...selectors, controllerMachineId: 'runtime', buildMachineId: 'runtime',
+              contentArtifactId: 'host-prepared-content', contentHeaderVersion: 2, contentBodyVersion: 3,
+            }, review: { creationDefaults: { values: { buildMachineId: 'runtime', controllerMachineId: 'runtime', retainPreviousDeployments: 1 },
+              sources: { controllerMachineId: 'explicit', buildMachineId: 'builtin', retainPreviousDeployments: 'builtin' } },
+            creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 3, projectDefaultsRevision: 0, content: null } } });
+          }
+          DeploymentEnvironmentCreateInputV1Schema.parse(input);
+          committed = true;
+          return { ok: true, environmentId: 'created-environment', revision: 1 };
+        } });
+      const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+      homes.answer(serverId, 'GET /v1/deployments/environments/created-environment', { body: { ok: true,
+        environment: createDeploymentEnvironmentHeaderV1({ id: 'created-environment', projectSourceId: 'source-app',
+          serverId: `srv_${'e'.repeat(32)}`, controllerMachineId: 'runtime' }), targetLinks: [] } });
+      homes.answer(serverId, 'POST /v1/deployments/targets/list', {
+        body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.targets.link', tokenEpoch: 0, execute: input => {
+          // Only the create intent may arrive, and only for the Environment the draft just made.
+          expect(committed).toBe(true);
+          const create = DeploymentTargetLinkCreateIntentInputV1Schema.parse(input);
+          creates.push(create);
+          return { ok: true, environmentId: 'created-environment', revision: 2, targetLinkId: 'created-link', targetLinkRevision: 1 };
+        } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope,
+        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+        phone={false} platformAvailable actions={createDeploymentActions(account.accountLifetime, 'source-app')}
+        onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={() => {}} />);
+      const header = () => screen.findAllByType(PageHeader)[0]!;
+      await act(async () => header().props.titleEditor.onChangeText('Marketing site'));
+      await waitForTestEvent(screen.subscribe,
+        () => screen.findHostByTestId(`project-deployments.draft.target:${pluginId}/beta`), node => node !== null);
+      await screen.pressByTestIdAsync(`project-deployments.draft.target:${pluginId}/beta`);
+      const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+      const mode = () => screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'project-deployments.platform.mode');
+      await waitForHomeGovernance(async () => { await act(async () => {}); expect(mode(), screen.getTextContent()).toBeDefined(); });
+      await act(async () => mode()!.props.onChange('create'));
+      const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+      const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+      await act(async () => screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account',
+        account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'cloud-account' } }, null));
+      const patch = async (value: Record<string, unknown>) => act(async () => screen.findAllByType(ActionInputFields)[0]!.props.onPatch(value));
+      await patch({ providerAccountId: 'organization' });
+      await patch({ resourceName: 'new-project' });
+      await patch({ providerEnvironment: { kind: 'production' } });
+      // Nothing is made while the person is still choosing; Create makes the Environment, then the provider project.
+      expect(creates).toEqual([]);
+      expect(screen.findHostByTestId('project-deployments.platform.create')).toBeNull();
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(header().props.primaryAction.disabled, screen.getTextContent()).toBe(false); });
+      await act(async () => header().props.primaryAction.onPress());
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findHostByTestId('project-deployments.draft.defaults'), screen.getTextContent()).not.toBeNull(); });
+      await act(async () => header().props.primaryAction.onPress());
+      await waitForHomeGovernance(async () => { await act(async () => {}); expect(saved, screen.getTextContent()).toHaveLength(1); });
+      expect(creates).toHaveLength(1);
+      expect(creates[0]).toMatchObject({ environmentId: 'created-environment', expectedRevision: 1, targetId: 'beta',
+        source: { kind: 'plugin', contribution: { pluginId, localId: 'beta' } },
+        providerCreate: { providerAccountId: 'organization', resourceName: 'new-project' } });
+      expect(saved).toEqual([['created-environment', undefined]]);
+      await screen.unmount();
+    } finally { standardCleanup(); await receiver.dispose(); await installed.dispose(); account.dispose(); storage.setState(previous); }
+  });
+
   it('offers the way to a platform when no plugin declares one, and says nothing of platforms to a viewer who cannot link', async () => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-no-platforms.test', accountId: 'alice', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);

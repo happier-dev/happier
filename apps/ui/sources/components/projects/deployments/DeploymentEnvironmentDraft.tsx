@@ -63,8 +63,7 @@ import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { DeploymentPlatformTargetEditor, useDeploymentPlatformTargets } from './DeploymentPlatformTargetSheet';
-import { buildPlatformTargetLinkInput } from './platformTargetLink';
-import type { DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { buildPlatformTargetCreateLinkInput, buildPlatformTargetLinkInput, type PreparedPlatformTargetLink } from './platformTargetLink';
 import type { readDeploymentPlatformTargets } from './platformTargetLink';
 import {
   DeploymentRetentionChoice,
@@ -142,7 +141,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const platformTargets = platforms.state.status === 'ready' ? platforms.state.targets : NO_PLATFORM_TARGETS;
     const [targetKey, setTargetKey] = React.useState<string>(MACHINE_TILE);
     const platformTarget = props.platformAvailable === true ? platformTargets.find((target) => target.key === targetKey) ?? null : null;
-    const [platformProvider, setPlatformProvider] = React.useState<DeploymentTargetLinkProviderContentV1 | null>(null);
+    const [platformProvider, setPlatformProvider] = React.useState<PreparedPlatformTargetLink | null>(null);
     const [composePath, setComposePath] = React.useState(DEFAULT_COMPOSE_PATH);
     const [composeDocument, setComposeDocument] = React.useState('');
     const [imageName, setImageName] = React.useState('');
@@ -272,7 +271,7 @@ export const DeploymentEnvironmentDraft = React.memo(
         if (partial.environmentId) onSaved(partial.environmentId, { tab: deploymentPartialRecoveryTab(partial) });
         return;
       }
-      if (!valid || !actions || !chosen?.installationId || saving) return;
+      if (!valid || !actions || !chosen?.installationId || saving || !props.lifetime) return;
       setSaving(true);
       setRefusal(null);
       let createdEnvironment: Readonly<{ environmentId: string; revision: number }> | null = null;
@@ -314,8 +313,18 @@ export const DeploymentEnvironmentDraft = React.memo(
         }
         createdEnvironment = created;
         if (platformTarget && platformProvider) {
-          const linked = await actions.link(buildPlatformTargetLinkInput({ target: platformTarget,
-            environment: { id: created.environmentId, revision: created.revision }, provider: platformProvider }), { confirmed: true });
+          // An existing resource links as reviewed; Create new makes it now, through the editor's own create intent.
+          const environment = { id: created.environmentId, revision: created.revision };
+          const linkInput = platformProvider.kind === 'existing'
+            ? buildPlatformTargetLinkInput({ target: platformTarget, environment, provider: platformProvider.provider })
+            : await buildPlatformTargetCreateLinkInput({ serverId: props.lifetime.scope.serverId, target: platformTarget, environment,
+              requestKey: platformProvider.requestKey, providerCreate: platformProvider.providerCreate });
+          if (!linkInput) {
+            setRefusal({ kind: 'refused', reason: 'other', code: 'invalid_parameters', progress: { kind: 'partial',
+              environmentId: created.environmentId, revision: created.revision, phase: 'target', savedSecrets: [], errorCode: 'invalid_parameters' } });
+            return;
+          }
+          const linked = await actions.link(linkInput, { confirmed: true });
           if (!linked.ok) {
             const outcome = readDeploymentActionResult(linked);
             if (outcome.kind === 'refused') setRefusal({ ...outcome, progress: { kind: 'partial',

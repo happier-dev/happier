@@ -13,6 +13,7 @@ import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/p
 import { projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common/connectedAccounts';
 import type { DeploymentTargetCredentialPrincipalV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import type { DeploymentTargetLinkCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import { readDeploymentRefusal, type DeploymentRefusalReason } from './deploymentActionOutcome';
@@ -200,6 +201,44 @@ export function buildPlatformTargetDraft(
 }
 
 /** Link spends exactly the inspected provider content; the host Action authors and associates it. */
+/**
+ * A platform target chosen before its Environment exists (the new-Environment draft): an inspected existing resource,
+ * or a reviewed create intent with its own retry key. The draft links it once Create has made the Environment.
+ */
+export type PreparedPlatformTargetLink =
+  | Readonly<{ kind: 'existing'; provider: DeploymentTargetLinkProviderContentV1 }>
+  | Readonly<{ kind: 'create'; requestKey: string; providerCreate: PlatformTargetProviderCreate }>;
+
+/** A reviewed platform draft's provider part: what a create intent asks the platform to make. */
+export type PlatformTargetProviderCreate = Omit<ReturnType<typeof buildPlatformTargetDraft>, 'v' | 'serverId' | 'environmentId' | 'expectedRevision'>;
+export function readProviderCreate(draft: ReturnType<typeof buildPlatformTargetDraft>): PlatformTargetProviderCreate {
+  const { v: _v, serverId: _serverId, environmentId: _environmentId, expectedRevision: _revision, ...providerCreate } = draft;
+  return providerCreate;
+}
+
+/**
+ * The link Action's create intent: the platform makes the resource and links it to this Environment in one Action
+ * (the editor's Create new, and the draft's Create once its Environment exists). Null when the intent is not admitted.
+ */
+export async function buildPlatformTargetCreateLinkInput(
+  input: Readonly<{
+    serverId: string;
+    target: Pick<DeploymentPlatformTarget, 'targetId' | 'pluginId' | 'targetKind'>;
+    environment: Readonly<{ id: string; revision: number }>;
+    requestKey: string;
+    providerCreate: PlatformTargetProviderCreate;
+  }>,
+): Promise<DeploymentTargetLinkCreateIntentInputV1 | null> {
+  const { DeploymentTargetLinkCreateIntentInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+  const parsed = DeploymentTargetLinkCreateIntentInputV1Schema.safeParse({
+    serverId: input.serverId, environmentId: input.environment.id, expectedRevision: input.environment.revision,
+    requestKey: input.requestKey, targetId: input.target.targetId, role: 'runtime', targetKind: input.target.targetKind,
+    machines: [], source: { kind: 'plugin', contribution: { pluginId: input.target.pluginId, localId: input.target.targetId } },
+    providerCreate: input.providerCreate,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
 export function buildPlatformTargetLinkInput(
   input: Readonly<{
     target: Pick<DeploymentPlatformTarget, 'targetId' | 'pluginId' | 'targetKind'>;
