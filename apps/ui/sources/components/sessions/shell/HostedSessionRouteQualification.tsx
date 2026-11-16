@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { matchWorkspaceDestinationRoute } from '@/components/appShell/workspace/workspaceRoutes';
 import { useSessionRouteQualification, type SessionRouteQualification } from '@/hooks/session/useSessionRouteQualification';
+import { useDestinationFocus } from '@/components/appShell/workspace/destinationInstanceContext';
 
 /**
  * A hosted Session destination opened without a Home qualifies its own tab once its sole Home is known,
@@ -10,15 +11,16 @@ import { useSessionRouteQualification, type SessionRouteQualification } from '@/
 export function HostedSessionRouteQualification(props: Readonly<{
     params: Readonly<Record<string, string>>;
     pathname: string;
-    focused: boolean;
     replace: (href: NonNullable<SessionRouteQualification['qualifiedHref']>) => void;
 }>): null {
     const query = React.useMemo(() => {
         const pathParams = matchWorkspaceDestinationRoute(props.pathname)?.params ?? {};
         return Object.fromEntries(Object.entries(props.params).filter(([key]) => key !== 'id' && !Object.hasOwn(pathParams, key)));
     }, [props.pathname, props.params]);
+    // Focus is read here, so the destination chrome around this leaf does not render on a tab switch.
+    const focused = useDestinationFocus();
     const { qualifiedHref } = useSessionRouteQualification({
-        params: props.params, query, pathname: props.pathname, enabled: props.focused,
+        params: props.params, query, pathname: props.pathname, enabled: focused,
     });
     const replace = props.replace;
     React.useEffect(() => {

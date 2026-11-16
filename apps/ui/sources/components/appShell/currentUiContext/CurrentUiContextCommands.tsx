@@ -9,7 +9,7 @@ import { executeMountedCurrentUiContextCommand } from './currentUiContextActionR
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { CurrentUiContextVoiceInvocationOutcome } from './currentUiContextVoiceToolPort';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { useCapturedPluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, usePluginSurfaceFocusEligibilityStore } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 type LocalCommandResult = boolean | void | CurrentUiContextVoiceInvocationOutcome;
 export type CurrentUiContextMountedCommandExecution = Pick<ReturnType<typeof useMountedActionExecution>, 'execute' | 'executeForCaller' | 'binding'>;
@@ -340,23 +340,26 @@ export function useCurrentUiContextLocalCommands(commands: readonly CurrentUiCon
     const composition = React.useContext(CompositionContext);
     const reader = useOptionalCurrentUiContextReader();
     const modalId = useModalContentId();
-    const layoutEligibility = useCapturedPluginSurfaceFocusEligibility();
+    const layoutEligibility = usePluginSurfaceFocusEligibilityStore();
     // Modal commands already retain their addresses behind another modal; the
     // current-context composer selects them by modalId when that modal returns.
-    const eligible = modalId !== null || layoutEligibility?.currentUiContextEffective !== false;
-    const isCurrent = React.useCallback(() => eligible && composition?.isCurrent() === true, [composition, eligible]);
+    // Eligibility is followed by subscription, so a layout focus move does not render the command's owner.
+    const eligible = React.useMemo(() => ({
+        get: () => modalId !== null || layoutEligibility.read()?.currentUiContextEffective !== false,
+        subscribe: layoutEligibility.subscribe,
+    }), [layoutEligibility, modalId]);
+    const isCurrent = React.useCallback(() => eligible.get() && composition?.isCurrent() === true, [composition, eligible]);
     const definitions = useCurrentUiContextLocalCommandDefinitions(commands, isCurrent, options?.contextKey);
     const mountedDefinitions = React.useMemo(() => options?.foregroundOverlay
         ? definitions.map(definition => ({ ...definition, foreground: { modalId } })) : definitions,
     [definitions, options?.foregroundOverlay, modalId]);
-    React.useLayoutEffect(() => {
-        return eligible ? composition?.register(definitions, mountedDefinitions) : undefined;
-    }, [composition, definitions, mountedDefinitions, eligible]);
+    React.useLayoutEffect(() => followSignal(eligible, (on) => on ? composition?.register(definitions, mountedDefinitions) : undefined),
+        [composition, definitions, mountedDefinitions, eligible]);
     const binding = React.useMemo<{ current: LocalCommandInvocationState | null }>(() => ({ current: null }),
         [composition, definitions, options?.unbound, reader]);
-    React.useLayoutEffect(() => {
-        binding.current = eligible ? { composition, reader, definitions, commands, unbound: options?.unbound } : null;
+    React.useLayoutEffect(() => followSignal(eligible, (on) => {
+        binding.current = on ? { composition, reader, definitions, commands, unbound: options?.unbound } : null;
         return () => { binding.current = null; };
-    }, [binding, composition, reader, definitions, commands, options?.unbound, eligible]);
+    }), [binding, composition, reader, definitions, commands, options?.unbound, eligible]);
     return React.useMemo(() => ({ invoke: createLocalCommandInvoker(binding) }), [binding]);
 }

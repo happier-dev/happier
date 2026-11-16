@@ -20,30 +20,53 @@ const PluginSurfaceFocusEligibilityContext = React.createContext<PluginSurfaceFo
 export type LayoutPresentationSignal = Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
 const ALWAYS_PRESENTED: LayoutPresentationSignal = Object.freeze({ get: () => true, subscribe: () => () => {} });
 const LayoutPresentationSignalContext = React.createContext<LayoutPresentationSignal>(ALWAYS_PRESENTED);
-/** The facts as the nearest provider last committed them, read when acting (never a render input). */
-const FocusEligibilityReaderContext = React.createContext<() => PluginSurfaceFocusEligibility | null>(() => null);
+/**
+ * The facts as the nearest provider last committed them: read when acting, or followed by subscription
+ * (it notifies after the provider commits new facts). Reading it never renders the reader.
+ */
+type FocusEligibilityStore = Readonly<{
+    read: () => PluginSurfaceFocusEligibility | null;
+    subscribe: (listener: () => void) => () => void;
+}>;
+const NO_ELIGIBILITY_OWNER: FocusEligibilityStore = Object.freeze({ read: () => null, subscribe: () => () => {} });
+const FocusEligibilityStoreContext = React.createContext<FocusEligibilityStore>(NO_ELIGIBILITY_OWNER);
 
-function useProvidedEligibilityReader(value: PluginSurfaceFocusEligibility | null): () => PluginSurfaceFocusEligibility | null {
-    const current = React.useRef(value);
-    React.useLayoutEffect(() => { current.current = value; }, [value]);
-    const [read] = React.useState(() => () => current.current);
-    return read;
+function useProvidedEligibilityStore(value: PluginSurfaceFocusEligibility | null): FocusEligibilityStore {
+    const [store] = React.useState(() => {
+        let current = value;
+        const listeners = new Set<() => void>();
+        return {
+            read: () => current,
+            subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+            set: (next: PluginSurfaceFocusEligibility | null) => {
+                if (next === current) return;
+                current = next;
+                for (const listener of [...listeners]) listener();
+            },
+        };
+    });
+    React.useLayoutEffect(() => store.set(value), [store, value]);
+    return store;
 }
 
 /** One provider's facts: the value, its presentation signal and its call-time reader (hooks run in the provider). */
 function useEligibilityProviders(value: PluginSurfaceFocusEligibility | null, presented: boolean, children: React.ReactNode): React.ReactElement {
-    const signal = useProvidedPresentationSignal(presented);
-    const read = useProvidedEligibilityReader(value);
+    const signal = useBooleanSignal(presented);
+    const store = useProvidedEligibilityStore(value);
     return <PluginSurfaceFocusEligibilityContext.Provider value={value}>
         <LayoutPresentationSignalContext.Provider value={signal}>
-            <FocusEligibilityReaderContext.Provider value={read}>{children}</FocusEligibilityReaderContext.Provider>
+            <FocusEligibilityStoreContext.Provider value={store}>{children}</FocusEligibilityStoreContext.Provider>
         </LayoutPresentationSignalContext.Provider>
     </PluginSurfaceFocusEligibilityContext.Provider>;
 }
 
-function useProvidedPresentationSignal(presented: boolean): LayoutPresentationSignal {
+/**
+ * A stable signal that follows `value` after each commit. Its owner renders with the value; readers of the
+ * signal do not.
+ */
+export function useBooleanSignal(value: boolean): LayoutPresentationSignal {
     const [signal] = React.useState(() => {
-        let current = presented;
+        let current = value;
         const listeners = new Set<() => void>();
         return {
             get: () => current,
@@ -55,7 +78,7 @@ function useProvidedPresentationSignal(presented: boolean): LayoutPresentationSi
             },
         };
     });
-    React.useLayoutEffect(() => signal.set(presented), [presented, signal]);
+    React.useLayoutEffect(() => signal.set(value), [value, signal]);
     return signal;
 }
 
@@ -103,9 +126,9 @@ export function PluginSurfaceFocusEligibilityTransfer(props: Readonly<{
  * facts at that moment, so a host that only opens such nodes does not render when they change.
  */
 export function useRetainedPluginSurfaceFocusNodeFactory(): (children: React.ReactNode) => React.ReactElement {
-    const read = React.useContext(FocusEligibilityReaderContext);
-    return React.useCallback((children: React.ReactNode) => <RetainedFocusEligibility captured={read()}>{children}</RetainedFocusEligibility>,
-        [read]);
+    const store = React.useContext(FocusEligibilityStoreContext);
+    return React.useCallback((children: React.ReactNode) => <RetainedFocusEligibility captured={store.read()}>{children}</RetainedFocusEligibility>,
+        [store]);
 }
 
 /** Transfer the existing layout's facts into its portal; parking can only withdraw them. */
@@ -168,6 +191,24 @@ export function usePluginSurfaceCurrentUiContextEligibility(): boolean {
  */
 export function useLayoutPresentationActive(): boolean {
     return React.useContext(PluginSurfaceFocusEligibilityContext)?.presentationEffective ?? true;
+}
+
+/**
+ * {@link usePluginSurfaceFocusEligibility} as a subscription, for work that only starts or stops with focus
+ * eligibility (a registration, a seed hand-off): a tab switch or a pane focus move does not render the reader.
+ */
+export function usePluginSurfaceFocusEligibilitySignal(): LayoutPresentationSignal {
+    const store = React.useContext(FocusEligibilityStoreContext);
+    // Fails closed like `usePluginSurfaceFocusEligibility`: no provider, no proven owner.
+    return React.useMemo(() => ({ get: () => store.read()?.effective === true, subscribe: store.subscribe }), [store]);
+}
+
+/**
+ * The layout's facts as a subscription (`read` when acting, `subscribe` to follow them): for work that
+ * registers or gates on a fact other than focus (semantic current context) without rendering on a change.
+ */
+export function usePluginSurfaceFocusEligibilityStore(): FocusEligibilityStore {
+    return React.useContext(FocusEligibilityStoreContext);
 }
 
 /** {@link useLayoutPresentationActive} as a subscription: a hide or show does not render the reader. */

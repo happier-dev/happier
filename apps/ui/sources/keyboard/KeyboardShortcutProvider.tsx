@@ -1,6 +1,6 @@
 import { ShortcutsSheet } from './shortcutsSheet/ShortcutsSheet';
 import * as React from 'react';
-import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, type LayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type { HappierFindBarProps } from '@happier-dev/plugin-ui/presentation';
 import { useFindSurfaceRegistrationWithHost, type FindSurfaceRegistrationHost } from '@happier-dev/plugin-ui/advanced';
@@ -186,8 +186,26 @@ export function useNativeKeyboardInput(input: NativeKeyboardInputRegistration | 
     }, [registration, bindingsKey]);
 }
 
-export function useFindSurfaceRegistration(surface: FindSurfaceRegistration | null): void {
-    useFindSurfaceRegistrationWithHost(surface, useFindSurfaceRegistrationHost());
+/**
+ * Registers `surface` with the provider's Find owner. With `active`, the surface is registered only while
+ * the signal is true, and it follows the signal by subscription: its owner does not render when it flips.
+ */
+export function useFindSurfaceRegistration(surface: FindSurfaceRegistration | null, active?: LayoutPresentationSignal): void {
+    const host = useFindSurfaceRegistrationHost();
+    const following = React.useMemo<FindSurfaceRegistrationHost | null>(() => host && active ? {
+        register: (registration) => {
+            let first = true;
+            return followSignal(active, (on) => {
+                const dispose = on ? host.register(registration) : undefined;
+                // The registration hook refreshes after the first run; each later flip refreshes here.
+                if (!first) host.refresh();
+                first = false;
+                return dispose;
+            });
+        },
+        refresh: host.refresh,
+    } : host, [active, host]);
+    useFindSurfaceRegistrationWithHost(surface, following);
 }
 
 /** The plugin presentation adapter forwards registrations into this provider's one owner. */

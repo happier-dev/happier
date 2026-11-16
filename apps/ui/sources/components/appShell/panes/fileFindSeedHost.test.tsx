@@ -38,6 +38,8 @@ const { getStorage } = await import('@/sync/domains/state/storage');
 const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 const findSeedHosts = await import('./fileFindSeedHost');
 const { FileFindSeedHost } = findSeedHosts;
+/** The transcript surface is Find-eligible; each host adds its destination's focus. */
+const SURFACE_ELIGIBLE = { get: () => true, subscribe: () => () => {} };
 const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
 const { TranscriptFindSurface } = await import('@/components/sessions/transcript/find/TranscriptFindSurface');
 const { useTranscriptFind } = await import('@/components/sessions/transcript/find/useTranscriptFind');
@@ -115,7 +117,7 @@ describe('file Find destination memory', () => {
             return <AppPaneProvider><StageChat /><React.Suspense fallback={<></>}>
                 <DestinationInstanceHost tabId="selected" ref={{ kind: 'session', params: { id: sessionId, serverId } }}
                     pathname={`/session/${sessionId}`} focused visible navigation={{ push() {}, replace() {}, back() {} }}>
-                    <findSeedHosts.ChatFindSeedHost sessionId={sessionId} serverId={serverId} active>{input => <Content {...input} key={tick} />}</findSeedHosts.ChatFindSeedHost>
+                    <findSeedHosts.ChatFindSeedHost sessionId={sessionId} serverId={serverId} eligible={SURFACE_ELIGIBLE}>{input => <Content {...input} key={tick} />}</findSeedHosts.ChatFindSeedHost>
                 </DestinationInstanceHost>
             </React.Suspense></AppPaneProvider>;
         }
@@ -242,7 +244,7 @@ describe('file Find destination memory', () => {
         function ReopenedChat() {
             return <DestinationInstanceHost tabId="reopened" ref={{ kind: 'session', params: { sessionId: 'chat-a' } }}
                 pathname="/session/chat-a" focused visible navigation={{ push() {}, replace() {}, back() {} }}>
-                <findSeedHosts.ChatFindSeedHost sessionId="chat-a" serverId={serverId} active>{(input) => React.createElement('ChatSeedProbe', input)}</findSeedHosts.ChatFindSeedHost>
+                <findSeedHosts.ChatFindSeedHost sessionId="chat-a" serverId={serverId} eligible={SURFACE_ELIGIBLE}>{(input) => React.createElement('ChatSeedProbe', input)}</findSeedHosts.ChatFindSeedHost>
             </DestinationInstanceHost>;
         }
         const screen = await renderScreen(<AppPaneProvider><Launch /></AppPaneProvider>);
@@ -308,7 +310,7 @@ describe('file Find destination memory', () => {
         function ChatHost(props: Readonly<{ tabId: string; serverId: string; focused: boolean }>) {
             return <DestinationInstanceHost tabId={props.tabId} ref={{ kind: 'session', params: { sessionId: 'chat-a' } }}
                 pathname="/session/chat-a" focused={props.focused} visible navigation={{ push() {}, replace() {}, back() {} }}>
-                <findSeedHosts.ChatFindSeedHost sessionId="chat-a" serverId={props.serverId} active>{(input) => React.createElement('ChatSeedProbe', { tabId: props.tabId, ...input })}</findSeedHosts.ChatFindSeedHost>
+                <findSeedHosts.ChatFindSeedHost sessionId="chat-a" serverId={props.serverId} eligible={SURFACE_ELIGIBLE}>{(input) => React.createElement('ChatSeedProbe', { tabId: props.tabId, ...input })}</findSeedHosts.ChatFindSeedHost>
             </DestinationInstanceHost>;
         }
         const screen = await renderScreen(<AppPaneProvider><StageChat /><ChatHost tabId="wrong-home" serverId="home-b" focused /><ChatHost tabId="hidden" serverId={serverId} focused={false} /><ChatHost tabId="selected" serverId={serverId} focused /></AppPaneProvider>);

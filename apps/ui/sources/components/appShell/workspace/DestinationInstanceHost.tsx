@@ -120,26 +120,32 @@ export function DestinationInstanceHost(props: Readonly<{
         ...(props.navigation ? { navigation: props.navigation } : {}),
         ...(props.stackOwned ? { stackOwned: true as const } : {}),
     }), [focused, isFocused, props.navigation, props.pathname, props.ref, props.stackOwned, props.tabId, props.visible]);
-    const scoped = sessionAddress ? <SessionViewerDestinationScope key={sessionAddressKey(sessionAddress)}
-        sessionId={sessionAddress.sessionId} serverId={sessionAddress.serverId}>
-        {props.children}
-    </SessionViewerDestinationScope> : props.children;
-    if (props.stackOwned) return <DestinationInstanceContext.Provider value={value}>
-        <PluginSurfaceFocusEligibilityProvider active={value.focused} presentationActive={value.visible} currentUiContextActive={value.focused}>
+    const sessionId = sessionAddress?.sessionId ?? null;
+    const sessionServerId = sessionAddress?.serverId ?? null;
+    const qualify = sessionRoute && !props.ref.params.serverId && props.navigation ? props.navigation.replace : null;
+    // A tab switch moves only focus and visibility: they reach readers through the contexts above, so the
+    // chrome, the Session scope and the body below keep their elements and do not render.
+    const body = React.useMemo(() => {
+        const scoped = sessionId !== null && sessionServerId !== null ? <SessionViewerDestinationScope
+            key={sessionAddressKey({ sessionId, serverId: sessionServerId })} sessionId={sessionId} serverId={sessionServerId}>
+            {props.children}
+        </SessionViewerDestinationScope> : props.children;
+        if (props.stackOwned) return scoped;
+        return <DestinationNavigationChrome scopeKey={`destination:${props.tabId}`} phone={props.phone === true} navigation={props.navigation} baseOptions={baseOptions}
+            identityKey={props.pathname}>
+            {qualify ? <HostedSessionRouteQualification params={props.ref.params} pathname={props.pathname} replace={qualify} /> : null}
             {scoped}
-        </PluginSurfaceFocusEligibilityProvider>
-    </DestinationInstanceContext.Provider>;
+        </DestinationNavigationChrome>;
+    }, [baseOptions, props.children, props.navigation, props.pathname, props.phone, props.ref.params, props.stackOwned, props.tabId,
+        qualify, sessionId, sessionServerId]);
     return <DestinationInstanceContext.Provider value={value}>
         <PluginSurfaceFocusEligibilityProvider active={value.focused} presentationActive={value.visible} currentUiContextActive={value.focused}>
-            <DestinationNavigationChrome scopeKey={`destination:${props.tabId}`} phone={props.phone === true} navigation={props.navigation} baseOptions={baseOptions}
-                identityKey={props.pathname}>
-                {sessionRoute && !props.ref.params.serverId && props.navigation ? <HostedSessionRouteQualification
-                    params={props.ref.params} pathname={props.pathname} focused={focused} replace={props.navigation.replace} /> : null}
-                {scoped}
-            </DestinationNavigationChrome>
+            {body}
         </PluginSurfaceFocusEligibilityProvider>
     </DestinationInstanceContext.Provider>;
 }
+
+const selectChromeIdentity = (value: DestinationInstanceContextValue | null) => value ? { ref: value.ref, tabId: value.tabId } : null;
 
 function DestinationNavigationChrome(props: Readonly<{
     scopeKey: string;
@@ -156,7 +162,8 @@ function DestinationNavigationChrome(props: Readonly<{
     children: React.ReactNode;
 }>) {
     const { theme } = useUnistyles();
-    const hostedInstance = useDestinationInstance();
+    // The chrome names its destination: focus and visibility do not render it.
+    const hostedInstance = useDestinationInstance(selectChromeIdentity);
     const publicationOnly = props.publicationOnly !== undefined;
     const instance = publicationOnly ? props.publicationOnly : hostedInstance;
     const nativeShowsTitle = useNavigationTitleChromeShowsTitle();

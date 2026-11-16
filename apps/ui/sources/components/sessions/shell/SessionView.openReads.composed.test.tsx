@@ -215,10 +215,18 @@ it('renders only its focus readers when its retained Session tab is hidden and s
         expect(renders.get('SessionHeaderSlot') ?? 0, summary).toBe(0);
         expect(counts.read().commitsFor(SessionDestinationBody), summary).toBe(0);
         expect(counts.read().commitsFor(PaneColumnsHost), summary).toBe(0);
-        // HEAD before W5: ~564 (A/B arm); W5: 434; transcript list: 393; composer, body and pane hosts: 159.
-        // What remains draws from focus (test IDs, atmosphere) or is the destination host chain itself; see
-        // P03-SESSION-CONTENT-READERS.
-        expect(total, summary).toBeLessThan(170);
+        // Find follows eligibility by subscription; the header carries its test IDs at their own nodes; the
+        // destination chrome and Session scope keep their elements; a Session's atmosphere glass draws nothing
+        // from visibility.
+        for (const name of ['TranscriptFindSurface', 'TranscriptFindProvider', 'ChatFindSeedHost', 'SessionPaneHeaderBand',
+            'DetailsTabHeader2', 'DestinationNavigationChrome', 'SessionViewerDestinationScope', 'SessionBoardControllerProvider', 'GlassSurface2']) {
+            expect(renders.get(name) ?? 0, `${name} ${summary}`).toBe(0);
+        }
+        // HEAD before W5: ~564 (A/B arm); W5: 434; transcript list: 393; composer, body and pane hosts: 159;
+        // Find, header, destination chain, atmosphere glass: 90. What remains draws from focus or visibility
+        // (test IDs, display/inert, the atmosphere stage), is a null leaf that runs focus-gated effects, or is
+        // this harness's wrapper; see P03-UI-RESIDUALS.
+        expect(total, summary).toBeLessThan(100);
     } finally {
         await screen.unmount();
     }

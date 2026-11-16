@@ -102,19 +102,30 @@ export function AtmosphereSurfaceFrame(props: Readonly<{
     // The surface's planet (SurfacePlanet) is drawn behind its band, including a chosen picture's stand-in.
     const planet = atmosphere.shown && atmosphere.source === 'planet' && !props.session;
     const boundary = React.useMemo(() => ({ ref: bandRef, onLayout, onFocusChange, pictureRoom, planet, backdrop }), [onLayout, onFocusChange, pictureRoom, planet, backdrop]);
-    const target = typeof props.surface === 'object' && 'project' in props.surface && props.editor
-        ? { surface: props.surface, editor: props.editor }
-        : { surface: 'new-session' as const };
-    // A retained destination's glass sleeps through the backing of the tabs shown in its place.
-    return <View ref={paneRef} onLayout={onLayout} style={{ flex: 1, minWidth: 0, minHeight: 0 }}><GlassEnvironmentHold presented={visible} carriesAtmosphere={atmosphere.shown && geometry !== null}>
-        <GlassSurface noCoat plane surfaceGroup="content" finishRole={null}
+    // A frame without a planet (a Session's) draws nothing from visibility inside its glass: the coat and its
+    // content keep their element, so a tab switch renders only this frame and its hold.
+    const planetGeometry = visible && planet ? geometry : null;
+    const planetAtmosphere = planetGeometry ? atmosphere : null;
+    const editor = props.editor;
+    const surfaceProp = props.surface;
+    const lookShown = enabled && !props.session && props.showLook !== false && typeof props.surface === 'string';
+    const glass = React.useMemo(() => {
+        const target = typeof surfaceProp === 'object' && 'project' in surfaceProp && editor
+            ? { surface: surfaceProp, editor }
+            : { surface: 'new-session' as const };
+        return <GlassSurface noCoat plane surfaceGroup="content" finishRole={null}
             style={{ flex: 1, minWidth: 0, minHeight: 0 }} testID={props.session ? 'session-atmosphere-coat' : 'atmosphere-surface'}>
-            {visible && planet && geometry ? <SurfacePlanet surface={props.surface} atmosphere={atmosphere} geometry={geometry} origin={columnOrigin} radius={columnRadius} sending={sending} /> : null}
+            {planetGeometry && planetAtmosphere ? <SurfacePlanet surface={surfaceProp} atmosphere={planetAtmosphere} geometry={planetGeometry} origin={columnOrigin} radius={columnRadius} sending={sending} /> : null}
             <AtmosphereBandBoundary.Provider value={enabled ? boundary : null}>{props.children}</AtmosphereBandBoundary.Provider>
-            {enabled && !props.session && props.showLook !== false && typeof props.surface === 'string' ? <View style={{ position: 'absolute', right: 16, top: 14 }}>
+            {lookShown ? <View style={{ position: 'absolute', right: 16, top: 14 }}>
                 <LookChip target={target} testID="new-session-look" />
             </View> : null}
-        </GlassSurface>
+        </GlassSurface>;
+    }, [planetAtmosphere, boundary, columnOrigin, columnRadius, editor, enabled, lookShown, planetGeometry, props.children, props.session,
+        sending, surfaceProp]);
+    // A retained destination's glass sleeps through the backing of the tabs shown in its place.
+    return <View ref={paneRef} onLayout={onLayout} style={{ flex: 1, minWidth: 0, minHeight: 0 }}><GlassEnvironmentHold presented={visible} carriesAtmosphere={atmosphere.shown && geometry !== null}>
+        {glass}
     </GlassEnvironmentHold></View>;
 }
 

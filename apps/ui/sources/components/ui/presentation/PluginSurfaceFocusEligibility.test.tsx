@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import {
+    followSignal,
     PluginSurfaceFocusEligibilityProvider,
+    usePluginSurfaceFocusEligibilitySignal,
     usePluginSurfaceCurrentUiContextEligibility,
     usePluginSurfaceFocusEligibility,
     usePresentedValue,
@@ -68,6 +70,34 @@ describe('PluginSurfaceFocusEligibility', () => {
         expect(screen.findByTestId('current-ui-context-explicit-root')?.props.eligible).toBe(true);
         expect(screen.findByTestId('current-ui-context-explicit-root')?.props.currentUiContextEligible).toBe(true);
         expect(screen.findByTestId('current-ui-context-hidden-child')?.props.currentUiContextEligible).toBe(false);
+    });
+    it('follows focus eligibility by subscription: a nested reader sees each flip without rendering for it', async () => {
+        const followed: boolean[] = [];
+        let renders = 0;
+        const Reader = React.memo(function Reader() {
+            renders += 1;
+            const eligible = usePluginSurfaceFocusEligibilitySignal();
+            React.useEffect(() => followSignal(eligible, value => { followed.push(value); }), [eligible]);
+            return null;
+        });
+        const reader = <Reader />;
+        const tree = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active}>
+            <PluginSurfaceFocusEligibilityProvider active>{reader}</PluginSurfaceFocusEligibilityProvider>
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(tree(true));
+        await screen.update(tree(false));
+        await screen.update(tree(true));
+        expect(followed).toEqual([true, false, true]);
+        expect(renders).toBe(1);
+        // Without a provider there is no proven owner: the signal fails closed like the hook.
+        const orphan: boolean[] = [];
+        function Orphan() {
+            const eligible = usePluginSurfaceFocusEligibilitySignal();
+            React.useEffect(() => followSignal(eligible, value => { orphan.push(value); }), [eligible]);
+            return null;
+        }
+        await renderScreen(<Orphan />);
+        expect(orphan).toEqual([false]);
     });
     it('presents a value without rendering for a hide or show, and presents a value changed while hidden when shown', async () => {
         const values: string[] = [];

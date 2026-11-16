@@ -7,7 +7,7 @@ import { HappierPressable, type HappierFocusable } from '@happier-dev/plugin-ui/
 
 import { DetailsTabHeader, type DetailsTabHeaderAction } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { SessionHeaderPullHost, SessionHeaderPullTarget } from '@/components/sessions/shell/SessionHeaderPull';
-import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '@/components/sessions/shell/sessionScreenTestIds';
+import { SessionScreenTestIdView, useOptionalSessionScreenTestId } from '@/components/sessions/shell/sessionScreenTestIds';
 import { executeSessionLifecycleAction } from '@/components/sessions/actions/sessionActionExecution';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
@@ -71,9 +71,20 @@ export type SessionPaneHeaderProps = Readonly<{
  * hands the controls to the band, which keeps them beside the title and compacts them when room is short.
  */
 export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: SessionPaneHeaderProps) {
+    // Test IDs follow screen focus (one mounted Session screen carries them). Only a header with Back reads
+    // that here, for the band's Back; every other ID is set by the node that carries it.
+    return props.showBackButton !== false && props.onBackPress
+        ? <SessionPaneHeaderWithBack {...props} />
+        : <SessionPaneHeaderBand {...props} backTestID={undefined} />;
+});
+
+function SessionPaneHeaderWithBack(props: SessionPaneHeaderProps) {
+    return <SessionPaneHeaderBand {...props} backTestID={useOptionalSessionScreenTestId('session-header-back')} />;
+}
+
+const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: SessionPaneHeaderProps & Readonly<{ backTestID: string | undefined }>) {
     const { theme } = useUnistyles();
     const identityMode = useSetting('sessionHeaderIdentityDisplay');
-    const testIdsEnabled = useSessionScreenTestIdsEnabled();
     const isConnected = props.isConnected ?? true;
     const editing = useSessionTitleEditor(props.rename ?? null, props.title);
     const conversationColumnPx = useLayoutMaxWidth('conversation');
@@ -123,28 +134,25 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
         { label: t('common.save'), tone: 'primary', onPress: editing.save, busy: editing.saving,
             disabled: !editing.draft.trim(), testID: 'session-header-title-save' },
     ], [editing.cancel, editing.draft, editing.save, editing.saving]);
-    const backTestID = resolveOptionalSessionScreenTestId(testIdsEnabled, 'session-header-back');
+    const backTestID = props.backTestID;
     const header = (
         <DetailsTabHeader
             testID="session-header"
             title={props.title}
             leading={identity ? (
                 <PullTarget pullable={pullable}>
-                    <View testID={resolveOptionalSessionScreenTestId(testIdsEnabled, 'session-header-avatar')}>{identity}</View>
+                    <SessionScreenTestIdView sessionScreenTestId="session-header-avatar">{identity}</SessionScreenTestIdView>
                 </PullTarget>
             ) : undefined}
             titleControl={titleControl}
             metaLeading={props.badges?.length || props.subtitle || props.lineage ? (
-                <View style={styles.metadataRow} testID={resolveOptionalSessionScreenTestId(testIdsEnabled, 'session-header-metadata')}>
+                <SessionScreenTestIdView style={styles.metadataRow} sessionScreenTestId="session-header-metadata">
                     {props.subtitle ? <SessionHeaderSubtitle text={props.subtitle} mode={props.subtitleEllipsizeMode ?? 'tail'} /> : null}
                     {props.lineage}
                     {props.badges?.map((badge, index) => (
-                        <StatusPill key={`${badge}:${index}`} variant="neutral" chrome="plain" hideDot
-                            foregroundColor={theme.colors.text.secondary}
-                            label={badge} labelVariant="phrase" labelNumberOfLines={1}
-                            testID={resolveOptionalSessionScreenTestId(testIdsEnabled, `session-header-badge:${index}`)} />
+                        <SessionHeaderBadge key={`${badge}:${index}`} label={badge} index={index} />
                     ))}
-                </View>
+                </SessionScreenTestIdView>
             ) : undefined}
             actions={editing.draft === null ? props.rightElement : undefined}
             buttons={buttons}
@@ -168,6 +176,14 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
         </PaneMainBody>
     );
 });
+
+/** A header badge; its test ID follows screen focus here, so the header does not render for it. */
+function SessionHeaderBadge(props: Readonly<{ label: string; index: number }>) {
+    const { theme } = useUnistyles();
+    return <StatusPill variant="neutral" chrome="plain" hideDot foregroundColor={theme.colors.text.secondary}
+        label={props.label} labelVariant="phrase" labelNumberOfLines={1}
+        testID={useOptionalSessionScreenTestId(`session-header-badge:${props.index}`)} />;
+}
 
 const LINEAGE_SEAM_HIT_REACH = { bottom: 0 } as const;
 

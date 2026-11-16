@@ -8,8 +8,8 @@ import { FindBarPlacement, useFindBarPresence, useFindBarPresentation, findBarBa
 import { useFindSurfaceFocusReturn } from '@/components/ui/find/useFindSurfaceFocusReturn';
 import { useFindComposerSlotReplacing } from '@/components/ui/find/FindComposerSlot';
 import { ChatFindSeedHost } from '@/components/appShell/panes/fileFindSeedHost';
-import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { useSessionScreenIsFocused } from '@/components/sessions/shell/useSessionScreenIsFocused';
+import { allSignals, usePluginSurfaceFocusEligibilitySignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useSessionScreenFocusSignal } from '@/components/sessions/shell/useSessionScreenIsFocused';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
 import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { t } from '@/text';
@@ -57,15 +57,17 @@ type Props = Readonly<{
 export function TranscriptFindSurface(props: Props) {
     const { model } = props;
     const open = React.useSyncExternalStore(model.subscribe, () => model.getSnapshot().open, () => false);
-    // Find belongs to the focused Session screen; this surface reads that itself, so the list it wraps
-    // does not render when focus moves.
-    const eligible = usePluginSurfaceFocusEligibility() && useSessionScreenIsFocused();
+    // Find belongs to the focused Session screen. Eligibility is followed by subscription (registration) and
+    // read when acting, so neither this surface nor the list it wraps renders when focus moves.
+    const eligibility = usePluginSurfaceFocusEligibilitySignal();
+    const screenFocus = useSessionScreenFocusSignal();
+    const eligible = React.useMemo(() => allSignals(eligibility, screenFocus), [eligibility, screenFocus]);
     const input = React.useRef<TextInput | null>(null);
     const [inputFocused, setInputFocused] = React.useState(false);
     const focusReturn = useFindSurfaceFocusReturn();
     const composerReplaced = useFindComposerSlotReplacing();
     const containsTarget = (target: unknown) => {
-        if (!eligible || Platform.OS !== 'web') return false;
+        if (!eligible.get() || Platform.OS !== 'web') return false;
         // On phones the bar moves into the composer slot, outside this viewport.
         if (isFindSurfaceTarget(input.current as unknown as HTMLElement | null, target)) return true;
         const viewport = props.viewportRef.current as unknown as HTMLElement | null;
@@ -74,7 +76,7 @@ export function TranscriptFindSurface(props: Props) {
         const session = viewport?.closest('[data-testid^="session-view-retained-surface:"]');
         return isFindSurfaceTarget(session?.querySelector('[data-testid="agent-input-composer"]'), target);
     };
-    const containsFocus = () => eligible && (Platform.OS !== 'web'
+    const containsFocus = () => eligible.get() && (Platform.OS !== 'web'
         || containsTarget(typeof document === 'undefined' ? null : document.activeElement));
     const close = () => {
         model.close(); setInputFocused(false);
@@ -92,11 +94,11 @@ export function TranscriptFindSurface(props: Props) {
         focusReturn.capture(model.getSnapshot().open);
         model.open(); input.current?.focus();
     };
-    useFindSurfaceRegistration(eligible ? {
+    useFindSurfaceRegistration({
         surfaceId: `transcript:${props.serverId ?? ''}:${props.sessionId}`,
         containsFocus, containsTarget, open: openFind, isOpen: () => open, isInputFocused: () => inputFocused,
         controller,
-    } : null);
+    }, eligible);
     const [measuredClearance, setMeasuredClearance] = React.useState(0);
     const clearance = open ? measuredClearance : 0;
     const onClearanceChange = props.onClearanceChange;
@@ -107,7 +109,7 @@ export function TranscriptFindSurface(props: Props) {
         onClearanceChange?.(clearance);
         // Header growth preserves the old visible position. Re-seat through the same jump
         // owner after publishing the new band, rather than leaving the first result covered.
-        if (changed && clearance > 0 && eligible) void model.revealCurrent();
+        if (changed && clearance > 0 && eligible.get()) void model.revealCurrent();
     }, [clearance, onClearanceChange, model, eligible]);
     // The bar stays through its exit; the model is already closed and focus already returned.
     const presence = useFindBarPresence(open);
@@ -115,7 +117,7 @@ export function TranscriptFindSurface(props: Props) {
         {props.children}
         {presence.present ? <TranscriptFindActive {...props} visible={open} controller={controller} inputRef={input} onClearance={setMeasuredClearance}
             onInputFocus={() => setInputFocused(true)} onInputBlur={() => setInputFocused(false)} /> : null}
-        {props.serverId ? <ChatFindSeedHost sessionId={props.sessionId} serverId={props.serverId} active={eligible}>
+        {props.serverId ? <ChatFindSeedHost sessionId={props.sessionId} serverId={props.serverId} eligible={eligibility}>
             {({ findSeed, consumeFindSeed }) => <TranscriptFindSeed model={model} seed={findSeed} consume={consumeFindSeed} open={openFind} />}
         </ChatFindSeedHost> : null}
     </TranscriptFindProvider>;
