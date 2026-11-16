@@ -1,5 +1,5 @@
 import { decodeBase64, defineProtocolObject, defineProtocolString, defineProtocolNumber, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, FreestyleLaunchSchema, FreestyleOperationSchema, FreestyleResourceSchema, ROLE_SCHEMAS, reference, type FreestyleLaunch, type FreestyleOperation, type FreestyleResource } from './schemas.js';
 
 // Freestyle public v5 REST, OpenAPI 3.1.0 / info 0.1.0, observed 2026-11-01.
@@ -21,14 +21,14 @@ const executionSchema = defineProtocolObject({ statusCode: defineProtocolNumber(
 const outputSchema = defineProtocolObject({ exitCode: defineProtocolNumber({ integer: true }), stdoutBase64: defineProtocolString(), stderrBase64: defineProtocolString() }, open);
 type Acquisition = MachineProvisionerAcquireResultV1<FreestyleResource, FreestyleOperation>;
 type Destruction = MachineProvisionerDestroyResultV1<FreestyleOperation>;
-class NativeError extends Error {
-  constructor(readonly code: string, readonly status?: number) { super(code); }
+export class NativeError extends Error {
+  constructor(readonly code: string, readonly status?: number, readonly nativeCause?: MachineProvisionerNativeCauseV1) { super(code); }
 }
 const code = (error: unknown) => error instanceof NativeError ? error.code : 'freestyle_unavailable';
 const pending = (operation: FreestyleOperation): Acquisition => ({ kind: 'pending', nativeOperationRef: reference(operation) });
 
-export function createFreestyleNativeClient(request: typeof fetch, signal?: AbortSignal, observedAt = Date.now()) {
-  async function http(url: string, method = 'GET', body?: unknown, bytes?: Uint8Array) {
+export function createFreestyleHttp(request: typeof fetch, signal?: AbortSignal) {
+  return async function http(url: string, method = 'GET', body?: unknown, bytes?: Uint8Array) {
     signal?.throwIfAborted();
     const response = await request(url, { method, signal, redirect: 'error',
       headers: { 'content-type': bytes ? 'application/octet-stream' : 'application/json' },
@@ -36,7 +36,11 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
     if (!response.ok) throw new NativeError(response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'freestyle_http_' + response.status, response.status);
     if (response.status === 204) return null;
     try { return await response.json() as unknown; } catch { throw new NativeError('freestyle_invalid_response'); }
-  }
+  };
+}
+
+export function createFreestyleNativeClient(request: typeof fetch, signal?: AbortSignal, observedAt = Date.now()) {
+  const http = createFreestyleHttp(request, signal);
   function identity(value: unknown, expected: { name: string; managedId: string; vmId?: string }): Native {
     const parsed = dtoSchema.safeParse(value);
     if (!parsed.success) throw new NativeError('freestyle_invalid_response');
@@ -50,6 +54,16 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
   }
   const path = (id: string) => FREESTYLE_API + '/vms/' + encodeURIComponent(id);
   async function read(value: FreestyleResource) { return identity(await http(path(value.vmId)), value); }
+  async function readResource(value: { name: string; managedId: string; vmId?: string }): Promise<FreestyleResource> {
+    return resource(identity(await http(path(value.vmId ?? value.name)), value), value.managedId);
+  }
+  async function createResource(input: FreestyleLaunch, managedId: string): Promise<FreestyleResource> {
+    const launch = FreestyleLaunchSchema.parse(input);
+    const expected = { name: 'happier-' + managedId, managedId };
+    return resource(identity(await http(FREESTYLE_API + '/vms', 'POST', { ...launch, slug: expected.name,
+      metadata: { 'happier-managed-id': managedId }, autoDeleteSeconds: -1, idleTimeoutSeconds: -1,
+      firewall: { rules: [{ action: 'allow', source: {}, destination: { public: true } }] } }), expected), managedId);
+  }
   async function check(): Promise<MachineProvisionerCheckResultV1> {
     try {
       const value = await http(FREESTYLE_API + '/vms?limit=0');
@@ -61,10 +75,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
     const launch = FreestyleLaunchSchema.parse(input);
     const operation = { kind: 'acquire', name: 'happier-' + managedId, managedId } as const;
     try {
-      const native = identity(await http(FREESTYLE_API + '/vms', 'POST', { ...launch, slug: operation.name,
-        metadata: { 'happier-managed-id': managedId }, autoDeleteSeconds: -1, idleTimeoutSeconds: -1,
-        firewall: { rules: [{ action: 'allow', source: {}, destination: { public: true } }] } }), operation);
-      return { kind: 'bound', resource: { ...reference(resource(native, managedId)), origin: 'created' as const } };
+      return { kind: 'bound', resource: { ...reference(await createResource(launch, managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // An interrupted create may already be paid; recovery reads the exact retained name, never creates.
@@ -161,5 +172,5 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
       return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) }));
     }
   }
-  return { check, acquire, recover, bootstrap, inspect, exec, putFile, power, destroy };
+  return { check, acquire, recover, bootstrap, inspect, exec, putFile, power, destroy, createResource, readResource };
 }

@@ -10,6 +10,8 @@ import {
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, ORIGINS, connectedAccountRuntime, connectedAccountPortableRuntime, nativeFetch } from './account.js';
 import { createFreestyleNativeClient } from './machine/nativeClient.js';
+import { createFreestylePreparationClient, FREESTYLE_PREPARATION_HOME, FreestylePreparationInputSchema,
+  FreestylePreparedArtifactSchema, FreestylePreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 import { BILLING, CONTRIBUTION, FreestyleLaunchSchema, FreestyleOptionsSchema, FreestyleResourceSchema, FreestyleOperationSchema, ROLE_SCHEMAS, RECONCILIATION } from './machine/schemas.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
@@ -19,6 +21,7 @@ const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAc
 const confirmation = { title: 'Manage this Freestyle VM?', body: 'Freestyle charges for VM resources. Pausing retains memory and disk, subject to your Freestyle plan retention policy; deleting permanently removes it.' };
 const retention = { supportedIntents: ['start', 'suspend', 'resume', 'delete'] } as const;
 const runtime = (context: PluginAccountActionContext | PluginInvocationContext) => createFreestyleNativeClient(nativeFetch(context), context.signal, context.invokedAtMs);
+const preparationRuntime = (context: PluginAccountActionContext | PluginInvocationContext) => createFreestylePreparationClient(nativeFetch(context), context.signal);
 
 export const MACHINE_PROVISIONER = {
   title: 'Freestyle', icon: 'cloud', resourceKind: 'freestyle-vm', schemaVersion: 1,
@@ -29,6 +32,9 @@ export const MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
   reconciliation: { nativeOperationSchema: FreestyleOperationSchema.jsonSchema, action: 'reconcile' },
+  preparation: { inputSchema: FreestylePreparationInputSchema.jsonSchema, artifactSchema: FreestylePreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: FreestylePreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
@@ -64,7 +70,9 @@ export const PLUGIN = definePlugin({
         if (!check.available) return { dimensions: { size: [], image: [], location: [], network: [], duration: [] }, code: 'provider_unavailable' };
         const snapshot = input.snapshotId ?? 'freestyle/ubuntu';
         return { base: { launch: { snapshotId: snapshot }, guestPlatform: 'linux' as const, retention },
-          dimensions: { size: [], image: [{ id: snapshot, title: snapshot, guestPlatform: 'linux' as const, assignments: [], nativeFacts: { image: { id: snapshot, title: snapshot } } }], location: [], network: [], duration: [] } };
+          dimensions: { size: [], image: [{ id: snapshot, title: snapshot, guestPlatform: 'linux' as const, assignments: [], nativeFacts: {
+            image: { id: snapshot, title: snapshot }, preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: FREESTYLE_PREPARATION_HOME },
+          } }], location: [], network: [], duration: [] } };
       } },
     acquire: { ...defaults, title: 'Create Freestyle VM', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.acquireInput, resultSchema: RECONCILIATION.result,
       async run(input, context) { return input.managedId ? runtime(context).acquire(input.launch, input.managedId) : { kind: 'rejected' as const, code: 'invalid_request' as const }; } },
@@ -78,6 +86,20 @@ export const PLUGIN = definePlugin({
       async run(input, context) { return runtime(context).power(input.resource, input.intent); } },
     destroy: { ...defaults, title: 'Delete Freestyle VM', confirmation, dangerLevel: 'destructive', inputSchema: RECONCILIATION.destroyInput, resultSchema: RECONCILIATION.destroyResult,
       async run(input, context) { return runtime(context).destroy(input); } },
+    'prepare-build': { ...defaults, title: 'Build Freestyle prepared snapshot', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this Freestyle snapshot?', body: 'Provider charges apply for build compute, storage and transfer. Snapshot retention depends on your plan. See https://www.freestyle.sh/docs/vms/pricing-and-limits for current pricing.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return preparationRuntime(context).build(input); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect Freestyle prepared snapshot', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return preparationRuntime(context).inspect('nativeOperation' in input ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...defaults, title: 'Delete Freestyle prepared snapshot', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Freestyle snapshot?', body: 'Permanently delete the owned prepared snapshot and its remaining build VM.' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return preparationRuntime(context).destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); } },
     exec: { ...defaults, title: 'Run in Freestyle guest', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) { return runtime(context).exec(input); } },
     'put-file': { ...defaults, title: 'Write Freestyle guest file', confirmation, dangerLevel: 'writesRemote', inputSchema: ROLE_SCHEMAS.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,
