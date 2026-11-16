@@ -36,7 +36,7 @@ import { admitLiveSessionDelivery, withdrawSessionConsumption } from '@/app/api/
 import { MACHINE_ACCESS_LOSS_EVENT, type MachineAccessLoss } from './machineAccessLoss';
 import { PRESENCE_DEADLINE_EVENT, type PresenceDeadlineNotification } from '@/app/presence/presenceDeadlineNotification';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
-import { db } from '@/storage/db';
+import { db, getDbProviderFromEnv } from '@/storage/db';
 import { readAccountChangesPage } from '@/app/changes/readAccountChangesPage';
 import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, type PushedAccountChangesPageV1 } from '@happier-dev/protocol/changes';
 
@@ -853,7 +853,11 @@ class EventRouter {
         } }) as Tx;
         const rowOnly = await decide(rowOnlyReader, await inReadSnapshot(tx => tx.session.findUnique({
             where: { id: params.sessionId }, select: withSessionContentSelect(select),
-        }).then(decodeSessionStoredContent), { singleStatementRead: true }));
+        }).then(decodeSessionStoredContent), {
+            // The access row loads relations: one joined statement where Prisma's relationJoins exist,
+            // separate queries on SQLite, which keeps their shared snapshot.
+            singleStatementRead: getDbProviderFromEnv(process.env, "postgres") !== "sqlite",
+        }));
         const decided = !readBeyondRow ? rowOnly : await captureReadSnapshot(async tx => decide(tx,
             await tx.session.findUnique({ where: { id: params.sessionId }, select: withSessionContentSelect(select) }).then(decodeSessionStoredContent)));
         for (const socket of decided.refused) withdrawSessionConsumption(socket, params.sessionId);
