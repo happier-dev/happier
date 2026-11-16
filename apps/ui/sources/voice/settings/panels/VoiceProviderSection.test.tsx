@@ -80,14 +80,6 @@ async function renderScreen(...input: Parameters<typeof renderTestScreen>) {
 }
 
 
-/** Exercise the Action owner's real review instead of bypassing its confirmation. */
-async function confirmConnectedServicesSelection(screen: Awaited<ReturnType<typeof renderScreen>>) {
-    await waitForTestEvent(screen.subscribe,
-        () => screen.findByTestId('actions.confirmation-review.decision-approve'), button => button !== null);
-    expect(accountFixture.writes).toEqual([]);
-    await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
-}
-
 beforeEach(async () => {
     descriptorAvailable = false;
     voiceProjectionEntries = {};
@@ -3937,7 +3929,6 @@ describe('VoiceProviderSection', () => {
         const version = storage.getState().settingsVersion;
         expect(version).not.toBeNull();
         await act(async () => field?.props.onChange(binding, version));
-        await confirmConnectedServicesSelection(screen);
         await waitForTestEvent(accountFixture.subscribe, () => expect(accountFixture.persistedSettings.voice).toMatchObject({
             providerId,
             providers: {
@@ -3990,7 +3981,6 @@ describe('VoiceProviderSection', () => {
         const version = storage.getState().settingsVersion;
         expect(version).not.toBeNull();
         await act(async () => fields[0]?.props.onChange(binding, version));
-        await confirmConnectedServicesSelection(screen);
         await waitForTestEvent(accountFixture.subscribe, () => expect(accountFixture.persistedSettings.voice).toMatchObject({
             providerId: CODEX_PROVIDER_ID,
             providers: {

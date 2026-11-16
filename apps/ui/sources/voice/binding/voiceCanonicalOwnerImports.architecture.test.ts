@@ -100,7 +100,6 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
         filePath: 'sources/voice/persistence/resetVoiceAgentPersistenceState.ts',
         requiredImports: [
             '@/voice/binding/VoiceConversationBindingResolver',
-            '@/voice/persistence/voiceConversationSession',
         ],
         forbiddenImports: [
             '@/voice/sessionBinding/voiceConversationSession',
@@ -159,8 +158,7 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
     {
         filePath: 'sources/voice/binding/voiceConversationBindingPersistence.ts',
         requiredImports: [
-            './voiceConversationBindingTypes',
-            '@/voice/persistence/voiceConversationSession',
+            './voiceConversationBindingStore',
         ],
         forbiddenImports: [
             '@/voice/sessionBinding/voiceConversationSession',
@@ -170,8 +168,7 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
     {
         filePath: 'sources/voice/agent/useHasGlobalVoiceAgentConversation.ts',
         requiredImports: [
-            '@/voice/binding/voiceConversationBindingStore',
-            '@/voice/persistence/voiceConversationSystemSessionLookup',
+            '@/voice/persistence/useVoiceHomeConversationAddress',
         ],
         forbiddenImports: [
             '@/voice/sessionBinding/voiceConversationSystemSessionLookup',

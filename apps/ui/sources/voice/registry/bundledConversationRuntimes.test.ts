@@ -167,9 +167,12 @@ function installCredentialSettings(
 
 describe('createBundledConversationRuntimes', () => {
   let account: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>;
+  let vendorFetch: typeof fetch;
   beforeEach(async () => {
+    vendorFetch = async () => { throw new Error('Unexpected vendor HTTP request'); };
     const purposes = createConnectedPurposeCatalogHttpBoundary();
     account = await createPlainArtifactHomeFixture('https://bundled-credentials.example.test', {
+      handleExternalRequest: async (url, init) => await vendorFetch(url, init),
       handleRequest: async (path, init) => await purposes.handle(new URL(path, 'https://bundled-credentials.example.test'), init)
         ?? answerVoiceRealtimePreparationHttpRequest(new URL(path, 'https://bundled-credentials.example.test'), storage.getState().settings),
     });
@@ -253,7 +256,7 @@ describe('createBundledConversationRuntimes', () => {
           headers: { 'content-type': 'application/json' },
         });
       });
-      vi.stubGlobal('fetch', fetch);
+      vendorFetch = fetch;
       const hostLease = createBundledConversationRuntimeHostLease();
       const runtimes = (await createBundledConversationRuntimes({
         bundledEntries: [entry],
@@ -296,7 +299,7 @@ describe('createBundledConversationRuntimes', () => {
         headers: { 'content-type': 'application/json' },
       });
     });
-    vi.stubGlobal('fetch', fetch);
+    vendorFetch = fetch;
     const hostLease = createBundledConversationRuntimeHostLease();
     const runtimes = (await createBundledConversationRuntimes({
       bundledEntries: [entry],
