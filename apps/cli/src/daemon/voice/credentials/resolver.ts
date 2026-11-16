@@ -260,21 +260,21 @@ export function createVoiceCredentialResolver(params: Readonly<{
       if (!input.identity) throw unavailable();
       const snapshot = getSnapshot();
       const lifetimeToken = getLifetimeToken();
-      const inspected = inspectReference({
+      const selected = readSelectedSource({
         snapshot,
         machineId: params.machineId,
         identity: input.identity,
       });
       if (!snapshot) throw unavailable();
-      if (inspected.status !== 'ready') throw unavailable(inspected.status);
-      const admittedSnapshot = await admitOperation(snapshot, inspected.reference.secretId);
-      const admittedInspection = admittedSnapshot === snapshot
-        ? inspected
-        : inspectReference({
-            snapshot: admittedSnapshot,
-            machineId: params.machineId,
-            identity: input.identity,
-          });
+      if (selected?.selection.kind !== 'savedSecret' || !selected.savedSecret) throw unavailable();
+      // Admission owns acquiring shared material, including a cold daemon's
+      // first read. Inspect only the catalog returned by that owner.
+      const admittedSnapshot = await admitOperation(snapshot, selected.savedSecret.secretId);
+      const admittedInspection = inspectReference({
+        snapshot: admittedSnapshot,
+        machineId: params.machineId,
+        identity: input.identity,
+      });
       if (admittedInspection.status !== 'ready') throw unavailable(admittedInspection.status);
       const resolved = admittedInspection.reference;
       await admitMediatedSavedSecretCredential({ identity: input.identity,

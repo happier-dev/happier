@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 
 import {
   accountSettingsParse,
@@ -146,9 +149,50 @@ function publishQualified(params: Readonly<{
   });
 }
 
-afterEach(() => resetActiveAccountSettingsSnapshotForTests());
+afterEach(() => {
+  resetActiveAccountSettingsSnapshotForTests();
+  vi.restoreAllMocks();
+});
 
 describe('Voice credential resolver', () => {
+  it.each([
+    ['ready', null],
+    ['access_removed', 'forbidden'],
+    ['deleted', 'deleted'],
+    ['recipient_mode_unsupported', 'mode_incompatible'],
+  ] as const)('admits cold bound material using Home status %s', async (materialStatus, refusal) => {
+    const token = 'cold-voice-account';
+    const resourceId = 'cold-voice-key';
+    const ref = `happier:shared-secret:v1:${resourceId}`;
+    publishQualified({ scopeKey: resolveAccountSettingsScopeKeyForToken(token), accountValue: 'unused',
+      contribution: GOOGLE_STT_CONTRIBUTION, includeSecret: false, secretId: ref });
+    const snapshot = getActiveAccountSettingsSnapshot()!;
+    const context = createInvocationSavedSecretOperationContextV1({
+      credentials: { token, encryption: null }, snapshot,
+      serverHttpBaseUrl: 'https://voice-home.example', isCurrent: async () => true,
+    });
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { resources: [{
+      resourceId, encryptionMode: 'plain', recipientEnvelope: null,
+      entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'Voice key', kind: 'apiKey',
+        revision: 1, materialStatus, capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+        content: { v: 1, name: 'Voice key', kind: 'apiKey', value: 'cold-provider-key' } }),
+    }] } });
+    const resolver = createVoiceCredentialResolver({ machineId: null, operationContext: context });
+    let used = false;
+    const operation = resolver.withSecret({ identity: identityFor(GOOGLE_STT_CONTRIBUTION),
+      use: async secret => { used = true; return secret; } });
+    if (refusal) {
+      await expect(operation).rejects.toMatchObject({ code: 'credential_unavailable', materialStatus: refusal });
+      expect(used).toBe(false);
+    } else {
+      await expect(operation).resolves.toBe('cold-provider-key');
+    }
+    // One selected-resource admission; no catalog-wide bootstrap or second read.
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get.mock.calls[0]?.[1]).toMatchObject({ params: { resourceIds: [resourceId] } });
+  });
+
   it('does not admit the predecessor providerId request shape at the current resolver boundary', async () => {
     publishLegacy({ scopeKey: 'account-a', accountValue: 'account-key' });
     const resolver = createVoiceCredentialResolver({ machineId: null });
@@ -381,8 +425,8 @@ describe('Voice credential resolver', () => {
     ['deleted', 'deleted'],
     ['update_required', 'repair_required'],
   ] as const)(
-    'fails closed when a shared resource whose catalog status is %s',
-    async (materialStatus, resolvedStatus) => {
+    'reports the cached shared resource catalog status %s',
+    (materialStatus, resolvedStatus) => {
       const resourceId = 'resource_voice_shared';
       publishQualified({
         scopeKey: 'account-a',
@@ -411,10 +455,6 @@ describe('Voice credential resolver', () => {
         source: null,
         materialStatus: resolvedStatus,
       });
-      await expect(resolver.withSecret({
-        identity: identityFor(GOOGLE_STT_CONTRIBUTION),
-        use: async () => undefined,
-      })).rejects.toMatchObject({ code: 'credential_unavailable', materialStatus: resolvedStatus });
     },
   );
 
@@ -518,7 +558,7 @@ describe('Voice credential resolver', () => {
     })).resolves.toBe('rotated-plaintext');
   });
 
-  it('reports an authoritatively absent shared resource distinctly from temporary unavailability', async () => {
+  it('reports an authoritatively absent shared resource distinctly from temporary unavailability', () => {
     publishQualified({
       scopeKey: 'account-a',
       accountValue: 'unused-personal-key',
@@ -532,13 +572,6 @@ describe('Voice credential resolver', () => {
     expect(resolver.status(identityFor(GOOGLE_STT_CONTRIBUTION))).toEqual({
       available: false,
       source: null,
-      materialStatus: 'forbidden',
-    });
-    await expect(resolver.withSecret({
-      identity: identityFor(GOOGLE_STT_CONTRIBUTION),
-      use: async () => undefined,
-    })).rejects.toMatchObject({
-      code: 'credential_unavailable',
       materialStatus: 'forbidden',
     });
   });
