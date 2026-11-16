@@ -16,13 +16,13 @@ import { encodeBase64 } from '@/encryption/base64';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import nacl from 'tweetnacl';
-import { createHydratedPlainMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeRequestSchema, PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -249,10 +249,28 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         return ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: 'opaque-preset', revision: 1 },
             ...(missingPolicy ? {} : { retention, wakeOnAcceptedMessage: false }), presetContentOverride: override });
     };
-    const installationKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
-    const installationPublicKey = encodeBase64(installationKeys.publicKey, 'base64url');
-    const guest = { ...createPlainMachineRowFixture({ id: 'joined', accountId }),
-        installationPublicKey: encodeBase64(installationKeys.publicKey, 'base64') };
+    // The guest's published mode and Action envelopes must match this Account.
+    // Keep the real encrypted codec at the captured guest HTTP boundary.
+    const guestRoles = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId: homeId,
+        accountId, machineId: 'joined', actionId: 'machines.roles.set', tokenEpoch: 0,
+        ...(encryption ? { encryption } : {}), requesterInvocation: 'optional',
+        execute: input => {
+            roleDispatches++;
+            expect(input).toMatchObject({ machineId: 'joined', policy: { active: ['sessions'] } });
+            return { status: 'applied', policy: { active: ['sessions'] }, metadataVersion: 1 };
+        } });
+    const guest = guestRoles.machine;
+    const installationPublicKey = encodeBase64(nacl.sign.keyPair.fromSecretKey(guestRoles.installationPrivateKey).publicKey, 'base64url');
+    const guestSessions = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId: homeId,
+        accountId, machineId: guest.id,
+        actionId: 'session.spawn_new', tokenEpoch: 0,
+        ...(encryption ? { encryption } : {}), requesterInvocation: 'optional',
+        execute: () => {
+            guestDispatches++;
+            return SessionSpawnNewActionResultV1Schema.parse({ type: 'success', disposition: 'created', sessionId: 'managed-session',
+                executionTarget: { serverId: homeId, machineId: guest.id }, organizationPlacement: { sectionId: null, tagIds: [] },
+                initialInput: { status: 'notRequested' } });
+        } });
     const guestAccess = MachineAccessGrantsListResponseV1Schema.parse({ machineId: guest.id,
         custodian: { accountId, displayName: 'Test Account' }, access: guest.access,
         canManage: true, grants: [], ownDirectGrant: true, ownAccessSources: [],
@@ -260,8 +278,24 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     let receiver: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | undefined;
     let receiverProjection: ReturnType<typeof buildDeferredDaemonProjectionSections> | undefined;
     const homeBoundaryFailures: unknown[] = [];
+    let releaseRequests = 0;
+    const releaseResponse = (address: URL) => {
+        releaseRequests++;
+        if (address.pathname === '/repos/happier-dev/happier/releases') {
+            return Response.json([{ tag_name: `cli-v${signedRelease.version}`, draft: false, prerelease: false }]);
+        }
+        if (address.pathname !== `/repos/happier-dev/happier/releases/tags/cli-v${signedRelease.version}`)
+            homeBoundaryFailures.push({ releasePath: address.pathname });
+        expect(address.pathname).toBe(`/repos/happier-dev/happier/releases/tags/cli-v${signedRelease.version}`);
+        return Response.json({ assets: [
+            `checksums-happier-v${signedRelease.version}.txt`,
+            `checksums-happier-v${signedRelease.version}.txt.minisig`,
+            `happier-v${signedRelease.version}-linux-x64.tar.gz`,
+        ].map(name => ({ name, browser_download_url: `${signedRelease.source}${name}` })) });
+    };
     const request: typeof fetch = async (url, init) => {
         const address = new URL(String(url));
+        if (address.origin === 'https://api.github.com') return releaseResponse(address);
         if (address.origin === 'https://api.vercel.com') return native.fetch(url, init);
         if (address.pathname === '/v1/machines/read-batch') {
             const receivingMachine = receiver?.machine;
@@ -274,7 +308,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         catch (error) { homeBoundaryFailures.push(error); throw error; }
     };
     connection = await restoreServerAccountForTest({ serverUrl, accountId, credentials,
-        additionalRequestOrigins: ['https://api.vercel.com'],
+        additionalRequestOrigins: ['https://api.vercel.com', 'https://api.github.com'],
         configureSocket: socket => {
             configureConnectedServerSocketBoundary(socket);
             vi.spyOn(socket, 'timeout').mockReturnValue(socket);
@@ -294,21 +328,6 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                     return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
                 }
                 if (event.includes('rpc')) { machineRpcs++; throw new Error('Unexpected Machine operation RPC'); }
-    let releaseRequests = 0;
-    const releaseResponse = (address: URL) => {
-        releaseRequests++;
-        if (address.pathname === '/repos/happier-dev/happier/releases') {
-            return Response.json([{ tag_name: `cli-v${signedRelease.version}`, draft: false, prerelease: false }]);
-        }
-        if (address.pathname !== `/repos/happier-dev/happier/releases/tags/cli-v${signedRelease.version}`)
-            homeBoundaryFailures.push({ releasePath: address.pathname });
-        expect(address.pathname).toBe(`/repos/happier-dev/happier/releases/tags/cli-v${signedRelease.version}`);
-        return Response.json({ assets: [
-            `checksums-happier-v${signedRelease.version}.txt`,
-            `checksums-happier-v${signedRelease.version}.txt.minisig`,
-            `happier-v${signedRelease.version}-linux-x64.tar.gz`,
-        ].map(name => ({ name, browser_download_url: `${signedRelease.source}${name}` })) });
-    };
                 return { ok: true };
             });
         if (address.origin === 'https://api.github.com') return releaseResponse(address);
@@ -406,29 +425,17 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                 return Response.json({ v: 1, token: 'guest-creation-proof', binding: {
                     serverIdentityId: homeId, accountId, authentication: { kind: 'account', tokenEpoch: 0 },
                     actionId, requestId: body.envelope.requestId, target: { kind: 'machine', machineId: 'joined' },
-                    machineId: 'joined', installationId: guest.installationId, custodianAccountId: accountId, accountEncryptionMode: 'plain',
+                    machineId: 'joined', installationId: guest.installationId, custodianAccountId: accountId,
+                    accountEncryptionMode: encryption ? 'e2ee' : 'plain',
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
                     managedContinuation: { ...body.managedContinuation, acquireRequestEnvelopeDigest: acquireDigest },
                 } });
             }
-            if (path === '/v1/actions/machines.roles.set') {
-                roleDispatches++;
-                const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(await new Response(init?.body).json());
-                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body.envelope);
-                expect(envelope.input).toMatchObject({ machineId: 'joined', policy: { active: ['sessions'] } });
-                return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.roles.set',
-                    requestId: envelope.requestId, execution: { ok: true, result: {
-                        status: 'applied', policy: { active: ['sessions'] }, metadataVersion: 1,
-                    } } }));
-            }
-            if (path === '/v1/actions/session.spawn_new') {
-                guestDispatches++;
-                const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(await new Response(init?.body).json());
-                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body.envelope);
-                return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'session.spawn_new', requestId: envelope.requestId, execution: { ok: true, result: SessionSpawnNewActionResultV1Schema.parse({
-                    type: 'success', disposition: 'created', sessionId: 'managed-session', executionTarget: { serverId: homeId, machineId: 'joined' },
-                    organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
-                }) } }));
+            if (path === '/v1/actions/machines.roles.set' || path === '/v1/actions/session.spawn_new') {
+                const boundary = path === '/v1/actions/machines.roles.set' ? guestRoles : guestSessions;
+                const response = await boundary.handle(new URL(String(url)), init);
+                if (!response) throw new Error('Missing guest Action HTTP boundary');
+                return response;
             }
             if (path === '/v4/connect/qualified/accounts') return Response.json({ service: selected.service, accounts: [{
                 ref: selected, status: 'connected', authenticationModeId: 'token', configurationReady: true,
@@ -817,6 +824,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                     stdout = command.includes('.txt.minisig') ? signedRelease.signatureText : signedRelease.checksumsText;
                 }
                 else if (command.includes('current_target=') && command.includes('version_path')) stdout = 'current=\nprevious=\n';
+                else if (command.includes('managed_guest_cli_absent')) stdout = 'managed_guest_cli_absent\n';
                 else if (command.includes("'auth' 'request'")) {
                     await readCreationStage?.('joining');
                     joinAttempts++;
@@ -975,7 +983,8 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             const created = await createManagedProvisionerClient(lifetime.scope, homeId).execute('machines.managed.acquire', input);
             const code = created.kind === 'failed' ? created.code : created.kind;
             interrupted = created.kind === 'succeeded' ? { ok: true, result: created.value }
-                : { ok: false, errorCode: code, error: code };
+                : { ok: false, errorCode: code, error: code,
+                    ...(created.kind === 'failed' && created.failureCause ? { failureCause: created.failureCause } : {}) };
         }
         if (missingPolicy) {
             const { resolveMachineRetentionPolicyV1 } = await import('@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1');
@@ -984,7 +993,8 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             expect(admittedPresetPolicy, JSON.stringify(interrupted)).toEqual({
                 retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage });
         }
-        expect(stages, JSON.stringify(interrupted)).toEqual(new Set(['installing', 'joining']));
+        expect(homeBoundaryFailures).toEqual([]);
+        expect(stages, JSON.stringify({ interrupted, observation: managed?.observation })).toEqual(new Set(['installing', 'joining']));
         readCreationStage = undefined;
         if (missingPolicy && !plainPreset) {
             // Replay the same root against the Home's real report-updated
@@ -995,7 +1005,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         }
         let retried = interrupted;
         if (!startAgent) {
-            expect(interrupted).toMatchObject({ ok: false });
+            expect(interrupted).toMatchObject({ ok: true, result: { managedId: 'managed-1' } });
             const retained = await executor.execute('machines.managed.get', { homeId, managedId: 'managed-1' }, {
                 ...context, actionRequestId: 'stage-interrupted', presentUserConfirmation: undefined,
             });
