@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { PushTokensRemoteAlertProjectionV2Schema } from '../push/pushTokenRegistration.js';
 import { SessionSystemRecordInvalidationV1Schema } from '../sessions/board/changeHint.js';
+import { PushedAccountChangesPageV1Schema } from '../changes/index.js';
 import { MachineKindFromLegacyProjectionSchema } from '../machines/machineKind.js';
 import { ManagedMachineRefV1Schema, ManagedMachineInputRuntimeV1Schema } from '../machines/managed/managedMachineV1.js';
 import { RunnerMachineContentKeyBindingV1Schema } from '../ephemeralRunner/machineContentKeyBinding.js';
@@ -195,6 +196,9 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
     artifactKinds: z.optional(z.array(z.string())),
     // Complete routing; any Account entity other than an addressed record leaves this absent.
     sessionSystemRecords: z.optional(z.array(SessionSystemRecordInvalidationV1Schema)),
+    // This recipient socket's authorized feed page, read by the server at fan-out
+    // for a socket that declared row demand. Absent: read the feed as before.
+    rows: z.optional(PushedAccountChangesPageV1Schema),
   }),
   z.looseObject({
     t: z.literal('delete-session'),

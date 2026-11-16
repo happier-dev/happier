@@ -568,3 +568,53 @@ export const CursorGoneErrorSchema = lazyZodSchema(() => z.strictObject({
 }));
 
 export type CursorGoneError = z.infer<typeof CursorGoneErrorSchema>;
+
+/**
+ * A consumer socket's standing demand for pushed Account change pages, declared
+ * in its socket auth. The server reads each pushed page through the same feed
+ * owner as `GET /v2/changes`, with this socket's credential, these kinds and the
+ * feed page limit; it never widens what that read would return.
+ */
+export const ACCOUNT_CHANGE_ROWS_SOCKET_AUTH_KEY_V1 = 'accountChangeRows' as const;
+
+/** The feed's default page size; a pushed page is read with it, so a full pushed page means "read on". */
+export const ACCOUNT_CHANGES_PAGE_LIMIT_V1 = 200;
+
+export const AccountChangeRowsDemandV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  kinds: z.array(ChangeKindSchema).check(z.minLength(1), z.maxLength(64)),
+}));
+
+export type AccountChangeRowsDemandV1 = z.infer<typeof AccountChangeRowsDemandV1Schema>;
+
+export function buildAccountChangeRowsSocketAuthV1(kinds: readonly ChangeKind[]) {
+  return { [ACCOUNT_CHANGE_ROWS_SOCKET_AUTH_KEY_V1]: { v: 1 as const, kinds: [...kinds] } };
+}
+
+/** Absent or malformed demand: the socket receives the content-free wake only. */
+export function readAccountChangeRowsDemandV1(auth: unknown): AccountChangeRowsDemandV1 | null {
+  if (!auth || typeof auth !== 'object' || Array.isArray(auth)) return null;
+  const parsed = AccountChangeRowsDemandV1Schema.safeParse((auth as Record<string, unknown>)[ACCOUNT_CHANGE_ROWS_SOCKET_AUTH_KEY_V1]);
+  return parsed.success ? { v: 1, kinds: [...new Set(parsed.data.kinds)] } : null;
+}
+
+/**
+ * One recipient's authorized feed page carried by an Account wake: exactly the
+ * page `GET /v2/changes?after=<after>` returns to that socket's credential at
+ * fan-out. A consumer applies it only when its own cursor lies in
+ * `[after, page.nextCursor)`; any other cursor is a gap it reads through the feed.
+ */
+export const PushedAccountChangesPageV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  after: z.number().check(z.int(), z.minimum(0)),
+  page: ChangesResponseSchema,
+}).check(z.superRefine((pushed, context) => {
+  if (pushed.page.sessionAccessProbe !== undefined) {
+    context.addIssue({ code: 'custom', message: 'A pushed change page never carries a Session access probe.' });
+  }
+  if (pushed.page.nextCursor < pushed.after || pushed.page.changes.some(change => change.cursor <= pushed.after)) {
+    context.addIssue({ code: 'custom', message: 'A pushed change page covers only cursors after its start.' });
+  }
+})));
+
+export type PushedAccountChangesPageV1 = z.infer<typeof PushedAccountChangesPageV1Schema>;
