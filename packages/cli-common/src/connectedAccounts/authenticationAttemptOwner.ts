@@ -466,6 +466,16 @@ function runtimeAdmissionFailure(error: unknown): Readonly<{
     return { status: 'unavailable', code, ...(diagnostic ? { diagnostic } : {}) };
 }
 
+function internalAttemptFailure(error: unknown, attemptId: string, phase: string): AttemptResponse {
+    return {
+        status: 'unavailable',
+        attemptId,
+        ...projectConnectedAccountFailure(error, {
+            code: { outcome: 'connected_account_attempt_internal_unavailable' }, phase,
+        }),
+    };
+}
+
 function createAttemptCredentialStore(): PluginConnectedAccountCredentialStore & Readonly<{
     snapshot(): Readonly<Record<string, string>>;
     clear(): void;
@@ -1313,13 +1323,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 return ownershipFailure;
             }
             return null;
-        } catch {
+        } catch (error) {
             const ownershipFailure = attemptOwnershipFailure(attempt);
             if (ownershipFailure) return ownershipFailure;
-            const response: AttemptResponse = {
-                status: 'unavailable', attemptId: attempt.id,
-                code: 'connected_account_attempt_internal_unavailable',
-            };
+            const response = internalAttemptFailure(error, attempt.id, 'connected_account.attempt.acknowledge');
             await destroyAttempt(attempt, response, phase === 'starting'
                 ? { skipAddressTransactionCleanup: true, skipConfigurationCleanup: true } : undefined);
             return response;
@@ -2712,13 +2719,9 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         void beginProviderFlow(attempt).then(response => {
             pending.settle(response);
             report(response);
-        }).catch(async () => {
+        }).catch(async (error) => {
             if (!attempt.active || attempts.get(attempt.id) !== attempt) return;
-            const response: AttemptResponse = {
-                status: 'unavailable',
-                attemptId: attempt.id,
-                code: 'connected_account_attempt_internal_unavailable',
-            };
+            const response = internalAttemptFailure(error, attempt.id, 'connected_account.attempt.start');
             attempt.lastResponse = response;
             pending.settle(response);
             try {
@@ -2926,14 +2929,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 let exact: Awaited<ReturnType<typeof params.accounts.readExact>>;
                 try {
                     exact = await params.accounts.readExact(snapshot.account!);
-                } catch {
+                } catch (error) {
                     const ownershipFailure = attemptOwnershipFailure(restoration);
                     if (ownershipFailure) return { response: ownershipFailure };
-                    return await cleanUpTerminal({
-                        status: 'unavailable',
-                        attemptId,
-                        code: 'connected_account_attempt_internal_unavailable',
-                    });
+                    return await cleanUpTerminal(internalAttemptFailure(error, attemptId, 'connected_account.attempt.restore_account'));
                 }
                 const afterAccountRead = attemptOwnershipFailure(restoration);
                 if (afterAccountRead) return { response: afterAccountRead };
@@ -3130,9 +3129,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             let record: ConnectedAccountAttemptTransactionRecord | null;
             try {
                 record = input.record ?? await params.attemptAddresses?.read(input.attemptId) ?? null;
-            } catch {
-                return { status: 'unavailable', attemptId: input.attemptId,
-                    code: 'connected_account_attempt_internal_unavailable' };
+            } catch (error) {
+                return internalAttemptFailure(error, input.attemptId, 'connected_account.attempt.restore');
             }
             input.signal?.throwIfAborted();
             if (record?.kind === 'manual' && record.scope.phase === 'starting') {
@@ -3145,8 +3143,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             if (record.kind === 'manual') {
                 let manual: ConnectedAccountManualAttemptBasis | null;
                 try { manual = await params.attemptAddresses?.readManualDraft?.(record) ?? null; }
-                catch { return { status: 'unavailable', attemptId: input.attemptId,
-                    code: 'connected_account_attempt_internal_unavailable' }; }
+                catch (error) { return internalAttemptFailure(error, input.attemptId, 'connected_account.attempt.restore_manual'); }
                 input.signal?.throwIfAborted();
                 if (!manual) return unavailable(input.attemptId);
                 const reconnectTarget = manual.account ? await prepareReconnectTarget(manual.account) : null;
@@ -3472,15 +3469,11 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     let exact: Awaited<ReturnType<typeof params.accounts.readExact>>;
                     try {
                         exact = await params.accounts.readExact(snapshot.account);
-                    } catch {
+                    } catch (error) {
                         const ownershipFailure =
                             attemptOwnershipFailure(restoration);
                         if (ownershipFailure) return ownershipFailure;
-                        return await cleanUpTerminal({
-                            status: 'unavailable',
-                            attemptId: input.attemptId,
-                            code: 'connected_account_attempt_internal_unavailable',
-                        });
+                        return await cleanUpTerminal(internalAttemptFailure(error, input.attemptId, 'connected_account.attempt.restore_account'));
                     }
                     const afterAccountRead =
                         attemptOwnershipFailure(restoration);

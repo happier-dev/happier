@@ -6,10 +6,71 @@ import { createConnectedAccountConfigurationOwner } from './configurationOwner.j
 import { createConnectedAccountCredentialSettlement } from './credentialSettlement.js';
 import { invokeConnectedAccountAuthenticationRuntime } from './authenticationRuntimeDispatcher.js';
 import type { ConnectedAccountCompletionObservation } from './authenticationTypes.js';
+import { createConnectedAccountAttemptTransactionAdapters } from './attemptTransactionAdapters.js';
+import type { ConnectedAccountAttemptTransactionRecord, ConnectedAccountAttemptTransactionStoreApi } from './attemptTransactionApi.js';
 
 // Review probes composed through real attempt/configuration/settlement owners;
 // only provider and persistence transports are synthetic boundaries.
 describe('admitted authentication settlement', () => {
+    it.each(['begin', 'submit', 'restore'] as const)('retains transaction failure causes during %s without disclosing transport data', async stage => {
+        const service = { pluginId: 'acme.review', localId: 'account' };
+        const descriptor = PluginConnectedAccountAuthenticationModeV2Schema.parse({
+            id: 'manual', kind: 'manual', credentialOrigin: 'authentication', outcomeReconciliation: 'none', fields: [],
+        });
+        let failRead = stage !== 'submit';
+        let record: ConnectedAccountAttemptTransactionRecord | null = null;
+        const api: ConnectedAccountAttemptTransactionStoreApi = {
+            async read() {
+                if (failRead) throw Object.assign(new Error('private transport body'), {
+                    response: { status: 503, data: { error: 'database_transaction_timeout', private: 'private transport body' } },
+                });
+                return record;
+            },
+            async create(input) { return record = { ...input, expiresAtMs: 60_000, revision: 1 }; },
+            async replace(input) { return record = { ...input, revision: input.expectedRevision + 1 }; },
+            async delete() { record = null; }, async listPending() { return []; },
+        };
+        const transactions = createConnectedAccountAttemptTransactionAdapters({ api,
+            now: () => 1000, randomBytes: size => new Uint8Array(size),
+            generatePkceCodes: async () => { throw new Error('manual flow must not request PKCE'); },
+            seal: async payload => ({ t: 'plain', v: payload }),
+            open: async entry => entry.content.t === 'plain' ? entry.content.v : null,
+        });
+        const configuration = createConnectedAccountConfigurationOwner({
+            read: async () => null, replace: async () => { throw new Error('unused'); },
+            destroyAttempt: async () => {}, secrets: { admit: async () => {}, has: async () => false, read: async () => null },
+            isRuntimeCurrent: () => true,
+        });
+        const owner = createConnectedAccountAuthenticationAttemptOwner({
+            createAttemptId: () => 'attempt-one', createAccountId: () => 'account-one', now: () => 1000,
+            attemptAddresses: transactions.address, configuration, accounts: { readExact: async () => null },
+            runtime: {
+                admit: async () => ({ service, descriptor, occurrenceId: 'one',
+                    sourceCustody: { kind: 'managed', immutableGenerationId: 'artifact-one', installSource: 'archive' } }),
+                isCurrent: () => true,
+                invoke: async () => { throw new Error('failed custody must not invoke provider'); },
+            },
+            settlement: { settle: async () => { throw new Error('failed custody must not settle credentials'); } },
+            oauth: { create: async () => { throw new Error('manual flow must not create OAuth'); } },
+        });
+        try {
+            let response;
+            if (stage === 'restore') response = await owner.ensureRestored({ attemptId: 'attempt-one' });
+            else {
+                response = await owner.beginConnect({ service, modeId: 'manual' });
+                if (stage === 'submit') {
+                    expect(response.status).toBe('awaitingManual');
+                    failRead = true;
+                    response = await owner.submitManual({ attemptId: 'attempt-one', fields: {} });
+                }
+            }
+            expect(response).toMatchObject({ status: 'unavailable', diagnostic: { details: {
+                failureCause: { httpStatus: 503, errorCode: 'database_transaction_timeout' },
+            } } });
+            expect(JSON.stringify(response)).not.toContain('private transport body');
+        } finally { owner.dispose(); }
+    });
+
     it('publishes service-neutral legacy refusals while retaining the private diagnostic', async () => {
         const service = { pluginId: 'acme.review', localId: 'account' };
         const descriptor = PluginConnectedAccountAuthenticationModeV2Schema.parse({
