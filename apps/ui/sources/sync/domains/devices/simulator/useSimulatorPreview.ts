@@ -15,7 +15,8 @@ import {
 } from './control';
 import type { SimulatorPreviewApi } from './api';
 import { selectSimulatorPreviewViewModel } from './selectors';
-import type { SimulatorPreviewSelectionHookInput, SimulatorPreviewViewModel } from './types';
+import type { SimulatorDeviceOperationResultV1, SimulatorDeviceOperationV1 } from '@happier-dev/protocol/devices/simulator/operationsV1';
+import type { SimulatorDeviceOperationRequest, SimulatorPreviewSelectionHookInput, SimulatorPreviewViewModel } from './types';
 
 export type SimulatorPreviewActions = Readonly<{
     selectDevice: (simulatorId: string) => void;
@@ -31,9 +32,15 @@ export type SimulatorPreviewActions = Readonly<{
     setFps: () => Promise<void>;
     setScale: () => Promise<void>;
     rotateLeft: () => Promise<void>;
-    pressHome: () => Promise<void>;
-    pressBack: () => Promise<void>;
-    pressRecent: () => Promise<void>;
+    /**
+     * Run a device operation (boot, power off, screenshot, hardware button, app, link, setting,
+     * accessibility) on one device through its canonical Action. Resolves null without sending when
+     * that device does not advertise the operation; otherwise the Action's typed result.
+     */
+    runDeviceOperation: (
+        simulatorId: string,
+        request: SimulatorDeviceOperationRequest,
+    ) => Promise<SimulatorDeviceOperationResultV1 | null>;
 }>;
 
 export type UseSimulatorPreviewResult = Readonly<{
@@ -236,16 +243,15 @@ export function useSimulatorPreview(input: SimulatorPreviewSelectionHookInput & 
                 action: { kind: 'orientation', orientation: 'landscapeLeft' satisfies SimulatorOrientationV1 },
             });
         },
-        pressHome: async () => {
-            await sendBuiltControl({ api: input.api, viewModel, action: { kind: 'hardware_button', button: 'home' } });
+        runDeviceOperation: async (simulatorId, request) => {
+            const device = input.resources.find((resource) => resource.simulatorId === simulatorId);
+            if (!device?.supportedDeviceOperations?.includes(request.operation)) return null;
+            const execute = input.api?.executeDeviceOperation;
+            if (!execute) return null;
+            // The request's own fields plus the device's identity are exactly one canonical operation.
+            return execute({ ...request, platform: device.platform, deviceId: device.deviceId } as SimulatorDeviceOperationV1);
         },
-        pressBack: async () => {
-            await sendBuiltControl({ api: input.api, viewModel, action: { kind: 'hardware_button', button: 'back' } });
-        },
-        pressRecent: async () => {
-            await sendBuiltControl({ api: input.api, viewModel, action: { kind: 'hardware_button', button: 'recents' } });
-        },
-    }), [input.api, sourceAndStream, viewModel]);
+    }), [input.api, input.resources, sourceAndStream, viewModel]);
 
     return { viewModel, actions };
 }

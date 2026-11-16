@@ -13,7 +13,9 @@ import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
 
+import { SimulatorDeviceTools } from './SimulatorDeviceTools';
 import { simulatorStreamStyles } from './styles';
+import type { useSimulatorDeviceOperation } from './useSimulatorDeviceOperation';
 
 const sidebandKinds: readonly SimulatorSidebandKindV1[] = BACKED_SIMULATOR_SIDEBAND_KINDS_V1;
 
@@ -146,13 +148,16 @@ function SidebandRows(props: Readonly<{
 }
 
 /**
- * The on-demand Tools panel: rare stream presets and capture health
+ * The on-demand Tools panel: rare stream presets, the device's test tools (apps, links, settings,
+ * accessibility) and capture health
  * with its diagnostics. Only what the producer backs is listed; nothing here is needed to watch or drive
  * the device, so it stays closed until asked for.
  */
 export function SimulatorSidebandPanel(props: Readonly<{
     viewModel: SimulatorPreviewViewModel;
     actions: Partial<SimulatorPreviewActions>;
+    /** Runs the device operations of the device tools; without it only stream and capture tools show. */
+    operations?: ReturnType<typeof useSimulatorDeviceOperation>;
     onClose: () => void;
     /** A narrow pane: the panel takes the stage's place instead of standing beside it. */
     stacked?: boolean;
@@ -194,6 +199,14 @@ export function SimulatorSidebandPanel(props: Readonly<{
                             />
                         ))}
                     </ItemGroup>
+                ) : null}
+                {props.operations && props.viewModel.resource ? (
+                    <SimulatorDeviceTools
+                        key={props.viewModel.resource.simulatorId}
+                        viewModel={props.viewModel}
+                        operations={props.operations}
+                        testID={props.testID}
+                    />
                 ) : null}
                 {kinds.map((kind) => {
                     const title = sidebandTitle(kind);

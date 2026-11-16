@@ -415,8 +415,10 @@ describe('SimulatorStreamView', () => {
         );
         await flushHookEffects({ cycles: 2, turns: 2 });
 
+        // The browser cannot decode H.264: a typed cause on the stage, never a blank player.
         expect(screen.findByTestId('simulator-stream-player-webcodecs-surface')).toBeNull();
-        expect(screen.findByTestId('simulator-stream-player-unavailable')).toBeTruthy();
+        expect(screen.findByTestId('simulator-stream-unavailable')).toBeTruthy();
+        expect(screen.findByTestId('simulator-stream-unavailable-diagnostic-webcodecs_decoder_unavailable')).toBeTruthy();
     });
 
     it('does not show the previous simulator frame after switching to a device with no frame yet (C-STALE)', async () => {

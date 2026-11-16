@@ -1,5 +1,6 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
+import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -11989,6 +11990,7 @@ deleteWarning: "Gespeicherte Anmeldungen und Website-Daten dieses Profils werden
 
     simulatorPreview: {
         viewer: simulatorViewerTranslations['de'],
+        device: simulatorDeviceToolsTranslations['de'],
         title: 'Simulator',
         picker: {
             title: 'Geräte',

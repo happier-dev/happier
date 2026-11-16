@@ -28,8 +28,9 @@ function selectedViewModel(overrides: Partial<SimulatorPreviewViewModel> = {}): 
         kind: 'selected',
         viewerId: 'viewer_1',
         devices: [
-            { simulatorId: 'sim_1', label: 'iPhone 16', platformLabel: 'iOS', selected: true, availability: { state: 'available' } },
-            { simulatorId: 'sim_2', label: 'Pixel 9', platformLabel: 'Android', selected: false, availability: { state: 'available' } },
+            { simulatorId: 'sim_1', label: 'iPhone 16', platformLabel: 'iOS', selected: true, state: 'running', canBoot: false, availability: { state: 'available' } },
+            { simulatorId: 'sim_2', label: 'Pixel 9', platformLabel: 'Android', selected: false, state: 'running', canBoot: false, availability: { state: 'available' } },
+            { simulatorId: 'avd_3', label: 'Pixel Tablet', platformLabel: 'Android', selected: false, state: 'stopped', canBoot: true, availability: { state: 'unavailable' } },
         ],
         selectedSimulatorId: 'sim_1',
         resource: {
@@ -61,6 +62,7 @@ function selectedViewModel(overrides: Partial<SimulatorPreviewViewModel> = {}): 
             canSetScale: false,
             supportedInputKinds: ['tap', 'hardware_button'],
             hardwareButtons: ['home'],
+            deviceOperations: ['screenshot', 'hardware', 'power_off'],
         },
         sidebands: {},
         diagnostics: [],
@@ -69,9 +71,9 @@ function selectedViewModel(overrides: Partial<SimulatorPreviewViewModel> = {}): 
     };
 }
 
-async function renderPane(viewModel: SimulatorPreviewViewModel, actions: Record<string, unknown> = {}) {
+async function renderPane(viewModel: SimulatorPreviewViewModel, actions: Record<string, unknown> = {}, sessionId?: string) {
     const { SimulatorPreviewPane } = await import('./SimulatorPreviewPane');
-    return renderScreen(<SimulatorPreviewPane viewModel={viewModel} actions={actions} testID="simulator-preview" />);
+    return renderScreen(<SimulatorPreviewPane viewModel={viewModel} actions={actions} sessionId={sessionId} testID="simulator-preview" />);
 }
 
 describe('SimulatorPreviewPane', () => {
@@ -201,5 +203,40 @@ describe('SimulatorPreviewPane', () => {
         // A device that cannot be watched never reads as live and offers no control to take.
         expect(setup.findByTestId('simulator-preview-bar-status')).toBeNull();
         expect(setup.findByTestId('simulator-preview-bar-acquire-lease')).toBeNull();
+    });
+    it('starts a stopped device from discovery and opens it once it boots', async () => {
+        const runDeviceOperation = vi.fn(async () => ({ ok: true as const, device: { ...selectedViewModel().resource!, simulatorId: 'emulator-5554' } }));
+        const selectDevice = vi.fn();
+        const screen = await renderPane({ ...selectedViewModel(), kind: 'empty', selectedSimulatorId: null, resource: null },
+            { runDeviceOperation, selectDevice });
+
+        await screen.pressByTestIdAsync('simulator-preview-picker-start:avd_3');
+        expect(runDeviceOperation).toHaveBeenCalledWith('avd_3', { operation: 'boot' });
+        expect(selectDevice).toHaveBeenCalledWith('emulator-5554');
+    });
+
+    it('takes a screenshot into the Session from the rail, and offers none without a Session', async () => {
+        const runDeviceOperation = vi.fn(async () => ({ ok: true as const }));
+        const withSession = await renderPane(selectedViewModel(), { runDeviceOperation }, 'session_1');
+        await withSession.pressByTestIdAsync('simulator-preview-toolbar-screenshot');
+        expect(runDeviceOperation).toHaveBeenCalledWith('sim_1', { operation: 'screenshot', sessionId: 'session_1' });
+
+        const withoutSession = await renderPane(selectedViewModel(), { runDeviceOperation });
+        expect(withoutSession.findByTestId('simulator-preview-toolbar-screenshot')).toBeNull();
+    });
+
+    it('says in the bar when this browser cannot play the device video, with no retry that cannot help', async () => {
+        vi.stubGlobal('VideoDecoder', undefined);
+        try {
+            const screen = await renderPane(selectedViewModel({
+                stream: { ...selectedViewModel().stream, selectedCodec: 'h264.avcc', lastFrameUrl: undefined, avccChunks: [new Uint8Array([0, 0, 0, 1])] },
+            }), { openStream: vi.fn() });
+            expect(screen.findByTestId('simulator-preview-bar-status-label')?.props.children).toBe('simulatorPreview.device.videoUnsupported');
+            expect(screen.findByTestId('simulator-preview-stream-unavailable')).toBeTruthy();
+            expect(screen.findByTestId('simulator-preview-stream-unavailable-action')).toBeNull();
+            expect(screen.findByTestId('simulator-preview-bar-acquire-lease')).toBeNull();
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
 });

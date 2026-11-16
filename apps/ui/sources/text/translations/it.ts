@@ -1,5 +1,6 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
+import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -12341,6 +12342,7 @@ deleteWarning: "Le credenziali e i dati dei siti salvati nel profilo vengono eli
 
   simulatorPreview: {
       viewer: simulatorViewerTranslations['it'],
+      device: simulatorDeviceToolsTranslations['it'],
     title: 'Simulatore',
     picker: {
       title: 'Dispositivi',

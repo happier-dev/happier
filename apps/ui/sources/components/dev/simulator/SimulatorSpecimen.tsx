@@ -23,9 +23,7 @@ const ACTIONS: Partial<SimulatorPreviewActions> = {
   requestKeyframe: NOOP,
   lowerQuality: NOOP,
   setFps: NOOP,
-  pressHome: NOOP,
-  pressBack: NOOP,
-  pressRecent: NOOP,
+  runDeviceOperation: async () => ({ ok: true }),
   requestSideband: NOOP,
 };
 
@@ -34,22 +32,29 @@ const DEVICES: SimulatorPreviewViewModel['devices'] = [
     simulatorId: 'sim_ios',
     label: 'iPhone 16 Pro',
     platformLabel: 'iOS',
-    selected: true,
+    selected: true, state: 'running', canBoot: false,
     availability: { state: 'available' },
   },
   {
     simulatorId: 'sim_android',
     label: 'Pixel 9',
     platformLabel: 'Android',
-    selected: false,
+    selected: false, state: 'running', canBoot: false,
     availability: { state: 'available' },
   },
   {
     simulatorId: 'sim_ipad',
     label: 'iPad Air 13-inch',
     platformLabel: 'iOS',
-    selected: false,
+    selected: false, state: 'running', canBoot: false,
     availability: { state: 'degraded', reasonCode: 'slow_consumer' },
+  },
+  {
+    simulatorId: 'avd_tablet',
+    label: 'Pixel Tablet',
+    platformLabel: 'Android',
+    selected: false, state: 'stopped', canBoot: true,
+    availability: { state: 'unavailable', reasonCode: 'device_stopped' },
   },
 ];
 
@@ -96,6 +101,7 @@ function model(
       canSetScale: false,
       supportedInputKinds: ['tap', 'swipe', 'keyboard_text', 'hardware_button'],
       hardwareButtons: ['home', 'back', 'recents'],
+      deviceOperations: ['screenshot', 'power_off', 'hardware', 'app_launch', 'app_terminate', 'open_url', 'appearance_set', 'text_size_set', 'location_set', 'permission_set', 'rotate', 'accessibility_snapshot', 'accessibility_press'],
     },
     sidebands: {
       capture_health: {
@@ -211,6 +217,7 @@ export function SimulatorSpecimen(
               style={props.phone ? styles.framePhone : styles.frame}
             >
               <SimulatorPreviewPane
+                sessionId="session_dev"
                 viewModel={frame.viewModel}
                 actions={ACTIONS}
                 testID={`simulator-specimen-${frame.id}-pane`}

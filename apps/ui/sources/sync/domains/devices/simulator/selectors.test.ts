@@ -362,7 +362,7 @@ describe('simulator preview selectors', () => {
         expect(viewModel.stream.lastFrameUrl).toBeUndefined();
         expect(viewModel.stream.avccChunks?.map((chunk) => [...chunk])).toEqual([[1, 2, 3, 4]]);
     });
-    it('names the platform and offers exactly the hardware buttons the producer advertises', async () => {
+    it('names the platform and offers exactly the device operations and hardware buttons the producer advertises', async () => {
         const { selectSimulatorPreviewViewModel } = await import('./selectors');
         const select = (resource: SimulatorDeviceResourceV1) => selectSimulatorPreviewViewModel({
             resources: [resource],
@@ -376,16 +376,22 @@ describe('simulator preview selectors', () => {
         expect(ios.devices[0]?.platformLabel).toBe('iOS');
         expect(ios.controls.hardwareButtons).toEqual([]);
 
-        const android = select({ ...availableResource, platform: 'android', displayName: 'Pixel 9', supportedHardwareButtons: ['home', 'back', 'recents'] });
-        expect(android.devices[0]?.platformLabel).toBe('Android');
-        expect(android.controls.hardwareButtons).toEqual(['home', 'back', 'recents']);
-
-        const noButtonInput = select({
-            ...availableResource,
-            platform: 'android',
-            supportedHardwareButtons: ['home'],
-            capture: { ...availableResource.capture, supportedInputKinds: ['tap'] } as SimulatorDeviceResourceV1['capture'],
+        const android = select({
+            ...availableResource, platform: 'android', displayName: 'Pixel 9',
+            supportedDeviceOperations: ['hardware', 'screenshot'], supportedHardwareButtons: ['home', 'back', 'recents'],
         });
-        expect(noButtonInput.controls.hardwareButtons).toEqual([]);
+        expect(android.devices[0]).toMatchObject({ platformLabel: 'Android', state: 'running', canBoot: false });
+        expect(android.controls.hardwareButtons).toEqual(['home', 'back', 'recents']);
+        expect(android.controls.deviceOperations).toEqual(['hardware', 'screenshot']);
+
+        // Buttons without the hardware operation cannot be pressed, so none are offered.
+        const noHardwareOperation = select({ ...availableResource, platform: 'android', supportedHardwareButtons: ['home'] });
+        expect(noHardwareOperation.controls.hardwareButtons).toEqual([]);
+
+        const stopped = select({
+            ...availableResource, state: 'stopped', supportedDeviceOperations: ['boot'],
+            capture: { status: 'unavailable', sourceId: 'source_1', reasonCode: 'device_stopped' },
+        });
+        expect(stopped.devices[0]).toMatchObject({ state: 'stopped', canBoot: true });
     });
 });

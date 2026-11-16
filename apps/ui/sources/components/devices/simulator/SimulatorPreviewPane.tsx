@@ -16,6 +16,7 @@ import { SimulatorStreamView } from './SimulatorStreamView';
 import { SimulatorToolbar } from './SimulatorToolbar';
 import { SimulatorViewerBar } from './SimulatorViewerBar';
 import { simulatorStreamStyles } from './styles';
+import { useSimulatorDeviceOperation } from './useSimulatorDeviceOperation';
 
 /**
  * The device viewer. Identity and state first (the bar), the live screen as the main content, the
@@ -26,6 +27,8 @@ import { simulatorStreamStyles } from './styles';
 export function SimulatorPreviewPane(props: Readonly<{
     viewModel: SimulatorPreviewViewModel;
     actions: Partial<SimulatorPreviewActions>;
+    /** The Session this viewer belongs to: where a screenshot lands. */
+    sessionId?: string;
     testID: string;
 }>): React.ReactElement {
     const { viewModel, actions } = props;
@@ -44,6 +47,18 @@ export function SimulatorPreviewPane(props: Readonly<{
     const toggleTools = React.useCallback(() => setToolsOpen((current) => !current), []);
     const closeTools = React.useCallback(() => setToolsOpen(false), []);
     const retry = actions.openStream ? () => { void actions.openStream?.(); } : undefined;
+    const operations = useSimulatorDeviceOperation(actions);
+    const runOperation = operations.run;
+    const selectDevice = actions.selectDevice;
+    // Booting answers with the running device's identity; the viewer opens it as soon as it is up.
+    const startDevice = React.useCallback(async (simulatorId: string) => {
+        const result = await runOperation(`boot:${simulatorId}`, simulatorId, { operation: 'boot' });
+        if (result?.ok) selectDevice?.(result.device?.simulatorId ?? simulatorId);
+    }, [runOperation, selectDevice]);
+    const selectedSimulatorId = viewModel.selectedSimulatorId;
+    const powerOff = React.useCallback(() => {
+        if (selectedSimulatorId) void runOperation('power_off', selectedSimulatorId, { operation: 'power_off' });
+    }, [runOperation, selectedSimulatorId]);
 
     return (
         // The rail, capsule and menus float over or beside the live picture: they take its coat.
@@ -58,6 +73,8 @@ export function SimulatorPreviewPane(props: Readonly<{
                         devices={viewModel.devices}
                         selectedSimulatorId={viewModel.selectedSimulatorId}
                         onSelectDevice={(simulatorId) => actions.selectDevice?.(simulatorId)}
+                        onStartDevice={(simulatorId) => { void startDevice(simulatorId); }}
+                        pendingOperation={operations.pending}
                         testID={`${props.testID}-picker`}
                     />
                 ) : (
@@ -70,6 +87,9 @@ export function SimulatorPreviewPane(props: Readonly<{
                                 onToggleTools={toggleTools}
                                 onHideControls={stacked ? () => setControlsHidden(true) : undefined}
                                 stacked={stacked}
+                                onStartDevice={(simulatorId) => { void startDevice(simulatorId); }}
+                                onPowerOff={powerOff}
+                                powerOffPending={operations.pending === 'power_off'}
                                 testID={`${props.testID}-bar`}
                             />
                         )}
@@ -110,6 +130,8 @@ export function SimulatorPreviewPane(props: Readonly<{
                                 <SimulatorToolbar
                                     viewModel={viewModel}
                                     actions={actions}
+                                    operations={operations}
+                                    sessionId={props.sessionId}
                                     orientation={stacked ? 'horizontal' : 'vertical'}
                                     testID={`${props.testID}-toolbar`}
                                 />
@@ -118,6 +140,7 @@ export function SimulatorPreviewPane(props: Readonly<{
                                 <SimulatorSidebandPanel
                                     viewModel={viewModel}
                                     actions={actions}
+                                    operations={operations}
                                     onClose={closeTools}
                                     stacked={stacked}
                                     testID={`${props.testID}-sidebands`}

@@ -1,5 +1,6 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
+import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -12237,6 +12238,7 @@ deleteWarning: "Isso exclui os logins e dados de sites salvos no perfil e fecha 
 
   simulatorPreview: {
       viewer: simulatorViewerTranslations['pt'],
+      device: simulatorDeviceToolsTranslations['pt'],
     title: 'Simulador',
     picker: {
       title: 'Dispositivos',

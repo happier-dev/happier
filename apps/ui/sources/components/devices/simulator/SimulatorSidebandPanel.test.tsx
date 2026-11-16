@@ -18,6 +18,7 @@ const CONTROLS: SimulatorPreviewControls = {
     canSetScale: false,
     supportedInputKinds: [],
     hardwareButtons: [],
+    deviceOperations: [],
 };
 
 function viewModel(overrides: Partial<Pick<SimulatorPreviewViewModel, 'controls' | 'sidebands' | 'diagnostics'>>): SimulatorPreviewViewModel {

@@ -145,9 +145,6 @@ describe('useSimulatorPreview', () => {
         await expect(hook.getCurrent().actions.setFps()).resolves.toBeUndefined();
         await expect(hook.getCurrent().actions.setScale()).resolves.toBeUndefined();
         await expect(hook.getCurrent().actions.rotateLeft()).resolves.toBeUndefined();
-        await expect(hook.getCurrent().actions.pressHome()).resolves.toBeUndefined();
-        await expect(hook.getCurrent().actions.pressBack()).resolves.toBeUndefined();
-        await expect(hook.getCurrent().actions.pressRecent()).resolves.toBeUndefined();
 
         expect(requestKeyframe).toHaveBeenCalledWith(expect.objectContaining({
             simulatorId: 'sim_1',
@@ -176,15 +173,6 @@ describe('useSimulatorPreview', () => {
         });
         expect(sendControl).not.toHaveBeenCalledWith({
             control: expect.objectContaining({ kind: 'orientation', orientation: 'landscapeLeft' }),
-        });
-        expect(sendControl).toHaveBeenCalledWith({
-            control: expect.objectContaining({ kind: 'hardware_button', button: 'home' }),
-        });
-        expect(sendControl).toHaveBeenCalledWith({
-            control: expect.objectContaining({ kind: 'hardware_button', button: 'back' }),
-        });
-        expect(sendControl).toHaveBeenCalledWith({
-            control: expect.objectContaining({ kind: 'hardware_button', button: 'recents' }),
         });
     });
 
@@ -301,7 +289,6 @@ describe('useSimulatorPreview', () => {
 
         await expect(hook.getCurrent().actions.acquireLease()).resolves.toBeUndefined();
         await expect(hook.getCurrent().actions.rotateLeft()).resolves.toBeUndefined();
-        await expect(hook.getCurrent().actions.pressHome()).resolves.toBeUndefined();
         await expect(hook.getCurrent().actions.requestKeyframe()).resolves.toBeUndefined();
 
         expect(acquireLease).not.toHaveBeenCalled();
@@ -312,5 +299,33 @@ describe('useSimulatorPreview', () => {
             sourceId: 'source_1',
             control: expect.objectContaining({ kind: 'request_keyframe' }),
         }));
+    });
+    it('runs a device operation on the named device through its Action, only when that device advertises it', async () => {
+        const { useSimulatorPreview } = await import('./useSimulatorPreview');
+        const executeDeviceOperation = vi.fn(async () => ({ ok: true as const }));
+        const stopped: SimulatorDeviceResourceV1 = {
+            v: 1, simulatorId: 'avd_1', platform: 'android', deviceId: 'Pixel_9', displayName: 'Pixel 9', state: 'stopped',
+            supportedDeviceOperations: ['boot'],
+            capture: { status: 'unavailable', sourceId: 'source_avd', reasonCode: 'device_stopped' },
+        };
+        const hook = await renderHook(() => useSimulatorPreview({
+            resources: [{ ...availableResource, supportedDeviceOperations: ['screenshot', 'power_off'] }, stopped],
+            selectedSimulatorId: 'sim_1',
+            viewerId: 'viewer_1',
+            nowMs: () => 1_500,
+            previewStatesBySimulatorId: {},
+            playerStatesBySimulatorId: {},
+            api: { executeDeviceOperation },
+        }));
+
+        await expect(hook.getCurrent().actions.runDeviceOperation('avd_1', { operation: 'boot' })).resolves.toEqual({ ok: true });
+        expect(executeDeviceOperation).toHaveBeenCalledWith({ operation: 'boot', platform: 'android', deviceId: 'Pixel_9' });
+
+        await hook.getCurrent().actions.runDeviceOperation('sim_1', { operation: 'screenshot', sessionId: 'session_1' });
+        expect(executeDeviceOperation).toHaveBeenLastCalledWith({ operation: 'screenshot', platform: 'ios', deviceId: 'device_1', sessionId: 'session_1' });
+
+        // Not advertised by that device: nothing is sent.
+        await expect(hook.getCurrent().actions.runDeviceOperation('avd_1', { operation: 'power_off' })).resolves.toBeNull();
+        expect(executeDeviceOperation).toHaveBeenCalledTimes(2);
     });
 });

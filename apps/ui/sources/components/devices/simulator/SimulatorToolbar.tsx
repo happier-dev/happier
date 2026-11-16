@@ -1,19 +1,18 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import type { SimulatorDeviceHardwareButtonV1 } from '@happier-dev/protocol/devices/simulator/operationsV1';
 
 import { IconButton, type IconButtonIconName } from '@/components/ui/buttons/IconButton';
 import type { SimulatorPreviewActions } from '@/sync/domains/devices/simulator/useSimulatorPreview';
-import type { SimulatorDeviceHardwareButtonV1 } from '@happier-dev/protocol/devices/simulator/operationsV1';
 import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator/types';
 import { t } from '@/text';
 
 import { simulatorStreamStyles } from './styles';
-
-type RailButton = SimulatorDeviceHardwareButtonV1;
+import type { useSimulatorDeviceOperation } from './useSimulatorDeviceOperation';
 
 const RAIL_BUTTONS: readonly Readonly<{
-    button: RailButton;
+    button: SimulatorDeviceHardwareButtonV1;
     iconName: IconButtonIconName;
     label: () => string;
     testSuffix: string;
@@ -23,39 +22,35 @@ const RAIL_BUTTONS: readonly Readonly<{
     { button: 'recents', iconName: 'stack', label: () => t('simulatorPreview.toolbar.recentButton'), testSuffix: 'button-recent' },
 ];
 
-function pressAction(actions: Partial<SimulatorPreviewActions>, button: RailButton): (() => Promise<void>) | undefined {
-    switch (button) {
-        case 'home': return actions.pressHome;
-        case 'back': return actions.pressBack;
-        case 'recents': return actions.pressRecent;
-    }
-}
-
 /**
- * The device's common actions beside its screen: the platform's hardware buttons, rotation when the
- * producer backs it, and frame refresh. The rail is the same whether or not the person holds control,
- * so nothing moves when they take it; input-only buttons stay visible and say what they need.
- * Vertical beside the screen; a horizontal strip under it on a narrow pane.
+ * The device's common actions beside its screen: the hardware buttons the producer advertises, a
+ * screenshot that lands in the Session, and frame refresh. Buttons and screenshot are device
+ * operations (Actions), so they work whether or not the person holds input control. Vertical beside
+ * the screen; a horizontal strip under it on a narrow pane.
  */
 export function SimulatorToolbar(props: Readonly<{
     viewModel: SimulatorPreviewViewModel;
     actions: Partial<SimulatorPreviewActions>;
+    operations: ReturnType<typeof useSimulatorDeviceOperation>;
+    /** The Session a screenshot lands in; without one there is nowhere to put it, so none is offered. */
+    sessionId?: string;
     orientation?: 'vertical' | 'horizontal';
     testID: string;
 }>): React.ReactElement | null {
     const { theme } = useUnistyles();
-    const { controls } = props.viewModel;
+    const { controls, selectedSimulatorId } = props.viewModel;
     const horizontal = props.orientation === 'horizontal';
-    const inputReason = controls.canControl ? undefined : t('simulatorPreview.viewer.takeControlFirst');
     const buttons = RAIL_BUTTONS.filter((entry) => controls.hardwareButtons.includes(entry.button));
-    const showRotate = controls.supportedInputKinds.includes('orientation');
+    const sessionId = props.sessionId;
+    const canScreenshot = Boolean(sessionId) && controls.deviceOperations.includes('screenshot');
     const canRefreshFrame = controls.canRequestKeyframe;
-    const deviceGroup = buttons.length > 0 || showRotate;
-    if (!deviceGroup && !canRefreshFrame) return null;
+    const deviceGroup = buttons.length > 0 || canScreenshot;
+    if (!selectedSimulatorId || (!deviceGroup && !canRefreshFrame)) return null;
 
     // The rail's own gap, so stacked targets tile it without overlapping.
     const gap = theme.space.s8;
     const gaps = horizontal ? { interactiveTargetGapPx: gap } : { interactiveTargetVerticalGapPx: gap };
+    const { pending, run } = props.operations;
     return (
         <View
             testID={props.testID}
@@ -69,22 +64,20 @@ export function SimulatorToolbar(props: Readonly<{
                     variant="plain"
                     accessibilityLabel={entry.label()}
                     tooltip={entry.label()}
-                    disabled={!controls.canControl}
-                    disabledReason={inputReason}
-                    onPress={() => { void pressAction(props.actions, entry.button)?.(); }}
+                    busy={pending === `hardware:${entry.button}`}
+                    onPress={() => { void run(`hardware:${entry.button}`, selectedSimulatorId, { operation: 'hardware', button: entry.button }); }}
                     {...gaps}
                 />
             ))}
-            {showRotate ? (
+            {canScreenshot && sessionId ? (
                 <IconButton
-                    testID={`${props.testID}-rotate-left`}
-                    iconName="arrow-counter-clockwise"
+                    testID={`${props.testID}-screenshot`}
+                    iconName="camera"
                     variant="plain"
-                    accessibilityLabel={t('simulatorPreview.toolbar.rotateLeft')}
-                    tooltip={t('simulatorPreview.toolbar.rotateLeft')}
-                    disabled={!controls.canControl}
-                    disabledReason={inputReason}
-                    onPress={() => { void props.actions.rotateLeft?.(); }}
+                    accessibilityLabel={t('simulatorPreview.device.screenshot')}
+                    tooltip={t('simulatorPreview.device.screenshot')}
+                    busy={pending === 'screenshot'}
+                    onPress={() => { void run('screenshot', selectedSimulatorId, { operation: 'screenshot', sessionId }); }}
                     {...gaps}
                 />
             ) : null}

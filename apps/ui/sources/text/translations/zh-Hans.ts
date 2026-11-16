@@ -1,5 +1,6 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
+import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -11754,6 +11755,7 @@ deleteWarning: "这会删除配置文件中保存的登录信息和网站数据�
 
   simulatorPreview: {
       viewer: simulatorViewerTranslations['zh-Hans'],
+      device: simulatorDeviceToolsTranslations['zh-Hans'],
     title: '模拟器',
     picker: {
       title: '设备',

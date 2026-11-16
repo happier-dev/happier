@@ -1,5 +1,6 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
+import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import type { AgentStartupFailureCode, RequesterSessionRuntimeRefusalCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { SessionUsageLimitRecoveryOperationResultErrorStatusV1 } from '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1';
@@ -13947,6 +13948,7 @@ const enStreamPlayer = {
 
 const enSimulatorPreview = {
   viewer: simulatorViewerTranslations['en'],
+  device: simulatorDeviceToolsTranslations['en'],
   title: 'Simulator',
   picker: {
     title: 'Devices',

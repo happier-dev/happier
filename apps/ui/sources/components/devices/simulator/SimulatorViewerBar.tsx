@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import {
   StreamStatusDot,
   resolveStreamStatusDotVariant,
+  type StreamStatusDotVariant,
 } from '@/components/stream/StreamStatusDot';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -19,31 +20,39 @@ import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator
 import { t } from '@/text';
 
 import { simulatorStreamStyles } from './styles';
+import { resolveSimulatorVideoUnsupportedReason } from './videoSupport';
 
-/** One status phrase: the stream when it is not live, otherwise who controls the device. */
 export function isSimulatorStreamLive(phase: SimulatorPreviewViewModel['stream']['phase']): boolean {
   return phase === 'playing' || phase === 'degraded';
 }
 
+export type SimulatorBarStatus = Readonly<{ label: string; variant: StreamStatusDotVariant }>;
+
 /**
- * Who has the live device. Any other stream state is said once, on the stage (opening, connecting,
- * reconnecting over the held frame, failed), so the bar carries no second copy of it.
+ * The bar's one status. A browser that cannot play the video says so as a typed cause; otherwise only
+ * a live device has a status here (who has it). Opening, connecting, reconnecting and failures are
+ * said once, on the stage, so the bar carries no second copy of them.
  */
-export function resolveSimulatorStatusLabel(
+export function resolveSimulatorBarStatus(
   viewModel: SimulatorPreviewViewModel,
-): string | null {
+): SimulatorBarStatus | null {
+  if (viewModel.controls.canWatch && resolveSimulatorVideoUnsupportedReason(viewModel.stream)) {
+    return { label: t('simulatorPreview.device.videoUnsupported'), variant: 'error' };
+  }
   if (!viewModel.controls.canWatch || !isSimulatorStreamLive(viewModel.stream.phase))
     return null;
+  const variant = resolveStreamStatusDotVariant(viewModel.stream.phase, viewModel.stream.diagnostic?.reasonCode);
   if (viewModel.controls.canControl)
-    return t('streamPlayer.controls.controlling');
+    return { label: t('streamPlayer.controls.controlling'), variant };
   if (viewModel.lease.state === 'held-by-other') {
-    return viewModel.lease.holderLabel
-      ? t('simulatorPreview.toolbar.heldByOtherWithHolder', {
-          holder: viewModel.lease.holderLabel,
-        })
-      : t('simulatorPreview.toolbar.heldByOther');
+    return {
+      label: viewModel.lease.holderLabel
+        ? t('simulatorPreview.toolbar.heldByOtherWithHolder', { holder: viewModel.lease.holderLabel })
+        : t('simulatorPreview.toolbar.heldByOther'),
+      variant,
+    };
   }
-  return t('streamPlayer.status.playing');
+  return { label: t('streamPlayer.status.playing'), variant };
 }
 
 /**
@@ -61,6 +70,11 @@ export function SimulatorViewerBar(
     onHideControls?: () => void;
     /** A narrow pane: the bar takes two rows so the device name never truncates to a letter. */
     stacked?: boolean;
+    /** Boot a stopped device chosen from the switch list. */
+    onStartDevice: (simulatorId: string) => void;
+    /** Power the open device off (distinct from closing the viewer). */
+    onPowerOff: () => void;
+    powerOffPending: boolean;
     testID: string;
   }>,
 ): React.ReactElement | null {
@@ -74,11 +88,12 @@ export function SimulatorViewerBar(
   );
   const platformLabel = device?.platformLabel;
   const leaseState = viewModel.lease.state;
-  const statusLabel = resolveSimulatorStatusLabel(viewModel);
+  const status = resolveSimulatorBarStatus(viewModel);
   const canTakeControl =
     leaseState === 'available' &&
     viewModel.controls.canWatch &&
     isSimulatorStreamLive(viewModel.stream.phase) &&
+    !resolveSimulatorVideoUnsupportedReason(viewModel.stream) &&
     resource.capture.status !== 'unavailable' &&
     resource.capture.inputMode !== 'none';
 
@@ -87,7 +102,10 @@ export function SimulatorViewerBar(
       ? viewModel.devices.map((entry) => ({
           id: `device:${entry.simulatorId}`,
           title: entry.label,
-          subtitle: entry.platformLabel,
+          subtitle: entry.state === 'stopped'
+            ? `${entry.platformLabel} · ${t('simulatorPreview.device.stopped')}`
+            : entry.platformLabel,
+          disabled: entry.state === 'stopped' && !entry.canBoot,
           category: t('simulatorPreview.viewer.switchDevice'),
           checked: entry.simulatorId === resource.simulatorId,
           testID: `${props.testID}-device:${entry.simulatorId}`,
@@ -102,6 +120,17 @@ export function SimulatorViewerBar(
           },
         ]
       : []),
+    ...(viewModel.controls.deviceOperations.includes('power_off')
+      ? [
+          {
+            id: 'power-off',
+            title: t('simulatorPreview.device.powerOff'),
+            destructive: true,
+            loading: props.powerOffPending,
+            testID: `${props.testID}-power-off`,
+          },
+        ]
+      : []),
     ...(props.onHideControls
       ? [
           {
@@ -113,27 +142,14 @@ export function SimulatorViewerBar(
       : []),
   ];
 
-  const statusNode = statusLabel ? (
-        <View
-          style={simulatorStreamStyles.barStatus}
-          testID={`${props.testID}-status`}
-        >
-          <StreamStatusDot
-            variant={resolveStreamStatusDotVariant(
-              viewModel.stream.phase,
-              viewModel.stream.diagnostic?.reasonCode,
-            )}
-            testID={`${props.testID}-dot`}
-          />
-          <Text
-            style={simulatorStreamStyles.barMeta}
-            numberOfLines={1}
-            testID={`${props.testID}-status-label`}
-          >
-            {statusLabel}
-          </Text>
-        </View>
-      ) : null;
+  const statusNode = status ? (
+    <View style={simulatorStreamStyles.barStatus} testID={`${props.testID}-status`}>
+      <StreamStatusDot variant={status.variant} testID={`${props.testID}-dot`} />
+      <Text style={simulatorStreamStyles.barMeta} numberOfLines={1} testID={`${props.testID}-status-label`}>
+        {status.label}
+      </Text>
+    </View>
+  ) : null;
   const primaryNode = canTakeControl ? (
           <RoundButton
             size="small"
@@ -204,8 +220,13 @@ export function SimulatorViewerBar(
             showCategoryTitles
             onSelect={(id) => {
               setMenuOpen(false);
-              if (id.startsWith('device:'))
-                actions.selectDevice?.(id.slice('device:'.length));
+              if (id.startsWith('device:')) {
+                const simulatorId = id.slice('device:'.length);
+                const target = viewModel.devices.find((entry) => entry.simulatorId === simulatorId);
+                if (target?.state === 'stopped') props.onStartDevice(simulatorId);
+                else actions.selectDevice?.(simulatorId);
+              }
+              else if (id === 'power-off') props.onPowerOff();
               else if (id === 'renew') void actions.renewLease?.();
               else if (id === 'hide-controls') props.onHideControls?.();
             }}

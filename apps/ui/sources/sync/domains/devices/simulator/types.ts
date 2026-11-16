@@ -5,7 +5,11 @@ import type {
     MachineLiveStreamControlSidebandV1} from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 import type {
     SimulatorDeviceResourceV1} from '@happier-dev/protocol/devices/simulator/v1';
-import type { SimulatorDeviceHardwareButtonV1 } from '@happier-dev/protocol/devices/simulator/operationsV1';
+import type {
+    SimulatorDeviceHardwareButtonV1,
+    SimulatorDeviceOperationKindV1,
+    SimulatorDeviceOperationV1,
+} from '@happier-dev/protocol/devices/simulator/operationsV1';
 import type {
     SimulatorSidebandKindV1,
     SimulatorSidebandMessageV1,
@@ -21,10 +25,18 @@ export type SimulatorPreviewAvailability = Readonly<{
     reasonCode?: string;
 }>;
 
+/** A device operation addressed by kind and its own fields; the target device supplies platform and id. */
+export type SimulatorDeviceOperationRequest = SimulatorDeviceOperationV1 extends infer Operation
+    ? Operation extends unknown ? Omit<Operation, 'platform' | 'deviceId'> : never
+    : never;
+
 export type SimulatorPreviewDeviceOption = Readonly<{
     simulatorId: string;
     label: string;
     platformLabel: string;
+    /** The producer's lifecycle state; a stopped device is offered for boot, not for preview. */
+    state: 'running' | 'stopped' | 'unavailable';
+    canBoot: boolean;
     selected: boolean;
     availability: SimulatorPreviewAvailability;
 }>;
@@ -44,8 +56,10 @@ export type SimulatorPreviewControls = Readonly<{
     canSetFps: boolean;
     canSetScale: boolean;
     supportedInputKinds: readonly MachineLiveStreamControlSidebandV1['kind'][];
-    /** The hardware buttons the producer advertises for this device, when it accepts button input. */
+    /** The hardware buttons the producer advertises, when the device takes the hardware operation. */
     hardwareButtons: readonly SimulatorDeviceHardwareButtonV1[];
+    /** Device operations (Actions) the selected device advertises. */
+    deviceOperations: readonly SimulatorDeviceOperationKindV1[];
 }>;
 
 export type SimulatorPreviewDiagnostic = Readonly<{

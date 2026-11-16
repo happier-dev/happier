@@ -165,6 +165,11 @@ export const simulatorStreamStyles = StyleSheet.create((theme) => ({
         ...Typography.variant('label', 'semiBold'),
         color: theme.colors.text.primary,
     },
+    inlineActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s4,
+    },
     toolsBody: {
         paddingBottom: theme.space.s16,
     },

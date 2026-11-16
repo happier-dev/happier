@@ -162,6 +162,7 @@ function selectLease(input: Readonly<{
 }
 
 const NO_HARDWARE_BUTTONS: SimulatorPreviewControls['hardwareButtons'] = [];
+const NO_DEVICE_OPERATIONS: SimulatorPreviewControls['deviceOperations'] = [];
 
 const PLATFORM_LABELS: Readonly<Record<SimulatorDeviceResourceV1['platform'], string>> = {
     ios: 'iOS',
@@ -187,10 +188,11 @@ function selectControls(input: Readonly<{
         supportedInputKinds: inputSupported
             ? input.resource.capture.supportedInputKinds ?? []
             : [],
-        // The producer owns which buttons the device has; they are pressed through button input.
-        hardwareButtons: inputSupported && input.resource.capture.supportedInputKinds?.includes('hardware_button')
+        // The producer owns which buttons the device has; they are pressed through the hardware operation.
+        hardwareButtons: input.resource?.supportedDeviceOperations?.includes('hardware')
             ? input.resource.supportedHardwareButtons ?? NO_HARDWARE_BUTTONS
             : NO_HARDWARE_BUTTONS,
+        deviceOperations: input.resource?.supportedDeviceOperations ?? NO_DEVICE_OPERATIONS,
     };
 }
 
@@ -264,6 +266,8 @@ function selectDeviceOptions(input: SimulatorPreviewSelectionInput): readonly Si
             simulatorId: resource.simulatorId,
             label: resource.displayName,
             platformLabel: PLATFORM_LABELS[resource.platform],
+            state: resource.state ?? 'running',
+            canBoot: resource.supportedDeviceOperations?.includes('boot') === true,
             selected: resource.simulatorId === input.selectedSimulatorId,
             availability: projectSimulatorPreviewAvailability({
                 resource,

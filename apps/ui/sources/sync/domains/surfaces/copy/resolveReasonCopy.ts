@@ -358,6 +358,10 @@ const SIMULATOR_PREVIEW_KEYS = {
     capture_degraded: 'simulatorPreview.availability.captureDegraded',
     stream_degraded: 'simulatorPreview.availability.streamDegraded',
     stream_error: 'simulatorPreview.availability.streamUnavailable',
+    // The browser's video decoder support check (one owner for the player and the viewer).
+    webcodecs_unavailable: 'simulatorPreview.device.videoUnsupportedBody',
+    webcodecs_decoder_unavailable: 'simulatorPreview.device.videoUnsupportedBody',
+    webcodecs_chunk_unavailable: 'simulatorPreview.device.videoUnsupportedBody',
 } as const satisfies Record<string, SimulatorPreviewMessageKey>;
 
 const STREAM_PLAYER_KEYS = {
@@ -499,7 +503,8 @@ type SimulatorPreviewMessageKey =
     | 'simulatorPreview.availability.captureUnavailable'
     | 'simulatorPreview.availability.captureDegraded'
     | 'simulatorPreview.availability.streamDegraded'
-    | 'simulatorPreview.availability.streamUnavailable';
+    | 'simulatorPreview.availability.streamUnavailable'
+    | 'simulatorPreview.device.videoUnsupportedBody';
 
 type StreamPlayerMessageKey =
     | 'streamPlayer.status.permissionExpired'

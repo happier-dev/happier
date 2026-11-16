@@ -11,6 +11,7 @@ import { t } from '@/text';
 
 import { SimulatorUnavailableState } from './SimulatorUnavailableState';
 import { simulatorStreamStyles } from './styles';
+import { resolveSimulatorVideoUnsupportedReason } from './videoSupport';
 
 export type SimulatorStreamViewControls = Readonly<{
     canWatch: boolean;
@@ -85,16 +86,18 @@ export function SimulatorStreamView(props: Readonly<{
     });
     const captureUnavailable = props.resource.capture.status === 'unavailable';
     const retry = props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined;
+    // A browser that cannot decode the video is a cause of its own: retrying never helps.
+    const videoUnsupportedReason = stage === 'unavailable' ? null : resolveSimulatorVideoUnsupportedReason(props.playerState);
 
-    if (stage === 'unavailable') {
-        const reasonCode = captureUnavailable
+    if (stage === 'unavailable' || videoUnsupportedReason) {
+        const reasonCode = videoUnsupportedReason ?? (captureUnavailable
             ? resolveCaptureReason(props.resource)
-            : props.playerState.diagnostic?.reasonCode ?? resolveCaptureReason(props.resource) ?? 'watch_unavailable';
+            : props.playerState.diagnostic?.reasonCode ?? resolveCaptureReason(props.resource) ?? 'watch_unavailable');
         return (
             <StateStage testID={props.testID}>
                 <SimulatorUnavailableState
                     reasonCode={reasonCode}
-                    action={captureUnavailable ? undefined : retry}
+                    action={captureUnavailable || videoUnsupportedReason ? undefined : retry}
                     testID={props.testID}
                 />
             </StateStage>

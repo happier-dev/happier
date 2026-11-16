@@ -1,5 +1,6 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
+import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -11971,6 +11972,7 @@ deleteWarning: "Сохранённые входы и данные сайтов �
 
   simulatorPreview: {
       viewer: simulatorViewerTranslations['ru'],
+      device: simulatorDeviceToolsTranslations['ru'],
     title: 'Симулятор',
     picker: {
       title: 'Устройства',

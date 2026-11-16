@@ -17,6 +17,7 @@ export function SessionSimulatorPreviewPane(props: Readonly<{
             <SimulatorPreviewPane
                 viewModel={props.viewModel}
                 actions={props.actions}
+                sessionId={props.sessionId}
                 testID={`${testID}-preview`}
             />
         </View>
