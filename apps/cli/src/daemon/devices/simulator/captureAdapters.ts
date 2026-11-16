@@ -13,11 +13,7 @@ import {
     type AndroidScrcpyServerRestarter,
 } from './android/capture';
 import type { AndroidScrcpyServerEncoderParamsV1 } from './android/server';
-import { createSimulatorFrameProducerCaptureAdapter } from './capture/adapter';
-import {
-    createIosSimulatorHelperFrameProducer,
-    type IosSimulatorHelperFrameStreamOpener,
-} from './ios/helperFrameProducer';
+import { createSimulatorFrameProducerCaptureAdapter, type SimulatorCaptureFrameProducer } from './capture/adapter';
 
 export type SimulatorCaptureAdapterFactoryOptions = Readonly<{
     android?: Readonly<{
@@ -32,7 +28,7 @@ export type SimulatorCaptureAdapterFactoryOptions = Readonly<{
         maxBufferedBytes?: number;
     }>;
     ios?: Readonly<{
-        openStream?: IosSimulatorHelperFrameStreamOpener;
+        producer?: SimulatorCaptureFrameProducer;
     }>;
 }>;
 
@@ -66,13 +62,11 @@ export function createSimulatorCaptureAdapterForResource(
         });
     }
 
-    if (resource.platform === 'ios' && options.ios?.openStream) {
+    if (resource.platform === 'ios' && options.ios?.producer) {
         return createSimulatorFrameProducerCaptureAdapter({
             sourceId: capture.sourceId,
             sourceCodecs: capture.supportedCodecs,
-            producer: createIosSimulatorHelperFrameProducer({
-                openStream: options.ios.openStream,
-            }),
+            producer: options.ios.producer,
         });
     }
 

@@ -9,6 +9,8 @@ import {
     readSimulatorControlSendAction,
     rejectedSimulatorInputResult,
     unavailableSimulatorInputResult,
+    DEFAULT_SIMULATOR_SWIPE_DURATION_MS,
+    DEFAULT_SIMULATOR_LONG_PRESS_DURATION_MS,
 } from '../input';
 import {
     ANDROID_SCRCPY_ABSOLUTE_ORIENTATION_UNSUPPORTED_REASON,
@@ -28,8 +30,6 @@ import {
 } from './tooling';
 
 const DEFAULT_ANDROID_INPUT_TIMEOUT_MS = 5_000;
-const DEFAULT_ANDROID_SWIPE_DURATION_MS = 250;
-const DEFAULT_ANDROID_LONG_PRESS_DURATION_MS = 500;
 
 export type AndroidSimulatorInputDisplaySize = Readonly<{
     widthPx: number;
@@ -295,7 +295,7 @@ function buildAdbInputCommand(input: Readonly<{
         case 'long_press': {
             if (!displaySize) return { ok: false, status: 'unavailable', reasonCode: 'android_simulator_display_size_unavailable' };
             const [x, y] = xy(control.x, control.y, displaySize);
-            const durationMs = String(control.durationMs ?? DEFAULT_ANDROID_LONG_PRESS_DURATION_MS);
+            const durationMs = String(control.durationMs ?? DEFAULT_SIMULATOR_LONG_PRESS_DURATION_MS);
             return { ok: true, command: { serial: input.serial, args: ['shell', 'input', 'swipe', x, y, x, y, durationMs] } };
         }
         case 'swipe':
@@ -303,7 +303,7 @@ function buildAdbInputCommand(input: Readonly<{
             if (!displaySize) return { ok: false, status: 'unavailable', reasonCode: 'android_simulator_display_size_unavailable' };
             const [fromX, fromY] = xy(control.fromX, control.fromY, displaySize);
             const [toX, toY] = xy(control.toX, control.toY, displaySize);
-            const durationMs = String(control.durationMs ?? DEFAULT_ANDROID_SWIPE_DURATION_MS);
+            const durationMs = String(control.durationMs ?? DEFAULT_SIMULATOR_SWIPE_DURATION_MS);
             return {
                 ok: true,
                 command: {

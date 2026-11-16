@@ -6,7 +6,7 @@ describe('discoverIosSimulatorResources', () => {
         const resource = createIosSimulatorResource({
             device: { udid: 'stopped-device', name: 'iPhone', state: 'shutdown', runtime: 'ios-runtime' },
             health: {
-                v: 1, platform: 'ios', status: 'unavailable', reasonCode: 'helper_artifact_missing',
+                v: 1, platform: 'ios', status: 'unavailable', reasonCode: 'ios_native_producer_unavailable',
                 diagnostics: [],
             },
         });
@@ -18,7 +18,7 @@ describe('discoverIosSimulatorResources', () => {
         expect(resource).not.toHaveProperty('runtimeId');
         expect(createIosSimulatorResource({
             device: { udid: 'running-device', name: 'iPhone', state: 'booted', runtime: 'ios-runtime' },
-            health: { v: 1, platform: 'ios', status: 'unavailable', reasonCode: 'helper_artifact_missing', diagnostics: [] },
+            health: { v: 1, platform: 'ios', status: 'unavailable', reasonCode: 'ios_native_producer_unavailable', diagnostics: [] },
         })).toMatchObject({ state: 'running', runtimeId: 'running-device' });
     });
 
@@ -34,12 +34,7 @@ describe('discoverIosSimulatorResources', () => {
                 reasonCode: 'unsupported_host',
                 diagnostics: [{ code: 'unsupported_host' }],
             }),
-            resolveHelperArtifact: async () => {
-                throw new Error('helper should not be resolved');
-            },
-            probeHelperHealth: async () => {
-                throw new Error('helper should not be probed');
-            },
+            readProducerHealth: async () => { throw new Error('producer should not be read'); },
             runSimctl: async () => {
                 throw new Error('simctl should not run');
             },
@@ -53,7 +48,7 @@ describe('discoverIosSimulatorResources', () => {
         });
     });
 
-    it('projects booted simulators with unavailable capture when the helper artifact is missing', async () => {
+    it('projects booted simulators with unavailable capture when the native producer is unavailable', async () => {
         const mod = await import('./discovery').catch(() => null);
 
         expect(mod?.discoverIosSimulatorResources).toBeTypeOf('function');
@@ -63,14 +58,10 @@ describe('discoverIosSimulatorResources', () => {
             resolveXcodeEnvironment: async () => ({
                 ok: true,
             }),
-            resolveHelperArtifact: async () => ({
-                ok: false,
-                reasonCode: 'helper_artifact_missing',
-                diagnostics: [{ code: 'helper_missing' }],
+            readProducerHealth: async () => ({
+                v: 1, platform: 'ios', status: 'unavailable', reasonCode: 'ios_native_producer_unavailable',
+                diagnostics: [{ code: 'ios_native_producer_load_failed' }],
             }),
-            probeHelperHealth: async () => {
-                throw new Error('helper should not be probed');
-            },
             runSimctl: async () => ({
                 exitCode: 0,
                 stderr: '',
@@ -91,18 +82,18 @@ describe('discoverIosSimulatorResources', () => {
                 capture: {
                     status: 'unavailable',
                     sourceId: 'ios-simulator:A1B2-C3D4:screen',
-                    reasonCode: 'helper_artifact_missing',
+                    reasonCode: 'ios_native_producer_unavailable',
                 },
-                unavailableReason: 'helper_artifact_missing',
+                unavailableReason: 'ios_native_producer_unavailable',
             }],
             health: {
                 status: 'unavailable',
-                reasonCode: 'helper_artifact_missing',
+                reasonCode: 'ios_native_producer_unavailable',
             },
         });
     });
 
-    it('keeps helper-healthy booted simulators unavailable until the stream adapter is wired', async () => {
+    it('keeps producer-healthy booted simulators unavailable until the stream adapter is wired', async () => {
         const mod = await import('./discovery').catch(() => null);
 
         expect(mod?.discoverIosSimulatorResources).toBeTypeOf('function');
@@ -112,22 +103,15 @@ describe('discoverIosSimulatorResources', () => {
             resolveXcodeEnvironment: async () => ({
                 ok: true,
             }),
-            resolveHelperArtifact: async () => ({
-                ok: true,
-                path: '/tmp/helper',
-                version: '1.2.3',
-                digest: 'sha256:helper',
-            }),
-            probeHelperHealth: async () => ({
+            readProducerHealth: async () => ({
                 v: 1,
                 platform: 'ios',
                 status: 'available',
                 usesPrivateFrameworks: true,
-                helperDistribution: 'prebuilt-signed',
+                helperDistribution: 'bundled-native',
                 requiredPrivateFrameworks: ['CoreSimulator', 'SimulatorKit'],
                 supportedCodecs: ['image.mjpeg'],
                 supportedInputKinds: ['tap'],
-                helperVersion: '1.2.3',
             }),
             runSimctl: async () => ({
                 exitCode: 0,
@@ -162,7 +146,7 @@ describe('discoverIosSimulatorResources', () => {
         });
     });
 
-    it('projects helper-healthy booted simulators as MJPEG exclusive resources when the stream adapter is explicitly available', async () => {
+    it('projects producer-healthy booted simulators as MJPEG exclusive resources when the stream adapter is explicitly available', async () => {
         const mod = await import('./discovery').catch(() => null);
 
         expect(mod?.discoverIosSimulatorResources).toBeTypeOf('function');
@@ -172,22 +156,15 @@ describe('discoverIosSimulatorResources', () => {
             resolveXcodeEnvironment: async () => ({
                 ok: true,
             }),
-            resolveHelperArtifact: async () => ({
-                ok: true,
-                path: '/tmp/helper',
-                version: '1.2.3',
-                digest: 'sha256:helper',
-            }),
-            probeHelperHealth: async () => ({
+            readProducerHealth: async () => ({
                 v: 1,
                 platform: 'ios',
                 status: 'available',
                 usesPrivateFrameworks: true,
-                helperDistribution: 'prebuilt-signed',
+                helperDistribution: 'bundled-native',
                 requiredPrivateFrameworks: ['CoreSimulator', 'SimulatorKit'],
                 supportedCodecs: ['image.mjpeg'],
                 supportedInputKinds: ['tap'],
-                helperVersion: '1.2.3',
             }),
             runSimctl: async () => ({
                 exitCode: 0,
@@ -223,46 +200,7 @@ describe('discoverIosSimulatorResources', () => {
         });
     });
 
-    it('keeps the pinned helper artifact fail-closed until a real signed artifact is vendored', async () => {
-        const mod = await import('./discovery').catch(() => null);
 
-        expect(mod?.resolvePinnedIosSimulatorHelperArtifact).toBeTypeOf('function');
-        if (!mod?.resolvePinnedIosSimulatorHelperArtifact) return;
-
-        // The pinned constant carries the all-zero placeholder digest, so resolution must fail
-        // closed (helper_artifact_missing) regardless of host — capture availability stays off
-        // until a genuine signed/notarized helper + digest is pinned and the verifier accepts it.
-        await expect(mod.resolvePinnedIosSimulatorHelperArtifact()).resolves.toMatchObject({
-            ok: false,
-        });
-    });
-
-    it('derives capture availability from a verified pinned helper resolution', async () => {
-        const mod = await import('./discovery').catch(() => null);
-
-        expect(mod?.resolveIosSimulatorCaptureAdapterAvailability).toBeTypeOf('function');
-        if (!mod?.resolveIosSimulatorCaptureAdapterAvailability) return;
-
-        // Verified resolution → available; failed resolution → unavailable. This is the gate the
-        // daemon uses to flip captureAdapterAvailable, so it must be true ONLY when the artifact
-        // verifies.
-        await expect(mod.resolveIosSimulatorCaptureAdapterAvailability({
-            resolveHelperArtifact: async () => ({
-                ok: true,
-                path: '/tmp/helper',
-                version: '1.2.3',
-                digest: 'sha256:helper',
-            }),
-        })).resolves.toBe(true);
-
-        await expect(mod.resolveIosSimulatorCaptureAdapterAvailability({
-            resolveHelperArtifact: async () => ({
-                ok: false,
-                reasonCode: 'helper_artifact_missing',
-                diagnostics: [],
-            }),
-        })).resolves.toBe(false);
-    });
 
     it('discovers booted devices through platform tooling without assuming private framework locations', async () => {
         const mod = await import('./discovery').catch(() => null);
@@ -272,10 +210,9 @@ describe('discoverIosSimulatorResources', () => {
 
         const discovery = mod.createDefaultIosSimulatorResourcesDiscovery({
             platform: 'darwin',
-            resolveHelperArtifact: async () => ({
-                ok: false,
-                reasonCode: 'helper_artifact_missing',
-                diagnostics: [{ code: 'helper_missing' }],
+            readProducerHealth: async () => ({
+                v: 1, platform: 'ios', status: 'unavailable', reasonCode: 'ios_native_producer_unavailable',
+                diagnostics: [{ code: 'ios_native_producer_load_failed' }],
             }),
             runCommand: async (input) => {
                 // The OS boundary models xcrun resolving the selected developer tools,
@@ -305,9 +242,6 @@ describe('discoverIosSimulatorResources', () => {
                     }),
                 };
             },
-            runHelper: async () => {
-                throw new Error('helper should not be probed when artifact is missing');
-            },
         });
 
         await expect(discovery()).resolves.toMatchObject({
@@ -315,12 +249,12 @@ describe('discoverIosSimulatorResources', () => {
                 simulatorId: 'A1B2-C3D4',
                 capture: {
                     status: 'unavailable',
-                    reasonCode: 'helper_artifact_missing',
+                    reasonCode: 'ios_native_producer_unavailable',
                 },
             }],
             health: {
                 status: 'unavailable',
-                reasonCode: 'helper_artifact_missing',
+                reasonCode: 'ios_native_producer_unavailable',
             },
         });
     });

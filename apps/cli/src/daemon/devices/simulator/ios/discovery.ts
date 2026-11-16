@@ -8,14 +8,7 @@ import { defaultSimulatorToolRunner, type SimulatorToolRunner } from '../process
 import { getSimulatorDeviceOperationCapabilities } from '../operations/capabilities';
 import { createIosSimulatorAccessibility } from './accessibility';
 import { createIosSimulatorUnavailableHealth } from './diagnostics';
-import {
-    resolveIosSimulatorHelperArtifact,
-    type IosSimulatorHelperArtifactResolution,
-    type IosSimulatorHelperSignatureResult,
-} from './helperArtifact';
-import { resolveIosSimulatorHelperPin } from './helperPin';
-import type { IosSimulatorHelperProbeRunner } from './helperProbe';
-import { probeIosSimulatorHelperHealth } from './helperProbe';
+import { resolveIosSimulatorNativeProducer } from './native';
 import {
     resolveIosSimulatorXcodeEnvironment,
     type IosSimulatorXcodeCommandResult,
@@ -31,9 +24,6 @@ export type IosSimulatorDiscoveryDevice = Readonly<{
     available?: boolean;
 }>;
 
-export type IosSimulatorDiscoveryReader = () =>
-    Promise<readonly IosSimulatorDiscoveryDevice[]> | readonly IosSimulatorDiscoveryDevice[];
-
 export type IosSimulatorSimctlRunner = (
     input: Readonly<{ command: 'xcrun'; args: readonly string[]; timeoutMs: number }>,
 ) => Promise<IosSimulatorXcodeCommandResult>;
@@ -46,67 +36,17 @@ export type IosSimulatorResourcesDiscoveryResult = Readonly<{
 
 export type DiscoverIosSimulatorResourcesInput = Readonly<{
     resolveXcodeEnvironment: () => Promise<IosSimulatorXcodeEnvironment>;
-    resolveHelperArtifact: () => Promise<IosSimulatorHelperArtifactResolution>;
-    probeHelperHealth: (input: Readonly<{
-        helperPath: string;
-        runHelper?: IosSimulatorHelperProbeRunner;
-    }>) => Promise<IosSimulatorAdapterHealthV1>;
+    readProducerHealth: () => IosSimulatorAdapterHealthV1 | Promise<IosSimulatorAdapterHealthV1>;
     runSimctl: IosSimulatorSimctlRunner;
     captureAdapterAvailable?: boolean;
     accessibilityAvailable?: boolean;
     timeoutMs?: number;
 }>;
 
-// EXTERNAL-ARTIFACT BOUNDARY: the pin is derived (compute-at-build, verify-at-launch) from the
-// vendored manifest.json that scripts/buildIosSimulatorHelper.mjs rewrites after a successful
-// sign + notarize + staple. While no signed/notarized helper has been produced, the manifest still
-// carries the blocked placeholder, so this resolves to the all-zero placeholder digest and the
-// resolver fails closed via the placeholder-digest guard in helperArtifact.ts (iOS capture stays
-// unavailable). No human hand-edit of a digest constant is required after running the signer — the
-// build output flows into the pin automatically; running the iOS argent QA gate before relying on
-// the flip is still required.
-export const PINNED_IOS_SIMULATOR_HELPER_ARTIFACT = resolveIosSimulatorHelperPin();
-
-/**
- * Resolve the pinned vendored helper artifact through the real (digest + signature + version)
- * verification chain. Returns ok:false (fail-closed) while the placeholder digest is pinned or the
- * signed/notarized artifact is absent/unverifiable.
- */
-export function resolvePinnedIosSimulatorHelperArtifact(input: Readonly<{
-    verifyHelperSignature?: (path: string) => Promise<IosSimulatorHelperSignatureResult>;
-}> = {}): Promise<IosSimulatorHelperArtifactResolution> {
-    return resolveIosSimulatorHelperArtifact({
-        expectedVersion: PINNED_IOS_SIMULATOR_HELPER_ARTIFACT.version,
-        expectedDigest: PINNED_IOS_SIMULATOR_HELPER_ARTIFACT.digest,
-        ...(input.verifyHelperSignature ? { verifySignature: input.verifyHelperSignature } : {}),
-    });
-}
-
-/**
- * Derive the iOS capture-availability gate from the verified-artifact resolution. The daemon flips
- * `captureAdapterAvailable` true ONLY when this returns true, which keeps the advertised
- * `capture.status: 'available'` honest (capability-truth): availability is gated on the artifact
- * actually verifying, never on a caller assertion.
- */
-export async function resolveIosSimulatorCaptureAdapterAvailability(input: Readonly<{
-    resolveHelperArtifact?: () => Promise<IosSimulatorHelperArtifactResolution>;
-    verifyHelperSignature?: (path: string) => Promise<IosSimulatorHelperSignatureResult>;
-}> = {}): Promise<boolean> {
-    const resolution = await (input.resolveHelperArtifact
-        ?? (() => resolvePinnedIosSimulatorHelperArtifact(
-            input.verifyHelperSignature ? { verifyHelperSignature: input.verifyHelperSignature } : {},
-        )))();
-    return resolution.ok;
-}
-
 export type CreateDefaultIosSimulatorResourcesDiscoveryInput = Readonly<{
     platform?: NodeJS.Platform | string;
     runCommand?: IosSimulatorXcodeCommandRunner;
-    runHelper?: IosSimulatorHelperProbeRunner;
-    verifyHelperSignature?: (path: string) => Promise<IosSimulatorHelperSignatureResult>;
-    resolveHelperArtifact?: () => Promise<IosSimulatorHelperArtifactResolution>;
-    expectedHelperVersion?: string;
-    expectedHelperDigest?: string;
+    readProducerHealth?: () => IosSimulatorAdapterHealthV1 | Promise<IosSimulatorAdapterHealthV1>;
     captureAdapterAvailable?: boolean;
     timeoutMs?: number;
 }>;
@@ -273,13 +213,7 @@ export async function discoverIosSimulatorResources(
         };
     }
 
-    const helperArtifact = await input.resolveHelperArtifact();
-    const health = helperArtifact.ok
-        ? await input.probeHelperHealth({ helperPath: helperArtifact.path })
-        : createIosSimulatorUnavailableHealth({
-            reasonCode: helperArtifact.reasonCode,
-            diagnostics: helperArtifact.diagnostics,
-        });
+    const health = await input.readProducerHealth();
 
     const simctl = await input.runSimctl({
         command: 'xcrun',
@@ -353,20 +287,11 @@ function createDefaultCommandRunner(runner: SimulatorToolRunner): IosSimulatorXc
     });
 }
 
-function createDefaultHelperRunner(runner: SimulatorToolRunner): IosSimulatorHelperProbeRunner {
-    return async (input) => await runner({
-        command: input.helperPath,
-        args: input.args,
-        timeoutMs: input.timeoutMs,
-    });
-}
-
 export function createDefaultIosSimulatorResourcesDiscovery(
     input: CreateDefaultIosSimulatorResourcesDiscoveryInput = {},
 ): () => Promise<IosSimulatorResourcesDiscoveryResult> {
     const sharedRunner = defaultSimulatorToolRunner;
     const runCommand = input.runCommand ?? createDefaultCommandRunner(sharedRunner);
-    const runHelper = input.runHelper ?? createDefaultHelperRunner(sharedRunner);
     const timeoutMs = input.timeoutMs ?? 5_000;
     const accessibility = createIosSimulatorAccessibility({
         ...(input.platform ? { platform: input.platform as NodeJS.Platform } : {}),
@@ -379,16 +304,7 @@ export function createDefaultIosSimulatorResourcesDiscovery(
             runCommand,
             timeoutMs,
         }),
-        resolveHelperArtifact: input.resolveHelperArtifact ?? (async () => await resolveIosSimulatorHelperArtifact({
-            expectedVersion: input.expectedHelperVersion ?? PINNED_IOS_SIMULATOR_HELPER_ARTIFACT.version,
-            expectedDigest: input.expectedHelperDigest ?? PINNED_IOS_SIMULATOR_HELPER_ARTIFACT.digest,
-            ...(input.verifyHelperSignature ? { verifySignature: input.verifyHelperSignature } : {}),
-        })),
-        probeHelperHealth: async ({ helperPath }) => await probeIosSimulatorHelperHealth({
-            helperPath,
-            runHelper,
-            timeoutMs,
-        }),
+        readProducerHealth: input.readProducerHealth ?? (() => resolveIosSimulatorNativeProducer().health),
         runSimctl: runCommand,
         ...(input.captureAdapterAvailable !== undefined
             ? { captureAdapterAvailable: input.captureAdapterAvailable }

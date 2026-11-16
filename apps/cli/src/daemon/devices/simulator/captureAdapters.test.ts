@@ -10,7 +10,7 @@ import type {
 import { DEFAULT_SIMULATOR_STREAM_CONTROLS_V1 } from '@happier-dev/protocol';
 import type { MachineLiveStreamCaptureStartInput } from '../../peer/mediation/stream/captureAdapter';
 import type { AndroidScrcpyServerHandleResult } from './android/server';
-import type { IosSimulatorHelperFrameMessage } from './ios/helperProtocol';
+import type { SimulatorCaptureFrameProducerStartInput } from './capture/adapter';
 
 const caps: MachineLiveStreamCapsV1 = {
     maxBitrateBps: 256_000,
@@ -158,7 +158,7 @@ describe('createSimulatorCaptureAdapterForResource', () => {
         expect(offeredFrames.map((frame) => frame.codecId)).toEqual(['h264.avcc', 'h264.avcc']);
     });
 
-    it('keeps iOS resources fail-closed until the signed helper stream opener exists', async () => {
+    it('keeps iOS resources fail-closed until the native producer exists', async () => {
         const mod = await import('./captureAdapters').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('createSimulatorCaptureAdapterForResource');
@@ -178,39 +178,18 @@ describe('createSimulatorCaptureAdapterForResource', () => {
         });
     });
 
-    it('uses the iOS helper frame producer when a helper stream opener is provided', async () => {
+    it('uses the iOS native producer through the shared capture adapter', async () => {
         const mod = await import('./captureAdapters').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('createSimulatorCaptureAdapterForResource');
         if (!('createSimulatorCaptureAdapterForResource' in mod)) return;
 
         const stopStream = vi.fn(async () => {});
-        const openStream = vi.fn((input: {
-            sourceId: string;
-            streamId: string;
-            codecId: MachineLiveStreamCodecIdV1;
-            emitMessage: (message: IosSimulatorHelperFrameMessage) => void;
-        }) => {
-            input.emitMessage({
-                v: 1,
-                kind: 'frame',
-                streamId: input.streamId,
-                sourceId: input.sourceId,
-                sequence: 1,
-                timestampMs: 1_234,
-                codecId: input.codecId,
-                payloadKind: 'image_keyframe',
-                payloadEncoding: 'binary_base64',
-                payloadBase64: 'AQID',
-                payloadSizeBytes: 3,
-            });
+        const start = vi.fn(async (input: SimulatorCaptureFrameProducerStartInput) => {
+            input.emitFrame({ codecId: input.negotiatedCodecId, payload: new Uint8Array([1, 2, 3]), keyframe: true });
             return { stop: stopStream };
         });
-        const options = {
-            ios: {
-                openStream,
-            },
-        };
+        const options = { ios: { producer: { start } } };
         const offeredFrames: MachineLiveStreamFrameV1[] = [];
         const adapter = mod.createSimulatorCaptureAdapterForResource(iosResource, options);
 
@@ -227,10 +206,10 @@ describe('createSimulatorCaptureAdapterForResource', () => {
         }));
 
         expect(result).toMatchObject({ ok: true });
-        expect(openStream).toHaveBeenCalledWith(expect.objectContaining({
+        expect(start).toHaveBeenCalledWith(expect.objectContaining({
             sourceId: 'ios-simulator:A1B2-C3D4:screen',
             streamId: 'stream_ios',
-            codecId: 'image.mjpeg',
+            negotiatedCodecId: 'image.mjpeg',
         }));
         expect(offeredFrames).toEqual([expect.objectContaining({
             streamId: 'stream_ios',

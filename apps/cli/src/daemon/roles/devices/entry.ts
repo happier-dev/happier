@@ -12,13 +12,10 @@ import { createDefaultAndroidSimulatorResourcesDiscovery } from '@/daemon/device
 import { createAndroidScrcpyTunnelOwner } from '@/daemon/devices/simulator/android/tunnelOwner';
 import { createSimulatorCaptureAdapterForResource } from '@/daemon/devices/simulator/captureAdapters';
 import { createSimulatorCaptureRegistryReconciler } from '@/daemon/devices/simulator/captureRegistration';
-import {
-  createDefaultIosSimulatorResourcesDiscovery,
-  resolveIosSimulatorCaptureAdapterAvailability,
-  resolvePinnedIosSimulatorHelperArtifact,
-} from '@/daemon/devices/simulator/ios/discovery';
-import { createIosSimulatorHelperSession } from '@/daemon/devices/simulator/ios/helperSession';
-import { verifyIosSimulatorHelperSignature } from '@/daemon/devices/simulator/ios/signature';
+import { createDefaultIosSimulatorResourcesDiscovery } from '@/daemon/devices/simulator/ios/discovery';
+import { resolveIosSimulatorNativeProducer } from '@/daemon/devices/simulator/ios/native';
+import { createIosSimulatorNativeSession } from '@/daemon/devices/simulator/ios/nativeSession';
+import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHappierProcessRoots';
 import type { SimulatorInputLeaseManager } from '@/daemon/devices/simulator/lease';
 import { createAndroidSimulatorPlatformAdapter } from '@/daemon/devices/simulator/platform/android';
 import { createIosSimulatorPlatformAdapter } from '@/daemon/devices/simulator/platform/ios';
@@ -69,8 +66,8 @@ export type DevicesRoleActivation = Readonly<{
     /** The managed browser's resources for Guard and the process census (null until one runs). */
     resourceOwner: () => BrowserResourceOwner | null;
   }>;
-  /** Long-lived helper processes the role owns (iOS simulator helper). */
-  readHelperProcessRoots: () => ReturnType<ReturnType<typeof createIosSimulatorHelperSession>['readProcessRoots']>;
+  /** Long-lived helper processes the role owns. */
+  readHelperProcessRoots: () => readonly HappierProcessRootSource[];
   /**
    * `inactive`: the role was turned off, so the data only it can reach (Session and ephemeral
    * browser profiles) is purged first. `shutdown`: the daemon stops; data stays as today.
@@ -88,38 +85,18 @@ export async function activateDevicesRole(ctx: DevicesRoleContext): Promise<Devi
   let stopped = false;
   let guardBrowserResourceOwner: BrowserResourceOwner | null = null;
   const androidScrcpyTunnelOwner = createAndroidScrcpyTunnelOwner();
-  // iOS capture-availability gate (capability-truth): trust is derived ONLY from a daemon-side
-  // signature/notarization + digest verification of the vendored helper artifact. Until the
-  // signed/notarized helper is produced and pinned (see scripts/buildIosSimulatorHelper.mjs +
-  // PINNED_IOS_SIMULATOR_HELPER_ARTIFACT), this resolves to false and iOS stays fail-closed.
-  const verifyIosHelperSignature = (path: string) => verifyIosSimulatorHelperSignature({ path });
-  // Resolve the pinned vendored helper through the full digest + Developer ID signature +
-  // notarization verification chain ONCE. The same verified resolution drives both the
-  // capture-availability gate and the helper-session owner's process path, so a verified
-  // resource always has a real producer + input sender behind it (capability-truth). While the
-  // placeholder digest is pinned (no signed/notarized artifact produced yet), this fails closed.
-  const iosSimulatorHelperArtifact = await resolvePinnedIosSimulatorHelperArtifact({
-    verifyHelperSignature: verifyIosHelperSignature,
-  });
-  const iosSimulatorCaptureAdapterAvailable = await resolveIosSimulatorCaptureAdapterAvailability({
-    resolveHelperArtifact: async () => iosSimulatorHelperArtifact,
-  });
-  // Single long-lived `--daemon-json` helper-session owner: the iOS analog of the Android scrcpy
-  // server handle. It owns the piped child process and is BOTH the frame-stream producer
-  // (openStream) AND the input command sender (sendCommand). Constructed only when the artifact
-  // verified, so capture/input are never silently no-ops behind an unverified binary.
-  const iosSimulatorHelperSession = iosSimulatorHelperArtifact.ok
-    ? createIosSimulatorHelperSession({ helperPath: iosSimulatorHelperArtifact.path })
+  const iosSimulatorNativeProducer = resolveIosSimulatorNativeProducer();
+  const iosSimulatorNativeSession = iosSimulatorNativeProducer.ok
+    ? createIosSimulatorNativeSession({ addon: iosSimulatorNativeProducer.addon })
     : null;
   const simulatorPreviewAdapter = createComposedSimulatorPreviewAdapter({
     platforms: [
       createIosSimulatorPlatformAdapter({
-        captureAdapterAvailable: iosSimulatorCaptureAdapterAvailable,
         discoverResources: createDefaultIosSimulatorResourcesDiscovery({
-          captureAdapterAvailable: iosSimulatorCaptureAdapterAvailable,
-          verifyHelperSignature: verifyIosHelperSignature,
+          captureAdapterAvailable: iosSimulatorNativeSession !== null,
+          readProducerHealth: () => iosSimulatorNativeProducer.health,
         }),
-        ...(iosSimulatorHelperSession ? { sendInputCommand: iosSimulatorHelperSession.sendCommand } : {}),
+        ...(iosSimulatorNativeSession ? { sendInputCommand: iosSimulatorNativeSession.sendCommand } : {}),
       }),
       createAndroidSimulatorPlatformAdapter({
         discoverResources: createDefaultAndroidSimulatorResourcesDiscovery(),
@@ -156,11 +133,9 @@ export async function activateDevicesRole(ctx: DevicesRoleContext): Promise<Devi
                     restartServer: androidScrcpyTunnelOwner.restartServer,
                     adaptiveBitrate: true,
                   },
-                  // iOS MJPEG frame producer. openStream is supplied ONLY when the signed
-                  // helper artifact verified (capability-truth: a verified resource always
-                  // has a real producer behind it). While unverified, openStream is omitted
-                  // and the iOS branch returns the typed-unavailable capture adapter.
-                  ios: iosSimulatorHelperSession ? { openStream: iosSimulatorHelperSession.openStream } : {},
+                  ios: iosSimulatorNativeSession
+                    ? { producer: iosSimulatorNativeSession.createProducer(resource.deviceId) }
+                    : {},
                 }),
               ),
           }),
@@ -233,7 +208,7 @@ export async function activateDevicesRole(ctx: DevicesRoleContext): Promise<Devi
       purgeForLogout: browserRoutePublication.purgeBrowserStorageForLogout,
       resourceOwner: () => guardBrowserResourceOwner,
     },
-    readHelperProcessRoots: () => iosSimulatorHelperSession?.readProcessRoots() ?? [],
+    readHelperProcessRoots: () => [],
     stop: async (reason = 'shutdown') => {
       if (stopped) return;
       stopped = true;
@@ -251,10 +226,8 @@ export async function activateDevicesRole(ctx: DevicesRoleContext): Promise<Devi
       await browserRoutePublication.stopRecording();
       await simulatorPreviewRuntime.stop();
       guardBrowserResourceOwner = null;
-      // Tear down the long-lived iOS helper child process (SIGTERM) so a verified signed helper
-      // never outlives the role. No-op when iOS stayed fail-closed (no session was created).
-      await iosSimulatorHelperSession?.stop().catch((error: unknown) => {
-        logger.debug('[DAEMON RUN] Failed to stop iOS simulator helper session', error);
+      await iosSimulatorNativeSession?.stop().catch((error: unknown) => {
+        logger.debug('[DAEMON RUN] Failed to stop iOS simulator native session', error);
       });
     },
   };

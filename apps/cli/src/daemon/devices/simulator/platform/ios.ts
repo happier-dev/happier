@@ -6,12 +6,7 @@ import type {
     SimulatorSidebandMessageV1,
 } from '@happier-dev/protocol';
 
-import {
-    createIosSimulatorResource,
-    type IosSimulatorDiscoveryDevice,
-    type IosSimulatorDiscoveryReader,
-    type IosSimulatorResourcesDiscoveryResult,
-} from '../ios/discovery';
+import type { IosSimulatorResourcesDiscoveryResult } from '../ios/discovery';
 import { createIosSimulatorUnavailableHealth } from '../ios/diagnostics';
 import {
     dispatchIosSimulatorInput,
@@ -32,8 +27,6 @@ export type IosSimulatorPlatformAdapter = Readonly<{
             | {
                 ok: false;
                 reasonCode: string;
-                requiredOwner?: 'signed_ios_simulator_private_framework_helper';
-                privateFrameworks?: readonly ['CoreSimulator', 'SimulatorKit'];
             }
         >
     >;
@@ -203,238 +196,64 @@ function createIosCaptureHealthSideband(input: Readonly<{
 }
 
 export function createIosSimulatorPlatformAdapter(input: Readonly<{
-    helperAvailable?: boolean;
-    captureAdapterAvailable?: boolean;
-    discoverBootedSimulators?: IosSimulatorDiscoveryReader;
-    discoverResources?: () => Promise<IosSimulatorResourcesDiscoveryResult> | IosSimulatorResourcesDiscoveryResult;
+    discoverResources: () => Promise<IosSimulatorResourcesDiscoveryResult> | IosSimulatorResourcesDiscoveryResult;
     sendInputCommand?: IosSimulatorInputCommandSender | null;
     now?: () => number;
-}> = { helperAvailable: false }): IosSimulatorPlatformAdapter {
-    const unavailableHealth = createIosSimulatorUnavailableHealth({
-        reasonCode: 'ios_private_helper_unavailable',
-        diagnostics: [{
-            requiredOwner: 'signed_ios_simulator_private_framework_helper',
-            privateFrameworks: ['CoreSimulator', 'SimulatorKit'],
-        }],
-    });
-    let lastDiscoveryDiagnostics: readonly Record<string, unknown>[] = [];
+}>): IosSimulatorPlatformAdapter {
     let lastDiscoveryResult: IosSimulatorResourcesDiscoveryResult | null = null;
-    const readHealth = async (): Promise<IosSimulatorAdapterHealthV1> => input.helperAvailable
-        ? {
-            v: 1,
-            platform: 'ios',
-            status: 'available',
-            usesPrivateFrameworks: true,
-            helperDistribution: 'prebuilt-signed',
-            requiredPrivateFrameworks: ['CoreSimulator', 'SimulatorKit'],
-            supportedCodecs: ['image.mjpeg'],
-            // Capability-truth (L1): input verbs are advertised only once the capture adapter is
-            // wired. While the adapter is unavailable the resource downgrades to
-            // ios_capture_adapter_unavailable, so health must not advertise verbs it cannot service.
-            supportedInputKinds: input.captureAdapterAvailable === true
-                ? ['tap', 'swipe', 'keyboard_text', 'hardware_button']
-                : [],
-        }
-        : unavailableHealth;
-    const readDevices = async (): Promise<readonly IosSimulatorDiscoveryDevice[]> => {
-        try {
-            const devices = await (input.discoverBootedSimulators?.() ?? []);
-            lastDiscoveryDiagnostics = devices.length === 0
-                ? [{
-                    platform: 'ios',
-                    status: 'unavailable',
-                    severity: 'info',
-                    reasonCode: 'simulator_not_booted',
-                }]
-                : [];
-            return devices;
-        } catch (error) {
-            lastDiscoveryDiagnostics = [{
-                platform: 'ios',
-                status: 'unavailable',
-                severity: 'error',
-                reasonCode: 'simulator_discovery_failed',
-                errorName: error instanceof Error ? error.name : 'UnknownError',
-            }];
-            return [];
-        }
-    };
     const readDiscoveryResult = async (): Promise<IosSimulatorResourcesDiscoveryResult> => {
-        if (input.discoverResources) {
-            try {
-                const result = await input.discoverResources();
-                lastDiscoveryResult = result;
-                lastDiscoveryDiagnostics = result.diagnostics;
-                return result;
-            } catch (error) {
-                const health = createIosSimulatorUnavailableHealth({
-                    reasonCode: 'simulator_not_booted',
-                    diagnostics: [{
-                        code: 'simulator_discovery_failed',
-                        errorName: error instanceof Error ? error.name : 'UnknownError',
-                    }],
-                });
-                const result: IosSimulatorResourcesDiscoveryResult = {
-                    resources: [],
-                    diagnostics: [{
-                        platform: 'ios',
-                        status: 'unavailable',
-                        severity: 'error',
-                        reasonCode: 'simulator_discovery_failed',
-                        errorName: error instanceof Error ? error.name : 'UnknownError',
-                    }],
-                    health,
-                };
-                lastDiscoveryResult = result;
-                lastDiscoveryDiagnostics = result.diagnostics;
-                return result;
-            }
+        try {
+            lastDiscoveryResult = await input.discoverResources();
+        } catch (error) {
+            const diagnostics = [{ code: 'simulator_discovery_failed', errorName: error instanceof Error ? error.name : 'UnknownError' }];
+            lastDiscoveryResult = {
+                resources: [],
+                health: createIosSimulatorUnavailableHealth({ reasonCode: 'simulator_not_booted', diagnostics }),
+                diagnostics: [{ platform: 'ios', status: 'unavailable', severity: 'error', reasonCode: 'simulator_discovery_failed', diagnostics }],
+            };
         }
-
-        const [health, devices] = await Promise.all([readHealth(), readDevices()]);
-        return {
-            resources: devices.map((device) => createIosSimulatorResource({
-                device,
-                health,
-                captureAdapterAvailable: input.captureAdapterAvailable,
-            })),
-            diagnostics: [
-                ...lastDiscoveryDiagnostics,
-                ...(health.status !== 'available'
-                    ? [{
-                        platform: health.platform,
-                        status: health.status,
-                        severity: 'error',
-                        reasonCode: health.reasonCode,
-                        diagnostics: health.diagnostics,
-                    }]
-                    : input.captureAdapterAvailable === true || devices.length === 0
-                        ? []
-                        : [{
-                            platform: 'ios',
-                            status: 'unavailable',
-                            severity: 'error',
-                            reasonCode: 'ios_capture_adapter_unavailable',
-                            diagnostics: [{ code: 'ios_capture_adapter_unavailable' }],
-                        }]),
-            ],
-            health,
-        };
-    };
-    const readCurrentHealth = async (): Promise<IosSimulatorAdapterHealthV1> => {
-        if (input.discoverResources) {
-            return (lastDiscoveryResult ?? await readDiscoveryResult()).health;
-        }
-        return await readHealth();
+        return lastDiscoveryResult;
     };
     return {
         platform: 'ios',
         usesPrivateFrameworks: true,
-        health: readCurrentHealth,
-        listResources: async () => {
-            const result = await readDiscoveryResult();
-            return result.resources;
-        },
-        listDiagnostics: async () => {
-            if (input.discoverResources) {
-                const result = lastDiscoveryResult ?? await readDiscoveryResult();
-                return result.diagnostics;
-            }
-            const health = await readHealth();
-            const diagnostics: Record<string, unknown>[] = [...lastDiscoveryDiagnostics];
-            if (health.status === 'unavailable') {
-                diagnostics.push({
-                    platform: health.platform,
-                    status: health.status,
-                    severity: 'error',
-                    reasonCode: health.reasonCode,
-                    diagnostics: health.diagnostics,
-                });
-            }
-            return diagnostics;
-        },
+        health: async () => (lastDiscoveryResult ?? await readDiscoveryResult()).health,
+        listResources: async () => (await readDiscoveryResult()).resources,
+        listDiagnostics: async () => (lastDiscoveryResult ?? await readDiscoveryResult()).diagnostics,
         dispatchAction: async ({ event, resource }) => {
             if (event.type === 'simulator.sideband.request') {
-                const discoveryResult = input.discoverResources || input.discoverBootedSimulators
-                    ? await readDiscoveryResult()
-                    : null;
-                const sidebandAuthority = validateIosSidebandDispatchAuthority({
-                    event,
-                    resource,
-                    ...(discoveryResult ? { authorizedResources: discoveryResult.resources } : {}),
-                });
-                if (!sidebandAuthority.ok) return sidebandAuthority.result;
-                const health = discoveryResult?.health ?? await readCurrentHealth();
+                const discoveryResult = await readDiscoveryResult();
+                const authority = validateIosSidebandDispatchAuthority({ event, resource, authorizedResources: discoveryResult.resources });
+                if (!authority.ok) return authority.result;
                 if (event.kind === 'capture_health') {
                     return actionAcceptedResult(event, createIosCaptureHealthSideband({
-                        event,
-                        resource: sidebandAuthority.resource,
-                        health,
+                        event, resource: authority.resource, health: discoveryResult.health,
                         emittedAtMs: input.now?.() ?? Date.now(),
                     }));
                 }
                 return actionUnavailableResult(event, `ios_simulator_sideband_${event.kind}_unsupported`);
             }
-
             const authority = validateIosControlDispatchAuthority({ event, resource });
             if (!authority.ok) return authority.result;
-
-            const discoveryResult = event.type === 'simulator.control.send' && (input.discoverResources || input.discoverBootedSimulators)
-                ? await readDiscoveryResult()
-                : null;
-            if (discoveryResult) {
-                const discoveryAuthority = validateIosControlDispatchAuthority({
-                    event,
-                    resource,
-                    authorizedResources: discoveryResult.resources,
-                });
-                if (!discoveryAuthority.ok) return discoveryAuthority.result;
-            }
-
-            const health = discoveryResult?.health ?? await readCurrentHealth();
-            if (health.status === 'unavailable') {
-                return {
-                    v: 1,
-                    eventType: event.type,
-                    status: 'unavailable',
-                    reasonCode: health.reasonCode,
-                    diagnostics: [],
-                };
+            const discoveryResult = await readDiscoveryResult();
+            const discoveryAuthority = validateIosControlDispatchAuthority({ event, resource, authorizedResources: discoveryResult.resources });
+            if (!discoveryAuthority.ok) return discoveryAuthority.result;
+            if (discoveryResult.health.status === 'unavailable') {
+                return actionUnavailableResult(event, discoveryResult.health.reasonCode);
             }
             return await dispatchIosSimulatorInput({
-                event,
-                supportedInputKinds: health.supportedInputKinds,
+                event, supportedInputKinds: discoveryResult.health.supportedInputKinds,
                 ...(input.sendInputCommand !== undefined ? { sendCommand: input.sendInputCommand } : {}),
             });
         },
         stop: async () => {},
-        capture: async (captureInput) => {
-            const discoveryResult = input.discoverResources ? await readDiscoveryResult() : null;
-            if (discoveryResult) {
-                const resource = discoveryResult.resources.find((item) => item.simulatorId === captureInput.simulatorId);
-                if (!resource) return { ok: false, reasonCode: 'unknown_simulator' };
-                return resource.capture.status === 'available'
-                    ? { ok: true }
-                    : { ok: false, reasonCode: resource.capture.reasonCode };
-            }
-
-            const health = await readCurrentHealth();
-            if (health.status === 'available') {
-                return input.captureAdapterAvailable === true
-                    ? { ok: true }
-                    : { ok: false, reasonCode: 'ios_capture_adapter_unavailable' };
-            }
-            return health.reasonCode === 'ios_private_helper_unavailable'
-                ? {
-                    ok: false,
-                    reasonCode: health.reasonCode,
-                    requiredOwner: 'signed_ios_simulator_private_framework_helper',
-                    privateFrameworks: ['CoreSimulator', 'SimulatorKit'],
-                }
-                : {
-                    ok: false,
-                    reasonCode: health.reasonCode,
-                };
+        capture: async ({ simulatorId }) => {
+            const discoveryResult = await readDiscoveryResult();
+            const resource = discoveryResult.resources.find((item) => item.simulatorId === simulatorId);
+            if (!resource) return { ok: false, reasonCode: 'unknown_simulator' };
+            return resource.capture.status === 'available'
+                ? { ok: true }
+                : { ok: false, reasonCode: resource.capture.reasonCode };
         },
     };
 }

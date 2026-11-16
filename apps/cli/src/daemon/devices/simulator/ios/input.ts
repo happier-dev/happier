@@ -1,5 +1,6 @@
 import type {
     MachineLiveStreamInputControlKindV1,
+    MachineLiveStreamControlSidebandV1,
     SimulatorPreviewActionResultV1,
     SimulatorPreviewActionV1,
 } from '@happier-dev/protocol';
@@ -10,13 +11,9 @@ import {
     rejectedSimulatorInputResult,
     unavailableSimulatorInputResult,
 } from '../input';
-import {
-    serializeIosSimulatorHelperCommand,
-    type IosSimulatorHelperControlCommand,
-} from './helperProtocol';
 
 export type IosSimulatorInputCommandSender = (
-    command: IosSimulatorHelperControlCommand,
+    command: MachineLiveStreamControlSidebandV1,
 ) => Promise<Readonly<
     | { ok: true; diagnostics?: readonly Record<string, unknown>[] }
     | { ok: false; reasonCode: string; diagnostics?: readonly Record<string, unknown>[]; status?: 'rejected' | 'unavailable' }
@@ -44,22 +41,16 @@ export async function dispatchIosSimulatorInput(
     if (!input.sendCommand) {
         return unavailableSimulatorInputResult(input.event, 'ios_simulator_input_sender_unavailable', [{
             code: 'ios_simulator_input_sender_unavailable',
-            requiredOwner: 'signed_ios_simulator_private_framework_helper',
+            requiredOwner: 'bundled_ios_simulator_native_producer',
             privateFrameworks: ['CoreSimulator', 'SimulatorKit'],
         }]);
     }
 
-    const command = serializeIosSimulatorHelperCommand({
-        control: action.control,
-        ...(input.supportedInputKinds ? { supportedInputKinds: input.supportedInputKinds } : {}),
-    });
-    if (!command.ok) {
-        return command.status === 'rejected'
-            ? rejectedSimulatorInputResult(input.event, command.reasonCode, command.diagnostics ?? [])
-            : unavailableSimulatorInputResult(input.event, command.reasonCode, command.diagnostics ?? []);
+    if (input.supportedInputKinds && !input.supportedInputKinds.some((kind) => kind === action.control.kind)) {
+        return unavailableSimulatorInputResult(input.event, 'ios_simulator_control_unsupported');
     }
 
-    const result = await input.sendCommand(command.command);
+    const result = await input.sendCommand(action.control);
     if (result.ok) return acceptedSimulatorInputResult(input.event, result.diagnostics ?? []);
 
     return result.status === 'rejected'

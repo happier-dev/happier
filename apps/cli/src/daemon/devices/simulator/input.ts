@@ -6,6 +6,9 @@ import type {
 
 export type SimulatorControlSendAction = Extract<SimulatorPreviewActionV1, { type: 'simulator.control.send' }>;
 
+export const DEFAULT_SIMULATOR_SWIPE_DURATION_MS = 250;
+export const DEFAULT_SIMULATOR_LONG_PRESS_DURATION_MS = 500;
+
 function eventType(event: SimulatorPreviewActionV1): SimulatorPreviewActionTypeV1 {
     return event.type;
 }

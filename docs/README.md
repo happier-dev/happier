@@ -30,7 +30,7 @@ This folder documents how Happier works internally, with a focus on protocol, ba
 - [surface-states.md](surface-states.md): Container-sized state composition, retained content and recovery presentation (0.3 development).
 - [triage-sources.md](triage-sources.md): Versioned Triage source ABI, feature-package boundary and caller-bound source administration (0.3 development).
 - [scm-diff-summary.md](scm-diff-summary.md): Captured SCM comparisons, progressive outputs, editable machine results, personal marks, retained generators, review narration and accepted commit application (unreleased 0.3 development).
-- ios-simulator-helper.md: iOS simulator helper architecture, trust chain, and the private-framework App Store / TOS posture.
+- ios-simulator-helper.md: iOS simulator native producer, capture/input ownership, availability and recovery.
 - issue-triage.md: How the GitHub issue triage workflows are wired to maintainer tooling.
 
 ### Archived architecture snapshots

@@ -17,7 +17,7 @@ const controlAction = (control: Control): SimulatorPreviewActionV1 => ({
 });
 
 describe('iOS simulator input dispatch', () => {
-    it('fails closed when no signed helper command sender is supplied', async () => {
+    it('fails closed when no native input sender is supplied', async () => {
         const { dispatchIosSimulatorInput } = await import('./input');
 
         await expect(dispatchIosSimulatorInput({
@@ -31,12 +31,12 @@ describe('iOS simulator input dispatch', () => {
             status: 'unavailable',
             reasonCode: 'ios_simulator_input_sender_unavailable',
             diagnostics: [expect.objectContaining({
-                requiredOwner: 'signed_ios_simulator_private_framework_helper',
+                requiredOwner: 'bundled_ios_simulator_native_producer',
             })],
         });
     });
 
-    it('serializes typed controls to the injected helper command sender', async () => {
+    it('passes typed controls to the native input owner', async () => {
         const { dispatchIosSimulatorInput } = await import('./input');
         const sendCommand = vi.fn(async () => ({ ok: true as const }));
 
@@ -47,24 +47,15 @@ describe('iOS simulator input dispatch', () => {
 
         expect(sendCommand).toHaveBeenCalledWith({
             v: 1,
-            kind: 'control',
-            commandId: 'cmd-event-1',
-            target: {
-                sourceId: 'ios-simulator:A1B2-C3D4:screen',
-                simulatorId: 'A1B2-C3D4',
-            },
-            control: {
-                v: 1,
-                kind: 'keyboard_text',
-                streamId: 'stream-1',
-                sourceId: 'ios-simulator:A1B2-C3D4:screen',
-                eventId: 'event-1',
-                text: 'hello',
-            },
+            kind: 'keyboard_text',
+            streamId: 'stream-1',
+            sourceId: 'ios-simulator:A1B2-C3D4:screen',
+            eventId: 'event-1',
+            text: 'hello',
         });
     });
 
-    it('rejects controls not advertised by the helper before invoking the sender', async () => {
+    it('rejects controls not advertised by the producer before invoking the sender', async () => {
         const { dispatchIosSimulatorInput } = await import('./input');
         const sendCommand = vi.fn(async () => ({ ok: true as const }));
 
