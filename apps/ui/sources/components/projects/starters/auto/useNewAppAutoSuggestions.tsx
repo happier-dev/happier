@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { validateDeploySuggestionV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
+import type { InteractionTransientQuestionAnswerV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
 import type {
   DeploySuggestionCatalogV1,
   DeploySuggestionRecommendationV1,
@@ -66,8 +68,14 @@ export function useNewAppAutoSuggestions(
   const [phase, setPhase] = React.useState<Phase>({ kind: 'describe' });
   const [chosenCardId, setChosenCardId] = React.useState<string | null>(null);
   const abort = React.useRef<AbortController | null>(null);
+  const round = React.useRef<Readonly<{
+    serverId: string;
+    catalog: DeploySuggestionCatalogV1;
+    answers: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>;
+  }> | null>(null);
   // The accepted Run's own Stop, for a Retry after its target refused the first one.
   const runStop = React.useRef<RunStop | null>(null);
+  const lastRecommendations = React.useRef<Extract<DeploySuggestionOutcome, { kind: 'recommendations' }> | null>(null);
 
   // Stop is a request: the step stays on the Run until its target confirms the stop, and a refusal stays on screen.
   const stop = React.useCallback(() => {
@@ -100,18 +108,29 @@ export function useNewAppAutoSuggestions(
   }, [params.active, stop]);
   React.useEffect(() => () => abort.current?.abort(), []);
 
-  const suggest = React.useCallback(() => {
+  const runSuggestion = React.useCallback((followUp?: Readonly<{
+    answers?: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>;
+    note?: string;
+    refreshCatalog?: boolean;
+  }>) => {
     if (!params.serverId || !description.trim()) return;
+    const serverId = params.serverId;
+    const previous = followUp && round.current?.serverId === params.serverId ? round.current : null;
+    const answers = previous ? { ...previous.answers, ...followUp?.answers } : followUp?.answers;
+    if (!followUp) { round.current = null; lastRecommendations.current = null; }
     abort.current?.abort();
     const controller = new AbortController();
     abort.current = controller;
-    setChosenCardId(null);
+    if (!followUp) setChosenCardId(null);
     runStop.current = null;
     setPhase({ kind: 'working', counts: null, runner: null, running: false, stop: 'idle' });
     let runner: Runner | null = null;
     void suggestDeploySetup({
       serverId: params.serverId,
       description,
+      ...(previous && !followUp?.refreshCatalog ? { catalog: previous.catalog } : {}),
+      ...(answers ? { answers } : {}),
+      ...(followUp?.note === undefined ? {} : { note: followUp.note }),
       choice: runnerChoice ?? null,
       signal: controller.signal,
       onProgress: (progress) => {
@@ -141,10 +160,18 @@ export function useNewAppAutoSuggestions(
         setPhase({ kind: 'describe' });
         return;
       }
-      if (outcome.kind === 'recommendations') setChosenCardId(cardId(0));
+      if ('catalog' in outcome) round.current = { serverId, catalog: outcome.catalog, answers: answers ?? {} };
+      if (outcome.kind === 'recommendations') { lastRecommendations.current = outcome; setChosenCardId(cardId(0)); }
       setPhase({ kind: 'settled', outcome, runner });
     });
   }, [description, params.serverId, runnerChoice]);
+
+  const suggest = React.useCallback(() => runSuggestion(), [runSuggestion]);
+  const answerQuestions = React.useCallback((answers: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>) =>
+    runSuggestion({ answers }), [runSuggestion]);
+  const suggestAgain = React.useCallback((note: string) => runSuggestion({ note }), [runSuggestion]);
+  // Connecting changes catalog facts. Only this explicit refresh reloads a follow-up snapshot.
+  const refreshSuggestions = React.useCallback(() => runSuggestion({ refreshCatalog: true }), [runSuggestion]);
 
   const backToDescription = React.useCallback(
     () => setPhase({ kind: 'describe' }),
@@ -205,12 +232,12 @@ export function useNewAppAutoSuggestions(
         ),
       };
     }
-    // Questions render in the step with U2's extracted question form; until then they read as no setup yet.
+    if (outcome.kind === 'questions') return { kind: 'questions', questions: outcome.questions.questions };
     if (outcome.kind === 'failed') return { kind: 'failed' };
     return { kind: 'nothing' };
   }, [openMachineSetup, phase, stop, theme.colors.text.secondary]);
 
-  const settled = phase.kind === 'settled' ? phase.outcome : null;
+  const settled = phase.kind === 'settled' ? phase.outcome : phase.kind === 'working' ? lastRecommendations.current : null;
   const chosen = React.useMemo((): NewAppAutoChosen | null => {
     if (settled?.kind !== 'recommendations' || chosenCardId === null)
       return null;
@@ -218,6 +245,21 @@ export function useNewAppAutoSuggestions(
       settled.recommendations[Number(chosenCardId.slice(CARD_PREFIX.length))];
     return recommendation ? { recommendation, catalog: settled.catalog } : null;
   }, [chosenCardId, settled]);
+  const adjustChosen = React.useCallback((changes: Partial<Pick<DeploySuggestionRecommendationV1, 'source' | 'targetId' | 'data'>>) => {
+    if (!chosen || phase.kind !== 'settled' || phase.outcome.kind !== 'recommendations') return false;
+    const source = changes.source ?? chosen.recommendation.source;
+    const starter = source.kind === 'starter' ? chosen.catalog.starters.find(item => item.id === source.starterId) : undefined;
+    const candidate = { ...chosen.recommendation, ...changes, ...(starter?.deploy ? { stack: starter.deploy } : {}) };
+    const checked = validateDeploySuggestionV1({ recommendations: [candidate] }, chosen.catalog);
+    const recommendation = checked.recommendations[0];
+    if (!recommendation) return false;
+    const outcome = { ...phase.outcome, recommendations: phase.outcome.recommendations.map((item, index) =>
+      cardId(index) === chosenCardId ? recommendation : item) };
+    lastRecommendations.current = outcome;
+    setPhase({ ...phase, outcome });
+    return true;
+  }, [chosen, chosenCardId, phase]);
+  const questions = settled?.kind === 'questions' ? settled.questions : null;
   const runner = phase.kind === 'describe' ? null : phase.runner;
 
   return {
@@ -225,6 +267,11 @@ export function useNewAppAutoSuggestions(
     setDescription,
     view,
     suggest,
+    questions,
+    answerQuestions,
+    suggestAgain,
+    refreshSuggestions,
+    adjustChosen,
     stop,
     backToDescription,
     chosenCardId,

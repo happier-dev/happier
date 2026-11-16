@@ -481,3 +481,69 @@ it('when every suggestion is dropped it says it couldn’t suggest, and Try agai
     await fixture.dispose();
   }
 });
+
+it('F2: canonical answers and adjustment notes each start one checked run with zero catalog reads; connect refresh reads once', async () => {
+  const { useNewAppAutoSuggestions } = await import('./auto/useNewAppAutoSuggestions');
+  const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?', required: true }] };
+  let round = 0;
+  let releaseNote!: () => void;
+  const noteGate = new Promise<void>(resolve => { releaseNote = resolve; });
+  suggestionBoundary({ deploymentSuggestionTargets: async () => ({ targets, stores: [{ id: 'db', engine: 'postgres' }] }),
+    executionRunWait: async () => {
+      round++;
+      if (round === 3) await noteGate;
+      return { ok: true, status: 'succeeded', result: terminal(round === 1
+        ? { recommendations: [], questions } : { recommendations: [recommendation] }) };
+    } });
+  const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://auto-u2-followup.test',
+    { key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [] } }, 'updated', { handleRequest: async () => null });
+  const { TransientQuestionForm } = await import('@/components/appShell/plugins/TransientQuestionForm');
+  let current!: ReturnType<typeof useNewAppAutoSuggestions>;
+  function Harness() {
+    current = useNewAppAutoSuggestions({ serverId: fixture.home.id, active: true });
+    return current.questions ? <TransientQuestionForm questions={current.questions.questions}
+      onAnswer={current.answerQuestions} onCancel={current.backToDescription} /> : null;
+  }
+  const screen = await renderScreen(<Harness />);
+  try {
+    await act(async () => current.setDescription('  Bakery\n'));
+    await act(async () => current.suggest());
+    await waitForHomeGovernance(() => expect(current.questions).toEqual(questions));
+    const answers = { purpose: { kind: 'text' as const, value: 'Order bread' } };
+    execute.mockClear();
+    await act(async () => screen.changeTextByTestId('app-shell-question-purpose-text', 'Order bread'));
+    await screen.pressByTestIdAsync('app-shell-question-submit');
+    await waitForHomeGovernance(() => expect(current.chosen).toBeTruthy());
+    expect(calls('deployments.suggestions.catalog')).toHaveLength(0);
+    expect(calls('execution.run.start')).toHaveLength(1);
+    expect(calls('deployments.suggestions.check')).toHaveLength(1);
+    expect(calls('execution.run.start')[0]![1]).toMatchObject({ intentInput: { input: { description: '  Bakery\n', answers } } });
+    execute.mockClear();
+    let adjusted = false;
+    await act(async () => { adjusted = current.adjustChosen({ data: { kind: 'store', storeId: 'db', engine: 'postgres' } }); });
+    expect(adjusted).toBe(true);
+    expect(current.chosen!.recommendation.data).toEqual({ kind: 'store', storeId: 'db', engine: 'postgres' });
+    await act(async () => { adjusted = current.adjustChosen({ targetId: 'invented' }); });
+    expect(adjusted).toBe(false);
+    expect(current.chosen!.recommendation.targetId).toBe('own');
+    expect(execute).not.toHaveBeenCalled();
+    const snapshot = current.chosen!.catalog;
+    execute.mockClear();
+    await act(async () => current.suggestAgain('Keep it free'));
+    await waitForHomeGovernance(() => expect(calls('execution.run.start')).toHaveLength(1));
+    expect(current.view.kind).toBe('working');
+    expect(current.chosen!.recommendation.data).toEqual({ kind: 'store', storeId: 'db', engine: 'postgres' });
+    await act(async () => releaseNote());
+    await waitForHomeGovernance(() => expect(current.view.kind).toBe('recommendations'));
+    expect(calls('deployments.suggestions.catalog')).toHaveLength(0);
+    expect(calls('execution.run.start')).toHaveLength(1);
+    expect(calls('deployments.suggestions.check')).toHaveLength(1);
+    expect(calls('execution.run.start')[0]![1]).toMatchObject({ intentInput: { input: { catalog: snapshot, answers, note: 'Keep it free' } } });
+    execute.mockClear();
+    await act(async () => current.refreshSuggestions());
+    await waitForHomeGovernance(() => expect(current.chosen).toBeTruthy());
+    expect(calls('deployments.suggestions.catalog')).toHaveLength(1);
+    expect(calls('execution.run.start')).toHaveLength(1);
+    expect(calls('deployments.suggestions.check')).toHaveLength(1);
+  } finally { await screen.unmount(); await fixture.dispose(); }
+});
