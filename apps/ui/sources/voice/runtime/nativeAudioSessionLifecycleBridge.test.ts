@@ -141,6 +141,7 @@ async function withNativeBridge(
       return new Response('{}', { status: 404 });
     }),
   });
+  await sync.awaitBootstrapForegroundAcquisition();
   const voice = writeVoiceProviderSettingsConfig(previousState.settings.voice, entry.providerId, ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS);
   storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
     voice: { ...voice, providerId: entry.providerId },
@@ -239,6 +240,7 @@ async function withNativePcmBridge(run: (fixture: Readonly<{
       ?? answerVoiceRealtimePreparationHttpRequest(url, storage.getState().settings)
       ?? (new URL(String(url)).pathname === '/health' ? Response.json({ status: 'ok' }) : new Response('{}', { status: 404 })),
   });
+  await sync.awaitBootstrapForegroundAcquisition();
   const voice = writeVoiceProviderSettingsConfig(previousState.settings.voice, entry.providerId, { ...XAI_REALTIME_DEFAULT_SETTINGS, resumptionEnabled: false });
   const contribution = { pluginId: entry.pluginId, localId: entry.declaration.id };
   const saved = saveAndUseAccountVoiceCredential({ settings: settingsParse({

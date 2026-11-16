@@ -764,7 +764,7 @@ describe('VoiceProviderSettingsActions', () => {
             ? input.href
             : input.url,
       );
-      if (request.pathname === '/v1/voices') {
+      if (request.pathname === '/v2/voices') {
         return new Response(JSON.stringify({
           voices: [{ voice_id: 'hpp4J3VqNfWAUOO0d1Us', name: 'Default Happier Voice' }],
         }), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -846,7 +846,7 @@ describe('VoiceProviderSettingsActions', () => {
 
   it('tells the user which setting to fix when the provider reports a typed unusable-voice code', async () => {
     const http = provider.fetch.getMockImplementation()!;
-    provider.fetch.mockImplementation(async (input, init) => providerUrl(input).pathname === '/v1/voices'
+    provider.fetch.mockImplementation(async (input, init) => providerUrl(input).pathname === '/v2/voices'
       ? provider.response({ voices: [{ voice_id: 'another-voice', name: 'HAPPIER_PROVIDER_PROSE_SENTINEL private-request-id' }] })
       : await http(input, init));
     const { VoiceProviderSettingsActions } = await import('./VoiceProviderSettingsActions');

@@ -200,7 +200,7 @@ describe('the shared realtime voice catalog', () => {
     });
     expect(closed.getCurrent().lastKnownRows).toEqual([{ id: 'voice-catalog-1', name: 'Sage', previewAvailable: false }]);
     const voiceRequests = () => runtime.fetch.mock.calls.filter(([request, init]) =>
-      init?.method === 'GET' && new URL(request instanceof Request ? request.url : String(request)).pathname === '/v1/voices');
+      init?.method === 'GET' && new URL(request instanceof Request ? request.url : String(request)).pathname === '/v2/voices');
     expect(voiceRequests()).toHaveLength(1);
     await closed.rerender('different-credential-target');
     expect(closed.getCurrent().lastKnownRows).toBeNull();

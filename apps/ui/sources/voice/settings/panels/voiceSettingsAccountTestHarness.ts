@@ -128,7 +128,7 @@ export function createElevenLabsSettingsRuntimeTestHarness() {
             || !new Headers(init.headers).get('xi-api-key')) throw new Error('Unexpected vendor HTTP authority');
         const method = init.method ?? 'GET';
         if (method === 'GET' && url.pathname === '/v1/convai/agents') return response({ agents: [], has_more: false, next_cursor: null });
-        if (method === 'GET' && url.pathname === '/v1/voices') return response({ voices: [{ voice_id: 'hpp4J3VqNfWAUOO0d1Us', name: 'Happier voice', category: 'premade' }] });
+        if (method === 'GET' && url.pathname === '/v2/voices') return response({ voices: [{ voice_id: 'hpp4J3VqNfWAUOO0d1Us', name: 'Happier voice', category: 'premade' }], has_more: false, next_page_token: null });
         if (method === 'GET' && url.pathname === '/v1/convai/tools') return response({ tools: [], has_more: false, next_cursor: null });
         if (method === 'POST' && url.pathname === '/v1/convai/tools') return response({ id: `tool_${++nextToolId}` });
         if (method === 'POST' && url.pathname === '/v1/convai/agents/create') {
