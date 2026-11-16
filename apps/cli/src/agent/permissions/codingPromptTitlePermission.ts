@@ -1,5 +1,5 @@
 import {
-  isCodingPromptSessionTitleUpdatesEnabled,
+  resolveCodingPromptSessionTitleInstructionModeV1,
   parseHappierToolsShellBridgeCommand,
 } from '@happier-dev/protocol';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
@@ -36,11 +36,17 @@ export function isAgentSessionTitleToolCall(toolName: string, input: unknown): b
     || isShellBridgeTitleCall(toolName, input);
 }
 
+/**
+ * Enforces the title mode at the write boundary, not just in the prompt: start-only ('initial')
+ * mode behaves as disabled once the Happier Session already has a title, so a replayed or
+ * stale instruction cannot make an agent overwrite it. Explicit user renames do not pass here.
+ */
 export function shouldDenyAgentSessionTitleToolCall(params: Readonly<{
   settings: unknown;
+  sessionMetadata?: unknown;
   toolName: string;
   input: unknown;
 }>): boolean {
-  return !isCodingPromptSessionTitleUpdatesEnabled(params.settings)
+  return resolveCodingPromptSessionTitleInstructionModeV1(params.settings, params.sessionMetadata) === 'disabled'
     && isAgentSessionTitleToolCall(params.toolName, params.input);
 }
