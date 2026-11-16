@@ -104,4 +104,22 @@ describe('simulator device operations', () => {
             ['-s', 'emulator-1', 'shell', 'pm', 'clear-permission-flags', 'com.example', 'android.permission.CAMERA', 'user-set', 'user-fixed'],
         ]);
     });
+
+    it('returns a bootable AVD identity after Android power-off and retains native identity failures before killing', async () => {
+        const run = vi.fn<SimulatorOperationRunner>(async ({ args }) => args.includes('name') ? result('Phone_AVD\nOK\n') : result());
+        const operations = createSimulatorDeviceOperations({ platform: 'linux', run,
+            resolveAdb: async () => ({ ok: true, command: 'adb', source: 'path' }) });
+        expect(await operations.execute({ operation: 'power_off', platform: 'android', deviceId: 'emulator-5680' })).toMatchObject({
+            ok: true, device: { deviceId: 'avd:Phone_AVD', avdName: 'Phone_AVD', state: 'stopped', supportedDeviceOperations: ['boot'] },
+        });
+        expect(run.mock.calls.map(([input]) => input.args)).toEqual([
+            ['-s', 'emulator-5680', 'emu', 'avd', 'name'], ['-s', 'emulator-5680', 'emu', 'kill'],
+        ]);
+        run.mockClear();
+        run.mockResolvedValue({ ...result('', 1), stderr: 'Emulator identity unavailable' });
+        expect(await operations.execute({ operation: 'power_off', platform: 'android', deviceId: 'emulator-5680' })).toMatchObject({
+            ok: false, errorCode: 'simulator_tool_failed', step: 'power_off.identity', exitCode: 1, cause: 'Emulator identity unavailable',
+        });
+        expect(run.mock.calls.map(([input]) => input.args)).toEqual([['-s', 'emulator-5680', 'emu', 'avd', 'name']]);
+    });
 });

@@ -13,7 +13,7 @@ import { createIosSimulatorUnavailableHealth } from '../ios/diagnostics';
 import { createSimulatorOperationRunner, type SimulatorOperationProcessResult, type SimulatorOperationRunner } from '../process';
 import { bootAndroidSimulator, type AndroidEmulatorSpawn } from './androidBoot';
 import { isSimulatorDeviceOperationBacked } from './capabilities';
-import { readAndroidSimulatorInventory } from './inventory';
+import { parseAndroidAvdName, readAndroidSimulatorInventory } from './inventory';
 
 export type SimulatorDeviceOperationResult = Readonly<
     | { ok: true; device?: SimulatorDeviceResourceV1; png?: Buffer }
@@ -128,9 +128,17 @@ export function createSimulatorDeviceOperations(options: CreateSimulatorDeviceOp
                     return { ok: true, device: lifecycleResource('android', serial, 'running', avdName) };
                 }
                 if (input.deviceId.startsWith('avd:')) return { ok: false, errorCode: 'simulator_not_booted', step: input.operation };
+                if (input.operation === 'power_off') {
+                    const identity = await run({ command, args: ['-s', input.deviceId, 'emu', 'avd', 'name'], signal });
+                    if (identity.exitCode !== 0) return failed('power_off.identity', identity);
+                    const avdName = parseAndroidAvdName(identity.stdout.toString('utf8'));
+                    if (!avdName) return { ok: false, errorCode: 'android_emulator_identity_invalid', step: 'power_off.identity' };
+                    const poweredOff = await run({ command, args: ['-s', input.deviceId, 'emu', 'kill'], signal });
+                    if (poweredOff.exitCode !== 0) return failed('power_off', poweredOff);
+                    return { ok: true, device: lifecycleResource('android', `avd:${avdName}`, 'stopped', avdName) };
+                }
                 let shell: readonly string[] | undefined;
                 switch (input.operation) {
-                    case 'power_off': args = ['emu', 'kill']; break;
                     case 'app_launch': shell = ['monkey', '-p', input.appId, '-c', 'android.intent.category.LAUNCHER', '1']; args = []; break;
                     case 'app_terminate': shell = ['am', 'force-stop', input.appId]; args = []; break;
                     case 'open_url': shell = ['am', 'start', '-a', 'android.intent.action.VIEW', '-d', input.url]; args = []; break;
