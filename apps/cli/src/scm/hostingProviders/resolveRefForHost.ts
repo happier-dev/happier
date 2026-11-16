@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { normalizeScmHostingRepositoryIdentity, ScmHostingRepositoryIdentityV1Schema } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
@@ -26,7 +26,9 @@ const resultSchema = z.union([
         branch: z.string(), headSha: ScmCommitOidSchema }) }),
     z.object({ kind: z.literal('unavailable'), failure: z.object({ code: z.string().check(z.minLength(1)) }) }),
 ]);
-const refuse = (code: string, cause?: ActionExecuteFailure): never => { throw Object.assign(new Error(code, { cause }), { code }); };
+const refuse = (code: string, cause?: ActionExecuteFailure): never => {
+    throw Object.assign(createActionExecuteFailureError({ ...cause, ok: false, errorCode: code, error: code }), { cause });
+};
 
 /** The hosting provider owns the remote read; the requester Account executor owns its credential. */
 export async function resolveScmHostingRefForHost(input: Readonly<{
