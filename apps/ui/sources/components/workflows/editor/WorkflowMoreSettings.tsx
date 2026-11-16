@@ -9,7 +9,6 @@ import {
 import {
   applyWorkflowDefinitionEditsV1,
   setWorkflowDefaultField,
-  setWorkflowFinalOutput,
 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 
@@ -36,7 +35,6 @@ import {
   useWorkflowEditorSelector,
   type WorkflowEditorDraftStore,
 } from './workflowEditorDraftStore';
-import { WorkflowFinalOutputEditor } from './WorkflowFinalOutputEditor';
 import { WorkflowLastRun } from './WorkflowRecentRuns';
 import { WorkflowRolesEditor } from './WorkflowRolesEditor';
 import { WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE } from './WorkflowStepInspector';
@@ -227,10 +225,6 @@ export function WorkflowMoreSettings(
                 onChangeText={(next) => props.onChangeDescription?.(next)}
                 testID={`${id}-description`}
               />)}
-          {readOnly ? null : (
-            // The workflow's result, until the page's Result row carries it (open design question, WF-P2-HOW-1116).
-            <WorkflowFinalOutputHost draftStore={props.draftStore} onChange={onChange} testIDPrefix={id} />
-          )}
           {props.workflowDefinitionId === undefined ? null
             : renderWorkflowCardFieldRow('last-run', t('workflows.page.sections.lastRun'),
               <WorkflowLastRun definitionId={props.workflowDefinitionId} testID={`${id}-last-run`} />)}
@@ -355,18 +349,5 @@ function WorkflowRolesEditorHost(
         if (result.ok) props.onChange(result.draft);
       }}
     />
-  );
-}
-
-/** Mounted only while More settings is open: the result choice lists the draft's producing steps. */
-function WorkflowFinalOutputHost(props: Readonly<{
-  draftStore: WorkflowEditorDraftStore;
-  onChange: (next: WorkflowEditorDraft) => void;
-  testIDPrefix: string;
-}>): React.ReactElement {
-  const draft = useWorkflowEditorSelector(props.draftStore, (current) => current);
-  return (
-    <WorkflowFinalOutputEditor draft={draft} testIDPrefix={props.testIDPrefix}
-      onChange={(finalOutput) => props.onChange(setWorkflowFinalOutput(props.draftStore.get(), finalOutput))} />
   );
 }

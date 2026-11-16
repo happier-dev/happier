@@ -16329,14 +16329,7 @@ const ja: WorkflowEditorPageTranslations = {
         conversationShared: '共有',
         conversationFresh: '新規',
         conversationContinue: '続ける',
-        workspaceWorkflow: 'ワークフロー',
-        workspaceProject: 'プロジェクト',
-        workspaceNewWorktree: 'Worktree',
         continueFrom: '続ける対象',
-        workspaceFollows: 'ワークフローのワークスペースが変わったとき',
-        workspaceFollowsChanges: '追従する',
-        workspaceFollowsPinned: 'これを維持',
-        worktreeSource: '開始元',
         advancedTitle: '詳細',
         deadline: ({ ms }) => `結果を ${ms} ミリ秒待つ`,
         workflowDefault: ({ value }) => `ワークフローの既定 · ${value}`,
@@ -17342,6 +17335,8 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         clear: '選択を解除',
         fieldPath: 'フィールドのパス',
         explain: 'このワークフローが終了したときに返すもの。',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: '報告する内容',
     },
 
     conversation: {
@@ -17380,8 +17375,6 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         whereStepLeftIt: 'ステップが残した場所',
         whereStepLeftItSubtitle: '前のステップが終了したフォルダー（未コミットの変更を含む）。',
         newWorktreeSubtitle: '最新のコミットを新しくチェックアウトします。未コミットの変更はプロジェクトフォルダーに残ります。',
-        committedOnlyNote: '新しいワークツリーには、元フォルダーのコミット済みの状態が入ります。ステージ済み・未コミット・未追跡の変更は元フォルダーに残ります。',
-        reuseNote: 'ワークスペースを続ける場合、未コミットのファイルはそのままの状態で見えます。',
         sharedParallelNote: '1 つのワークスペースを共有するブランチは、同時に書き込むことがあります。',
         unavailable: ({ block }) => `${block} のワークスペースは利用できません。`,
         unavailableBody: '復元してこの実行を続けるか、完了済みの作業を繰り返す可能性がある新しい実行を確認してください。',

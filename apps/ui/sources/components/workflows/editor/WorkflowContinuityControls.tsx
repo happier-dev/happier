@@ -32,12 +32,14 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 
 /**
- * Conversation and workspace continuity, authored as the canonical selection
- * vocabulary, as two field selects (04 §5.2, M8). Both are separate from
- * dataflow: continuing a conversation never implies reusing a workspace, and
- * sharing a workspace never implies sharing history.
+ * Conversation continuity, authored as the canonical selection vocabulary
+ * (04 §5.2, M8). It is separate from dataflow and from the Workspace, which the
+ * sessions' checkout picker chooses (WF-REDESIGN-1116 change a): continuing a
+ * conversation never implies reusing a workspace, and sharing a workspace never
+ * implies sharing history. The workspace it is given only says when branches
+ * share one folder.
  *
- * For a step (`inherited` given) the first option of each field is "Workflow
+ * For a step (`inherited` given) the first option is "Workflow
  * default · {value}", which deletes the step's own choice so later default
  * changes reach it; every explicit option — including the one equal to today's
  * default — stays offered, because choosing it pins that value (F24).
@@ -48,7 +50,6 @@ import { useWorkflowAccountLifetime } from '../workflowAccountScope';
  */
 
 const NO_EXISTING_SESSIONS: readonly WorkflowExistingSessionOption[] = [];
-const DEFAULT_OPTION_ID = 'default';
 const EXISTING_SESSION_OPTION_ID = 'existing_session';
 
 function scopeKey(scope: WorkflowReferenceScope): string {
@@ -138,17 +139,6 @@ function conversationOptionId(conversation: WorkflowConversationSelection): stri
     }
 }
 
-function workspaceOptionId(workspace: WorkflowWorkspaceSelection): string {
-    switch (workspace.kind) {
-        case 'from_step': return `from_step:${workspace.producer.blockId}:${scopeKey(workspace.producer.scope)}`;
-        case 'new_worktree':
-            return workspace.source.kind === 'step'
-                ? `new_worktree:step:${workspace.source.producer.blockId}:${scopeKey(workspace.source.producer.scope)}`
-                : `new_worktree:${workspace.source.kind}`;
-        default: return workspace.kind;
-    }
-}
-
 function producerRef(producer: WorkflowProducerOption) {
     return { blockId: producer.blockId, scope: producer.scope };
 }
@@ -194,17 +184,14 @@ export function WorkflowContinuityControls(props: Readonly<{
     onSessionOptionsDemandChange?: (demanded: boolean) => void;
     onChangeConversation: (value: WorkflowConversationSelection | undefined) => void;
     onBindExistingSession?: (sessionId: string) => Promise<EntityDropOutcomeV1>;
-    onChangeWorkspace: (value: WorkflowWorkspaceSelection | undefined) => void;
     /**
      * `item` (default): settings rows. `track`: Conversation on its card's label track, its segments
      * beside the label (How and where it runs, round 1116).
      */
     layout?: 'item' | 'track';
-    /** `conversation`: a host that chooses the Workspace elsewhere (the checkout picker) shows only Conversation. */
-    parts?: 'all' | 'conversation';
     testIDPrefix: string;
 }>): React.ReactElement {
-    const { draft, onChangeConversation, onChangeWorkspace, testIDPrefix } = props;
+    const { draft, onChangeConversation, testIDPrefix } = props;
     const producers = props.consumerBlockId === undefined
         ? []
         : listWorkflowProducerOptions(draft, props.consumerBlockId);
@@ -328,30 +315,10 @@ export function WorkflowContinuityControls(props: Readonly<{
         );
     }
 
-    const workspaceChoices = new Map<string, WorkflowWorkspaceSelection>();
-    const workspaceItems: DropdownMenuItem[] = [];
-    const offerWorkspace = (choice: WorkflowWorkspaceSelection, suffix: string) => {
-        const id = workspaceOptionId(choice);
-        workspaceChoices.set(id, choice);
-        workspaceItems.push({ id, title: formatWorkflowWorkspaceLabel(draft, choice), testID: `${testIDPrefix}-workspace-option-${suffix}` });
-    };
-    for (const producer of producers) {
-        offerWorkspace({ kind: 'from_step', producer: producerRef(producer) }, `from-step-${producer.blockId}`);
-    }
-    offerWorkspace({ kind: 'new_worktree', source: { kind: 'original' } }, 'worktree');
-    offerWorkspace({ kind: 'new_worktree', source: { kind: 'workflow' } }, 'worktree-workflow');
-    for (const producer of producers) {
-        offerWorkspace({ kind: 'new_worktree', source: { kind: 'step', producer: producerRef(producer) } }, `worktree-step-${producer.blockId}`);
-    }
-    // A recorded choice whose producer is no longer offered stays visible as recorded.
-    if (props.workspace !== undefined && !workspaceChoices.has(workspaceOptionId(props.workspace))) {
-        offerWorkspace(props.workspace, 'recorded');
-    }
     if (props.conversation !== undefined && props.conversation.kind === 'from_step'
         && !conversationChoices.has(conversationOptionId(props.conversation))) {
         offerConversation(props.conversation, formatWorkflowConversationLabel({ draft, conversation: props.conversation }), 'recorded');
     }
-    const workspaceSelectedId = props.workspace === undefined ? '' : workspaceOptionId(props.workspace);
 
     // Conversation and Workspace are visible choices (lab `editor-E1o`): one segment per kind, the
     // consequence under the label, and a field select beneath only when the chosen kind has more
@@ -413,46 +380,6 @@ export function WorkflowContinuityControls(props: Readonly<{
     const continueSelectedId = choosingSession || props.conversation?.kind === 'existing_session' ? EXISTING_SESSION_OPTION_ID
         : props.conversation === undefined ? '' : conversationOptionId(props.conversation);
 
-    // A step's Default segment covers both ways of using the workflow's workspace: following the workflow
-    // default (the step records nothing) and the explicit Workflow workspace (F24: every supported choice
-    // stays reachable), chosen in the field beneath it. Workflow settings have no Default, so the explicit
-    // choice is its own segment there.
-    type WorkspaceSegment = WorkflowWorkspaceSelection['kind'] | typeof DEFAULT_OPTION_ID;
-    const workspaceSegment: WorkspaceSegment = inherits && (props.workspace === undefined || props.workspace.kind === 'inherit')
-        ? DEFAULT_OPTION_ID : props.workspace?.kind ?? 'inherit';
-    const workspaceSegments: SegmentedChoiceOption<WorkspaceSegment>[] = [];
-    if (inherits) workspaceSegments.push({ id: DEFAULT_OPTION_ID, label: t('workflows.page.inspector.choiceDefault') });
-    else workspaceSegments.push({ id: 'inherit', label: t('workflows.page.inspector.workspaceWorkflow') });
-    workspaceSegments.push({ id: 'project_checkout', label: t('workflows.page.inspector.workspaceProject') });
-    workspaceSegments.push({ id: 'new_worktree', label: t('workflows.page.inspector.workspaceNewWorktree') });
-    if (producers.length > 0 || props.workspace?.kind === 'from_step') {
-        workspaceSegments.push({ id: 'from_step', label: t('workflows.page.inspector.conversationContinue') });
-    }
-    const workspaceConsequence = props.workspace === undefined && inherits
-        ? t('workflows.page.inspector.workflowDefault', { value: formatWorkflowWorkspaceLabel(draft, props.inherited?.workspace) })
-        : formatWorkflowWorkspaceLabel(draft, props.workspace);
-    const selectWorkspaceSegment = (segment: WorkspaceSegment) => {
-        if (segment === DEFAULT_OPTION_ID) {
-            // Reselecting Default keeps a recorded Workflow workspace; the field beneath changes it.
-            if (props.workspace?.kind !== 'inherit') onChangeWorkspace(undefined);
-            return;
-        }
-        if (segment === props.workspace?.kind) return;
-        if (segment === 'from_step') {
-            const producer = producers[0];
-            if (producer !== undefined) onChangeWorkspace({ kind: 'from_step', producer: producerRef(producer) });
-            return;
-        }
-        if (segment === 'new_worktree') { onChangeWorkspace({ kind: 'new_worktree', source: { kind: 'original' } }); return; }
-        onChangeWorkspace({ kind: segment });
-    };
-    const followItems: DropdownMenuItem[] = [
-        // Inherit by default (a later change to the workflow's workspace carries here) or pin it explicitly.
-        { id: DEFAULT_OPTION_ID, title: t('workflows.page.inspector.workspaceFollowsChanges'), testID: `${testIDPrefix}-workspace-follows-default` },
-        { id: 'inherit', title: t('workflows.page.inspector.workspaceFollowsPinned'), testID: `${testIDPrefix}-workspace-follows-workflow` },
-    ];
-    const workspaceVariantItems = workspaceItems.filter((item) => workspaceSegment === 'from_step'
-        ? item.id.startsWith('from_step:') : workspaceSegment === 'new_worktree' && item.id.startsWith('new_worktree:'));
     const sessionStatusLine = choosingSession
         ? (existingSessionOffered ? null : props.sessionOptionsStatus === 'ready' || props.sessionOptionsStatus === undefined
             ? t('workflows.conversation.noExistingSessions') : t('workflows.conversation.sessionsLoading'))
@@ -554,9 +481,9 @@ export function WorkflowContinuityControls(props: Readonly<{
             {conversationDetails}
         </>
     );
-    // Branches writing one folder together is the workspace's consequence; a host choosing the Workspace
-    // elsewhere still hears it here, where the steps' running is decided.
-    if (props.parts === 'conversation') return (
+    // Branches writing one folder together is the workspace's consequence; the Workspace is chosen in the
+    // checkout picker, and this note stays here, where the steps' running is decided.
+    return (
         <>
             {conversation}
             {sharesWorkspaceWithParallelSiblings ? (
@@ -565,59 +492,5 @@ export function WorkflowContinuityControls(props: Readonly<{
                 </Text>
             ) : null}
         </>
-    );
-
-    return (
-        <View>
-            {conversation}
-            <SegmentedChoiceItem<WorkspaceSegment>
-                testIDPrefix={`${testIDPrefix}-workspace`}
-                title={t('workflows.workspace.title')}
-                subtitle={workspaceConsequence}
-                options={workspaceSegments}
-                value={workspaceSegment}
-                valueSource={workspaceSegment === DEFAULT_OPTION_ID && props.workspace === undefined ? 'inherited' : 'set'}
-                onChange={selectWorkspaceSegment}
-                accessoryLayout="stacked"
-                showDivider={false}
-            />
-            {workspaceSegment === DEFAULT_OPTION_ID ? (
-                <ContinuityField
-                    title={t('workflows.page.inspector.workspaceFollows')}
-                    items={followItems}
-                    selectedId={props.workspace === undefined ? DEFAULT_OPTION_ID : 'inherit'}
-                    onSelect={(id) => onChangeWorkspace(id === 'inherit' ? { kind: 'inherit' } : undefined)}
-                    testIDPrefix={`${testIDPrefix}-workspace-follows`}
-                />
-            ) : null}
-            {workspaceVariantItems.length > 1 ? (
-                <ContinuityField
-                    title={workspaceSegment === 'new_worktree' ? t('workflows.page.inspector.worktreeSource') : t('workflows.page.inspector.continueFrom')}
-                    items={workspaceVariantItems}
-                    selectedId={workspaceSelectedId}
-                    onSelect={(id) => {
-                        const choice = workspaceChoices.get(id);
-                        if (choice !== undefined) onChangeWorkspace(choice);
-                    }}
-                    testIDPrefix={`${testIDPrefix}-workspace-variant`}
-                />
-            ) : null}
-            {/* Reuse continues the exact directory, dirty state included. */}
-            {workspaceKind !== 'from_step' ? null : (
-                <Text testID={`${testIDPrefix}-workspace-reuse-note`} style={workflowEditorStyles.groupSummary}>
-                    {t('workflows.workspace.reuseNote')}
-                </Text>
-            )}
-            {sharesWorkspaceWithParallelSiblings ? (
-                <Text testID={`${testIDPrefix}-workspace-shared-parallel-note`} style={workflowEditorStyles.groupSummary}>
-                    {t('workflows.workspace.sharedParallelNote')}
-                </Text>
-            ) : null}
-            {workspaceKind !== 'new_worktree' ? null : (
-                <Text testID={`${testIDPrefix}-workspace-committed-note`} style={workflowEditorStyles.groupSummary}>
-                    {t('workflows.workspace.committedOnlyNote')}
-                </Text>
-            )}
-        </View>
     );
 }

@@ -15828,14 +15828,7 @@ const de: WorkflowEditorPageTranslations = {
         conversationShared: 'Gemeinsam',
         conversationFresh: 'Neu',
         conversationContinue: 'Fortsetzen',
-        workspaceWorkflow: 'Workflow',
-        workspaceProject: 'Projekt',
-        workspaceNewWorktree: 'Worktree',
         continueFrom: 'Setzt fort',
-        workspaceFollows: 'Wenn sich der Workflow-Arbeitsbereich ändert',
-        workspaceFollowsChanges: 'Folgen',
-        workspaceFollowsPinned: 'Diesen beibehalten',
-        worktreeSource: 'Beginnt bei',
         advancedTitle: 'Erweitert',
         deadline: ({ ms }) => `Wartet ${ms} ms auf sein Ergebnis`,
         workflowDefault: ({ value }) => `Workflow-Standard · ${value}`,
@@ -16841,6 +16834,8 @@ const de = translated(workflowValueReferenceTranslations.de, {
         clear: 'Auswahl aufheben',
         fieldPath: 'Feldpfad',
         explain: 'Was dieser Workflow beim Abschluss zurückgibt.',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: 'Meldet',
     },
 
     conversation: {
@@ -16879,8 +16874,6 @@ const de = translated(workflowValueReferenceTranslations.de, {
         whereStepLeftIt: 'Wo ein Schritt es gelassen hat',
         whereStepLeftItSubtitle: 'Der Ordner, in dem ein früherer Schritt geendet hat, mit nicht übernommenen Änderungen.',
         newWorktreeSubtitle: 'Ein frischer Checkout des letzten Commits. Nicht übernommene Änderungen bleiben im Projektordner.',
-        committedOnlyNote: 'Ein neuer Worktree enthält den committeten Stand des Quellordners. Gestagte, nicht committete und nicht verfolgte Änderungen bleiben in der Quelle.',
-        reuseNote: 'Wird ein Arbeitsbereich fortgesetzt, sieht er seine nicht committeten Dateien genau so, wie sie sind.',
         sharedParallelNote: 'Zweige, die sich einen Arbeitsbereich teilen, können gleichzeitig hineinschreiben.',
         unavailable: ({ block }) => `Der Arbeitsbereich für ${block} ist nicht verfügbar.`,
         unavailableBody: 'Stell ihn wieder her, um diesen Lauf fortzusetzen, oder prüf einen neuen Lauf, der bereits erledigte Arbeit wiederholen kann.',

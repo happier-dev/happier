@@ -16377,14 +16377,7 @@ const ru: WorkflowEditorPageTranslations = {
         conversationShared: 'Общий',
         conversationFresh: 'Новый',
         conversationContinue: 'Продолжить',
-        workspaceWorkflow: 'Процесс',
-        workspaceProject: 'Проект',
-        workspaceNewWorktree: 'Worktree',
         continueFrom: 'Продолжает',
-        workspaceFollows: 'Если рабочее пространство процесса изменится',
-        workspaceFollowsChanges: 'Следовать',
-        workspaceFollowsPinned: 'Оставить этот',
-        worktreeSource: 'Начинается с',
         advancedTitle: 'Дополнительно',
         deadline: ({ ms }) => `Ждёт результат ${ms} мс`,
         workflowDefault: ({ value }) => `По умолчанию процесса · ${value}`,
@@ -17390,6 +17383,8 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         clear: 'Очистить выбор',
         fieldPath: 'Путь к полю',
         explain: 'То, что рабочий процесс возвращает по завершении.',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: 'Сообщает',
     },
 
     conversation: {
@@ -17428,8 +17423,6 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         whereStepLeftIt: 'Там, где его оставил шаг',
         whereStepLeftItSubtitle: 'Папка, в которой завершился предыдущий шаг, вместе с незафиксированными изменениями.',
         newWorktreeSubtitle: 'Новая копия последнего коммита. Незафиксированные изменения остаются в папке проекта.',
-        committedOnlyNote: 'Новое рабочее дерево содержит зафиксированное состояние исходной папки. Проиндексированные, незафиксированные и неотслеживаемые изменения остаются в источнике.',
-        reuseNote: 'При продолжении рабочего пространства оно видит свои незафиксированные файлы ровно такими, какие они есть.',
         sharedParallelNote: 'Ветки, использующие одно рабочее пространство, могут писать в него одновременно.',
         unavailable: ({ block }) => `Рабочее пространство для ${block} недоступно.`,
         unavailableBody: 'Восстановите его, чтобы продолжить этот запуск, или просмотрите новый запуск, который может повторить уже выполненную работу.',

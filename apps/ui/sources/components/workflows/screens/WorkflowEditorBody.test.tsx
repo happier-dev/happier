@@ -398,7 +398,7 @@ it('keeps closed workflow and step summaries on the exact admitted Home name wit
             <WorkflowInspector {...props} subject={{ kind: 'block', blockId: 'analyze' }} presentation="popover" testIDPrefix="closed-step" />
             <WorkflowContinuityControls draft={draft} conversation={undefined} workspace={undefined}
                 inherited={{ conversation: draft.defaults.conversation, workspace: draft.defaults.workspace }}
-                existingSessions={props.existingSessions} onChangeConversation={() => {}} onChangeWorkspace={() => {}}
+                existingSessions={props.existingSessions} onChangeConversation={() => {}}
                 testIDPrefix="closed-inherited" />
         </WorkflowAccountLifetimeProvider>;
     }
@@ -1990,11 +1990,12 @@ describe('workflow editor body', () => {
         expect(screen.findByTestId('workflow-editor-inputs')).not.toBeNull();
         expect(segmentedField(screen, 'workflow-editor-defaults-continuity-conversation').props.value).toBe('shared_run');
         expect(screen.findByTestId('workflow-editor-more-settings-session')).toBeNull();
-        expect(screen.findByTestId('workflow-editor-more-settings-final-output-editor')).toBeNull();
+        // The workflow's Result sits at the page foot on the spine, never behind More settings (round 1116).
+        expect(screen.findByTestId('workflow-editor-result-final-output-editor')).not.toBeNull();
 
         await screen.pressByTestIdAsync('workflow-editor-more-settings-toggle');
         expect(screen.findByTestId('workflow-editor-more-settings-session')).not.toBeNull();
-        expect(screen.findByTestId('workflow-editor-more-settings-final-output-editor')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-more-settings-final-output-editor')).toBeNull();
         await screen.unmount();
     });
 
@@ -2606,6 +2607,20 @@ describe('workflow editor body', () => {
         expect(field.props.value).toBe('shared_run');
         await act(async () => { field.props.onChange('default'); });
         expect(changed.mock.calls.at(-1)?.[0].blocks[0]).not.toHaveProperty('execution');
+    });
+
+    // WF-REDESIGN-1116 change a: a step picks its Workspace through the sessions' checkout picker, not segments.
+    it('draws a step\'s Workspace as the checkout field, following the workflow until the step chooses', async () => {
+        const harness = await loadHarness();
+        const screen = await renderBody(harness, { projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' } });
+        await activatePromptPreview(screen, 'workflow-editor-step-analyze-prompt');
+        await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
+
+        const field = screen.findByTestId('workflow-editor-inspector-workspace-project-checkout');
+        expect(field?.props.accessibilityLabel).toContain('workflows.workspace.sameAsWorkflow');
+        expect(screen.findAll((node) => node.props?.testIDPrefix === 'workflow-editor-inspector-continuity-workspace')).toHaveLength(0);
+        // Conversation stays the continuity owner's.
+        expect(segmentedField(screen, 'workflow-editor-inspector-continuity-conversation')).toBeDefined();
     });
 
     it('opens Step options for a Wait for you and a Side by side group with their own rows', async () => {
@@ -3309,10 +3324,9 @@ describe('workflow editor body', () => {
         const harness = await loadHarness();
         // Selection is the contract, not copy or the presence of a menu option.
         const none = await renderBody(harness);
-        await none.pressByTestIdAsync('workflow-editor-more-settings-toggle');
-        expect(none.root.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflow-editor-more-settings-final-output-select')?.props.selectedId)
+        expect(none.root.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflow-editor-result-final-output-select')?.props.selectedId)
             .toBe('none');
-        expect(none.findByTestId('workflow-editor-more-settings-final-output-path')).toBeNull();
+        expect(none.findByTestId('workflow-editor-result-final-output-path')).toBeNull();
         await none.unmount();
 
         const bound = await renderBody(harness, {
@@ -3322,14 +3336,13 @@ describe('workflow editor body', () => {
                 path: [],
             }),
         });
-        await bound.pressByTestIdAsync('workflow-editor-more-settings-toggle');
-        expect(bound.root.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflow-editor-more-settings-final-output-select')?.props.selectedId)
+        expect(bound.root.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflow-editor-result-final-output-select')?.props.selectedId)
             .toBe('result:analyze');
         // The producer uses the document vocabulary, never a clipped prompt or internal id.
         expect(bound.getTextContent()).toContain('workflows.editor.addStep');
-        await bound.pressByTestIdAsync('workflow-editor-more-settings-final-output-trigger');
+        await bound.pressByTestIdAsync('workflow-editor-result-final-output-trigger');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
-        expect(bound.findByTestId('workflow-editor-more-settings-final-output-path')).not.toBeNull();
+        expect(bound.findByTestId('workflow-editor-result-final-output-path')).not.toBeNull();
     });
 
     it('authors and clears the deterministic final output through the shared draft owner', async ({ onTestFinished }) => {
@@ -3348,19 +3361,18 @@ describe('workflow editor body', () => {
         }
         const screen = await renderScreen(<ControlledBody />);
 
-        await screen.pressByTestIdAsync('workflow-editor-more-settings-toggle');
-        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-trigger');
+        await screen.pressByTestIdAsync('workflow-editor-result-final-output-trigger');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
-        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-option-analyze');
+        await screen.pressByTestIdAsync('workflow-editor-result-final-output-option-analyze');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         expect(changed.mock.calls[0]?.[0].finalOutput).toEqual({
             kind: 'result',
             producer: { blockId: 'analyze', scope: { kind: 'current' } },
             path: [],
         });
-        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-trigger');
+        await screen.pressByTestIdAsync('workflow-editor-result-final-output-trigger');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
-        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-clear');
+        await screen.pressByTestIdAsync('workflow-editor-result-final-output-clear');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         expect(current.finalOutput).toBeUndefined();
         expect(changed).toHaveBeenCalledTimes(2);
@@ -3505,10 +3517,9 @@ describe('workflow editor body', () => {
         await screen.pressByTestIdAsync('workflow-editor-redo');
         expect(draft.blocks.map((block) => block.id)).toEqual(['implement']);
         await screen.pressByTestIdAsync('workflow-editor-undo');
-        await screen.pressByTestIdAsync('workflow-editor-more-settings-toggle');
-        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-trigger');
+        await screen.pressByTestIdAsync('workflow-editor-result-final-output-trigger');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
-        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-option-implement');
+        await screen.pressByTestIdAsync('workflow-editor-result-final-output-option-implement');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         expect(redoLabel).toBeNull();
         expect(draft.finalOutput).toMatchObject({ producer: { blockId: 'implement' } });

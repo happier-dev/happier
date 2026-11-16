@@ -89,6 +89,7 @@ import { WorkflowBlockListEditor, type WorkflowDocumentPresentation } from '../e
 import { useWorkflowEditorComposerCustody } from '../editor/useWorkflowEditorComposerCustody';
 import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { WorkflowInspector } from '../editor/WorkflowInspector';
+import { WorkflowResultFoot } from '../editor/WorkflowResultFoot';
 import { useWorkflowSessionBinding } from '../editor/useWorkflowSessionBinding';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
@@ -1175,10 +1176,21 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         ...(sessionDrop === undefined ? {} : { bindExistingSession: sessionDrop.bind }),
         ...(props.executionTarget === undefined ? {} : { executionTarget: props.executionTarget }),
         ...(props.runAsTargets === undefined ? {} : { runAsTargets: props.runAsTargets }),
+        // A step's Workspace picks a checkout of the workflow's place.
+        place: {
+            target: props.projectTarget,
+            machineName: props.machineName,
+            ...(props.projectMachines === undefined ? {} : { machines: props.projectMachines }),
+            ...(props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime }),
+        },
         ...(props.description === undefined ? {} : { description: props.description }),
         ...(props.onChangeDescription === undefined ? {} : { onChangeDescription: props.onChangeDescription }),
     }), [
         props.currentWorkflowRef,
+        props.projectTarget,
+        props.machineName,
+        props.projectMachines,
+        props.accountLifetime,
         props.description,
         props.onChangeDescription,
         documentEditable,
@@ -1267,6 +1279,10 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         </Popover>
     );
 
+    // The workflow's Result: the spine's last node at the document's foot (round 1116).
+    const resultFoot = React.useMemo(() => (
+        <WorkflowResultFoot draftStore={draftStore} onChange={onChange} editable={documentEditable} testIDPrefix={testIDPrefix} />
+    ), [documentEditable, draftStore, onChange, testIDPrefix]);
     const blockList = (
         <WorkflowEditorBlockList
             draftStore={draftStore}
@@ -1283,6 +1299,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             onCustomize={openInspector}
             onCommitChange={props.onCommitChange}
             onUseExample={useExample}
+            rootFoot={resultFoot}
             rootAddRow
             registerPromptRef={registerPromptRef}
             requestPromptFocus={requestPromptFocus}

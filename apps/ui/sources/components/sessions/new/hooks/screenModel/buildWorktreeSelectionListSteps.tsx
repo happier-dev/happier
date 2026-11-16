@@ -706,7 +706,9 @@ export function buildWorktreeSelectionListSteps(params: WorktreeSelectionListBui
         }]),
     ];
 
-    const existingOptions = buildExistingWorktreeOptions(params);
+    // A step's workspace names no path of its own (the workflow's folder, a new worktree or a step's
+    // folder), so another existing checkout is not a step choice.
+    const existingOptions = params.workflowScope?.step === undefined ? buildExistingWorktreeOptions(params) : [];
 
     const sections: SelectionListSectionDescriptor[] = [];
 

@@ -16394,14 +16394,7 @@ const es: WorkflowEditorPageTranslations = {
         conversationShared: 'Compartida',
         conversationFresh: 'Nueva',
         conversationContinue: 'Continuar',
-        workspaceWorkflow: 'Flujo',
-        workspaceProject: 'Proyecto',
-        workspaceNewWorktree: 'Worktree',
         continueFrom: 'Continúa',
-        workspaceFollows: 'Si cambia el espacio de trabajo del flujo',
-        workspaceFollowsChanges: 'Seguirlo',
-        workspaceFollowsPinned: 'Conservar este',
-        worktreeSource: 'Parte de',
         advancedTitle: 'Avanzado',
         deadline: ({ ms }) => `Espera ${ms} ms su resultado`,
         workflowDefault: ({ value }) => `Predeterminado del flujo · ${value}`,
@@ -17407,6 +17400,8 @@ const es = translated(workflowValueReferenceTranslations.es, {
         clear: 'Quitar la selección',
         fieldPath: 'Ruta del campo',
         explain: 'Lo que devuelve este flujo de trabajo al terminar.',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: 'Informa',
     },
 
     conversation: {
@@ -17445,8 +17440,6 @@ const es = translated(workflowValueReferenceTranslations.es, {
         whereStepLeftIt: 'Donde lo dejó un paso',
         whereStepLeftItSubtitle: 'La carpeta donde terminó un paso anterior, con los cambios sin confirmar.',
         newWorktreeSubtitle: 'Una copia nueva del último commit. Los cambios sin confirmar se quedan en la carpeta del proyecto.',
-        committedOnlyNote: 'Un worktree nuevo contiene el estado confirmado de la carpeta de origen. Los cambios preparados, sin confirmar y sin seguimiento se quedan en el origen.',
-        reuseNote: 'Al continuar en un espacio de trabajo, este ve sus archivos sin confirmar tal y como están.',
         sharedParallelNote: 'Las ramas que comparten un espacio de trabajo pueden escribir en él a la vez.',
         unavailable: ({ block }) => `El espacio de trabajo de ${block} no está disponible.`,
         unavailableBody: 'Restáuralo para continuar esta ejecución, o revisa una ejecución nueva que puede repetir trabajo ya terminado.',

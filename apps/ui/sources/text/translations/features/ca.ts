@@ -16367,14 +16367,7 @@ const ca: WorkflowEditorPageTranslations = {
         conversationShared: 'Compartida',
         conversationFresh: 'Nova',
         conversationContinue: 'Continuar',
-        workspaceWorkflow: 'Flux',
-        workspaceProject: 'Projecte',
-        workspaceNewWorktree: 'Worktree',
         continueFrom: 'Continua',
-        workspaceFollows: 'Si canvia l’espai de treball del flux',
-        workspaceFollowsChanges: 'Seguir-lo',
-        workspaceFollowsPinned: 'Mantenir aquest',
-        worktreeSource: 'Comença a',
         advancedTitle: 'Avançat',
         deadline: ({ ms }) => `Espera el resultat ${ms} ms`,
         workflowDefault: ({ value }) => `Valor del flux · ${value}`,
@@ -17380,6 +17373,8 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         clear: 'Esborra la selecció',
         fieldPath: 'Camí del camp',
         explain: 'El que retorna aquest flux de treball quan acaba.',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: 'Informa',
     },
 
     conversation: {
@@ -17418,8 +17413,6 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         whereStepLeftIt: 'On el va deixar un pas',
         whereStepLeftItSubtitle: 'La carpeta on va acabar un pas anterior, amb els canvis sense confirmar.',
         newWorktreeSubtitle: 'Una còpia nova de l’últim commit. Els canvis sense confirmar es queden a la carpeta del projecte.',
-        committedOnlyNote: 'Un arbre de treball nou conté l’estat validat de la carpeta d’origen. Els canvis preparats, no validats i no seguits es queden a l’origen.',
-        reuseNote: 'Quan es continua en un espai de treball, aquest hi veu els fitxers no validats exactament tal com són.',
         sharedParallelNote: 'Les branques que comparteixen un espai de treball hi poden escriure alhora.',
         unavailable: ({ block }) => `L’espai de treball de ${block} no està disponible.`,
         unavailableBody: 'Restaura’l per continuar aquesta execució, o revisa una execució nova que pot repetir feina ja acabada.',

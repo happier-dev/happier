@@ -187,6 +187,11 @@ export type WorkflowBlockListEditorProps = Readonly<{
    * ends without a second, identical Add; Start from an example stays. Nested lists keep theirs.
    */
   rootAddRow?: boolean;
+  /**
+   * The root list's foot (the workflow's Result, round 1116): the spine runs on from the last block,
+   * past the end row, to its mark. Nested lists ignore it.
+   */
+  rootFoot?: React.ReactNode;
   /** Names the scope for the Add control's accessible hint. */
   scopeLabel?: string;
   /**
@@ -514,6 +519,11 @@ export function WorkflowBlockListEditor(
         <View
           style={blocks.length === 0 ? undefined : grid.listEnd}
         >
+          {blocks.length === 0 || props.rootFoot === undefined ? null : (
+            // The spine crosses the end row on its way to the foot's mark.
+            <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+              style={[workflowEditorStyles.spineSegment, workflowEditorStyles.spineAcross]} />
+          )}
           <WorkflowAddBlockMenu
             composerScope={composerScope}
             examplesOnly={props.rootAddRow === false}
@@ -531,6 +541,7 @@ export function WorkflowBlockListEditor(
           />
         </View>
       ) : null}
+      {list.kind === 'root' && blocks.length > 0 ? props.rootFoot ?? null : null}
     </View>
   );
 }
@@ -817,7 +828,8 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
         ? 'next'
         : block.kind === 'parallel' ||
             block.kind === 'loop' ||
-            block.kind === 'if'
+            block.kind === 'if' ||
+            props.rootFoot !== undefined
           ? 'end'
           : null
       : !isLast

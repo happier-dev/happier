@@ -1697,6 +1697,15 @@ describe('buildWorktreeSelectionListSteps workflow scope (a workflow\'s workspac
         expect(fromCause).not.toHaveBeenCalled();
     });
 
+    it('offers a step no other checkout: it works in the workflow\'s folder, a new worktree or a step\'s folder', async () => {
+        const rootStep = await build({ newWorktree: { onSelect: vi.fn() }, step: {
+            sameAsWorkflow: { subtitle: 'Project folder', onSelect: vi.fn() }, fromSteps: [] } });
+        // A step's workspace names no path of its own, so another existing checkout is not a step choice.
+        expect(rootStep.sections.find((section) => section.id === 'worktree:existing')).toBeUndefined();
+        expect(requireStaticSection(rootStep, 'worktree:quick-actions').options.map((option) => option.id))
+            .toEqual(['current_path', 'create_git_worktree']);
+    });
+
     it('offers only "Same as the workflow" when no earlier step leaves a folder', async () => {
         const rootStep = await build({ newWorktree: { onSelect: vi.fn() }, step: {
             sameAsWorkflow: { subtitle: 'Project folder', onSelect: vi.fn() }, fromSteps: [] } });

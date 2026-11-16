@@ -338,7 +338,6 @@ export function WorkflowHowAndWhereCard(
               {...(props.bindExistingSession === undefined ? {} : {
                 onBindExistingSession: (sessionId: string) => props.bindExistingSession!(null, sessionId),
               })}
-              onChangeWorkspace={(value) => onChange(setWorkflowDefaultField(readDraft(), 'workspace', value))}
               testIDPrefix={`${props.testIDPrefix}-defaults-continuity`}
             />
           )}
@@ -391,7 +390,7 @@ const readWholeDraft = (draft: WorkflowEditorDraft) => draft;
  */
 function WorkflowDefaultsConversation(
   props: Readonly<{ draftStore: WorkflowEditorDraftStore }>
-    & Omit<React.ComponentProps<typeof WorkflowContinuityControls>, 'draft' | 'conversation' | 'workspace' | 'layout' | 'parts'>,
+    & Omit<React.ComponentProps<typeof WorkflowContinuityControls>, 'draft' | 'conversation' | 'workspace' | 'layout'>,
 ): React.ReactElement {
   const { draftStore, ...controls } = props;
   const draft = useWorkflowEditorSelector(draftStore, readWholeDraft);
@@ -399,7 +398,6 @@ function WorkflowDefaultsConversation(
     <WorkflowContinuityControls
       {...controls}
       layout="track"
-      parts="conversation"
       draft={draft}
       conversation={draft.defaults.conversation}
       workspace={draft.defaults.workspace}

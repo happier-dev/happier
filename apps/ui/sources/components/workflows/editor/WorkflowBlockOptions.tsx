@@ -64,6 +64,9 @@ import {
 import { useWorkflowStepFieldControlRenderer } from './workflowStepFieldControls';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { NO_DISCLOSURE, WorkflowInspectorGroup } from './workflowInspectorGroup';
+import { renderWorkflowCardFieldRow } from './workflowCardFieldRow';
+import { WorkflowStepWorkspaceField } from './WorkflowProjectTargetControl';
+import { buildWorkflowStepWorkspace } from './workflowStepWorkspace';
 import { WorkflowRunWhenOption } from './WorkflowRunWhenConnector';
 import {
     readWorkflowNotifyReportOffer,
@@ -530,6 +533,7 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
     const { draft, onChange, step, testIDPrefix } = props;
     const effectiveExecution = resolveEffectiveWorkflowStepExecution(draft, step);
     const continuedSessionLabel = useWorkflowContinuedSessionLabel(effectiveExecution.conversation);
+    const workspace = React.useMemo(() => buildWorkflowStepWorkspace({ draft, step, onChange }), [draft, onChange, step]);
     if (props.documentEditable === false) return <>
         <ItemGroup title={t('workflows.page.sections.conversationTitle')}><SectionContentRow>
             <Text style={workflowEditorStyles.metaText}>{formatWorkflowContinuitySummary({ draft,
@@ -596,6 +600,22 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                 />
             </ItemGroup>
 
+            {/* Workspace is the sessions' checkout picker at step scope (round 1116b change a), on the label track. */}
+            <ItemGroup title={t('workflows.workspace.title')}>
+                <SectionContentRow testID={`${testIDPrefix}-workspace-row`}>
+                    {renderWorkflowCardFieldRow('workspace', t('workflows.workspace.title'), (
+                        <WorkflowStepWorkspaceField
+                            target={props.place?.target}
+                            machineName={props.place?.machineName ?? null}
+                            {...(props.place?.machines === undefined ? {} : { machines: props.place.machines })}
+                            {...(props.place?.accountLifetime === undefined ? {} : { accountLifetime: props.place.accountLifetime })}
+                            workspace={workspace}
+                            testIDPrefix={`${testIDPrefix}-workspace`}
+                        />
+                    ))}
+                </SectionContentRow>
+            </ItemGroup>
+
             <ItemGroup title={t('workflows.page.sections.conversationTitle')}>
                 {/* The controls are page rows with their own inset: a content row around them indents a second grid. */}
                 <View testID={`${testIDPrefix}-continuity-row`}>
@@ -613,7 +633,6 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                         {...(props.bindExistingSession === undefined ? {} : {
                             onBindExistingSession: (sessionId: string) => props.bindExistingSession!(step.id, sessionId),
                         })}
-                        onChangeWorkspace={(value) => onChange(setWorkflowStepExecutionField(draft, step.id, 'workspace', value))}
                         testIDPrefix={`${testIDPrefix}-continuity`}
                     />
                 </View>

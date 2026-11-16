@@ -34,9 +34,9 @@ describe('workflow final output accessibility', () => {
         const onChange = vi.fn();
         const screen = await renderScreen(<WorkflowFinalOutputEditor draft={draft} onChange={onChange} testIDPrefix="output" />);
         const select = () => screen.root.findByType(DropdownMenu);
-        const itemTrigger = select().props.itemTrigger;
-        if (!itemTrigger) throw new Error('Expected labelled final-output trigger');
-        expect(itemTrigger.title).toBeTruthy();
+        // One field select named by the Result row's label (label-in-name), saying what is chosen.
+        expect(screen.findByTestId('output-final-output-trigger')?.props.accessibilityLabel)
+            .toBe('workflows.finalOutput.reports: workflows.finalOutput.none');
         expect(select().props.selectedId).toBe('none');
         const blockId = draft.blocks[0]!.id;
         await act(async () => select().props.onSelect(`result:${blockId}`));

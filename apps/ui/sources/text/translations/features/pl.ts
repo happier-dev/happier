@@ -16365,14 +16365,7 @@ const pl: WorkflowEditorPageTranslations = {
         conversationShared: 'Wspólna',
         conversationFresh: 'Nowa',
         conversationContinue: 'Kontynuuj',
-        workspaceWorkflow: 'Przepływ',
-        workspaceProject: 'Projekt',
-        workspaceNewWorktree: 'Worktree',
         continueFrom: 'Kontynuuje',
-        workspaceFollows: 'Gdy zmieni się obszar roboczy przepływu',
-        workspaceFollowsChanges: 'Podążaj za nim',
-        workspaceFollowsPinned: 'Zachowaj ten',
-        worktreeSource: 'Zaczyna od',
         advancedTitle: 'Zaawansowane',
         deadline: ({ ms }) => `Czeka ${ms} ms na wynik`,
         workflowDefault: ({ value }) => `Domyślne przepływu · ${value}`,
@@ -17378,6 +17371,8 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         clear: 'Wyczyść wybór',
         fieldPath: 'Ścieżka pola',
         explain: 'To, co ten przepływ pracy zwraca po zakończeniu.',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: 'Zgłasza',
     },
 
     conversation: {
@@ -17416,8 +17411,6 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         whereStepLeftIt: 'Tam, gdzie zostawił to krok',
         whereStepLeftItSubtitle: 'Folder, w którym zakończył się wcześniejszy krok, wraz z niezatwierdzonymi zmianami.',
         newWorktreeSubtitle: 'Świeży checkout ostatniego commita. Niezatwierdzone zmiany zostają w folderze projektu.',
-        committedOnlyNote: 'Nowy worktree zawiera zatwierdzony stan folderu źródłowego. Zmiany przygotowane, niezatwierdzone i nieśledzone zostają w źródle.',
-        reuseNote: 'Gdy obszar roboczy jest kontynuowany, widzi swoje niezatwierdzone pliki dokładnie takimi, jakie są.',
         sharedParallelNote: 'Gałęzie dzielące jeden obszar roboczy mogą pisać do niego w tym samym czasie.',
         unavailable: ({ block }) => `Obszar roboczy dla ${block} jest niedostępny.`,
         unavailableBody: 'Przywróć go, aby kontynuować to uruchomienie, albo przejrzyj nowe uruchomienie, które może powtórzyć już wykonaną pracę.',

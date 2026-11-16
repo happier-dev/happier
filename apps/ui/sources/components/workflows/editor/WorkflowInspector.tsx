@@ -9,6 +9,10 @@ import type { WorkflowRunAsTarget, WorkflowRunAsTargetKind } from '../run/workfl
 import type { WorkflowContinuityControls } from './WorkflowContinuityControls';
 import { WorkflowBlockOptions } from './WorkflowBlockOptions';
 import type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
+import type { WorkflowStepWorkspaceField } from './WorkflowProjectTargetControl';
+
+/** The workflow's place, as a step's Workspace field reads it. */
+export type WorkflowStepPlace = Pick<React.ComponentProps<typeof WorkflowStepWorkspaceField>, 'target' | 'machineName' | 'machines' | 'accountLifetime'>;
 
 /**
  * Step options (04 §5.2): a block's settings, anchored beside the step's control, or the shared sheet
@@ -48,6 +52,8 @@ export type WorkflowInspectorProps = Readonly<{
     onRetrySessionOptions?: () => void;
     onSessionOptionsDemandChange?: (demanded: boolean) => void;
     bindExistingSession?: WorkflowSessionDrop['bind'];
+    /** Where the workflow runs: a step's Workspace picks a checkout of this place (WF-REDESIGN-1116 change a). */
+    place?: WorkflowStepPlace;
     /** "Each step runs in": a step's Runs in reads the workflow's default from here. */
     executionTarget?: WorkflowRunAsTargetKind;
     runAsTargets?: readonly WorkflowRunAsTarget[];

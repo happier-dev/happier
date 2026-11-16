@@ -414,6 +414,8 @@ export const en = {
         clear: 'Clear selection',
         fieldPath: 'Field path',
         explain: 'What this workflow returns when it finishes.',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: 'Reports',
     },
 
     conversation: {
@@ -452,8 +454,6 @@ export const en = {
         whereStepLeftIt: 'Where a step left it',
         whereStepLeftItSubtitle: 'The folder an earlier step finished in, uncommitted work included.',
         newWorktreeSubtitle: 'A fresh checkout of the last commit. Uncommitted changes stay in the project folder.',
-        committedOnlyNote: 'A new worktree contains the source folder’s committed state. Staged, uncommitted and untracked changes stay in the source.',
-        reuseNote: 'Continuing a workspace sees its uncommitted files exactly as they are.',
         sharedParallelNote: 'Branches sharing one workspace can write to it at the same time.',
         unavailable: ({ block }: { block: string }) => `The workspace for ${block} is unavailable.`,
         unavailableBody: 'Restore it to continue this run, or review a new run that may repeat completed work.',

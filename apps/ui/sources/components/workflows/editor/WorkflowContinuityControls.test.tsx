@@ -88,7 +88,6 @@ async function renderControls(conversation: WorkflowConversationSelection) {
       conversation={conversation}
       workspace={{ kind: 'inherit' }}
       onChangeConversation={() => {}}
-      onChangeWorkspace={() => {}}
       testIDPrefix="editor"
     />,
   );
@@ -131,7 +130,6 @@ describe('WorkflowContinuityControls continuation disclosure', () => {
           onRetrySessionOptions: retry,
           onBindExistingSession: async () => ({ status: 'applied' as const }),
           onChangeConversation: () => {},
-          onChangeWorkspace: () => {},
           testIDPrefix: 'pending',
         };
         const options = [
@@ -217,7 +215,6 @@ describe('WorkflowContinuityControls continuation disclosure', () => {
           { sessionId: 'session', machineId: 'machine', label: 'Review' },
         ]}
         onChangeConversation={changed}
-        onChangeWorkspace={() => {}}
         testIDPrefix="binding"
       />,
     );
@@ -249,71 +246,6 @@ describe('WorkflowContinuityControls continuation disclosure', () => {
     expect(screen.findByTestId('editor-conversation-waiting-note')).toBeNull();
   });
 
-  it('keeps the explicit Workflow workspace reachable beside Default and pins it when chosen', async () => {
-    const changed = vi.fn();
-    const props = {
-      draft: createWorkflowEditorDraft({ draftId: 'pin', name: 'Review', blocks: [stepBlock('step', 'Review')] }),
-      conversation: undefined,
-      inherited: { conversation: undefined, workspace: { kind: 'project_checkout' as const } },
-      onChangeConversation: () => {},
-      onChangeWorkspace: changed,
-      testIDPrefix: 'pin',
-    };
-    const screen = await renderScreen(<WorkflowContinuityControls {...props} workspace={undefined} />);
-    const workspace = () =>
-      screen.findAll((node) => node.props.testIDPrefix === 'pin-workspace' && Array.isArray(node.props.options))[0]! as unknown as {
-        props: { options: ReadonlyArray<{ id: string }>; value: string; valueSource: string; onChange: (id: string) => void };
-      };
-    const follows = () =>
-      screen.findAll((node) => node.props.testID === 'pin-workspace-follows-field' && Array.isArray(node.props.items))[0]! as unknown as {
-        props: { selectedId: string; items: ReadonlyArray<{ id: string }>; onSelect: (id: string) => void };
-      };
-    // The three kinds stay visible segments; Default follows the workflow and offers the explicit choice beneath.
-    expect(workspace().props.options.map((option) => option.id)).toEqual(['default', 'project_checkout', 'new_worktree']);
-    expect(follows().props.items.map((item) => item.id)).toEqual(['default', 'inherit']);
-    expect(follows().props.selectedId).toBe('default');
-    await act(async () => {
-      follows().props.onSelect('inherit');
-    });
-    expect(changed).toHaveBeenLastCalledWith({ kind: 'inherit' });
-    // Recorded, it stays the Default segment as a set value, and reselecting Default never erases it.
-    await screen.update(<WorkflowContinuityControls {...props} workspace={{ kind: 'inherit' }} />);
-    expect(workspace().props.value).toBe('default');
-    expect(workspace().props.valueSource).toBe('set');
-    expect(follows().props.selectedId).toBe('inherit');
-    changed.mockClear();
-    await act(async () => {
-      workspace().props.onChange('default');
-    });
-    expect(changed).not.toHaveBeenCalled();
-    await act(async () => {
-      follows().props.onSelect('default');
-    });
-    expect(changed).toHaveBeenLastCalledWith(undefined);
-    // Another kind leaves Default: no follow field.
-    await screen.update(<WorkflowContinuityControls {...props} workspace={{ kind: 'project_checkout' }} />);
-    expect(screen.findAll((node) => node.props.testID === 'pin-workspace-follows-field')).toHaveLength(0);
-  });
-
-  it('offers the Workflow workspace as its own segment where a Workflow has no Default', async () => {
-    const screen = await renderScreen(
-      <WorkflowContinuityControls
-        draft={createWorkflowEditorDraft({ draftId: 'settings', name: 'Review', blocks: [stepBlock('step', 'Review')] })}
-        conversation={undefined}
-        workspace={undefined}
-        onChangeConversation={() => {}}
-        onChangeWorkspace={() => {}}
-        testIDPrefix="settings"
-      />,
-    );
-    const workspace = screen.findAll((node) => node.props.testIDPrefix === 'settings-workspace' && Array.isArray(node.props.options))[0]! as unknown as {
-      props: { options: ReadonlyArray<{ id: string }>; value: string };
-    };
-    expect(workspace.props.options.map((option) => option.id)).toEqual(['inherit', 'project_checkout', 'new_worktree']);
-    expect(workspace.props.value).toBe('inherit');
-    expect(screen.findAll((node) => node.props.testID === 'settings-workspace-follows-field')).toHaveLength(0);
-  });
-
   it('lets a recorded Session be replaced even when it is the only Continue target', async () => {
     const restore = withPopoverWebGlobals();
     try {
@@ -338,7 +270,6 @@ describe('WorkflowContinuityControls continuation disclosure', () => {
           sessionOptionsStatus="ready"
           onBindExistingSession={bind}
           onChangeConversation={() => {}}
-          onChangeWorkspace={() => {}}
           testIDPrefix="change"
         />,
       );
@@ -388,7 +319,6 @@ describe('WorkflowContinuityControls continuation disclosure', () => {
           sessionOptionsStatus="ready"
           onBindExistingSession={async () => ({ status: 'applied' as const })}
           onChangeConversation={() => {}}
-          onChangeWorkspace={() => {}}
           testIDPrefix="identity"
         />,
       );

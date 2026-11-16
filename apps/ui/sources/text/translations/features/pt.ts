@@ -16345,14 +16345,7 @@ const pt: WorkflowEditorPageTranslations = {
         conversationShared: 'Compartilhada',
         conversationFresh: 'Nova',
         conversationContinue: 'Continuar',
-        workspaceWorkflow: 'Fluxo',
-        workspaceProject: 'Projeto',
-        workspaceNewWorktree: 'Worktree',
         continueFrom: 'Continua',
-        workspaceFollows: 'Se o espaço de trabalho do fluxo mudar',
-        workspaceFollowsChanges: 'Acompanhar',
-        workspaceFollowsPinned: 'Manter este',
-        worktreeSource: 'Começa em',
         advancedTitle: 'Avançado',
         deadline: ({ ms }) => `Aguarda o resultado por ${ms} ms`,
         workflowDefault: ({ value }) => `Padrão do fluxo · ${value}`,
@@ -17358,6 +17351,8 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         clear: 'Limpar a seleção',
         fieldPath: 'Caminho do campo',
         explain: 'O que este fluxo de trabalho devolve quando termina.',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: 'Reporta',
     },
 
     conversation: {
@@ -17396,8 +17391,6 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         whereStepLeftIt: 'Onde um passo o deixou',
         whereStepLeftItSubtitle: 'A pasta onde um passo anterior terminou, com as alterações não confirmadas.',
         newWorktreeSubtitle: 'Um checkout novo do último commit. As alterações não confirmadas ficam na pasta do projeto.',
-        committedOnlyNote: 'Um worktree novo contém o estado commitado da pasta de origem. As alterações no stage, não commitadas e não rastreadas ficam na origem.',
-        reuseNote: 'Ao continuar em um espaço de trabalho, ele vê os arquivos não commitados exatamente como estão.',
         sharedParallelNote: 'Ramos que compartilham um espaço de trabalho podem escrever nele ao mesmo tempo.',
         unavailable: ({ block }) => `O espaço de trabalho de ${block} não está disponível.`,
         unavailableBody: 'Restaure-o para continuar esta execução, ou avalie uma nova execução que pode repetir trabalho já concluído.',

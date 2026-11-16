@@ -16,7 +16,7 @@ import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMac
 import { useCheckoutSelectionPicker } from '@/components/sessions/new/hooks/screenModel/useCheckoutSelectionPicker';
 import { useNewSessionRepoScmSnapshot } from '@/components/sessions/new/hooks/screenModel/useNewSessionRepoScmSnapshot';
 import { resolveNewSessionCheckoutChipModel } from '@/components/sessions/new/modules/newSessionCheckoutChipModel';
-import { WORKSPACE_NEW_WORKTREE_OPTION_ID } from '@/components/sessions/new/hooks/screenModel/buildWorktreeSelectionListSteps';
+import { WORKSPACE_NEW_WORKTREE_OPTION_ID, type WorktreeSelectionStepScope } from '@/components/sessions/new/hooks/screenModel/buildWorktreeSelectionListSteps';
 import { SessionAuthoringFieldSelectTrigger } from '@/components/sessions/authoring/controls/SessionAuthoringFieldSelectTrigger';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
@@ -92,6 +92,9 @@ const styles = StyleSheet.create((theme) => ({
     fixedPath: {
         ...Typography.mono(),
     },
+    path: {
+        ...Typography.mono(),
+    },
     control: {
         minWidth: 0,
         flexShrink: 1,
@@ -127,6 +130,16 @@ export type WorkflowWhereRowRenderer = (row: 'machine' | 'folder' | 'workspace',
 export type WorkflowWhereWorkspace = Readonly<{
     value: WorkflowWorkspaceSelection | undefined;
     onChange?: (next: WorkflowWorkspaceSelection) => void;
+    /** A step's Workspace: its own rows lead the popover, and it never moves the workflow's folder. */
+    step?: WorkflowStepWorkspaceScope;
+}>;
+
+/**
+ * A step's choices beyond the workflow's ("Same as the workflow", "Where a step left it"), and the step's
+ * current choice as the popover's selected row and the field's words.
+ */
+export type WorkflowStepWorkspaceScope = WorktreeSelectionStepScope & Readonly<{
+    selection: Readonly<{ optionId: string; label: string }> | undefined;
 }>;
 
 /** What the Workspace field says, in the checkout picker's own words. */
@@ -545,6 +558,7 @@ function ProjectCheckoutPicker(props: Readonly<{
     const { onSelectDirectory, target } = props;
     const workspaceValue = props.workspace?.value;
     const onChangeWorkspace = props.workspace?.onChange;
+    const stepScope = props.workspace?.step;
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
     const applyClose = React.useCallback(() => setOpen(false), []);
@@ -565,8 +579,23 @@ function ProjectCheckoutPicker(props: Readonly<{
     }), [props.machineHomeDir, props.machinePlatform, repoScmSnapshot, target.directory]);
     const selectCheckoutPath = React.useCallback((path: string | null) => {
         setOpen(false);
-        if (path !== null) onSelectDirectory(target, path);
-    }, [onSelectDirectory, target]);
+        // A step works in the workflow's folder; only the workflow's own Workspace moves it.
+        if (stepScope === undefined && path !== null && path !== target.directory) onSelectDirectory(target, path);
+        // An existing checkout is the folder itself: the workflow works in it as it is.
+        onChangeWorkspace?.({ kind: 'project_checkout' });
+    }, [onChangeWorkspace, onSelectDirectory, stepScope, target]);
+    const workflowScope = React.useMemo(() => onChangeWorkspace === undefined ? undefined : {
+        newWorktree: { onSelect: () => { setOpen(false); onChangeWorkspace({ kind: 'new_worktree', source: { kind: 'original' } }); } },
+        ...(stepScope === undefined ? {} : { step: {
+            sameAsWorkflow: { subtitle: stepScope.sameAsWorkflow.subtitle,
+                onSelect: () => { setOpen(false); stepScope.sameAsWorkflow.onSelect(); } },
+            fromSteps: stepScope.fromSteps.map((fromStep) => ({ ...fromStep,
+                onSelect: () => { setOpen(false); fromStep.onSelect(); } })),
+        } }),
+    }, [onChangeWorkspace, stepScope]);
+    const workspaceKind = workspaceValue?.kind;
+    const selection = React.useMemo(() => stepScope !== undefined ? stepScope.selection : workspaceKind === 'new_worktree'
+        ? { optionId: WORKSPACE_NEW_WORKTREE_OPTION_ID, label: t('newSession.checkout.newWorktree') } : undefined, [stepScope, workspaceKind]);
     const picker = useCheckoutSelectionPicker({
         repoScmSnapshot,
         checkoutChipModel,
@@ -576,12 +605,49 @@ function ProjectCheckoutPicker(props: Readonly<{
         machineHomeDir: props.machineHomeDir,
         machinePlatform: props.machinePlatform,
         onSelectCheckoutPath: selectCheckoutPath,
+        ...(workflowScope === undefined ? {} : { workflowScope }),
+        ...(selection === undefined ? {} : { selection }),
     });
     const scope = props.currentUiContextCommandScope;
     const commands = useCurrentUiContextLocalCommands(scope === undefined || picker === null ? [] : [
         { key: 'open', title: t('newSession.checkout.selectTitle'), description: `${scope}.checkout.open`, invoke: () => setOpen(true) },
         { key: 'close', title: t('common.close'), description: `${scope}.checkout.close`, invoke: applyClose },
     ], { foregroundOverlay: true, contextKey: scope });
+    const togglePicker = scope === undefined ? () => setOpen(current => !current) : () => { void commands.invoke(open ? 'close' : 'open'); };
+    if (props.workspace !== undefined) {
+        // The Workspace row keeps its place where the folder is no Git repository (or not read yet): it
+        // says the workflow works in the folder, and offers nothing it could not honour.
+        const label = picker?.selectedLabel ?? stepScope?.selection?.label ?? workflowWorkspaceFieldLabel(workspaceValue);
+        return (
+            <>
+                <SessionAuthoringFieldSelectTrigger
+                    anchorRef={anchorRef}
+                    title={t('workflows.workspace.title')}
+                    label={label}
+                    span="column"
+                    open={open}
+                    disabled={picker === null || onChangeWorkspace === undefined}
+                    onPress={togglePicker}
+                    testID={`${props.testIDPrefix}-project-checkout`}
+                />
+                {picker === null ? null : <AgentInputSelectionListPopover
+                    currentUiContextCommandScope={scope === undefined ? undefined : `${scope}.checkout.list`}
+                    open={open}
+                    anchorRef={anchorRef}
+                    rootStep={picker.rootStep}
+                    selectedOptionId={picker.selectedOptionId}
+                    onSelect={() => {
+                        // Each option's own `onSelect` is the action source; this wrapper owns only the close path.
+                    }}
+                    onRequestClose={(context?: ActionExecutorContext) => {
+                        if (scope === undefined || context !== undefined) applyClose();
+                        else void commands.invoke('close');
+                    }}
+                    maxHeightCap={480}
+                />}
+            </>
+        );
+    }
     if (picker === null) return null;
 
     return (
@@ -619,5 +685,48 @@ function ProjectCheckoutPicker(props: Readonly<{
                 maxHeightCap={480}
             />
         </>
+    );
+}
+
+/**
+ * A step's Workspace field (WF-REDESIGN-1116 change a): the same checkout picker as the workflow's
+ * Workspace row, for the workflow's place, with the step's own rows leading. Mounted only while the
+ * step's options are open.
+ */
+export function WorkflowStepWorkspaceField(props: Readonly<{
+    accountLifetime?: ServerAccountScopeLifetime | null;
+    target: WorkflowAuthoringTarget | null | undefined;
+    machines?: readonly Machine[];
+    machineName: string | null;
+    workspace: WorkflowWhereWorkspace & Readonly<{ step: WorkflowStepWorkspaceScope }>;
+    currentUiContextCommandScope?: string;
+    testIDPrefix: string;
+}>): React.ReactElement {
+    const target = props.target ?? null;
+    const { serverId, machineHomeDir, machinePlatform, moveToDirectory } = useWorkflowWhereChoices({
+        ...(props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime }),
+        target,
+        ...(props.machines === undefined ? {} : { machines: props.machines }),
+        machineName: props.machineName,
+        machineHomeDir: null,
+    });
+    const anchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
+    if (target === null || !isWorkflowProjectTarget(target)) {
+        // No folder chosen yet: the field says the step's choice and waits for the workflow's place.
+        return <SessionAuthoringFieldSelectTrigger anchorRef={anchorRef} title={t('workflows.workspace.title')}
+            label={props.workspace.step.selection?.label ?? workflowWorkspaceFieldLabel(props.workspace.value)}
+            span="column" open={false} disabled onPress={() => {}} testID={`${props.testIDPrefix}-project-checkout`} />;
+    }
+    return (
+        <ProjectCheckoutPicker
+            currentUiContextCommandScope={props.currentUiContextCommandScope}
+            target={target}
+            serverId={serverId}
+            machineHomeDir={machineHomeDir}
+            machinePlatform={machinePlatform}
+            onSelectDirectory={moveToDirectory}
+            workspace={props.workspace}
+            testIDPrefix={props.testIDPrefix}
+        />
     );
 }

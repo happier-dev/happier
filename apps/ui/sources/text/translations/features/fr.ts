@@ -16392,14 +16392,7 @@ const fr: WorkflowEditorPageTranslations = {
         conversationShared: 'Partagée',
         conversationFresh: 'Nouvelle',
         conversationContinue: 'Reprendre',
-        workspaceWorkflow: 'Workflow',
-        workspaceProject: 'Projet',
-        workspaceNewWorktree: 'Worktree',
         continueFrom: 'Reprend',
-        workspaceFollows: 'Si l’espace de travail du workflow change',
-        workspaceFollowsChanges: 'Le suivre',
-        workspaceFollowsPinned: 'Garder celui-ci',
-        worktreeSource: 'Part de',
         advancedTitle: 'Avancé',
         deadline: ({ ms }) => `Attend son résultat ${ms} ms`,
         workflowDefault: ({ value }) => `Valeur du workflow · ${value}`,
@@ -17405,6 +17398,8 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         clear: 'Effacer la sélection',
         fieldPath: 'Chemin du champ',
         explain: 'Ce que ce flux de travail renvoie lorsqu’il se termine.',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: 'Rapporte',
     },
 
     conversation: {
@@ -17443,8 +17438,6 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         whereStepLeftIt: 'Là où une étape l’a laissé',
         whereStepLeftItSubtitle: 'Le dossier où une étape précédente s’est arrêtée, modifications non validées comprises.',
         newWorktreeSubtitle: 'Un nouvel extrait du dernier commit. Les modifications non validées restent dans le dossier du projet.',
-        committedOnlyNote: 'Un nouveau worktree contient l’état committé du dossier source. Les modifications indexées, non committées et non suivies restent dans la source.',
-        reuseNote: 'Quand un espace de travail est repris, il voit ses fichiers non committés exactement tels quels.',
         sharedParallelNote: 'Les branches qui partagent un espace de travail peuvent y écrire en même temps.',
         unavailable: ({ block }) => `L’espace de travail de ${block} n’est pas disponible.`,
         unavailableBody: 'Restaure-le pour continuer cette exécution, ou examine une nouvelle exécution qui risque de répéter du travail déjà fait.',

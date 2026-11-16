@@ -16323,14 +16323,7 @@ const zhHant: WorkflowEditorPageTranslations = {
         conversationShared: '共用',
         conversationFresh: '新建',
         conversationContinue: '繼續',
-        workspaceWorkflow: '工作流程',
-        workspaceProject: '專案',
-        workspaceNewWorktree: 'Worktree',
         continueFrom: '繼續對象',
-        workspaceFollows: '工作流程工作區變更時',
-        workspaceFollowsChanges: '跟隨它',
-        workspaceFollowsPinned: '保留目前',
-        worktreeSource: '起點',
         advancedTitle: '進階',
         deadline: ({ ms }) => `等待結果 ${ms} 毫秒`,
         workflowDefault: ({ value }) => `工作流程預設 · ${value}`,
@@ -17336,6 +17329,8 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         clear: '清除選擇',
         fieldPath: '欄位路徑',
         explain: '這個工作流程結束時回傳的內容。',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: '報告',
     },
 
     conversation: {
@@ -17374,8 +17369,6 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         whereStepLeftIt: '某個步驟留下的位置',
         whereStepLeftItSubtitle: '先前某個步驟結束時所在的資料夾，包括未提交的變更。',
         newWorktreeSubtitle: '最新提交的全新簽出。未提交的變更留在專案資料夾中。',
-        committedOnlyNote: '新的工作樹包含來源資料夾已提交的狀態。已暫存、未提交與未追蹤的變更仍留在來源資料夾。',
-        reuseNote: '繼續使用某個工作區時，它會原樣看到其中未提交的檔案。',
         sharedParallelNote: '共用同一個工作區的分支可能會同時寫入。',
         unavailable: ({ block }) => `${block} 的工作區無法使用。`,
         unavailableBody: '把它還原以繼續這次執行，或檢視一次可能重複已完成工作的新執行。',

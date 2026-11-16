@@ -16346,14 +16346,7 @@ const it: WorkflowEditorPageTranslations = {
         conversationShared: 'Condivisa',
         conversationFresh: 'Nuova',
         conversationContinue: 'Continua',
-        workspaceWorkflow: 'Workflow',
-        workspaceProject: 'Progetto',
-        workspaceNewWorktree: 'Worktree',
         continueFrom: 'Continua',
-        workspaceFollows: 'Se cambia lo spazio di lavoro del workflow',
-        workspaceFollowsChanges: 'Seguirlo',
-        workspaceFollowsPinned: 'Mantenere questo',
-        worktreeSource: 'Parte da',
         advancedTitle: 'Avanzate',
         deadline: ({ ms }) => `Attende il risultato per ${ms} ms`,
         workflowDefault: ({ value }) => `Predefinito del workflow · ${value}`,
@@ -17359,6 +17352,8 @@ const it = translated(workflowValueReferenceTranslations.it, {
         clear: 'Annulla la selezione',
         fieldPath: 'Percorso del campo',
         explain: 'Ciò che questo flusso di lavoro restituisce quando finisce.',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: 'Riporta',
     },
 
     conversation: {
@@ -17397,8 +17392,6 @@ const it = translated(workflowValueReferenceTranslations.it, {
         whereStepLeftIt: 'Dove l’ha lasciato un passaggio',
         whereStepLeftItSubtitle: 'La cartella in cui è terminato un passaggio precedente, modifiche non confermate incluse.',
         newWorktreeSubtitle: 'Un checkout nuovo dell’ultimo commit. Le modifiche non confermate restano nella cartella del progetto.',
-        committedOnlyNote: 'Un nuovo worktree contiene lo stato committato della cartella di origine. Le modifiche in staging, non committate e non tracciate restano nell’origine.',
-        reuseNote: 'Quando un’area di lavoro viene ripresa, vede i suoi file non committati esattamente come sono.',
         sharedParallelNote: 'I rami che condividono un’area di lavoro possono scriverci contemporaneamente.',
         unavailable: ({ block }) => `L’area di lavoro di ${block} non è disponibile.`,
         unavailableBody: 'Ripristinala per continuare questa esecuzione, oppure valuta una nuova esecuzione che potrebbe ripetere lavoro già completato.',

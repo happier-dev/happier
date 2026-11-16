@@ -16324,14 +16324,7 @@ const zhHans: WorkflowEditorPageTranslations = {
         conversationShared: '共享',
         conversationFresh: '新建',
         conversationContinue: '继续',
-        workspaceWorkflow: '工作流',
-        workspaceProject: '项目',
-        workspaceNewWorktree: 'Worktree',
         continueFrom: '继续对象',
-        workspaceFollows: '工作流工作区变化时',
-        workspaceFollowsChanges: '跟随它',
-        workspaceFollowsPinned: '保留当前',
-        worktreeSource: '起点',
         advancedTitle: '高级',
         deadline: ({ ms }) => `等待结果 ${ms} 毫秒`,
         workflowDefault: ({ value }) => `工作流默认 · ${value}`,
@@ -17337,6 +17330,8 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         clear: '清除选择',
         fieldPath: '字段路径',
         explain: '这个工作流结束时返回的内容。',
+        /** The page-foot Result row's label: what the workflow returns. */
+        reports: '报告',
     },
 
     conversation: {
@@ -17375,8 +17370,6 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         whereStepLeftIt: '某个步骤留下的位置',
         whereStepLeftItSubtitle: '之前某个步骤结束时所在的文件夹，包括未提交的更改。',
         newWorktreeSubtitle: '最新提交的全新检出。未提交的更改留在项目文件夹中。',
-        committedOnlyNote: '新的工作树包含源文件夹已提交的状态。已暂存、未提交和未跟踪的更改仍留在源文件夹中。',
-        reuseNote: '继续使用一个工作区时，它会原样看到其中未提交的文件。',
         sharedParallelNote: '共用同一个工作区的分支可能会同时写入。',
         unavailable: ({ block }) => `${block} 的工作区不可用。`,
         unavailableBody: '恢复它以继续这次运行，或者查看一次可能重复已完成工作的新运行。',

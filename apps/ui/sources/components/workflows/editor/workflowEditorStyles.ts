@@ -149,6 +149,11 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     spineToEnd: {
         bottom: 0,
     },
+    /** Through a whole row on the spine's way (the root's end row, on the way to the Result). */
+    spineAcross: {
+        top: 0,
+        bottom: 0,
+    },
     /** A lane's last block while editing: past the lane's end inserter, to where the lane joins back. */
     spineToEndPastInserter: {
         bottom: -theme.space.s20,
