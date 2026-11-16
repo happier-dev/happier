@@ -592,7 +592,7 @@ export const DeploymentReceiptDetail = React.memo(
                 key={`${log.reference.machineId}:${log.reference.installationId}`}
                 testID="project-deployments.receipt.log"
                 title={t('projects.deployments.logTitle')}
-                description={log.excerpt!.truncated
+                description={log.reference.machineId === undefined ? undefined : log.excerpt!.truncated
                   ? t('projects.deployments.logTail', { machine: machineName(log.reference.machineId) })
                   : t('projects.deployments.logWhole', { machine: machineName(log.reference.machineId) })}
                 surface="none"

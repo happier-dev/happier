@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { DeploymentReadAdmissionV1Schema, projectDeploymentReadAdmissionV1 } from './deploymentReadAdmissionV1';
+import { DeploymentLogsReadInputV1Schema, DeploymentLogsReadSuccessV1Schema, DeploymentHealthReadInputV1Schema } from './deploymentReadsV1';
+import { PluginUiDeploymentStageLogsReadReferenceV1Schema } from '../daemon/machineServiceLogsResource';
+import { FileSaveInputSchema } from '../actions/fileSaveActionFamily';
+
+describe('target-shaped deployment logs', () => {
+    it.each(['build', 'runtime'] as const)('returns platform %s logs without inventing Machine coordinates', kind => {
+        const result = { ok: true, environmentId: 'environment', deploymentId: 'deployment', targetLinkId: 'link', kind,
+            logs: { kind: 'page', page: { sourceRevision: 'provider-deployment', text: 'ready', nextCursor: null, truncated: false } } };
+        expect(DeploymentLogsReadSuccessV1Schema.parse(result)).toEqual(result);
+    });
+    it.each(['build', 'runtime'] as const)('admits a compact platform %s read and follows the same reference', kind => {
+        const input = { serverId: 'home', environmentId: 'environment', deploymentId: 'deployment', kind };
+        expect(DeploymentLogsReadInputV1Schema.parse(input)).toEqual(input);
+        expect(DeploymentReadAdmissionV1Schema.parse(projectDeploymentReadAdmissionV1('deployments.logs.read', input)))
+            .toEqual({ actionId: 'deployments.logs.read', environmentId: 'environment', deploymentId: 'deployment', kind });
+        expect(PluginUiDeploymentStageLogsReadReferenceV1Schema.parse({ hostRead: 'deployments.logs',
+            input: { ...input, ...(kind === 'build' ? { tail: true } : {}) }, sourceRevision: 'provider-deployment' }))
+            .toHaveProperty('input.deploymentId', 'deployment');
+        if (kind === 'build') expect(FileSaveInputSchema.parse({ fileName: 'build.log', source: {
+            kind: 'deploymentLog', reference: input } })).toHaveProperty('source.reference', input);
+        expect(DeploymentLogsReadInputV1Schema.safeParse({ ...input, arbitrary: true }).success).toBe(false);
+        expect(DeploymentHealthReadInputV1Schema.safeParse(input).success).toBe(false);
+    });
+});
 
 describe('deployment current-health read admission', () => {
     it('binds the read-only current edge to one Environment, link and controller without a receipt', () => {

@@ -1597,6 +1597,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (request.actionId === 'deployments.logs.read') {
                 const input = DeploymentActionInputSchemasV1['deployments.logs.read'].safeParse(request.input);
                 if (!input.success) return failure('invalid_parameters');
+                if (input.data.targetLinkId === undefined) {
+                    return contributedTarget.prepareLogs({ input: input.data, context: request.context });
+                }
                 try {
                     // Native runtime log recovery uses public placement without opening Account content.
                     const metadata = await readEnvironmentMetadata({ environmentId: input.data.environmentId, context: request.context });

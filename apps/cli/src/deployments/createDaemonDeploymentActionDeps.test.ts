@@ -2296,11 +2296,14 @@ describe('installed deployment storage and target composition', () => {
                             ? formatQualifiedPluginActionId({ pluginId, localId: 'upload-deploy' }) : 'action.invoke']:
                             { approvalRequiredSurfaces: ['api'] } } } : {}) }) };
             if (runtimeLogs) {
+                const acceptedExecution = receipt.acceptedExecution;
+                receipt.acceptedExecution = undefined;
                 const result = await executor.execute('deployments.logs.read', { serverId: 'home', environmentId: receipt.environmentId,
-                    deploymentId: receipt.id, targetLinkId: receipt.targetLinkId, machineId: 'machine-a', installationId: 'installation-a', kind: 'runtime' },
+                    deploymentId: receipt.id, kind: 'runtime' },
                 context);
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, kind: 'runtime', logs: {
                     kind: 'page', page: { sourceRevision: 'existing-provider-deployment', text: 'Runtime ready\n', truncated: true } } } });
+                receipt.acceptedExecution = acceptedExecution;
                 const hostRead = createDaemonHostResourceRead({ readAccountId: () => 'owner', resolveActionExecutor: async () => executor });
                 const reference = { hostRead: 'deployments.logs' as const, sourceRevision: 'existing-provider-deployment', input: {
                     serverId: 'home', environmentId: receipt.environmentId, deploymentId: receipt.id, targetLinkId: receipt.targetLinkId,
@@ -2336,11 +2339,21 @@ describe('installed deployment storage and target composition', () => {
             if (scenario === 'build logs') {
                 // QA #82: receipt revision1 remains readable after the same Link advances to2.
                 row.targetLink.revision = 2;
+                const compactInput = { serverId: 'home', environmentId: receipt.environmentId,
+                    deploymentId: receipt.id, kind: 'build' as const };
+                for (const mismatch of [{ targetLinkId: 'other-link' }, { machineId: 'other-machine' },
+                    { installationId: 'other-installation' }]) {
+                    await expect(executor.execute('deployments.logs.read', { ...compactInput, ...mismatch }, context))
+                        .resolves.toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+                }
                 const result = await executor.execute('deployments.logs.read', { serverId: 'home', environmentId: receipt.environmentId,
-                    deploymentId: receipt.id, targetLinkId: receipt.targetLinkId, machineId: 'machine-a', installationId: 'installation-a', kind: 'build' }, context);
+                    deploymentId: receipt.id, kind: 'build' }, context);
                 if (!result.ok) throw new Error(JSON.stringify(result));
                 expect(result).toMatchObject({ ok: true, result: { ok: true, kind: 'build', logs: { kind: 'page',
                     page: { sourceRevision: 'existing-provider-deployment', text: 'Build complete\n' } } } });
+                await expect(executor.execute('deployments.logs.read', { ...compactInput, targetLinkId: receipt.targetLinkId,
+                    machineId: 'machine-a', installationId: 'installation-a' }, context))
+                    .resolves.toMatchObject({ ok: true, result: { ok: true, kind: 'build' } });
                 await expect(executor.execute('deployments.logs.read', { serverId: 'home', environmentId: receipt.environmentId,
                     deploymentId: receipt.id, targetLinkId: receipt.targetLinkId, machineId: 'machine-a', installationId: 'installation-a',
                     kind: 'runtime', service: { kind: 'deployment', machineId: 'machine-a', environmentId: receipt.environmentId,

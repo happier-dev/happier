@@ -58,10 +58,10 @@ describe('receipt facts', () => {
             providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
             providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
                 providerDeploymentId: 'dpl_exact' } };
-        receipt.deployment.acceptedExecution = { v: 1, controller: { machineId: 'controller', installationId: 'installation' } };
+        receipt.deployment.acceptedExecution = undefined;
         expect(projectDeploymentReceiptFactsV1(receipt).logs).toEqual([{ scope: 'operation', excerpt: null, reference: {
             kind: 'build', environmentId: receipt.deployment.environmentId, deploymentId: receipt.deployment.id,
-            targetLinkId: receipt.deployment.targetLinkId, machineId: 'controller', installationId: 'installation' } }]);
+            targetLinkId: receipt.deployment.targetLinkId } }]);
     });
 
     it('says where a receipt ran from its target kind: a platform keeps its own releases, so no Machine keep count (COR4B ui-60)', () => {

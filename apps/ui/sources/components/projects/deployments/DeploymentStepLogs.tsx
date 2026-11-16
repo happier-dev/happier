@@ -102,7 +102,8 @@ export function DeploymentStepLogs(
       ).map(({ reference }) => ({ id: `build-log.${reference.machineId}.${reference.installationId}`,
         // Beside steps it is the whole deploy log; with no steps, sibling logs differ only by their Machine.
         label: recorded.length > 0 ? t('projects.deployments.deployLog')
-          : machineNames[reference.machineId] ?? t('projects.deployments.aMachine'),
+          : reference.machineId ? machineNames[reference.machineId] ?? t('projects.deployments.aMachine')
+            : t('projects.deployments.deployLog'),
         step: null, log: reference }))];
     },
     [facts.steps, facts.logs, machineId, steps, machineNames],

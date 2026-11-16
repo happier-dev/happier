@@ -496,14 +496,24 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null> {
         try {
             const address = request.input;
-            if (address.serverId !== host.serverId || address.machineId !== host.machineId) return failure('target_mismatch');
+            if (address.serverId !== host.serverId || address.machineId !== undefined && address.machineId !== host.machineId) return failure('target_mismatch');
             const environment = await host.readEnvironment({ environmentId: address.environmentId, context: request.context });
-            const row = environment.targetLinks.find(row => row.targetLink.id === address.targetLinkId);
+            const selectedRow = address.targetLinkId === undefined ? undefined
+                : environment.targetLinks.find(row => row.targetLink.id === address.targetLinkId);
+            if (address.targetLinkId !== undefined && !selectedRow) return failure('target_mismatch');
+            if (selectedRow && selectedRow.targetLink.source.kind !== 'plugin') return null;
+            const receipt = await host.readReceipt({ environmentId: address.environmentId, deploymentId: address.deploymentId, context: request.context });
+            const targetLinkId = receipt.deployment.targetLinkId;
+            const controller = receipt.deployment.acceptedExecution?.controller;
+            if (receipt.deployment.id !== address.deploymentId || receipt.deployment.environmentId !== address.environmentId
+                || address.targetLinkId !== undefined && address.targetLinkId !== targetLinkId
+                || address.machineId !== undefined && address.machineId !== controller?.machineId
+                || address.installationId !== undefined && address.installationId !== controller?.installationId) return failure('target_mismatch');
+            const row = selectedRow ?? environment.targetLinks.find(row => row.targetLink.id === targetLinkId);
             if (!row) return failure('target_mismatch');
             if (row.targetLink.source.kind !== 'plugin') return null;
             const role = address.kind === 'build' ? 'logs.build' : 'logs.runtime';
-            const receipt = await host.readReceipt({ environmentId: address.environmentId, deploymentId: address.deploymentId, context: request.context });
-            return await withRole<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null>({ environmentId: address.environmentId, targetLinkId: address.targetLinkId,
+            return await withRole<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null>({ environmentId: address.environmentId, targetLinkId,
                 context: request.context }, environment, role, async scope => {
                 const input = DeploymentTargetRoleInputSchemasV1[role].parse({ ...scope.common,
                     deploymentId: receipt.deployment.id, expectedDeploymentRevision: receipt.deployment.revision,
@@ -524,9 +534,10 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                                 text: '', nextCursor: null, truncated: true } }
                             : DeploymentTargetLogsResultV1ProtocolSchema.parse(result.result);
                         return { ok: true, result: DeploymentLogsReadSuccessV1Schema.parse({ ok: true,
-                            environmentId: address.environmentId, deploymentId: address.deploymentId, targetLinkId: address.targetLinkId,
-                            machineId: address.machineId, installationId: address.installationId, kind: address.kind,
-                            ...(address.kind === 'runtime' && address.service ? { service: address.service } : {}), logs }) };
+                            environmentId: address.environmentId, deploymentId: address.deploymentId, targetLinkId,
+                            kind: address.kind,
+                            ...(address.kind === 'runtime' && address.service ? { service: address.service,
+                                machineId: address.machineId, installationId: address.installationId } : {}), logs }) };
                     } };
             });
         } catch (error) {

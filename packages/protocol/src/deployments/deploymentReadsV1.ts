@@ -12,6 +12,9 @@ import { ManagedServiceNativeLogCursorV1Schema, ManagedServiceNativeLogResultV1S
 
 const target = { environmentId: id, deploymentId: id, targetLinkId: id, machineId: id, installationId: id };
 const input = { serverId: id, ...target };
+/** Platform receipts resolve their link and executor; native readers require their exact Machine placement. */
+const logTarget = { environmentId: id, deploymentId: id, targetLinkId: z.optional(id),
+  machineId: z.optional(id), installationId: z.optional(id) };
 const service = { service: MachineDeploymentServiceIdentityV1Schema };
 const referenceBinding = () => ({ name: EnvironmentVariableBindingV1Schema.shape.name,
   phase: EnvironmentVariableBindingV1Schema.shape.phase, source: DeploymentReferenceSourceV1Schema });
@@ -34,6 +37,10 @@ export const DeploymentSecretRevisionFactV1Schema = lazyZodSchema(() => z.strict
 export type DeploymentSecretRevisionFactV1 = z.infer<typeof DeploymentSecretRevisionFactV1Schema>;
 const matchesService = (value: { environmentId: string; machineId: string; service: z.infer<typeof MachineDeploymentServiceIdentityV1Schema> }) =>
   value.environmentId === value.service.environmentId && value.machineId === value.service.machineId;
+const matchesLogService = (value: { environmentId: string; machineId?: string; installationId?: string; targetLinkId?: string;
+  service?: z.infer<typeof MachineDeploymentServiceIdentityV1Schema> }) => value.service === undefined
+    || value.machineId !== undefined && value.installationId !== undefined && value.targetLinkId !== undefined
+      && matchesService({ ...value, machineId: value.machineId, service: value.service });
 const serviceIdentityCheck = { message: 'The stable service belongs to the selected Environment and Machine.' };
 const freshness = { observedAtMs: z.nullable(timestamp), freshness: z.enum(['current', 'stale', 'unavailable']) };
 
@@ -86,13 +93,13 @@ export const DeploymentHealthReadInputV1Schema = lazyZodSchema(() => z.strictObj
   .check(z.refine(matchesService, serviceIdentityCheck)));
 export const DeploymentDriftReadInputV1Schema = lazyZodSchema(() => z.strictObject({ ...input, ...service, expectedRevision: revision })
   .check(z.refine(matchesService, serviceIdentityCheck)));
-export const DeploymentStageLogsReadInputV1Schema = lazyZodSchema(() => z.strictObject({ ...input,
+export const DeploymentStageLogsReadInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: id, ...logTarget,
   kind: z.literal('build'), ref: z.optional(id), tail: z.optional(z.literal(true)),
   cursor: z.optional(ManagedServiceNativeLogCursorV1Schema) }));
-export const DeploymentRuntimeLogsReadInputV1Schema = lazyZodSchema(() => z.strictObject({ ...input,
+export const DeploymentRuntimeLogsReadInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: id, ...logTarget,
   service: z.optional(MachineDeploymentServiceIdentityV1Schema), kind: z.literal('runtime'),
   cursor: z.optional(ManagedServiceNativeLogCursorV1Schema) })
-  .check(z.refine(value => value.service === undefined || matchesService({ ...value, service: value.service }), serviceIdentityCheck)));
+  .check(z.refine(matchesLogService, serviceIdentityCheck)));
 export const DeploymentLogsReadInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   DeploymentStageLogsReadInputV1Schema,
   DeploymentRuntimeLogsReadInputV1Schema,
@@ -121,10 +128,10 @@ export const DeploymentDriftReadSuccessV1Schema = lazyZodSchema(() => z.strictOb
 }).check(z.refine(matchesService, serviceIdentityCheck)));
 /** Both front doors reuse the native source-bound cursor/result grammar without another byte budget. */
 export const DeploymentLogsReadSuccessV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ ok: z.literal(true), ...target, kind: z.literal('build'), logs: ManagedServiceNativeLogResultV1Schema }),
-  z.strictObject({ ok: z.literal(true), ...target, service: z.optional(MachineDeploymentServiceIdentityV1Schema),
+  z.strictObject({ ok: z.literal(true), ...logTarget, kind: z.literal('build'), logs: ManagedServiceNativeLogResultV1Schema }),
+  z.strictObject({ ok: z.literal(true), ...logTarget, service: z.optional(MachineDeploymentServiceIdentityV1Schema),
     kind: z.literal('runtime'), logs: ManagedServiceNativeLogResultV1Schema })
-    .check(z.refine(value => value.service === undefined || matchesService({ ...value, service: value.service }), serviceIdentityCheck)),
+    .check(z.refine(matchesLogService, serviceIdentityCheck)),
 ]));
 
 /** Clients bind strings using their own parameter syntax, including managed positional keys. */

@@ -2,6 +2,7 @@ import type {
     DeploymentReceiptDetailV1, DeploymentReceiptFailureV1, DeploymentReviewRevisionV1, DeploymentStepV1,
     DeploymentReceiptHeaderV1, DeploymentTargetLinkHeaderV1, DeploymentReceiptHistoryV1,
 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { deploymentRevisionShortLabelV1, getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1,
     projectDeploymentDowntimeClassV1, projectDeploymentReviewRevisionV1 } from '@happier-dev/deployment-protocol/v1';
 
@@ -54,8 +55,7 @@ export function selectDeploymentReceiptRetainedHistoryV1(input: DeploymentReceip
 /** Exact operands for the existing deployments.logs.read stage-log owner. */
 export type DeploymentReceiptLogFactV1 = Readonly<{
     scope: 'operation';
-    reference: Readonly<{ kind: 'build'; environmentId: string; deploymentId: string; targetLinkId: string;
-        machineId: string; installationId: string }>;
+    reference: Readonly<Omit<Extract<DeploymentLogsReadInputV1, { kind: 'build' }>, 'serverId' | 'cursor' | 'tail' | 'ref'>>;
     excerpt: Readonly<{ text: string; truncated: boolean }> | null;
 }>;
 export type DeploymentReceiptStepLogFactV1 = Readonly<{
@@ -130,10 +130,9 @@ export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetail
             targetLinkId: deployment.targetLinkId, machineId: log.machineId, installationId: log.installationId },
         excerpt: log.excerpt ?? null,
     }));
-    const controller = deployment.acceptedExecution?.controller;
-    if (content.platform?.observation.providerDeploymentId && controller) logs.push({
+    if (content.platform?.observation.providerDeploymentId) logs.push({
         scope: 'operation', reference: { kind: 'build', environmentId: deployment.environmentId, deploymentId: deployment.id,
-            targetLinkId: deployment.targetLinkId, machineId: controller.machineId, installationId: controller.installationId },
+            targetLinkId: deployment.targetLinkId },
         excerpt: null,
     });
     const memberLogs = new Map(logs.map(log => [JSON.stringify([

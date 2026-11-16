@@ -180,6 +180,9 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       ],
     } as const : {
       ...(id === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? { description: deploymentDeployDescription } : {}),
+      ...(id === deploymentActionIds.DEPLOYMENT_LOGS_READ_ACTION_ID_V1 ? {
+        description: 'Read the retained deployment log. Platform targets need serverId, environmentId, deploymentId and kind; the receipt supplies routing. Native Machine logs also need targetLinkId, machineId and installationId, plus service for runtime logs.',
+      } : {}),
       fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || accountPage
@@ -201,10 +204,10 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
         { path: 'params', title: 'Bound string parameters', widget: 'json' as const, required: true },
       ] : []),
       ...(isDeploymentNativeReadActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 ? [
-        { path: 'deploymentId', title: 'Active deployment', widget: 'text' as const, required: true },
-        { path: 'targetLinkId', title: 'Deployment target', widget: 'text' as const, required: true },
-        { path: 'machineId', title: 'Selected Machine', widget: 'text' as const, required: true },
-        { path: 'installationId', title: 'Machine installation', widget: 'text' as const, required: true },
+        { path: 'deploymentId', title: id === deploymentActionIds.DEPLOYMENT_LOGS_READ_ACTION_ID_V1 ? 'Deployment receipt' : 'Active deployment', widget: 'text' as const, required: true },
+        { path: 'targetLinkId', title: id === deploymentActionIds.DEPLOYMENT_LOGS_READ_ACTION_ID_V1 ? 'Native Machine deployment target' : 'Deployment target', widget: 'text' as const, required: id !== deploymentActionIds.DEPLOYMENT_LOGS_READ_ACTION_ID_V1 },
+        { path: 'machineId', title: 'Selected Machine', widget: 'text' as const, required: id !== deploymentActionIds.DEPLOYMENT_LOGS_READ_ACTION_ID_V1 },
+        { path: 'installationId', title: 'Machine installation', widget: 'text' as const, required: id !== deploymentActionIds.DEPLOYMENT_LOGS_READ_ACTION_ID_V1 },
         { path: 'service', title: 'Stable service identity', widget: 'json' as const, required: id !== deploymentActionIds.DEPLOYMENT_LOGS_READ_ACTION_ID_V1 },
         ...(id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 ? [{ path: 'expectedGeneration', title: 'Service generation', widget: 'text' as const, required: true }] : []),
         ...(id === deploymentActionIds.DEPLOYMENT_DRIFT_READ_ACTION_ID_V1 ? [{ path: 'expectedRevision', title: 'Environment revision', widget: 'number' as const, required: true }] : []),

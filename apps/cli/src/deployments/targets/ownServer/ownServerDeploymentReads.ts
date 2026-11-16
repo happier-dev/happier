@@ -37,7 +37,9 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
         if (actionId !== 'deployments.health.read' && actionId !== 'deployments.drift.read' && actionId !== 'deployments.logs.read') return failure('unsupported_action');
         let lease: ReturnType<typeof tryAcquireAuthoritativePluginRuntimeRegistryLease> = null;
         try {
-            const input: ReadInput = DeploymentActionInputSchemasV1[actionId].parse(rawInput);
+            const parsed: ReadInput = DeploymentActionInputSchemasV1[actionId].parse(rawInput);
+            if (!parsed.targetLinkId || !parsed.machineId || !parsed.installationId) return failure('target_mismatch');
+            const input = { ...parsed, targetLinkId: parsed.targetLinkId, machineId: parsed.machineId, installationId: parsed.installationId };
             await host.assertCurrent(context);
             const installation = readInstallationIdentityIfExistsSync();
             if (input.serverId !== host.serverId || input.machineId !== host.machineId

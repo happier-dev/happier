@@ -3903,6 +3903,30 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await readDeploymentTargetAuthorizationInTx(db, environment, mismatch)).toBeNull();
     });
 
+    it('refuses compact platform logs without a matching receipt before any target-link lookup (N4)', async () => {
+        const f = await fixture('account', 'account', { platformTarget: 'workers' });
+        const actionId = 'deployments.logs.read' as const;
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = { serverId, environmentId: f.environment.id, deploymentId: crypto.randomUUID(), kind: 'build' as const };
+        const admission = projectDeploymentReadAdmissionV1(actionId, input);
+        if (!admission || admission.actionId !== actionId) throw new Error('Compact log admission missing');
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const linkReads: unknown[] = [];
+        // Observe real Prisma IO: an omitted id is a wildcard, never a target-link selector.
+        const stop = observeSqliteRequests({ before: query => {
+            if (query.model === 'DeploymentTargetLink') linkReads.push(query.args);
+        } });
+        try {
+            expect(await readAdmittedDeploymentReadScopeInTx(db, admission)).toBeNull();
+            await expect(auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id,
+                serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+                actionId, machineId: f.controller.id, target, requestId: envelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                deploymentReadAdmission: admission }, { input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            expect(linkReads).toEqual([]);
+        } finally { stop(); }
+    });
+
     it.each(['plain', 'e2ee'] as const)('opens captured %s Domain inventory only for the admitted member job', async contentMode => {
         const f = await fixture('team', 'account', { separateMemberCustodian: true, separateContentOwner: true, contentMode });
         const domainContent = await f.content('deployment-domain.v1');

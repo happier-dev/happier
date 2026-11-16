@@ -1781,9 +1781,6 @@ export type DeploymentsActionInputById = {
         kind: 'build';
         environmentId: string;
         deploymentId: string;
-        targetLinkId: string;
-        machineId: string;
-        installationId: string;
         serverId: string;
         ref?: string | undefined;
         tail?: true | undefined;
@@ -1791,13 +1788,13 @@ export type DeploymentsActionInputById = {
             sourceRevision: string;
             token: string;
         };
+        targetLinkId?: string | undefined;
+        machineId?: string | undefined;
+        installationId?: string | undefined;
     } | {
         kind: 'runtime';
         environmentId: string;
         deploymentId: string;
-        targetLinkId: string;
-        machineId: string;
-        installationId: string;
         serverId: string;
         service?: undefined | {
             kind: 'deployment';
@@ -1811,6 +1808,9 @@ export type DeploymentsActionInputById = {
             sourceRevision: string;
             token: string;
         };
+        targetLinkId?: string | undefined;
+        machineId?: string | undefined;
+        installationId?: string | undefined;
     };
     readonly "deployments.data.query": {
         sql: string;
@@ -8444,10 +8444,10 @@ export type DeploymentsActionResultById = {
         };
         environmentId: string;
         deploymentId: string;
-        targetLinkId: string;
-        machineId: string;
-        installationId: string;
         ok: true;
+        targetLinkId?: string | undefined;
+        machineId?: string | undefined;
+        installationId?: string | undefined;
     } | {
         kind: 'runtime';
         logs: {
@@ -8477,9 +8477,6 @@ export type DeploymentsActionResultById = {
         };
         environmentId: string;
         deploymentId: string;
-        targetLinkId: string;
-        machineId: string;
-        installationId: string;
         ok: true;
         service?: undefined | {
             kind: 'deployment';
@@ -8489,6 +8486,9 @@ export type DeploymentsActionResultById = {
             composeService: string;
             serviceId: string;
         };
+        targetLinkId?: string | undefined;
+        machineId?: string | undefined;
+        installationId?: string | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';

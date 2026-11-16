@@ -2,7 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentHealthReadInputV1Schema, DeploymentHealthCurrentInputV1Schema,
-  DeploymentDriftReadInputV1Schema, DeploymentLogsReadInputV1Schema } from './deploymentReadsV1.js';
+  DeploymentDriftReadInputV1Schema, DeploymentLogsReadInputV1Schema, DeploymentStageLogsReadInputV1Schema } from './deploymentReadsV1.js';
 
 import { isDeploymentReadAdmissionActionIdV1 } from './deploymentActionIdsV1.js';
 import { ProjectReadinessReadInputV1Schema } from '../projects/readinessInputV1.js';
@@ -24,7 +24,8 @@ export const DeploymentReadAdmissionV1Schema = lazyZodSchema(() => z.discriminat
   z.strictObject({ actionId: z.literal('deployments.health.current'), environmentId: id, targetLinkId: id, machineId: id }),
   z.strictObject({ actionId: z.literal('deployments.health.read'), ...references }),
   z.strictObject({ actionId: z.literal('deployments.drift.read'), ...references, expectedRevision: revision }),
-  z.strictObject({ actionId: z.literal('deployments.logs.read'), ...references, kind: z.enum(['build', 'runtime']) }),
+  z.extend(z.omit(DeploymentStageLogsReadInputV1Schema, { serverId: true, ref: true, tail: true, cursor: true, kind: true }),
+    { actionId: z.literal('deployments.logs.read'), kind: z.enum(['build', 'runtime']) }),
   z.strictObject({ actionId: z.literal('deployments.data.query'), ...references, expectedRevision: revision }),
   z.strictObject({ actionId: z.literal(ACTION_INVOKE_ACTION_ID_V1), action: asProtocolZod(PluginContributionIdentityV1Schema),
     environmentId: id, targetLinkId: id, expectedRevision: revision, expectedTargetLinkRevision: revision }),
@@ -60,7 +61,8 @@ export function projectDeploymentReadAdmissionV1(actionId: string, input: unknow
   }
   if (actionId === 'deployments.logs.read') {
     const { environmentId, deploymentId, targetLinkId, machineId, installationId, kind } = DeploymentLogsReadInputV1Schema.parse(input);
-    return { actionId, environmentId, deploymentId, targetLinkId, machineId, installationId, kind };
+    return { actionId, environmentId, deploymentId, kind, ...(targetLinkId ? { targetLinkId } : {}),
+      ...(machineId ? { machineId } : {}), ...(installationId ? { installationId } : {}) };
   }
   const { environmentId, deploymentId, targetLinkId, machineId, installationId } = DeploymentHealthReadInputV1Schema.parse(input);
   return { actionId, environmentId, deploymentId, targetLinkId, machineId, installationId };
