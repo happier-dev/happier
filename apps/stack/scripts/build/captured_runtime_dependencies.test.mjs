@@ -63,3 +63,35 @@ test('retains dynamically selected native PTY providers without emitted imports'
   const require = createRequire(join(outputDir, 'apps/cli/package.json'));
   for (const id of ids) assert.equal(require(id).backend, id);
 });
+
+test('retains Transformers Node Common separately from its Web Common after capture', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-transformers-common-capture-' });
+  const repo = fixture.path('repo');
+  const cli = join(repo, 'apps/cli');
+  const transformers = join(cli, 'node_modules/@huggingface/transformers');
+  const node = join(transformers, 'node_modules/onnxruntime-node');
+  const web = join(transformers, 'node_modules/onnxruntime-web');
+  const packageAt = async (directory, manifest, code) => {
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'package.json'), JSON.stringify({ main: 'index.cjs', ...manifest }));
+    await writeFile(join(directory, 'index.cjs'), code);
+  };
+  await packageAt(join(node, 'node_modules/onnxruntime-common'), { name: 'onnxruntime-common', version: '1.21.0' }, 'exports.runtime = "node common";');
+  await packageAt(join(web, 'node_modules/onnxruntime-common'), { name: 'onnxruntime-common', version: '1.22.0' }, 'exports.runtime = "web common";');
+  await packageAt(node, { name: 'onnxruntime-node', version: '1.21.0', dependencies: { 'onnxruntime-common': '1.21.0' } }, 'module.exports = require("onnxruntime-common");');
+  await packageAt(web, { name: 'onnxruntime-web', version: '1.22.0', dependencies: { 'onnxruntime-common': '1.22.0' } }, 'module.exports = require("onnxruntime-common");');
+  await mkdir(join(transformers, 'dist'));
+  await writeFile(join(transformers, 'package.json'), JSON.stringify({ name: '@huggingface/transformers', version: '3.8.1', type: 'module', dependencies: {
+    'onnxruntime-node': '1.21.0', 'onnxruntime-web': '1.22.0',
+  } }));
+  // The real 3.8.1 Node entry imports Common without declaring it; the existing
+  // vendoring rule chooses Node's declared Common rather than Web's version.
+  await writeFile(join(transformers, 'dist/transformers.node.mjs'), 'import common from "onnxruntime-common"; import web from "onnxruntime-web"; export const runtimes = [common.runtime, web.runtime];');
+  await writeFile(join(cli, 'package.json'), JSON.stringify({ dependencies: { '@huggingface/transformers': '3.8.1' } }));
+  const outputDir = fixture.path('capture');
+  captureRuntimeDependencies({ imports: [], outputDir, sourceRepoDir: repo });
+  await rm(repo, { recursive: true });
+  const require = createRequire(join(outputDir, 'apps/cli/package.json'));
+  const captured = await import(pathToFileURL(require.resolve('@huggingface/transformers/dist/transformers.node.mjs')).href);
+  assert.deepEqual(captured.runtimes, ['node common', 'web common']);
+});

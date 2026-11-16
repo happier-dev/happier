@@ -44,6 +44,15 @@ export function omitWorkspaceSourceCondition(value: unknown): unknown;
 
 export function collectExternalRuntimeDependencies(packageJson: any): ReadonlyArray<RuntimeDependency>;
 
+export function collectRuntimeDependencyEdges(params: Readonly<{
+  packageJson: Record<string, unknown>;
+  resolveFromPackageJsonPath: string;
+  dereferenceRootDir?: string;
+}>): ReadonlyArray<Readonly<{
+  dependency: RuntimeDependency;
+  resolveFromPackageJsonPath: string;
+}>>;
+
 export function assertResolvedRuntimeDependencyMatchesDeclaration(params: Readonly<{
   dependency: RuntimeDependency;
   resolvedPackageJsonPath: string;

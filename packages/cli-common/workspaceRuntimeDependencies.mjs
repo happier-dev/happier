@@ -805,19 +805,8 @@ export function copyDirDereferenceContainedSync({
   copyPath(sourceDir, destDir, new Set());
 }
 
-export function vendorRuntimeDependencyTree({
-  packageJsonPath,
-  resolveFromPackageJsonPath = packageJsonPath,
-  destNodeModulesDir,
-  copyResolvedPackage,
-  visited = new Set(),
-  activeSourcePackageDirs = new Set(),
-  validateResolvedPackage,
-  dereferenceRootDir,
-  excludeRootDependencies = [],
-  inspectOnly = false,
-}) {
-  const packageJson = readJson(packageJsonPath);
+/** Installed edges shared by vendoring and retained runtime capture. */
+export function collectRuntimeDependencyEdges({ packageJson, resolveFromPackageJsonPath, dereferenceRootDir }) {
   const dependencies = collectExternalRuntimeDependencies(packageJson);
   let commonResolveFromPackageJsonPath;
   // Transformers 3.8.1's Node ESM entrypoint imports Common without declaring
@@ -833,15 +822,35 @@ export function vendorRuntimeDependencyTree({
     dependencies.push(commonDependency);
     commonResolveFromPackageJsonPath = nodeRuntime.packageJsonPath;
   }
+  return dependencies.map(dependency => ({ dependency,
+    resolveFromPackageJsonPath: dependency.name === 'onnxruntime-common'
+      ? commonResolveFromPackageJsonPath ?? resolveFromPackageJsonPath
+      : resolveFromPackageJsonPath,
+  }));
+}
+
+export function vendorRuntimeDependencyTree({
+  packageJsonPath,
+  resolveFromPackageJsonPath = packageJsonPath,
+  destNodeModulesDir,
+  copyResolvedPackage,
+  visited = new Set(),
+  activeSourcePackageDirs = new Set(),
+  validateResolvedPackage,
+  dereferenceRootDir,
+  excludeRootDependencies = [],
+  inspectOnly = false,
+}) {
+  const packageJson = readJson(packageJsonPath);
   if (!inspectOnly) mkdirSync(destNodeModulesDir, { recursive: true });
 
-  for (const dependency of dependencies) {
+  for (const { dependency, resolveFromPackageJsonPath: dependencyResolveFrom } of collectRuntimeDependencyEdges({
+    packageJson, resolveFromPackageJsonPath, dereferenceRootDir,
+  })) {
     if (excludeRootDependencies.includes(dependency.name)) continue;
     const resolvedPackage = resolveInstalledRuntimeDependency({
       dependency,
-      resolveFromPackageJsonPath: dependency.name === 'onnxruntime-common'
-        ? commonResolveFromPackageJsonPath ?? resolveFromPackageJsonPath
-        : resolveFromPackageJsonPath,
+      resolveFromPackageJsonPath: dependencyResolveFrom,
       dereferenceRootDir,
     });
     if (!resolvedPackage) continue;

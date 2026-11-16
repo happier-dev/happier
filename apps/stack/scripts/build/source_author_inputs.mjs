@@ -4,7 +4,7 @@ import { isBuiltin } from 'node:module';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readCachedFileDigestSync } from '../utils/fs/cached_file_digest.mjs';
-import { collectExternalRuntimeDependencies, isInternalWorkspacePackageName, resolveInstalledRuntimePackage } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
+import { collectRuntimeDependencyEdges, isInternalWorkspacePackageName, resolveInstalledRuntimePackage } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 
 /** External imports emitted by the runtime select its installed package closure.
  * Compiler/ambient lookup roots are build inputs, not dependencies of an
@@ -52,11 +52,13 @@ export function readSourceRuntimeDependencyIdentity({ imports: runtimeImports,
     const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
     // Peers can supply runtime imports too. Keep an absent peer observable,
     // without turning this inventory into a new package-install validator.
-    for (const dependency of collectExternalRuntimeDependencies({ ...manifest,
-      optionalDependencies: { ...manifest.peerDependencies, ...manifest.optionalDependencies } })) {
+    for (const { dependency, resolveFromPackageJsonPath } of collectRuntimeDependencyEdges({
+      packageJson: { ...manifest, optionalDependencies: { ...manifest.peerDependencies, ...manifest.optionalDependencies } },
+      resolveFromPackageJsonPath: packageJsonPath,
+    })) {
       let installed;
       try {
-        installed = resolveInstalledRuntimePackage({ packageName: dependency.name, resolveFromPackageJsonPath: packageJsonPath });
+        installed = resolveInstalledRuntimePackage({ packageName: dependency.name, resolveFromPackageJsonPath });
       } catch (error) {
         if (!dependency.optional || error.code !== 'MODULE_NOT_FOUND') throw error;
         hash.update(JSON.stringify([declarationsOnly ? logicalPath : identityPathFor(physical), dependency.name, 'absent']));
