@@ -8,6 +8,9 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from './agentInputChipIconMetrics';
 
+/** The permission control's mark, wherever the control is drawn (the composer chip, a page's field select). */
+export const PERMISSION_CONTROL_ICON = 'shield-check' as const;
+
 export function createPermissionActionChip(params: Readonly<{
     anchorRef: React.RefObject<View | null>;
     tint: string;
@@ -28,7 +31,7 @@ export function createPermissionActionChip(params: Readonly<{
             onPress={params.onPress}
             style={params.chipStyle}
         >
-            {normalizeNodeForView(<Icon name="shield-check" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={params.tint} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
+            {normalizeNodeForView(<Icon name={PERMISSION_CONTROL_ICON} size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={params.tint} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
             {params.showLabel && params.label ? (
                 <Text style={params.textStyle}>{params.label}</Text>
             ) : null}

@@ -13,6 +13,7 @@ import type {
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
+import { SessionAuthoringChipDescriptorTrigger } from './SessionAuthoringFieldSelectTrigger';
 import { useNewSessionConnectedServices } from '@/components/sessions/new/modules/useNewSessionConnectedServices';
 import { getConnectedServicesAuthActionChipPlacement } from '@/components/sessions/agentInput/definitions/createConnectedServicesAuthActionChip';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -42,6 +43,8 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
     value: ConnectedServiceBindingsV2 | null | undefined;
     onChange: (value: ConnectedServiceBindingsV2 | null) => void;
     chipRenderContext: AgentInputExtraActionChipRenderContext;
+    /** `select`: the bordered field select of the `selects` presentation; the composer chip otherwise. */
+    trigger?: 'chip' | 'select';
     testID: string;
 }>): React.ReactElement | null {
     const { onChange } = props;
@@ -155,7 +158,8 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
     const popover = connectedServicesAuthChip.collapsedContentPopover;
     return (
         <View testID={props.testID} style={{ alignSelf: 'flex-start' }}>
-            {connectedServicesAuthChip.render(renderContext)}
+            <SessionAuthoringChipDescriptorTrigger chip={connectedServicesAuthChip} renderContext={renderContext} trigger={props.trigger}
+                anchorRef={anchorRef} open={open} onToggle={() => setOpen((current) => !current)} testID={props.testID} />
             {popover === undefined ? null : (
                 <AgentInputContentPopover
                     open={open}

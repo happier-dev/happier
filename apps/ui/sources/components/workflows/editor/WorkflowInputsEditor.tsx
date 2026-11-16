@@ -8,11 +8,14 @@ import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/
 import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FIELD_BOX_METRICS } from '@/components/ui/forms/fieldBox';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Text } from '@/components/ui/text/Text';
+import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { Popover } from '@/components/ui/popover';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
@@ -21,29 +24,79 @@ import {
     describeWorkflowInputValueType,
 } from '@/components/workflows/presentation/workflowBlockedReasonText';
 
-import { WorkflowFieldSelect } from './WorkflowStepDataEditor';
-import { workflowEditorStyles } from './workflowEditorStyles';
+import { WorkflowDocumentGridContext } from './workflowEditorStyles';
 
+/**
+ * Workflow inputs as one compact table (WF-REDESIGN-1116 change d): Name, Type, Default, Description
+ * and Required edited in place, a "…" per row and "Add an input" at its foot. A phone keeps Name, Type
+ * and Required; Default and Description move into the row's "…".
+ */
 const styles = StyleSheet.create((theme) => ({
     root: { gap: theme.space.s8 },
-    heading: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     title: { ...Typography.variant('label', 'semiBold'), color: theme.colors.text.primary },
-    // The section's quiet trailing action ("+ Add input"), on the title's line at its end.
-    addTarget: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, paddingHorizontal: theme.space.s4 },
-    add: { ...Typography.variant('label', 'semiBold'), color: theme.colors.text.secondary },
+    table: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.default,
+        borderRadius: theme.borderRadius.md,
+        overflow: 'hidden',
+    },
     row: {
-        gap: theme.space.s8,
-        paddingVertical: theme.space.s12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        columnGap: theme.space.s8,
+        paddingHorizontal: theme.space.s8,
+        minHeight: FIELD_BOX_METRICS.minHeightPx + theme.space.s8,
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: theme.colors.border.default,
     },
-    line: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.s8 },
-    nameField: { flexGrow: 1, flexBasis: 140, minWidth: 0 },
-    // Beside its label while a field's own width fits there; beneath it, at the line's width, when it doesn't.
-    defaultInput: { flexGrow: 1, flexShrink: 1, flexBasis: FIELD_BOX_METRICS.triggerMinWidthPx, minWidth: 0 },
-    required: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
-    requiredLabel: { ...Typography.variant('label', 'regular'), color: theme.colors.text.primary },
-    defaultField: { flexGrow: 1, flexShrink: 1, flexBasis: 200, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
+    headRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        columnGap: theme.space.s8,
+        paddingHorizontal: theme.space.s8,
+        paddingVertical: theme.space.s6,
+    },
+    head: { ...Typography.variant('meta', 'semiBold'), color: theme.colors.text.tertiary, paddingHorizontal: theme.space.s4 },
+    nameCol: { flexGrow: 3, flexShrink: 1, flexBasis: 0, minWidth: 0 },
+    typeCol: { flexGrow: 2, flexShrink: 1, flexBasis: 0, minWidth: 0 },
+    defaultCol: { flexGrow: 2, flexShrink: 1, flexBasis: 0, minWidth: 0 },
+    descriptionCol: { flexGrow: 3, flexShrink: 1, flexBasis: 0, minWidth: 0 },
+    requiredCol: { width: 72, alignItems: 'flex-start' },
+    moreCol: { width: 32, alignItems: 'center' },
+    cell: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.primary,
+        paddingHorizontal: theme.space.s6,
+        paddingVertical: theme.space.s4,
+        borderWidth: 1,
+        borderColor: 'transparent',
+        borderRadius: FIELD_BOX_METRICS.radiusPx,
+        minWidth: 0,
+    },
+    cellMono: { ...Typography.mono() },
+    cellFocused: { borderColor: theme.colors.border.strong, backgroundColor: theme.colors.input.background },
+    cellInvalid: { borderColor: theme.colors.state.danger.foreground },
+    quiet: { ...Typography.variant('body'), color: theme.colors.text.tertiary, paddingHorizontal: theme.space.s6 },
+    typeTrigger: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s2, paddingHorizontal: theme.space.s6, alignSelf: 'flex-start' },
+    typeText: { ...Typography.variant('body'), color: theme.colors.text.primary },
+    foot: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        columnGap: theme.space.s12,
+        rowGap: theme.space.s4,
+        paddingHorizontal: theme.space.s8,
+        paddingVertical: theme.space.s8,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.colors.border.default,
+    },
+    add: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, paddingHorizontal: theme.space.s4 },
+    addLabel: { ...Typography.variant('label'), color: theme.colors.text.secondary },
+    note: { ...Typography.variant('meta'), color: theme.colors.text.tertiary, flexShrink: 1, marginLeft: 'auto' },
+    sheet: { gap: theme.space.s12, padding: theme.space.s16 },
+    sheetLabel: { ...Typography.variant('label'), color: theme.colors.text.secondary },
+    remove: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, alignSelf: 'flex-start', paddingVertical: theme.space.s4 },
+    removeLabel: { ...Typography.variant('label'), color: theme.colors.state.danger.foreground },
 }));
 
 const VALUE_TYPES = ['string', 'number', 'boolean', 'json'] as const;
@@ -94,13 +147,54 @@ function parseDefault(type: WorkflowInputDefinition['valueType'], text: string):
     }
 }
 
+const TYPE_ITEMS = (rowId: string): DropdownMenuItem[] => [
+    ...VALUE_TYPES.map((valueType) => ({
+        id: valueType, testID: `${rowId}-type-${valueType}`, title: describeWorkflowInputValueType(valueType),
+    })),
+    { id: PARTICIPANT_TYPE, testID: `${rowId}-type-${PARTICIPANT_TYPE}`, title: t('workflows.inputs.typeParticipant') },
+    { id: PARTICIPANT_LIST_TYPE, testID: `${rowId}-type-${PARTICIPANT_LIST_TYPE}`, title: t('workflows.inputs.typeParticipants') },
+];
+
+/** A table cell edited in place: its value as text, the field box only while it has the caret. */
+function InputCell(props: Readonly<{
+    value: string;
+    onChangeText: (text: string) => void;
+    accessibilityLabel: string;
+    placeholder?: string;
+    monospace?: boolean;
+    invalid?: boolean;
+    testID: string;
+}>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const [focused, setFocused] = React.useState(false);
+    return (
+        <TextInput
+            testID={props.testID}
+            value={props.value}
+            onChangeText={props.onChangeText}
+            accessibilityLabel={props.accessibilityLabel}
+            {...(props.placeholder === undefined ? {} : { placeholder: props.placeholder })}
+            placeholderTextColor={theme.colors.input.placeholder}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            autoCapitalize="none"
+            autoCorrect={false}
+            numberOfLines={1}
+            style={[styles.cell, props.monospace ? styles.cellMono : null, focused ? styles.cellFocused : null,
+                props.invalid ? styles.cellInvalid : null]}
+        />
+    );
+}
+
 function WorkflowInputRow(props: Readonly<{
     input: WorkflowInputDefinition;
     index: number;
+    compact: boolean;
     onChange: (next: WorkflowInputDefinition) => void;
     onRemove: () => void;
     testIDPrefix: string;
 }>): React.ReactElement {
+    const { theme } = useUnistyles();
     const { input } = props;
     const [defaultText, setDefaultText] = React.useState(() => formatDefault(input.default));
     // The draft is the source of truth; the typed text survives only while it
@@ -117,114 +211,150 @@ function WorkflowInputRow(props: Readonly<{
         setDefaultText(formatDefault(input.default));
     }, [input.default, input.valueType]);
     const defaultInvalid = !input.required && isUnresolvedDefault(input.default);
+    const defaultRepair = defaultInvalid ? describeWorkflowInputRepair({ valueType: input.valueType, errorCode: 'invalid_input' }) : null;
     const rowId = `${props.testIDPrefix}-input-${props.index}`;
-    // One input, composed from the page's own field controls (DESIGN-13): its name and type on the
-    // first line, what it is for beneath, then whether a run must supply it (or what it falls back
-    // to). No text tabs or link-coloured words: a choice is a field select, a yes/no is a switch.
+    const [typeOpen, setTypeOpen] = React.useState(false);
+    const [moreOpen, setMoreOpen] = React.useState(false);
+    const moreAnchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
+    const typeItems = React.useMemo(() => TYPE_ITEMS(rowId), [rowId]);
+    const typeId = input.inputType && 'hostType' in input.inputType && input.inputType.hostType === 'agentParticipant'
+        ? input.multiple ? PARTICIPANT_LIST_TYPE : PARTICIPANT_TYPE : input.valueType;
+    const selectType = (id: string) => {
+        setTypeOpen(false);
+        if (id === PARTICIPANT_TYPE || id === PARTICIPANT_LIST_TYPE) {
+            const { inputType: _inputType, multiple: _multiple, enum: _enum,
+                optionsSourceId: _optionsSourceId, default: _default, defaultFrom: _defaultFrom, ...base } = input;
+            setDefaultText('');
+            props.onChange({ ...base, valueType: 'json', inputType: { hostType: 'agentParticipant' },
+                ...(id === PARTICIPANT_LIST_TYPE ? { multiple: true } : {}) });
+            return;
+        }
+        const valueType = VALUE_TYPES.find((candidate) => candidate === id);
+        if (valueType === undefined) return;
+        const nextDefault = parseDefault(valueType, defaultText);
+        const { inputType: _inputType, multiple: _multiple, defaultFrom: _defaultFrom, ...base } = input;
+        props.onChange({ ...base, valueType, ...(nextDefault === undefined ? { default: undefined } : { default: nextDefault }) });
+    };
+    const changeDefault = (text: string) => {
+        setDefaultText(text);
+        const value = parseDefault(input.valueType, text);
+        props.onChange({ ...input, ...(value === undefined ? { default: undefined } : { default: value }) });
+    };
+    const changeDescription = (description: string) => props.onChange({
+        ...input,
+        ...(description.length === 0 ? { description: undefined } : { description }),
+    });
+    // A required input has no fallback: a run must supply it, so its Default cell says so quietly.
+    const defaultCell = input.required
+        ? <Text style={styles.quiet} accessibilityLabel={t('workflows.inputs.defaultValue')}>{'\u2014'}</Text>
+        : <InputCell testID={`${rowId}-default`} value={defaultText} onChangeText={changeDefault}
+            accessibilityLabel={defaultRepair ?? t('workflows.inputs.defaultValue')} placeholder={t('workflows.inputs.defaultValue')}
+            invalid={defaultInvalid} />;
+    const descriptionCell = <InputCell testID={`${rowId}-description`} value={input.description ?? ''} onChangeText={changeDescription}
+        accessibilityLabel={t('workflows.inputs.descriptionPlaceholder')} placeholder={t('workflows.inputs.descriptionPlaceholder')} />;
     return (
         <View testID={rowId} style={styles.row} accessibilityRole="summary">
-            <View style={styles.line}>
-                <View style={styles.nameField}>
-                    <FieldTextInput
-                        testID={`${rowId}-name`}
-                        value={input.name}
-                        monospace
-                        placeholder={t('workflows.inputs.namePlaceholder')}
-                        accessibilityLabel={t('workflows.inputs.namePlaceholder')}
-                        onChangeText={(name) => props.onChange({ ...input, name })}
-                    />
-                </View>
-                <WorkflowFieldSelect
+            <View style={styles.nameCol}>
+                <InputCell testID={`${rowId}-name`} value={input.name} monospace onChangeText={(name) => props.onChange({ ...input, name })}
+                    accessibilityLabel={t('workflows.inputs.namePlaceholder')} placeholder={t('workflows.inputs.namePlaceholder')} />
+            </View>
+            <View style={styles.typeCol}>
+                <DropdownMenu
                     testID={`${rowId}-type`}
-                    label={t('workflows.inputs.typeLabel')}
-                    items={[
-                        ...VALUE_TYPES.map((valueType) => ({
-                            id: valueType, testID: `${rowId}-type-${valueType}`, title: describeWorkflowInputValueType(valueType),
-                        })),
-                        { id: PARTICIPANT_TYPE, testID: `${rowId}-type-${PARTICIPANT_TYPE}`,
-                            title: t('workflows.inputs.typeParticipant') },
-                        { id: PARTICIPANT_LIST_TYPE, testID: `${rowId}-type-${PARTICIPANT_LIST_TYPE}`,
-                            title: t('workflows.inputs.typeParticipants') },
-                    ]}
-                    selectedId={input.inputType && 'hostType' in input.inputType && input.inputType.hostType === 'agentParticipant'
-                        ? input.multiple ? PARTICIPANT_LIST_TYPE : PARTICIPANT_TYPE : input.valueType}
-                    onSelect={(id) => {
-                        if (id === PARTICIPANT_TYPE || id === PARTICIPANT_LIST_TYPE) {
-                            const { inputType: _inputType, multiple: _multiple, enum: _enum,
-                                optionsSourceId: _optionsSourceId, default: _default, defaultFrom: _defaultFrom, ...base } = input;
-                            setDefaultText('');
-                            props.onChange({ ...base, valueType: 'json', inputType: { hostType: 'agentParticipant' },
-                                ...(id === PARTICIPANT_LIST_TYPE ? { multiple: true } : {}) });
-                            return;
-                        }
-                        const valueType = VALUE_TYPES.find((candidate) => candidate === id);
-                        if (valueType === undefined) return;
-                        const nextDefault = parseDefault(valueType, defaultText);
-                        const { inputType: _inputType, multiple: _multiple, defaultFrom: _defaultFrom, ...base } = input;
-                        props.onChange({
-                            ...base,
-                            valueType,
-                            ...(nextDefault === undefined ? { default: undefined } : { default: nextDefault }),
-                        });
-                    }}
+                    open={typeOpen}
+                    onOpenChange={setTypeOpen}
+                    items={typeItems}
+                    selectedId={typeId}
+                    matchTriggerWidth={false}
+                    onSelect={selectType}
+                    trigger={({ toggle, selectedItem }) => (
+                        <HappierPressable
+                            testID={`${rowId}-type-trigger`}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${t('workflows.inputs.typeLabel')}: ${selectedItem?.title ?? ''}`}
+                            hasPopup="menu"
+                            expanded={typeOpen}
+                            onPress={toggle}
+                            style={(state) => [styles.typeTrigger, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
+                                focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+                        >
+                            <Text numberOfLines={1} style={styles.typeText}>{selectedItem?.title ?? ''}</Text>
+                            <Icon name={typeOpen ? 'caret-up' : 'caret-down'} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+                        </HappierPressable>
+                    )}
                 />
-                {/* Removing an input is a quiet trailing icon on its name line, not a red word on every row. */}
+            </View>
+            {props.compact ? null : <View style={styles.defaultCol}>{defaultCell}</View>}
+            {props.compact ? null : <View style={styles.descriptionCol}>{descriptionCell}</View>}
+            <View style={styles.requiredCol}>
+                <Switch
+                    testID={`${rowId}-required`}
+                    accessibilityLabel={t('workflows.inputs.required')}
+                    value={input.required}
+                    onValueChange={(required) => props.onChange(required
+                        ? { ...input, required: true, default: undefined }
+                        : { ...input, required: false })}
+                />
+            </View>
+            <View style={styles.moreCol} ref={moreAnchorRef} collapsable={false}>
                 <IconButton
-                    testID={`${rowId}-remove`}
-                    iconName="trash"
+                    testID={`${rowId}-more`}
+                    iconName="dots-three"
                     variant="plain"
-                    accessibilityLabel={t('workflows.editor.remove')}
-                    tooltip={t('workflows.editor.remove')}
-                    onPress={props.onRemove}
+                    accessibilityLabel={t('common.moreActions')}
+                    accessibilityHint={input.name}
+                    onPress={() => setMoreOpen((current) => !current)}
+                    expanded={moreOpen}
+                    hasPopup="dialog"
                 />
             </View>
-            <FieldTextInput
-                testID={`${rowId}-description`}
-                value={input.description ?? ''}
-                placeholder={t('workflows.inputs.descriptionPlaceholder')}
-                accessibilityLabel={t('workflows.inputs.descriptionPlaceholder')}
-                onChangeText={(description) => props.onChange({
-                    ...input,
-                    ...(description.length === 0 ? { description: undefined } : { description }),
-                })}
-            />
-            <View style={styles.line}>
-                <View style={styles.required}>
-                    <Text style={styles.requiredLabel}>{t('workflows.inputs.required')}</Text>
-                    <Switch
-                        testID={`${rowId}-required`}
-                        accessibilityLabel={t('workflows.inputs.required')}
-                        value={input.required}
-                        onValueChange={(required) => props.onChange(required
-                            ? { ...input, required: true, default: undefined }
-                            : { ...input, required: false })}
-                    />
-                </View>
-                {input.required ? null : (
-                    // An optional input names what it falls back to, so a filled default never reads as an unlabelled value.
-                    <View style={styles.defaultField}>
-                        <Text style={styles.requiredLabel}>{t('workflows.inputs.defaultValue')}</Text>
-                        <FieldTextInput
-                            style={styles.defaultInput}
-                            testID={`${rowId}-default`}
-                            value={defaultText}
-                            placeholder={t('workflows.inputs.defaultValue')}
-                            accessibilityLabel={t('workflows.inputs.defaultValue')}
-                            // The repair reaches assistive technology on the field itself, and is
-                            // shown under it by the field's own error slot.
-                            error={defaultInvalid ? describeWorkflowInputRepair({
-                                valueType: input.valueType,
-                                errorCode: 'invalid_input',
-                            }) : null}
-                            onChangeText={(text) => {
-                                setDefaultText(text);
-                                const value = parseDefault(input.valueType, text);
-                                props.onChange({ ...input, ...(value === undefined ? { default: undefined } : { default: value }) });
-                            }}
-                        />
-                    </View>
-                )}
-            </View>
+            {moreOpen ? (
+                <Popover
+                    open
+                    anchorRef={moreAnchorRef}
+                    boundaryRef={null}
+                    placement="auto-vertical"
+                    phonePresentation="sheet"
+                    sheetHeader="none"
+                    accessibilityLabel={input.name}
+                    edgePadding={{ horizontal: 12, vertical: 12 }}
+                    portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}
+                    maxWidthCap={360}
+                    onRequestClose={() => setMoreOpen(false)}
+                >
+                    {({ maxHeight, maxWidth }) => (
+                        <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme" containerStyle={{ width: Math.min(maxWidth, 360) }}>
+                            <View style={styles.sheet}>
+                                {/* A phone's table keeps three columns; the rest of the input is edited here. */}
+                                {props.compact ? (
+                                    <>
+                                        <Text style={styles.sheetLabel}>{t('workflows.inputs.defaultColumn')}</Text>
+                                        {input.required ? <Text style={styles.quiet}>{t('workflows.inputs.required')}</Text> : (
+                                            <FieldTextInput testID={`${rowId}-default-sheet`} value={defaultText} onChangeText={changeDefault}
+                                                placeholder={t('workflows.inputs.defaultValue')} accessibilityLabel={t('workflows.inputs.defaultValue')}
+                                                error={defaultRepair} />
+                                        )}
+                                        <Text style={styles.sheetLabel}>{t('workflows.inputs.descriptionColumn')}</Text>
+                                        <FieldTextInput testID={`${rowId}-description-sheet`} value={input.description ?? ''} onChangeText={changeDescription}
+                                            placeholder={t('workflows.inputs.descriptionPlaceholder')} accessibilityLabel={t('workflows.inputs.descriptionPlaceholder')} />
+                                    </>
+                                ) : null}
+                                <HappierPressable
+                                    testID={`${rowId}-remove`}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={t('workflows.editor.remove')}
+                                    onPress={() => { setMoreOpen(false); props.onRemove(); }}
+                                    style={(state) => [styles.remove, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
+                                        focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+                                >
+                                    <Icon name="trash" size={ICON_SIZE.xs} color={theme.colors.state.danger.foreground} />
+                                    <Text style={styles.removeLabel}>{t('workflows.editor.remove')}</Text>
+                                </HappierPressable>
+                            </View>
+                        </FloatingOverlay>
+                    )}
+                </Popover>
+            ) : null}
         </View>
     );
 }
@@ -232,42 +362,59 @@ function WorkflowInputRow(props: Readonly<{
 export function WorkflowInputsEditor(props: Readonly<{
     inputs: readonly WorkflowInputDefinition[];
     onChange: (inputs: readonly WorkflowInputDefinition[]) => void;
-    /** The heading in its host's words ("Asks for" in How and where it runs). */
+    /** The heading in its host's words ("Workflow inputs" in How and where it runs). */
     title?: string;
+    /** What the inputs are for, at the table's foot. */
+    note?: string;
     testIDPrefix: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const compact = React.useContext(WorkflowDocumentGridContext) === 'compact';
     return (
         <View testID={`${props.testIDPrefix}-inputs`} style={styles.root}>
-            <View style={styles.heading}>
-                <Text style={styles.title}>{props.title ?? t('workflows.inputs.title')}</Text>
-                <HappierPressable
-                    testID={`${props.testIDPrefix}-inputs-add`}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('workflows.inputs.addInput')}
-                    onPress={() => props.onChange([...props.inputs, {
-                        name: nextInputName(props.inputs),
-                        valueType: 'string',
-                        required: false,
-                    }])}
-                    style={(state) => [workflowEditorStyles.actionTarget, styles.addTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
-                >
-                    <Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-                    <Text style={styles.add}>{t('workflows.inputs.addInput')}</Text>
-                </HappierPressable>
+            <Text style={styles.title}>{props.title ?? t('workflows.inputs.title')}</Text>
+            <View style={styles.table} accessibilityRole="list">
+                {props.inputs.length === 0 ? null : (
+                    <View style={styles.headRow} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                        <Text style={[styles.head, styles.nameCol]}>{t('workflows.inputs.nameColumn')}</Text>
+                        <Text style={[styles.head, styles.typeCol]}>{t('workflows.inputs.typeLabel')}</Text>
+                        {compact ? null : <Text style={[styles.head, styles.defaultCol]}>{t('workflows.inputs.defaultColumn')}</Text>}
+                        {compact ? null : <Text style={[styles.head, styles.descriptionCol]}>{t('workflows.inputs.descriptionColumn')}</Text>}
+                        <Text style={[styles.head, styles.requiredCol]}>{t('workflows.inputs.required')}</Text>
+                        <View style={styles.moreCol} />
+                    </View>
+                )}
+                {props.inputs.map((input, index) => (
+                    <WorkflowInputRow
+                        key={index}
+                        input={input}
+                        index={index}
+                        compact={compact}
+                        onChange={(next) => props.onChange(props.inputs.map((current, candidate) => (
+                            candidate === index ? next : current
+                        )))}
+                        onRemove={() => props.onChange(props.inputs.filter((_current, candidate) => candidate !== index))}
+                        testIDPrefix={props.testIDPrefix}
+                    />
+                ))}
+                <View style={[styles.foot, props.inputs.length === 0 ? { borderTopWidth: 0 } : null]}>
+                    <HappierPressable
+                        testID={`${props.testIDPrefix}-inputs-add`}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('workflows.inputs.addInput')}
+                        onPress={() => props.onChange([...props.inputs, {
+                            name: nextInputName(props.inputs),
+                            valueType: 'string',
+                            required: false,
+                        }])}
+                        style={(state) => [styles.add, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+                    >
+                        <Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+                        <Text style={styles.addLabel}>{t('workflows.inputs.addInput')}</Text>
+                    </HappierPressable>
+                    {props.note === undefined ? null : <Text style={styles.note}>{props.note}</Text>}
+                </View>
             </View>
-            {props.inputs.map((input, index) => (
-                <WorkflowInputRow
-                    key={index}
-                    input={input}
-                    index={index}
-                    onChange={(next) => props.onChange(props.inputs.map((current, candidate) => (
-                        candidate === index ? next : current
-                    )))}
-                    onRemove={() => props.onChange(props.inputs.filter((_current, candidate) => candidate !== index))}
-                    testIDPrefix={props.testIDPrefix}
-                />
-            ))}
         </View>
     );
 }

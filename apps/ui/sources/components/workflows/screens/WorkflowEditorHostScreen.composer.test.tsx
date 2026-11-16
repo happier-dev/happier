@@ -166,9 +166,11 @@ async function readCompanionIds(screen: Awaited<ReturnType<typeof renderScreen>>
     return (await readWorkflowCompanionRail(screen)).props.model.items.map((item: { id: string }) => item.id);
 }
 
-/** Workflow settings: the one settings popover, opened from How and where it runs (owner 2026-11-15). */
-async function openWorkflowSettings(screen: Awaited<ReturnType<typeof renderScreen>>) {
-    await screen.pressByTestIdAsync(screen.findByTestId('workflow-builtin-how-where-settings') ? 'workflow-builtin-how-where-settings' : 'workflow-editor-how-where-settings');
+/** The workflow's long tail: More settings at the foot of How and where it runs (round 1116b change e). */
+async function openMoreSettings(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const prefix = screen.findByTestId('workflow-builtin-how-where') ? 'workflow-builtin' : 'workflow-editor';
+    if (screen.findByTestId(`${prefix}-more-settings-toggle`) === null) await screen.pressByTestIdAsync(`${prefix}-how-where-caret`);
+    await screen.pressByTestIdAsync(`${prefix}-more-settings-toggle`);
 }
 
 /** When it runs: the page's trigger card, opened in place when a saved workflow shows it closed. */
@@ -1232,7 +1234,7 @@ describe('editor workflow composer', () => {
         expect(body.props.onSave).toBeUndefined();
         expect(body.props.onDuplicate).toBeTypeOf('function');
         expect(await readCompanionIds(screen)).not.toContain('settings');
-        expect(screen.findByTestId('workflow-builtin-how-where-settings')).not.toBeNull();
+        expect(screen.findByTestId('workflow-builtin-how-where-settings')).toBeNull();
         expect(screen.findByTestId('workflow-builtin-duplicate')).not.toBeNull();
         expect(screen.findByTestId('workflow-builtin-run-now')).not.toBeNull();
         const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
@@ -1244,10 +1246,10 @@ describe('editor workflow composer', () => {
         expect(body.findAll(node => String(node.type) === 'Text' && node.props.selectable === true && node.children.includes(step.document.text))).not.toHaveLength(0);
         expect(body.findAll(node => String(node.type) === 'MultiTextInput')).toHaveLength(0);
         expect(body.findAll(node => typeof node.props.testID === 'string' && /(?:composer-send|dictation|voice-composer)/u.test(node.props.testID))).toHaveLength(0);
-        await openWorkflowSettings(screen);
-        const { WorkflowInspector } = await import('../editor/WorkflowInspector');
-        expect(screen.root.findAllByType(WorkflowInspector).some(inspector => inspector.props.documentEditable === false)).toBe(true);
-        expect(screen.findByTestId('workflow-builtin-group-agent')).not.toBeNull();
+        await openMoreSettings(screen);
+        const { WorkflowMoreSettings } = await import('../editor/WorkflowMoreSettings');
+        expect(screen.root.findAllByType(WorkflowMoreSettings).some(settings => settings.props.documentEditable === false)).toBe(true);
+        expect(screen.findByTestId('workflow-builtin-more-settings-session')).not.toBeNull();
     });
 
     it('reopens the catalog composer with recovery enabled and rejoins its exact unresolved admission', async () => {

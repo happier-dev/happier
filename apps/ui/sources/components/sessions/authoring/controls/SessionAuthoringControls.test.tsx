@@ -10,6 +10,7 @@ import {
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
+import { teamCredentialDisplayNameFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { installAgentInputCommonModuleMocks } from '@/components/sessions/agentInput/agentInputTestHelpers';
 
 import type {
@@ -434,7 +435,8 @@ describe('SessionAuthoringControls', () => {
         'session-authoring-control-capabilitySelection-unavailable',
       ),
     ).toBeTruthy();
-    expect(screen.findByTestId('session-authoring-control-approvalProfileId-unavailable')).toBeTruthy();
+    // Approval profiles have their own selectable control, even without an Agent.
+    expect(screen.findByTestId('session-authoring-control-approvalProfileId')).toBeTruthy();
     await screen.unmount();
   });
 
@@ -568,6 +570,30 @@ describe('SessionAuthoringControls', () => {
     });
     expect(fields.onChangeField).toHaveBeenCalledWith('permissionMode', 'yolo');
     await fields.screen.unmount();
+  });
+
+  it('draws the selects presentation as unlabelled field selects that open the chip picker and write the same value', async () => {
+    const { HappierFieldBoxTrigger } = await import('@happier-dev/plugin-ui/presentation');
+    const selects = await renderControls({
+      fields: ['permissionMode'],
+      presentation: 'selects',
+      facts: { agentTargets: [directCapableClaude()] },
+    });
+    // No settings row and no per-field label: the host's group names the set.
+    expect(selects.screen.findByTestId('session-authoring-control-permissionMode-row')).toBeNull();
+    expect(selects.screen.getTextContent()).not.toContain('settingsSession.permissions.title');
+    // The trigger is the bordered field select, still named for assistive technology.
+    expect(selects.screen.findAllByType(HappierFieldBoxTrigger).length).toBe(1);
+    expect(selects.screen.findByTestId('session-authoring-control-permissionMode')?.props.accessibilityLabel)
+      .toContain('settingsSession.permissions.title');
+    await act(async () => {
+      selects.screen.pressByTestId('session-authoring-control-permissionMode');
+    });
+    await act(async () => {
+      selectOption(selects.screen, 'yolo');
+    });
+    expect(selects.onChangeField).toHaveBeenCalledWith('permissionMode', 'yolo');
+    await selects.screen.unmount();
   });
 
   it('says once that the Agent comes first instead of listing each Agent-owned field as unavailable', async () => {
@@ -742,7 +768,7 @@ describe('SessionAuthoringControls', () => {
     const teamResource = TeamCredentialResourceCatalogEntryV1Schema.parse({
       id: 'res-1',
       teamId: 'team-1',
-      displayName: 'Shared GitHub app',
+      displayName: teamCredentialDisplayNameFixture('Shared GitHub app'),
       resourceRevision: 3,
       readiness: { kind: 'available' },
       recoveryAction: null,

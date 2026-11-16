@@ -316,6 +316,10 @@ function buildDraft(harness: Harness, overrides: Partial<{ name: string; text: s
 function segmentedField(screen: Awaited<ReturnType<typeof renderScreen>>, testIDPrefix: string) {
     const match = screen.findAll((node) => node.props?.testIDPrefix === testIDPrefix && Array.isArray(node.props?.options)
         && typeof node.props?.onChange === 'function')[0];
+    // On a card's label track the same choice is the segmented bar beside its label.
+    const bar = match === undefined ? screen.findAll((node) => node.props?.testIDPrefix === testIDPrefix && Array.isArray(node.props?.tabs)
+        && typeof node.props?.onSelectTab === 'function')[0] : undefined;
+    if (bar !== undefined) return { props: { options: bar.props.tabs, value: bar.props.activeTabId, onChange: bar.props.onSelectTab } } as never;
     if (match === undefined) throw new Error(`No segmented choice ${testIDPrefix}`);
     return match as unknown as { props: {
         options: ReadonlyArray<Readonly<{ id: string; label: string; unavailableReason?: string }>>;
@@ -343,7 +347,7 @@ it.each(['session', 'detached_run'] as const)('shows the read-only execution tar
     const screen = await renderBody(harness, { ...props, documentPresentation: { editable: false } });
     // A new workflow opens the card.
     expect(screen.findByTestId('workflow-editor-run-as-readonly')).not.toBeNull();
-    expect(screen.getTextContent()).toContain('workflows.page.sections.eachStepRunsIn');
+    expect(screen.getTextContent()).toContain('workflows.page.sections.runsInRow');
     expect(screen.getTextContent()).toContain(executionTarget === 'session'
         ? 'workflows.page.sections.aSession' : 'workflows.page.sections.aBackgroundRun');
     expect(screen.findByTestId('workflow-editor-run-as:session')).toBeNull();
@@ -391,7 +395,6 @@ it('keeps closed workflow and step summaries on the exact admitted Home name wit
         const props = { draft, onChange: () => {}, existingSessions: [{ sessionId, machineId: 'machine-1', label: 'Stale option name' }],
             machineName: 'Studio', documentEditable: false };
         return <WorkflowAccountLifetimeProvider value={admitted ? (retained ? firstBinding : binding) ?? null : null}>
-            <WorkflowInspector {...props} subject={{ kind: 'workflow' }} presentation="pane" testIDPrefix="closed-default" />
             <WorkflowInspector {...props} subject={{ kind: 'block', blockId: 'analyze' }} presentation="popover" testIDPrefix="closed-step" />
             <WorkflowContinuityControls draft={draft} conversation={undefined} workspace={undefined}
                 inherited={{ conversation: draft.defaults.conversation, workspace: draft.defaults.workspace }}
@@ -514,9 +517,9 @@ it('detail-navigation.T1/T2/T6 keeps the editor draft and undo across page and c
     expect(screen.findAllByTestId('workflow-editor-flow-node-analyze').length).toBeGreaterThan(0);
     // Workflow settings is no companion (owner 2026-11-15): the side column offers Flow only.
     expect(readShellColumnActionOwner('side')?.tabs ?? []).not.toContain('settings');
-    await screen.pressByTestIdAsync('workflow-editor-how-where-settings');
+    // Workflow settings live in How and where it runs (round 1116b): no settings control or popover.
+    expect(screen.findByTestId('workflow-editor-how-where-settings')).toBeNull();
     expect(readShellColumnActionOwner('main')?.activeTab).toBe('flow');
-    expect(screen.findByTestId('workflow-editor-options')).not.toBeNull();
     expect(current.draft?.name).toBe('Edited without saving');
     await act(async () => undo());
     expect(current.draft?.name).toBe('Review');
@@ -1167,7 +1170,8 @@ it('keeps description metadata editable outside the portable draft and offers a 
         description: 'Accepted description', onChangeDescription,
         onBackToRun,
     });
-    const description = screen.findByTestId('workflow-editor-description');
+    await screen.pressByTestIdAsync('workflow-editor-more-settings-toggle');
+    const description = screen.findByTestId('workflow-editor-more-settings-description');
     expect(description?.props.value).toBe('Accepted description');
     await act(async () => description?.props.onChangeText('Edited description'));
     expect(onChangeDescription).toHaveBeenCalledWith('Edited description');
@@ -1211,7 +1215,8 @@ describe('workflow editor body', () => {
             draft: { ...buildDraft(harness), inputs: [{ name: 'retries', valueType: 'number', required: false }] } });
         const source = () => screen.findByTestId('e09-unsubmitted-source')?.props.value;
         // A real descendant's unsubmitted text: an input default that does not parse yet stays the field's own.
-        const pendingDefault = () => screen.findByTestId('workflow-editor-input-0-default')?.props.value;
+        const pendingDefault = () => screen.findByTestId('workflow-editor-input-0-default')?.props.value
+            ?? screen.findByTestId('workflow-editor-input-0-default-sheet')?.props.value;
         const resize = async (wide: boolean) => {
             paneState.detailsAvailable = wide;
             viewport.window = wide ? { width: 1440, height: 1000 } : { width: 390, height: 844 };
@@ -1228,6 +1233,8 @@ describe('workflow editor body', () => {
         // One page tree serves both widths: nothing moves into a dialog, nothing is lost.
         await resize(false);
         expect(screen.visibleModals()).toEqual([]);
+        // The compact table keeps defaults in its row's explicitly opened sheet.
+        await screen.pressByTestIdAsync('workflow-editor-input-0-more');
         expect(source()).toBe('unsubmitted-environment');
         expect(pendingDefault()).toBe('three');
         await resize(true);
@@ -1251,9 +1258,8 @@ describe('workflow editor body', () => {
         const companion = () => screen.findByType(AppPaneScopeHost).props.destinationDetails;
         expect(companion()).toMatchObject({ companion: true, pane: { props: { testID: 'workflow-editor-agent-pane' } } });
         expect(screen.findByTestId('workflow-editor-details-tabs:settings')).toBeNull();
-        // Workflow settings is a popover beside its control, never a second companion (owner 2026-11-15).
-        await screen.pressByTestIdAsync('workflow-editor-how-where-settings');
-        expect(screen.findByTestId('workflow-editor-options')).not.toBeNull();
+        // Workflow settings live in How and where it runs (round 1116b), never a second companion.
+        expect(screen.findByTestId('workflow-editor-how-where-settings')).toBeNull();
         expect(companion()).toMatchObject({ companion: true, pane: { props: { testID: 'workflow-editor-agent-pane' } } });
         expect(screen.findByType(AppPaneScopeHost).props.destinationDetails).toMatchObject({ companion: true });
     });
@@ -1293,8 +1299,6 @@ describe('workflow editor body', () => {
         const header = await renderBody(harness, { onEditWithAgent, onSave: () => {}, triggersSummary: 'Manual' });
         // No agent conversation yet: no agent companion and nothing opens as a modal.
         expect(header.findByType(AppPaneScopeHost).props.destinationDetails).toBeNull();
-        // Workflow settings opens as a popover: no pane, so the header keeps its labelled action.
-        await header.pressByTestIdAsync('workflow-editor-how-where-settings');
         expect(header.findByType(AppPaneScopeHost).props.destinationDetails).toBeNull();
         const editAction = header.findByTestId('workflow-editor-edit-with-agent');
         expect(editAction?.findAll((node) => typeof node.type === 'string' && node.props.children === 'workflows.authoring.edit').length)
@@ -1329,7 +1333,7 @@ describe('workflow editor body', () => {
 
         expect(screen.findByTestId('workflow-editor-name')).toBeNull();
         expect(screen.findByTestId('workflow-editor-where-chips')).not.toBeNull();
-        expect(screen.findByTestId('workflow-editor-defaults')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-header-engine')).not.toBeNull();
         expect(screen.findByTestId('workflow-editor-project-directory-readonly')).not.toBeNull();
         expect(screen.getTextContent()).toContain('~/project');
     });
@@ -1449,7 +1453,7 @@ describe('workflow editor body', () => {
         const harness = await loadHarness();
         const screen = await renderBody(harness, { selectedBlockId: 'analyze' });
 
-        expect(screen.findByTestId('workflow-editor-defaults')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-header-engine')).not.toBeNull();
         // Step options never render as a document column beside the steps.
         expect(screen.findByTestId('workflow-editor-inspector')).toBeNull();
         await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
@@ -1533,7 +1537,7 @@ describe('workflow editor body', () => {
         expect(screen.findByTestId('workflow-editor-inspector-done')).not.toBeNull();
     });
 
-    it('offers only the engine picker and Permissions in workflow Agent and model settings', async () => {
+    it('offers every Session field a step can set in workflow Agent and model settings, through the same controls (owner parity 2026-11-15)', async () => {
         const harness = await loadHarness();
         const changed = vi.fn();
         const screen = await renderBody(harness, {
@@ -1543,22 +1547,12 @@ describe('workflow editor body', () => {
             },
         });
 
-        const defaults = screen.findByTestId('workflow-editor-defaults');
-        if (defaults === null) throw new Error('Expected workflow default controls');
-        // F11: the group already names Agent and model; keep the engine picker
-        // without a second labeled row, alongside the editable Permissions row.
-        expect(screen.findHostByTestId('workflow-editor-defaults-agentTarget')).not.toBeNull();
-        const rowIds = defaults.findAll(node => typeof node.type === 'string'
-            && typeof node.props.testID === 'string'
-            && node.props.testID.startsWith('workflow-editor-defaults-')
-            && node.props.testID.endsWith('-row')).map(node => node.props.testID);
-        expect(rowIds).toEqual([
-            'workflow-editor-defaults-permissionMode-row',
-        ]);
-        expect(defaults.findAll(node => typeof node.props.testID === 'string'
-            && node.props.testID.endsWith('-unavailable'))).toHaveLength(0);
+        // Who runs it: the composer's own chips as field selects (round 1116b change b); the long tail is in More settings.
+        expect(screen.findHostByTestId('workflow-editor-header-engine-agentTarget')).not.toBeNull();
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-toggle');
+        expect(screen.findByTestId('workflow-editor-more-settings-session')).not.toBeNull();
 
-        await screen.pressByTestIdAsync('workflow-editor-defaults-permissionMode');
+        await screen.pressByTestIdAsync('workflow-editor-header-engine-permissionMode');
         const { AgentInputChipPickerPopover } = await import('@/components/sessions/agentInput/components/AgentInputChipPickerPopover');
         const picker = screen.root.findAllByType(AgentInputChipPickerPopover).find(node => node.props.open);
         if (picker === undefined) throw new Error('Expected the Permissions picker');
@@ -1576,7 +1570,7 @@ describe('workflow editor body', () => {
         const harness = await loadHarness();
         const changed = vi.fn();
         const withoutFacts = await renderBody(harness);
-        expect(withoutFacts.findByTestId('workflow-editor-defaults-agentTarget')?.props.accessibilityLabel).toContain('workflows.input.unavailable');
+        expect(withoutFacts.findByTestId('workflow-editor-header-engine-agentTarget')?.props.accessibilityLabel).toContain('workflows.input.unavailable');
         await withoutFacts.unmount();
 
         const screen = await renderBody(harness, {
@@ -1597,28 +1591,9 @@ describe('workflow editor body', () => {
             },
         });
 
-        const chip = screen.findByTestId('workflow-editor-defaults-agentTarget');
+        const chip = screen.findByTestId('workflow-editor-header-engine-agentTarget');
         expect(chip).not.toBeNull();
         expect(chip?.props.accessibilityLabel).toContain('Claude Code');
-    });
-
-    it('opens workflow settings as the canonical full-width solid phone sheet', async () => {
-        viewport.window = { width: 390, height: 844 };
-        paneState.detailsAvailable = false;
-        const home = await serveActionHomes({ homes: [{ key: 'phone-settings', serverUrl: 'https://workflow-phone-settings.test', accountId: 'editor-account' }],
-            route: request => createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
-        bindingBoundaries.push(() => home.dispose());
-        const { resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime } = await import('@/sync/domains/scope/serverCredentialAccountScope');
-        const resolution = await resolveServerCredentialAccountScope(home.homes['phone-settings']!.id);
-        if (resolution.kind !== 'bound') throw new Error('The phone editor needs its admitted Account');
-        const harness = await loadHarness();
-        const screen = await renderBody(harness, { onRunNow: () => {}, accountLifetime: captureServerCredentialAccountScopeLifetime(resolution) });
-        // The one settings popover presents as the shared solid sheet on a phone (owner 2026-11-15).
-        await screen.pressByTestIdAsync('workflow-editor-how-where-settings');
-        const { Popover } = await import('@/components/ui/popover/Popover');
-        const open = screen.findAllByType(Popover).find((node) => node.props.open);
-        expect(open?.props).toMatchObject({ phonePresentation: 'sheet', sheetMaterial: 'solid' });
-        expect(screen.findByTestId('workflow-editor-defaults')).not.toBeNull();
     });
 
     it('opens the same controlled step options as the canonical phone sheet', async () => {
@@ -1832,12 +1807,13 @@ describe('workflow editor body', () => {
         const order = ['workflow-editor-header', 'workflow-editor-how-where', 'workflow-editor-list-root'];
         expect(renderedOrder(screen, order)).toEqual(order);
         // Where it runs is New Session's Machine and folder chips in How and where it runs, bordered (owner 2026-11-13).
-        const placement = (id: string) => screen.root.findAll((node) => node.props?.filter?.id === id)[0]?.props.filter;
-        expect(placement('session-placement-machine')?.valueLabel).toBe('Mac Studio');
-        expect(placement('session-placement-folder')?.valueLabel).toBe('~/project');
+        const placement = (testID: string) => screen.root.findAll((node) => node.props?.testID === testID && typeof node.props?.accessibilityLabel === 'string')[0]?.props;
+        expect(placement('agent-input-machine-chip')?.accessibilityLabel).toBe('newSession.wizardSection.machine: Mac Studio');
+        expect(placement('agent-input-path-chip')?.accessibilityLabel).toBe('newSession.wizardSection.folder: ~/project');
         expect(screen.findByTestId('workflow-editor-header-engine')).not.toBeNull();
-        // Workflow settings is a popover, closed until asked for; the document carries no settings wall.
-        expect(screen.findByTestId('workflow-editor-defaults')).toBeNull();
+        // The long tail waits behind More settings, closed; the document carries no settings wall.
+        expect(screen.findByTestId('workflow-editor-more-settings-toggle')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-more-settings-session')).toBeNull();
         // No chip line and no settings sidebar.
         expect(screen.findByTestId('workflow-editor-chips')).toBeNull();
         expect(screen.findByType(AppPaneScopeHost).props.destinationDetails).toBeNull();
@@ -1880,9 +1856,8 @@ describe('workflow editor body', () => {
         expect(screen.findHostByTestId('workflow-editor-step-analyze-prompt')).not.toBeNull();
         expect(paneUiState.readAll()?.['workflow-editor']?.right.isOpen).toBe(true);
 
-        // Workflow settings opens beside its control and leaves Flow where it is.
-        await screen.pressByTestIdAsync('workflow-editor-how-where-settings');
-        expect(screen.findByTestId('workflow-editor-options')).not.toBeNull();
+        // Workflow settings live in How and where it runs: Flow stays where it is.
+        expect(screen.findByTestId('workflow-editor-how-where-settings')).toBeNull();
         expect(host.props.destinationDetails).toBeNull();
         expect(screen.findHostByTestId('workflow-editor-flow-node-analyze')).not.toBeNull();
         const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
@@ -1968,17 +1943,16 @@ describe('workflow editor body', () => {
             onChangeProjectTarget: () => {},
             onRunNow: ran,
         });
-        const placement = (id: string) => screen.root.findAll((node) => node.props?.filter?.id === id)[0]?.props.filter;
+        const placement = (testID: string) => screen.root.findAll((node) => node.props?.testID === testID && typeof node.props?.accessibilityLabel === 'string')[0]?.props;
         // Missing is stated once, by the Machine chip; the folder chip waits in place, disabled.
-        expect(placement('session-placement-machine')?.muted).toBe(true);
-        expect(placement('session-placement-machine')?.valueLabel).toBe('agentInput.runOn');
-        expect(placement('session-placement-machine')?.open).toBe(false);
-        expect(placement('session-placement-folder')?.disabled).toBe(true);
-        expect(placement('session-placement-folder')?.valueLabel).toBe('newSession.folder.chooseMachineFirst');
+        expect(placement('agent-input-machine-chip')?.accessibilityLabel).toBe('newSession.wizardSection.machine: agentInput.runOn');
+        expect(placement('agent-input-machine-chip')?.expanded).toBe(false);
+        expect(placement('agent-input-path-chip')?.disabled).toBe(true);
+        expect(placement('agent-input-path-chip')?.accessibilityLabel).toBe('newSession.wizardSection.folder: newSession.folder.chooseMachineFirst');
 
         await screen.pressByTestIdAsync('workflow-editor-run-now');
         expect(ran).not.toHaveBeenCalled();
-        expect(placement('session-placement-machine')?.open).toBe(true);
+        expect(placement('agent-input-machine-chip')?.expanded).toBe(true);
         expect(announcementWrites).not.toHaveBeenCalled();
     });
 
@@ -1987,7 +1961,7 @@ describe('workflow editor body', () => {
      * after a schema wall. Inputs and shared defaults are optional refinements
      * and follow the authored steps.
      */
-    it('composes the first cards, the settings, then the blocks, for a host without page commands', async () => {
+    it('composes the first cards, More settings within them, then the blocks, for a host without page commands', async () => {
         const harness = await loadHarness();
         const screen = await renderBody(harness, {
             projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' },
@@ -1999,52 +1973,29 @@ describe('workflow editor body', () => {
             'workflow-editor-how-where',
             'workflow-editor-where-chips',
             'workflow-editor-inputs',
-            'workflow-editor-defaults',
-            'workflow-editor-final-output-row',
+            'workflow-editor-more-settings',
             'workflow-editor-list-root',
         ];
         expect(renderedOrder(screen, order)).toEqual(order);
     });
 
     /**
-     * 04 §5.2 (D10): Workflow settings are quiet by default. Each group is one
-     * line of effective values until it holds a value set for this workflow,
-     * needs attention, or the person opens it; the person's choice is view
-     * state. A required-but-missing machine keeps Where it runs open even when
-     * the person closed it, so a closed group never hides what is required.
+     * Round 1116b (change e): every workflow setting is in How and where it runs. Where, Who, Each step and the
+     * inputs are rows of the card; the long tail waits behind More settings, closed until the person opens it.
      */
-    it('keeps settings groups as summaries until a value, a missing requirement or the person opens them', async () => {
+    it('keeps the long tail behind More settings until the person opens it', async () => {
         const harness = await loadHarness();
-        const toggled = vi.fn();
-        const pristine = harness.createWorkflowEditorDraft({ draftId: 'draft-quiet', name: 'Quiet' });
-        const screen = await renderBody(harness, {
-            draft: pristine,
-            inspectorGroupDisclosure: new Map(),
-            onChangeInspectorGroup: toggled,
-        });
-        // Where, what each step runs in and what a run asks for are How and where it runs' rows (owner 2026-11-15).
+        const screen = await renderBody(harness, { draft: harness.createWorkflowEditorDraft({ draftId: 'draft-quiet', name: 'Quiet' }) });
         expect(screen.findByTestId('workflow-editor-where-chips')).not.toBeNull();
         expect(screen.findByTestId('workflow-editor-inputs')).not.toBeNull();
-        // Every settings group is a one-line summary of its effective values.
-        expect(screen.findByTestId('workflow-editor-defaults')).toBeNull();
-        expect(screen.findByTestId('workflow-editor-defaults-continuity-row')).toBeNull();
-        expect(screen.findByTestId('workflow-editor-final-output-row')).toBeNull();
-        expect(screen.getTextContent()).toContain('workflows.conversation.sharedRun · workflows.workspace.inherit');
-        expect(screen.getTextContent()).toContain('workflows.finalOutput.none');
+        expect(segmentedField(screen, 'workflow-editor-defaults-continuity-conversation').props.value).toBe('shared_run');
+        expect(screen.findByTestId('workflow-editor-more-settings-session')).toBeNull();
+        expect(screen.findByTestId('workflow-editor-more-settings-final-output-editor')).toBeNull();
 
-        await screen.pressByTestIdAsync('workflow-editor-group-result-header');
-        expect(toggled).toHaveBeenCalledWith('result', true);
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-toggle');
+        expect(screen.findByTestId('workflow-editor-more-settings-session')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-more-settings-final-output-editor')).not.toBeNull();
         await screen.unmount();
-
-        // The person's choice opens it; a value set for this workflow opens another.
-        const opened = await renderBody(harness, {
-            draft: harness.setWorkflowDefaultField(pristine, 'conversation', { kind: 'fresh' }),
-            projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' },
-            inspectorGroupDisclosure: new Map([['result', true]]),
-        });
-        expect(opened.findByTestId('workflow-editor-final-output-row')).not.toBeNull();
-        expect(opened.findByTestId('workflow-editor-defaults-continuity-row')).not.toBeNull();
-        expect(opened.findByTestId('workflow-editor-defaults')).toBeNull();
     });
 
     /**
@@ -2056,7 +2007,6 @@ describe('workflow editor body', () => {
         const harness = await loadHarness();
         const linear = await renderBody(harness);
         expect(linear.findByTestId('workflow-editor-defaults-continuity-workspace-shared-parallel-note')).toBeNull();
-        expect(linear.findByTestId('workflow-editor-defaults-continuity-workspace-reuse-note')).toBeNull();
         await linear.unmount();
 
         const withParallel = harness.insertWorkflowBlock(buildDraft(harness), {
@@ -2207,7 +2157,7 @@ describe('workflow editor body', () => {
         await act(async () => { machineChip?.props.onPress(); });
         expect(screen.visibleModals()).toHaveLength(0);
         expect(screen.findAllByTestId('workflow-editor-machine-option:machine-1').length).toBeGreaterThan(0);
-        expect(screen.findByTestId('workflow-editor-how-where-how')?.findAll((node) => node.props?.testID === 'workflow-editor-header-engine').length)
+        expect(screen.findByTestId('workflow-editor-how-where-who')?.findAll((node) => node.props?.testID === 'workflow-editor-header-engine').length)
             .toBeGreaterThan(0);
         await screen.unmount();
     });
@@ -2342,7 +2292,7 @@ describe('workflow editor body', () => {
 
         expect(screen.findHostByTestId('workflow-editor-scroll')).toBeNull();
         expect(screen.findHostByTestId('workflow-editor-header')).toBeNull();
-        expect(screen.findByTestId('workflow-editor-defaults')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-more-settings')).not.toBeNull();
     });
 
     it('hides an effect the host cannot offer instead of rendering it inert', async () => {
@@ -2535,8 +2485,8 @@ describe('workflow editor body', () => {
 
         expect(Number.isNaN(draft.inputs[0]?.default)).toBe(true);
         expect(screen.findByTestId('workflow-editor-input-0-default')?.props.value).toBe('many');
-        // The repair is the field's own error, under it and announced (the canonical field owner).
-        expect(screen.findByTestId('workflow-editor-input-0-default.error')?.props.accessibilityRole).toBe('alert');
+        // The compact table cell exposes its canonical repair through its accessible name.
+        expect(screen.findByTestId('workflow-editor-input-0-default')?.props.accessibilityLabel).toContain('workflows.inputs.wrongType');
         await act(async () => {
             executeWorkflowCommand('workflow.save');
             executeWorkflowCommand('workflow.run');
@@ -2833,9 +2783,8 @@ describe('workflow editor body', () => {
         });
         const field = segmentedField(listed, 'workflow-editor-defaults-continuity-conversation');
         expect(field.props.value).toBe('continue');
-        // The consequence line names the recorded Session.
-        await waitForHomeGovernance(() => expect(String(segmentedField(listed,
-            'workflow-editor-defaults-continuity-conversation').props.subtitle)).toContain('Ship release'));
+        // The continuation names the recorded Session.
+        await waitForHomeGovernance(() => expect(listed.getTextContent()).toContain('Ship release'));
         await listed.unmount();
 
         await act(async () => { getStorage().setState(state => ({ sessionListRowsByServerId: {
@@ -2946,15 +2895,15 @@ describe('workflow editor body', () => {
         const screen = await renderScreen(<harness.WorkflowEditorBody {...props} />);
         const name = screen.findHostByTestId('workflow-editor-name');
         expect(name).not.toBeNull();
-        // The description is edited in Workflow settings (owner 2026-11-15); the one popover keeps it across widths.
-        await screen.pressByTestIdAsync('workflow-editor-how-where-settings');
-        const description = screen.findHostByTestId('workflow-editor-description');
+        // The description is edited in More settings (round 1116b); the card keeps it across widths.
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-toggle');
+        const description = screen.findHostByTestId('workflow-editor-more-settings-description');
         expect(description?.props.value).toBe('Review before publishing');
         for (const width of [390, 1440]) {
             viewport.window = { width, height: 800 };
             await screen.update(<harness.WorkflowEditorBody {...props} />);
             expect(screen.findHostByTestId('workflow-editor-name') === name, `name at ${width}px`).toBe(true);
-            expect(screen.findHostByTestId('workflow-editor-description') === description, `description at ${width}px`).toBe(true);
+            expect(screen.findHostByTestId('workflow-editor-more-settings-description') === description, `description at ${width}px`).toBe(true);
         }
     });
 
@@ -3360,9 +3309,10 @@ describe('workflow editor body', () => {
         const harness = await loadHarness();
         // Selection is the contract, not copy or the presence of a menu option.
         const none = await renderBody(harness);
-        expect(none.root.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflow-editor-final-output-select')?.props.selectedId)
+        await none.pressByTestIdAsync('workflow-editor-more-settings-toggle');
+        expect(none.root.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflow-editor-more-settings-final-output-select')?.props.selectedId)
             .toBe('none');
-        expect(none.findByTestId('workflow-editor-final-output-path')).toBeNull();
+        expect(none.findByTestId('workflow-editor-more-settings-final-output-path')).toBeNull();
         await none.unmount();
 
         const bound = await renderBody(harness, {
@@ -3372,13 +3322,14 @@ describe('workflow editor body', () => {
                 path: [],
             }),
         });
-        expect(bound.root.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflow-editor-final-output-select')?.props.selectedId)
+        await bound.pressByTestIdAsync('workflow-editor-more-settings-toggle');
+        expect(bound.root.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflow-editor-more-settings-final-output-select')?.props.selectedId)
             .toBe('result:analyze');
         // The producer uses the document vocabulary, never a clipped prompt or internal id.
         expect(bound.getTextContent()).toContain('workflows.editor.addStep');
-        await bound.pressByTestIdAsync('workflow-editor-final-output-trigger');
+        await bound.pressByTestIdAsync('workflow-editor-more-settings-final-output-trigger');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
-        expect(bound.findByTestId('workflow-editor-final-output-path')).not.toBeNull();
+        expect(bound.findByTestId('workflow-editor-more-settings-final-output-path')).not.toBeNull();
     });
 
     it('authors and clears the deterministic final output through the shared draft owner', async ({ onTestFinished }) => {
@@ -3397,18 +3348,19 @@ describe('workflow editor body', () => {
         }
         const screen = await renderScreen(<ControlledBody />);
 
-        await screen.pressByTestIdAsync('workflow-editor-final-output-trigger');
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-toggle');
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-trigger');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
-        await screen.pressByTestIdAsync('workflow-editor-final-output-option-analyze');
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-option-analyze');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         expect(changed.mock.calls[0]?.[0].finalOutput).toEqual({
             kind: 'result',
             producer: { blockId: 'analyze', scope: { kind: 'current' } },
             path: [],
         });
-        await screen.pressByTestIdAsync('workflow-editor-final-output-trigger');
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-trigger');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
-        await screen.pressByTestIdAsync('workflow-editor-final-output-clear');
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-clear');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         expect(current.finalOutput).toBeUndefined();
         expect(changed).toHaveBeenCalledTimes(2);
@@ -3553,9 +3505,10 @@ describe('workflow editor body', () => {
         await screen.pressByTestIdAsync('workflow-editor-redo');
         expect(draft.blocks.map((block) => block.id)).toEqual(['implement']);
         await screen.pressByTestIdAsync('workflow-editor-undo');
-        await screen.pressByTestIdAsync('workflow-editor-final-output-trigger');
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-toggle');
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-trigger');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
-        await screen.pressByTestIdAsync('workflow-editor-final-output-option-implement');
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-final-output-option-implement');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         expect(redoLabel).toBeNull();
         expect(draft.finalOutput).toMatchObject({ producer: { blockId: 'implement' } });
@@ -3897,6 +3850,6 @@ describe('WorkflowEditorBody unsaved draft commands', () => {
         // "Asks for" is How and where it runs' group (owner 2026-11-15), its inputs edited where they read.
         const asks = screen.findByTestId('workflow-editor-how-where-asks');
         expect(asks?.findAll((node) => node.props?.testID === 'workflow-editor-inputs').length).toBeGreaterThan(0);
-        expect(screen.getTextContent()).toContain('workflows.page.sections.groupAsks');
+        expect(screen.getTextContent()).toContain('workflows.inputs.title');
     });
 });

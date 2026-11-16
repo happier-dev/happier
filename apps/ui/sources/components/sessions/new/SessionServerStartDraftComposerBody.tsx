@@ -28,8 +28,12 @@ const TOOL_FIELDS: readonly SessionAuthoringFieldId[] = [
     'capabilitySelection', 'connectedServices', 'unlistedTools', 'allowedTools',
 ];
 
-/** What an added agent shows as composer chips (lab dpRev `add`): engine, Runs through, permissions. */
-const CHIP_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget', 'connectedServices', 'permissionMode', 'approvalProfileId'];
+/**
+ * What an added agent shows as composer chips (lab dpRev `add`): engine, Runs through, permissions. A
+ * workflow's "Who runs it" shows the same set (WF-REDESIGN-1116), so both read it here.
+ */
+export const SESSION_COMPOSER_CHIP_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget', 'connectedServices', 'permissionMode', 'approvalProfileId'];
+const CHIP_FIELDS = SESSION_COMPOSER_CHIP_FIELDS;
 
 /**
  * The same Session-owned fields inside an inline editor or its returning sheet. `chips` shows them as

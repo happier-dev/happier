@@ -15,6 +15,7 @@ import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture, creat
 import { buildWorkflowEditorDraftFromDefinition } from '@/sync/domains/workflows/workflowAuthoring';
 import { getWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
 import { useWorkflowEditorHistory } from './useWorkflowEditorHistory';
+import { createWorkflowEditorReadable, useControlledWorkflowEditorDraftStore } from './workflowEditorDraftStore';
 
 // Only native RPC, HTTP, credentials and platform rendering leave the process.
 // Action admission, plugin discovery, codecs, scope and editor history stay real.
@@ -51,6 +52,8 @@ const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orch
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { resetWorkflowLibraryReadsForTests } = await import('../library/workflowLibraryReads');
 const { createWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+const { WorkflowMoreSettings } = await import('./WorkflowMoreSettings');
+const { WorkflowHowAndWhereCard } = await import('./WorkflowHowAndWhereCard');
 let serverId: string;
 
 function childProjection(localId = 'child') {
@@ -89,89 +92,60 @@ beforeEach(async () => {
 afterEach(async () => { await standardCleanup(); resetWorkflowLibraryReadsForTests(); await home.reset(); });
 
 describe('workflow editor declared bindings', () => {
-    it('keeps Recent runs quiet before opening all admitted recent rows', async () => {
+    it('reads the last run from the library summaries alone, once More settings is open', async () => {
         const definitionId = '00000000-0000-4000-8000-000000000029';
-        const runs = ['recent-first', 'recent-second'].map(id => createWorkflowRunSummaryFixture({
-            id, ownerAccountId: 'account-a', machineId: 'machine-a', sourceArtifactId: definitionId,
-            workflowCustodyState: null,
-        }));
-        const recent = runs.map(run => createWorkflowRunRecentSummaryFixture({ runId: run.id, state: run.state }));
+        const run = createWorkflowRunSummaryFixture({ id: 'recent-first', ownerAccountId: 'account-a', machineId: 'machine-a',
+            sourceArtifactId: definitionId, workflowCustodyState: null });
+        const recent = [createWorkflowRunRecentSummaryFixture({ runId: run.id, state: run.state })];
         const requests: string[] = [];
         home.answer(serverId, '/v3/automations/runs/workflow-storage', { select: input => {
             if (!input || typeof input !== 'object' || !('operation' in input)) throw new Error('Missing operation');
             requests.push(String(input.operation));
-            if (input.operation === 'summaries') {
-                expect(input).toMatchObject({ request: { sourceArtifactIds: [definitionId] } });
-                return { body: { summaries: [{ sourceArtifactId: definitionId,
-                    lastRun: { ...recent[0], createdAt: runs[0]!.createdAt, startedAt: runs[0]!.createdAt, finishedAt: null },
-                    recent, needsYouCount: 0, needsYouRunId: null }], remainingSourceArtifactIds: [] } };
-            }
-            if (input.operation !== 'list') throw new Error('Recent running rows must not acquire Run details');
-            expect(input).toMatchObject({ request: { runIds: ['recent-first', 'recent-second'] } });
-            const continuation = 'request' in input && input.request !== null && typeof input.request === 'object' && 'cursor' in input.request;
-            return { body: { runs: [runs[continuation ? 1 : 0]], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {},
-                ...(continuation ? {} : { nextCursor: 'recent-next' }) } };
+            if (input.operation !== 'summaries') throw new Error('The last run must not acquire Run details');
+            return { body: { summaries: [{ sourceArtifactId: definitionId,
+                lastRun: { ...recent[0], createdAt: run.createdAt, startedAt: run.createdAt, finishedAt: null },
+                recent, needsYouCount: 0, needsYouRunId: null }], remainingSourceArtifactIds: [] } };
         } });
         const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'recent-rows', name: 'Review changes', definition });
-        const inspector = (expanded: boolean) => <harness.WorkflowInspector workflowDefinitionId={definitionId}
-            subject={{ kind: 'workflow' }} presentation="pane" draft={draft} machineName={null} testIDPrefix="rows"
-            onChange={() => {}} groupDisclosure={new Map([['recentRuns', expanded]])} />;
-        const screen = await renderScreen(inspector(false));
-        await waitForHomeGovernance(() => expect(requests).toEqual(['summaries']));
-        expect(screen.findByTestId('rows-recent-run:recent-first')).toBeNull();
-        expect(screen.getTextContent()).toContain('workflows.runState.running');
-        await screen.update(inspector(true));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('rows-recent-run:recent-second')).not.toBeNull());
-        expect(screen.findByTestId('rows-recent-run:recent-first')).not.toBeNull();
-        expect(requests).toEqual(['summaries', 'list', 'list']);
+        const screen = await renderScreen(<WorkflowMoreSettings draftStore={createWorkflowEditorReadable(draft)} onChange={() => {}}
+            documentEditable authoringFacts={undefined} workflowDefinitionId={definitionId} testIDPrefix="rows" />);
+        // Closed, the last run is not read at all.
+        expect(requests).toEqual([]);
+        await screen.pressByTestIdAsync('rows-more-settings-toggle');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('workflows.runState.running'));
+        expect(requests).toEqual(['summaries']);
     });
-    it('keeps Recent runs quiet with one Agent and model group label', async () => {
-        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'label', name: 'Workflow', definition });
-        const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane"
-            draft={draft} machineName={null} testIDPrefix="label" onChange={() => {}}
-            groupDisclosure={new Map([['agent', true]])} />);
-        const agent = screen.findByTestId('label-group-agent')!;
-        // The group holds the fields beside the Agent; the Agent itself is on the "How and where it runs" card.
-        expect(agent.findAll(node => String(node.type) === 'Text'
-            && node.children.includes('workflows.page.sections.modelAndPermissionsTitle'))).toHaveLength(1);
-    });
-    it('offers the chosen Agent\'s connected service in the workflow\'s Agent and model', async () => {
+    it('offers the chosen Agent\'s connected service among Who runs it', async () => {
         const claude = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
         const base = buildWorkflowEditorDraftFromDefinition({ draftId: 'services', name: 'Workflow', definition });
         const draft = { ...base, defaults: { ...base.defaults, agentTarget: claude } };
-        const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane"
-            draft={draft} machineName={null} testIDPrefix="services" onChange={() => {}}
-            groupDisclosure={new Map([['agent', true]])}
+        const screen = await renderScreen(<WorkflowHowAndWhereCard draftStore={createWorkflowEditorReadable(draft)} onChange={() => {}}
+            documentEditable showsWorkflowAgent accountLifetime={null} whereRef={React.createRef()}
+            projectTarget={null} machineName={null} projectMachines={undefined} onChangeProjectTarget={undefined}
+            executionTarget={undefined} runAsTargets={undefined} onChangeExecutionTarget={undefined}
             authoringFacts={{
                 agentTargets: [{ id: 'agent:happier.agent.claude/claude', label: 'Claude Code', target: claude, agentId: 'claude',
                     connectedAccounts: [{ service: { pluginId: 'happier.connect.github', localId: 'github' }, purpose: 'auth' }] }],
                 connectedServices: { serverId },
-            }} />);
-        expect(screen.findByTestId('services-defaults-connectedServices-row')).not.toBeNull();
+            }}
+            expanded onExpandedChange={() => {}} testIDPrefix="services" />);
+        // The composer's own four: the engine, Connected Services, permissions and approvals, as field selects.
+        expect(screen.findByTestId('services-header-engine-connectedServices-unavailable')).toBeNull();
+        expect(screen.findByTestId('services-header-engine-agentTarget')).not.toBeNull();
+        expect(screen.findByTestId('services-header-engine-permissionMode')).not.toBeNull();
     });
-    it('keeps Recent runs quiet for an unsaved workflow and demands only summaries until opened', async () => {
-        const definitionId = '00000000-0000-4000-8000-000000000019';
+    it('reads no run history for an unsaved workflow', async () => {
         const requests: string[] = [];
         home.answer(serverId, '/v3/automations/runs/workflow-storage', { select: input => {
-            if (!input || typeof input !== 'object' || !('operation' in input)) throw new Error('Missing operation');
-            requests.push(String(input.operation));
-            return { body: { summaries: [{ sourceArtifactId: definitionId, lastRun: null, recent: [], needsYouCount: 0, needsYouRunId: null }], remainingSourceArtifactIds: [] } };
+            requests.push(String((input as { operation?: unknown }).operation));
+            return { body: { summaries: [], remainingSourceArtifactIds: [] } };
         } });
         const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'recent', name: 'Review changes', definition });
-        const inspector = (saved: boolean, expanded = false) => <harness.WorkflowInspector
-            subject={{ kind: 'workflow' }} presentation="pane" draft={draft} machineName={null} testIDPrefix="recent"
-            onChange={() => {}} {...(saved ? { workflowDefinitionId: definitionId } : {})}
-            groupDisclosure={new Map([['recentRuns', expanded]])} />;
-        const screen = await renderScreen(inspector(false));
-        expect(screen.findByTestId('recent-group-recent-runs')).toBeNull();
+        const screen = await renderScreen(<WorkflowMoreSettings draftStore={createWorkflowEditorReadable(draft)} onChange={() => {}}
+            documentEditable authoringFacts={undefined} testIDPrefix="recent" />);
+        await screen.pressByTestIdAsync('recent-more-settings-toggle');
+        expect(screen.findByTestId('recent-more-settings-last-run')).toBeNull();
         expect(requests).toEqual([]);
-        await screen.update(inspector(true));
-        await waitForHomeGovernance(() => expect(requests).toEqual(['summaries']));
-        expect(screen.findByTestId('recent-group-recent-runs')).not.toBeNull();
-        expect(screen.getTextContent()).not.toContain('workflows.page.inspector.noRunsYet');
-        await screen.update(inspector(true, true));
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('workflows.page.inspector.noRunsYet'));
-        expect(requests).toEqual(['summaries']);
     });
     it('names a built-in child without reading saved or plugin inventories', async () => {
         const builtin = (await import('../presentation/workflowReferenceOptions')).listBuiltinWorkflowReferenceOptions()[0]!;
@@ -282,20 +256,6 @@ describe('workflow editor declared bindings', () => {
         } });
     });
 
-    it('reads a workflow that sets nothing as the default in the closed Model and permissions group', async () => {
-        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'empty-engine', name: 'Workflow',
-            definition: createWorkflowDefinitionFixture({ defaults: {} }) });
-        const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane"
-            draft={draft} machineName={null} testIDPrefix="empty" onChange={() => {}} />);
-        const header = screen.findByTestId('empty-group-agent-header')!;
-        // The Agent reads on the "How and where it runs" card; this group names only what the workflow sets.
-        expect(header.findAll((node) => String(node.type) === 'Text' && node.children.includes('common.default'))).not.toHaveLength(0);
-        const withPermissions = { ...draft, defaults: { ...draft.defaults, permissionMode: 'plan' as const } };
-        await screen.update(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane"
-            draft={withPermissions} machineName={null} testIDPrefix="empty" onChange={() => {}} />);
-        expect(screen.findByTestId('empty-group-agent-header')!.findAll((node) => String(node.type) === 'Text'
-            && node.children.includes('settingsSession.permissions.title'))).not.toHaveLength(0);
-    });
     it('reads declared input titles rather than wire keys in a read-only settings pane', async () => {
         const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'builtin', name: 'Built-in',
             definition: createWorkflowDefinitionFixture({ inputs: [
@@ -310,7 +270,7 @@ describe('workflow editor declared bindings', () => {
             documentEditable={false} showsWorkflowAgent={false} accountLifetime={null} whereRef={React.createRef()}
             projectTarget={null} machineName={null} projectMachines={undefined} onChangeProjectTarget={undefined}
             executionTarget={undefined} runAsTargets={undefined} onChangeExecutionTarget={undefined} authoringFacts={undefined}
-            expanded onExpandedChange={() => {}} settingsAnchorRef={React.createRef()} onOpenSettings={() => {}} testIDPrefix="editor" />);
+            expanded onExpandedChange={() => {}} testIDPrefix="editor" />);
         const text = screen.getTextContent();
         expect(text).toContain('workflows.page.fields.maxRounds');
         expect(text).toContain('workflows.page.fields.secondOpinion');
@@ -349,15 +309,16 @@ describe('workflow editor declared bindings', () => {
             currentDraft = draft;
             const history = useWorkflowEditorHistory<typeof initial>('draft', setDraft);
             undo = history.controls.undo;
-            return <harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane" draft={draft}
-                machineName={null} testIDPrefix="editor" onChange={(next) => {
-                    history.record(draft, next, 'roles'); setDraft(next); changed(next);
-                }} />;
+            const store = useControlledWorkflowEditorDraftStore(draft);
+            return <WorkflowMoreSettings draftStore={store} documentEditable authoringFacts={undefined} testIDPrefix="editor" onChange={(next) => {
+                history.record(draft, next, 'roles'); setDraft(next); changed(next);
+            }} />;
         }
         const settings = getStorage().getState().settings;
         const screen = await renderScreen(<Host />);
-        expect(screen.findByTestId('editor-group-roles')).not.toBeNull();
-        await screen.pressByTestIdAsync('editor-role-local_builder-target:background_run');
+        await screen.pressByTestIdAsync('editor-more-settings-toggle');
+        await screen.pressByTestIdAsync('editor-more-settings-roles');
+        await screen.pressByTestIdAsync('editor-more-settings-roles-role-local_builder-target:background_run');
         expect(changed.mock.lastCall?.[0].roles).toEqual([{ ...definition.roles?.[0],
             runsAs: { kind: 'background_run', intent: 'task' } }]);
         await act(async () => undo());
@@ -436,20 +397,22 @@ describe('workflow editor declared bindings', () => {
         function Host() {
             const [draft, setDraft] = React.useState(initial);
             current = draft;
-            return <harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane" draft={draft}
-                machineName={null} testIDPrefix="editor" onChange={setDraft} />;
+            const store = useControlledWorkflowEditorDraftStore(draft);
+            return <WorkflowMoreSettings draftStore={store} documentEditable authoringFacts={undefined} testIDPrefix="editor" onChange={setDraft} />;
         }
         const settings = getStorage().getState().settings;
         const screen = await renderScreen(<Host />);
-        await screen.pressByTestIdAsync('editor-add-role-trigger');
+        await screen.pressByTestIdAsync('editor-more-settings-toggle');
+        await screen.pressByTestIdAsync('editor-more-settings-roles');
+        await screen.pressByTestIdAsync('editor-more-settings-roles-add-role-trigger');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
-        await screen.pressByTestIdAsync('editor-add-role-inline');
+        await screen.pressByTestIdAsync('editor-more-settings-roles-add-role-inline');
         await act(async () => { await vi.runOnlyPendingTimersAsync(); });
         expect(current.roles?.map((role) => role.roleId)).toEqual(['local_builder', 'workflow_role_1']);
-        await act(async () => screen.changeTextByTestId('editor-role-workflow_role_1-name', 'Local reviewer'));
-        await act(async () => screen.changeTextByTestId('editor-role-workflow_role_1-instructions', 'Review this workflow'));
+        await act(async () => screen.changeTextByTestId('editor-more-settings-roles-role-workflow_role_1-name', 'Local reviewer'));
+        await act(async () => screen.changeTextByTestId('editor-more-settings-roles-role-workflow_role_1-instructions', 'Review this workflow'));
         expect(current.roles?.[1]).toMatchObject({ name: 'Local reviewer', instructions: 'Review this workflow' });
-        await screen.pressByTestIdAsync('editor-role-workflow_role_1-reset');
+        await screen.pressByTestIdAsync('editor-more-settings-roles-role-workflow_role_1-reset');
         expect(current.roles).toEqual(initial.roles);
         expect(getStorage().getState().settings).toBe(settings);
     });
@@ -534,7 +497,7 @@ describe('How and where it runs sentence (QA-WAVE-1115)', () => {
             projectTarget={null} machineName={null} projectMachines={undefined} onChangeProjectTarget={undefined}
             executionTarget={undefined} runAsTargets={undefined} onChangeExecutionTarget={undefined}
             authoringFacts={{ agentTargets: [{ id: 'agent:happier.agent.claude/claude', label: 'Claude Code', target: claude, agentId: 'claude' }] }}
-            expanded={false} onExpandedChange={() => {}} settingsAnchorRef={React.createRef()} onOpenSettings={() => {}} testIDPrefix="sentence" />);
+            expanded={false} onExpandedChange={() => {}} testIDPrefix="sentence" />);
     };
     const summary = (screen: Awaited<ReturnType<typeof renderCard>>) => String(screen.findByTestId('sentence-how-where-summary')?.props.children);
 
@@ -547,7 +510,7 @@ describe('How and where it runs sentence (QA-WAVE-1115)', () => {
     });
 });
 
-describe('workflow settings popover, two scopes (owner 2026-11-15)', () => {
+describe('workflow and step settings (round 1116b)', () => {
     const claude = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
     const facts = () => ({ agentTargets: [{ id: 'agent:happier.agent.claude/claude', label: 'Claude Code', target: claude, agentId: 'claude' as const }],
         connectedServices: { serverId } });
@@ -557,12 +520,13 @@ describe('workflow settings popover, two scopes (owner 2026-11-15)', () => {
             blocks: base.blocks.map((block) => block.kind === 'step' ? { ...block, execution: stepExecution } : block) };
     };
 
-    it('lists every Session field a step inherits in Workflow settings, the tool policy included', async () => {
-        const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="popover"
-            draft={draftWith()} testIDPrefix="scope" onChange={() => {}}
-            groupDisclosure={new Map([['agent', true]])} authoringFacts={facts()} />);
-        expect(screen.findByTestId('scope-defaults-allowedTools-row')).not.toBeNull();
-        expect(screen.findByTestId('scope-defaults-unlistedTools-row')).not.toBeNull();
+    it('lists every Session field a step inherits in More settings, the tool policy included', async () => {
+        const screen = await renderScreen(<WorkflowMoreSettings draftStore={createWorkflowEditorReadable(draftWith())} onChange={() => {}}
+            documentEditable authoringFacts={facts()} testIDPrefix="scope" />);
+        await screen.pressByTestIdAsync('scope-more-settings-toggle');
+        expect(screen.findByTestId('scope-more-settings-session-allowedTools-input')).not.toBeNull();
+        expect(screen.findByTestId('scope-more-settings-session-unlistedTools')
+            ?? screen.findByTestId('scope-more-settings-session-unlistedTools-unavailable')).not.toBeNull();
     });
 
     it('shows a step its Agent and every field in one page, each saying where its value comes from', async () => {

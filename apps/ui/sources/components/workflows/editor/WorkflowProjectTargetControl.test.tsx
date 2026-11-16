@@ -373,6 +373,45 @@ describe('workflow project target control', () => {
         });
     });
 
+    it('lays Machine, Folder and Workspace on the host rows, and the checkout picker writes the workflow Workspace', async () => {
+        const { Text } = await import('@/components/ui/text/Text');
+        const onChange = vi.fn();
+        const onWorkspace = vi.fn();
+        const rows: string[] = [];
+        const screen = await renderControl({
+            target: { machineId: 'machine-1', directory: '/repo/payments', workspaceRefId: 'ref-main' },
+            onChange,
+            presentation: 'rows',
+            renderRow: (row: string, label: string, control: React.ReactNode) => {
+                rows.push(row);
+                return <React.Fragment key={row}><Text>{label}</Text>{control}</React.Fragment>;
+            },
+            workspace: { value: undefined, onChange: onWorkspace },
+        });
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.findByTestId('workflow-editor-project-checkout')).not.toBeNull();
+        });
+        expect(new Set(rows)).toEqual(new Set(['machine', 'folder', 'workspace']));
+
+        await screen.pressByTestIdAsync('workflow-editor-project-checkout');
+        let popover = screen.findAllByType(AgentInputSelectionListPopover).find(node => node.props.open)!;
+        let rootStep = popover.props.rootStep as SelectionListStep;
+        // A workflow creates its worktree per run: "New worktree" selects in place, no branch or name steps.
+        const quickActions = stepOptions(rootStep, 'worktree:quick-actions');
+        expect(quickActions.map((option) => option.id)).toEqual(['current_path', 'create_git_worktree']);
+        expect(quickActions[1]!.openStep).toBeUndefined();
+        await screen.pressByTestIdAsync(`selection-list:${rootStep.id}:option:create_git_worktree`);
+        expect(onWorkspace).toHaveBeenLastCalledWith({ kind: 'new_worktree', source: { kind: 'original' } });
+        expect(onChange).not.toHaveBeenCalled();
+
+        await screen.pressByTestIdAsync('workflow-editor-project-checkout');
+        popover = screen.findAllByType(AgentInputSelectionListPopover).find(node => node.props.open)!;
+        rootStep = popover.props.rootStep as SelectionListStep;
+        await screen.pressByTestIdAsync(`selection-list:${rootStep.id}:option:current_path`);
+        expect(onWorkspace).toHaveBeenLastCalledWith({ kind: 'project_checkout' });
+    });
+
     it('starts a newly selected Machine in its default folder without the previous binding', async () => {
         const onChange = vi.fn();
         const screen = await renderControl({

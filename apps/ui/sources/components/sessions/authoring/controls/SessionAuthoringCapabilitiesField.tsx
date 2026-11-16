@@ -5,6 +5,7 @@ import { SessionCapabilitySelectionV1Schema, type SessionCapabilitySelectionV1 }
 
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
+import { SessionAuthoringChipDescriptorTrigger } from './SessionAuthoringFieldSelectTrigger';
 import { useNewSessionCapabilitiesChip } from '@/components/sessions/capabilities/useSessionCapabilitiesChip';
 import { getCapabilitiesActionChipPlacement } from '@/components/sessions/capabilities/createCapabilitiesActionChip';
 
@@ -27,6 +28,8 @@ export function SessionAuthoringCapabilitiesField(props: Readonly<{
     value: SessionCapabilitySelectionV1 | null | undefined;
     onChange: (value: SessionCapabilitySelectionV1) => void;
     chipRenderContext: AgentInputExtraActionChipRenderContext;
+    /** `select`: the bordered field select of the `selects` presentation; the composer chip otherwise. */
+    trigger?: 'chip' | 'select';
     testID: string;
 }>): React.ReactElement {
     const { onChange } = props;
@@ -62,7 +65,8 @@ export function SessionAuthoringCapabilitiesField(props: Readonly<{
     const popover = chip.collapsedContentPopover;
     return (
         <View testID={props.testID} style={{ alignSelf: 'flex-start' }}>
-            {chip.render(renderContext)}
+            <SessionAuthoringChipDescriptorTrigger chip={chip} renderContext={renderContext} trigger={props.trigger}
+                anchorRef={anchorRef} open={open} onToggle={() => setOpen((current) => !current)} testID={props.testID} />
             {popover === undefined ? null : (
                 <AgentInputContentPopover
                     open={open}

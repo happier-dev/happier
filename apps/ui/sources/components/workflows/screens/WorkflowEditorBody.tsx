@@ -853,10 +853,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         ? onEditorBack()
         : safeRouterBack({ router, navigation: backNavigation, fallbackHref: '/workflows' }));
     const whereRef = React.useRef<WorkflowProjectTargetControlHandle | null>(null);
-    /** "How and where it runs"'s Workflow settings control: the workflow-scope settings sit beside it. */
-    const workflowSettingsAnchorRef = React.useRef<View | null>(null);
-    // One details companion beside the page: the authoring agent (Plan T U5). Workflow settings and
-    // Step options are the one settings popover, never a sidebar (owner 2026-11-15).
+    // One details companion beside the page: the authoring agent (Plan T U5). Step options are the one
+    // settings popover, never a sidebar (owner 2026-11-15); the workflow's own settings are in How and where it runs.
     const [detailsCompanion, setDetailsCompanion] = React.useState<WorkflowEditorCompanion | null>(null);
     const authoringDraftId = props.authoringDraft?.draftId ?? null;
     const hasAgentTab = Boolean(props.authoringSessionId) || authoringDraftId !== null;
@@ -885,8 +883,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
      * shared sheet.
      */
     const [settingsPopover, setSettingsPopover] = React.useState<Readonly<{
-        /** `null`: the workflow scope. */
-        blockId: string | null;
+        blockId: string;
         /** The control that opened it: focus returns here. */
         anchorRef: React.RefObject<View | null>;
         /** What the panel sits beside: the step's card when it has one, else the control. */
@@ -1024,9 +1021,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         attention: documentEditable && projectUnresolved && props.onChangeProjectTarget !== undefined,
         recorded: cardDisclosure.get(WORKFLOW_HOW_WHERE_CARD_ID), initialValueSet: newWorkflow,
     });
-    const openWorkflowSettings = React.useCallback(() => {
-        setSettingsPopover({ blockId: null, anchorRef: workflowSettingsAnchorRef, placementRef: workflowSettingsAnchorRef });
-    }, []);
     // Run now with no Machine opens the Where picker; a closed card opens first, then its picker.
     const pendingWherePickerRef = React.useRef(false);
     React.useEffect(() => {
@@ -1204,11 +1198,11 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         props.onChangeInspectorGroup,
         props.runAsTargets,
     ]);
-    const buildSettingsProps = React.useCallback((blockId: string | null): WorkflowEditorInspectorProps => ({
+    const buildSettingsProps = React.useCallback((blockId: string): WorkflowEditorInspectorProps => ({
         ...inspectorBaseProps,
-        subject: blockId === null ? { kind: 'workflow' } : { kind: 'block', blockId },
+        subject: { kind: 'block', blockId },
         presentation: 'popover',
-        testIDPrefix: blockId === null ? testIDPrefix : `${testIDPrefix}-inspector`,
+        testIDPrefix: `${testIDPrefix}-inspector`,
     }), [inspectorBaseProps, testIDPrefix]);
 
     const closeSettingsPopover = React.useCallback(() => setSettingsPopover(null), []);
@@ -1225,9 +1219,9 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         setSettingsPopover({ blockId, anchorRef, placementRef: cardRef ?? anchorRef });
     }, [props.onCustomizeBlock, readDraft]);
     // Step options stay open while their block exists; the page reads that block's kind only.
-    const settingsBlockKind = useWorkflowEditorSelector(draftStore, (draft) => settingsPopover === null || settingsPopover.blockId === null ? null
+    const settingsBlockKind = useWorkflowEditorSelector(draftStore, (draft) => settingsPopover === null ? null
         : findWorkflowBlock(draft, settingsPopover.blockId)?.kind ?? null);
-    const settingsPopoverShown = settingsPopover !== null && (settingsPopover.blockId === null || settingsBlockKind !== null);
+    const settingsPopoverShown = settingsPopover !== null && settingsBlockKind !== null;
 
     // Undo and Redo are icon buttons: at the end of the chip line when wide (04 §4.1), at the document
     // foot on a phone. Only the commandless composition keeps the labelled pair.
@@ -1246,7 +1240,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             phonePresentation="sheet"
             sheetHeader="none"
             sheetMaterial="solid"
-            accessibilityLabel={settingsPopover.blockId === null ? t('workflows.page.settings') : t('workflows.page.inspector.stepOptions')}
+            accessibilityLabel={t('workflows.page.inspector.stepOptions')}
             edgePadding={{ horizontal: 12, vertical: 12 }}
             portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}
             maxWidthCap={settingsWidth}
@@ -1264,7 +1258,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 >
                     <WorkflowEditorInspector
                         // One mounted surface per scope: switching scope starts that scope's pages fresh.
-                        key={settingsPopover.blockId ?? 'workflow'}
+                        key={settingsPopover.blockId}
                         {...buildSettingsProps(settingsPopover.blockId)}
                         onDone={closeSettingsPopover}
                     />
@@ -1505,9 +1499,14 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 authoringFacts={props.authoringFacts}
                 expanded={howWhereExpanded}
                 onExpandedChange={(expanded) => setCardExpanded(WORKFLOW_HOW_WHERE_CARD_ID, expanded)}
-                settingsAnchorRef={workflowSettingsAnchorRef}
-                // A composition without page commands shows Workflow settings in place, below the cards.
-                {...(hasPageCommands ? { onOpenSettings: openWorkflowSettings } : {})}
+                {...(props.existingSessions === undefined ? {} : { existingSessions: props.existingSessions })}
+                sessionOptionsStatus={props.sessionOptionsStatus}
+                onRetrySessionOptions={props.onRetrySessionOptions}
+                onSessionOptionsDemandChange={props.onSessionOptionsDemandChange}
+                {...(sessionDrop === undefined ? {} : { bindExistingSession: sessionDrop.bind })}
+                {...(props.currentWorkflowRef === null || props.currentWorkflowRef === undefined ? {} : { workflowDefinitionId: props.currentWorkflowRef })}
+                {...(props.description === undefined ? {} : { description: props.description })}
+                {...(props.onChangeDescription === undefined ? {} : { onChangeDescription: props.onChangeDescription })}
                 testIDPrefix={testIDPrefix}
             />
         </View>
@@ -1521,9 +1520,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             <View testID={testIDPrefix} style={{ gap: theme.space.s16 }}>
                 {props.showNameField === false && props.onBackToRun === undefined ? null : identity}
                 <WorkflowDocumentGridContext.Provider value={compactLayout ? 'compact' : 'wide'}>{firstCards}</WorkflowDocumentGridContext.Provider>
-                <ItemList scrollEnabled={false}>
-                    <WorkflowEditorInspector {...buildSettingsProps(null)} presentation="pane" />
-                </ItemList>
                 <WorkflowDocumentGridContext.Provider value={compactLayout ? 'compact' : 'wide'}>{blockList}</WorkflowDocumentGridContext.Provider>
                 {historyActions}
                 {settingsPopoverNode}

@@ -1,24 +1,28 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import {
-  HappierPressable,
-  HAPPIER_PRESS_FEEDBACK_V1,
-} from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet } from 'react-native-unistyles';
 import { readWorkflowEngineChoiceV1, resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
-import { setWorkflowInputs } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { setWorkflowDefaultField, setWorkflowInputs } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import type { WorkflowWorkspaceSelection } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import { workflowInputToFieldHint } from '@happier-dev/protocol/workflows/workflowV1';
 
-import { useSessionAuthoringEngineSummary } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
-import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import {
+  SessionAuthoringControls,
+  useSessionAuthoringEngineSummary,
+} from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import {
+  readSessionAuthoringAgentTargetValue,
+  retireUnavailableSessionAuthoringRuntimeDescriptor,
+  type SessionAuthoringControlFacts,
+} from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
+import { SESSION_COMPOSER_CHIP_FIELDS } from '@/components/sessions/new/SessionServerStartDraftComposerBody';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { workflowDefaultsChooseAgent } from '@/sync/domains/workflows/workflowAuthoring';
+import { workflowDefaultsChooseAgent, type WorkflowExistingSessionOption } from '@/sync/domains/workflows/workflowAuthoring';
+import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import type { WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import { t } from '@/text';
@@ -27,26 +31,30 @@ import type {
   WorkflowRunAsTarget,
   WorkflowRunAsTargetKind,
 } from '../run/workflowRunAsTargets';
-import { WorkflowDefaultEngineControls } from './WorkflowDefaultEngineControls';
+import { WorkflowContinuityControls } from './WorkflowContinuityControls';
 import {
   useWorkflowEditorSelector,
   type WorkflowEditorDraftStore,
 } from './workflowEditorDraftStore';
 import { WorkflowInputsEditor } from './WorkflowInputsEditor';
 import { WorkflowCardGutterRow, WorkflowKindCard } from './WorkflowKindCard';
+import { WorkflowMoreSettings } from './WorkflowMoreSettings';
+import { renderWorkflowCardFieldRow } from './workflowCardFieldRow';
 import {
   formatWorkflowWhereSummary,
   WorkflowProjectTargetControl,
   type WorkflowProjectTargetControlHandle,
+  type WorkflowWhereRowRenderer,
 } from './WorkflowProjectTargetControl';
 import { WorkflowFieldPair } from './WorkflowStepDataEditor';
+import type { WorkflowSessionDrop } from './useWorkflowSessionBinding';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { formatWorkflowFieldLabel } from '../presentation/workflowValuePresentation';
 
 const styles = StyleSheet.create((theme) => ({
-  /** One meaning per group (lab r16 "Where", "How", "Asks for"), a hairline between them. */
+  /** One meaning per group (lab round 1116: Where it runs, Who runs it, Each step, Workflow inputs), a hairline between them. */
   group: {
-    gap: theme.space.s8,
+    gap: theme.space.s4,
     paddingVertical: theme.space.s8,
   },
   groupRule: {
@@ -56,33 +64,13 @@ const styles = StyleSheet.create((theme) => ({
   groupTitle: {
     ...Typography.variant('label', 'semiBold'),
     color: theme.colors.text.primary,
+    paddingBottom: theme.space.s4,
   },
-  row: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    columnGap: theme.space.s12,
-    rowGap: theme.space.s4,
-    minWidth: 0,
-  },
-  chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: theme.space.s8,
-  },
-  asksNote: {
+  note: {
     ...Typography.variant('meta'),
     color: theme.colors.text.tertiary,
   },
-  settingsAction: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s4,
-    paddingHorizontal: theme.space.s4,
-    borderRadius: theme.borderRadius.sm,
-  },
-  settingsLabel: {
+  readOnlyValue: {
     ...Typography.variant('label'),
     color: theme.colors.text.primary,
   },
@@ -92,12 +80,15 @@ const readDefaults = (draft: WorkflowEditorDraft) => draft.defaults;
 const readRoles = (draft: WorkflowEditorDraft) => draft.roles;
 const readInputs = (draft: WorkflowEditorDraft) => draft.inputs;
 
+/** Machine, Folder and Workspace on the card's label track. */
+const renderWhereRow: WorkflowWhereRowRenderer = renderWorkflowCardFieldRow;
+
 /**
- * "How and where it runs" (owner 2026-11-15, lab round 1115 r16 "Two cards"): the page's second
- * first card. Where (Machine and folder), How (the workflow's Agent and model, what each step runs
- * in) and what a run asks for, each through its one owner — the Where control, the shared Session
- * engine chips, the run-as choice and the inputs editor. Its header says it all in one sentence and
- * opens Workflow settings for everything else. Each group reads only its own draft slice.
+ * "How and where it runs" (lab round 1116b with owner changes a–e): the page's second first card and the
+ * one place for how the workflow runs. Where it runs (Machine, Folder and the Session checkout picker as
+ * Workspace), Who runs it (New Session's composer chips as field selects), Each step (Runs in and
+ * Conversation), the Workflow inputs table, and More settings for the long tail. Each part is its one
+ * owner's; each group reads only its own draft slice.
  */
 export function WorkflowHowAndWhereCard(
   props: Readonly<{
@@ -121,14 +112,19 @@ export function WorkflowHowAndWhereCard(
     authoringFacts: SessionAuthoringControlFacts | undefined;
     expanded: boolean;
     onExpandedChange: (expanded: boolean) => void;
-    /** Where Workflow settings sits: this card's control, which the page also opens it beside. */
-    settingsAnchorRef: React.RefObject<View | null>;
-    /** Absent where the host shows Workflow settings in place: the card has no control for it. */
-    onOpenSettings?: () => void;
+    /** Conversation: an existing Session to continue, through the host's Session candidacy owner. */
+    existingSessions?: readonly WorkflowExistingSessionOption[];
+    sessionOptionsStatus?: React.ComponentProps<typeof WorkflowContinuityControls>['sessionOptionsStatus'];
+    onRetrySessionOptions?: () => void;
+    onSessionOptionsDemandChange?: (demanded: boolean) => void;
+    bindExistingSession?: WorkflowSessionDrop['bind'];
+    /** Saved source only: More settings' Last run. */
+    workflowDefinitionId?: string;
+    description?: string;
+    onChangeDescription?: (next: string) => void;
     testIDPrefix: string;
   }>,
 ): React.ReactElement {
-  const { theme } = useUnistyles();
   const id = `${props.testIDPrefix}-how-where`;
   const defaults = useWorkflowEditorSelector(props.draftStore, readDefaults);
   const roles = useWorkflowEditorSelector(props.draftStore, readRoles);
@@ -177,7 +173,6 @@ export function WorkflowHowAndWhereCard(
             : 'workflows.page.sections.howWhereSession',
           { where, agent: agentClause },
         );
-  const { onOpenSettings } = props;
   const runsInTabs = React.useMemo(
     () =>
       (props.runAsTargets ?? []).map((target) => ({
@@ -201,6 +196,47 @@ export function WorkflowHowAndWhereCard(
   const runsInReasons = runsInTabs.flatMap((tab) => ('unavailableReason' in tab && tab.unavailableReason !== undefined ? [tab.unavailableReason] : []));
   const readDraft = props.draftStore.get;
   const { onChange } = props;
+  const readOnly = !props.documentEditable;
+
+  // The workflow's Workspace is the Session checkout picker's choice (change a), written to its defaults.
+  const workspace = React.useMemo(() => ({
+    value: defaults.workspace,
+    ...(readOnly ? {} : {
+      onChange: (next: WorkflowWorkspaceSelection) => onChange(setWorkflowDefaultField(readDraft(), 'workspace', next)),
+    }),
+  }), [defaults.workspace, onChange, readDraft, readOnly]);
+
+  // Who runs it: the composer's own chips and writers, as the Workflow settings agent group wrote them.
+  const changeEngine = React.useCallback<NonNullable<React.ComponentProps<typeof SessionAuthoringControls>['onChangeEngine']>>((engine) => {
+    if (readOnly) return;
+    const draft = readDraft();
+    onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) });
+  }, [onChange, readDraft, readOnly]);
+  const changeFields = React.useCallback<NonNullable<React.ComponentProps<typeof SessionAuthoringControls>['onChangeFields']>>((fields) => {
+    if (readOnly) return;
+    const draft = readDraft();
+    let next = { ...draft, defaults: withWorkflowAuthoringEngineFields(draft.defaults, fields) };
+    const retired = retireUnavailableSessionAuthoringRuntimeDescriptor({
+      runtimeDescriptorV1: draft.defaults.runtimeDescriptorV1,
+      agentTarget: fields.agentTarget ?? draft.defaults.agentTarget, facts: props.authoringFacts,
+    });
+    if (retired !== draft.defaults.runtimeDescriptorV1) next = setWorkflowDefaultField(next, 'runtimeDescriptorV1', retired);
+    onChange(next);
+  }, [onChange, props.authoringFacts, readDraft, readOnly]);
+  const changeField = React.useCallback<React.ComponentProps<typeof SessionAuthoringControls>['onChangeField']>((field, value) => {
+    if (readOnly) return;
+    const draft = readDraft();
+    let next = setWorkflowDefaultField(draft, field, value);
+    if (field === 'agentTarget') {
+      const retired = retireUnavailableSessionAuthoringRuntimeDescriptor({
+        runtimeDescriptorV1: draft.defaults.runtimeDescriptorV1,
+        agentTarget: readSessionAuthoringAgentTargetValue(value),
+        facts: props.authoringFacts,
+      });
+      if (retired !== draft.defaults.runtimeDescriptorV1) next = setWorkflowDefaultField(next, 'runtimeDescriptorV1', retired);
+    }
+    onChange(next);
+  }, [onChange, props.authoringFacts, readDraft, readOnly]);
 
   return (
     <WorkflowCardGutterRow icon="laptop">
@@ -212,98 +248,60 @@ export function WorkflowHowAndWhereCard(
           expanded: props.expanded,
           onExpandedChange: props.onExpandedChange,
         }}
-        headerAction={
-          onOpenSettings === undefined ? undefined : (
-            <View ref={props.settingsAnchorRef} collapsable={false}>
-              <HappierPressable
-                testID={`${id}-settings`}
-                accessibilityRole="button"
-                accessibilityLabel={t('workflows.page.settings')}
-                hasPopup="dialog"
-                onPress={onOpenSettings}
-                style={(state) => [
-                  styles.settingsAction,
-                  state.pressed
-                    ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle }
-                    : null,
-                  focusRingStyle({
-                    focused: state.focused,
-                    color: theme.colors.border.focus,
-                  }),
-                ]}
-              >
-                <Icon
-                  name="sliders-horizontal"
-                  size={ICON_SIZE.xs}
-                  color={theme.colors.text.secondary}
-                />
-                <Text style={styles.settingsLabel}>
-                  {t('workflows.page.settings')}
-                </Text>
-              </HappierPressable>
-            </View>
-          )
-        }
       >
         <View style={styles.group} testID={`${id}-where`}>
           <Text style={styles.groupTitle}>
-            {t('workflows.page.sections.groupWhere')}
+            {t('workflows.page.sections.whereTitle')}
           </Text>
-          <View style={workflowEditorStyles.actionFieldRow}>
-            <WorkflowFieldPair
-              label={t('workflows.page.sections.machineAndFolder')}
-              trackKey="where"
-            >
-              <WorkflowProjectTargetControl
-                accountLifetime={props.accountLifetime}
-                purpose="workflow"
-                ref={props.whereRef}
-                presentation="value"
-                target={props.projectTarget}
-                machineName={props.machineName}
-                {...(props.projectMachines === undefined
-                  ? {}
-                  : { machines: props.projectMachines })}
-                {...(!props.documentEditable ||
-                props.onChangeProjectTarget === undefined
-                  ? {}
-                  : { onChange: props.onChangeProjectTarget })}
-                testIDPrefix={props.testIDPrefix}
-              />
-            </WorkflowFieldPair>
+          <View testID={`${props.testIDPrefix}-where-chips`}>
+          <WorkflowProjectTargetControl
+            accountLifetime={props.accountLifetime}
+            purpose="workflow"
+            ref={props.whereRef}
+            presentation="rows"
+            renderRow={renderWhereRow}
+            workspace={workspace}
+            target={props.projectTarget}
+            machineName={props.machineName}
+            {...(props.projectMachines === undefined
+              ? {}
+              : { machines: props.projectMachines })}
+            {...(readOnly || props.onChangeProjectTarget === undefined
+              ? {}
+              : { onChange: props.onChangeProjectTarget })}
+            testIDPrefix={props.testIDPrefix}
+          />
           </View>
         </View>
-        <View style={[styles.group, styles.groupRule]} testID={`${id}-how`}>
+        {!props.showsWorkflowAgent ? null : (
+          <View style={[styles.group, styles.groupRule]} testID={`${id}-who`}>
+            <Text style={styles.groupTitle}>
+              {t('workflows.page.sections.groupWho')}
+            </Text>
+            <SessionAuthoringControls
+              presentation="selects"
+              disabled={readOnly}
+              fields={SESSION_COMPOSER_CHIP_FIELDS}
+              values={values}
+              engine={readWorkflowEngineChoiceV1(defaults)}
+              workflowRoles={roles}
+              onChangeEngine={changeEngine}
+              onChangeFields={changeFields}
+              onChangeField={changeField}
+              {...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts })}
+              testIDPrefix={`${props.testIDPrefix}-header-engine`}
+            />
+          </View>
+        )}
+        <View style={[styles.group, styles.groupRule]} testID={`${id}-each-step`}>
           <Text style={styles.groupTitle}>
-            {t('workflows.page.sections.groupHow')}
+            {t('workflows.page.sections.groupEachStep')}
           </Text>
-          {!props.showsWorkflowAgent ? null : (
-            <View style={workflowEditorStyles.actionFieldRow}>
-              <WorkflowFieldPair
-                label={t('workflows.page.sections.agentRow')}
-                trackKey="agent"
-              >
-                <View style={styles.chips}>
-                  <WorkflowDefaultEngineControls
-                    defaults={defaults}
-                    roles={roles}
-                    readDraft={readDraft}
-                    onChange={onChange}
-                    editable={props.documentEditable}
-                    {...(props.authoringFacts === undefined
-                      ? {}
-                      : { facts: props.authoringFacts })}
-                    testIDPrefix={`${props.testIDPrefix}-header-engine`}
-                  />
-                </View>
-              </WorkflowFieldPair>
-            </View>
-          )}
           {runsInTabs.length === 0 ||
           props.onChangeExecutionTarget === undefined ? null : (
             <View style={workflowEditorStyles.actionFieldRow}>
               <WorkflowFieldPair
-                label={t('workflows.page.sections.eachStepRunsIn')}
+                label={t('workflows.page.sections.runsInRow')}
                 trackKey="runs-in"
               >
                 {props.documentEditable ? (
@@ -316,25 +314,40 @@ export function WorkflowHowAndWhereCard(
                     role="radiogroup"
                     testIDPrefix={`${props.testIDPrefix}-run-as`}
                   />
-                ) : null}
-                {/* An unavailable class stays visible with its reason; never downgraded. */}
-                {props.documentEditable && runsInReasons.length > 0 ? (
-                  <Text style={styles.asksNote}>{runsInReasons.join(' ')}</Text>
-                ) : null}
-                {props.documentEditable ? null : (
+                ) : (
                   // A read-only value, not a disabled choice with a reason that asks to choose (M7).
-                  <Text testID={`${props.testIDPrefix}-run-as-readonly`} style={styles.settingsLabel}>
+                  <Text testID={`${props.testIDPrefix}-run-as-readonly`} style={styles.readOnlyValue}>
                     {background ? t('workflows.page.sections.aBackgroundRun') : t('workflows.page.sections.aSession')}
                   </Text>
                 )}
+                {/* An unavailable class stays visible with its reason; never downgraded. */}
+                {props.documentEditable && runsInReasons.length > 0 ? (
+                  <Text style={styles.note}>{runsInReasons.join(' ')}</Text>
+                ) : null}
               </WorkflowFieldPair>
             </View>
+          )}
+          {readOnly ? null : (
+            <WorkflowDefaultsConversation
+              draftStore={props.draftStore}
+              {...(props.existingSessions === undefined ? {} : { existingSessions: props.existingSessions })}
+              onSessionOptionsDemandChange={props.onSessionOptionsDemandChange}
+              sessionOptionsStatus={props.sessionOptionsStatus}
+              onRetrySessionOptions={props.onRetrySessionOptions}
+              onChangeConversation={(value) => onChange(setWorkflowDefaultField(readDraft(), 'conversation', value))}
+              {...(props.bindExistingSession === undefined ? {} : {
+                onBindExistingSession: (sessionId: string) => props.bindExistingSession!(null, sessionId),
+              })}
+              onChangeWorkspace={(value) => onChange(setWorkflowDefaultField(readDraft(), 'workspace', value))}
+              testIDPrefix={`${props.testIDPrefix}-defaults-continuity`}
+            />
           )}
         </View>
         <View style={[styles.group, styles.groupRule]} testID={`${id}-asks`}>
           {props.documentEditable ? (
             <WorkflowInputsEditor
-              title={t('workflows.page.sections.groupAsks')}
+              title={t('workflows.inputs.title')}
+              note={t('workflows.page.sections.asksNote')}
               inputs={inputs}
               onChange={(next) => onChange(setWorkflowInputs(readDraft(), next))}
               testIDPrefix={props.testIDPrefix}
@@ -342,7 +355,7 @@ export function WorkflowHowAndWhereCard(
           ) : (
             <>
               <Text style={styles.groupTitle}>
-                {t('workflows.page.sections.groupAsks')}
+                {t('workflows.inputs.title')}
               </Text>
               {/* Read-only, the declared inputs read by their titles, never their wire keys. */}
               {inputs.map((input) => (
@@ -350,13 +363,46 @@ export function WorkflowHowAndWhereCard(
                   {formatWorkflowFieldLabel(input.name, workflowInputToFieldHint(input).title)}
                 </Text>
               ))}
+              <Text style={styles.note}>{t('workflows.page.sections.asksNote')}</Text>
             </>
           )}
-          <Text style={styles.asksNote}>
-            {t('workflows.page.sections.asksNote')}
-          </Text>
         </View>
+        <WorkflowMoreSettings
+          draftStore={props.draftStore}
+          onChange={onChange}
+          documentEditable={props.documentEditable}
+          authoringFacts={props.authoringFacts}
+          {...(props.workflowDefinitionId === undefined ? {} : { workflowDefinitionId: props.workflowDefinitionId })}
+          {...(props.description === undefined ? {} : { description: props.description })}
+          {...(props.onChangeDescription === undefined ? {} : { onChangeDescription: props.onChangeDescription })}
+          testIDPrefix={props.testIDPrefix}
+        />
       </WorkflowKindCard>
     </WorkflowCardGutterRow>
+  );
+}
+
+const readWholeDraft = (draft: WorkflowEditorDraft) => draft;
+
+/**
+ * Each step's Conversation, the conversation part of the continuity owner on the card's label track.
+ * The owner reads the whole draft (it names a continued step's conversation), so only this leaf
+ * subscribes to it; the card keeps its own slices.
+ */
+function WorkflowDefaultsConversation(
+  props: Readonly<{ draftStore: WorkflowEditorDraftStore }>
+    & Omit<React.ComponentProps<typeof WorkflowContinuityControls>, 'draft' | 'conversation' | 'workspace' | 'layout' | 'parts'>,
+): React.ReactElement {
+  const { draftStore, ...controls } = props;
+  const draft = useWorkflowEditorSelector(draftStore, readWholeDraft);
+  return (
+    <WorkflowContinuityControls
+      {...controls}
+      layout="track"
+      parts="conversation"
+      draft={draft}
+      conversation={draft.defaults.conversation}
+      workspace={draft.defaults.workspace}
+    />
   );
 }

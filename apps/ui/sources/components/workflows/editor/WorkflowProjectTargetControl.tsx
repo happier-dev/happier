@@ -7,6 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
+import type { WorkflowWorkspaceSelection } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
 import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
 import { SessionPlacementChips, useSessionPlacementPopovers, type SessionPlacementChipsHandle, type SessionPlacementChoiceProps } from '@/components/sessions/new/placement/SessionPlacementChips';
@@ -15,6 +16,8 @@ import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMac
 import { useCheckoutSelectionPicker } from '@/components/sessions/new/hooks/screenModel/useCheckoutSelectionPicker';
 import { useNewSessionRepoScmSnapshot } from '@/components/sessions/new/hooks/screenModel/useNewSessionRepoScmSnapshot';
 import { resolveNewSessionCheckoutChipModel } from '@/components/sessions/new/modules/newSessionCheckoutChipModel';
+import { WORKSPACE_NEW_WORKTREE_OPTION_ID } from '@/components/sessions/new/hooks/screenModel/buildWorktreeSelectionListSteps';
+import { SessionAuthoringFieldSelectTrigger } from '@/components/sessions/authoring/controls/SessionAuthoringFieldSelectTrigger';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
@@ -120,6 +123,17 @@ export function formatWorkflowWhereSummary(params: Readonly<{
     })}`;
 }
 
+export type WorkflowWhereRowRenderer = (row: 'machine' | 'folder' | 'workspace', label: string, control: React.ReactNode) => React.ReactNode;
+export type WorkflowWhereWorkspace = Readonly<{
+    value: WorkflowWorkspaceSelection | undefined;
+    onChange?: (next: WorkflowWorkspaceSelection) => void;
+}>;
+
+/** What the Workspace field says, in the checkout picker's own words. */
+function workflowWorkspaceFieldLabel(value: WorkflowWorkspaceSelection | undefined): string {
+    return value?.kind === 'new_worktree' ? t('newSession.checkout.newWorktree') : t('newSession.checkout.noWorktree');
+}
+
 /** Opens the Where owner's picker from elsewhere (Run now with no Machine chosen). */
 export type WorkflowProjectTargetControlHandle = Readonly<{ openPicker: () => void }>;
 
@@ -147,9 +161,18 @@ type WorkflowProjectTargetControlProps = Readonly<{
      * host that is already that popover (a run composer's Where chip).
      * `value`: the value of a label/value row that already names it (How and
      * where it runs' "Machine and folder"): the bordered chips while editable,
-     * otherwise what the field's read-only value says.
+     * otherwise what the field's read-only value says. `rows`: Machine, Folder
+     * and Workspace each on a row the host draws on its own label track
+     * (`renderRow`), each a bordered field select.
      */
-    presentation?: 'chip' | 'field' | 'inline' | 'value';
+    presentation?: 'chip' | 'field' | 'inline' | 'value' | 'rows';
+    /** `rows`: draws one labelled row of the host's track. */
+    renderRow?: WorkflowWhereRowRenderer;
+    /**
+     * The workflow's Workspace (WF-REDESIGN-1116 change a): the checkout picker, New Session's, writes
+     * this choice ("New worktree" per run, or the project folder) instead of only moving the folder.
+     */
+    workspace?: WorkflowWhereWorkspace;
     /** The field row's label; `field` only. */
     title?: string;
     /** The field row's description (its consequence), wrapping; `field` only. */
@@ -188,7 +211,11 @@ export const WorkflowProjectTargetControl = React.forwardRef<
             testIDPrefix={testIDPrefix}
             // One owner, two presentations by context (owner rulings 2026-11-13): chips in chip rows,
             // bordered where the editor header's other chips are; a labelled field row in forms.
-            {...(props.presentation === 'field' ? {
+            {...(props.presentation === 'rows' && props.renderRow !== undefined ? {
+                presentation: 'fields' as const,
+                renderRow: props.renderRow,
+                ...(props.workspace === undefined ? {} : { workspace: props.workspace }),
+            } : props.presentation === 'field' ? {
                 presentation: 'fields' as const,
                 title: props.title ?? t('workflows.page.sections.machineAndProject'),
                 ...(props.subtitle === undefined ? {} : { subtitle: props.subtitle }),
@@ -237,6 +264,25 @@ export const WorkflowProjectTargetControl = React.forwardRef<
             {formatWorkflowWhereSummary({ target, machineName: props.machineName, machineHomeDir })}
         </Text>
     );
+
+    if (props.presentation === 'rows' && props.renderRow !== undefined) {
+        if (editor) return editor;
+        // Read-only: what is, on the same rows (FIN-DESIGN-REVIEW M7).
+        const directory = target !== undefined && target !== null && isWorkflowProjectTarget(target)
+            ? formatPathRelativeToHome(target.directory, machineHomeDir, { homeLabel: t('workspacePresentation.homeFolder') }) : null;
+        return (
+            <>
+                {props.renderRow('machine', t('newSession.wizardSection.machine'), <Text testID={`${testIDPrefix}-machine`}
+                    style={props.machineName === null ? styles.unresolved : styles.value}>
+                    {props.machineName ?? (target === undefined || target === null ? t('workflows.editor.targetNotChosen') : t('workflows.editor.targetOtherMachine'))}
+                </Text>)}
+                {directory === null ? null : props.renderRow('folder', t('newSession.wizardSection.folder'),
+                    <Text testID={`${testIDPrefix}-project-directory-readonly`} style={[styles.value, styles.path]}>{directory}</Text>)}
+                {props.workspace === undefined ? null : props.renderRow('workspace', t('workflows.workspace.title'),
+                    <Text testID={`${testIDPrefix}-workspace-readonly`} style={styles.value}>{workflowWorkspaceFieldLabel(props.workspace.value)}</Text>)}
+            </>
+        );
+    }
 
     if (props.presentation === 'value') {
         return <View testID={`${testIDPrefix}-where-chips`} style={styles.row}>{editor ?? readOnlyValue}</View>;
@@ -407,6 +453,8 @@ function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
     title?: string;
     subtitle?: string;
     rowTestID?: string;
+    renderRow?: WorkflowWhereRowRenderer;
+    workspace?: WorkflowWhereWorkspace;
 }>): React.ReactElement {
     const { target } = props;
     const { choice, serverId, machineHomeDir, machinePlatform, moveToDirectory, latest } = useWorkflowWhereChoices(props);
@@ -447,15 +495,20 @@ function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
             {...(props.rowTestID === undefined ? {} : { rowTestID: props.rowTestID })}
             // A workflow's Sessions follow the Machine's row for workflows and automations (J6); no one-time override.
             isolationWorkKind="automationsWorkflows"
-            trailing={target !== null && isWorkflowProjectTarget(target) ? <ProjectCheckoutPicker
-                currentUiContextCommandScope={scope}
-                target={target}
-                serverId={serverId}
-                machineHomeDir={machineHomeDir}
-                machinePlatform={machinePlatform}
-                onSelectDirectory={moveToDirectory}
-                testIDPrefix={props.testIDPrefix}
-            /> : null}
+            {...(props.renderRow === undefined ? {} : { renderFieldRow: props.renderRow })}
+            trailing={target !== null && isWorkflowProjectTarget(target) ? (() => {
+                const picker = <ProjectCheckoutPicker
+                    currentUiContextCommandScope={scope}
+                    target={target}
+                    serverId={serverId}
+                    machineHomeDir={machineHomeDir}
+                    machinePlatform={machinePlatform}
+                    onSelectDirectory={moveToDirectory}
+                    {...(props.workspace === undefined ? {} : { workspace: props.workspace })}
+                    testIDPrefix={props.testIDPrefix}
+                />;
+                return props.renderRow === undefined ? picker : props.renderRow('workspace', t('workflows.workspace.title'), picker);
+            })() : null}
         />
     );
 }
@@ -485,9 +538,13 @@ function ProjectCheckoutPicker(props: Readonly<{
     machineHomeDir: string | null;
     machinePlatform: string | null;
     onSelectDirectory: (openedFor: WorkflowProjectTargetV1, directory: string) => void;
+    /** Present: the picker is the workflow's Workspace field and writes the choice (change a). */
+    workspace?: WorkflowWhereWorkspace;
     testIDPrefix: string;
 }>): React.ReactElement | null {
     const { onSelectDirectory, target } = props;
+    const workspaceValue = props.workspace?.value;
+    const onChangeWorkspace = props.workspace?.onChange;
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
     const applyClose = React.useCallback(() => setOpen(false), []);

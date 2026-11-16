@@ -27,6 +27,8 @@ import { t } from '@/text';
 import { resolveWorkflowSessionChoice } from '../presentation/workflowSessionChoice';
 import { workflowSessionOptionRow } from '../presentation/workflowSessionOptionRow';
 import { workflowEditorStyles } from './workflowEditorStyles';
+import { WorkflowFieldPair } from './WorkflowStepDataEditor';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 
 /**
@@ -193,6 +195,13 @@ export function WorkflowContinuityControls(props: Readonly<{
     onChangeConversation: (value: WorkflowConversationSelection | undefined) => void;
     onBindExistingSession?: (sessionId: string) => Promise<EntityDropOutcomeV1>;
     onChangeWorkspace: (value: WorkflowWorkspaceSelection | undefined) => void;
+    /**
+     * `item` (default): settings rows. `track`: Conversation on its card's label track, its segments
+     * beside the label (How and where it runs, round 1116).
+     */
+    layout?: 'item' | 'track';
+    /** `conversation`: a host that chooses the Workspace elsewhere (the checkout picker) shows only Conversation. */
+    parts?: 'all' | 'conversation';
     testIDPrefix: string;
 }>): React.ReactElement {
     const { draft, onChangeConversation, onChangeWorkspace, testIDPrefix } = props;
@@ -450,19 +459,8 @@ export function WorkflowContinuityControls(props: Readonly<{
         : sessionNotice === 'failed' ? t('workflows.conversation.sessionsFailedRetry')
         : sessionNotice === 'empty' ? t('workflows.conversation.noExistingSessions') : null;
 
-    return (
-        <View>
-            <SegmentedChoiceItem<ConversationSegment>
-                testIDPrefix={`${testIDPrefix}-conversation`}
-                title={t('workflows.conversation.title')}
-                subtitle={conversationConsequence}
-                options={conversationSegments}
-                value={conversationSegment}
-                valueSource={conversationSegment === 'default' ? 'inherited' : 'set'}
-                onChange={selectConversationSegment}
-                accessoryLayout="stacked"
-                showDivider={false}
-            />
+    const conversationDetails = (
+        <>
             {conversationSegment === 'continue' && (continueItems.length > 1 || continueItems[0]?.id === EXISTING_SESSION_OPTION_ID) ? (
                 <ContinuityField
                     title={t('workflows.page.inspector.continueFrom')}
@@ -523,7 +521,55 @@ export function WorkflowContinuityControls(props: Readonly<{
             {choosingSession && bindingRefusal !== null ? (
                 <Text accessibilityRole="alert" style={workflowEditorStyles.groupSummary}>{bindingRefusal}</Text>
             ) : null}
+        </>
+    );
+    const conversation = props.layout === 'track' ? (
+        <View style={workflowEditorStyles.actionFieldRow}>
+            <WorkflowFieldPair label={t('workflows.conversation.title')} trackKey="conversation">
+                <SegmentedTabBar<ConversationSegment>
+                    tabs={conversationSegments}
+                    activeTabId={conversationSegment}
+                    onSelectTab={selectConversationSegment}
+                    segmentSizing="content"
+                    accessibilityLabel={t('workflows.conversation.title')}
+                    role="radiogroup"
+                    testIDPrefix={`${testIDPrefix}-conversation`}
+                />
+                {conversationDetails}
+            </WorkflowFieldPair>
+        </View>
+    ) : (
+        <>
+            <SegmentedChoiceItem<ConversationSegment>
+                testIDPrefix={`${testIDPrefix}-conversation`}
+                title={t('workflows.conversation.title')}
+                subtitle={conversationConsequence}
+                options={conversationSegments}
+                value={conversationSegment}
+                valueSource={conversationSegment === 'default' ? 'inherited' : 'set'}
+                onChange={selectConversationSegment}
+                accessoryLayout="stacked"
+                showDivider={false}
+            />
+            {conversationDetails}
+        </>
+    );
+    // Branches writing one folder together is the workspace's consequence; a host choosing the Workspace
+    // elsewhere still hears it here, where the steps' running is decided.
+    if (props.parts === 'conversation') return (
+        <>
+            {conversation}
+            {sharesWorkspaceWithParallelSiblings ? (
+                <Text testID={`${testIDPrefix}-workspace-shared-parallel-note`} style={workflowEditorStyles.groupSummary}>
+                    {t('workflows.workspace.sharedParallelNote')}
+                </Text>
+            ) : null}
+        </>
+    );
 
+    return (
+        <View>
+            {conversation}
             <SegmentedChoiceItem<WorkspaceSegment>
                 testIDPrefix={`${testIDPrefix}-workspace`}
                 title={t('workflows.workspace.title')}

@@ -6,6 +6,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { Item } from '@/components/ui/lists/Item';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SessionAuthoringFieldSelectTrigger } from '@/components/sessions/authoring/controls/SessionAuthoringFieldSelectTrigger';
 import type { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { t } from '@/text';
 import type { ApprovalProfileV1 } from '@happier-dev/protocol/actions';
@@ -95,9 +96,10 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
     description?: string;
     /**
      * `fields` (default) a labelled field; `chips` the composer chip; `row` a value row among glyph-led rows
-     * (Session Info's Setup: glyph, label, current choice, chevron), collapsed until pressed.
+     * (Session Info's Setup: glyph, label, current choice, chevron), collapsed until pressed; `selects` the
+     * bordered field select of the Session controls' `selects` presentation, naming the choice alone.
      */
-    presentation?: 'chips' | 'fields' | 'row';
+    presentation?: 'chips' | 'fields' | 'row' | 'selects';
     /** The row presentation's glyph, in its section's glyph column. */
     icon?: React.ReactNode;
 }>) {
@@ -114,7 +116,8 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
         setOpen(false);
         props.onChange(approvalProfileChoiceValue(id));
     };
-    const chip = props.presentation === 'chips' ? approvalProfileChipLabel({ value: props.value,
+    const selectAnchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
+    const chip = props.presentation === 'chips' || props.presentation === 'selects' ? approvalProfileChipLabel({ value: props.value,
         profiles: props.source.profiles, machineDefault, ready: props.source.ready }) : null;
     const row = props.presentation === 'row';
     // A chip keeps its own width wherever it is placed; only the field presentation spans its row.
@@ -124,7 +127,10 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
             items={items} selectedId={selectedId}
             onSelect={select}
             emptyLabel={t(props.source.unavailable ? 'common.unavailable' : 'common.loading')}
-            trigger={chip ? ({ toggle }) => <SelectionListFilterChip filter={{
+            trigger={chip && props.presentation === 'selects' ? ({ toggle }) => <SessionAuthoringFieldSelectTrigger
+                anchorRef={selectAnchorRef} title={t('workflows.triggers.guided.profile.title')} label={chip.label}
+                open={open} disabled={disabled} onPress={toggle} testID={`${props.testID}-select`} />
+            : chip ? ({ toggle }) => <SelectionListFilterChip filter={{
                 id: props.testID, testID: `${props.testID}-chip`, label: t('workflows.triggers.guided.profile.title'),
                 valueLabel: chip.label, muted: !chip.chosen,
                 disabled, open: false, onOpenChange: next => { if (next) toggle(); }, renderPopoverContent: () => null,

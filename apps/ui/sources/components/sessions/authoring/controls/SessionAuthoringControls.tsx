@@ -16,6 +16,7 @@ import { AgentInputChipPickerPopover } from '@/components/sessions/agentInput/co
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Item } from '@/components/ui/lists/Item';
@@ -45,6 +46,9 @@ import { SessionAuthoringCapabilitiesField } from './SessionAuthoringCapabilitie
 import { useSessionAuthoringControls } from './useSessionAuthoringControls';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useSessionAuthoringEnginePicker } from './useSessionAuthoringEnginePicker';
+import { SessionAuthoringFieldSelectTrigger } from './SessionAuthoringFieldSelectTrigger';
+import { PERMISSION_CONTROL_ICON } from '@/components/sessions/agentInput/definitions/createPermissionActionChip';
+import { Icon } from '@/components/ui/icons/Icon';
 
 /**
  * The standalone, controlled Session-authoring controls.
@@ -187,6 +191,27 @@ function SessionAuthoringOptionChip(props: Readonly<{
         />
     );
     const openDemand = open ? props.openDemand : null;
+    if (props.presentation === 'selects') {
+        // The bordered field select, unlabelled: the host's group names the set (WF-REDESIGN-1116 change b).
+        return (
+            <>
+                <SessionAuthoringFieldSelectTrigger
+                    anchorRef={anchorRef}
+                    title={props.title}
+                    label={currentLabel}
+                    leading={props.leading}
+                    open={open}
+                    {...(props.disabled === true ? { disabled: true } : {})}
+                    {...(props.changed === true && props.changedAccessibilityHint !== undefined
+                        ? { accessibilityHint: props.changedAccessibilityHint } : {})}
+                    onPress={() => setOpen((current) => !current)}
+                    testID={props.testID}
+                />
+                {picker}
+                {openDemand}
+            </>
+        );
+    }
     if (props.presentation === 'chips' && props.changed === true) {
         // A value this subject sets is the canonical bordered chip, the one the header's Where and
         // Triggers chips are, so the header line reads as one set (lab E1). Its chooser stays this
@@ -328,6 +353,7 @@ function SessionAuthoringFieldControl(props: Readonly<{
                     value={values.connectedServices}
                     onChange={(bindings) => onChangeField('connectedServices', bindings)}
                     chipRenderContext={props.chipRenderContext}
+                    trigger={props.presentation === 'selects' ? 'select' : 'chip'}
                     testID={`${testID}-connected-services`}
                 />
             );
@@ -340,6 +366,7 @@ function SessionAuthoringFieldControl(props: Readonly<{
                     value={values.capabilitySelection}
                     onChange={(selection) => onChangeField('capabilitySelection', selection)}
                     chipRenderContext={props.chipRenderContext}
+                    trigger={props.presentation === 'selects' ? 'select' : 'chip'}
                     testID={`${testID}-mcp`}
                 />
             );
@@ -360,6 +387,7 @@ function SessionAuthoringFieldControl(props: Readonly<{
         case 'toolList':
             return (
                 <SessionAuthoringToolListInput
+                    boxed={props.presentation === 'selects'}
                     testID={`${testID}-input`}
                     title={control.title}
                     value={control.value}
@@ -374,6 +402,8 @@ function SessionAuthoringFieldControl(props: Readonly<{
                 <SessionAuthoringOptionChip
                     controlId={control.field}
                     fieldSpan="row"
+                    {...(props.presentation === 'selects' && control.field === 'permissionMode'
+                        ? { leading: <SessionAuthoringFieldMark name={PERMISSION_CONTROL_ICON} /> } : {})}
                     title={control.title}
                     options={control.options}
                     selectedOptionId={control.selectedOptionId}
@@ -421,10 +451,12 @@ function SessionAuthoringFieldControl(props: Readonly<{
 /**
  * `chips` (default): the composer's chips, as the header and a step's composer
  * show them. `fields`: one labelled row per field whose trigger is a bordered
- * field select, as a settings pane shows them. Both present the same field
- * models and open the same pickers.
+ * field select, as a settings pane shows them. `selects`: a wrapping row of
+ * those bordered field selects with no rows or per-field labels, for a page
+ * outside the composer that names the set in its own group ("Who runs it").
+ * All present the same field models and open the same pickers.
  */
-export type SessionAuthoringControlsPresentation = 'chips' | 'fields';
+export type SessionAuthoringControlsPresentation = 'chips' | 'fields' | 'selects';
 
 export type SessionAuthoringControlsProps = Readonly<{
     metadata?: Metadata | null;
@@ -457,6 +489,11 @@ export type SessionAuthoringControlsProps = Readonly<{
      * (a step's "Workflow defaults" and reset), so the row names the field once.
      */
     fieldMeta?: Readonly<Partial<Record<SessionAuthoringFieldId, React.ReactNode>>>;
+    /**
+     * `selects` in a host with its own label track (a workflow's More settings): each field on a row
+     * the host draws from the field's canonical title and its field select, as Machine and Folder are.
+     */
+    renderFieldRow?: (field: SessionAuthoringFieldId, title: string, control: React.ReactNode) => React.ReactNode;
     /** Renders the current values without allowing a change. */
     disabled?: boolean;
     testIDPrefix?: string;
@@ -512,6 +549,8 @@ function useResolvedSessionAuthoringControls(
  * value and the text never fight while typing.
  */
 function SessionAuthoringToolListInput(props: Readonly<{
+    /** `selects`: the bordered page field beside its row label. */
+    boxed?: boolean;
     testID: string;
     title: string;
     value: readonly string[];
@@ -526,6 +565,22 @@ function SessionAuthoringToolListInput(props: Readonly<{
             ? current
             : formatSessionAuthoringToolList(props.value));
     }, [valueKey]);
+    const change = (next: string) => {
+        setText(next);
+        props.onChange(parseSessionAuthoringToolList(next));
+    };
+    if (props.boxed === true) return (
+        <FieldTextInput
+            testID={props.testID}
+            value={text}
+            monospace
+            placeholder={props.placeholder}
+            accessibilityLabel={props.title}
+            editable={!props.disabled}
+            autoCapitalize="none"
+            onChangeText={change}
+        />
+    );
     return (
         <TextInput
             testID={props.testID}
@@ -664,20 +719,26 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
         return control.kind === 'unavailable' && control.reason === 'requires_agent_target';
     });
     let agentLineShown = false;
+    const { renderFieldRow } = props;
+    // `selects` on a host's label track: the row names the field with its canonical title.
+    const inRow = (field: SessionAuthoringFieldId, control: React.ReactNode): React.ReactNode => presentation !== 'selects' || renderFieldRow === undefined
+        ? control
+        : <React.Fragment key={field}>{renderFieldRow(field, resolveSessionAuthoringFieldTitle(field,
+            findSessionAuthoringAgentTargetOption(facts.agentTargets, props.values.agentTarget)) ?? field, control)}</React.Fragment>;
 
     return (
         <View
             ref={overlayAnchorRef}
             testID={testIDPrefix}
-            style={presentation === 'fields' ? styles.fields : styles.root}
+            style={presentation === 'fields' || props.renderFieldRow !== undefined ? styles.fields : styles.root}
         >
             {props.fields.map((field) => {
-                if (field === 'approvalProfileId') return <SessionAuthoringApprovalProfileField key={field}
+                if (field === 'approvalProfileId') return inRow(field, <SessionAuthoringApprovalProfileField key={field}
                     value={props.values.approvalProfileId} serverId={facts.agentPickerContext?.serverId}
                     machineId={facts.agentPickerContext?.machineId ?? null} presentation={presentation}
                     onChange={value => props.onChangeField('approvalProfileId', value)} disabled={props.disabled}
-                    titleMeta={props.fieldMeta?.approvalProfileId} testID={`${testIDPrefix}-approvalProfileId`} />;
-                if (presentation === 'fields' && field === 'profileId' && !props.values.profileId) return null;
+                    titleMeta={props.fieldMeta?.approvalProfileId} testID={`${testIDPrefix}-approvalProfileId`} />);
+                if (presentation !== 'chips' && field === 'profileId' && !props.values.profileId) return null;
                 if (engineField !== undefined && (field === 'acpSessionModeId' || field === 'sessionConfigOptionOverrides')) return null;
                 if (engineField !== undefined && (field === 'agentTarget' || field === 'modelSelection')) {
                     if (field !== engineField) return null;
@@ -694,7 +755,7 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                         onSelect={enginePicker.onSelect} testID={`${testIDPrefix}-${engineField}`}
                         openDemand={enginePicker.readinessDemand}
                     />;
-                    return presentation === 'chips' || props.engineFieldTitle === null ? <React.Fragment key={field}>{rendered}</React.Fragment>
+                    return presentation !== 'fields' || props.engineFieldTitle === null ? <React.Fragment key={field}>{rendered}</React.Fragment>
                         : <Item key={field} testID={`${testIDPrefix}-${engineField}-row`}
                             title={props.engineFieldTitle === undefined ? t('workflows.page.sections.agentTitle') : props.engineFieldTitle} mode="info" accessoryLayout="stacked" rightElement={rendered}
                             titleMeta={props.fieldMeta?.[engineField]} />;
@@ -721,6 +782,10 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                 // nothing. Without one (a lone field), the field still says why it is unavailable.
                 if (presentation === 'chips') return engineField !== undefined && control.kind === 'unavailable'
                     && control.reason === 'requires_agent_target' ? null : rendered;
+                // A row of field selects, like a form, holds only the decisions this subject has (see below).
+                if (presentation === 'selects') return control.kind === 'unavailable' && (control.reason === 'not_supported_on_target'
+                    || control.reason === 'agent_has_no_options' || control.reason === 'owned_by_host'
+                    || (control.reason === 'requires_agent_target' && engineField !== undefined)) ? null : inRow(field, rendered);
                 // A settings form holds only the decisions this step has: a field the Agent or the target can
                 // never offer (a Windows-only field on Linux, an Agent with no such options) is left out rather
                 // than listed as "Unavailable". Fields that wait on something or say what to do stay.
@@ -779,4 +844,10 @@ function sessionAuthoringUnavailableText(field: SessionAuthoringFieldId, reason:
             : t('newSession.profileUnavailableNoneYet');
     }
     return t('common.unavailable');
+}
+
+/** A field select's leading mark, at the size and tone the placement fields' marks use. */
+function SessionAuthoringFieldMark(props: Readonly<{ name: React.ComponentProps<typeof Icon>['name'] }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    return <Icon name={props.name} size={14} color={theme.colors.text.secondary} />;
 }

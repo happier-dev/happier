@@ -190,6 +190,11 @@ export function SessionPlacementChips(
     /** What follows the Machine and folder in the same row (a workflow's checkout picker). */
     trailing?: React.ReactNode;
     /**
+     * `fields` in a host with its own label track (a workflow's How card): each field on its own row,
+     * which the host draws from the field's label and control.
+     */
+    renderFieldRow?: (field: 'machine' | 'folder', label: string, control: React.ReactNode) => React.ReactNode;
+    /**
      * Which kind of work this placement starts: the chosen Machine's isolation policy for it is said under the
      * chips (`SessionIsolationOutcomeLine`), the same line New Session shows. Hosts that start no Session omit it.
      */
@@ -233,6 +238,25 @@ export function SessionPlacementChips(
       {open === 'folder' ? <PlacementPopover config={pathPopover} anchorRef={folderAnchor} onClose={close} {...(popoverAnchor ? { anchor: popoverAnchor } : {})} /> : null}
     </>
   );
+
+  if (props.presentation === 'fields' && props.renderFieldRow !== undefined) {
+    const machineTitle = t('newSession.wizardSection.machine');
+    const folderTitle = t('newSession.wizardSection.folder');
+    return (
+      <>
+        {props.renderFieldRow('machine', machineTitle,
+          <PlacementField anchorRef={machineAnchor} testID="agent-input-machine-chip" span="column"
+            label={machineTitle} value={machineLabel} placeholder={t('agentInput.runOn')}
+            open={open === 'machine'} disabled={!machineChoosable} onPress={() => setOpen('machine')} />)}
+        {props.renderFieldRow('folder', folderTitle,
+          <PlacementField anchorRef={folderAnchor} testID="agent-input-path-chip" span="column"
+            label={folderTitle} value={folderLabel} placeholder={folderLabel}
+            open={open === 'folder'} disabled={!machineKnown} onPress={() => setOpen('folder')} />)}
+        {props.trailing}
+        {popovers}
+      </>
+    );
+  }
 
   if (props.presentation === 'fields') {
     return (
