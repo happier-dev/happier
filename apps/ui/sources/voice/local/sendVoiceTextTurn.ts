@@ -62,6 +62,21 @@ export async function sendVoiceTextTurn(params: {
     handoffMode: 'interrupt_and_send';
   }>;
 }): Promise<void> {
+  return prepareVoiceTextTurn(params)();
+}
+
+/** Capture output ownership before durable admission while preserving the submitted turn itself. */
+export function prepareVoiceTextTurn(
+  params: Parameters<typeof sendVoiceTextTurn>[0],
+): (durableDispatch?: NonNullable<typeof params.durableDispatch>) => Promise<void> {
+  const playbackEpoch = params.playbackController.captureEpoch();
+  return (durableDispatch = params.durableDispatch) => dispatchVoiceTextTurn({ ...params, durableDispatch }, playbackEpoch);
+}
+
+async function dispatchVoiceTextTurn(
+  params: Parameters<typeof sendVoiceTextTurn>[0],
+  playbackEpoch: number,
+): Promise<void> {
   const { sessionId, settings, userText } = params;
   const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
   const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
@@ -88,7 +103,7 @@ export async function sendVoiceTextTurn(params: {
       text: userText,
       pendingPort: params.pendingPort,
       dispatch: async (durableDispatch) => {
-        await sendVoiceTextTurn({ ...params, durableDispatch });
+        await dispatchVoiceTextTurn({ ...params, durableDispatch }, playbackEpoch);
       },
     });
     if (!result.ok) throw new Error(result.message ?? result.reason);
@@ -103,7 +118,6 @@ export async function sendVoiceTextTurn(params: {
     return;
   }
 
-  const playbackEpoch = params.playbackController.captureEpoch();
   voiceActivityController.appendUserText(sessionId, adapterId, userText);
   const voiceAgentBackend = String(config?.agent?.backend ?? 'daemon').trim() || 'daemon';
   if (
