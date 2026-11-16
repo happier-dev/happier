@@ -70,7 +70,7 @@ export const en = {
     filtersMachine: 'Machine', filtersRunsOn: 'Runs on', filtersService: 'Service',
     spacesNew: "New space", spacesTitleMenu: ({ name }: { name: string }) => `${name}, spaces and filters`,
     spacesFilter: "Filter…", spacesSaveAs: "Save as space…", spacesSaveChanges: "Save changes", spacesEdit: "Edit space…",
-    spacesManage: "Manage spaces", spacesManageSessions: "Session spaces", spacesManageWorkflows: "Workflow spaces", spacesManageDiscussions: "Discussion spaces",
+    spacesManage: "Manage spaces", spacesManageSessions: "Session spaces", spacesManageWorkflows: "Workflow spaces", spacesManageDiscussions: "Discussion spaces", spacesManageServices: "Service spaces",
         spacesManageDescription: "Saved views you switch between from the strip, with a shortcut or a swipe on a phone.", spacesEditNamed: ({ name }: { name: string }) => `Edit ${name}`, spacesFiltered: "Filtered", spacesAdd: "Add space", spacesDelete: "Delete space",
     spacesDeleteTitle: ({ name }: { name: string }) => `Delete “${name}”?`,
     spacesDeleteBody: "This removes the space. Your sessions stay where they are.", spacesResetDefault: "Reset to default", spacesName: "Name",

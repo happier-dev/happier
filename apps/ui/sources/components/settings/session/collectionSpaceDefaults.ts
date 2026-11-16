@@ -4,11 +4,13 @@ import { readResolvedActiveServerSelection } from '@/sync/domains/server/selecti
 import { resolveSessionListViewContextDefaults } from '@/components/sessions/shell/search/sessionListViewFilters';
 import { t } from '@/text';
 
+import { COLLECTION_SPACE_KIND_PRESENTATION } from './collectionSpaceKindPresentation';
+
 /** Snapshot global defaults for an explicit default edit, never the caller's Team/archive lens. No demand is acquired. */
 export function readCollectionSpaceDefaultV1<K extends CollectionEntityKindV1>(entityKind: K, settings: Settings): CollectionSpaceV1<K>;
 export function readCollectionSpaceDefaultV1(entityKind: CollectionEntityKindV1, settings: Settings) {
     if (entityKind !== 'sessionWork') return createDefaultCollectionSpaceV1(entityKind, {
-        name: t(entityKind === 'workflow' ? 'sessionsList.spacesAllWorkflows' : 'sessionsList.spacesAllDiscussions'),
+        name: t(COLLECTION_SPACE_KIND_PRESENTATION[entityKind].defaultNameKey),
     });
     const selection = readResolvedActiveServerSelection(settings);
     const homes = selection.allowedServerIds.length ? selection.allowedServerIds : selection.activeServerId ? [selection.activeServerId] : [];

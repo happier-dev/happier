@@ -12160,7 +12160,7 @@ const sessionListFilterTranslations = { it: translated({
         filtersMachine: 'Macchina', filtersRunsOn: 'Eseguito su', filtersService: 'Servizio',
         spacesNew: "Nuovo spazio", spacesTitleMenu: ({ name }: { name: string }) => `${name}, spazi e filtri`,
         spacesFilter: "Filtra…", spacesSaveAs: "Salva come spazio…", spacesSaveChanges: "Salva modifiche", spacesEdit: "Modifica spazio…",
-        spacesManage: "Gestisci spazi", spacesManageSessions: "Spazi delle sessioni", spacesManageWorkflows: "Spazi dei workflow", spacesManageDiscussions: "Spazi delle discussioni",
+        spacesManage: "Gestisci spazi", spacesManageSessions: "Spazi delle sessioni", spacesManageWorkflows: "Spazi dei workflow", spacesManageDiscussions: "Spazi delle discussioni", spacesManageServices: "Spazi dei servizi",
         spacesManageDescription: "Viste salvate tra cui passi dalla barra, con una scorciatoia o scorrendo sul telefono.", spacesEditNamed: ({ name }: { name: string }) => `Modifica ${name}`, spacesFiltered: "Filtrato", spacesAdd: "Aggiungi spazio", spacesDelete: "Elimina spazio",
         spacesDeleteTitle: ({ name }: { name: string }) => `Eliminare «${name}»?`,
         spacesDeleteBody: "Lo spazio viene rimosso. Le tue sessioni restano dove sono.", spacesResetDefault: "Ripristina predefinito",

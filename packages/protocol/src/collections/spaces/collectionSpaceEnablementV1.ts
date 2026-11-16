@@ -8,4 +8,5 @@ export const COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1 = {
     sessionWork: 'sessionSpacesEnabled',
     workflow: 'workflowSpacesEnabled',
     discussion: 'discussionSpacesEnabled',
+    deploymentEnvironment: 'deploymentEnvironmentSpacesEnabled',
 } as const satisfies Record<CollectionEntityKindV1, string>;

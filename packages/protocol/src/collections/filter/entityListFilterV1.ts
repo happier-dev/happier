@@ -5,11 +5,14 @@ import type { EntityFilterEvaluatorV1, EntityFilterMatchV1, EntityFilterRegistry
 import type { SessionListFilterV1 } from '../../sessions/listFilter/sessionListFilterV1.js';
 import type { WorkflowListFilterV1 } from '../../workflows/listing/workflowListFilterV1.js';
 import type { DiscussionListFilterV1 } from '../../discussions/listing/discussionListFilterV1.js';
+import type { DeploymentEnvironmentListFilterV1 } from '../../deployments/deploymentEnvironmentListFilterV1.js';
 
 export type CollectionFilterMapV1 = Readonly<{
     sessionWork: SessionListFilterV1;
     workflow: WorkflowListFilterV1;
     discussion: DiscussionListFilterV1;
+    /** Services → Apps: the Account's Environments (owner D5). */
+    deploymentEnvironment: DeploymentEnvironmentListFilterV1;
 }>;
 export type EntityListFilterV1<E extends keyof CollectionFilterMapV1> = CollectionFilterMapV1[E];
 

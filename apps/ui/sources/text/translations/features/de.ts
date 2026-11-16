@@ -12145,7 +12145,7 @@ const sessionListFilterTranslations = { de: translated({
         filtersMachine: 'Rechner', filtersRunsOn: 'Läuft auf', filtersService: 'Dienst',
         spacesNew: "Neuer Bereich", spacesTitleMenu: ({ name }: { name: string }) => `${name}, Bereiche und Filter`,
         spacesFilter: "Filtern…", spacesSaveAs: "Als Bereich speichern…", spacesSaveChanges: "Änderungen speichern", spacesEdit: "Bereich bearbeiten…",
-        spacesManage: "Bereiche verwalten", spacesManageSessions: "Sitzungsbereiche", spacesManageWorkflows: "Workflow-Bereiche", spacesManageDiscussions: "Diskussionsbereiche",
+        spacesManage: "Bereiche verwalten", spacesManageSessions: "Sitzungsbereiche", spacesManageWorkflows: "Workflow-Bereiche", spacesManageDiscussions: "Diskussionsbereiche", spacesManageServices: "Dienstbereiche",
         spacesManageDescription: "Gespeicherte Ansichten, zwischen denen du über die Leiste, per Tastenkürzel oder auf dem Telefon per Wischen wechselst.", spacesEditNamed: ({ name }: { name: string }) => `${name} bearbeiten`, spacesFiltered: "Gefiltert", spacesAdd: "Bereich hinzufügen", spacesDelete: "Bereich löschen",
         spacesDeleteTitle: ({ name }: { name: string }) => `„${name}“ löschen?`,
         spacesDeleteBody: "Damit wird der Bereich entfernt. Deine Sitzungen bleiben, wo sie sind.",

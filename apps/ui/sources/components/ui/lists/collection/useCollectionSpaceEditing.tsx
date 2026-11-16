@@ -43,6 +43,7 @@ const SPACE_MEMBERSHIP_FOR: SpaceMembershipFor = {
   sessionWork: (mode) => (mode ? { create: { mode, tags: [] }, edit: { mode } } : NO_MEMBERSHIP),
   workflow: () => NO_MEMBERSHIP,
   discussion: () => NO_MEMBERSHIP,
+  deploymentEnvironment: () => NO_MEMBERSHIP,
 };
 
 type SpaceForm = Readonly<{

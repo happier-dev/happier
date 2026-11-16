@@ -12186,7 +12186,7 @@ const sessionListFilterTranslations = { ru: translated({
         spacesNew: "Новое пространство",
         spacesTitleMenu: ({ name }: { name: string }) => `${name}, пространства и фильтры`, spacesFilter: "Фильтр…",
         spacesSaveAs: "Сохранить как пространство…", spacesSaveChanges: "Сохранить изменения", spacesEdit: "Изменить пространство…",
-        spacesManage: "Управлять пространствами", spacesManageSessions: "Пространства сессий", spacesManageWorkflows: "Пространства процессов", spacesManageDiscussions: "Пространства обсуждений",
+        spacesManage: "Управлять пространствами", spacesManageSessions: "Пространства сессий", spacesManageWorkflows: "Пространства процессов", spacesManageDiscussions: "Пространства обсуждений", spacesManageServices: "Пространства сервисов",
         spacesManageDescription: "Сохранённые представления, между которыми вы переключаетесь на полосе, сочетанием клавиш или свайпом на телефоне.", spacesEditNamed: ({ name }: { name: string }) => `Изменить ${name}`, spacesFiltered: "Отфильтровано", spacesAdd: "Добавить пространство",
         spacesDelete: "Удалить пространство", spacesDeleteTitle: ({ name }: { name: string }) => `Удалить «${name}»?`,
         spacesDeleteBody: "Пространство будет удалено. Ваши сессии останутся на месте.", spacesResetDefault: "Сбросить по умолчанию",

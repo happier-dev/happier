@@ -12143,7 +12143,7 @@ const sessionListFilterTranslations = { zhHans: translated({
         conditionActive: '活跃',
         filtersMachine: '机器', filtersRunsOn: '运行于', filtersService: '服务',
         spacesNew: "新建空间", spacesTitleMenu: ({ name }: { name: string }) => `${name}，空间和筛选`, spacesFilter: "筛选…",
-        spacesSaveAs: "保存为空间…", spacesSaveChanges: "保存更改", spacesEdit: "编辑空间…", spacesManage: "管理空间", spacesManageSessions: "会话空间", spacesManageWorkflows: "工作流空间", spacesManageDiscussions: "讨论空间",
+        spacesSaveAs: "保存为空间…", spacesSaveChanges: "保存更改", spacesEdit: "编辑空间…", spacesManage: "管理空间", spacesManageSessions: "会话空间", spacesManageWorkflows: "工作流空间", spacesManageDiscussions: "讨论空间", spacesManageServices: "服务空间",
         spacesManageDescription: "可通过标签栏、快捷键或在手机上滑动切换的已保存视图。", spacesEditNamed: ({ name }: { name: string }) => `编辑${name}`, spacesFiltered: "已筛选", spacesAdd: "添加空间",
         spacesDelete: "删除空间", spacesDeleteTitle: ({ name }: { name: string }) => `删除“${name}”？`, spacesDeleteBody: "这会移除该空间。你的会话保持不变。",
         spacesResetDefault: "恢复默认", spacesName: "名称", spacesIcon: "图标", spacesEverywhereTitle: "包含所有位置需要你处理的内容",

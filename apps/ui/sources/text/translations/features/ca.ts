@@ -12160,7 +12160,7 @@ const sessionListFilterTranslations = { ca: translated({
         filtersMachine: 'Màquina', filtersRunsOn: 'S’executa a', filtersService: 'Servei',
         spacesNew: "Espai nou", spacesTitleMenu: ({ name }: { name: string }) => `${name}, espais i filtres`,
         spacesFilter: "Filtra…", spacesSaveAs: "Desa com a espai…", spacesSaveChanges: "Desa els canvis", spacesEdit: "Edita l’espai…",
-        spacesManage: "Gestiona els espais", spacesManageSessions: "Espais de sessions", spacesManageWorkflows: "Espais de fluxos", spacesManageDiscussions: "Espais de debats",
+        spacesManage: "Gestiona els espais", spacesManageSessions: "Espais de sessions", spacesManageWorkflows: "Espais de fluxos", spacesManageDiscussions: "Espais de debats", spacesManageServices: "Espais de serveis",
         spacesManageDescription: "Vistes desades entre les quals canvies des de la barra, amb una drecera o lliscant al telèfon.", spacesEditNamed: ({ name }: { name: string }) => `Edita ${name}`, spacesFiltered: "Filtrat", spacesAdd: "Afegeix l’espai", spacesDelete: "Suprimeix l’espai",
         spacesDeleteTitle: ({ name }: { name: string }) => `Vols suprimir «${name}»?`,
         spacesDeleteBody: "S’elimina l’espai. Les teves sessions es queden on són.", spacesResetDefault: "Restableix el valor per defecte",

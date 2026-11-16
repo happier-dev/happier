@@ -12142,7 +12142,7 @@ const sessionListFilterTranslations = { zhHant: translated({
         conditionActive: '活躍',
         filtersMachine: '機器', filtersRunsOn: '執行於', filtersService: '服務',
         spacesNew: "新增空間", spacesTitleMenu: ({ name }: { name: string }) => `${name}，空間與篩選`, spacesFilter: "篩選…",
-        spacesSaveAs: "儲存為空間…", spacesSaveChanges: "儲存變更", spacesEdit: "編輯空間…", spacesManage: "管理空間", spacesManageSessions: "工作階段空間", spacesManageWorkflows: "工作流程空間", spacesManageDiscussions: "討論空間",
+        spacesSaveAs: "儲存為空間…", spacesSaveChanges: "儲存變更", spacesEdit: "編輯空間…", spacesManage: "管理空間", spacesManageSessions: "工作階段空間", spacesManageWorkflows: "工作流程空間", spacesManageDiscussions: "討論空間", spacesManageServices: "服務空間",
         spacesManageDescription: "可透過標籤列、快捷鍵或在手機上滑動切換的已儲存檢視。", spacesEditNamed: ({ name }: { name: string }) => `編輯${name}`, spacesFiltered: "已篩選", spacesAdd: "新增空間",
         spacesDelete: "刪除空間", spacesDeleteTitle: ({ name }: { name: string }) => `刪除「${name}」？`, spacesDeleteBody: "這會移除該空間。你的工作階段保持不變。",
         spacesResetDefault: "還原預設", spacesName: "名稱", spacesIcon: "圖示", spacesEverywhereTitle: "包含所有位置需要你處理的內容",

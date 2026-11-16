@@ -23,14 +23,13 @@ import { CollectionSpacesSettingsList } from './CollectionSpacesSettingsList';
 import { t } from '@/text';
 
 import { collectionSpaceSettingRefs, collectionSpacesManageHref } from './collectionSpaceSettings';
+import { COLLECTION_SPACE_KIND_PRESENTATION } from './collectionSpaceKindPresentation';
 
 function defaultName(entityKind: CollectionEntityKindV1) {
-  return t(entityKind === 'sessionWork' ? 'sessionsList.filtersMyWork'
-    : entityKind === 'workflow' ? 'sessionsList.spacesAllWorkflows' : 'sessionsList.spacesAllDiscussions');
+  return t(COLLECTION_SPACE_KIND_PRESENTATION[entityKind].defaultNameKey);
 }
 function manageTitle(entityKind: CollectionEntityKindV1) {
-  return t(entityKind === 'sessionWork' ? 'sessionsList.spacesManageSessions'
-    : entityKind === 'workflow' ? 'sessionsList.spacesManageWorkflows' : 'sessionsList.spacesManageDiscussions');
+  return t(COLLECTION_SPACE_KIND_PRESENTATION[entityKind].manageTitleKey);
 }
 const NO_SUGGESTION = {
   name: '',

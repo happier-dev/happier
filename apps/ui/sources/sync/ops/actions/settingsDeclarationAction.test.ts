@@ -886,7 +886,8 @@ describe('scoped policy mutation results', () => {
 });
 
 describe('Collection space settings declarations', () => {
-    it.each(['spaces.enabled', 'session.list.spacesEnabled', 'workflow.list.spacesEnabled', 'discussion.list.spacesEnabled'])(
+    it.each(['spaces.enabled', 'session.list.spacesEnabled', 'workflow.list.spacesEnabled', 'discussion.list.spacesEnabled',
+        'deploymentEnvironment.list.spacesEnabled'])(
         'shares the default-on Account preference through %s without touching another Account or the catalog', async anchor => {
             const space = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'saved', name: 'Saved' };
             const owner = createOwner(undefined, true, true, applySettings(settingsDefaults, { collectionSpacesV1: CollectionSpacesV1Schema.parse({ v: 1, spaces: [space] }) }));

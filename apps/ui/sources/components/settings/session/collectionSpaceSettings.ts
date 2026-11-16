@@ -1,5 +1,5 @@
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
-import { CollectionSpaceSelectionValueV1Schema, getDefaultCollectionSpaceIdV1, reduceCollectionSpacesV1, resolveCollectionSpacesV1, resolveCollectionSpaceSelectionV1,
+import { COLLECTION_ENTITY_KINDS_V1, CollectionSpaceSelectionValueV1Schema, getDefaultCollectionSpaceIdV1, reduceCollectionSpacesV1, resolveCollectionSpacesV1, resolveCollectionSpaceSelectionV1,
     type CollectionEntityKindV1, type CollectionSpacesV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { builtInSettingUiDeclaration, SETTING_VALUE_UNAVAILABLE,
@@ -7,6 +7,7 @@ import { builtInSettingUiDeclaration, SETTING_VALUE_UNAVAILABLE,
 import { readCollectionSpaceId, readCollectionSpaceSelection, selectCollectionSpace } from '@/sync/domains/session/listing/sessionListSpaces';
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { readCollectionSpaceDefaultV1 } from './collectionSpaceDefaults';
+import { COLLECTION_SPACE_KIND_PRESENTATION } from './collectionSpaceKindPresentation';
 
 class SpaceMutationRejected extends Error {}
 
@@ -93,23 +94,21 @@ export function collectionSpaceSettingRefs(entityKind: CollectionEntityKindV1): 
         enabled: ref('spacesEnabled', {}), masterEnabled: { ...builtInSettingUiDeclaration('spaces.enabled'),
             anchor: 'spaces.enabled', sectionId: readBuiltInSettingDeclarationV1('spaces.enabled')!.sectionId } };
 }
-export const COLLECTION_SPACE_SETTINGS: readonly SettingsPageDeclaration[] = (['sessionWork', 'workflow', 'discussion'] as const).flatMap((entityKind): SettingsPageDeclaration[] => {
+export const COLLECTION_SPACE_SETTINGS: readonly SettingsPageDeclaration[] = COLLECTION_ENTITY_KINDS_V1.flatMap((entityKind): SettingsPageDeclaration[] => {
     const settings = collectionSpaceSettingRefs(entityKind);
     const pageSettings: Record<string, SettingRef> = { spaces: settings.spaces, enabled: settings.enabled,
         ...(entityKind === 'sessionWork' ? { masterEnabled: settings.masterEnabled } : {}) };
     const sectionId = settings.spaces.sectionId;
     // Manage spaces is the rows' home: search and the title menu open that entity's page at the same anchors.
-    const subpage = { id: 'spaces', route: collectionSpacesManageHref(entityKind), anchors: 'page' as const,
-        titleKey: entityKind === 'sessionWork' ? 'sessionsList.spacesManageSessions' as const
-            : entityKind === 'workflow' ? 'sessionsList.spacesManageWorkflows' as const : 'sessionsList.spacesManageDiscussions' as const };
-    const pageId = entityKind === 'sessionWork' ? 'session' as const : 'settings' as const;
+    const presentation = COLLECTION_SPACE_KIND_PRESENTATION[entityKind];
+    const subpage = { id: 'spaces', route: collectionSpacesManageHref(entityKind), anchors: 'page' as const, titleKey: presentation.manageTitleKey };
+    const pageId = presentation.settingsPageId;
     return [{ pageId, subpage, sections: {
         list: { titleKey: 'sessionsList.spacesTitle', settings: pageSettings },
     }, sectionRefs: { list: { id: sectionId, settingAnchors: [settings.spaces.anchor,
         settings.enabled.anchor, ...(entityKind === 'sessionWork' ? [settings.masterEnabled.anchor] : [])] } },
         settings: { ...pageSettings, selectedSpace: settings.selectedSpace } },
-    { pageId, subpage: { id: 'filters', route: entityKind === 'sessionWork' ? '/' : entityKind === 'workflow' ? '/workflows' : '/discussions',
-        titleKey: entityKind === 'sessionWork' ? 'sessionsList.filtersTitle' : entityKind === 'workflow' ? 'workflows.title' : 'session.collaboration.discussion.title', anchors: 'page' },
+    { pageId, subpage: { id: 'filters', route: presentation.listRoute, titleKey: presentation.listTitleKey, anchors: 'page' },
         sections: { list: { settings: { filters: settings.filters } } },
         sectionRefs: { list: { id: sectionId, settingAnchors: [settings.filters.anchor] } }, settings: { filters: settings.filters } }];
 });

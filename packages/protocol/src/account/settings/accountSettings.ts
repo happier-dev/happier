@@ -903,6 +903,7 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     sessionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     workflowSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     discussionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
+    deploymentEnvironmentSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     sessionListLayoutV1: accountPreference(z.enum(['projects', 'recent_activity']), 'projects', 'session list presentation'),
     sessionListAttentionPlacementV1: accountPreference(z.enum(['both', 'top', 'inPlace']), 'both', 'session list presentation'),
     sessionListRowContextV1: accountPreference(z.boolean(), true, 'session list presentation'),

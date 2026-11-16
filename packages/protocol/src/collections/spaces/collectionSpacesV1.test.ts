@@ -53,6 +53,17 @@ describe('collection spaces', () => {
         expect(value.spaces[0]?.filter).toMatchObject({ homeServerIds: [], startedBy: [] });
     });
 
+    it('keeps Services saved views (deploymentEnvironment): a default, a created view admitted through settings, a selection', () => {
+        expect(resolveCollectionSpacesV1(empty, 'deploymentEnvironment').map(space => [space.id, space.filter])).toEqual([['all-services', {}]]);
+        const failing = { ...createDefaultCollectionSpaceV1('deploymentEnvironment'), id: 'failing', name: 'Failing',
+            filter: { states: { include: ['needsYou' as const], exclude: [] } } };
+        const created = invoke(empty, { kind: 'collection_space', entityKind: 'deploymentEnvironment', mutation: { op: 'create', space: failing } });
+        expect(CollectionSpacesV1Schema.parse(created).spaces.map(space => space.id)).toEqual(['failing']);
+        const selection = selectCollectionSpaceV1({ v: 1, byAccountScope: {} }, 'scope', 'deploymentEnvironment', 'failing');
+        expect(resolveCollectionSpaceSelectionV1(selection, 'scope', 'deploymentEnvironment',
+            resolveCollectionSpacesV1(created, 'deploymentEnvironment'), { authoritative: true })).toBe('failing');
+    });
+
     it('reorders only its entity subsequence and resets default content at its current ordinal', () => {
         const workflow = { ...createDefaultCollectionSpaceV1('workflow'), id: 'automation' };
         const catalog: CollectionSpacesV1 = { v: 1, spaces: [custom('a'), workflow, custom('b')] };

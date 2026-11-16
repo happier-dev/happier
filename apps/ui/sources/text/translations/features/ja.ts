@@ -12148,7 +12148,7 @@ const sessionListFilterTranslations = { ja: translated({
         conditionActive: 'アクティブ',
         filtersMachine: 'マシン', filtersRunsOn: '実行先', filtersService: 'サービス',
         spacesNew: "新しいスペース", spacesTitleMenu: ({ name }: { name: string }) => `${name}、スペースとフィルター`, spacesFilter: "フィルター…",
-        spacesSaveAs: "スペースとして保存…", spacesSaveChanges: "変更を保存", spacesEdit: "スペースを編集…", spacesManage: "スペースを管理", spacesManageSessions: "セッションのスペース", spacesManageWorkflows: "ワークフローのスペース", spacesManageDiscussions: "ディスカッションのスペース",
+        spacesSaveAs: "スペースとして保存…", spacesSaveChanges: "変更を保存", spacesEdit: "スペースを編集…", spacesManage: "スペースを管理", spacesManageSessions: "セッションのスペース", spacesManageWorkflows: "ワークフローのスペース", spacesManageDiscussions: "ディスカッションのスペース", spacesManageServices: "サービスのスペース",
         spacesManageDescription: "ストリップ、ショートカット、またはスマートフォンでのスワイプで切り替える保存済みビュー。", spacesEditNamed: ({ name }: { name: string }) => `${name}を編集`, spacesFiltered: "フィルター適用中",
         spacesAdd: "スペースを追加", spacesDelete: "スペースを削除", spacesDeleteTitle: ({ name }: { name: string }) => `「${name}」を削除しますか？`,
         spacesDeleteBody: "スペースを削除します。セッションはそのまま残ります。", spacesResetDefault: "デフォルトに戻す", spacesName: "名前", spacesIcon: "アイコン",
