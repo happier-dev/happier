@@ -14,7 +14,7 @@ import { buildTokenCountSessionMessageFromUsageObservation } from '../../../usag
  */
 export type UsageObservedRuntimeMeasurement = Readonly<Pick<
   Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }>,
-  'source' | 'scope' | 'modelId' | 'tokens' | 'cost' | 'context'
+  'source' | 'scope' | 'modelId' | 'accounting' | 'tokens' | 'cost' | 'context'
 >>;
 
 function clampTokenCountCostForForwarding(
@@ -115,6 +115,7 @@ export function buildUsageObservedMeasurementFromTokenCountMessage(params: Reado
     source: observation.source,
     scope: observation.scope,
     ...(observation.modelId ? { modelId: observation.modelId } : {}),
+    ...(observation.accounting ? { accounting: observation.accounting } : {}),
     ...(tokens ? { tokens } : {}),
     ...(observation.cost ? { cost: observation.cost } : {}),
     ...(context ? { context } : {}),

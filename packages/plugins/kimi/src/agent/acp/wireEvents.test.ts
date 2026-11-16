@@ -106,6 +106,7 @@ describe('decodeKimiWireRecord', () => {
       type: 'step.end', uuid: 'step-uuid-2', turnId: '1', step: 2, usage: { inputOther: 100, output: 10, inputCacheRead: 30, inputCacheCreation: 20 },
     } })).toEqual({ kind: 'update', turnId: '1', updates: [{ sessionUpdate: 'usage_update', key: 'kimi-step:step-uuid-2', scope: 'turn_delta', totalTokens: 160,
       inputTokens: 150, outputTokens: 10, cacheReadTokens: 30, cacheWriteTokens: 20,
+      accounting: { inputIncludesCache: true },
     }] });
   });
 

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { AgentUsageObservedPayloadV1Schema } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
-import { buildTokenCountAgentMessageFromUsageObservation, buildLegacyUsageReportFromUsageObservation } from '@/usage/legacy/legacyUsageTransport';
+import { buildTokenCountAgentMessageFromUsageObservation, buildTokenCountSessionMessageFromUsageObservation, buildLegacyUsageReportFromUsageObservation } from '@/usage/legacy/legacyUsageTransport';
 import { buildUsageObservedMeasurementFromTokenCountMessage } from '../runtime/tokenCountForwarding';
+import { resolveUsageTokenCategories } from '@happier-dev/protocol/usage/usageTokenCategories';
+import { FX_PROMPT_USAGE } from '../../../../../../packages/plugins/fx/src/agent/acp/usage';
 
 import { buildAcpPromptUsageObservation, buildAcpUsageUpdateObservation } from './buildAcpUsageObservation';
 
@@ -16,6 +18,40 @@ it('keeps partial ACP counters through telemetry into the runtime without synthe
 });
 
 describe('buildAcpPromptUsageObservation', () => {
+  it('preserves witnessed FX counter overlap through the real producer and runtime carrier', () => {
+    const observation = buildAcpPromptUsageObservation({ provider: 'fx',
+      promptResponse: { modelId: 'fixture-model', usage: { inputTokens: 17, outputTokens: 7,
+        cacheReadTokens: 5, cacheWriteTokens: 2, reasoningTokens: 3 } },
+      projectUsage: FX_PROMPT_USAGE.projectPromptUsage,
+    });
+    for (const buildMessage of [buildTokenCountAgentMessageFromUsageObservation, buildTokenCountSessionMessageFromUsageObservation]) {
+      const message = buildMessage(observation!);
+      const measurement = buildUsageObservedMeasurementFromTokenCountMessage({ provider: 'fx', body: message, observedAtMs: 1 });
+      const payload = AgentUsageObservedPayloadV1Schema.parse({ kind: 'usage-observed', observationId: 'fx-inference', ...measurement });
+      expect(payload.accounting).toMatchObject({ inputIncludesCache: true, outputIncludesReasoning: true });
+      expect(resolveUsageTokenCategories(payload.tokens!, payload.accounting))
+        .toEqual({ input: 10, output: 4, cacheRead: 5, cacheWrite: 2, reasoning: 3, total: 24 });
+    }
+  });
+
+  it.each(['modelId', 'model'] as const)('retains a model witnessed inside prompt usage (%s)', modelKey => {
+    const observation = buildAcpPromptUsageObservation({ provider: 'fixture', promptResponse: {
+      usage: { [modelKey]: 'usage-model', inputTokens: 7, outputTokens: 3 },
+    } });
+    const message = buildTokenCountAgentMessageFromUsageObservation(observation!);
+    expect(buildUsageObservedMeasurementFromTokenCountMessage({ provider: 'fixture', body: message, observedAtMs: 1 }))
+      .toMatchObject({ modelId: 'usage-model', tokens: { input: 7, output: 3 } });
+  });
+
+  it('retains the provider-projected model when the response has no model and prefers an explicit response model', () => {
+    for (const modelId of [undefined, 'response-model']) {
+      expect(buildAcpPromptUsageObservation({ provider: 'fixture',
+        promptResponse: { modelId, _meta: { usage: { inputTokens: 7 } } },
+        projectUsage: ({ usage }) => ({ ...usage as Record<string, unknown>, modelId: 'projected-model' }),
+      })).toMatchObject({ modelId: modelId ?? 'projected-model', tokens: { input: 7 } });
+    }
+  });
+
   it('reads usage from the ACP prompt metadata envelope', () => {
     expect(buildAcpPromptUsageObservation({
       provider: 'test',

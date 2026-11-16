@@ -2,6 +2,7 @@ import { SessionContextUsageSnapshotV1Schema } from '@happier-dev/protocol/usage
 import { UsagePromptCacheSchema, type UsagePromptCache, type UsageObservationCost, type UsageObservationScope, type UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { SessionContextUsageSnapshotV1 } from '@happier-dev/protocol/usage/contextUsage';
 import type { RuntimeOutboundTranscriptUsageObservationV1 } from '@happier-dev/agents';
+import { AgentUsageObservedPayloadV1Schema, type AgentUsageObservedPayloadV1 } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
 
 export type { UsageObservationScope } from '@happier-dev/protocol';
 export type UsageNumberMap = UsageObservationTokens;
@@ -27,6 +28,7 @@ export type UsageObservation = {
     }>;
     contextSnapshot?: SessionContextUsageSnapshotV1;
     promptCache?: UsagePromptCache;
+    accounting?: AgentUsageObservedPayloadV1['accounting'];
 };
 
 export type UsageObservationBoundaryInput = RuntimeOutboundTranscriptUsageObservationV1 | UsageObservation;
@@ -311,6 +313,7 @@ export function extractUsageObservationFromTokenCountMessage(params: Readonly<{
     const parsedContextSnapshot = SessionContextUsageSnapshotV1Schema.safeParse(record.contextSnapshot);
     const contextSnapshot = parsedContextSnapshot.success ? parsedContextSnapshot.data : null;
     const parsedPromptCache = record.promptCache === undefined ? null : UsagePromptCacheSchema.safeParse(record.promptCache);
+    const parsedAccounting = record.accounting === undefined ? null : AgentUsageObservedPayloadV1Schema.shape.accounting.safeParse(record.accounting);
     const hasData = tokens != null || cost != null || contextUsedTokens != null || contextWindowTokens != null;
     if (!hasData && !params.allowUnknownMeasurements) return null;
 
@@ -331,6 +334,7 @@ export function extractUsageObservationFromTokenCountMessage(params: Readonly<{
         },
         ...(contextSnapshot ? { contextSnapshot } : {}),
         ...(parsedPromptCache?.success ? { promptCache: parsedPromptCache.data } : {}),
+        ...(parsedAccounting?.success ? { accounting: parsedAccounting.data } : {}),
     };
 }
 

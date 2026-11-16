@@ -95,6 +95,7 @@ export function buildTokenCountAgentMessageFromUsageObservation(
     scope: UsageObservationScope;
     key?: string;
     modelId?: string;
+    accounting?: UsageObservation['accounting'];
     cost?: LegacyUsageCostMap;
     context_used_tokens?: number;
     context_window_tokens?: number;
@@ -112,6 +113,7 @@ export function buildTokenCountAgentMessageFromUsageObservation(
         scope: observation.scope,
         ...(observation.key ? { key: observation.key } : {}),
         ...(observation.modelId ? { modelId: observation.modelId } : {}),
+        ...(observation.accounting ? { accounting: observation.accounting } : {}),
         ...(cost ? { cost } : {}),
         ...(observation.contextUsedTokens != null ? { context_used_tokens: observation.contextUsedTokens } : {}),
         ...(observation.contextWindowTokens != null ? { context_window_tokens: observation.contextWindowTokens } : {}),
@@ -128,6 +130,7 @@ export function buildTokenCountSessionMessageFromUsageObservation(
     scope: UsageObservationScope;
     key?: string;
     model?: string;
+    accounting?: UsageObservation['accounting'];
     cost?: LegacyUsageCostMap;
     context_used_tokens?: number;
     context_window_tokens?: number;
@@ -145,6 +148,7 @@ export function buildTokenCountSessionMessageFromUsageObservation(
         scope: observation.scope,
         ...(observation.key ? { key: observation.key } : {}),
         ...(observation.modelId ? { model: observation.modelId } : {}),
+        ...(observation.accounting ? { accounting: observation.accounting } : {}),
         ...(cost ? { cost } : {}),
         ...(observation.contextUsedTokens != null ? { context_used_tokens: observation.contextUsedTokens } : {}),
         ...(observation.contextWindowTokens != null ? { context_window_tokens: observation.contextWindowTokens } : {}),

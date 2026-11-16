@@ -104,7 +104,7 @@ export function buildAcpPromptUsageObservation(params: Readonly<{
         body: {
             ...projectedUsage,
             key: 'acp-prompt-usage',
-            modelId: promptResponse.modelId ?? promptResponse.model,
+            modelId: promptResponse.modelId ?? promptResponse.model ?? projectedUsage.modelId ?? projectedUsage.model,
             source: 'acp-prompt-usage',
             scope: 'turn_delta',
         },

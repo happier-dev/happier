@@ -80,6 +80,7 @@ function decodeLoopEvent(event: Record<string, unknown>): KimiWireEvent | null {
       totalTokens: usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation + usage.output,
       inputTokens: usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation,
       outputTokens: usage.output, cacheReadTokens: usage.inputCacheRead, cacheWriteTokens: usage.inputCacheCreation,
+      accounting: { inputIncludesCache: true },
     }] };
   }
   if (event.type === 'tool.call') {
