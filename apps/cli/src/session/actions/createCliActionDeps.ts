@@ -1252,8 +1252,6 @@ export function createCliActionDeps(params: CliActionDepsParams,
       const opened = DeploymentEnvironmentGetResultV1Schema.parse(loaded);
       if (!opened.ok) return opened;
       // The same original-root owner retains requester review for every controller dispatch.
-      if (nativeRead && (!('machineId' in input) || typeof input.machineId !== 'string'))
-        return executionRunActionFailure('invalid_parameters');
       if (actionId === DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1) {
         const health = DeploymentActionInputSchemasV1[actionId].safeParse(input);
         if (!health.success) return executionRunActionFailure('invalid_parameters');
