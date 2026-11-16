@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { WorkflowRunIdV1Schema } from '../workflows/workflowIdsV1.js';
 import { AutomationRunLifecycleConfigurationSchema, type AutomationRunLifecycleSource } from './automationRunLifecycle.js';
+import { AutomationActionRunEvidenceV1Schema, type AutomationActionRunEvidenceV1 } from './automationActionOccurrenceV1.js';
 
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import {
@@ -132,6 +133,13 @@ const AutomationConversationRunCauseSchema = lazyZodSchema(() => z.strictObject(
   occurredAt: AutomationOccurredAtV1Schema,
 }));
 
+const AutomationActionRunCauseSchema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('trigger'), triggerId: AutomationTriggerIdSchema,
+  triggerRevision: AutomationTriggerRevisionSchema, triggerKind: z.literal('action'),
+  occurrenceKey: AutomationOccurrenceKeyV1Schema, occurredAt: AutomationOccurredAtV1Schema,
+  evidence: AutomationActionRunEvidenceV1Schema,
+}));
+
 /**
  * Immutable, bounded Run provenance. This is the sole current cause owner;
  * private payload bytes remain in the existing trigger-evidence envelope.
@@ -143,6 +151,9 @@ const AutomationConversationRunCauseSchema = lazyZodSchema(() => z.strictObject(
  * and this declaration drift on any field, bound, or literal.
  */
 export type AutomationRunCause = Readonly<
+  | { kind: 'trigger'; triggerId: AutomationTriggerId; triggerRevision: AutomationTriggerRevision;
+    triggerKind: 'action'; occurrenceKey: AutomationOccurrenceKeyV1; occurredAt: AutomationOccurredAtV1;
+    evidence: AutomationActionRunEvidenceV1 }
   | {
     kind: 'trigger';
     triggerId: AutomationTriggerId;
@@ -218,6 +229,10 @@ export type AutomationRunCause = Readonly<
  * fails there.
  */
 export type AutomationRunCauseDeclarationV1 = Readonly<
+  | { kind: 'trigger'; triggerId: string; triggerRevision: number;
+    triggerKind: 'action'; occurrenceKey: string; occurredAt: number;
+    evidence: Readonly<{ actionId: string; requestId: string; phase: 'before' | 'after';
+      status?: 'succeeded' | 'failed'; errorCode?: string; machineId?: string; originRunId?: string }> }
   | {
     kind: 'trigger';
     triggerId: string;
@@ -300,6 +315,7 @@ export type AutomationRunCauseDeclarationV1 = Readonly<
 >;
 
 export const AutomationRunCauseSchema = z.union([
+  AutomationActionRunCauseSchema,
   AutomationScheduleRunCauseSchema,
   AutomationPluginEventRunCauseSchema,
   AutomationSessionLifecycleRunCauseSchema,

@@ -109,6 +109,8 @@ export async function readAutomationRunCauseChainTx(tx: Tx, originRunId: string 
         } else if (cause?.kind === "trigger" && cause.triggerKind === "runLifecycle") {
             runId = cause.evidence.originRunId
                 ?? (cause.evidence.source.kind === "workflow_run" ? cause.evidence.source.runId : null);
+        } else if (cause?.kind === "trigger" && cause.triggerKind === "action") {
+            runId = cause.evidence.originRunId ?? null;
         } else {
             break;
         }

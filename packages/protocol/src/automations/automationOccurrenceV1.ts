@@ -54,6 +54,7 @@ import {
   AutomationSessionLifecycleRequestKindSchema,
 } from './automationSessionLifecycle.js';
 import { AutomationRunLifecycleOccurrenceEvidenceV1Schema } from './automationRunLifecycle.js';
+import { AutomationActionOccurrenceEvidenceV1Schema } from './automationActionOccurrenceV1.js';
 import { WorkflowRunIdV1Schema } from '../workflows/workflowIdsV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 
@@ -195,6 +196,7 @@ export type AutomationSessionLifecycleOccurrenceEvidenceV1 = z.infer<
 >;
 
 export const AutomationTriggerOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  AutomationActionOccurrenceEvidenceV1Schema,
   AutomationScheduleOccurrenceEvidenceV1Schema,
   AutomationPluginEventOccurrenceEvidenceV1Schema,
   AutomationSessionLifecycleOccurrenceEvidenceV1Schema,
@@ -300,6 +302,7 @@ export function buildAutomationConversationOccurrenceEvidenceV1(params: Readonly
 }
 
 export const AutomationOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  AutomationActionOccurrenceEvidenceV1Schema,
   AutomationScheduleOccurrenceEvidenceV1Schema,
   AutomationPluginEventOccurrenceEvidenceV1Schema,
   AutomationSessionLifecycleOccurrenceEvidenceV1Schema,
@@ -332,6 +335,10 @@ function occurrenceKeyParts(input:
   | AutomationConversationOccurrenceEvidenceV1,
 ): readonly string[] {
   if ('triggerId' in input) {
+    if (input.evidence.kind === 'action') {
+      return ['1', input.evidence.kind, input.triggerId, input.evidence.actionId,
+        input.evidence.requestId, input.evidence.phase];
+    }
     if (input.evidence.kind === 'schedule') {
       return [
         '1',

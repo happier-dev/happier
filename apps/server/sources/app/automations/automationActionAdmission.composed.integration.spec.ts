@@ -108,4 +108,154 @@ describe("Action occurrence admission through the real router", () => {
         } finally { await app.close(); }
     });
 
+    it("matches an owned Action subject using the canonical structural key", async () => {
+        const accountId = randomUUID();
+        const machineId = randomUUID();
+        const automationId = randomUUID();
+        const triggerId = randomUUID();
+        const serverId = await getOrCreateServerIdentityId();
+        const subject = { kind: "machine" as const, serverId, machineId };
+        await db.account.create({ data: { id: accountId, encryptionMode: "plain" } });
+        await db.machine.create({ data: { id: machineId, accountId, metadata: "{}", installationId: randomUUID() } });
+        await db.automation.create({ data: { id: automationId, accountId, name: "Scoped commit review", enabled: true,
+            templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                directory: "/tmp/review", prompt: "Review" })), templateVersion: 1,
+            assignments: { create: { machineId, enabled: true, priority: 0 } } } });
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        try {
+            const authored = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                headers: { "x-test-user-id": accountId }, payload: { triggerId,
+                    trigger: { kind: "action", enabled: true, phase: "after", actionIds: ["scm.commit.create"], subject } } });
+            expect(authored.statusCode, authored.body).toBe(200);
+            const input = { evidence: { v: 1, kind: "action", actionId: "scm.commit.create", requestId: randomUUID(),
+                phase: "after", occurredAt: 42, status: "succeeded", subjects: [{ role: "operand", kind: "machine",
+                    key: automationSubjectKeyV1({ ...subject, machineId: randomUUID() }) }] },
+                triggers: [{ automationId, triggerId, triggerRevision: 0 }] };
+            const mismatched = await app.inject({ method: "POST", url: "/v1/automations/actions/admit",
+                headers: { "x-test-user-id": accountId }, payload: input });
+            expect(mismatched.statusCode, mismatched.body).toBe(200);
+            expect(mismatched.json().results[0]).toMatchObject({ kind: "skipped", reason: "subjectMismatch" });
+            expect(await db.automationRun.count({ where: { automationId } })).toBe(0);
+            const matched = await app.inject({ method: "POST", url: "/v1/automations/actions/admit",
+                headers: { "x-test-user-id": accountId }, payload: { ...input,
+                    evidence: { ...input.evidence, subjects: [{ role: "operand", kind: "machine", key: automationSubjectKeyV1(subject) }] } } });
+            expect(matched.statusCode, matched.body).toBe(200);
+            expect(matched.json().results[0]).toMatchObject({ kind: "admitted" });
+            expect(await db.automationRun.count({ where: { automationId } })).toBe(1);
+        } finally { await app.close(); }
+    });
+
+    it("places a reference-only consent Run on the invoking Machine without definition assignments", async () => {
+        const accountId = randomUUID();
+        const machineId = randomUUID();
+        const automationId = randomUUID();
+        const triggerId = randomUUID();
+        await db.account.create({ data: { id: accountId, encryptionMode: "plain" } });
+        await db.machine.create({ data: { id: machineId, accountId, metadata: "{}", installationId: randomUUID() } });
+        // B2 owns consent/step admission. This fixture starts with its actor-owned definition.
+        await db.automation.create({ data: { id: automationId, accountId, name: "Consented review", enabled: true,
+            templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                directory: "/tmp/review", prompt: "Review" })), templateVersion: 1 } });
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        try {
+            const authored = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                headers: { "x-test-user-id": accountId }, payload: { triggerId, trigger: { kind: "action", enabled: true,
+                    consentFor: { automationId: randomUUID(), triggerId: randomUUID() }, consentedWorkflowRevision: 1 } } });
+            expect(authored.statusCode, authored.body).toBe(200);
+            const input = { evidence: { v: 1, kind: "action", actionId: "scm.commit.create", requestId: randomUUID(),
+                phase: "after", occurredAt: 42, status: "succeeded", subjects: [] },
+                triggers: [{ automationId, triggerId, triggerRevision: 0 }] };
+            const noMachine = await app.inject({ method: "POST", url: "/v1/automations/actions/admit",
+                headers: { "x-test-user-id": accountId }, payload: input });
+            expect(noMachine.statusCode, noMachine.body).toBe(200);
+            expect(noMachine.json().results[0]).toMatchObject({ kind: "skipped", reason: "machineRequired" });
+            expect(await db.automationRun.count({ where: { automationId } })).toBe(0);
+            const admitted = await app.inject({ method: "POST", url: "/v1/automations/actions/admit",
+                headers: { "x-test-user-id": accountId }, payload: { ...input, evidence: { ...input.evidence, machineId } } });
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(admitted.json().results[0]).toMatchObject({ kind: "admitted" });
+            expect(await db.automationAssignment.count({ where: { automationId } })).toBe(0);
+            expect(await db.automationRunAssignment.findMany({ where: { runId: admitted.json().results[0].runId },
+                select: { machineId: true } })).toEqual([{ machineId }]);
+        } finally { await app.close(); }
+    });
+
+    it("admits each Action occurrence once and preserves the actor's own assignment", async () => {
+        const accountId = randomUUID();
+        const machineId = randomUUID();
+        const invokingMachineId = randomUUID();
+        const automationId = randomUUID();
+        const triggerId = randomUUID();
+        await db.account.create({ data: { id: accountId, encryptionMode: "plain" } });
+        await db.machine.create({ data: { id: machineId, accountId, metadata: "{}", installationId: randomUUID() } });
+        await db.machine.create({ data: { id: invokingMachineId, accountId, metadata: "{}", installationId: randomUUID() } });
+        await db.automation.create({ data: { id: automationId, accountId, name: "Review commit", enabled: true,
+            templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                directory: "/tmp/review", prompt: "Review the commit" })), templateVersion: 1,
+            assignments: { create: { machineId, enabled: true, priority: 0 } },
+        } });
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        try {
+            const authored = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                headers: { "x-test-user-id": accountId }, payload: { triggerId,
+                    trigger: { kind: "action", enabled: true, phase: "after", actionIds: ["scm.commit.create"] } } });
+            expect(authored.statusCode, authored.body).toBe(200);
+            const input = { evidence: { v: 1, kind: "action", actionId: "scm.commit.create", requestId: randomUUID(),
+                phase: "after", occurredAt: 42, status: "succeeded", machineId: invokingMachineId, subjects: [] },
+                triggers: [{ automationId, triggerId, triggerRevision: 0 }] };
+            const response = await app.inject({ method: "POST", url: "/v1/automations/actions/admit",
+                headers: { "x-test-user-id": accountId }, payload: input });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json().results[0]?.kind).toBe("admitted");
+            const runId = response.json().results[0].runId as string;
+            const detail = await app.inject({ method: "GET", url: `/v3/automations/${automationId}/runs/${runId}`,
+                headers: { "x-test-user-id": accountId } });
+            expect(detail.statusCode, detail.body).toBe(200);
+            expect(detail.json().cause).toMatchObject({ kind: "trigger", triggerKind: "action", triggerId,
+                occurredAt: input.evidence.occurredAt, evidence: { actionId: input.evidence.actionId,
+                    requestId: input.evidence.requestId, phase: "after", status: "succeeded", machineId: invokingMachineId } });
+            const replay = await app.inject({ method: "POST", url: "/v1/automations/actions/admit",
+                headers: { "x-test-user-id": accountId }, payload: input });
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json().results[0]).toMatchObject({ kind: "rejoined", runId });
+            const reconstructedReplay = await app.inject({ method: "POST", url: "/v1/automations/actions/admit",
+                headers: { "x-test-user-id": accountId }, payload: { ...input,
+                    evidence: { ...input.evidence, occurredAt: input.evidence.occurredAt + 1 } } });
+            expect.soft(reconstructedReplay.statusCode, reconstructedReplay.body).toBe(200);
+            expect.soft(reconstructedReplay.json().results?.[0]).toMatchObject({ kind: "rejoined", runId });
+            expect(await db.automationRun.count({ where: { automationId } })).toBe(1);
+            const target = await db.automationRunAssignment.findMany({ where: { runId }, select: { machineId: true } });
+            expect.soft(target).toEqual([{ machineId }]);
+            const foreign = await app.inject({ method: "POST", url: "/v1/automations/actions/admit",
+                headers: { "x-test-user-id": randomUUID() }, payload: input });
+            expect(foreign.statusCode, foreign.body).toBe(200);
+            expect(foreign.json().results[0]).toMatchObject({ kind: "skipped", reason: "triggerNotFound" });
+            const otherTriggerId = randomUUID();
+            const otherAuthored = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                headers: { "x-test-user-id": accountId }, payload: { triggerId: otherTriggerId,
+                    trigger: { kind: "action", enabled: true, phase: "after", actionIds: ["scm.commit.create"] } } });
+            expect(otherAuthored.statusCode, otherAuthored.body).toBe(200);
+            const recursive = await app.inject({ method: "POST", url: "/v1/automations/actions/admit",
+                headers: { "x-test-user-id": accountId }, payload: { ...input,
+                    evidence: { ...input.evidence, requestId: randomUUID(), originRunId: runId },
+                    triggers: [...input.triggers, { automationId, triggerId: otherTriggerId, triggerRevision: 0 }] } });
+            expect(recursive.statusCode, recursive.body).toBe(200);
+            expect(recursive.json().results[0]).toMatchObject({ kind: "skipped", reason: "causeSuppressed" });
+            expect(recursive.json().results[1]).toMatchObject({ kind: "admitted" });
+            expect(await db.automationRun.count({ where: { automationId } })).toBe(2);
+            await db.automation.update({ where: { id: automationId }, data: { scopeSessionId: randomUUID() } });
+            const nextInvocation = await app.inject({ method: "POST", url: "/v1/automations/actions/admit",
+                headers: { "x-test-user-id": accountId }, payload: { ...input,
+                    evidence: { ...input.evidence, requestId: randomUUID() } } });
+            expect(nextInvocation.statusCode, nextInvocation.body).toBe(200);
+            expect(nextInvocation.json().results[0]).toMatchObject({ kind: "admitted" });
+            const retainedRuns = await db.automationRun.findMany({ where: { automationId, triggerId },
+                select: { state: true } });
+            expect(retainedRuns).toHaveLength(2);
+            expect(retainedRuns.every(run => run.state === "queued")).toBe(true);
+        } finally { await app.close(); }
+    });
 });

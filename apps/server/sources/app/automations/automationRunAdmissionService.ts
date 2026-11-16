@@ -16,7 +16,7 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { getSessionReviewProjectionIdForRun, invalidateSessionReviewProjectionForRunInTx } from './sessionReviewProjectionInvalidation';
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { classifyMachinePresenceAtInstant } from "@/app/presence/machinePresenceAtInstant";
-import { resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
+import { resolveMachineAdmissionsInTx, type WorkflowMachineAdmission } from '@/app/machines/machineAccess';
 import { publishWorkflowRunMachineWakeInTx } from '@/app/workflows/workflowRunMachineRouting';
 import { attachAutomationWorkflowBodyTx } from "@/app/workflows/workflowRunService";
 import { acquireWorkflowPublicationLocksInTx } from "@/app/workflows/acquireWorkflowPublicationLocksInTx";
@@ -76,17 +76,25 @@ function sameOccurrenceCause(left: AutomationRunCause, right: AutomationRunCause
     // A manual idempotency key identifies the invocation. Retry wall-clock
     // time is not a second immutable fact and must not make that retry collide.
     if (left.kind === "manual" && right.kind === "manual") return true;
-    const withoutMutableRevision = (cause: AutomationRunCause): unknown => {
+    const withoutMutableOccurrenceFields = (cause: AutomationRunCause): unknown => {
         if (cause.kind !== "trigger") return cause;
+        if (cause.triggerKind === "action") {
+            // Approval replay retains the material request id but may rebuild
+            // the host timestamp. Status and safe evidence remain immutable.
+            const { triggerRevision: _revision, occurredAt: _timestamp, ...immutableAction } = cause;
+            return immutableAction;
+        }
         const { triggerRevision: _mutableRevision, ...immutableOccurrence } = cause;
         return immutableOccurrence;
     };
-    return createCanonicalJsonSigningInput(withoutMutableRevision(left))
-        === createCanonicalJsonSigningInput(withoutMutableRevision(right));
+    return createCanonicalJsonSigningInput(withoutMutableOccurrenceFields(left))
+        === createCanonicalJsonSigningInput(withoutMutableOccurrenceFields(right));
 }
 
 export type AutomationRunAdmissionRequest = Readonly<{
     automationId: string;
+    /** Invocation placement, frozen on this Run rather than the consent definition. */
+    runTargetMachineId?: string;
     now: Date;
     cause: AutomationRunCause;
     triggerEvidenceEnvelope?: string | null;
@@ -98,6 +106,12 @@ export type AutomationRunAdmissionRequest = Readonly<{
     /** Host-authenticated PR correspondence, revalidated after the existing scoped lock. */
     scopedConversationTrigger?: AutomationConversationScopedTriggerRefV1 | Omit<AutomationConversationScopedTriggerRefV1, 'pullRequest'>;
 }>;
+
+/** Material Action requests and admitted PR feedback retain each queued occurrence. */
+function preservesDistinctScopedOccurrences(request: AutomationRunAdmissionRequest, cause: AutomationRunCause): boolean {
+    return (cause.kind === "trigger" && cause.triggerKind === "action")
+        || (cause.kind === "conversation" && request.scopedConversationTrigger !== undefined);
+}
 
 function parseTriggerEvidenceEnvelope(raw: string | null | undefined): unknown | null {
     if (raw === null || raw === undefined) return null;
@@ -220,7 +234,10 @@ type PreparedAutomationRunAdmission = Readonly<{
     cause: AutomationRunCause;
     executionInputEnvelope: string | null;
     workflowDefinitionEnvelope: string | null;
-    automation: AutomationAdmissionDefinition;
+    automation: Omit<AutomationAdmissionDefinition, 'assignments'> & Readonly<{
+        assignments: readonly Readonly<{ machineId: string; priority: number;
+            machine: Readonly<{ accountId: string; installationId: string | null }> }>[];
+    }>;
     missedReason: "machine_offline" | "machine_presence_at_due_unavailable" | null;
 }>;
 
@@ -309,6 +326,7 @@ function prepareAutomationRunAdmission(params: Readonly<{
     triggersById: ReadonlyMap<string, AutomationAdmissionTrigger>;
     recipeFeaturePolicy: AutomationRecipeFeaturePolicy;
     scopedConversationMatches: boolean;
+    runTargetAdmission: WorkflowMachineAdmission | undefined;
 }>): PreparedAutomationRunAdmissionResult {
     const cause = params.cause;
     const existing = findExistingRun({
@@ -342,9 +360,15 @@ function prepareAutomationRunAdmission(params: Readonly<{
         ? presenceAtDue?.some(item => item.presence === "unavailable")
             ? "machine_presence_at_due_unavailable" : "machine_offline"
         : null;
-    const admissionAutomation: AutomationAdmissionDefinition = {
+    const target = params.request.runTargetMachineId === undefined ? undefined : params.runTargetAdmission;
+    const targetAssignments = target?.kind === 'admitted' && target.availability === 'available'
+        ? [{ machineId: target.machineId, priority: 0,
+            machine: { accountId: target.custodianAccountId, installationId: target.installationId } }] : [];
+    const admissionAutomation: PreparedAutomationRunAdmission['automation'] = {
         ...automation,
-        assignments: missedReason !== null ? availableAssignments : onTimeAssignments,
+        assignments: params.request.runTargetMachineId === undefined
+            ? missedReason !== null ? availableAssignments : onTimeAssignments
+            : targetAssignments,
     };
     // The select loads only enabled assignments. Replayable causes freeze only
     // presently available machines; every Session-lifecycle occurrence is
@@ -392,7 +416,7 @@ function prepareAutomationRunAdmission(params: Readonly<{
             executionInputEnvelope: frozen.executionInputEnvelope,
             workflowDefinitionEnvelope: frozen.workflowDefinitionEnvelope,
             automation: admissionAutomation,
-            missedReason,
+            missedReason: params.request.runTargetMachineId === undefined ? missedReason : null,
         },
     };
 }
@@ -405,13 +429,11 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
     const { request, cause, executionInputEnvelope, workflowDefinitionEnvelope, automation, missedReason } = params.admission;
     const missed = missedReason !== null;
     const triggerId = cause.kind === "manual" ? undefined : cause.triggerId;
-    // PR feedback and CI failures are distinct immutable occurrences, including
-    // while the Session is busy. Other scoped triggers keep their existing
+    // Material Action requests and PR feedback are distinct immutable occurrences,
+    // including while the Session is busy. Other scoped triggers keep their existing
     // latest-pending policy. The scoped correspondence was admitted above;
     // encrypted event bodies are never inspected to choose this policy.
-    const preservesPullRequestOccurrences = cause.kind === "conversation"
-        && request.scopedConversationTrigger !== undefined;
-    if (automation.scopeSessionId !== null && triggerId && !preservesPullRequestOccurrences) {
+    if (automation.scopeSessionId !== null && triggerId && !preservesDistinctScopedOccurrences(request, cause)) {
         const pending = await params.tx.automationRun.findMany({
             where: { accountId: params.accountId, triggerId, state: "queued" }, select: { id: true, workflowCustodyState: true },
         });
@@ -555,10 +577,11 @@ export async function admitAutomationRunsTx(params: Readonly<{
     }));
     const supersededTriggerIds = parsedAdmissions.flatMap(({ request, cause }) =>
         cause.kind !== 'manual' && cause.triggerId
-            && !(cause.kind === 'conversation' && request.scopedConversationTrigger !== undefined)
+            && !preservesDistinctScopedOccurrences(request, cause)
             ? [cause.triggerId] : []);
     await acquireWorkflowPublicationLocksInTx(params.tx, { accountId: params.accountId,
         automationIds: [...new Set(params.admissions.map(request => request.automationId))],
+        machineIds: parsedAdmissions.flatMap(({ request }) => request.runTargetMachineId === undefined ? [] : [request.runTargetMachineId]),
         sessionIds: parsedAdmissions.flatMap(({ cause }) => {
             const sourceSessionId = getSessionReviewProjectionIdForRun(encodeAutomationRunCause(cause));
             return sourceSessionId === null ? [] : [sourceSessionId];
@@ -658,8 +681,12 @@ export async function admitAutomationRunsTx(params: Readonly<{
     const workflowAutomationIds = new Set(automations.filter(automation => newAdmissionAutomationIds.has(automation.id)
         && parseAutomationStoredWorkflowDefinitionRecipeV2(automation.templateCiphertext).kind === 'available').map(row => row.id));
     const machineAdmissions = await resolveMachineAdmissionsInTx(params.tx, { actorAccountId: params.accountId, purpose: 'workflow',
-        machineIds: automations.filter(row => workflowAutomationIds.has(row.id))
-            .flatMap(row => row.assignments.map(assignment => assignment.machineId)) });
+        machineIds: [
+            ...automations.filter(row => workflowAutomationIds.has(row.id))
+                .flatMap(row => row.assignments.map(assignment => assignment.machineId)),
+            ...parsedAdmissions.flatMap(({ request }) => workflowAutomationIds.has(request.automationId)
+                && request.runTargetMachineId !== undefined ? [request.runTargetMachineId] : []),
+        ] });
     const automationsById = new Map(automations.map((automation) => [
         automation.id,
         {
@@ -696,6 +723,7 @@ export async function admitAutomationRunsTx(params: Readonly<{
         triggersById,
         recipeFeaturePolicy,
         scopedConversationMatches: scopedConversationMatches[index] === true,
+        runTargetAdmission: request.runTargetMachineId === undefined ? undefined : machineAdmissions.get(request.runTargetMachineId),
     }));
 
     const results: AutomationRunAdmissionResult[] = [];
