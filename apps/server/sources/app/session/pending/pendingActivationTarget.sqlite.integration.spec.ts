@@ -23,7 +23,7 @@ import { buildTrustedHostSessionInputAdmissionV1, SessionInputRequestV1Schema, w
 import { readStoredSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
 import { enqueuePendingMessage, materializeNextPendingMessage, resolveAcceptedPendingDelivery, settlePendingInputAdmission } from './pendingMessageService';
 import { armPendingActivationAuthorizationInTx } from './pendingActivationAuthorization';
-import { emitPendingActivationHint, loadPendingActivationPublication } from './publishPendingMutation';
+import { emitPendingActivationHint, emitPendingChanged, loadPendingActivationPublication } from './publishPendingMutation';
 
 describe('exact requester pending activation target (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -120,6 +120,39 @@ describe('exact requester pending activation target (real SQLite)', () => {
             expect(requesterSocket.emit).not.toHaveBeenCalled();
             expect(await db.accountChange.count({ where: { accountId: f.custodian.id } })).toBe(custodianChanges);
         } finally { for (const connection of connections) eventRouter.removeConnection(connection.userId, connection); }
+    });
+
+    it('publishes an accepted activation from one decision of its current target', async () => {
+        const f = await fixture();
+        const result = await enqueuePendingMessage(f.input);
+        if (!result.ok || !('activationTarget' in result) || !result.activationTarget) throw new Error('Missing accepted activation');
+        // Prisma's tracing helper is the client's own instrumentation boundary: every client operation passes it.
+        const operations: string[] = [];
+        const instrumented = globalThis as { PRISMA_INSTRUMENTATION?: unknown };
+        const previous = instrumented.PRISMA_INSTRUMENTATION;
+        const selectedSocket = createFakeSocket();
+        const connection: ClientConnection = { connectionType: 'machine-scoped', userId: f.custodian.id,
+            machineId: f.selectedMachine.id, socket: selectedSocket as unknown as Socket };
+        eventRouter.addConnection(connection.userId, connection);
+        instrumented.PRISMA_INSTRUMENTATION = { helper: {
+            isEnabled: () => false, getTraceParent: () => '00-10-10-00', dispatchEngineSpans: () => undefined, getActiveContext: () => undefined,
+            runInChildSpan: (options: { name?: string; attributes?: { name?: string } } | string, callback: () => unknown) => {
+                if (typeof options === 'object' && options.name === 'operation') operations.push(options.attributes?.name ?? '?');
+                return callback();
+            },
+        } };
+        try {
+            await emitPendingChanged({ sessionId: f.session.id, changedByAccountId: f.requester.id,
+                pendingCount: result.pendingCount, pendingVersion: result.pendingVersion,
+                recipientCursors: result.recipientCursors, activationTarget: result.activationTarget });
+        } finally {
+            instrumented.PRISMA_INSTRUMENTATION = previous;
+            eventRouter.removeConnection(connection.userId, connection);
+        }
+        expect(selectedSocket.emit).toHaveBeenCalledWith('ephemeral', expect.objectContaining({
+            type: 'pending-activation-requested', target: f.target, requestId: f.input.localId }));
+        // Each decision of the target reads its exact AccessKey binding once (the Machine grant currentness).
+        expect(operations.filter(name => name === 'AccessKey.findMany')).toHaveLength(1);
     });
 
     it('preserves explicit same-owner uninstalled predecessor placement without manufacturing an admitted target', async () => {
