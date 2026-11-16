@@ -320,6 +320,120 @@ describe('ApiMachineClient updates', () => {
     } finally { await client.shutdown(); }
   });
 
+  /**
+   * The daemon on one Home: connect catch-up reads the feed once, then Account wakes carry the
+   * page the server read for this socket. The HTTP feed is the boundary; the consumer stays real.
+   */
+  const startPushedChangesDaemon = async (servePage: (after: number) => Readonly<{ changes: unknown[]; nextCursor: number;
+    sessionAccessWitness?: unknown }>) => {
+    const persistence = await import('@/persistence');
+    const { runWithServerHttpBaseUrl } = await import('./client/serverHttpBaseUrl');
+    await Promise.all([
+      import('./machineAccessGrantEnvelopeHost'),
+      import('@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass'),
+    ]);
+    const holder = tweetnacl.box.keyPair();
+    const key = new Uint8Array(32).fill(47);
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'carol' })).toString('base64url')}.signature`;
+    const credential = { token, encryption: { type: 'dataKey' as const, publicKey: holder.publicKey, machineKey: holder.secretKey } };
+    const caller = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: key, recipientPublicKey: holder.publicKey, randomBytes: getRandomBytes }));
+    const metadata = encodeBase64(encrypt(key, 'dataKey', { host: 'carol', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/carol', happyHomeDir: '/home/carol/.happier' }));
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json({
+      features: {}, capabilities: { serverIdentity: { serverIdentityId: 'fixture-home' } },
+    })));
+    vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockResolvedValue(credential);
+    const state = { cursor: 0, feedReads: [] as number[] };
+    vi.spyOn(persistence, 'readAccountChangesCursor').mockImplementation(async () => state.cursor);
+    vi.spyOn(persistence, 'writeAccountChangesCursor').mockImplementation(async (_accountId, next) => { state.cursor = next; });
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const { pathname, searchParams } = new URL(url);
+      if (pathname === '/v1/account/profile') return { status: 200, data: { id: 'carol' } };
+      if (pathname === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'e2ee', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (pathname === '/v2/changes') {
+        const after = Number(searchParams.get('after') ?? 0);
+        state.feedReads.push(after);
+        return { status: 200, data: servePage(after) };
+      }
+      if (pathname === '/v1/machines/carol-executor/data-key-envelopes') return { status: 200, data: {
+        machineId: 'carol-executor', custodianAccountId: 'carol', encryptionMode: 'e2ee',
+        machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(decodeBase64(caller)), callerDataEncryptionKey: caller,
+        nextCursor: null, content: { metadata, metadataVersion: 1, daemonState: null, daemonStateVersion: 0 }, recipients: [] } };
+      return { status: 404, data: {} };
+    });
+    const socket = createApiSessionSocketStub();
+    bindApiSessionSocketSequenceMock(ioMock, [socket, createApiSessionSocketStub()]);
+    const { ApiMachineClient } = await import('./apiMachine');
+    const client = runWithServerHttpBaseUrl('https://pushed-home.test', () => new ApiMachineClient(token, {
+      id: 'carol-executor', encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: 'dataKey', dataEncryptionKey: caller,
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    }));
+    client.onConnectedServicesProjection(async () => {});
+    await seedActiveAccountSnapshot(token);
+    const sessionChanges: Array<Readonly<{ sessionId: string; cursor: number; removed?: true }>> = [];
+    client.onSessionChanged(change => { sessionChanges.push({ sessionId: change.sessionId, cursor: change.cursor,
+      ...(change.removed ? { removed: true as const } : {}) }); });
+    const revoked: string[] = [];
+    client.onSessionAccessRevoked(change => { revoked.push(change.sessionId); });
+    runWithServerHttpBaseUrl('https://pushed-home.test', () => client.connect());
+    // Connect catch-up is the one read the daemon owes.
+    await vi.waitFor(() => expect(state.feedReads).toEqual([0]));
+    await vi.waitFor(() => expect(Reflect.get(client, 'pendingChangesSyncDemand')).toBeNull());
+    const sessionRow = (cursor: number, sessionId = 'session-1') => ({ cursor, kind: 'session', entityId: sessionId, changedAt: cursor,
+      hint: { lastMessageSeq: cursor, pendingExecutionRunIds: [] } });
+    const wake = (seq: number, rows?: unknown) => socket.trigger('update', { id: `wake-${seq}`, seq, createdAt: seq,
+      body: { t: 'account-change', changeKinds: ['session'], entityIds: ['session-1'], ...(rows ? { rows } : {}) } });
+    return { client, state, sessionChanges, revoked, sessionRow, wake };
+  };
+
+  it('applies the pushed page of every turn after its catch-up without reading the changes feed again', async () => {
+    const daemon = await startPushedChangesDaemon(() => ({ changes: [], nextCursor: 0 }));
+    try {
+      for (let turn = 1; turn <= 5; turn += 1) {
+        daemon.wake(turn, { v: 1, after: turn - 1, page: { changes: [daemon.sessionRow(turn)], nextCursor: turn,
+          sessionAccessWitness: { v: 1, throughCursor: turn, entries: [{ sessionId: 'session-1', cursor: turn, status: 'available' }] } } });
+      }
+      await vi.waitFor(() => expect(daemon.state.cursor).toBe(5));
+      expect(daemon.state.feedReads).toEqual([0]);
+      expect(daemon.sessionChanges.map(change => change.cursor)).toEqual([1, 2, 3, 4, 5]);
+    } finally { await daemon.client.shutdown(); }
+  });
+
+  it('reads the changes feed exactly once to cover a gap, then applies pushed pages again', async () => {
+    let reads = 0;
+    const row = (cursor: number, sessionId: string) => ({ cursor, kind: 'session', entityId: sessionId, changedAt: cursor,
+      hint: { lastMessageSeq: cursor, pendingExecutionRunIds: [] } });
+    // The catch-up page is empty; the Home then commits cursors 1..3.
+    const daemon = await startPushedChangesDaemon(after => (reads += 1) === 1 ? { changes: [], nextCursor: after }
+      : { changes: [row(1, 'session-1'), row(3, 'session-2')], nextCursor: 3 });
+    try {
+      // Cursor 1 reached this socket in no pushed page (another wake it was excluded from).
+      daemon.wake(3, { v: 1, after: 2, page: { changes: [daemon.sessionRow(3, 'session-2')], nextCursor: 3 } });
+      await vi.waitFor(() => expect(daemon.state.cursor).toBe(3));
+      daemon.wake(4, { v: 1, after: 3, page: { changes: [daemon.sessionRow(4)], nextCursor: 4 } });
+      await vi.waitFor(() => expect(daemon.state.cursor).toBe(4));
+      expect(daemon.state.feedReads).toEqual([0, 0]);
+      expect(daemon.sessionChanges.map(change => [change.sessionId, change.cursor])).toEqual([
+        ['session-1', 1], ['session-2', 3], ['session-1', 4]]);
+    } finally { await daemon.client.shutdown(); }
+  });
+
+  it('drops a Session whose access a pushed page revokes, without reading the changes feed', async () => {
+    const daemon = await startPushedChangesDaemon(() => ({ changes: [], nextCursor: 0 }));
+    try {
+      daemon.wake(1, { v: 1, after: 0, page: { changes: [daemon.sessionRow(1)], nextCursor: 1,
+        sessionAccessWitness: { v: 1, throughCursor: 1, entries: [{ sessionId: 'session-1', cursor: 1, status: 'available' }] } } });
+      await vi.waitFor(() => expect(daemon.state.cursor).toBe(1));
+      // The share/Team change that removed this credential's access: the row carries no Session facts.
+      daemon.wake(2, { v: 1, after: 1, page: { changes: [{ cursor: 2, kind: 'session', entityId: 'session-1', changedAt: 2, hint: null }],
+        nextCursor: 2, sessionAccessWitness: { v: 1, throughCursor: 2, entries: [{ sessionId: 'session-1', cursor: 2, status: 'unavailable' }] } } });
+      await vi.waitFor(() => expect(daemon.state.cursor).toBe(2));
+      expect(daemon.revoked).toEqual(['session-1']);
+      expect(daemon.sessionChanges.at(-1)).toEqual({ sessionId: 'session-1', cursor: 2, removed: true });
+      expect(daemon.state.feedReads).toEqual([0]);
+    } finally { await daemon.client.shutdown(); }
+  });
+
   /** One pushed `share` pass over real preparation modules; the Home serves the row the case names. */
   const runShareWakePass = async (serveSessionRow: (sessionKey: Uint8Array) => ServedSessionRow) => {
     const persistence = await import('@/persistence');

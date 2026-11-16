@@ -3,11 +3,13 @@ import { createHappierSocket } from '@happier-dev/sync-client';
 
 import type { ManagedConnectionTransport } from '@happier-dev/connection-supervisor';
 import { buildMachineScopedSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
+import { buildAccountChangeRowsSocketAuthV1 } from '@happier-dev/protocol/changes';
 import type { MachineInstallationProofV1 } from '@happier-dev/protocol';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from '@/api/machine/socketTypes';
 import { buildCurrentCliClientCompatibilitySocketAuth } from '@/api/clientCompatibility/cliClientCompatibility';
 import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
+import { MACHINE_ACCOUNT_CHANGE_KINDS } from '@/api/machine/machineAccountChangePages';
 
 export function createMachineSocketTransport(params: Readonly<{
   serverUrl: string;
@@ -39,6 +41,8 @@ export function createMachineSocketTransport(params: Readonly<{
     authExtras: {
       ...buildMachineScopedSocketAuth(params),
       ...buildCurrentCliClientCompatibilitySocketAuth('daemon'),
+      // The daemon applies the Account change pages the server reads for this socket at fan-out.
+      ...buildAccountChangeRowsSocketAuthV1(MACHINE_ACCOUNT_CHANGE_KINDS),
     },
     withCredentials: true,
     engineOptions: getSocketIoProxyOptions({ targetUrl: params.serverUrl, env: params.env }),

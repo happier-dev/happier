@@ -20,7 +20,7 @@ import type { ExecutionRunMachineActivityV1 } from '@happier-dev/protocol/execut
 import { SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, type ScmDiffSummaryResultRevisionHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import type { ExecutionRunResumeMaterializationAuthority } from '@/agent/runtime/bridges/executionRun/resumeBackendController';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
-import { changeRowsAlreadyHeld, readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
+import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, changeRowsAlreadyHeld, readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/pluginDomain';
 import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
@@ -262,6 +262,7 @@ import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT } from '@happier-dev/protocol/machin
 import { TRANSFER_RELAY_V2_SOCKET_EVENT } from '@happier-dev/protocol/transfers/relay/v2/socketEvents';
 import type { ExternalSessionTranscriptInvalidationV1, ExternalSessionOperationSocketCommandV1, ExternalSessionOperationSocketResponseV1, ExternalSessionStatusDemandDaemonMessageV1, MachineLiveStreamRelayEnvelopeV1, MachineTransferReceiveEnvelope, MachineTransferSendEnvelope, PeerTcpTunnelRelayEnvelope, ExactSessionTurnEndMutationV1, TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
 import { fetchChanges, fetchChangesAccountId } from './changes';
+import { hasUsablePushedChangesPage, MACHINE_ACCOUNT_CHANGE_KINDS, readPushedChangesPage, takePushedChangesPage, type QueuedPushedChangesPage } from './machine/machineAccountChangePages';
 import { buildProjectAccountRowPhysicalKeyV1, ProjectAccountRowChangeHintV1Schema, type ProjectAccountRowKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { readAccountChangesCursor, writeAccountChangesCursor } from '@/persistence';
 import {
@@ -323,7 +324,7 @@ import type { DaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/conne
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
-import { isMachineProjectionChangeKindV1, readAuthoritativeSessionDeletionChangeV1, readSessionTranscriptChangeHintV1, readSessionTranscriptRevisedV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionMemoryInputsChangedV1, readSessionMemoryPushedFactsV1, TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, type ChangeKind } from '@happier-dev/protocol/changes';
+import { isMachineProjectionChangeKindV1, readAuthoritativeSessionDeletionChangeV1, readSessionTranscriptChangeHintV1, readSessionTranscriptRevisedV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionMemoryInputsChangedV1, readSessionMemoryPushedFactsV1, TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import {
     registerMachineRpcHandlers,
     type MachineRpcHandlerDeps,
@@ -654,14 +655,9 @@ type AccountChangesSyncDemand = {
      * transport (the next natural boundary) recovers again.
      */
     recoveredTransportGeneration?: number;
+    /** Pages the server read for this socket at fan-out; applied only from a matching cursor. */
+    pushedPages?: QueuedPushedChangesPage[];
 };
-
-// Every domain consumed by Machine catch-up below, including share revisions.
-// Selection belongs in the shared feed query, before transport decoding.
-const MACHINE_ACCOUNT_CHANGE_KINDS = [
-    'account', 'automation', 'artifact', 'discussion', 'machine', 'machineRecipientAccess',
-    'pluginDomain', 'savedSecretResource', 'session', 'share',
-] as const satisfies readonly ChangeKind[];
 
 /** `update-machine` fields the live handler applies to held Machine content. */
 const UPDATE_MACHINE_CONTENT_FIELDS_APPLIED_LIVE: ReadonlySet<string> = new Set([
@@ -6151,9 +6147,12 @@ export class ApiMachineClient {
                     && data.body.connectedServices !== undefined
                 )
             ) {
+                const pushed = data.body.t === 'account-change' ? readPushedChangesPage(data.body) : undefined;
+                if (pushed === null) logger.warn('[API MACHINE] Malformed pushed Account change page; reading the feed');
                 this.startChangesSyncWithRetry({ reason: 'live',
                     ...(data.body.t === 'account-change' && Number.isSafeInteger(data.seq) && data.seq >= 0
                         ? { requestedCursor: data.seq } : {}),
+                    ...(pushed ? { pushedPages: [{ transportGeneration, pushed }] } : {}),
                 });
             }
             if (!handled && process.env.DEBUG) {
@@ -6588,7 +6587,7 @@ export class ApiMachineClient {
         if (!accountId) throw new Error('account_changes_account_id_unavailable');
         const accountScopeKey = resolveAccountSettingsScopeKeyForToken(this.token);
 
-        const CHANGES_PAGE_LIMIT = 200;
+        const CHANGES_PAGE_LIMIT = ACCOUNT_CHANGES_PAGE_LIMIT_V1;
         let after = await readAccountChangesCursor(accountId);
         // The post-commit producer's seq is this durable cursor, not a domain
         // event count. An equal acknowledged wake has no remaining feed work.
@@ -6602,8 +6601,13 @@ export class ApiMachineClient {
         try {
             while (!this.projectionSchedulingClosed && this.isActiveTransportGeneration(transportGeneration)) {
                 signal.throwIfAborted();
-                const result = await fetchChanges({ token: this.token, after, limit: CHANGES_PAGE_LIMIT,
-                    kinds: MACHINE_ACCOUNT_CHANGE_KINDS, signal });
+                // The server authorized this socket's page at fan-out: apply it directly. Reconnect
+                // catch-up, a gap, a full page or no pushed page reads the feed.
+                const pushed = reason === 'live'
+                    ? takePushedChangesPage(opts.pushedPages ?? [], after, transportGeneration) : null;
+                const result = pushed ? { status: 'ok' as const, response: pushed.page }
+                    : await fetchChanges({ token: this.token, after, limit: CHANGES_PAGE_LIMIT,
+                        kinds: MACHINE_ACCOUNT_CHANGE_KINDS, signal });
                 signal.throwIfAborted();
                 if (this.projectionSchedulingClosed || !this.isActiveTransportGeneration(transportGeneration)) return;
                 if (result.status !== 'ok' && result.status !== 'cursor-gone'
@@ -7102,7 +7106,8 @@ export class ApiMachineClient {
                         phase: 'settled', ...connectedServicesPageDiagnostic,
                     });
                 }
-                if (changes.length < CHANGES_PAGE_LIMIT) return;
+                if (!(pushed ? pushed.full : changes.length >= CHANGES_PAGE_LIMIT)
+                    && !hasUsablePushedChangesPage(opts.pushedPages ?? [], after, transportGeneration)) return;
                 // Classify subsequent pages without repeating reconnect recovery.
                 reason = 'live';
             }
@@ -7135,6 +7140,7 @@ export class ApiMachineClient {
                 // genuine catch-up, never equality suppression.
                 delete demand.requestedCursor;
             } else demand.requestedCursor = Math.max(demand.requestedCursor, opts.requestedCursor);
+            if (opts.pushedPages) demand.pushedPages = [...demand.pushedPages ?? [], ...opts.pushedPages];
         }
         this.pendingChangesSyncDemand = demand;
         this.connectedServicesProjectionRetry.schedule(async (signal) => {
@@ -7149,6 +7155,8 @@ export class ApiMachineClient {
                     const retryDemand = this.pendingChangesSyncDemand ?? demand;
                     if (demand.reason !== 'live') retryDemand.reason = demand.reason;
                     delete retryDemand.requestedCursor;
+                    // A retry reads the feed: a held page's snapshot may predate the failure.
+                    delete retryDemand.pushedPages;
                     this.pendingChangesSyncDemand = retryDemand;
                 }
                 if (!signal.aborted) {
