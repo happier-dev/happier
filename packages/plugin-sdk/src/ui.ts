@@ -1,5 +1,6 @@
 export * from './ui/collectionFilters.js';
 export * from './ui/widgetSizes.js';
+export { FailureAgentActionV1Schema, FailureActionOutcomeV1Schema, FailureActionPlacementV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/failureActionPresentation';
 export * from './ui/declarativeData.js';
 export type { ProtocolPluginSurfaceTargetV1 } from './ui/publicContract.js';
 import { PLUGIN_UI_ICON_TOKENS_V1 as canonicalPluginUiIconTokensV1 } from '@happier-dev/protocol/plugins/contributions/ui/tokens';

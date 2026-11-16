@@ -1,29 +1,43 @@
-import type { ServiceHealthNoticeMachineV1 } from '../../../activity/accountNoticePageV1.js';
-import type { WorkspaceAddressV1 } from '../../../workspaces/workspaceRefV1.js';
-import type { JsonValue } from '../../../json/strictJsonValue.js';
+import { ServiceHealthNoticeMachineV1ProtocolSchema } from '../../../activity/accountNoticePageV1.js';
+import { WorkspaceAddressV1ProtocolSchema } from '../../../workspaces/workspaceRefV1.js';
+import { lazyDefinition } from '../../../lazyZodSchema.js';
+import { z } from '../../../zodRuntimePolicy.js';
+import { projectZodProtocolSchema } from '../../actions/internalProtocolZodAdapter.js';
+import { defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolObject,
+  defineProtocolString, defineProtocolUnion } from '../../actions/protocolComposableSchema.js';
+import { PluginUiDeclaredFailureActionV1Schema } from './failureActions.js';
+
+const closed = { policy: 'closed' } as const;
+const text = defineProtocolString();
+const machine = ServiceHealthNoticeMachineV1ProtocolSchema;
+const workspace = WorkspaceAddressV1ProtocolSchema;
+
+/** The existing split control's presentation without its declaration-only subject list. */
+export const FailureAgentActionV1Schema = lazyDefinition(() =>
+  projectZodProtocolSchema(z.omit(PluginUiDeclaredFailureActionV1Schema, { subjects: true })));
+export type FailureAgentAction = ReturnType<typeof FailureAgentActionV1Schema.parse>;
 
 /** Data for the existing native placement presenter; it grants no execution authority. */
-export type FailureActionPlacement = Readonly<{
-  machine?: ServiceHealthNoticeMachineV1;
-  workspace?: WorkspaceAddressV1;
-  agentTargetKey?: string;
-}>;
+export const FailureActionPlacementV1Schema = defineProtocolObject({
+  machine: machine.optional(), workspace: workspace.optional(), agentTargetKey: text.optional(),
+}, closed);
+export type FailureActionPlacement = ReturnType<typeof FailureActionPlacementV1Schema.parse>;
 
-/** The existing split control's presentation, decided by its contributing Action. */
-export type FailureAgentAction = Readonly<{
-  actionId: string; label: string; titleKey?: string;
-  launchMode: 'start' | 'review'; startable: boolean;
-}>;
-
-/** Native presenters consume these UI states without interpreting a plugin's domain result. */
-export type FailureActionOutcome =
-  | Readonly<{ kind: 'started'; handoff?: JsonValue }>
-  | Readonly<{ kind: 'approval'; artifactId: string }>
-  | Readonly<{ kind: 'selectionRequired'; fields: readonly string[] }>
-  | Readonly<{ kind: 'uncertain' }>
-  | Readonly<{ kind: 'unavailable'; code: string; configuredActionId?: string;
-      recovery?: 'configure'; handoff?: JsonValue; detail?: JsonValue }>
-  | Readonly<{ kind: 'placement_choice_required'; reason:
-      'controller_required' | 'machine_unreachable' | 'ambiguous_workspace' | 'agent_required';
-      candidates: readonly Readonly<{ machine: ServiceHealthNoticeMachineV1; workspace?: WorkspaceAddressV1; reachable: boolean }>[];
-      agents: readonly Readonly<{ targetKey: string; label: string }>[] }>;
+/** The single presentation grammar; plugins normalize their domain results before returning it. */
+export const FailureActionOutcomeV1Schema = defineProtocolUnion([
+  defineProtocolObject({ kind: defineProtocolLiteral('started'), handoff: defineProtocolJsonValue().optional() }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('approval'), artifactId: text }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('selectionRequired'), fields: defineProtocolArray(text) }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('uncertain') }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('unavailable'), code: text, configuredActionId: text.optional(),
+    recovery: defineProtocolLiteral('configure').optional(), handoff: defineProtocolJsonValue().optional(),
+    detail: defineProtocolJsonValue().optional() }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('placement_choice_required'), reason: defineProtocolUnion([
+    defineProtocolLiteral('controller_required'), defineProtocolLiteral('machine_unreachable'),
+    defineProtocolLiteral('ambiguous_workspace'), defineProtocolLiteral('agent_required'),
+  ]), candidates: defineProtocolArray(defineProtocolObject({ machine, workspace: workspace.optional(),
+    reachable: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed)),
+    agents: defineProtocolArray(defineProtocolObject({ targetKey: text, label: text }, closed)),
+  }, closed),
+]);
+export type FailureActionOutcome = ReturnType<typeof FailureActionOutcomeV1Schema.parse>;
