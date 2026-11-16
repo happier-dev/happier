@@ -102,8 +102,11 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
 
     const afterSeq = Math.max(0, Math.trunc(cursors.lastDeepIndexedSeq));
     let rows: DecryptedTranscriptRow[] = [];
+    // `new_only` admits rows created since enable, so once a pass has applied rows its projection
+    // only grows: later Turns continue after that checkpoint. The recent window establishes the
+    // first checkpoint without scanning the whole pre-enable history.
     const needsBoundedSnapshot = params.settings.coveragePolicy?.type !== 'full'
-      || params.settings.backfillPolicy === 'new_only'
+      || (params.settings.backfillPolicy === 'new_only' && afterSeq === 0)
       || params.settings.forceSnapshot === true
       || params.deep.hasSessionArtifactsOutsidePolicy({ sessionId, policyKey });
     try {

@@ -94,6 +94,41 @@ describe('syncDeepIndexForSessionsOnce', () => {
     } finally { deep.close(); tier1.close(); await rm(dir, { recursive: true, force: true }); }
   });
 
+  it('indexes new_only Turns incrementally after its applied checkpoint instead of re-reading the recent window', async () => {
+    const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-deep-new-only-'));
+    const tier1 = openSummaryShardIndexDb({ dbPath: join(dir, 'memory.sqlite') });
+    const deep = openDeepIndexDb({ dbPath: join(dir, 'deep.sqlite') });
+    try {
+      tier1.init(); deep.init();
+      const row = (seq: number, createdAtMs: number, text: string) => ({ seq, createdAtMs, role: 'user' as const, content: { type: 'text', text } });
+      const transcript = [row(1, 1_000, 'before enable secret'), row(2, 2_500, 'first turn amber')];
+      const reads: string[] = [];
+      const sync = () => syncDeepIndexForSessionsOnce({ sessionIds: ['new-only'], tier1, deep, now: () => 10_000,
+        settings: { enabled: true, enabledAtMs: 2_000, indexMode: 'deep', backfillPolicy: 'new_only', coveragePolicy: { type: 'full' },
+          deep: { maxChunkChars: 8000, maxChunkMessages: 20, minChunkMessages: 1,
+            includeAssistantAcpMessage: true, failureBackoffBaseMs: 0, failureBackoffMaxMs: 0 } },
+        fetchDecryptedTranscriptPageAfterSeq: async ({ afterSeq }) => {
+          reads.push(`after:${afterSeq}`);
+          return transcript.filter(entry => entry.seq > afterSeq);
+        },
+        fetchRecentDecryptedRows: async () => { reads.push('window'); return transcript.slice(); },
+      });
+      // No checkpoint yet: the bounded recent window establishes it.
+      await sync();
+      expect(reads).toEqual(['window']);
+      expect(tier1.getSessionCursors({ sessionId: 'new-only', nowMs: 10_000 }).lastDeepIndexedSeq).toBe(2);
+      // A later Turn reads only what follows the applied checkpoint and keeps earlier chunks.
+      transcript.push(row(3, 3_000, 'second turn cobalt'));
+      reads.length = 0;
+      await sync();
+      expect(reads).toEqual(['after:2']);
+      expect(tier1.getSessionCursors({ sessionId: 'new-only', nowMs: 10_000 }).lastDeepIndexedSeq).toBe(3);
+      expect(deep.search({ query: 'amber', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+      expect(deep.search({ query: 'cobalt', scope: { type: 'global' }, maxResults: 10 })).toHaveLength(1);
+      expect(deep.search({ query: 'secret', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+    } finally { deep.close(); tier1.close(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('applies since_enabled coverage to deep semantic rows', async () => {
     const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-deep-coverage-'));
     try {

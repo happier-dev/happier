@@ -723,6 +723,8 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
     }));
     const worker = await startWorker(
       { indexMode: 'deep', backfillPolicy: 'new_only', enabledAtMs: 5_000 },
+      // After the seeded checkpoint, new_only continues from it through the after-seq reader.
+      { fetchDecryptedTranscriptPageAfterSeq: async ({ afterSeq }) => rows.filter(row => row.seq > afterSeq) },
     );
 
     await worker.ensureUpToDate('old-explicit');
