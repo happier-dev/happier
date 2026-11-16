@@ -1,5 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { deploymentTargetFitFieldsV1 } from '../../deployments/deployShapeV1.js';
 import { WorkflowActionFieldBindingV1Schema } from '../../workflows/workflowLeafV1.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
 import { normalizePluginJsonSchema, pluginJsonValuesEqual } from '../actions/protocolComposableSchema.js';
@@ -51,7 +52,7 @@ export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType
     return z.strictObject({
         projects: z.optional(z.strictObject({ list: z.optional(resource), listAction: z.optional(action),
             provisionOptions: z.optional(resource), provisionOptionsAction: z.optional(action),
-            provision: z.optional(action), link: z.optional(action), delete: z.optional(action) })),
+            provision: z.optional(action), link: z.optional(action), delete: z.optional(action), observe: z.optional(action) })),
         branches: z.optional(z.strictObject({ list: z.optional(resource), listAction: z.optional(action),
             create: z.optional(action), delete: z.optional(action),
             /** Plugin-owned preview operands, evaluated against the occurrence's neutral preview input. */
@@ -62,6 +63,7 @@ export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType
 }
 
 const descriptorFields = () => ({
+    ...deploymentTargetFitFieldsV1(),
     id: local(), title: PluginLocalizedStringV2Schema, description: z.optional(PluginLocalizedStringV2Schema),
     icon: PluginActionIconV2Schema, targetKind: local(),
     targetSchema: closedSchema, linkSchema: closedSchema,
@@ -89,6 +91,14 @@ export type DeploymentTargetReferenceRoleV1 = Readonly<{
     readOnly: boolean;
 }>;
 
+/** Role grammar decides read-only classification for declaration and host admission. */
+export function isDeploymentTargetRoleReadOnlyV1(role: string): boolean {
+    const [group, operation] = role.split('.');
+    return operation === undefined ? group === 'inspect' || group === 'observe'
+        : operation === 'list' || operation === 'provisionOptions' || operation === 'link' || operation === 'observe'
+            || operation === 'read' || operation === 'verify' || group === 'query' || group === 'logs';
+}
+
 /** One traversal supplies kind-aware reference admission and normalized catalog projection. */
 export function readDeploymentTargetReferenceRolesV1(descriptor: DeploymentTargetContributionV1): readonly DeploymentTargetReferenceRoleV1[] {
     if (descriptor.role === 'data') return Object.entries(descriptor.dataV1 ?? {}).flatMap(([group, value]) => {
@@ -100,17 +110,16 @@ export function readDeploymentTargetReferenceRolesV1(descriptor: DeploymentTarge
             return [{
             role: `${group}.${operation}`, reference,
             targetFamily: leaf === 'list' || leaf === 'provisionOptions' ? 'resources' as const : 'actions' as const,
-            path: ['dataV1', group, leaf], readOnly: operation === 'list' || operation === 'provisionOptions'
-                || operation === 'link' || group === 'query',
+            path: ['dataV1', group, leaf], readOnly: isDeploymentTargetRoleReadOnlyV1(`${group}.${operation}`),
         }]; });
     });
     return Object.entries(descriptor.actions).flatMap(([group, value]) => {
         if (value === undefined) return [];
         if (typeof value === 'string') return [{ role: group, reference: value, targetFamily: 'actions' as const, path: ['actions', group],
-            readOnly: group === 'inspect' || group === 'observe' }];
+            readOnly: isDeploymentTargetRoleReadOnlyV1(group) }];
         return Object.entries(value).flatMap(([role, action]) => action === undefined ? [] : [{
             role: `${group}.${role}`, reference: action, targetFamily: 'actions' as const, path: ['actions', group, role],
-            readOnly: role === 'read' || role === 'verify' || group === 'logs',
+            readOnly: isDeploymentTargetRoleReadOnlyV1(`${group}.${role}`),
         }]);
     });
 }
@@ -162,10 +171,10 @@ export function validateDeploymentTargetContributionsV1(
                 || !isRecursivelyClosedPluginJsonSchemaV2(action.resultSchema)) {
                 context.addIssue({ code: 'custom', path, message: 'Deployment target roles require explicit recursively closed input and result schemas.' });
             }
-            if (binding.role === 'projects.delete' && (!action.resultSchema
+            if ((binding.role === 'projects.delete' || binding.role === 'projects.observe') && (!action.resultSchema
                 || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.resultSchema),
                     normalizePluginJsonSchema(DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema)))) {
-                context.addIssue({ code: 'custom', path, message: 'Data project deletion requires the canonical absence observation.' });
+                context.addIssue({ code: 'custom', path, message: 'Data project deletion and recovery require the canonical absence observation.' });
             }
             if (descriptor.role === 'runtime' && binding.role !== 'inspect' && binding.role !== 'link'
                 && Object.hasOwn(DeploymentTargetRoleInputProtocolSchemasV1, binding.role)) {
