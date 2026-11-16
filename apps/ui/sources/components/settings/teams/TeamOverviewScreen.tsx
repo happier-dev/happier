@@ -195,10 +195,7 @@ const TeamSetupSection = React.memo(function TeamSetupSection(
           state,
           testID: 'team-overview-setup-invite',
           title: t('homeGovernance.invite.action'),
-          detail: t('teams.overview.setup.inviteBody', {
-            home: context.homeName,
-            team: context.team.name,
-          }),
+          detail: t('teams.overview.setup.inviteBody'),
           action: (
             <RoundButton
               testID="team-overview-setup-invite-action"

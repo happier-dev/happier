@@ -15,7 +15,7 @@ const { SelectionListFilterChip } =
   await import('@/components/ui/selectionList/SelectionListFilterChips');
 const { SelectionList } =
   await import('@/components/ui/selectionList/SelectionList');
-const { UsageFilterBar } = await import('./UsageFilterBar');
+const { UsageFilterBar, usageTokensCostMetricOptions } = await import('./UsageFilterBar');
 const { USAGE_SCOPE_FILTER_ALL } = await import('./useUsageWidgetPageFilters');
 
 beforeEach(() => {
@@ -28,14 +28,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-type Bar = React.ComponentProps<typeof UsageFilterBar>;
-const page = {
-  period: '7days',
-  scope: { costBasis: 'auto' },
-} as const satisfies Readonly<{
-  period: Bar['page']['period'];
-  scope: Pick<Bar['page']['scope'], 'costBasis'>;
-}>;
+type Bar = React.ComponentProps<typeof UsageFilterBar<'tokens' | 'cost'>>;
 
 function renderBar(selections: string[], overrides: Partial<Bar> = {}) {
   return renderScreen(<UsageFilterBar {...barProps(selections)} {...overrides} />);
@@ -60,7 +53,9 @@ function barProps(selections: string[]): Bar {
     },
   });
   const props = {
-    page: page as unknown as Bar['page'],
+    period: '7days',
+    costBasis: 'auto',
+    metricOptions: usageTokensCostMetricOptions(),
     coverageIncomplete: false,
     scopeFilters: [
       filter('sources', [], [{ id: 'runtime', label: 'Happier sessions' }]),

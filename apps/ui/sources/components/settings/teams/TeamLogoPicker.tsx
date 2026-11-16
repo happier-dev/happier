@@ -63,6 +63,8 @@ function sourceUri(source: TeamLogoSourceV1): string {
  */
 export const TeamLogoPicker = React.memo(function TeamLogoPicker(props: Readonly<{
     identityId: string;
+    /** The Team name the preview's monogram letter comes from, as on the rail and Overview. */
+    monogram: string | null;
     testIDPrefix: string;
     currentLogo: TeamSummaryV1['logo'];
     selectedSource?: TeamLogoSourceV1 | null;
@@ -135,6 +137,7 @@ export const TeamLogoPicker = React.memo(function TeamLogoPicker(props: Readonly
     const preview = (
         <Avatar
             id={props.identityId}
+            monogram={props.monogram}
             square
             size={LOGO_PREVIEW_SIZE}
             imageUrl={imageUrl}

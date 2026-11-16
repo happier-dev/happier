@@ -52,7 +52,7 @@ export const english = {
             setup: {
                 title: ({ team }: { team: string }) => `Get ${team} ready`,
                 description: 'Each step leaves this list once it’s done.',
-                inviteBody: ({ home, team }: { home: string; team: string }) => `Everyone you invite joins ${home} as part of ${team}.`,
+                inviteBody: 'Everyone you invite joins this Home as part of this Team.',
                 signInTitle: 'Choose how members sign in',
                 signInBody: 'Keep this Home’s sign-in, or require your company’s.',
                 signInAction: 'Choose',
@@ -648,7 +648,7 @@ export const english = {
             emailLabel: 'Email address',
             emailPlaceholder: 'name@example.com',
             create: 'Create invitation',
-            linkNotice: ({ team, role }: { team: string; role: string }) => `Anyone signed into this Home with this link can join ${team} as ${role}.`,
+            linkNotice: ({ role }: { role: string }) => `Anyone signed into this Home with this link can join this Team as ${role}.`,
             copyLink: 'Copy link',
             copied: 'Link copied',
             qrLabel: 'QR code for this invitation link',

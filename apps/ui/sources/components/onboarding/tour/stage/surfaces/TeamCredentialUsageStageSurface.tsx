@@ -14,7 +14,6 @@ import { t } from '@/text';
 export function TeamCredentialUsageStageSurface(): React.ReactElement {
     const [team] = React.useState(() => buildDemoTeam(getDemoModeServerId() ?? 'demo-home'));
     const [result] = React.useState(buildDemoTeamCredentialUsage);
-    const [showSeriesList, setShowSeriesList] = React.useState(false);
     const seriesMotion = useUsageSeriesMotion(result.series.length);
     const series = React.useMemo(() => result.series.map(bucket => ({
         timestamp: Math.floor(bucket.bucketStartMs / 1000),
@@ -29,8 +28,7 @@ export function TeamCredentialUsageStageSurface(): React.ReactElement {
             showRequests completeness={t('teams.credentials.usage.recordedByHappier')}
             costUsd={result.totals.cost.reportedUsd} series={series}
             chartMetrics={['requests', 'tokens', 'cost']} selectedMetric="tokens"
-            seriesMotion={seriesMotion} showSeriesList={showSeriesList}
-            onToggleSeriesList={() => setShowSeriesList(current => !current)}
+            seriesMotion={seriesMotion}
             refreshing={false} onRefresh={() => {}} />
     </ItemList>;
 }

@@ -43,7 +43,7 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import { t } from '@/text';
-import { UsageFilterBar } from './UsageFilterBar';
+import { UsageFilterBar, usageTokensCostMetricOptions } from './UsageFilterBar';
 import { useUsageWidgetPageFilters } from './useUsageWidgetPageFilters';
 import { UsageDrillProvider, usageDrillFromPageFilters } from './usageDrill';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
@@ -432,20 +432,23 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   );
   const metricPending = layoutLoading || pendingMetric?.lifetime === metricLifetime;
   const changeMetric = layoutLoading || (usageWidgets.length && ready?.canEdit) ? onMetricChange : null;
+  const metricOptions = React.useMemo(() => usageTokensCostMetricOptions(), []);
   const filterBar = React.useMemo(() => <UsageFilterBar
-    page={page}
+    period={page.period}
+    costBasis={page.scope.costBasis}
     coverageIncomplete={facts.coverageIncomplete}
     scopeFilters={admittedFilters}
     onPeriodChange={selectPeriod}
     onCostBasisChange={selectCostBasis}
     costBasisOptions={costBasisOptions}
     costBasisPending={costBasisPending}
+    metricOptions={metricOptions}
     metric={metric}
     metricPending={metricPending}
     onMetricChange={changeMetric}
     testID="usage-filters"
-  />, [page, facts.coverageIncomplete, admittedFilters, selectPeriod, selectCostBasis, costBasisOptions,
-    costBasisPending, metric, metricPending, changeMetric]);
+  />, [page.period, page.scope.costBasis, facts.coverageIncomplete, admittedFilters, selectPeriod, selectCostBasis, costBasisOptions,
+    costBasisPending, metricOptions, metric, metricPending, changeMetric]);
 
   // The selected document and the named-view inventory settle independently.
   return (

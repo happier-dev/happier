@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
@@ -143,7 +144,7 @@ const HomeTeams = React.memo(function HomeTeams(
             && directory.unavailableHomes.every((home) => home.reason === 'loading')
         ) {
             add('loading', () => (
-                <ItemGroup title={t('homeGovernance.teams')} action={createAction}>
+                <ItemGroup surface="none" title={t('homeGovernance.teams')} action={createAction}>
                     <ItemLoadStateRows testID="home-teams-loading" state={{ kind: 'loading' }} rows={3} accessibilityLabel={t('homeGovernance.teams')} />
                 </ItemGroup>
             ));
@@ -163,13 +164,13 @@ const HomeTeams = React.memo(function HomeTeams(
         if (directoryFailed) {
             // The section and its create action stay; the unknown list is never an empty Home.
             add('unavailable', () => (
-                <ItemGroup title={t('homeGovernance.teams')} action={createAction}>
+                <ItemGroup surface="none" title={t('homeGovernance.teams')} action={createAction}>
                     <ItemLoadStateRows testID="home-teams" state={directoryFailure} />
                 </ItemGroup>
             ));
         } else if (directory.rows.length === 0) {
             add('empty', () => (
-                <ItemGroup title={t('homeGovernance.teams')} action={createAction}>
+                <ItemGroup surface="none" title={t('homeGovernance.teams')} action={createAction}>
                     <SurfaceStateCard testID="home-teams-empty" kind="empty" size="line" title={t('homeGovernance.teamsEmpty')} />
                 </ItemGroup>
             ));
@@ -178,19 +179,22 @@ const HomeTeams = React.memo(function HomeTeams(
                 const chunk = segment.items;
                 const { first, last } = segment;
                 add(`active:${chunk[0]!.address.teamId}`, () => (
-                    <ItemGroup
+                    <ItemGroup surface="none"
                         title={first ? t('homeGovernance.teams') : undefined}
                         action={first ? createAction : undefined}
                         virtualizedSegment={{ first, last }}
                     >
-                        {chunk.map((row) => (
-                            <TeamRow
-                                key={row.address.teamId}
-                                row={row}
-                                showHome={false}
-                                onPress={openTeam}
-                            />
-                        ))}
+                        {/* A browse list lies flat, its rows parted by the one list-row rule across chunks (LISTS-BUILD). */}
+                        <CollectionRows continued={!last}>
+                            {chunk.map((row) => (
+                                <TeamRow
+                                    key={row.address.teamId}
+                                    row={row}
+                                    showHome={false}
+                                    onPress={openTeam}
+                                />
+                            ))}
+                        </CollectionRows>
                     </ItemGroup>
                 ));
             }
@@ -218,7 +222,7 @@ const HomeTeams = React.memo(function HomeTeams(
         if (showArchived) {
             if (archivedLoading && archived.archivedRows.length === 0) {
                 add('archived-loading', () => (
-                    <ItemGroup title={t('teams.directory.archivedSection')}>
+                    <ItemGroup surface="none" title={t('teams.directory.archivedSection')}>
                         <ItemLoadStateRows testID="home-teams-archived-loading" state={{ kind: 'loading' }} rows={2} accessibilityLabel={t('teams.directory.archivedSection')} />
                     </ItemGroup>
                 ));
@@ -227,24 +231,26 @@ const HomeTeams = React.memo(function HomeTeams(
                 const chunk = segment.items;
                 const { first, last } = segment;
                 add(`archived:${chunk[0]!.address.teamId}`, () => (
-                    <ItemGroup
+                    <ItemGroup surface="none"
                         title={first ? t('teams.directory.archivedSection') : undefined}
                         virtualizedSegment={{ first, last }}
                     >
-                        {chunk.map((row) => (
-                            <TeamRow
-                                key={`archived:${row.address.teamId}`}
-                                row={row}
-                                showHome={false}
-                                onPress={openTeam}
-                            />
-                        ))}
+                        <CollectionRows continued={!last}>
+                            {chunk.map((row) => (
+                                <TeamRow
+                                    key={`archived:${row.address.teamId}`}
+                                    row={row}
+                                    showHome={false}
+                                    onPress={openTeam}
+                                />
+                            ))}
+                        </CollectionRows>
                     </ItemGroup>
                 ));
             }
             if (archived.partial && !archivedLoading) {
                 add('archived-failure', () => (
-                    <ItemGroup title={archived.archivedRows.length === 0 ? t('teams.directory.archivedSection') : undefined}>
+                    <ItemGroup surface="none" title={archived.archivedRows.length === 0 ? t('teams.directory.archivedSection') : undefined}>
                         <ItemLoadStateRows
                             testID="home-teams-archived"
                             state={{

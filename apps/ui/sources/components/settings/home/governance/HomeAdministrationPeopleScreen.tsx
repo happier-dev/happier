@@ -8,6 +8,7 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
@@ -145,7 +146,7 @@ const PeopleRoster = React.memo(function PeopleRoster(
                     return [{
                         key: 'search-loading',
                         render: () => (
-                            <ItemGroup>
+                            <ItemGroup surface="none">
                                 <ItemLoadStateRows
                                     testID="home-people-search-loading"
                                     state={{ kind: 'loading' }}
@@ -163,7 +164,7 @@ const PeopleRoster = React.memo(function PeopleRoster(
                     return [{
                         key: 'search-failure',
                         render: () => (
-                            <ItemGroup>
+                            <ItemGroup surface="none">
                                 {unsupported ? (
                                     <SurfaceStateCard
                                         testID="home-people-search-unsupported"
@@ -190,7 +191,7 @@ const PeopleRoster = React.memo(function PeopleRoster(
                 return [{
                     key: 'search-empty',
                     render: () => (
-                        <ItemGroup>
+                        <ItemGroup surface="none">
                             <SurfaceStateCard
                                 testID="home-people-search-empty"
                                 kind="empty"
@@ -209,7 +210,8 @@ const PeopleRoster = React.memo(function PeopleRoster(
                 result.push({
                     key: `search:${chunk[0]!.accountId}`,
                     render: () => (
-                        <ItemGroup virtualizedSegment={{ first, last }}>
+                        <ItemGroup surface="none" virtualizedSegment={{ first, last }}>
+                            <CollectionRows continued={!last}>
                             {chunk.map((row) => {
                                 const person = resolveAccountDisplayName({ profile: row.profile, accountId: row.accountId, viewerAccountId: context.scope.accountId });
                                 return (
@@ -222,6 +224,7 @@ const PeopleRoster = React.memo(function PeopleRoster(
                                     />
                                 );
                             })}
+                            </CollectionRows>
                         </ItemGroup>
                     ),
                 });
@@ -234,7 +237,7 @@ const PeopleRoster = React.memo(function PeopleRoster(
             return [{
                 key: 'loading',
                 render: () => (
-                    <ItemGroup>
+                    <ItemGroup surface="none">
                         <ItemLoadStateRows
                             testID="home-people-loading"
                             state={{ kind: 'loading' }}
@@ -250,7 +253,7 @@ const PeopleRoster = React.memo(function PeopleRoster(
             return [{
                 key: 'empty',
                 render: () => (
-                    <ItemGroup>
+                    <ItemGroup surface="none">
                         <SurfaceStateCard testID="home-people-empty" kind="empty" size="line" title={t('homeGovernance.peopleEmpty')} />
                     </ItemGroup>
                 ),
@@ -264,9 +267,12 @@ const PeopleRoster = React.memo(function PeopleRoster(
             result.push({
                 key: `roster:${chunk[0]!.accountId}`,
                 render: () => (
-                    <ItemGroup virtualizedSegment={{ first, last }}>
-                        {chunk.map((row) => <PeopleRosterRow key={row.accountId} row={row}
-                            viewerAccountId={context.scope.accountId} onOpen={open} locale={locale} />)}
+                    <ItemGroup surface="none" virtualizedSegment={{ first, last }}>
+                        {/* A browse list lies flat, its rows parted by the one list-row rule across chunks (LISTS-BUILD). */}
+                        <CollectionRows continued={!last}>
+                            {chunk.map((row) => <PeopleRosterRow key={row.accountId} row={row}
+                                viewerAccountId={context.scope.accountId} onOpen={open} locale={locale} />)}
+                        </CollectionRows>
                     </ItemGroup>
                 ),
             });
@@ -277,7 +283,7 @@ const PeopleRoster = React.memo(function PeopleRoster(
             result.push({
                 key: 'retry',
                 render: () => (
-                    <ItemGroup>
+                    <ItemGroup surface="none">
                         <ItemLoadStateRows
                             testID="home-people"
                             state={{

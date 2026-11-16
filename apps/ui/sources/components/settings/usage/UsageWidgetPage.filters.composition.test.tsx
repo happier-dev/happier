@@ -150,6 +150,12 @@ afterEach(async () => {
     socketBoundary?.dispose(); socketBoundary = undefined;
 });
 
+
+/** The page scope one filter shows: its chip's selection, which the bar reads from the mounted page context. */
+function shownScope(bar: { scopeFilters: readonly { field: string; selected: readonly string[] }[] }, field: string): readonly string[] {
+    return bar.scopeFilters.find((filter) => filter.field === field)?.selected ?? [];
+}
+
 describe('mounted Usage page scope commands', () => {
     it('keeps Overview entries, projections and subscriptions bounded across twenty settled period and filter switches', async () => {
         const { Session: InspectorSession } = await import('node:inspector');
@@ -256,7 +262,7 @@ describe('mounted Usage page scope commands', () => {
                 await waitForHomeGovernance(() => {
                     expect(summary()?.requestedQuery.period.relative).toBe(period);
                     expect(summary()?.shownQuery?.period.relative).toBe(period);
-                    expect(summary()?.requestedQuery.machines).toEqual(screen.findByType(UsageFilterBar).props.page.scope.machines);
+                    expect(summary()?.requestedQuery.machines).toEqual(shownScope(screen.findByType(UsageFilterBar).props, 'machines'));
                     expect(summary()?.shownQuery?.machines).toEqual(summary()?.requestedQuery.machines);
                     expect(summary()?.pending).toBe(false);
                     expect(summary()?.accounting).toBeDefined();
@@ -427,7 +433,8 @@ describe('mounted Usage page scope commands', () => {
             expect(chip(field).selectedIds.has(option.id)).toBe(true);
             await waitForHomeGovernance(() => expect(ledger()).toHaveLength(count));
             if (selection.startsWith('unnamed')) expect(ledger()[0], 'Selecting the folded group preserves its entire unfiltered row total').toEqual(unnamedRow);
-            expect(screen.findByType(UsageFilterBar).props.page.scope[field]).toEqual([...keys]);
+            // The page scope carries the exact keys (a folded Project group expands to every key in it); the widgets read it.
+            expect(screen.findByType(UsageProjectLedgerWidget).props.query[field]).toEqual([...keys]);
             const all = chip(field).options[0]!;
             await screen.pressByTestIdAsync(`${chip(field).testID}:${all.id}`);
             await screen.pressByTestIdAsync(chip(field).testID);
@@ -465,13 +472,13 @@ describe('mounted Usage page scope commands', () => {
         for (const basis of ['estimated', 'reported', 'api_equivalent', 'auto'] as const) {
             await screen.pressByTestIdAsync(chip().testID);
             await flushHookEffects({ cycles: 10 });
-            const pageTitle = describeUsageWidgetSlotValue('costBasis', basis, screen.findByType(UsageFilterBar).props.page.period);
+            const pageTitle = describeUsageWidgetSlotValue('costBasis', basis, screen.findByType(UsageFilterBar).props.period);
             expect(reader!.readCurrentUiContext()!.commands.some(command => command.title === pageTitle),
                 'The foreground chooser withholds the page command').toBe(false);
             await screen.pressByTestIdAsync(`${chip().testID}:${basis}`);
             await flushHookEffects({ cycles: 40 });
             expect(chip().selectedId).toBe(basis);
-            expect(screen.findByType(UsageFilterBar).props.page.scope.costBasis).toBe(basis);
+            expect(screen.findByType(UsageFilterBar).props.costBasis).toBe(basis);
             expect(screen.findByType(UsageWidgetPage).props.initialFilters.costMode).toBe(basis);
             await waitForHomeGovernance(() => {
                 const queries = bodyQueries();
@@ -520,12 +527,12 @@ describe('mounted Usage page scope commands', () => {
         try {
             if (selection === 'period') {
                 await invoke(t(getUsagePeriodDefinition('30days').translationKey));
-                expect(screen.findByType(UsageFilterBar).props.page.period).toBe('30days');
+                expect(screen.findByType(UsageFilterBar).props.period).toBe('30days');
             } else {
                 const filter = machineFilter()!;
                 const option = filter.options.find((value: { id: string }) => value.id === 'machine-a')!;
                 await invoke(`${filter.label}: ${option.label}`);
-                expect(screen.findByType(UsageFilterBar).props.page.scope.machines).toEqual(['machine-a']);
+                expect(shownScope(screen.findByType(UsageFilterBar).props, 'machines')).toEqual(['machine-a']);
             }
             expect.soft(posts(), `${selection} layout admission cannot acquire under UI authority`).toBe(before);
             expect.soft(screen.findAllByType(SurfaceStateCard).some(node => node.props.diagnosticCode === 'action_disabled')).toBe(true);
@@ -573,7 +580,7 @@ describe('mounted Usage page scope commands', () => {
                 key: JSON.stringify([filter.id, option.id]), title: `${filter.label}: ${option.label}`,
             }))), ...screen.findByType(UsageFilterBar).props.costBasisOptions.map((basis: UsageWidgetPageScope['costBasis']) => ({
                 key: JSON.stringify(['costBasis', basis]),
-                title: describeUsageWidgetSlotValue('costBasis', basis, screen.findByType(UsageFilterBar).props.page.period),
+                title: describeUsageWidgetSlotValue('costBasis', basis, screen.findByType(UsageFilterBar).props.period),
             }))];
         const ids = (choices: ReturnType<typeof offered>) => {
             const seen = new Map<string, number>();
@@ -773,8 +780,7 @@ describe('mounted Usage page scope commands', () => {
             expect(reader!.readCurrentUiContext()!.commands.some(command => command.title === t('usage.presets.costs'))).toBe(false);
         }
         await invoke(t(getUsagePeriodDefinition('30days').translationKey));
-        expect(toolbar().page.period).toBe('30days');
-        expect(toolbar().page.scope.session).toBe(sessionId ?? null);
+        expect(toolbar().period).toBe('30days');
         const filters = toolbar().scopeFilters;
         expect(filters.map((filter: { field: string }) => filter.field)).toEqual(sessionId ? [] : ['sources', 'agents', 'machines', 'projects']);
         expect(reader!.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(expect.arrayContaining(
@@ -783,10 +789,10 @@ describe('mounted Usage page scope commands', () => {
             const sourceFilter = filters.find((filter: { field: string }) => filter.field === 'sources');
             const source = sourceFilter.options.find((option: { id: string }) => option.id === 'native');
             await invoke(`${sourceFilter.title}: ${source.label}`);
-            expect(toolbar().page.scope.sources).toEqual(['native']);
+            expect(shownScope(toolbar(), 'sources')).toEqual(['native']);
         }
         await invoke(t('usage.board.page.costBasisReported'));
-        expect(toolbar().page.scope.costBasis).toBe('reported');
+        expect(toolbar().costBasis).toBe('reported');
         if (!sessionId) {
             holdRead = true;
             await invoke(t('usage.presets.costs'));

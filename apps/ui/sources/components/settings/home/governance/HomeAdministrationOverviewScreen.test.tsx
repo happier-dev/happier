@@ -34,6 +34,9 @@ const modal = vi.hoisted(() => ({
     prompt: null as null | { mockResolvedValueOnce: (value: string | null) => void },
 }));
 
+// The Team field's menu opens in place, so its choices are part of the rendered tree.
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 vi.mock('@/components/ui/lists/virtualized', () => ({
     VirtualizedList: (props: Record<string, any>) => React.createElement(
         'VirtualizedList',
@@ -498,10 +501,14 @@ describe('Invite people', () => {
         });
 
         const screen = await renderDialog(home);
-        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-invite-people-team:team-2'));
+        // The Team is one field, whatever the count: the Teams stay in its menu until it opens (D-B).
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-invite-people-team.trigger'));
+        expect(ids(screen)).not.toContain('home-invite-people-team:team-2');
         expect(ids(screen)).not.toContain('team-invite-submit');
 
-        await act(async () => screen.pressByTestId('home-invite-people-team:team-2'));
+        await screen.pressByTestIdAsync('home-invite-people-team.trigger');
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-invite-people-team:team-2'));
+        await screen.pressByTestIdAsync('home-invite-people-team:team-2');
         await waitForHomeGovernance(() => expect(ids(screen)).toContain('team-invite-submit'));
         expect(chromeTitles.at(-1)).toBe('teams.invitations.inviteTitle(team=Design)');
     });

@@ -22,6 +22,7 @@ import {
   fillUsageMixCalendar,
   fillUsageTrendCalendar,
   usageAxisTicks,
+  usageDailyBarGeometry,
   usageSeriesValueFormatter,
   usageVolumeSeries,
   usageSourceTimelineSeries,
@@ -253,16 +254,13 @@ export function UsageDailyWidget(props: UsageBodyProps) {
         series: drawnSeries,
         size: compact ? 'tile' : 'full',
         viewportHeight: height,
-        barGap: count > 45 ? 2 : count > 20 ? 4 : 6,
-        barMinHeight: 0,
+        ...usageDailyBarGeometry(count),
         axisTicks,
         ...(leads ? { leads } : {}),
         // Money scales to the data: a small-data week's $0.002 days stand as bars, never flattened under a cent floor
         // (USAGE-ACCEPT #13). An all-zero week still rests at the chart's own empty baseline.
         ...(metric === 'cost' ? {} : { minimumMaximum: 1 }),
-        showGrid: true,
         showScaleValues: !measuredZeroWeek,
-        scaleGutter: 44,
         showPeakValue: !measuredZeroWeek && dailyShowsPeak(phone, compact),
         // A hatched day is keyed in the legend, so a day with no figure (Cost: no price) reads as one beside the totals.
         showLegend: !compact && !measuredZeroWeek && (series.length > 1 || hasGapDay),

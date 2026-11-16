@@ -424,14 +424,18 @@ export function useCollectionPhonePageRows(): boolean {
  * A run of a list's rows, flat on the plane or the phone page (owner 2026-11-15: no card per list): it states their
  * order, so each row draws the one list-row rule under it while another row follows, and none beside the selected one.
  */
-export function CollectionRows(props: Readonly<{ children: React.ReactNode }>) {
+export function CollectionRows(props: Readonly<{
+    children: React.ReactNode;
+    /** Another run of the same list follows this one (the next chunk of a virtualized list), so its last row is followed too. */
+    continued?: boolean;
+}>) {
     const rows = flattenItemGroupElementChildren(props.children);
     return (
         <>
             {rows.map((row, index) => {
                 const next = rows[index + 1];
                 return (
-                    <CollectionRowOrder key={row.key ?? index} followed={next !== undefined}
+                    <CollectionRowOrder key={row.key ?? index} followed={next !== undefined || props.continued === true}
                         precedesSelected={(next?.props as { selected?: unknown } | undefined)?.selected === true}>
                         {row}
                     </CollectionRowOrder>

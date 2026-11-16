@@ -6,17 +6,27 @@ import type {
     TeamCredentialUsageQueryResultV1,
 } from '@happier-dev/protocol/teams';
 
-import { StackedSeriesChart, UsagePeriodSummaryBody, type UsageSummaryMetric } from '@happier-dev/plugin-ui/presentation';
+import { UsageDailyChart, UsagePeriodSummaryBody, type UsageSummaryMetric } from '@happier-dev/plugin-ui/presentation';
 import { useUnistyles } from 'react-native-unistyles';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
-import { usageSeriesFrame, usageSeriesTooltip, usageSeriesValueFormatter, useUsageSeriesMotion, usageVolumeLens } from '@/components/settings/usage/usageSeriesPresentation';
+import { UsageFilterBar } from '@/components/settings/usage/UsageFilterBar';
+import { usageSignatureAccent } from '@/components/settings/usage/usageAccent';
+import {
+    usageAxisTicks,
+    usageDailyBarGeometry,
+    usageSeriesValueFormatter,
+    usageVolumeSeries,
+    useUsageSeriesLens,
+    useUsageSeriesMotion,
+} from '@/components/settings/usage/usageSeriesPresentation';
+import { useUsageDailyChartShape } from '@/components/settings/usage/widgets/UsageDailyWidget';
+import { useUsageChartDetails } from '@/components/settings/usage/widgets/usageMountedControls';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -84,6 +94,8 @@ function metricLabel(metric: UsageVolumeMetric): string {
     return metric === 'tokens' ? t('usage.tokens') : t('usage.cost');
 }
 
+const EMPTY_SCOPE_FILTERS: readonly never[] = [];
+
 const COST_MODE_LABEL_KEYS = {
     auto: 'usage.auto',
     reported: 'usage.reported',
@@ -108,13 +120,6 @@ function costProvenanceLabel(
     if (cost.reportedUsd !== null && cost.reportedUsd > 0) return t('usage.reported');
     if (cost.estimatedUsd !== null && cost.estimatedUsd > 0) return t('usage.estimated');
     return undefined;
-}
-
-/** A bucket's full date for exact values and Details, where the axis label may shorten it. */
-function seriesBucketDate(timestampSeconds: number, period: UsagePeriod): string {
-    const hourly = getUsagePeriodDefinition(period).granularity === 'hour';
-    return formatWithCachedDateTimeFormatter(new Date(timestampSeconds * 1000), undefined,
-        hourly ? { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' } : { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function seriesBucketLabel(timestampSeconds: number, period: UsagePeriod): string {
@@ -167,13 +172,15 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     // the effective cost under the chosen mode, so the request, its cursor and
     // any export all carry it.
     const [costMode, setCostMode] = React.useState<UsageCostMode>('auto');
-    const [showSeriesList, setShowSeriesList] = React.useState(false);
     const [exportBusy, setExportBusy] = React.useState(false);
     const [exportNotice, setExportNotice] = React.useState<string | null>(null);
     // The end stays stable between refreshes, but a refresh — explicit, or woken
     // by the Home recording usage for this resource — always moves it to the
     // current instant instead of pinning the route's mount time.
     const [nowMs, setNowMs] = React.useState(() => Date.now());
+    // The filter strip's writers: this screen's own read, applied at once.
+    const changePeriod = React.useCallback(async (next: UsagePeriod) => { setPeriod(next); return true; }, []);
+    const changeCostMode = React.useCallback(async (next: UsageCostMode) => { setCostMode(next); return true; }, []);
 
     const range = React.useMemo(() => Object.freeze({
         startMs: resolveTeamCredentialUsageStartTimeSeconds(period, nowMs) * 1000,
@@ -361,39 +368,27 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
         };
     });
     const resourceName = view?.displayName ?? props.displayName;
+    const metricOptions = chartMetrics.map((candidate) => ({ id: candidate, label: metricLabel(candidate) }));
 
     return (
         <>
-            {/* What the page shows: one sheet of short choices, each beside its label (beneath it on a phone). */}
-            <ItemGroup>
-                <SegmentedChoiceItem<UsagePeriod>
-                    testIDPrefix="team-credential-usage-period"
-                    title={t('teams.credentials.usage.rangeLabel')}
-                    options={USAGE_PERIODS.map((candidate) => ({
-                        id: candidate,
-                        label: t(getUsagePeriodDefinition(candidate).shortTranslationKey),
-                    }))}
-                    value={period}
-                    onChange={setPeriod}
+            {/* What the page shows, as on the account Usage page: the period, then the metric and the cost basis,
+                one inline strip of one-press filters above the figures, never configuration rows. */}
+            <ItemGroup surface="none">
+                <UsageFilterBar<UsageVolumeMetric>
+                    testID="team-credential-usage-filters"
+                    period={period}
+                    costBasis={costMode}
+                    coverageIncomplete={false}
+                    scopeFilters={EMPTY_SCOPE_FILTERS}
+                    costBasisOptions={costModes}
+                    costBasisPending={false}
+                    onPeriodChange={changePeriod}
+                    onCostBasisChange={changeCostMode}
+                    metricOptions={metricOptions}
+                    metric={selectedMetric}
+                    onMetricChange={chartMetrics.length > 1 ? setMetric : null}
                 />
-                {chartMetrics.length > 1 ? (
-                    <SegmentedChoiceItem<UsageVolumeMetric>
-                        testIDPrefix="team-credential-usage-metric"
-                        title={t('usage.summary.export.metric')}
-                        options={chartMetrics.map((candidate) => ({ id: candidate, label: metricLabel(candidate) }))}
-                        value={selectedMetric}
-                        onChange={setMetric}
-                    />
-                ) : null}
-                {costModes.length > 1 ? (
-                    <SegmentedChoiceItem<UsageCostMode>
-                        testIDPrefix="team-credential-usage-cost-mode"
-                        title={t('usage.costMode')}
-                        options={costModes.map((candidate) => ({ id: candidate, label: t(COST_MODE_LABEL_KEYS[candidate]) }))}
-                        value={costMode}
-                        onChange={setCostMode}
-                    />
-                ) : null}
             </ItemGroup>
 
             {/* Totals already read stay on screen while the next range loads. */}
@@ -411,8 +406,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
             <TeamCredentialUsageSummary result={result} period={period} costMode={costMode}
                 showRequests={showRequests} completeness={completeness} costUsd={costUsd} series={series}
                 chartMetrics={chartMetrics} selectedMetric={selectedMetric}
-                seriesMotion={seriesMotion} showSeriesList={showSeriesList}
-                onToggleSeriesList={() => setShowSeriesList(current => !current)}
+                seriesMotion={seriesMotion}
                 refreshing={usage.status === 'loading'} onRefresh={refreshToNow} />
 
             <ItemGroup><DropdownMenu open={breakdownOpen} onOpenChange={setBreakdownOpen} selectedId={breakdown ?? 'none'} items={[{ id: 'none', testID: 'team-credential-usage-breakdown:none', title: t('teams.credentials.usage.breakdownNone') }, ...dimensions.map((id) => ({ id, testID: `team-credential-usage-breakdown:${id}`, title: usageBreakdownLabel(id) }))]} onSelect={(id) => setBreakdown(id === 'none' ? null : dimensions.find((dimension) => dimension === id) ?? breakdown)} itemTrigger={{ title: t('teams.credentials.usage.breakdownLabel'), subtitle: administers ? undefined : t('teams.credentials.usage.breakdownRestricted'), itemProps: { testID: 'team-credential-usage-breakdown-trigger' } }} /></ItemGroup>
@@ -654,25 +648,41 @@ export function TeamCredentialUsageSummary(props: Readonly<{
     showRequests: boolean;
     completeness: string;
     costUsd: number | null;
-    /** `recorded: false` is an empty slot of the time axis; the table lists recorded periods only. */
+    /** One point per bucket of the range; a bucket the Home recorded nothing for is a zero at the baseline. */
     series: readonly (UsageTrendPoint & { requests: number; recorded?: boolean })[];
     chartMetrics: readonly UsageVolumeMetric[];
     selectedMetric: UsageVolumeMetric;
     seriesMotion: ReturnType<typeof useUsageSeriesMotion>;
-    showSeriesList: boolean;
-    onToggleSeriesList: () => void;
     refreshing: boolean;
     onRefresh: () => void;
 }>): React.ReactElement {
     const { result, period, costMode, showRequests, completeness, costUsd, series,
-        chartMetrics, selectedMetric, seriesMotion, showSeriesList, onToggleSeriesList,
-        refreshing, onRefresh } = props;
+        chartMetrics, selectedMetric, seriesMotion, refreshing, onRefresh } = props;
     const coverage = result?.coverage ?? null;
     const { theme } = useUnistyles();
+    const currency = result?.totals.cost.currency ?? 'USD';
+    const format = usageSeriesValueFormatter(selectedMetric, currency);
+    const metricName = selectedMetric === 'requests' && coverage !== null
+        ? usageRequestMetricLabel(coverage.requestCountCoverage)
+        : metricLabel(selectedMetric);
+    // The account Daily chart's own series, shape, lens and exact-values disclosure: the period fills the
+    // chart's width, one bar per bucket, and the same events read the same on both pages.
+    const chartSeries = React.useMemo(() => usageVolumeSeries(series, selectedMetric, metricName, usageSignatureAccent(theme))
+        .map((entry) => ({ ...entry, points: entry.points.map((point) => {
+            const label = seriesBucketLabel(Number(point.x), period);
+            return { ...point, x: label, label };
+        }) })), [series, selectedMetric, metricName, theme, period]);
+    const axisTicks = React.useMemo(() => usageAxisTicks(chartSeries[0]?.points.map((point) => point.label ?? '') ?? []), [chartSeries]);
+    const shape = useUsageDailyChartShape();
+    const charted = result !== null && series.length > 0 && chartMetrics.length > 0;
+    const details = useUsageChartDetails(t('usage.usageOverTime'), charted);
+    const lens = useUsageSeriesLens({ series: chartSeries, format, accentColor: theme.colors.text.primary,
+        testID: 'team-credential-usage-series.lens' });
     return <>
             {result !== null ? (
                 <ItemGroup
-                    title={t('teams.credentials.usage.title')}
+                    // The page is "Usage"; this section is the period's figures, named as on the account page.
+                    title={t('usage.widgets.usage_period_summary')}
                     description={completeness || undefined}
                     // Usage follows new writes by itself; this brings the period's end up to now.
                     action={(
@@ -697,47 +707,30 @@ export function TeamCredentialUsageSummary(props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            {result !== null && series.length > 0 && chartMetrics.length > 0 ? (
+            {charted ? (
                 <ItemGroup title={t('usage.usageOverTime')}>
-                    <StackedSeriesChart
-                        testID="team-credential-usage-series"
-                        theme={projectPluginUiTheme(theme)} label={metricLabel(selectedMetric)} variant="bar" size="full" minimumMaximum={1}
-                        {...seriesMotion} showReadout={false}
-                        unknownLabel={t('common.unavailable')}
-                        barWidth={26} barSlotWidth={42} barGap={10} barLeadingInset={4} barMinHeight={10} barTrackColor={theme.colors.surface.inset}
-                        barEmphasis="maximum" showPeakValue showPointLabels showScaleValues
-                        series={[{ id: selectedMetric, label: selectedMetric === 'requests' ? usageRequestMetricLabel(result.coverage.requestCountCoverage) : metricLabel(selectedMetric), color: theme.colors.text.link,
-                            points: series.map((point) => ({ id: String(point.timestamp), x: point.timestamp, label: seriesBucketLabel(point.timestamp, period),
-                                y: selectedMetric === 'tokens' ? point.tokens : selectedMetric === 'cost' ? point.cost : point.requests ?? null })) }]}
-                        coordinateFormatter={(timestampSeconds) => seriesBucketDate(timestampSeconds, period)}
-                        valueFormatter={usageSeriesValueFormatter(selectedMetric, result.totals.cost.currency)}
-                        renderBucket={usageSeriesTooltip(theme.colors.text.link, 'usage-volume-point-trigger', { label: metricLabel(selectedMetric),
-                            format: usageSeriesValueFormatter(selectedMetric, result.totals.cost.currency),
-                            formatCoordinate: (timestampSeconds) => seriesBucketDate(timestampSeconds, period) })}
-                        renderFrame={usageSeriesFrame(series.length, { accentColor: theme.colors.text.link,
-                            resolveContent: usageVolumeLens(series, result.totals.cost.currency, (timestamp) => seriesBucketLabel(timestamp, period), usageRequestMetricLabel(result.coverage.requestCountCoverage)) })}
-                    />
-                    <Item
-                        testID="team-credential-usage-series-list-toggle"
-                        title={showSeriesList ? t('usage.showLess') : t('usage.showAll')}
-                        onPress={onToggleSeriesList}
-                        showChevron={false}
-                    />
-                    {showSeriesList ? series.filter((point) => point.recorded !== false).map((point) => (
-                        <Item
-                            key={point.timestamp}
-                            testID="team-credential-usage-series-list-row"
-                            title={seriesBucketLabel(point.timestamp, period)}
-                            // The table alternative reads the same metric the
-                            // chart draws; a chart-only fact is not accessible.
-                            detail={selectedMetric === 'cost'
-                                ? formatUsageCost(point.cost, result.totals.cost.currency)
-                                : selectedMetric === 'requests'
-                                    ? `${formatTokenCountLong(point.requests)} ${usageRequestMetricLabel(result.coverage.requestCountCoverage)}`
-                                    : `${formatTokenCountLong(point.tokens)} ${t('usage.tokens')}`}
-                            showChevron={false}
-                        />
-                    )) : null}
+                    <SectionContentRow>
+                        <UsageDailyChart theme={projectPluginUiTheme(theme)} gap={theme.space.s10} testID="team-credential-usage-series" chart={{
+                            ...details,
+                            ...seriesMotion,
+                            ...lens,
+                            label: metricName,
+                            series: chartSeries,
+                            size: 'full',
+                            viewportHeight: shape.plotPx,
+                            ...usageDailyBarGeometry(series.length),
+                            axisTicks,
+                            // Money scales to the data; a count never draws a fractional axis.
+                            ...(selectedMetric === 'cost' ? {} : { minimumMaximum: 1 }),
+                            showScaleValues: true,
+                            showPeakValue: shape.peak,
+                            unknownLabel: t('common.unavailable'),
+                            showReadout: false,
+                            valuesLabel: t('usage.showAll'),
+                            valuesCollapseLabel: t('usage.showLess'),
+                            valueFormatter: format,
+                        }} />
+                    </SectionContentRow>
                 </ItemGroup>
             ) : null}
 

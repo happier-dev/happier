@@ -806,6 +806,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                 />
                 <TeamLogoPicker
                     identityId={committedTeam?.team.id ?? draftMarkIdentity}
+                    monogram={committedTeam?.team.name ?? name}
                     testIDPrefix="teams-create"
                     currentLogo={null}
                     selectedSource={committedTeam?.logoSource ?? logoSource}

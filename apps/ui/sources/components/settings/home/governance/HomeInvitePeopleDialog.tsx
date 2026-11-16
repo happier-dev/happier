@@ -8,6 +8,7 @@ import { TeamSection } from '@/components/settings/teams/TeamSection';
 import { teamsCreatePath } from '@/components/settings/teams/teamsRoutes';
 import { TeamInvitationForm } from '@/components/settings/teams/invitations/TeamInvitationCreateScreen';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import type { PageHeaderPrimaryAction } from '@/components/ui/layout/PageHeader';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -69,7 +70,7 @@ const TeamInvitePeople = React.memo(function TeamInvitePeople(props: Readonly<{
 
 /**
  * One Team's form inside the dialog. The dialog is titled by that Team and says where people land
- * (lab `tsInvites-I`): "Invite to Platform · They join Personal Home as part of Platform." Once the
+ * (lab `tsInvites-I`): "Invite to Platform · Everyone you invite joins this Home as part of this Team." Once the
  * invitation exists the dialog becomes it (lab `tsInvites-K`): "Invitation ready". It keeps the
  * generic title only until the Team has been read.
  */
@@ -80,11 +81,11 @@ const TeamInviteForm = React.memo(function TeamInviteForm(props: Readonly<{
 }>) {
     const [issued, setIssued] = React.useState(false);
     const team = props.context.team.name;
-    const home = props.context.homeName;
+    // The title names the Team; the subtitle says "this Team" and "this Home" rather than repeat names.
     useModalCardChrome(props.setChrome, React.useMemo(() => homeInvitePeopleChrome({
         title: issued ? t('teams.invitations.readyTitle') : t('teams.invitations.inviteTitle', { team }),
-        subtitle: t('teams.overview.setup.inviteBody', { home, team }),
-    }), [home, issued, team]));
+        subtitle: t('teams.overview.setup.inviteBody'),
+    }), [issued, team]));
     return <TeamInvitationForm context={props.context} onDone={props.onClose} onIssuedChange={setIssued} />;
 });
 
@@ -117,6 +118,7 @@ const HomeInvitePeopleChooser = React.memo(function HomeInvitePeopleChooser(prop
         router.push(teamsCreatePath({ administrationServerId: props.serverId }) as never);
     }, [onClose, props.serverId, router]);
     const [chosenTeamId, setChosenTeamId] = React.useState<string | null>(null);
+    const teamItems = React.useMemo(() => teams.map((row) => ({ id: row.address.teamId, title: row.team.name })), [teams]);
     const selected = teams.length === 1
         ? teams[0]!
         : teams.find((row) => row.address.teamId === chosenTeamId) ?? null;
@@ -167,24 +169,26 @@ const HomeInvitePeopleChooser = React.memo(function HomeInvitePeopleChooser(prop
                     />
                 </ItemGroup>
             ) : teams.length > 1 ? (
-                <ItemGroup
-                    title={t('homeGovernance.invite.team')}
-                    accessibilityRole="radiogroup"
-                    accessibilityLabel={t('homeGovernance.invite.team')}
-                >
-                    {teams.map((row) => (
-                        <Item
-                            key={row.address.teamId}
-                            testID={`home-invite-people-team:${row.address.teamId}`}
-                            title={row.team.name}
-                            selected={row.address.teamId === selected?.address.teamId}
-                            accessibilityRole="radio"
-                            webRole="radio"
-                            accessibilityChecked={row.address.teamId === selected?.address.teamId}
-                            onPress={() => setChosenTeamId(row.address.teamId)}
-                            showChevron={false}
-                        />
-                    ))}
+                // One field, whatever the count (a Home can hold dozens of Teams): the dialog keeps its
+                // height and the Teams stay one search away in the field's menu.
+                <ItemGroup>
+                    <Item
+                        title={t('homeGovernance.invite.team')}
+                        accessoryLayout="adaptive"
+                        showChevron={false}
+                        rightElement={(
+                            <ValueFieldSelect
+                                testID="home-invite-people-team"
+                                label={t('homeGovernance.invite.team')}
+                                items={teamItems}
+                                selectedId={selected?.address.teamId ?? null}
+                                onSelect={setChosenTeamId}
+                                fill
+                                placeholder={t('homeGovernance.invite.teamChoose')}
+                                searchPlaceholder={t('homeGovernance.invite.teamSearch')}
+                            />
+                        )}
+                    />
                 </ItemGroup>
             ) : null}
 

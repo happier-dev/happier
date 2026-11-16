@@ -347,10 +347,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
                         copyLabel={t('teams.invitations.copyLink')}
                         shareLabel={t('teams.invitations.shareLink')}
                         qrAccessibilityLabel={t('teams.invitations.qrLabel')}
-                        description={t('teams.invitations.linkNotice', {
-                            team: context.team.name,
-                            role: teamRoleLabel(role),
-                        })}
+                        description={t('teams.invitations.linkNotice', { role: teamRoleLabel(role) })}
                     />
                 ) : null}
                 {/* The same closing row as the form's: the way on at the far edge, Done as the one primary. */}
@@ -407,7 +404,13 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
                 </ItemGroup>
             ) : null}
 
-            <ItemGroup>
+            {/* What a link gives away is read under the choices and before the buttons that mint it (the
+                dialog's grouped section footer); a refusal stays the actions' own footnote beneath them. */}
+            <ItemGroup
+                description={effectiveDelivery === 'link'
+                    ? t('teams.invitations.linkNotice', { role: teamRoleLabel(role) })
+                    : undefined}
+            >
                 {/* With no mail boundary there is only one way to invite, and a
                     chooser with a single option is noise. The transferable link
                     stays fully usable either way — email is the part that becomes
@@ -494,13 +497,8 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
 
             <ItemGroup surface="none">
                 <SectionButtonRow
-                    footnote={error ?? (effectiveDelivery === 'link'
-                        ? t('teams.invitations.linkNotice', {
-                            team: context.team.name,
-                            role: teamRoleLabel(role),
-                        })
-                        : null)}
-                    footnoteTone={error ? 'danger' : 'secondary'}
+                    footnote={error}
+                    footnoteTone="danger"
                     trailing={(
                         <>
                             {props.onDone ? (

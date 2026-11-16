@@ -349,6 +349,7 @@ const TeamLogoSection = React.memo(function TeamLogoSection(props: Readonly<{
     return (
         <TeamLogoPicker
             identityId={context.address.teamId}
+            monogram={context.team.name}
             testIDPrefix="team-settings"
             currentLogo={context.team.logo}
             disabled={!context.team.capabilities.manageSettings || !context.canMutate || removing}

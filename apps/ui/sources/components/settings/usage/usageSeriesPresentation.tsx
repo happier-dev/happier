@@ -1,5 +1,5 @@
 import { useCallback, useMemo, type ReactNode } from 'react';
-import { StyleSheet as RNStyleSheet, View } from 'react-native';
+import { StyleSheet as RNStyleSheet } from 'react-native';
 import { describeHappierSeriesBucket, type HappierSeries, type HappierSeriesBucket, type StackedSeriesChartProps } from '@happier-dev/plugin-ui/presentation';
 
 import { resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
@@ -8,8 +8,8 @@ import { resolveUsageCostBasis, resolveUsageCostForSelection } from '@happier-de
 import { type UsagePageCostSelection, type UsageCostMode } from '@happier-dev/protocol/usage/usageCostFacts';
 import { type UsageAnalyticsCoverage, type UsageAnalyticsQueryResponse} from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
-import { ChartTooltip, HorizontalChartFrame } from '@/components/ui/charts';
-import { resolveUsageMeasuredTokens, type UsageHourRhythm, type UsageModelMix, type UsageTrendPoint } from '@/sync/api/account/usageAnalytics';
+import { ChartTooltip } from '@/components/ui/charts';
+import { resolveUsageMeasuredTokens, type UsageHourRhythm, type UsageModelMix } from '@/sync/api/account/usageAnalytics';
 import { formatUsageHourLabel } from '@/sync/api/account/formatUsageRhythmLabel';
 import { t } from '@/text';
 import { formatTokenCount, formatTokenCountLong, formatUsageCost } from '@/utils/format/usageNumbers';
@@ -235,27 +235,18 @@ export function usageSeriesTooltip(accentColor: string, triggerTestID: string, o
     </ChartTooltip>;
 }
 
-export function usageSeriesFrame(pointCount: number, lens?: Readonly<{ accentColor: string; resolveContent: (index: number) => ScrubLensContent | null }>) {
-    const width = Math.max(640, pointCount * 58 + 18);
-    return (visual: ReactNode) => <HorizontalChartFrame contentWidth={width}><View style={{ width }}>
-        {lens ? <ScrubLens layout={{ leadingPx: 4, cellPx: 42, gapPx: 10, count: pointCount }}
-            resolveContent={lens.resolveContent} accentColor={lens.accentColor}>{visual}</ScrubLens> : visual}
-    </View></HorizontalChartFrame>;
-}
-
-export function usageVolumeLens(points: readonly (UsageTrendPoint & Readonly<{ requests?: number }>)[], currency: string,
-    label: (timestamp: number) => string = (timestamp) => volumeBucketLabel(timestamp, points.length),
-    requestLabel = t('usage.events')) {
-    return (index: number): ScrubLensContent | null => {
-        const point = points[index];
-        if (!point) return null;
-        return { title: label(point.timestamp), rows: [
-            ...(point.requests === undefined ? [] : [{ label: requestLabel, value: formatTokenCountLong(point.requests) }]),
-            { label: t('usage.tokens'), value: formatTokenCountLong(point.tokens) },
-            { label: t('usage.cost'), value: formatUsageCost(point.cost, currency) },
-            { label: t('usage.events'), value: point.reportCount.toLocaleString() },
-        ] };
-    };
+/**
+ * A period's daily bars fitted to the chart's width: the gap narrows as the period lengthens, a quiet day
+ * stands at the baseline (no stub that reads as a small value), with the grid and its scale gutter. The
+ * account Daily widget and a shared credential's usage draw their bars through this one geometry.
+ */
+export function usageDailyBarGeometry(bucketCount: number) {
+    return {
+        barGap: bucketCount > 45 ? 2 : bucketCount > 20 ? 4 : 6,
+        barMinHeight: 0,
+        showGrid: true,
+        scaleGutter: 44,
+    } as const;
 }
 
 export function usageSeriesValueFormatter(metric: 'tokens' | 'cost' | 'requests', currency: string) {

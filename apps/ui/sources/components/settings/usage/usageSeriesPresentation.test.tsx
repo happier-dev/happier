@@ -7,7 +7,7 @@ import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThem
 import { lightTheme } from '@/theme';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { fillUsageMixCalendar, fillUsageTrendCalendar, usageAxisTicks, usageSeriesFrame, usageSourceTimelineSeries, usageVolumeSeries, useUsageSeriesLens } from './usageSeriesPresentation';
+import { fillUsageMixCalendar, fillUsageTrendCalendar, usageAxisTicks, usageSourceTimelineSeries, usageVolumeSeries, useUsageSeriesLens } from './usageSeriesPresentation';
 import type { UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { ScrubLens, type ScrubLensContent } from './UsageScrubLens';
 
@@ -140,14 +140,12 @@ describe('usage projection into the shared series renderer', () => {
     it('retains older accounting buckets and the current currency in exact selected values', async () => {
         const points = Array.from({ length: 40 }, (_, index) => ({ timestamp: 1_710_000_000 + index * 86_400, tokens: index, cost: index === 0 ? 0.00004 : index, reportCount: 1 }));
         const screen = await renderScreen(<StackedSeriesChart theme={projectPluginUiTheme(lightTheme)} label="Cost"
-            series={usageVolumeSeries(points, 'cost', 'Cost EUR', lightTheme.colors.text.link)} variant="bar" size="full" testID="volume"
-            renderFrame={usageSeriesFrame(points.length)} />);
+            series={usageVolumeSeries(points, 'cost', 'Cost EUR', lightTheme.colors.text.link)} variant="bar" size="full" testID="volume" />);
         expect(screen.findAllHostsByTestId('volume-bar-0-0')).toHaveLength(1);
         expect(screen.findByTestId('volume')?.props.accessibilityLabel).toContain('Cost EUR 0.00004');
         const first = screen.findByTestId(`volume-bucket-${points[0]!.timestamp}`);
         act(() => pressTestInstance(first, 'volume-bucket'));
         expect(screen.getTextContent()).toContain('0.00004');
-        expect(screen.findByType('ScrollView' as never).props.horizontal).toBe(true);
     });
     it('keeps missing request counts unavailable while a witnessed zero remains zero', () => {
         const series = usageVolumeSeries([

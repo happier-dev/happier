@@ -13,7 +13,6 @@ import {
 } from '@/sync/api/account/usagePeriods';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
-import type { UsageWidgetPageContextState } from './useUsageWidgetPageContext';
 import type { UsageWidgetPageScope } from './usageWidgetPageContext';
 import { USAGE_SCOPE_FILTER_ALL, type UsageWidgetPageFilter } from './useUsageWidgetPageFilters';
 import { getAgentIdentityColor } from '@/agents/catalog/catalog';
@@ -24,14 +23,20 @@ import type { CurrentUiContextCommandInvocation } from '@/components/appShell/cu
 const COST_BASIS_TITLE = { auto: 'usage.board.page.costBasisAuto', reported: 'usage.board.page.costBasisReported',
     estimated: 'usage.board.page.costBasisEstimated', api_equivalent: 'usage.board.page.factApiEquivalent' } as const;
 
+/** The metric choice the account Usage page offers: what its widgets draw. */
+export function usageTokensCostMetricOptions(): readonly Readonly<{ id: 'tokens' | 'cost'; label: string }>[] {
+  return [{ id: 'tokens', label: t('usage.tokens') }, { id: 'cost', label: t('usage.cost') }];
+}
+
 /**
- * The page's one filter bar (lab `d2filter`): period, then each scope slot the widgets follow, then
- * the displayed widgets' own Tokens/Cost and the cost basis slot. Every control writes the mounted
- * page context or the widgets' inputs through their owners; it reads no usage of its own.
+ * A usage page's one filter bar (lab `d2filter`): period, then each scope slot the widgets follow, then
+ * the shown metric and the cost basis slot. Every control writes its caller's owner (the account page
+ * context, or a shared credential's usage read); it reads no usage of its own.
  */
-export function UsageFilterBar(
+export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
   props: Readonly<{
-    page: UsageWidgetPageContextState;
+    period: UsagePeriod;
+    costBasis: UsageWidgetPageScope['costBasis'];
     coverageIncomplete: boolean;
     scopeFilters: readonly UsageWidgetPageFilter[];
     costBasisOptions: readonly UsageWidgetPageScope['costBasis'][];
@@ -39,15 +44,16 @@ export function UsageFilterBar(
     costBasisPending: boolean;
     onPeriodChange(period: UsagePeriod): Promise<boolean>;
     onCostBasisChange(costBasis: UsageWidgetPageScope['costBasis'], callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
-    /** The displayed widgets' shared metric; `null` when they differ or none is shown. */
-    metric: 'tokens' | 'cost' | null;
-    onMetricChange: ((metric: 'tokens' | 'cost') => void) | null;
+    /** The metrics offered, in order; the account page's are `usageTokensCostMetricOptions()`. */
+    metricOptions: readonly Readonly<{ id: M; label: string }>[];
+    /** The shown metric; `null` when the displayed widgets differ or none is shown. */
+    metric: M | null;
+    onMetricChange: ((metric: M) => void) | null;
     metricPending?: boolean;
     testID: string;
   }>,
 ) {
-  const { page } = props;
-  const shownMetric = props.metric ?? 'tokens';
+  const shownMetric = props.metric ?? props.metricOptions[0]?.id ?? null;
   const phone = useDeviceType() === 'phone';
   // Scopes fold into the one Filters chooser only on a phone; a desktop keeps one chip per scope and puts
   // Tokens/Cost and the cost basis on their own right-aligned row on every view, so the bar keeps one shape (R138).
@@ -122,7 +128,7 @@ export function UsageFilterBar(
   );
   // While the read that names the cost bases is outstanding the chip already shows the basis in force (its
   // only known choice), so the trailing edge keeps its width and nothing beside it moves when the rest arrive.
-  const costBasisChoices = props.costBasisPending ? [page.scope.costBasis] : props.costBasisOptions;
+  const costBasisChoices = props.costBasisPending ? [props.costBasis] : props.costBasisOptions;
   const costFilter = React.useMemo(
     (): SelectionListFilter | null =>
       costBasisChoices.length < 2 && !props.costBasisPending
@@ -134,20 +140,17 @@ export function UsageFilterBar(
               id: option,
               label: t(COST_BASIS_TITLE[option]),
             })),
-            selectedId: page.scope.costBasis,
+            selectedId: props.costBasis,
             onChange: (id: string, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => {
               void props.onCostBasisChange(id as UsageWidgetPageScope['costBasis'], callerContext, invocation);
             },
             testID: `${props.testID}.costBasis`,
           },
-    [page.scope.costBasis, costBasisChoices, props.costBasisPending, props.onCostBasisChange, props.testID],
+    [props.costBasis, costBasisChoices, props.costBasisPending, props.onCostBasisChange, props.testID],
   );
   const metricTabs = React.useMemo(
-    () => [
-      { id: 'tokens' as const, label: t('usage.tokens'), disabled: props.metricPending },
-      { id: 'cost' as const, label: t('usage.cost'), disabled: props.metricPending },
-    ],
-    [props.metricPending],
+    () => props.metricOptions.map((option) => ({ ...option, disabled: props.metricPending })),
+    [props.metricOptions, props.metricPending],
   );
   // A phone keeps the period visible and folds every scope into one Filters chooser with the
   // narrowed count and the coverage dot (lab d2filter P); each scope is a section of the same choices.
@@ -180,7 +183,7 @@ export function UsageFilterBar(
       ))}
     </>
   );
-  const metricToggle = props.onMetricChange ? (
+  const metricToggle = props.onMetricChange && shownMetric !== null ? (
         <View style={styles.segment}>
           <SegmentedTabBar
             role="radiogroup"
@@ -208,7 +211,7 @@ export function UsageFilterBar(
         role="radiogroup"
         testIDPrefix={`${props.testID}.period`}
         tabs={periodTabs}
-        activeTabId={page.period}
+        activeTabId={props.period}
         onSelectTab={(period: UsagePeriod) => {
           void props.onPeriodChange(period);
         }}

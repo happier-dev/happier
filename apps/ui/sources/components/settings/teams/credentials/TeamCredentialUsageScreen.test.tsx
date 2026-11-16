@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoveryPageV1Schema, TeamCredentialUsageQueryResultV1Schema } from '@happier-dev/protocol/teams';
 import { addUsageMeasuredTokens, aggregateUsageContributionCosts, createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { act } from 'react-test-renderer';
 import { serializeUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamGroupFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
@@ -27,6 +28,7 @@ const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSn
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
 const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
 const { TeamCredentialUsageScreen } = await import('./TeamCredentialUsageScreen');
+const { SelectionListFilterChip } = await import('@/components/ui/selectionList/SelectionListFilterChips');
 
 vi.mock('@/components/ui/popover', async (importOriginal) =>
     (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
@@ -151,7 +153,8 @@ async function waitForTestId(
     testID: string,
 ): Promise<void> {
     await vi.waitFor(() => {
-        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(testID);
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids, ids.join(' ')).toContain(testID);
     });
 }
 
@@ -214,6 +217,23 @@ async function addRecipientHome(): Promise<string> {
     return serverId;
 }
 
+type RenderedUsage = Awaited<ReturnType<typeof renderScreen>>;
+
+/** The chart's point for the bucket starting at `bucketStartMs` (points are keyed by their start, in seconds). */
+function seriesPoint(screen: RenderedUsage, bucketStartMs: number): { y: number | null } | undefined {
+    return screen.findByType(StackedSeriesChart).props.series[0].points
+        .find((point: { id: string }) => point.id === String(bucketStartMs / 1000));
+}
+
+/** Chooses an offered cost basis through the filter strip's chip (the chip's own chooser is its owner's). */
+async function chooseCostBasisOption(screen: RenderedUsage, option: string, beforeChoose?: () => void) {
+    await waitForTestId(screen, 'team-credential-usage-filters.costBasis');
+    const chip = () => screen.findAllByType(SelectionListFilterChip).find((node) => node.props.filter.id === 'costBasis')!.props.filter;
+    await vi.waitFor(() => expect(chip().options.map((entry: { id: string }) => entry.id)).toContain(option));
+    beforeChoose?.();
+    await act(async () => { chip().onChange(option); });
+}
+
 describe('TeamCredentialUsageScreen', () => {
     it('offers aggregate usage in the Home administration destination owner only for administrators', async () => {
         const { resolveHomeConsoleDestinations } = await import('@/components/settings/home/governance/homeConsoleDestinations');
@@ -258,7 +278,7 @@ describe('TeamCredentialUsageScreen', () => {
             ? 'teams.credentials.usage.homeAdminRequired'
             : 'teams.credentials.usage.teamCredentialManagerRequired');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage.tokens');
-        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-series');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-series.chart');
     });
 
     it.each([{ kind: 'team', teamId: 'team-1' }, { kind: 'home' }] as const)(
@@ -380,15 +400,23 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-series');
+        await waitForTestId(screen, 'team-credential-usage-series.chart');
 
-        // The axis is contiguous (a slot per day of the range, recorded or not); the table lists recorded days.
-        expect(screen.findAllHostsByTestId('usage-volume-point-trigger').length).toBeGreaterThanOrEqual(2);
-        expect(screen.findAllHostsByTestId('team-credential-usage-series-list-row')).toHaveLength(0);
+        // The whole period is one chart fitted to its width, as on the account Usage page (D-D): one bar per
+        // day of the 30-day range, recorded or not, no fixed-width strip, and a quiet day rests at the baseline.
+        const chart = screen.findByType(StackedSeriesChart);
+        const starts = chart.props.series[0].points.map((point: { id: string }) => Number(point.id));
+        expect(starts.length).toBeGreaterThanOrEqual(30);
+        expect(starts.every((start: number, index: number) => index === 0 || start - starts[index - 1] === 86_400)).toBe(true);
+        expect(chart.props.barWidth).toBeUndefined();
+        expect(chart.props.barSlotWidth).toBeUndefined();
+        expect(chart.props.barMinHeight).toBe(0);
+        const recorded = chart.props.series[0].points.filter((point: { y: number | null }) => (point.y ?? 0) > 0);
+        expect(recorded.map((point: { y: number }) => point.y)).toEqual([120, 80]);
 
-        await screen.pressByTestIdAsync('team-credential-usage-series-list-toggle');
-
-        expect(screen.findAllHostsByTestId('team-credential-usage-series-list-row')).toHaveLength(2);
+        // Its exact values are the chart's own one table behind its one toggle, never a second list.
+        expect(screen.findAllHostsByTestId('team-credential-usage-series-list-toggle')).toHaveLength(0);
+        expect(screen.findAllHostsByTestId('team-credential-usage-series.chart-values-toggle')).toHaveLength(1);
     });
 
     it.each(['parts', 'mixed'] as const)('renders measured %s tokens in totals, chart, table and breakdown', async kind => {
@@ -409,14 +437,12 @@ describe('TeamCredentialUsageScreen', () => {
         });
         harness.answer(serverId, USAGE_QUERY_PATH, { body });
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-series');
+        await waitForTestId(screen, 'team-credential-usage-series.chart');
         expect.soft(screen.findAllByTestId('team-credential-usage.tokens')[0]?.props.value).toBe(expected);
-        expect.soft(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-usage-metric:tokens');
-        if (collectRenderedTestIds(screen.tree.toJSON()).includes('team-credential-usage-metric:tokens')) {
-            await screen.pressByTestIdAsync('team-credential-usage-metric:tokens');
-            expect.soft(screen.findByType(StackedSeriesChart).props.series[0].points[0].y).toBe(expected);
-            await screen.pressByTestIdAsync('team-credential-usage-series-list-toggle');
-            expect.soft(screen.findAllByTestId('team-credential-usage-series-list-row')[0]?.props.detail).toContain(String(expected));
+        expect.soft(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-usage-filters.metric:tokens');
+        if (collectRenderedTestIds(screen.tree.toJSON()).includes('team-credential-usage-filters.metric:tokens')) {
+            await screen.pressByTestIdAsync('team-credential-usage-filters.metric:tokens');
+            expect.soft(seriesPoint(screen, Date.UTC(2026, 8, 1))?.y).toBe(expected);
         }
         await screen.pressByTestIdAsync('team-credential-usage-breakdown-trigger');
         await waitForTestId(screen, 'team-credential-usage-breakdown:model');
@@ -450,10 +476,9 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-cost-mode:api_equivalent');
-
-        harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ reportedUsd: 2, apiEquivalentUsd: 9 }) });
-        screen.pressByTestId('team-credential-usage-cost-mode:api_equivalent');
+        await chooseCostBasisOption(screen, 'api_equivalent', () => {
+            harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ reportedUsd: 2, apiEquivalentUsd: 9 }) });
+        });
         await vi.waitFor(() => {
             expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ costMode: 'api_equivalent' });
         });
@@ -470,7 +495,7 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-cost-mode:estimated');
+        await waitForTestId(screen, 'team-credential-usage-filters.costBasis');
         // A mixed automatic total names both of its components.
         expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.caption)
             .toBe('usage.reported + usage.estimated');
@@ -478,7 +503,7 @@ describe('TeamCredentialUsageScreen', () => {
         expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ costMode: 'auto' });
 
         harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ estimatedUsd: 3, reportedUsd: 2 }) });
-        await screen.pressByTestIdAsync('team-credential-usage-cost-mode:estimated');
+        await chooseCostBasisOption(screen, 'estimated');
         await vi.waitFor(() => {
             expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ costMode: 'estimated' });
         });
@@ -488,7 +513,7 @@ describe('TeamCredentialUsageScreen', () => {
         expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.value).toBe(3);
 
         harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ estimatedUsd: 3, reportedUsd: 2 }) });
-        await screen.pressByTestIdAsync('team-credential-usage-cost-mode:reported');
+        await chooseCostBasisOption(screen, 'reported');
         await vi.waitFor(() => {
             expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ costMode: 'reported' });
         });
@@ -550,8 +575,8 @@ describe('TeamCredentialUsageScreen', () => {
         expect(screen.findAllByTestId('team-credential-usage.tokens')[0]?.props.value).toBe(0);
         expect(screen.findAllByTestId('team-credential-usage.cost')[0]?.props.value).toBe(0);
         const testIds = collectRenderedTestIds(screen.tree.toJSON());
-        expect(testIds).toContain('team-credential-usage-metric:tokens');
-        expect(testIds).toContain('team-credential-usage-metric:cost');
+        expect(testIds).toContain('team-credential-usage-filters.metric:tokens');
+        expect(testIds).toContain('team-credential-usage-filters.metric:cost');
     });
 
     it('says direct use is missing from the totals when the audience receives material', async () => {
@@ -866,22 +891,17 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-series');
-        await screen.pressByTestIdAsync('team-credential-usage-series-list-toggle');
-        expect(screen.findAllByTestId('team-credential-usage-series-list-row')[0]?.props.detail)
-            .toContain('usage.tokens');
+        await waitForTestId(screen, 'team-credential-usage-series.chart');
+        // The chart's exact-values table reads the same series and label the bars draw.
+        expect(screen.findByType(StackedSeriesChart).props.label).toBe('usage.tokens');
 
-        await screen.pressByTestIdAsync('team-credential-usage-metric:cost');
+        await screen.pressByTestIdAsync('team-credential-usage-filters.metric:cost');
 
-        // The chart and the list must show the same measurement; a chart-only
+        // The chart and its table must show the same measurement; a chart-only
         // metric is not reachable without sight.
-        expect(screen.findAllByTestId('team-credential-usage-series')
-            .find((node) => Array.isArray(node.props.series))?.props.series[0]).toMatchObject({ id: 'cost' });
-        expect(screen.findAllByTestId('team-credential-usage-series')
-            .find((node) => Array.isArray(node.props.series))?.props.series[0].points
-            .find((point: { x: number }) => point.x === Date.UTC(2026, 8, 1) / 1000)).toMatchObject({ y: 0 });
-        expect(screen.findAllByTestId('team-credential-usage-series-list-row')[0]?.props.detail)
-            .not.toContain('usage.tokens');
+        expect(screen.findByType(StackedSeriesChart).props.series[0]).toMatchObject({ id: 'cost' });
+        expect(seriesPoint(screen, Date.UTC(2026, 8, 1))).toMatchObject({ y: 0 });
+        expect(screen.findByType(StackedSeriesChart).props.label).toBe('usage.cost');
     });
 
     it('offers recorded requests in the chart and table only when that request metric is honest', async () => {
@@ -895,17 +915,12 @@ describe('TeamCredentialUsageScreen', () => {
         });
 
         const screen = await renderUsage(serverId);
-        await waitForTestId(screen, 'team-credential-usage-series');
-        await screen.pressByTestIdAsync('team-credential-usage-series-list-toggle');
-        await screen.pressByTestIdAsync('team-credential-usage-metric:requests');
+        await waitForTestId(screen, 'team-credential-usage-series.chart');
+        await screen.pressByTestIdAsync('team-credential-usage-filters.metric:requests');
 
-        expect(screen.findAllByTestId('team-credential-usage-series')
-            .find((node) => Array.isArray(node.props.series))?.props.series[0]).toMatchObject({ id: 'requests' });
-        expect(screen.findAllByTestId('team-credential-usage-series')
-            .find((node) => Array.isArray(node.props.series))?.props.series[0].points
-            .find((point: { x: number }) => point.x === Date.UTC(2026, 8, 1) / 1000)).toMatchObject({ y: 2 });
-        expect(screen.findAllByTestId('team-credential-usage-series-list-row')[0]?.props.detail)
-            .toContain('2');
+        expect(screen.findByType(StackedSeriesChart).props.series[0]).toMatchObject({ id: 'requests' });
+        expect(seriesPoint(screen, Date.UTC(2026, 8, 1))).toMatchObject({ y: 2 });
+        expect(screen.findByType(StackedSeriesChart).props.label).not.toBe('usage.tokens');
     });
 
     it('refreshes through a current end time while preserving the previous snapshot', async () => {
@@ -997,7 +1012,7 @@ describe('TeamCredentialUsageScreen', () => {
         expect(screen.findAllByTestId('team-credential-usage-export')[0]?.props.disabled).toBeFalsy();
 
         harness.answer(serverId, USAGE_QUERY_PATH, { status: 503, body: { error: 'unavailable' } });
-        screen.pressByTestId('team-credential-usage-period:today');
+        screen.pressByTestId('team-credential-usage-filters.period:today');
         await vi.waitFor(() => {
             expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ granularity: 'hour' });
         });
@@ -1020,7 +1035,7 @@ describe('TeamCredentialUsageScreen', () => {
         const screen = await renderUsage(serverId);
         await waitForTestId(screen, 'team-credential-usage.requests');
 
-        screen.pressByTestId('team-credential-usage-period:today');
+        screen.pressByTestId('team-credential-usage-filters.period:today');
         await vi.waitFor(() => {
             expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ granularity: 'hour' });
         });

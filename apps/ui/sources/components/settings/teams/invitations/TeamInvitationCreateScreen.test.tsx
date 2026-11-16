@@ -207,7 +207,7 @@ describe('TeamInvitationCreateScreen', () => {
         // The consequence belongs beside the button that creates the secret,
         // not only on the screen that already hands it over.
         expect(screen.getTextContent())
-            .toContain('teams.invitations.linkNotice(team=Platform,role=teams.role.member)');
+            .toContain('teams.invitations.linkNotice(role=teams.role.member)');
         expect(harness.requestsFor(INVITATION_CREATE_PATH)).toHaveLength(0);
     });
 
