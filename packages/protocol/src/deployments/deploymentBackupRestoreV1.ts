@@ -53,6 +53,7 @@ const restoreTarget = () => ({ serverId: id, environmentId: id, machineId: id, i
 export const DeploymentBackupRestorePrepareInputV1Schema = z.strictObject({
   ...restoreTarget(), mode: z.literal('prepare'),
 });
+export type DeploymentBackupRestorePrepareInputV1 = z.infer<typeof DeploymentBackupRestorePrepareInputV1Schema>;
 export const DeploymentBackupRestoreConfirmInputV1Schema = z.strictObject({
   ...restoreTarget(), mode: z.literal('confirm'), prepareOperationId: id,
   snapshot: z.optional(z.boolean()), snapshotReview: z.optional(DeploymentNativeSnapshotOfferV1Schema),
