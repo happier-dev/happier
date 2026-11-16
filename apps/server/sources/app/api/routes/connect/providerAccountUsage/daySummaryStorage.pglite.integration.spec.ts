@@ -58,6 +58,11 @@ describe('usage day summaries PostgreSQL storage', () => {
             const payload = { v: 1 as const, coverage: missing.missingDays[0]!.coverage,
                 content: { t: 'plain' as const, v: buildProviderAccountUsageDaySummaryV1({ recordId: first.recordId, dayStartAtMs, snapshots: [first] }) } };
             expect(await writeProviderAccountUsageDaySummary({ accountId: account.id, value: { recordId: first.recordId, dayStartAtMs, payload } }, tx)).toBe(true);
+            const legacy = await readProviderAccountUsageDaySummaries({ ...query, requireClockBounds: true }, tx);
+            expect(legacy).toEqual({ summaries: [{ dayStartAtMs, payload }], missingDays: [{ dayStartAtMs, coverage: payload.coverage }] });
+            expect(await writeProviderAccountUsageDaySummary({ accountId: account.id, value: { recordId: first.recordId, dayStartAtMs,
+                payload: { ...payload, clockBoundsVersion: 1 } } }, tx)).toBe(true);
+            expect(await readProviderAccountUsageDaySummaries({ ...query, requireClockBounds: true }, tx)).toEqual({ summaries: [], missingDays: [] });
         });
         await inTx(tx => retainProviderAccountUsageHistory(write(later), tx));
         await inTx(async tx => {
@@ -80,6 +85,8 @@ describe('usage day summaries PostgreSQL storage', () => {
             expect((await readProviderAccountUsageDaySummaries({ ...query, includeMissingDays: false }, tx)).summaries[0]!.payload)
                 .toEqual({ ...payload, coverage: { observationCount: 0, frontier: null } });
             expect(await readExpiredProviderAccountUsageSummaryDays({ cutoff, limit: 1 }, tx)).toEqual([]);
+            expect((await readProviderAccountUsageDaySummaries({ ...query, requireClockBounds: true }, tx)).missingDays)
+                .toEqual([{ dayStartAtMs, coverage: { observationCount: 0, frontier: null } }]);
             const record = await tx.providerAccountUsageRecord.findUniqueOrThrow({ where: { accountId_recordId: { accountId: account.id, recordId: first.recordId } } });
             expect(record.metadata).toEqual({ materialFingerprint: 'keep' });
         });

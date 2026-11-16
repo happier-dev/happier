@@ -19,6 +19,16 @@ describe('provider quota daily summary', () => {
     const summary = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [last, first] });
     expect(summary.lastSnapshot).toEqual(last);
     expect(summary.windows[0]).toMatchObject({ firstObservedAtMs: day + 100, lastObservedAtMs: day + 900, lastSnapshot: last });
+    expect(summary).toMatchObject({ observedAtRange: { startAtMs: day + 200, endAtMs: day + 801 } });
+    const late = { ...sample(day + 50, 10, day + 1000), observedAtMs: day + 900 };
+    const merged = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [late], previous: summary });
+    expect(merged).toMatchObject({ lastSnapshot: last, observedAtRange: { startAtMs: day + 200, endAtMs: day + 901 } });
+    const { observedAtRange: _bounds, ...legacy } = merged;
+    const unproven = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [late], previous: legacy });
+    expect(unproven.observedAtRange).toBeUndefined();
+    const rebuilt = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [], previous: legacy, completeDayHistory: true });
+    expect(rebuilt).toMatchObject({ observedAtRange: { startAtMs: day + 200, endAtMs: day + 201 },
+      windows: [{ peakUsed: 60, firstObservedAtMs: day + 50, lastObservedAtMs: day + 900 }] });
   });
   it('keeps ended-window chart values when old detail is replaced by daily summaries', () => {
     const snapshots = [sample(day + 100, 20, day + 1000), sample(day + 1000, 85, day + 1000),

@@ -1411,13 +1411,8 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
 
     app.route<{
         Querystring: { query: string | string[] };
-        Reply: {
-            200: z.infer<typeof QualifiedProviderAccountUsageHistoryResponseV4Schema> | z.infer<typeof ProviderAccountUsagePageProjectionReadV1Schema> | Readable | undefined;
-            304: null | undefined;
-            400: { error: 'invalid-params' };
-            404: z.infer<typeof NotFoundResponseSchema>;
-            409: z.infer<typeof QualifiedProviderAccountUsageReadErrorV4Schema>;
-        };
+        Reply: z.infer<typeof QualifiedProviderAccountUsageHistoryResponseV4Schema>
+            | z.infer<typeof ProviderAccountUsagePageProjectionReadV1Schema> | Readable | undefined;
     }>({ method: 'GET', url: '/v4/connect/qualified/provider-account-usage/history', exposeHeadRoute: false,
         preHandler: app.authenticate,
         schema: { querystring: z.strictObject({ query: z.union([z.string(), z.array(z.string())]) }), response: { 200: z.optional(z.union([QualifiedProviderAccountUsageHistoryResponseV4Schema, ProviderAccountUsagePageProjectionReadV1Schema])), 304: z.optional(z.null()), 400: z.strictObject({ error: z.literal('invalid-params') }), 404: NotFoundResponseSchema, 409: QualifiedProviderAccountUsageReadErrorV4Schema } },

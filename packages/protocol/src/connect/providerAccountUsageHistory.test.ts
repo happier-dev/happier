@@ -2,14 +2,143 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from './providerAccountUsagePrimitives.js';
 import { sealProviderAccountUsageSnapshot } from './accountUsage.js';
 import { ConnectedServiceQuotaGetResultV1Schema, QualifiedProviderAccountUsageHistoryResponseV4Schema,
-  openProviderAccountUsageHistoryPageV4, openProviderAccountUsageRecordV4, projectProviderAccountUsageQuotaReadV1 } from './providerAccountUsageHistory.js';
+  openProviderAccountUsageHistoryPageV4, openProviderAccountUsageRecordV4, projectProviderAccountUsageQuotaReadV1,
+  buildProviderAccountUsagePageProjectionV1, packProviderAccountUsagePageProjectionV1 } from './providerAccountUsageHistory.js';
 import { QualifiedProviderAccountUsageRecordResponseV4Schema } from './qualifiedConnectedAccountProjectionsV4.js';
+import { buildProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
 
 describe('opened accepted provider history', () => {
   const recordKey = { providerId: 'test', accountSubjectId: 'account', subjectKind: 'account' as const, quotaScope: 'account' as const };
   const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'account' }, observedAtMs: 100, fetchedAtMs: 100, staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', meters: [], subscription: { status: 'subscribed', renewal: 'off', observedAtMs: 100, staleAfterMs: 1000, currentPeriodEndAtMs: 200 } });
   const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
   const metadata = { fetchedAt: 100, staleAfterMs: 1000, status: 'ok' as const };
+  it('projects summary days and ended windows while deriving exact recent pace independently', () => {
+    const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+    const sample = (at: number, used: number, resetAtMs = 2000) => ProviderAccountUsageSnapshotV1Schema.parse({ ...snapshot,
+      subscription: undefined, state: 'loaded_data', observedAtMs: at, fetchedAtMs: at,
+      meters: [{ meterId: 'week', label: 'Weekly', used, limit: 100, utilizationPct: used, unit: 'requests', resetsAt: resetAtMs,
+        windowDurationMs: 1000, status: 'ok', details: {} }] });
+    const ended = sample(1000, 40, 1000);
+    const first = sample(1100, 10); const next = sample(1200, 30); const current = sample(1250, 40);
+    const summary = buildProviderAccountUsageDaySummaryV1({ recordId: snapshot.recordId, dayStartAtMs: 0,
+      snapshots: [ended, first, next, current] });
+    const history = { entries: [ended, first, next, current].map((snapshot, index) => ({ id: String(index), observedAtMs: snapshot.fetchedAtMs, snapshot })), nextCursor: null };
+    const expected = projectProviderAccountUsageQuotaReadV1({ input: { source }, current, history, nowMs: 1250 });
+    const input = { input: { source, projection: { range: { startAtMs: 0, endAtMs: 3000 }, resolution: 'accepted_observations' as const } }, current,
+      daySummaries: [summary], recentHistory: history, missingDays: [], nowMs: 1250 };
+    const projected = projectProviderAccountUsageQuotaReadV1(input);
+    expect(projected.pace).toEqual(expected.pace);
+    expect(projected.pace[0]!.value).toMatchObject({ status: 'available', sampleCount: 3,
+      empiricalRange: { min: 1, max: 1.6 }, observedCurve: [
+        { observedAtMs: 1100, usedFraction: .1 }, { observedAtMs: 1200, usedFraction: .3 }, { observedAtMs: 1250, usedFraction: .4 },
+      ] });
+    expect(projected.pageFacts).toMatchObject({ historyStatus: 'complete', resetWitness: { id: '3', observedAtMs: 1250 },
+      dayQuotaHistory: [{ windows: [{ peakUsed: 40 }, { peakUsed: 40 }] }],
+      earlierCurves: [{ meterId: 'week', value: { status: 'unavailable', reason: 'not_loaded' } }],
+      witnessedResets: [{ meterId: 'week', resetAtMs: 1000 }] });
+    expect(projected.unusedCapacity).toEqual({ historyStatus: 'not_loaded', windows: [] });
+    expect(projected.history).toBeUndefined();
+    expect(projected.pageProjection).toBeUndefined();
+    expect(ConnectedServiceQuotaGetResultV1Schema.safeParse(projected).success).toBe(true);
+    const partial = projectProviderAccountUsageQuotaReadV1({ ...input, missingDays: [{ dayStartAtMs: 0 }] });
+    expect(partial.pageFacts?.historyStatus).toBe('partial');
+    expect(partial.unusedCapacity?.historyStatus).toBe('not_loaded');
+    expect(partial.pace).toEqual(expected.pace);
+    const incompatibleSummary = { ...summary, windows: summary.windows.map(window => ({ ...window,
+      lastSnapshot: { ...window.lastSnapshot, meters: window.lastSnapshot.meters.map(meter => ({ ...meter, limit: 200 })) },
+    })) };
+    expect(projectProviderAccountUsageQuotaReadV1({ ...input, daySummaries: [incompatibleSummary] }).pace).toEqual(expected.pace);
+    const retained = buildProviderAccountUsageDaySummaryV1({ recordId: snapshot.recordId, dayStartAtMs: 0, snapshots: [ended, first, next] });
+    expect(projectProviderAccountUsageQuotaReadV1({ ...input, daySummaries: [retained], recentHistory: { ...history,
+      entries: history.entries.filter(entry => entry.snapshot !== next) } }).pace).toEqual(expected.pace);
+    const unproven = projectProviderAccountUsageQuotaReadV1({ ...input, recentHistory: undefined,
+      recentHistorySelection: { status: 'unavailable' as const, reason: 'unproven_clock_bounds' as const } });
+    expect(unproven.pace[0]!.value).toEqual({ status: 'unavailable', reason: 'not_loaded' });
+    expect(unproven.pageFacts?.historyStatus).toBe('partial');
+    const unknown = { ...current, meters: [{ ...current.meters[0]!, windowDurationMs: undefined }] };
+    expect(projectProviderAccountUsageQuotaReadV1({ ...input, current: unknown }).pace[0]!.value)
+      .toEqual({ status: 'unavailable', reason: 'unknown_window' });
+    const denominatorChanged = { ...first, meters: [{ ...first.meters[0]!, limit: 200 }] };
+    const incompatible = { ...history, entries: [{ ...history.entries[1]!, snapshot: denominatorChanged }, ...history.entries.slice(2)] };
+    expect(projectProviderAccountUsageQuotaReadV1({ ...input, recentHistory: incompatible }).pace[0]!.value)
+      .toEqual({ status: 'unavailable', reason: 'denominator_changed' });
+    const changedReset = { ...first, meters: [{ ...first.meters[0]!, resetsAt: 2100 }] };
+    expect(projectProviderAccountUsageQuotaReadV1({ ...input, recentHistory: { ...history,
+      entries: [{ ...history.entries[1]!, snapshot: changedReset }, ...history.entries.slice(2)] } }).pace[0]!.value)
+      .toEqual({ status: 'unavailable', reason: 'reset_changed' });
+    // Exact detail for PastCycleRow preserves WEB's sampleCount and exclusion
+    // falsifier while the bounded daily read leaves ended facts unloaded.
+    for (const changedDenominator of [false, true]) {
+      const earlier = sample(100, 10, 1000);
+      const middle = sample(500, 20, 1000);
+      if (changedDenominator) middle.meters[0]!.limit = 200;
+      const full = { ...history, entries: [earlier, middle, ended, first, next, current]
+        .map((snapshot, index) => ({ id: `ended-${index}`, observedAtMs: snapshot.fetchedAtMs, snapshot })) };
+      const fullRead = projectProviderAccountUsageQuotaReadV1({ input: input.input, current, history: full, nowMs: 1250 });
+      const dailyInput = { ...input,
+        daySummaries: [buildProviderAccountUsageDaySummaryV1({ recordId: snapshot.recordId, dayStartAtMs: 0,
+          snapshots: full.entries.map(entry => entry.snapshot) })],
+        recentHistory: { ...full, entries: full.entries.filter(entry => entry.snapshot.fetchedAtMs >= 1000) } };
+      const exact = projectProviderAccountUsageQuotaReadV1({ ...dailyInput, history: full,
+        exactHistoryRange: input.input.projection.range });
+      expect.soft(exact.unusedCapacity, `ended facts, denominator changed=${changedDenominator}`).toEqual(fullRead.unusedCapacity);
+      expect(projectProviderAccountUsageQuotaReadV1(dailyInput).unusedCapacity).toEqual({ historyStatus: 'not_loaded', windows: [] });
+    }
+  });
+  it.each(['history', 'pageProjection'] as const)('keeps explicit %s earlier curves alongside exact recent pace', kind => {
+    const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+    const sample = (at: number, used: number, resetsAt: number) => ProviderAccountUsageSnapshotV1Schema.parse({ ...snapshot,
+      observedAtMs: at, fetchedAtMs: at, subscription: undefined, state: 'loaded_data',
+      meters: [{ meterId: 'week', label: 'Weekly', used, limit: 100, utilizationPct: used, unit: 'requests',
+        resetsAt, windowDurationMs: 1000, status: 'ok', details: {} }] });
+    const samples = [sample(100, 10, 1000), sample(500, 20, 1000), sample(1000, 40, 1000), sample(1250, 5, 2000)];
+    const current = samples.at(-1)!;
+    const range = { startAtMs: 0, endAtMs: 2000 };
+    const input = { source, projection: { range, resolution: 'accepted_observations' as const } };
+    const history = { entries: samples.map((snapshot, index) => ({ id: String(index), observedAtMs: snapshot.fetchedAtMs, snapshot })), nextCursor: null };
+    const exact = kind === 'history' ? { history } : { pageProjection: packProviderAccountUsagePageProjectionV1(
+      buildProviderAccountUsagePageProjectionV1({ recordId: current.recordId, range, history })) };
+    const recentHistory = { entries: history.entries.slice(-1), nextCursor: null };
+    const full = projectProviderAccountUsageQuotaReadV1({ input, current, ...exact, nowMs: 1250 });
+    const recent = projectProviderAccountUsageQuotaReadV1({ input, current, recentHistory, nowMs: 1250 });
+    const mixed = projectProviderAccountUsageQuotaReadV1({ input, current, ...exact, recentHistory, nowMs: 1250 });
+    expect(full.pageFacts?.earlierCurves[0]?.value).toMatchObject({ status: 'available', curves: [{ points: [
+      { elapsedFraction: .1, usedFraction: .1 }, { elapsedFraction: .5, usedFraction: .2 }, { elapsedFraction: 1, usedFraction: .4 },
+    ] }] });
+    expect(mixed.unusedCapacity).toEqual(full.unusedCapacity);
+    expect(mixed.pageFacts?.earlierCurves).toEqual(full.pageFacts?.earlierCurves);
+    expect(mixed.pace).toEqual(recent.pace);
+    expect(recent.pageFacts?.earlierCurves[0]?.value).toEqual({ status: 'unavailable', reason: 'not_loaded' });
+    expect(recent.unusedCapacity).toEqual({ historyStatus: 'not_loaded', windows: [] });
+    expect(mixed.pageFacts?.resetWitness).toEqual(recent.pageFacts?.resetWitness);
+    const incompleteDaily = projectProviderAccountUsageQuotaReadV1({ input, current, ...exact,
+      recentHistorySelection: { status: 'unavailable', reason: 'unproven_clock_bounds' },
+      missingDays: [{ dayStartAtMs: 0 }], nowMs: 1250 });
+    expect(incompleteDaily.unusedCapacity).toEqual(full.unusedCapacity);
+    expect(incompleteDaily.pageFacts?.earlierCurves).toEqual(full.pageFacts?.earlierCurves);
+    const retainedCurrent = sample(2250, 5, 3000);
+    const retainedSummary = buildProviderAccountUsageDaySummaryV1({ recordId: current.recordId, dayStartAtMs: 0,
+      snapshots: [sample(900, 40, 1000), sample(1900, 50, 2000), retainedCurrent] });
+    const retainedRange = { startAtMs: 1000, endAtMs: 3000 };
+    const retainedHistory = { entries: [{ id: 'current-only', observedAtMs: retainedCurrent.fetchedAtMs, snapshot: retainedCurrent }], nextCursor: null };
+    const retainedExact = kind === 'history' ? { history: retainedHistory, exactHistoryRange: retainedRange }
+      : { pageProjection: packProviderAccountUsagePageProjectionV1(buildProviderAccountUsagePageProjectionV1({ recordId: current.recordId,
+        range: retainedRange, history: retainedHistory })) };
+    const retainedExpected = projectProviderAccountUsageQuotaReadV1({ input: { source, history: { range: retainedRange, pageSize: 100 } },
+      current: retainedCurrent, history: retainedHistory, daySummaries: [retainedSummary], nowMs: 2250 });
+    const retainedMixed = projectProviderAccountUsageQuotaReadV1({ input: { source, projection: { range: { startAtMs: 0, endAtMs: 4000 }, resolution: 'accepted_observations' } },
+      current: retainedCurrent, ...retainedExact, recentHistory: retainedHistory, daySummaries: [retainedSummary], nowMs: 2250 });
+    expect(retainedMixed.unusedCapacity).toEqual(retainedExpected.unusedCapacity);
+    expect(retainedMixed.unusedCapacity?.windows.map(value => value.window.resetAtMs)).toEqual([2000]);
+    if (kind === 'history') {
+      const requestScoped = projectProviderAccountUsageQuotaReadV1({ input: { source, history: { range: retainedRange, pageSize: 100 } },
+        current: retainedCurrent, history: retainedHistory, recentHistory: retainedHistory, daySummaries: [retainedSummary], nowMs: 2250 });
+      expect(requestScoped.unusedCapacity).toEqual(retainedExpected.unusedCapacity);
+      const unscoped = projectProviderAccountUsageQuotaReadV1({ input, current: retainedCurrent, history: retainedHistory,
+        recentHistory: retainedHistory, daySummaries: [retainedSummary], nowMs: 2250 });
+      expect(unscoped.unusedCapacity).toEqual({ historyStatus: 'returned_page', windows: [] });
+    }
+  });
   it('opens page payloads without re-admitting each HTTP-admitted record envelope', () => {
     const page = QualifiedProviderAccountUsageHistoryResponseV4Schema.parse({ entries: [{ id: 'witness', observedAtMs: 100,
       record: { content: { t: 'plain', v: snapshot }, metadata, sources: [] } }], nextCursor: null });

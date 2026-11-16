@@ -5,7 +5,7 @@ import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createUsageSnapshot } from '../providerAccountUsageTestkit';
 import { writeProviderAccountUsageRecordWithPolicy } from './routeWritePolicy';
-import { readProviderAccountUsageDaySummaries, writeProviderAccountUsageDaySummary } from './daySummaryStorage';
+import { pruneProviderAccountUsageSummaryDetail, readProviderAccountUsageDaySummaries, writeProviderAccountUsageDaySummary } from './daySummaryStorage';
 import { buildProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { buildProviderAccountUsagePageProjectionV1, PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { sealProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsagePageProjectionCrypto';
@@ -19,7 +19,7 @@ let harness: LightSqliteHarness;
 beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'usage-day-pending-' }); }, 120_000);
 afterAll(async () => { await harness?.close(); });
 
-it('seeks each pending day without scanning detail between pending intervals', async () => {
+it.each(['producer', 'reader'] as const)('%s seeks each pending day without scanning detail between pending intervals', async mode => {
     const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
     const start = Date.UTC(2020, 0, 1);
     const dayMs = 86_400_000;
@@ -38,7 +38,8 @@ it('seeks each pending day without scanning detail between pending intervals', a
             return Reflect.get(target, property, receiver);
         } });
         expect((await readProviderAccountUsageDaySummaries({ accountId: account.id, recordId: latest.recordId,
-            range: { startAtMs: start, endAtMs: start + 1000 * dayMs }, includeMissingDays: true }, boundary)).missingDays).toHaveLength(2);
+            range: { startAtMs: start, endAtMs: start + 1000 * dayMs },
+            includeMissingDays: mode === 'producer', includeCoverage: mode === 'reader' }, boundary)).missingDays).toHaveLength(2);
     });
     const grouped = queries.filter(query => query.sql.includes('COUNT(*) OVER'));
     let detailVisits = 0;
@@ -58,7 +59,133 @@ it('seeks each pending day without scanning detail between pending intervals', a
         data: { metadata: { daySummaryPendingDays: snapshots.map(snapshot => Math.floor(snapshot.fetchedAtMs / dayMs) * dayMs) } } });
     await inTx(async tx => {
         expect((await readProviderAccountUsageDaySummaries({ accountId: account.id, recordId: latest.recordId,
-            range: { startAtMs: start, endAtMs: start + 1000 * dayMs }, includeMissingDays: true }, tx)).missingDays).toHaveLength(1000);
+            range: { startAtMs: start, endAtMs: start + 1000 * dayMs },
+            includeMissingDays: mode === 'producer', includeCoverage: mode === 'reader' }, tx)).missingDays).toHaveLength(1000);
+    });
+});
+
+it('reader coverage retains summary prefixes while reporting pending and unsummarized days from the same read', async () => {
+    const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+    const start = Date.UTC(2026, 0, 1);
+    const dayMs = 86_400_000;
+    const first = createUsageSnapshot({ fetchedAt: start + 1000 });
+    const older = { ...first, fetchedAtMs: start - dayMs + 1000, observedAtMs: start - dayMs + 1000, planLabel: 'older' };
+    const second = { ...first, fetchedAtMs: start + dayMs + 1000, observedAtMs: start + dayMs + 1000, planLabel: 'second' };
+    const write = (snapshot: typeof first) => writeProviderAccountUsageRecordWithPolicy({ accountId: account.id,
+        recordId: snapshot.recordId, recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1', status: 'ok', snapshot,
+        fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs });
+    const query = { accountId: account.id, recordId: first.recordId, range: { startAtMs: start - dayMs, endAtMs: start + 3 * dayMs } };
+    await write(older);
+    await write(first);
+    await write(second);
+    await inTx(async tx => {
+        const pending = await readProviderAccountUsageDaySummaries({ ...query, includeMissingDays: true }, tx);
+        for (const [index, snapshot] of [older, first, second].entries()) {
+            const dayStartAtMs = start + (index - 1) * dayMs;
+            expect(await writeProviderAccountUsageDaySummary({ accountId: account.id, value: {
+                recordId: first.recordId, dayStartAtMs, payload: { v: 1, coverage: pending.missingDays[index]!.coverage,
+                    content: { t: 'plain', v: buildProviderAccountUsageDaySummaryV1({ recordId: first.recordId, dayStartAtMs, snapshots: [snapshot] }) } },
+            } }, tx)).toBe(true);
+        }
+        expect((await pruneProviderAccountUsageSummaryDetail({ accountId: account.id, recordId: first.recordId,
+            dayStartAtMs: start, cutoff: new Date(start + dayMs), limit: 1, dryRun: false }, tx)).deleted).toBe(1);
+    });
+    await inTx(async tx => {
+        const queries: Prisma.Sql[] = [];
+        const boundary = new Proxy(tx, { get(target, property, receiver) {
+            if (property === '$queryRaw') return async <T>(sql: Prisma.Sql) => { queries.push(sql); return target.$queryRaw<T>(sql); };
+            return Reflect.get(target, property, receiver);
+        } });
+        const complete = await readProviderAccountUsageDaySummaries({ ...query, includeCoverage: true }, boundary);
+        expect(complete.summaries.map(day => day.dayStartAtMs)).toEqual([start - dayMs, start, start + dayMs]);
+        expect(complete.summaries[1]!.payload.coverage).toEqual({ observationCount: 0, frontier: null });
+        expect(complete.missingDays).toEqual([]);
+        expect(queries.filter(sql => sql.sql.includes('ProviderAccountUsageHistory'))).toHaveLength(0);
+    });
+    const pendingSecond = { ...second, fetchedAtMs: second.fetchedAtMs + 1000, observedAtMs: second.observedAtMs + 1000, planLabel: 'changed' };
+    const third = { ...second, fetchedAtMs: start + 2 * dayMs + 1000, observedAtMs: start + 2 * dayMs + 1000, planLabel: 'third' };
+    await write(pendingSecond);
+    await write(third);
+    const expectedMissing = [{ dayStartAtMs: start + dayMs, coverage: { observationCount: 2, frontier: { observedAtMs: pendingSecond.fetchedAtMs } } },
+        { dayStartAtMs: start + 2 * dayMs, coverage: { observationCount: 1, frontier: { observedAtMs: third.fetchedAtMs } } }];
+    await inTx(async tx => {
+        const ordinary = await readProviderAccountUsageDaySummaries(query, tx);
+        expect(ordinary.summaries).toHaveLength(3);
+        expect(ordinary.missingDays).toEqual([]);
+        const reader = await readProviderAccountUsageDaySummaries({ ...query, includeCoverage: true }, tx);
+        expect(reader.summaries).toEqual(ordinary.summaries);
+        expect(reader.summaries[2]!.payload).toMatchObject({ coverage: { observationCount: 0, frontier: null },
+            content: { t: 'plain', v: { lastSnapshot: second } } });
+        expect(reader.missingDays).toMatchObject(expectedMissing);
+        expect(reader.missingDays.every(day => day.precedingSummary === undefined)).toBe(true);
+        let producerBodies = 0;
+        const boundary = new Proxy(tx, { get(target, property, receiver) {
+            if (property === 'providerAccountUsageDaySummary') return new Proxy(target.providerAccountUsageDaySummary, {
+                get(model, method, modelReceiver) {
+                    if (method === 'findMany') return async (args: Prisma.ProviderAccountUsageDaySummaryFindManyArgs) => {
+                        const rows = await model.findMany(args); producerBodies += rows.length; return rows;
+                    };
+                    return Reflect.get(model, method, modelReceiver);
+                },
+            });
+            return Reflect.get(target, property, receiver);
+        } });
+        const producer = await readProviderAccountUsageDaySummaries({ ...query, includeMissingDays: true }, boundary);
+        expect(producer.summaries.map(day => day.dayStartAtMs)).toEqual([start + dayMs]);
+        expect(producer.missingDays).toMatchObject(expectedMissing);
+        expect(producer.missingDays.map(day => day.precedingSummary?.dayStartAtMs)).toEqual([start, start + dayMs]);
+        expect(producerBodies).toBe(2);
+    });
+    // The legacy metadata path delegates to the same pending authority; a
+    // compacted complete day is not mistaken for an invalidated retained day.
+    await db.providerAccountUsageRecord.update({ where: { accountId_recordId: { accountId: account.id, recordId: first.recordId } }, data: { metadata: {} } });
+    await inTx(async tx => {
+        const legacy = await readProviderAccountUsageDaySummaries({ ...query, includeCoverage: true }, tx);
+        expect(legacy.summaries).toHaveLength(3);
+        expect(legacy.missingDays).toMatchObject(expectedMissing);
+    });
+});
+
+it('clock-bound backfill selects legacy summaries even after their exact detail was compacted', async () => {
+    const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+    const start = Date.UTC(2026, 0, 1);
+    const dayMs = 86_400_000;
+    const snapshots = Array.from({ length: 3 }, (_, index) => ({ ...createUsageSnapshot({ fetchedAt: start + index * dayMs + 1000 }),
+        planLabel: `day-${index}` }));
+    const first = snapshots[0]!;
+    const query = { accountId: account.id, recordId: first.recordId,
+        range: { startAtMs: start, endAtMs: start + 3 * dayMs }, includeMissingDays: true };
+    for (const snapshot of snapshots) await writeProviderAccountUsageRecordWithPolicy({ accountId: account.id,
+        recordId: snapshot.recordId, recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1', status: 'ok', snapshot,
+        fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs });
+    await inTx(async tx => {
+        const pending = await readProviderAccountUsageDaySummaries(query, tx);
+        for (const [index, snapshot] of snapshots.entries()) {
+            const dayStartAtMs = start + index * dayMs;
+            expect(await writeProviderAccountUsageDaySummary({ accountId: account.id, value: {
+                recordId: first.recordId, dayStartAtMs, payload: { v: 1, coverage: pending.missingDays[index]!.coverage,
+                    ...(index === 2 ? { clockBoundsVersion: 1 as const } : {}),
+                    content: { t: 'plain', v: buildProviderAccountUsageDaySummaryV1({ recordId: first.recordId, dayStartAtMs, snapshots: [snapshot] }) } },
+            } }, tx)).toBe(true);
+        }
+        expect((await pruneProviderAccountUsageSummaryDetail({ accountId: account.id, recordId: first.recordId,
+            dayStartAtMs: start, cutoff: new Date(start + dayMs), limit: 1, dryRun: false }, tx)).deleted).toBe(1);
+        expect(await readProviderAccountUsageDaySummaries(query, tx)).toEqual({ summaries: [], missingDays: [] });
+        const upgrade = await readProviderAccountUsageDaySummaries({ ...query, requireClockBounds: true }, tx);
+        expect(upgrade.summaries.map(day => day.dayStartAtMs)).toEqual([start, start + dayMs]);
+        expect(upgrade.missingDays).toMatchObject([
+            { dayStartAtMs: start, coverage: { observationCount: 0, frontier: null } },
+            { dayStartAtMs: start + dayMs, coverage: { observationCount: 1, frontier: { observedAtMs: snapshots[1]!.fetchedAtMs } } },
+        ]);
+        expect(upgrade.missingDays.map(day => day.precedingSummary?.dayStartAtMs)).toEqual([undefined, start]);
+        for (const day of upgrade.missingDays) {
+            const previous = upgrade.summaries.find(summary => summary.dayStartAtMs === day.dayStartAtMs)!;
+            expect(await writeProviderAccountUsageDaySummary({ accountId: account.id, value: {
+                recordId: first.recordId, dayStartAtMs: day.dayStartAtMs,
+                payload: { ...previous.payload, coverage: day.coverage, clockBoundsVersion: 1 },
+            } }, tx)).toBe(true);
+        }
+        expect(await readProviderAccountUsageDaySummaries({ ...query, requireClockBounds: true }, tx)).toEqual({ summaries: [], missingDays: [] });
     });
 });
 

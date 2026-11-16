@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { QualifiedProviderAccountUsageHistoryResponseV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
+import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/providerAccountUsagePrimitives';
 
 import { db } from '@/storage/db';
 import { withSqliteReadSnapshot } from '@/storage/prisma';
@@ -91,7 +92,7 @@ describe('qualified provider usage finite history stream', () => {
                 expect(entries.every(entry => entry.record.content.t === 'encrypted')).toBe(true);
                 expect(response.body).not.toContain('sample-');
             } else {
-                expect(entries.map(entry => entry.record.content.t === 'plain' ? entry.record.content.v.planLabel : null))
+                expect(entries.map(entry => entry.record.content.t === 'plain' ? ProviderAccountUsageSnapshotV1Schema.parse(entry.record.content.v).planLabel : null))
                     .toEqual(fixture.snapshots.map(snapshot => snapshot.planLabel));
             }
             const witness = await app.inject({ method: 'GET', url: path({ recordId: fixture.recordId,

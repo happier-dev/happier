@@ -1,9 +1,10 @@
 import type { ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
-import { ProviderAccountUsageRecordIdSchema } from './providerAccountUsagePrimitives.js';
+import { PROVIDER_ACCOUNT_USAGE_DAY_MS, ProviderAccountUsageRecordIdSchema } from './providerAccountUsagePrimitives.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { isConnectedServiceQuotaObservationFresh } from './quotaObservationTime.js';
 import type { ConnectedServiceQuotaMeterV1 } from './connectedServiceSchemas.js';
+import type { ProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
 
 export const ProviderAccountUsagePaceWindowV1Schema = lazyZodSchema(() => z.strictObject({
   recordId: ProviderAccountUsageRecordIdSchema, meterId: z.string().check(z.minLength(1)),
@@ -78,6 +79,45 @@ export function resolveProviderAccountUsagePaceWindow(snapshot: ProviderAccountU
   const window = operands ? operands.readWindow(meter) : readMeterPaceWindow(meter);
   return window ? { recordId: snapshot.recordId, meterId, resetAtMs: window.resetAtMs,
     windowStartAtMs: window.windowStartAtMs, windowDurationMs: window.windowDurationMs } : null;
+}
+
+export type ProviderAccountUsageRecentHistoryRangesV1 =
+  | Readonly<{ status: 'available'; ranges: Readonly<{ startAtMs: number; endAtMs: number }>[] }>
+  | Readonly<{ status: 'unavailable'; reason: 'unknown_window' | 'unproven_clock_bounds' }>;
+
+/** All admitted summary days and missing-day coverage are required, independently of the displayed range. */
+export function resolveProviderAccountUsageRecentHistoryRangesV1(input: Readonly<{
+  current: ProviderAccountUsageSnapshotV1 | null; daySummaries: readonly ProviderAccountUsageDaySummaryV1[];
+  missingDays?: readonly Readonly<{ dayStartAtMs: number }>[]; nowMs: number;
+}>): ProviderAccountUsageRecentHistoryRangesV1 {
+  const current = input.current;
+  if (!current) return { status: 'unavailable', reason: 'unknown_window' };
+  const windows = current.meters.flatMap(meter => {
+    const window = resolveProviderAccountUsagePaceWindow(current, meter.meterId);
+    return window ? [window] : [];
+  });
+  if (!windows.length) return { status: 'unavailable', reason: 'unknown_window' };
+  if (input.missingDays?.length || input.daySummaries.some(day => !day.observedAtRange)) {
+    return { status: 'unavailable', reason: 'unproven_clock_bounds' };
+  }
+  const endAtMs = Math.max(input.nowMs, current.fetchedAtMs) + 1;
+  const startAtMs = Math.min(...windows.map(window => window.windowStartAtMs));
+  const ranges = startAtMs < endAtMs ? [{ startAtMs, endAtMs }] : [];
+  // The accepted witness can itself precede its provider-clock window.
+  ranges.push({ startAtMs: current.fetchedAtMs, endAtMs: current.fetchedAtMs + 1 });
+  for (const day of input.daySummaries) {
+    const observed = day.observedAtRange!;
+    if (windows.some(window => observed.endAtMs > window.windowStartAtMs && observed.startAtMs < current.observedAtMs)) {
+      ranges.push({ startAtMs: day.dayStartAtMs, endAtMs: day.dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS });
+    }
+  }
+  const merged: { startAtMs: number; endAtMs: number }[] = [];
+  for (const range of ranges.sort((left, right) => left.startAtMs - right.startAtMs)) {
+    const previous = merged.at(-1);
+    if (previous && range.startAtMs <= previous.endAtMs) previous.endAtMs = Math.max(previous.endAtMs, range.endAtMs);
+    else merged.push({ ...range });
+  }
+  return { status: 'available', ranges: merged };
 }
 
 /**

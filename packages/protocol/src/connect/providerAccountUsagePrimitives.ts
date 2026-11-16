@@ -23,6 +23,9 @@ export {
   type ProviderAccountUsageQuotaScopeV1,
 } from './providerAccountUsageQuotaScopeV1.js';
 
+/** UTC partition size shared by accepted usage history and its sealed daily summaries. */
+export const PROVIDER_ACCOUNT_USAGE_DAY_MS = 86_400_000;
+
 const encoder = new TextEncoder();
 
 export const SealedProviderAccountUsageRecoveryCreditDetailsV1Schema = lazyZodSchema(() => z.strictObject({ ciphertext: z.string().check(z.minLength(1)) }));

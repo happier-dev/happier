@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { buildProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
+import { buildProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
 import { deriveProviderAccountUsageEarlierWindowCurves, deriveProviderAccountUsagePace, deriveProviderAccountUsageUnusedCapacity,
-  getProviderAccountUsageDerivationInterval, hasProviderAccountUsageWitnessedReset, readProviderAccountUsageWindowComparabilityReason } from './deriveProviderAccountUsagePace.js';
+  getProviderAccountUsageDerivationInterval, hasProviderAccountUsageWitnessedReset, readProviderAccountUsageWindowComparabilityReason,
+  resolveProviderAccountUsageRecentHistoryRangesV1 } from './deriveProviderAccountUsagePace.js';
 
 function snapshot(at = 250): ProviderAccountUsageSnapshotV1 {
   const recordKey = { providerId: 'test', accountSubjectId: 'account', subjectKind: 'account' as const, quotaScope: 'account' as const };
@@ -9,6 +11,54 @@ function snapshot(at = 250): ProviderAccountUsageSnapshotV1 {
 }
 
 describe('accepted provider usage pace', () => {
+  it('preserves a historical reset conflict hidden by a later backward provider clock', () => {
+    const day = 86_400_000;
+    const current = snapshot(20 * day + 9500);
+    current.meters[0]!.resetsAt = 20 * day + 10000;
+    const hidden = snapshot(20 * day + 9100); hidden.fetchedAtMs = 100;
+    const last = snapshot(200);
+    const summary = buildProviderAccountUsageDaySummaryV1({ recordId: current.recordId, dayStartAtMs: 0, snapshots: [hidden, last] });
+    expect(summary.windows[0]).toMatchObject({ firstObservedAtMs: 100, lastObservedAtMs: 200, lastSnapshot: { observedAtMs: 200 } });
+    const full = deriveProviderAccountUsagePace({ snapshot: current, meterId: 'weekly', nowMs: current.observedAtMs, history: [hidden, last] });
+    const selection = resolveProviderAccountUsageRecentHistoryRangesV1({ current, daySummaries: [summary], nowMs: current.observedAtMs });
+    if (selection.status !== 'available') throw new Error('exact clock range unavailable');
+    const bounded = deriveProviderAccountUsagePace({ snapshot: current, meterId: 'weekly', nowMs: current.observedAtMs,
+      history: [hidden, last].filter(snapshot => selection.ranges.some(range => snapshot.fetchedAtMs >= range.startAtMs && snapshot.fetchedAtMs < range.endAtMs)) });
+    expect(full).toEqual({ status: 'unavailable', reason: 'reset_changed' });
+    expect(bounded).toEqual(full);
+    expect(selection).toEqual({ status: 'available', ranges: [{ startAtMs: 0, endAtMs: day },
+      { startAtMs: 20 * day + 9000, endAtMs: current.fetchedAtMs + 1 }] });
+    console.info(JSON.stringify({ clockCounterexample: { current: current.observedAtMs, actualWindowStart: 20 * day + 9000,
+      hidden: { fetchedAtMs: hidden.fetchedAtMs, observedAtMs: hidden.observedAtMs },
+      retainedLast: { fetchedAtMs: last.fetchedAtMs, observedAtMs: last.observedAtMs }, full, bounded } }));
+  });
+  it('selects every actual meter window without fetching unrelated historical gaps or guessing legacy clock bounds', () => {
+    const day = 86_400_000;
+    const current = snapshot(20 * day + 9500);
+    current.meters = [
+      { ...current.meters[0]!, resetsAt: 21 * day, windowDurationMs: 7 * day },
+      { ...current.meters[0]!, meterId: 'short', resetsAt: 20 * day + 10000 },
+      { ...current.meters[0]!, meterId: 'unknown', resetsAt: null, windowDurationMs: undefined },
+    ];
+    const old = snapshot(5 * day + 500);
+    old.meters[0]!.resetsAt = 5 * day + 1000;
+    const summary = buildProviderAccountUsageDaySummaryV1({ recordId: current.recordId, dayStartAtMs: 5 * day, snapshots: [old] });
+    const input = { current, daySummaries: [summary], nowMs: current.observedAtMs };
+    expect(resolveProviderAccountUsageRecentHistoryRangesV1(input)).toEqual({ status: 'available',
+      ranges: [{ startAtMs: 14 * day, endAtMs: current.fetchedAtMs + 1 }] });
+    const skewed = [6, 7].map(index => buildProviderAccountUsageDaySummaryV1({ recordId: current.recordId, dayStartAtMs: index * day,
+      snapshots: [{ ...old, fetchedAtMs: index * day + 100, observedAtMs: current.observedAtMs - 100 }] }));
+    expect(resolveProviderAccountUsageRecentHistoryRangesV1({ ...input, daySummaries: [summary, ...skewed] }))
+      .toEqual({ status: 'available', ranges: [{ startAtMs: 6 * day, endAtMs: 8 * day },
+        { startAtMs: 14 * day, endAtMs: current.fetchedAtMs + 1 }] });
+    const { observedAtRange: _bounds, ...legacy } = summary;
+    expect(resolveProviderAccountUsageRecentHistoryRangesV1({ ...input, daySummaries: [legacy] }))
+      .toEqual({ status: 'unavailable', reason: 'unproven_clock_bounds' });
+    expect(resolveProviderAccountUsageRecentHistoryRangesV1({ ...input, missingDays: [{ dayStartAtMs: 5 * day }] }))
+      .toEqual({ status: 'unavailable', reason: 'unproven_clock_bounds' });
+    expect(resolveProviderAccountUsageRecentHistoryRangesV1({ ...input, current: { ...current, meters: [current.meters[2]!] } }))
+      .toEqual({ status: 'unavailable', reason: 'unknown_window' });
+  });
   it('rejects ordinary same-window observations before deriving pace or comparing entitlement', () => {
     let entitlementReads = 0;
     let counterReads = 0;

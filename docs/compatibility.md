@@ -9094,6 +9094,32 @@ This changes no persisted shape or wire epoch. The scoped-clean 0.2 frontier
 at `972cdc0e5978aaf95a2902d4970441590c75b978` has no qualified provider-history
 route or schema; no predecessor adapter is added.
 
+The unreleased day-summary read accepts optional `includeCoverage: true`:
+its existing `{ summaries, missingDays }` result contains the selected stored
+plain/encrypted envelopes and canonical pending-day coverage in one snapshot.
+An invalidated stored prefix can remain present alongside its missing-day proof;
+it does not establish complete coverage. The daemon's `includeMissingDays: true`
+mode retains its narrow missing-body/predecessor behavior. Older strict development
+Homes reject the new request option; clients must not silently replace an
+unsupported summary read with a full-Year raw-history drain. The response
+container and its encryption envelope remain unchanged.
+The same unreleased contract adds optional sealed day-summary `observedAtRange`
+(half-open provider-clock extrema), outer `clockBoundsVersion: 1`, and daemon
+request `requireClockBounds: true`. The existing daemon upgrades legacy summaries
+from complete remaining-day reads plus retained endpoints; it does not recover
+expired detail or change pace verdict semantics. The one pace owner derives
+coalesced accepted-history ranges for the actual current meter windows, including
+clock-skewed days. Legacy or missing evidence is explicitly unproven rather than
+a foreground exact-history fallback. This is an additive development format
+change with a producer-first direct cut: matching Protocol, server, daemon and
+client load together; older strict development readers may reject new fields.
+Day summaries supply daily/reset chart facts; recent exact history supplies current
+pace and reset witnesses. An explicitly requested exact history or page projection
+still supplies earlier curves and ended-window unused-capacity facts, including
+distinct sample counts and exclusion reasons. A summary-only read leaves these
+unrequested exact facts `not_loaded`; it never substitutes endpoint estimates.
+No migration, new store, wire epoch or predecessor adapter is added.
+
 Unreleased 0.3 deployment lifecycle observations and repository receipt investigation
 summaries optionally carry `builtSha`, the provider-observed commit. The requested
 `sourceIntent.sha` stays unchanged; historical observations without `builtSha` remain

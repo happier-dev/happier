@@ -7,6 +7,157 @@ import { persistProviderAccountUsageWithDaySummaries } from './persistence';
 import { logger } from '@/ui/logger';
 
 describe('key-holding quota summary maintenance', () => {
+  describe('producer clock extrema upgrades', () => {
+    const recordKey = { providerId: 'test', accountSubjectId: 'account', subjectKind: 'account' as const, quotaScope: 'account' as const };
+    const recordId = buildProviderAccountUsageRecordId(recordKey);
+    const sample = (fetchedAtMs: number, observedAtMs: number, used = 20): ProviderAccountUsageSnapshotV1 => ({
+      v: 1, recordId, recordKey, providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'account' },
+      observedAtMs, fetchedAtMs, staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+      meters: [{ meterId: 'daily', label: 'Daily', used, limit: 100, remaining: 100 - used, utilizationPct: used,
+        unit: 'requests', resetsAt: 1000, windowDurationMs: 1000, status: 'ok', details: {} }],
+    });
+    const legacySummary = (snapshots: readonly ProviderAccountUsageSnapshotV1[]) => {
+      const summary = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: 0, snapshots });
+      return { v: summary.v, recordId, dayStartAtMs: 0, lastSnapshot: summary.lastSnapshot, windows: summary.windows };
+    };
+
+    it.each(['plain', 'e2ee'] as const)('upgrades %s legacy days from all remaining rows despite backwards provider clocks', async accountMode => {
+      const observations = [sample(100, 9100, 80), sample(200, 50)];
+      const previous = legacySummary(observations);
+      const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+      const randomBytes = (n: number) => new Uint8Array(n).fill(3);
+      const content = accountMode === 'plain' ? { t: 'plain' as const, v: previous }
+        : sealProviderAccountUsageDaySummaryV1({ summary: previous, material, randomBytes });
+      const { sealProviderAccountUsageSnapshot } = await import('@happier-dev/protocol/connect/accountUsage');
+      const ranges: number[] = [];
+      const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+        if (String(url).includes('/day-summaries')) {
+          const query = JSON.parse(new URL(String(url)).searchParams.get('query')!);
+          expect(query).toMatchObject({ includeMissingDays: true, requireClockBounds: true });
+          return { status: 200, data: {
+            summaries: [{ dayStartAtMs: 0, payload: { v: 1, coverage: { observationCount: 2, frontier: { id: '200', observedAtMs: 200 } }, content } },
+              { dayStartAtMs: 86_400_000, payload: { v: 1, coverage: { observationCount: 0, frontier: null }, content: { t: 'encrypted', c: 'unrelated-completed-body' } } }],
+            missingDays: [{ dayStartAtMs: 0, coverage: { observationCount: 2, frontier: { id: '200', observedAtMs: 200 } } }],
+          } };
+        }
+        const query = JSON.parse(new URL(String(url)).searchParams.get('query')!) as { history: { range: { startAtMs: number } } };
+        ranges.push(query.history.range.startAtMs);
+        return { status: 200, data: { entries: observations.filter(snapshot => snapshot.fetchedAtMs >= query.history.range.startAtMs)
+          .map(snapshot => ({ id: String(snapshot.fetchedAtMs), observedAtMs: snapshot.fetchedAtMs, record: {
+            content: accountMode === 'plain' ? { t: 'plain', v: snapshot }
+              : { t: 'encrypted', c: sealProviderAccountUsageSnapshot({ snapshot, material, randomBytes }).ciphertext },
+            metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: 1000, status: 'ok' }, sources: [],
+          } })), nextCursor: null } };
+      });
+      const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 200, data: { success: true } });
+      try {
+        expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode, material, randomBytes, nowMs: 86_400_200 }))
+          .toEqual({ status: 'written', days: 1 });
+        expect(ranges).toEqual([0]);
+        const { ProviderAccountUsageDaySummaryWriteV1Schema } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
+        const write = ProviderAccountUsageDaySummaryWriteV1Schema.parse(put.mock.calls[0]?.[1]);
+        expect(write.payload).toMatchObject({ clockBoundsVersion: 1 });
+        expect(openProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: 0, accountMode, material, content: write.payload.content }))
+          .toMatchObject({ observedAtRange: { startAtMs: 50, endAtMs: 9101 }, windows: [{ peakUsed: 80 }] });
+        expect(get.mock.calls).toHaveLength(2);
+        expect(put.mock.calls).toHaveLength(1);
+      } finally { get.mockRestore(); put.mockRestore(); }
+    });
+
+    it.each([false, true])('preserves compacted chart and reset evidence when remaining detail is empty=%s', async empty => {
+      const previous = legacySummary([sample(100, 100, 80), { ...sample(200, 1200), meters: [{ ...sample(200, 1200).meters[0]!, resetsAt: 2000 }] },
+        { ...sample(300, 9100), meters: [] }]);
+      expect(previous.windows[0]?.resets).toEqual([{ resetAtMs: 1000, usedBeforeReset: 80 }]);
+      const remaining = empty ? [] : [{ ...sample(50, 10), meters: [] }];
+      const get = vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data: String(url).includes('/day-summaries')
+        ? { summaries: [{ dayStartAtMs: 0, payload: { v: 1, coverage: { observationCount: remaining.length, frontier: empty ? null : { id: '50', observedAtMs: 50 } }, content: { t: 'plain', v: previous } } }],
+          missingDays: [{ dayStartAtMs: 0, coverage: { observationCount: remaining.length, frontier: empty ? null : { id: '50', observedAtMs: 50 } } }] }
+        : { entries: remaining.map(snapshot => ({ id: '50', observedAtMs: 50, record: { content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: 50, staleAfterMs: 1000, status: 'ok' }, sources: [] } })), nextCursor: null } }));
+      const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 200, data: { success: true } });
+      try {
+        expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: 300 })).toEqual({ status: 'written', days: 1 });
+        expect(put.mock.calls[0]?.[1]).toMatchObject({ payload: { clockBoundsVersion: 1, content: { t: 'plain', v: {
+          observedAtRange: { startAtMs: empty ? 100 : 10, endAtMs: 9101 }, lastSnapshot: previous.lastSnapshot,
+          windows: expect.arrayContaining(previous.windows.map(window => expect.objectContaining({ peakUsed: window.peakUsed,
+            firstObservedAtMs: window.firstObservedAtMs, resets: window.resets }))),
+        } } } });
+      } finally { get.mockRestore(); put.mockRestore(); }
+    });
+
+    it('includes accepted backdated rows even when the same pending day also gains a newer row', async () => {
+      const first = sample(100, 100, 20);
+      const previous = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: 0, snapshots: [first] });
+      const observations = [sample(50, 9100, 90), first, sample(200, 200, 30)];
+      const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+        if (String(url).includes('/day-summaries')) return { status: 200, data: {
+          summaries: [{ dayStartAtMs: 0, payload: { v: 1, coverage: { observationCount: 0, frontier: null }, content: { t: 'plain', v: previous } } }],
+          missingDays: [{ dayStartAtMs: 0, coverage: { observationCount: 3, frontier: { id: '200', observedAtMs: 200 } } }],
+        } };
+        const query = JSON.parse(new URL(String(url)).searchParams.get('query')!) as { history: { range: { startAtMs: number } } };
+        return { status: 200, data: { entries: observations.filter(snapshot => snapshot.fetchedAtMs >= query.history.range.startAtMs)
+          .map(snapshot => ({ id: String(snapshot.fetchedAtMs), observedAtMs: snapshot.fetchedAtMs, record: { content: { t: 'plain', v: snapshot },
+            metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: 1000, status: 'ok' }, sources: [] } })), nextCursor: null } };
+      });
+      const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 200, data: { success: true } });
+      try {
+        expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: 300 })).toEqual({ status: 'written', days: 1 });
+        expect(put.mock.calls[0]?.[1]).toMatchObject({ payload: { clockBoundsVersion: 1, content: { t: 'plain', v: {
+          observedAtRange: { startAtMs: 100, endAtMs: 9101 }, windows: [{ peakUsed: 90, firstObservedAtMs: 50 }],
+        } } } });
+      } finally { get.mockRestore(); put.mockRestore(); }
+    });
+
+    it.each(['mode_mismatch', 'material_unavailable'] as const)('does not mark a legacy day proven when %s prevents opening it', async reason => {
+      const previous = legacySummary([sample(100, 9100)]);
+      const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+      const content = reason === 'mode_mismatch' ? { t: 'plain' as const, v: previous }
+        : sealProviderAccountUsageDaySummaryV1({ summary: previous, material, randomBytes: n => new Uint8Array(n).fill(3) });
+      const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: {
+        summaries: [{ dayStartAtMs: 0, payload: { v: 1, coverage: { observationCount: 0, frontier: null }, content } }],
+        missingDays: [{ dayStartAtMs: 0, coverage: { observationCount: 0, frontier: null } }],
+      } });
+      const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 200, data: { success: true } });
+      try {
+        expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'e2ee', nowMs: 200 }))
+          .toEqual({ status: 'partial', days: 0, unavailableDays: [{ dayStartAtMs: 0, reason: 'content_unavailable' }] });
+        expect(get.mock.calls).toHaveLength(1);
+        expect(put).not.toHaveBeenCalled();
+      } finally { get.mockRestore(); put.mockRestore(); }
+    });
+
+    it('stops before sealing or publishing clock proof when cancelled during the final detail read', async () => {
+      const controller = new AbortController();
+      const cancellation = new Error('cancelled');
+      const snapshot = sample(100, 9100);
+      const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+        if (String(url).includes('/day-summaries')) return { status: 200, data: { summaries: [],
+          missingDays: [{ dayStartAtMs: 0, coverage: { observationCount: 1, frontier: { id: '100', observedAtMs: 100 } } }] } };
+        controller.abort(cancellation);
+        return { status: 200, data: { entries: [{ id: '100', observedAtMs: 100, record: { content: { t: 'plain', v: snapshot },
+          metadata: { fetchedAt: 100, staleAfterMs: 1000, status: 'ok' }, sources: [] } }], nextCursor: null } };
+      });
+      const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 200, data: { success: true } });
+      try {
+        await expect(maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: 200, signal: controller.signal }))
+          .rejects.toBe(cancellation);
+        expect(put).not.toHaveBeenCalled();
+      } finally { get.mockRestore(); put.mockRestore(); }
+    });
+
+    it('publishes clock proof with the discovered coverage and reports a concurrent coverage conflict', async () => {
+      const snapshot = sample(100, 9100);
+      const coverage = { observationCount: 1, frontier: { id: '100', observedAtMs: 100 } };
+      const get = vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data: String(url).includes('/day-summaries')
+        ? { summaries: [], missingDays: [{ dayStartAtMs: 0, coverage }] }
+        : { entries: [{ id: '100', observedAtMs: 100, record: { content: { t: 'plain', v: snapshot },
+          metadata: { fetchedAt: 100, staleAfterMs: 1000, status: 'ok' }, sources: [] } }], nextCursor: null } }));
+      const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 409, data: { error: 'provider_account_usage_projection_conflict' } });
+      try {
+        expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: 200 })).toEqual({ status: 'conflict', days: 0 });
+        expect(put.mock.calls[0]?.[1]).toMatchObject({ payload: { coverage, clockBoundsVersion: 1 } });
+      } finally { get.mockRestore(); put.mockRestore(); }
+    });
+  });
   it('uses the just-updated preceding day when discovery also captured its stale body', async () => {
     const day = 86_400_000;
     const recordKey = { providerId: 'test', accountSubjectId: 'account', subjectKind: 'account' as const, quotaScope: 'account' as const };
@@ -39,7 +190,7 @@ describe('key-holding quota summary maintenance', () => {
         .toEqual([{ resetAtMs: day, usedBeforeReset: 80 }]);
     } finally { get.mockRestore(); put.mockRestore(); }
   });
-  it('opens only the inclusive accepted suffix when a summarized day gains a new observation', async () => {
+  it('reads the full pending day through transport pages when a summarized day gains an observation', async () => {
     const recordKey = { providerId: 'test', accountSubjectId: 'account', subjectKind: 'account' as const, quotaScope: 'account' as const };
     const recordId = buildProviderAccountUsageRecordId(recordKey);
     const observations: ProviderAccountUsageSnapshotV1[] = Array.from({ length: 102 }, (_, index) => ({ v: 1, recordId, recordKey, providerId: 'test',
@@ -63,7 +214,7 @@ describe('key-holding quota summary maintenance', () => {
     const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 200, data: { success: true } });
     try {
       expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: 300 })).toEqual({ status: 'written', days: 1 });
-      expect(transferred).toBe(2);
+      expect(transferred).toBe(102);
       expect(put.mock.calls[0]?.[1]).toMatchObject({ payload: { content: { t: 'plain', v: { lastSnapshot: observations.at(-1) } } } });
     } finally { get.mockRestore(); put.mockRestore(); }
   });

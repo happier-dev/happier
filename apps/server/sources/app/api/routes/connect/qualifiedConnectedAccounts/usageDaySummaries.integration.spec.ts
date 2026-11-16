@@ -206,6 +206,10 @@ describe('qualified usage day summaries', () => {
             const ordinary = await app.inject({ method: 'GET', url: url(), headers });
             expect(ordinary.statusCode, ordinary.body).toBe(200);
             expect(ordinary.json()).toEqual({ summaries: [], missingDays: [] });
+            const coverageUrl = `/v4/connect/qualified/provider-account-usage/day-summaries?${new URLSearchParams({ query: JSON.stringify({ ...query, includeCoverage: true }) })}`;
+            const uncoveredRead = await app.inject({ method: 'GET', url: coverageUrl, headers });
+            expect(uncoveredRead.statusCode, uncoveredRead.body).toBe(200);
+            expect(uncoveredRead.json()).toMatchObject({ summaries: [], missingDays: [{ dayStartAtMs, coverage: { observationCount: 1 } }] });
             const backfill = await app.inject({ method: 'GET', url: url(true), headers });
             expect(backfill.statusCode, backfill.body).toBe(200);
             expect(backfill.json()).toMatchObject({ summaries: [], missingDays: [{ dayStartAtMs, coverage: {
@@ -230,7 +234,10 @@ describe('qualified usage day summaries', () => {
                 .toEqual({ summaries: [], missingDays: [] });
             expect((await app.inject({ method: 'GET', url: url(), headers })).json())
                 .toEqual({ summaries: [{ dayStartAtMs, payload }], missingDays: [] });
+            expect((await app.inject({ method: 'GET', url: coverageUrl, headers })).json())
+                .toEqual({ summaries: [{ dayStartAtMs, payload }], missingDays: [] });
             const stranger = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+            expect((await app.inject({ method: 'GET', url: coverageUrl, headers: { 'x-test-user-id': stranger.id } })).statusCode).toBe(404);
             expect((await app.inject({ method: 'GET', url: url(), headers: { 'x-test-user-id': stranger.id } })).statusCode).toBe(404);
             expect((await write(payload, { 'x-test-user-id': stranger.id })).statusCode).toBe(404);
             const later = { ...snapshot, fetchedAtMs: snapshot.fetchedAtMs + 1000, observedAtMs: snapshot.observedAtMs + 1000, planLabel: 'changed plan' };
@@ -245,6 +252,10 @@ describe('qualified usage day summaries', () => {
             expect((await app.inject({ method: 'GET', url: url(true), headers })).json()).toMatchObject({
                 missingDays: [{ dayStartAtMs, coverage: { observationCount: 2, frontier: { observedAtMs: later.fetchedAtMs } } }],
             });
+            const invalidatedRead = await app.inject({ method: 'GET', url: coverageUrl, headers });
+            expect(invalidatedRead.statusCode, invalidatedRead.body).toBe(200);
+            expect(invalidatedRead.json()).toMatchObject({ summaries: [{ dayStartAtMs, payload: { ...payload, coverage: { observationCount: 0, frontier: null } } }],
+                missingDays: [{ dayStartAtMs, coverage: { observationCount: 2, frontier: { observedAtMs: later.fetchedAtMs } } }] });
             expect((await write(payload)).statusCode).toBe(409);
             // Invalidated proof never authorizes deletion before the normal
             // producer merges and seals the newly accepted detail.

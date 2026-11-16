@@ -1,15 +1,17 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
-import { ProviderAccountUsageRecordIdSchema, ProviderAccountUsageSnapshotV1Schema, type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
+import { PROVIDER_ACCOUNT_USAGE_DAY_MS, ProviderAccountUsageRecordIdSchema, ProviderAccountUsageSnapshotV1Schema, type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
 import { resolveProviderAccountUsagePaceWindow, hasProviderAccountUsageWitnessedReset } from './deriveProviderAccountUsagePace.js';
 
-export const PROVIDER_ACCOUNT_USAGE_DAY_MS = 86_400_000;
+export { PROVIDER_ACCOUNT_USAGE_DAY_MS } from './providerAccountUsagePrimitives.js';
 const Time = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 const Day = lazyZodSchema(() => Time.check(z.refine(value => value % PROVIDER_ACCOUNT_USAGE_DAY_MS === 0)));
 export const ProviderAccountUsageDaySummaryV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1), recordId: ProviderAccountUsageRecordIdSchema, dayStartAtMs: Day,
   lastSnapshot: ProviderAccountUsageSnapshotV1Schema,
+  /** Sealed provider-clock extrema of the available canonical observation basis. */
+  observedAtRange: z.optional(z.strictObject({ startAtMs: Time, endAtMs: Time }).check(z.refine(value => value.endAtMs > value.startAtMs))),
   windows: z.array(z.strictObject({
     meterId: z.string().check(z.minLength(1)), windowStartAtMs: z.nullable(Time), resetAtMs: z.nullable(Time),
     lastSnapshot: ProviderAccountUsageSnapshotV1Schema, peakUsed: z.nullable(z.number()),
@@ -28,12 +30,16 @@ export const ProviderAccountUsageDaySummaryContentV1Schema = lazyZodSchema(() =>
 ]));
 export const StoredProviderAccountUsageDaySummaryV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1), coverage: ProviderAccountUsageDaySummaryCoverageV1Schema, content: ProviderAccountUsageDaySummaryContentV1Schema,
+  clockBoundsVersion: z.optional(z.literal(1)),
 }));
 export type StoredProviderAccountUsageDaySummaryV1 = z.infer<typeof StoredProviderAccountUsageDaySummaryV1Schema>;
 export const ProviderAccountUsageDaySummaryReadV1Schema = lazyZodSchema(() => z.strictObject({
   recordId: ProviderAccountUsageRecordIdSchema,
   range: z.strictObject({ startAtMs: Time, endAtMs: Time }).check(z.refine(value => value.endAtMs > value.startAtMs)),
   includeMissingDays: z.optional(z.boolean()),
+  /** Return all selected envelopes with pending coverage, without producer predecessor bodies. */
+  includeCoverage: z.optional(z.boolean()),
+  requireClockBounds: z.optional(z.boolean()),
 }));
 export const ProviderAccountUsageDaySummaryResponseV1Schema = lazyZodSchema(() => z.strictObject({
   summaries: z.array(z.strictObject({ dayStartAtMs: Day, payload: StoredProviderAccountUsageDaySummaryV1Schema })),
@@ -48,6 +54,8 @@ export const ProviderAccountUsageDaySummaryWriteV1Schema = lazyZodSchema(() => z
 export function buildProviderAccountUsageDaySummaryV1(input: Readonly<{
   recordId: string; dayStartAtMs: number; snapshots: readonly ProviderAccountUsageSnapshotV1[];
   previous?: ProviderAccountUsageDaySummaryV1; precedingSnapshot?: ProviderAccountUsageSnapshotV1;
+  /** The producer exhausted this day's retained raw history and proved its coverage before writing. */
+  completeDayHistory?: boolean;
 }>): ProviderAccountUsageDaySummaryV1 {
   const snapshots = [...input.snapshots].sort((left, right) => left.fetchedAtMs - right.fetchedAtMs);
   const previous = input.previous;
@@ -96,7 +104,22 @@ export function buildProviderAccountUsageDaySummaryV1(input: Readonly<{
     // including a newly backfilled sample earlier than the next window.
     if (reset.resetAtMs === window.resetAtMs) reset.usedBeforeReset = window.lastSnapshot.meters[0]?.used ?? reset.usedBeforeReset;
   }
-  return { v: 1, recordId: input.recordId, dayStartAtMs: input.dayStartAtMs, lastSnapshot, windows: [...windows.values()] };
+  let observedAtRange: ProviderAccountUsageDaySummaryV1['observedAtRange'];
+  if (!previous || previous.observedAtRange || input.completeDayHistory) {
+    if (previous && !input.completeDayHistory) observedAtRange = previous.observedAtRange && { ...previous.observedAtRange };
+    // A complete legacy rebuild includes the retained endpoints after detail
+    // retention. It proves today's available basis, never deleted observations.
+    const basis = input.completeDayHistory && previous
+      ? [previous.lastSnapshot, ...previous.windows.map(window => window.lastSnapshot), ...snapshots] : snapshots;
+    for (const snapshot of basis) {
+      const at = snapshot.observedAtMs;
+      observedAtRange = observedAtRange
+        ? { startAtMs: Math.min(observedAtRange.startAtMs, at), endAtMs: Math.max(observedAtRange.endAtMs, at + 1) }
+        : { startAtMs: at, endAtMs: at + 1 };
+    }
+  }
+  return { v: 1, recordId: input.recordId, dayStartAtMs: input.dayStartAtMs, lastSnapshot, windows: [...windows.values()],
+    ...(observedAtRange ? { observedAtRange } : {}) };
 }
 
 /** The same UTC-day chart facts from detail and compacted days; neither path adds quota counters. */

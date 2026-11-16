@@ -6,7 +6,7 @@ import { readQualifiedProviderAccountUsageDaySummariesV4, readQualifiedProviderA
   writeQualifiedProviderAccountUsageDaySummaryV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { readHttpStatus } from '@/api/client/httpStatusError';
 
-/** The key-holding writer backfills only days whose remaining detail lacks coverage. */
+/** The key-holding writer maintains pending days and upgrades legacy clock evidence. */
 export async function maintainProviderAccountUsageDaySummaries(input: Readonly<{
   token: string; recordId: string; accountMode: 'plain' | 'e2ee'; material?: AccountScopedCryptoMaterial;
   randomBytes?: (length: number) => Uint8Array; nowMs: number; signal?: AbortSignal;
@@ -14,7 +14,7 @@ export async function maintainProviderAccountUsageDaySummaries(input: Readonly<{
   | Readonly<{ status: 'unavailable'; days: number; reason: 'authority_unavailable' | 'write_failed' }>
   | Readonly<{ status: 'partial'; days: number; unavailableDays: readonly Readonly<{ dayStartAtMs: number; reason: 'content_unavailable' }>[] }>> {
   const range = { startAtMs: 0, endAtMs: Math.max(1, input.nowMs + 1) };
-  const read = await readQualifiedProviderAccountUsageDaySummariesV4({ ...input, query: { recordId: input.recordId, range, includeMissingDays: true }, requestPurpose: 'connected-accounts:usage-persistence' });
+  const read = await readQualifiedProviderAccountUsageDaySummariesV4({ ...input, query: { recordId: input.recordId, range, includeMissingDays: true, requireClockBounds: true }, requestPurpose: 'connected-accounts:usage-persistence' });
   if (!read) return { status: 'unsupported', days: 0 };
   const existingByDay = new Map(read.summaries.map(summary => [summary.dayStartAtMs, summary]));
   let completedPredecessor: ProviderAccountUsageDaySummaryV1 | undefined;
@@ -38,7 +38,9 @@ export async function maintainProviderAccountUsageDaySummaries(input: Readonly<{
       const pageSize = 100; // Existing exact-history transport page size, not a backfill limit.
       do {
         const page = await readQualifiedProviderAccountUsageHistoryV4({ ...input, query: { recordId: input.recordId,
-          history: { range: { startAtMs: Math.max(missing.dayStartAtMs, previous?.lastSnapshot.fetchedAtMs ?? 0), endAtMs: missing.dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS }, pageSize,
+          // Accepted rows can arrive behind the retained last snapshot. Read the
+          // selected day's remaining basis before publishing its coverage proof.
+          history: { range: { startAtMs: missing.dayStartAtMs, endAtMs: missing.dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS }, pageSize,
             ...(cursor ? { cursor } : {}) } }, requestPurpose: 'connected-accounts:usage-persistence' });
         if (!page) return { status: 'unsupported', days };
         let opened: ReturnType<typeof openProviderAccountUsageHistoryPageV4>;
@@ -47,14 +49,16 @@ export async function maintainProviderAccountUsageDaySummaries(input: Readonly<{
         snapshots.push(...opened.entries.map(entry => entry.snapshot));
         cursor = opened.nextCursor ?? undefined;
       } while (cursor);
-      if (!snapshots.length) continue; // A simultaneous covered sweep may already have removed this day.
+      input.signal?.throwIfAborted();
+      if (!snapshots.length && !previous) continue; // A simultaneous covered sweep may already have removed this day.
       const summary = buildProviderAccountUsageDaySummaryV1({ recordId: input.recordId, dayStartAtMs: missing.dayStartAtMs,
-        snapshots, previous, precedingSnapshot: preceding?.lastSnapshot });
+        snapshots, previous, precedingSnapshot: preceding?.lastSnapshot, completeDayHistory: true });
       if (input.accountMode === 'e2ee' && (!input.material || !input.randomBytes)) throw new Error('provider_account_usage_summary_material_unavailable');
       const content = input.accountMode === 'plain' ? { t: 'plain' as const, v: summary }
         : sealProviderAccountUsageDaySummaryV1({ summary, material: input.material!, randomBytes: input.randomBytes! });
       const status = await writeQualifiedProviderAccountUsageDaySummaryV4({ ...input, write: { recordId: input.recordId,
-        dayStartAtMs: missing.dayStartAtMs, payload: { v: 1, coverage: missing.coverage, content } } });
+        dayStartAtMs: missing.dayStartAtMs, payload: { v: 1, coverage: missing.coverage, content,
+          ...(summary.observedAtRange ? { clockBoundsVersion: 1 as const } : {}) } } });
       if (status !== 'written') return { status, days };
       completedPredecessor = summary;
       days++;

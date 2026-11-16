@@ -1320,6 +1320,26 @@ initializes it from retained detail; reads need not wait for that write. This
 metadata is preserved across current-record updates and excluded from retained
 history payloads. Normal initialized discovery transfers only pending days and
 their required predecessor summaries.
+The day-summary reader can request `includeCoverage: true` to receive all
+selected envelopes together with the pending days and their accepted count/frontier
+from one admitted read snapshot. Pending days explicitly mark missing or stale
+summary coverage, including a useful retained prefix. This does not open sealed
+content or initiate a foreground raw-history backfill. The daemon's separate
+`includeMissingDays: true` demand still fetches only missing bodies and predecessors.
+Daily summaries optionally retain `observedAtRange: { startAtMs, endAtMs }`,
+a half-open range of provider observation clocks, inside the existing sealed body.
+The key-holding daemon computes it from a complete read of the selected pending
+day and the retained summary endpoints. An optional outer `clockBoundsVersion: 1`
+marks this format without disclosing those clocks. The daemon requests
+`requireClockBounds: true` to upgrade legacy days through the same writer;
+completed current-format days need no raw-history scan. Retention cannot recover
+deleted observations: an upgraded compacted day proves only its retained operands.
+The pace owner uses these bounds to include accepted days whose provider clocks
+reach the current meter windows, including observations outside their own windows.
+Missing or unproven bounds remain explicitly unavailable until producer backfill.
+Summary endpoints do not establish exact ended-window sample counts or eligibility.
+Consumers that render ended-window facts or earlier curves retain their explicit
+exact-history demand; this does not add a second summary or pace store.
 Daily summaries remain after detailed observations expire. Exact observation
 and reset-witness reads cannot recover deleted detail; that loss beyond the
 configured detail window is accepted. The operator-facing contract is
