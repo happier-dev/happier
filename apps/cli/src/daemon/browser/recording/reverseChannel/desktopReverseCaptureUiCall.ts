@@ -33,9 +33,9 @@ export type CreateDesktopReverseBrowserRecordingCaptureUiCallOptions = Readonly<
  * reference-only `UiBrowserRecordingCaptureFrameRequestV1` over the persistent machine socket via
  * `callConnectedClientRpc(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)`. On success it returns the
  * UI's raw (already-decrypted) response for the reverse-invoke adapter to validate against the shared
- * contract. On ANY transport failure — no machine socket, no desktop UI registered, timeout — it
- * THROWS, so the reverse-invoke adapter maps it to a fail-closed `ui_unavailable` result and the
- * recording producer honestly reports it cannot capture (never a fabricated frame).
+ * contract. Typed RPC failures use the same response envelope so the reverse-invoke adapter can
+ * distinguish unavailable UI handlers from other refusals. Missing clients and untyped failures
+ * throw and remain fail-closed UI-unavailable results.
  */
 export function createDesktopReverseBrowserRecordingCaptureUiCall(
   options: CreateDesktopReverseBrowserRecordingCaptureUiCallOptions,
@@ -51,7 +51,10 @@ export function createDesktopReverseBrowserRecordingCaptureUiCall(
       options.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined,
     );
     if (!response.ok) {
-      throw new Error(response.errorCode ?? response.error ?? 'reverse_capture_rpc_failed');
+      if (response.errorCode) {
+        return { protocolVersion: 1, result: { ok: false, errorCode: response.errorCode } };
+      }
+      throw new Error(response.error ?? 'reverse_capture_rpc_failed');
     }
     return response.result;
   };

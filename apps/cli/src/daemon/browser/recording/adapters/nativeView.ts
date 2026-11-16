@@ -39,8 +39,8 @@ export type BrowserRecordingNativeViewCaptureAdapterOptions = Readonly<{
    * daemon asks the connected desktop UI, over the persistent machine socket
    * (`RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME`), to capture each reference-only frame from the
    * Wry WebView it owns. The command is therefore normally bound; when no desktop UI is reachable the
-   * reverse invoke fails closed and the adapter reports `browser_recording_capture_adapter_missing`
-   * rather than fabricating a frame. It is left optional only so tests/QA can omit it.
+   * reverse invoke fails closed and the adapter preserves its unavailable reason rather than
+   * fabricating a frame. It is left optional only so tests/QA can omit it.
    */
   captureCommand?: BrowserRecordingNativeViewCaptureCommand;
   nowMs?: () => number;
@@ -106,7 +106,7 @@ export function createBrowserRecordingNativeViewCaptureAdapter(
       if (!result.ok) {
         return {
           status: 'unavailable',
-          reason: unavailable('browser_recording_capture_unavailable', result.reasonCode),
+          reason: unavailable(result.reasonCode, result.reasonCode),
         };
       }
 

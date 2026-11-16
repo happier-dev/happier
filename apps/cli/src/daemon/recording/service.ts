@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { type BrowserRecordingAvailabilityReason } from '@happier-dev/protocol/browser/recording/captureProfiles';
+import type { DaemonBrowserRecordingUnavailableReasonV1 } from '@happier-dev/protocol/browser/recording/v1';
 import type { BrowserRecordingCaptureSourceV1, BrowserDiagnosticFidelityV1, BrowserEvidenceSessionMediaReferenceV1, BrowserRecordingCapabilities, BrowserRecordingCaptureKindV1, BrowserRenderEngineKindV1, BrowserRecordingOutcomeReasonV1, BrowserRecordingPolicyStateV1, BrowserRecordingRetentionClassV1, BrowserRecordingSessionV1, BrowserSemanticAdapterKindV1, BrowserViewTargetKindV1 } from '@happier-dev/protocol';
 import type { SessionMediaIngestionSource } from '@/session/media/_types';
 import type { SurfaceInputControl } from '../surfaces/inputControl';
@@ -22,20 +22,8 @@ export type BrowserRecordingInputControlResolver = (view: Readonly<{
   viewId: string;
 }>) => SurfaceInputControl | undefined;
 
-export type BrowserRecordingDaemonUnavailableCode =
-  | BrowserRecordingAvailabilityReason['reasonCode']
-  | 'browser_recording_capture_adapter_missing'
-  | 'browser_recording_already_active'
-  | 'browser_recording_id_conflict'
-  | 'browser_recording_missing'
-  | 'browser_recording_not_active'
-  | 'browser_recording_media_discard_failed'
-  | 'browser_recording_capture_failed';
-
-export type BrowserRecordingDaemonUnavailableReason = Readonly<{
-  code: BrowserRecordingDaemonUnavailableCode;
-  message: string;
-}>;
+export type BrowserRecordingDaemonUnavailableReason = Readonly<DaemonBrowserRecordingUnavailableReasonV1>;
+export type BrowserRecordingDaemonUnavailableCode = BrowserRecordingDaemonUnavailableReason['code'];
 
 export type BrowserRecordingCapturedArtifact = Readonly<{
   /** A usable bounded clip can be stored even when its owner stopped accepting frames. */

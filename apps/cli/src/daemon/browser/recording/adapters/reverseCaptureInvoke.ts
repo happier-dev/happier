@@ -1,6 +1,6 @@
 import { UiBrowserRecordingCaptureFrameRequestV1Schema, UiBrowserRecordingCaptureFrameResponseV1Schema } from '@happier-dev/protocol/browser/recording/reverseCaptureV1';
 import type { UiBrowserRecordingCaptureFrameRequestV1 } from '@happier-dev/protocol';
-import { isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotFoundResult, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import type {
   DesktopBrowserRecordingFrameCaptureInvoke,
@@ -40,8 +40,8 @@ const INVALID_RESPONSE_ERROR_CODE = 'desktop_browser_recording_capture_ui_invali
  *
  * Reference-only end to end (BRW-15): only a local `path` + metadata cross back; no pixel bytes. When
  * no desktop UI is reachable (RPC method-not-found / transport throw) the invoke fails closed, so the
- * recording producer honestly reports `browser_recording_capture_adapter_missing` rather than
- * pretending a frame exists.
+ * recording producer reports UI unavailability rather than pretending a frame exists. Other typed
+ * refusals retain their error code.
  */
 export function createReverseDesktopBrowserRecordingNativeViewCaptureInvoke(
   options: CreateReverseDesktopBrowserRecordingNativeViewCaptureInvokeOptions,
@@ -76,6 +76,11 @@ export function createReverseDesktopBrowserRecordingNativeViewCaptureInvoke(
 
     const result = parsed.data.result;
     if (!result.ok) {
+      if (result.errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND
+        || result.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+        || result.errorCode === 'machine_socket_unavailable') {
+        return { ok: false, errorCode: UI_UNAVAILABLE_ERROR_CODE };
+      }
       return { ok: false, errorCode: result.errorCode };
     }
 

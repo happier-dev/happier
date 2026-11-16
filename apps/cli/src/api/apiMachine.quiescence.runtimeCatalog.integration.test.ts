@@ -10,6 +10,12 @@ import { ApiMachineClient } from './apiMachine';
 import { encodeBase64, encrypt } from './encryption';
 import { AccountProfileResponseSchema, decodePlainMachineStoredContent, FeaturesResponseSchema, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, RPC_METHODS } from '@happier-dev/protocol';
 import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocation/actions/clientActionMachineRpc';
+import { createBrowserRecordingNativeViewCaptureAdapter } from '@/daemon/browser/recording/adapters/nativeView';
+import { createBrowserRecordingNativeViewCaptureCommand } from '@/daemon/browser/recording/adapters/nativeViewCommand';
+import { createDesktopBrowserRecordingNativeViewCaptureTransport } from '@/daemon/browser/recording/adapters/nativeViewTransport';
+import { createReverseDesktopBrowserRecordingNativeViewCaptureInvoke } from '@/daemon/browser/recording/adapters/reverseCaptureInvoke';
+import { createDesktopReverseBrowserRecordingCaptureUiCall } from '@/daemon/browser/recording/reverseChannel/desktopReverseCaptureUiCall';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 const ioMock = vi.hoisted(() => vi.fn());
@@ -265,6 +271,37 @@ describe('ApiMachineClient daemon quiescence admission', () => {
             ok: true,
             result: { hello: 'daemon' },
         });
+    });
+
+    it.each([
+        [RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.FORBIDDEN],
+        [RPC_ERROR_CODES.METHOD_NOT_FOUND, 'desktop_browser_recording_capture_ui_unavailable'],
+        [RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, 'desktop_browser_recording_capture_ui_unavailable'],
+    ])('retains recording reverse RPC refusal %s at native capture admission', async (errorCode, expectedCode) => {
+        // The socket ACK is the external boundary; the Machine RPC, reverse
+        // transport, capture command and native adapter all run their real code.
+        const socket = createApiSessionSocketStub({ connected: true, emitWithAck: () => ({
+            ok: false, error: 'Reverse capture refused', errorCode,
+        }) });
+        const client = new ApiMachineClient('token', createPlainMachine());
+        Reflect.set(client, 'socket', socket);
+        const adapter = createBrowserRecordingNativeViewCaptureAdapter({
+            captureCommand: createBrowserRecordingNativeViewCaptureCommand({
+                transport: createDesktopBrowserRecordingNativeViewCaptureTransport({
+                    invokeRecordingFrameCapture: createReverseDesktopBrowserRecordingNativeViewCaptureInvoke({
+                        callUi: createDesktopReverseBrowserRecordingCaptureUiCall({ getMachineClient: () => client }),
+                    }),
+                }),
+            }),
+        });
+        await expect(adapter.start({ recording: {
+            v: 1, recordingId: 'recording_reverse_rpc', browserSessionId: 'browser_session_1', viewId: 'view_1',
+            profileId: 'profile_1', targetKind: 'streamedBrowser', adapterKind: 'localPreview',
+            renderEngineKind: 'desktopWebView', captureKind: 'nativeViewCapture', fidelity: 'nativeCallback',
+            startedAtMs: 1000, status: 'starting', navigationGenerationStart: 1, durationMs: 0,
+            byteSize: 0, frameCount: 0, fps: 1, mimeType: 'image/png', retentionClass: 'preSend',
+            redactionLevel: 'metadataOnly', policyState: 'allowed', actionChapters: [], relatedReferences: [],
+        } })).resolves.toMatchObject({ status: 'unavailable', reason: { code: expectedCode } });
     });
 
     it('carries exact answering-client routing and its answering address through the Machine socket', async () => {
