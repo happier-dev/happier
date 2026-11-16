@@ -105,6 +105,7 @@ async function probeServerReadiness(params: Readonly<{
     endpoint: string;
     token: string | null;
     homeCarrier?: HomeCarrier | null;
+    signal?: AbortSignal;
 }>): Promise<ReadinessProbeResult> {
     const endpoint = params.endpoint.replace(/\/+$/, '');
     const homeCarrier = params.homeCarrier ?? null;
@@ -127,6 +128,7 @@ async function probeServerReadiness(params: Readonly<{
                 {
                     method: 'GET',
                     headers: { Accept: 'application/json' },
+                    signal: params.signal,
                 },
             );
             if (healthResponse.status === 429) {
@@ -157,6 +159,7 @@ async function probeServerReadiness(params: Readonly<{
     return await probeAuthenticatedServerAuthPingEndpoint({
         endpoint,
         token: params.token,
+        signal: params.signal,
         ...(homeCarrier ? { homeCarrier } : {}),
     });
 }
@@ -174,6 +177,11 @@ type ReachabilitySupervisorEntry = {
     subscribers: Set<(state: ManagedConnectionState) => void>;
     invalidateInFlight: Promise<void> | null;
     lastInvalidateAt: number;
+    /**
+     * Cancels this Home's unanswered readiness probes. Probes have no deadline (a slow
+     * Home stays pending until it answers); a recovery signal replaces them instead.
+     */
+    probeLifetime: AbortController;
     ownerCount: number;
     pendingStartCount: number;
     stopInFlight: Promise<void> | null;
@@ -249,6 +257,7 @@ function getOrCreateEntry(serverUrlRaw: string, token: string | null = null): Re
             endpoint: entry.runtimeOrigin ?? entry.serverUrl,
             token: entry.token,
             homeCarrier: entry.homeCarrier,
+            signal: entry.probeLifetime.signal,
         }),
         onStateChange: (state) => {
             entry.state = state;
@@ -260,6 +269,7 @@ function getOrCreateEntry(serverUrlRaw: string, token: string | null = null): Re
         subscribers,
         invalidateInFlight: null,
         lastInvalidateAt: Number.NEGATIVE_INFINITY,
+        probeLifetime: new AbortController(),
         ownerCount: 0,
         pendingStartCount: 0,
         stopInFlight: null,
@@ -520,13 +530,15 @@ async function recheckOnlineEntry(entry: ReachabilitySupervisorEntry): Promise<v
     // newly selected route before publishing an outage to every socket owner.
     const scope = entry.supervisor.captureProbeReportScope?.();
     if (!scope) return;
-    const { runtimeOrigin, homeCarrier, token } = entry;
+    const { runtimeOrigin, homeCarrier, token, probeLifetime } = entry;
     const probe = await probeServerReadiness({
         endpoint: runtimeOrigin ?? entry.serverUrl,
         token,
         homeCarrier,
+        signal: probeLifetime.signal,
     });
-    if (!networkAllowed || entry.supervisor.captureProbeReportScope?.().generation !== scope.generation
+    // A cancelled recheck is no evidence about the Home; its replacement answers.
+    if (probeLifetime.signal.aborted || !networkAllowed || entry.supervisor.captureProbeReportScope?.().generation !== scope.generation
         || entry.runtimeOrigin !== runtimeOrigin || entry.token !== token
         || (entry.homeCarrier?.endpointId ?? null) !== (homeCarrier?.endpointId ?? null)) return;
     if (probe.status !== 'ready') {
@@ -541,9 +553,29 @@ async function recheckOnlineEntry(entry: ReachabilitySupervisorEntry): Promise<v
     }
 }
 
+/**
+ * Replace this Home's unanswered probes. Stop first, so the supervisor ignores
+ * its cancelled probe instead of reading it as an outage; a healthy online
+ * entry only loses its pending recheck, never its socket.
+ */
+async function supersedeUnansweredProbes(entry: ReachabilitySupervisorEntry): Promise<void> {
+    const superseded = entry.probeLifetime;
+    entry.probeLifetime = new AbortController();
+    const previous = entry.invalidateInFlight;
+    if (entry.state.phase === 'connecting' || entry.state.phase === 'offline') await entry.supervisor.stop();
+    superseded.abort();
+    if (previous) await previous.catch(() => {});
+}
+
 export async function invalidateServerReachabilitySupervisor(params: Readonly<{
     serverUrl: string;
     token: string | null;
+    /**
+     * A recovery signal (Retry, app foreground, network back) replaces an outstanding
+     * probe; failure evidence joins it. Without this, a probe the Home never
+     * answered holds every later Retry.
+     */
+    supersede?: boolean;
 }>): Promise<void> {
     const entry = getOrCreateEntry(params.serverUrl, params.token);
     const tokenChanged = entry.token !== params.token;
@@ -553,15 +585,20 @@ export async function invalidateServerReachabilitySupervisor(params: Readonly<{
         return;
     }
 
-    if (entry.invalidateInFlight) {
-        await entry.invalidateInFlight;
-        return;
-    }
-
     const now = Date.now();
-    // Coalesce simultaneous foreground and transport-failure revalidation.
-    if (now - entry.lastInvalidateAt < 250) {
-        return;
+    // Only an outstanding probe is replaced. A healthy online entry keeps the
+    // join/coalescing below, so a recovery signal never becomes a probe loop.
+    if (params.supersede && (entry.invalidateInFlight || entry.state.phase !== 'online')) {
+        await supersedeUnansweredProbes(entry);
+    } else {
+        if (entry.invalidateInFlight) {
+            await entry.invalidateInFlight;
+            return;
+        }
+        // Coalesce simultaneous transport-failure revalidation.
+        if (now - entry.lastInvalidateAt < 250) {
+            return;
+        }
     }
     entry.lastInvalidateAt = now;
 
@@ -601,9 +638,10 @@ export async function invalidateServerReachabilitySupervisor(params: Readonly<{
     }
 }
 
+/** Recovery signals (Retry, app foreground, browser `online`): each replaces unanswered probes. */
 export async function invalidateAllServerReachabilitySupervisors(): Promise<void> {
     await Promise.allSettled(Array.from(entriesByScopeKey.values()).map((entry) =>
-        invalidateServerReachabilitySupervisor({ serverUrl: entry.serverUrl, token: entry.token }),
+        invalidateServerReachabilitySupervisor({ serverUrl: entry.serverUrl, token: entry.token, supersede: true }),
     ));
 }
 

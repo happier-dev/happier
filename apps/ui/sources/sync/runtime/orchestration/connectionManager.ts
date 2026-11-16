@@ -356,6 +356,13 @@ export async function retryActiveServerConnection(): Promise<void> {
     if (activeRecoveryPromise) return await activeRecoveryPromise;
     activeRecoveryPromise = (async () => {
         const snapshot = getActiveServerSnapshot();
+        // A silent read, a long reachability backoff or a probe the Home never
+        // answered must not hold this Retry. Replace them first: carrier
+        // preparation below waits on this Home's readiness verdict.
+        abortServerFetches();
+        fireAndForget(invalidateAllServerReachabilitySupervisors(), {
+            tag: 'connectionManager.retryActiveServerConnection.reachability',
+        });
         if (
             !isAppliedActiveServerRuntimeAvailable()
             ||
@@ -365,16 +372,9 @@ export async function retryActiveServerConnection(): Promise<void> {
             // A failed staged switch has no applied socket for this target to
             // retry. Re-enter the serialized switch owner so credentials,
             // carrier and Sync are prepared as one exact target transaction.
-            // A cold restore parked on a silent read or a long reachability
-            // backoff must not hold this Retry.
-            abortServerFetches();
-            fireAndForget(invalidateAllServerReachabilitySupervisors(), {
-                tag: 'connectionManager.retryActiveServerConnection.reachability',
-            });
             await switchConnectionToActiveServer();
             return;
         }
-        abortServerFetches();
         const credentials = await resolveCredentialsForActiveServer(snapshot);
         const publicationTarget = capturePublicationTargetForSnapshot(snapshot);
         if (!publicationTarget) return;

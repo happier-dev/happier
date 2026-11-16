@@ -6,6 +6,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { bindEndpointConnectivityStateToRealtimeStore } from './bindManagedConnectionStateToRealtimeStore';
 
 import {
+    invalidateAllServerReachabilitySupervisors,
     invalidateServerReachabilitySupervisor,
     peekServerReachabilityState,
     reportServerUnreachable,
@@ -135,6 +136,45 @@ describe('serverReachabilitySupervisorPool (invalidate)', () => {
         const healthCalls = runtimeFetchSpy.mock.calls.filter(([input]) => String(input).endsWith('/health'));
         expect(healthCalls).toHaveLength(2);
 
+        unsubscribe();
+    });
+
+    it.each(['connecting', 'online'] as const)('lets a recovery signal replace a probe the Home never answered (%s)', async (startPhase) => {
+        const serverUrl = 'https://example.test';
+        const token = 'accepted-token';
+        let answering = startPhase === 'online';
+        const probeSignals: Array<AbortSignal | undefined> = [];
+        // The fetch adapter is the network boundary: an unanswered request stays
+        // pending until its caller aborts it, as a platform fetch does.
+        setRuntimeFetch((_input, init) => {
+            probeSignals.push(init?.signal ?? undefined);
+            if (answering) return Promise.resolve(new Response('{"ok":true}', { status: 200 }));
+            return new Promise<Response>((_resolve, reject) => {
+                init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+            });
+        });
+        const unsubscribe = subscribeServerReachabilityState(serverUrl, () => {}, token);
+
+        void startServerReachabilitySupervisor({ serverUrl, token });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(peekServerReachabilityState(serverUrl, token)?.phase).toBe(startPhase);
+
+        // The Home stops answering: failure evidence re-probes, and that probe hangs too.
+        answering = false;
+        reportServerUnreachable(serverUrl, new Error('transport close'), token);
+        await vi.advanceTimersByTimeAsync(1_000);
+        const unansweredProbes = probeSignals.length;
+        expect(unansweredProbes).toBeGreaterThanOrEqual(startPhase === 'online' ? 2 : 1);
+
+        // The Home answers again and the user presses Retry (or returns to the app).
+        answering = true;
+        void invalidateAllServerReachabilitySupervisors();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(probeSignals.length).toBeGreaterThan(unansweredProbes);
+        expect(peekServerReachabilityState(serverUrl, token)?.phase).toBe('online');
+        // Superseded probes are cancelled, not left holding the Home's request slot.
+        expect(probeSignals.slice(startPhase === 'online' ? 1 : 0, unansweredProbes).every((signal) => signal?.aborted === true)).toBe(true);
         unsubscribe();
     });
 });

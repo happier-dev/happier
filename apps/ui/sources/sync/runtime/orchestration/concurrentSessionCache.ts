@@ -1054,6 +1054,7 @@ export async function retryConcurrentSessionListQueryHome(serverIdRaw: string): 
         await invalidateServerReachabilitySupervisor({
             serverUrl: entry.serverUrl,
             token: entry.credentials.token,
+            supersede: true,
         });
         if (isManagedServerActive(entry) && entry.reachabilityState.phase === 'online') {
             queueRefresh(entry);

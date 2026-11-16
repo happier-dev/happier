@@ -85,6 +85,8 @@ function mockEnvironment(options: Readonly<{
             }
             : options.profile),
         getSavedHomeConnectionAddress: (input: Readonly<{ canonicalServerUrl: string }>) => input.canonicalServerUrl,
+        // No saved runtime origin: carrier policy selects from the descriptor.
+        getSavedHomeConnectionSnapshot: () => null,
     }));
     vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => await createTokenStorageModuleMock({
         importOriginal,
@@ -324,6 +326,50 @@ describe('focused-Home browser Iroh carrier selection', () => {
 
         expect(publishSpy.mock.calls.map(([publication]) => publication.carrier)).toEqual(['https', 'https']);
         expect(retryNow).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets a visible Retry recover a Home whose last readiness probe was never answered', async () => {
+        acquireBrowserCarrierSpy.mockRejectedValue(new IrohError('unavailable', 'worker script missing'));
+        const publicUrl = 'https://public.example.test';
+        const { retryNow } = mockEnvironment({
+            snapshot: { serverId: 'srv_home_a', serverUrl: CANONICAL_URL, carrier: 'https', generation: 42 },
+            profile: {
+                id: 'profile-a', serverIdentityId: 'srv_home_a', serverUrl: CANONICAL_URL, publicServerUrl: publicUrl,
+                homeConnectionDescriptor: { ...HOME_DESCRIPTOR, endpoints: [...HOME_DESCRIPTOR.endpoints, { kind: 'https', url: publicUrl }] },
+            },
+        });
+        // The fetch adapter is the network boundary: the Home answers, refuses, or leaves a request unanswered.
+        let home: 'answering' | 'refusing' | 'silent' = 'answering';
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(async (input, init) => {
+            if (home === 'refusing') throw new TypeError('Failed to fetch');
+            if (home === 'silent') return await new Promise<Response>((_resolve, reject) => {
+                init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+            });
+            return new Response(JSON.stringify(String(input).endsWith('/v1/features')
+                ? { features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_home_a' } } }
+                : { ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        });
+        const reachability = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        // The Account socket keeps observing the Home through the outage.
+        const unsubscribe = reachability.subscribeServerReachabilityState(publicUrl, () => {}, 'home-token');
+        const { switchConnectionToActiveServer, retryActiveServerConnection } = await import('./connectionManager');
+        try {
+            await switchConnectionToActiveServer();
+            expect(retryNow).not.toHaveBeenCalled();
+            home = 'refusing';
+            reachability.reportServerUnreachable(publicUrl, new Error('transport close'), 'home-token');
+            await vi.waitFor(() => expect(reachability.peekServerReachabilityState(publicUrl, 'home-token')?.phase).toBe('offline'));
+            home = 'silent';
+            await vi.waitFor(() => expect(reachability.peekServerReachabilityState(publicUrl, 'home-token')?.phase).toBe('connecting'), { timeout: 3_000 });
+
+            home = 'answering';
+            void retryActiveServerConnection();
+            await vi.waitFor(() => expect(retryNow).toHaveBeenCalledTimes(1), { timeout: 3_000 });
+        } finally {
+            unsubscribe();
+            await reachability.resetServerReachabilitySupervisors();
+        }
     });
 
     it('reselects the sole HTTPS carrier on focused retry', async () => {
