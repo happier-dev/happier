@@ -24,6 +24,7 @@ import {
   readCliSourceEntries,
   readWorkspacePackages,
   runtimePackageExports,
+  dropRedundantSourceRuntimeChunkImports,
   stripUnusedSourceRuntimeBanners,
 } from '../../sourceRuntimeEntries.mjs';
 
@@ -671,7 +672,9 @@ export async function buildCliBinaryArtifactCodePayload({
     });
     Object.assign(result.metafile!.inputs, sidecars.metafile.inputs);
     Object.assign(result.metafile!.outputs, sidecars.metafile.outputs);
-    await stripUnusedSourceRuntimeBanners(Object.keys(result.metafile!.outputs).map((file) => join(repoRoot, file)));
+    const emitted = Object.keys(result.metafile!.outputs).map((file) => join(repoRoot, file));
+    await stripUnusedSourceRuntimeBanners(emitted);
+    await dropRedundantSourceRuntimeChunkImports(emitted);
     const assets = join(cliDir, 'assets');
     if (existsSync(assets))
       await cp(assets, join(payloadDir, 'assets'), {

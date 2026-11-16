@@ -55,6 +55,89 @@ export async function stripUnusedSourceRuntimeBanners(files) {
   return stripped;
 }
 
+// esbuild's split output gives each chunk a bare `import"./chunk.js"` for every chunk its graph reaches,
+// a browser preload hint. Node keeps one resolve and load record per import statement and importer, so a
+// daemon or session host held ~16 MiB of loader caches for ~250k such edges (95% redundant, 2026-11-16).
+// A bare import whose target an EARLIER import of the same chunk already reaches is a no-op when it runs:
+// dropping it leaves ESM evaluation order unchanged. The statement becomes spaces so lines and columns
+// still match a source map.
+const CHUNK_IMPORT_STATEMENT = /\s*import\s*(?:(?:\{[^}]*\}|\*\s*as\s+[\w$]+|[\w$]+(?:\s*,\s*(?:\{[^}]*\}|\*\s*as\s+[\w$]+))?)\s*from\s*)?(["'])([^"'\n]+)\1\s*;?/y;
+
+/** Leading import statements of an emitted chunk (after an optional shebang and CommonJS banner). */
+function readChunkImportPrologue(code) {
+  const statements = [];
+  let at = code.startsWith('#!') ? code.indexOf('\n') + 1 : 0;
+  if (code.startsWith(SOURCE_RUNTIME_COMMONJS_BANNER, at)) at += SOURCE_RUNTIME_COMMONJS_BANNER.length;
+  for (;;) {
+    CHUNK_IMPORT_STATEMENT.lastIndex = at;
+    const match = CHUNK_IMPORT_STATEMENT.exec(code);
+    if (!match) {
+      // The banner and the chunk's own imports may sit on separate lines; skip one empty or banner-only line.
+      if (statements.length === 0 && code[at] === '\n') { at += 1; continue; }
+      return statements;
+    }
+    const text = match[0];
+    const start = match.index + (text.length - text.trimStart().length);
+    statements.push({ start, end: match.index + text.length, specifier: match[2], bare: /^import\s*["']/.test(text.trimStart()) });
+    at = match.index + text.length;
+  }
+}
+
+/** Blanks redundant bare chunk imports in emitted JavaScript files; returns how many were dropped. */
+export async function dropRedundantSourceRuntimeChunkImports(files) {
+  const paths = [...new Set(files)].filter(file => /\.m?js$/.test(file)).map(file => resolve(file));
+  const index = new Map(paths.map((file, i) => [file, i]));
+  const codes = await Promise.all(paths.map(file => readFile(file, 'utf8')));
+  const edges = codes.map((code, i) => readChunkImportPrologue(code).flatMap(statement => {
+    if (!statement.specifier.startsWith('./') && !statement.specifier.startsWith('../')) return [];
+    const target = index.get(resolve(dirname(paths[i]), statement.specifier));
+    return target === undefined ? [] : [{ ...statement, target }];
+  }));
+  // Chunks each chunk reaches (Tarjan SCCs complete in reverse topological order).
+  const reach = paths.map(() => null);
+  const order = new Int32Array(paths.length).fill(-1), low = new Int32Array(paths.length), onStack = new Uint8Array(paths.length);
+  const stack = []; let counter = 0;
+  for (let root = 0; root < paths.length; root += 1) {
+    if (order[root] !== -1) continue;
+    const work = [[root, 0]];
+    while (work.length > 0) {
+      const frame = work[work.length - 1]; const node = frame[0];
+      if (frame[1] === 0 && order[node] === -1) { order[node] = low[node] = counter++; stack.push(node); onStack[node] = 1; }
+      if (frame[1] < edges[node].length) {
+        const next = edges[node][frame[1]++].target;
+        if (order[next] === -1) work.push([next, 0]); else if (onStack[next]) low[node] = Math.min(low[node], order[next]);
+        continue;
+      }
+      work.pop();
+      if (work.length > 0) { const parent = work[work.length - 1][0]; low[parent] = Math.min(low[parent], low[node]); }
+      if (low[node] !== order[node]) continue;
+      const component = []; let member;
+      do { member = stack.pop(); onStack[member] = 0; component.push(member); } while (member !== node);
+      const reached = new Set();
+      for (const from of component) for (const edge of edges[from]) {
+        reached.add(edge.target);
+        if (!component.includes(edge.target)) for (const deeper of reach[edge.target]) reached.add(deeper);
+      }
+      for (const from of component) reach[from] = reached;
+    }
+  }
+  let dropped = 0;
+  await Promise.all(paths.map(async (file, i) => {
+    const covered = new Set(); const blank = [];
+    for (const edge of edges[i]) {
+      if (edge.bare && covered.has(edge.target)) { blank.push(edge); continue; }
+      covered.add(edge.target);
+      for (const deeper of reach[edge.target]) covered.add(deeper);
+    }
+    if (blank.length === 0) return;
+    let code = codes[i];
+    for (const edge of blank.reverse()) code = code.slice(0, edge.start) + ' '.repeat(edge.end - edge.start) + code.slice(edge.end);
+    await writeFile(file, code);
+    dropped += blank.length;
+  }));
+  return dropped;
+}
+
 // Node source tools reuse the bundle resolver's authored workspace authority.
 // This adapter maps only bare first-party imports; tsx retains transpilation.
 let nodeWorkspacePackages;

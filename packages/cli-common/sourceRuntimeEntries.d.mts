@@ -27,6 +27,8 @@ export const SOURCE_RUNTIME_COMMONJS_BANNER: string;
 export const SOURCE_RUNTIME_COMMONJS_DEFINE: Readonly<{ __dirname: string; __filename: string }>;
 export function stripUnusedSourceRuntimeBanner(code: string): string;
 export function stripUnusedSourceRuntimeBanners(files: Iterable<string>): Promise<number>;
+/** Blanks bare chunk imports an earlier import of the same chunk already reaches; returns how many. */
+export function dropRedundantSourceRuntimeChunkImports(files: Iterable<string>): Promise<number>;
 export function initialize(repoDir: string): Promise<void>;
 export const resolve: import('node:module').ResolveHook;
 export function sourceExport(value: unknown, label: string): string;

@@ -39,7 +39,7 @@ import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourc
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
-import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 export { readWorkspacePackages, resolveWorkspaceSource } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 
 const SHARED_SOURCE_INPUT_MANIFEST = '.source-runtime-shared-inputs.json';
@@ -1563,7 +1563,9 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
       plugin, createWorkspaceSourceResolver({workspacePackages, requireFromProject}),
     ],
   });
-  await stripUnusedSourceRuntimeBanners(Object.keys(result.metafile.outputs).map(file => resolve(repoDir, file)));
+  const emittedFiles = Object.keys(result.metafile.outputs).map(file => resolve(repoDir, file));
+  await stripUnusedSourceRuntimeBanners(emittedFiles);
+  await dropRedundantSourceRuntimeChunkImports(emittedFiles);
   phase('esbuild-main', 'plugin-resources');
   const runtimeManifest = component === 'daemon' ? {
     ...manifest, type: 'module', main: './src/index.mjs', module: './src/index.mjs',
