@@ -46,7 +46,8 @@ describe('theme profile import/export', () => {
         const imported = importThemeProfileFromJson(exported, { now: profile.updatedAt });
         expect(imported.ok).toBe(true);
         if (imported.ok) {
-            expect(imported.document.raw).toEqual(raw);
+            expect(imported.document.raw).toEqual({ ...raw, id: imported.profile.id });
+            expect(imported.profile.id).not.toBe(raw.id);
             expect(imported.document.compatibility.status).toBe('partial');
         }
     });
@@ -332,10 +333,9 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('generates a new id on collision and trims valid imported names', () => {
+    it('creates a fresh copy identity without acquiring existing profiles and trims imported names', () => {
         const json = JSON.stringify({ kind: 'happier.themeProfile', schemaVersion: 1, profile: { ...profile, name: '  Imported Ocean  ', overrides: { light: {}, dark: {} } } });
         const result = importThemeProfileFromJson(json, {
-            existingProfileIds: new Set(['theme_ocean']),
             generateId: () => 'theme_imported',
             now: '2026-05-12T00:00:00.000Z',
         });
@@ -355,7 +355,6 @@ describe('theme profile import/export', () => {
         });
 
         const result = importThemeProfileFromJson(json, {
-            existingProfileIds: new Set(),
             generateId: () => 'theme_imported',
             now: '2026-05-12T00:00:00.000Z',
         });
@@ -374,7 +373,6 @@ describe('theme profile import/export', () => {
         });
 
         const result = importThemeProfileFromJson(json, {
-            existingProfileIds: new Set(),
             generateId: () => 'theme_imported',
             now: '2026-05-12T00:00:00.000Z',
         });
@@ -393,7 +391,6 @@ describe('theme profile import/export', () => {
         });
 
         const result = importThemeProfileFromJson(json, {
-            existingProfileIds: new Set(),
             generateId: () => 'theme_imported',
             now: '2026-05-12T00:00:00.000Z',
         });
@@ -412,7 +409,6 @@ describe('theme profile import/export', () => {
         });
 
         const result = importThemeProfileFromJson(json, {
-            existingProfileIds: new Set(),
             generateId: () => 'theme_imported',
             now: '2026-05-12T00:00:00.000Z',
         });
@@ -453,16 +449,19 @@ describe('portable presentation retention', () => {
         expect(exported.profile).toMatchObject(portable);
         const imported = importThemeProfileFromJson(JSON.stringify(exported), { now: portable.updatedAt });
         expect(imported.ok).toBe(true);
-        if (imported.ok) expect(imported.document.raw).toMatchObject(portable);
+        if (imported.ok) {
+            expect(imported.document.raw).toMatchObject({ ...portable, id: imported.profile.id });
+            expect(imported.profile.id).not.toBe(portable.id);
+        }
     });
 });
 
 
 describe('Artifact-owned theme capacity', () => {
-    it('imports a CSS-rich profile beyond former settings import limits into a populated library', () => {
+    it('imports a CSS-rich profile beyond former settings import limits', () => {
         const portable = { ...profile, overrides: { light: {}, dark: {} }, css: '.card{color:red}\n'.repeat(5000) };
         const result = importThemeProfileFromJson(JSON.stringify({ kind: 'happier.themeProfile', schemaVersion: 1, profile: portable }),
-            { now: portable.updatedAt, existingProfileIds: new Set(Array.from({ length: 60 }, (_, i) => `saved_${i}`)) });
+            { now: portable.updatedAt });
         expect(result.ok).toBe(true);
         if (result.ok) expect(result.profile.css).toBe(portable.css);
     });

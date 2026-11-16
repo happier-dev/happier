@@ -29,7 +29,6 @@ export type ThemeProfileImportResult =
 
 type ImportOptions = Readonly<{
     now: string;
-    existingProfileIds?: ReadonlySet<string>;
     generateId?: () => string;
 }>;
 
@@ -77,25 +76,13 @@ export { isReservedThemeProfileId } from '@happier-dev/protocol/account/settings
 
 export const createThemeProfileId = (): string => randomUUID();
 
-const sanitizeId = (id: unknown, options: ImportOptions): string => {
+const sanitizeId = (id: unknown): string => {
     const sourceId = typeof id === 'string' && id.trim().length > 0 ? id.trim() : createThemeProfileId();
     if (
         isRouteSafeThemeProfileId(sourceId)
         && !isReservedThemeProfileId(sourceId)
-        && !options.existingProfileIds?.has(sourceId)
     ) {
         return sourceId;
-    }
-
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-        const candidate = (options.generateId ?? createThemeProfileId)();
-        if (
-            isRouteSafeThemeProfileId(candidate)
-            && !isReservedThemeProfileId(candidate)
-            && !options.existingProfileIds?.has(candidate)
-        ) {
-            return candidate;
-        }
     }
 
     return createThemeProfileId();
@@ -167,7 +154,7 @@ const sanitizeProfile = (
     const sanitizedProfileWithoutAssetAppearance = {
         ...profile,
         schemaVersion: THEME_PROFILE_SCHEMA_VERSION,
-        id: sanitizeId(profile.id, options),
+        id: sanitizeId(profile.id),
         name,
         createdAt: typeof profile.createdAt === 'string' ? profile.createdAt : options.now,
         updatedAt: typeof profile.updatedAt === 'string' ? profile.updatedAt : options.now,
@@ -234,12 +221,14 @@ export const importThemeProfileFromJson = (json: string, options: ImportOptions)
         return { ok: false, error: 'invalidJson' };
     }
 
+    // Files create editable copies; their record identity belongs to the exporting Account.
+    const copyId = (options.generateId ?? createThemeProfileId)();
     let rawProfile: unknown;
     const nativeFile = ThemeProfileFileEnvelopeSchema.safeParse(parsed);
     if (nativeFile.success) {
         rawProfile = nativeFile.data.profile;
     } else {
-        rawProfile = resolveExternalThemeProfileImportProfile(parsed, options);
+        rawProfile = resolveExternalThemeProfileImportProfile(parsed, { ...options, generateId: () => copyId });
         if (!rawProfile) {
             return { ok: false, error: 'unsupportedSchema' };
         }
@@ -249,7 +238,7 @@ export const importThemeProfileFromJson = (json: string, options: ImportOptions)
     const name = sanitizeThemeProfileName(rawProfile.name, { defaultBlankName: true });
     if (!name) return { ok: false, error: 'invalidProfile' };
     const read = parseThemeProfileDocument({ ...rawProfile,
-        id: sanitizeId(rawProfile.id, options), name,
+        id: copyId, name,
         createdAt: typeof rawProfile.createdAt === 'string' ? rawProfile.createdAt : options.now,
         updatedAt: typeof rawProfile.updatedAt === 'string' ? rawProfile.updatedAt : options.now,
     });

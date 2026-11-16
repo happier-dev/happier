@@ -5,7 +5,6 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import { mergeThemeProfileDocumentEdit, type ThemeProfileLibrary, type ThemeProfileMode, type ThemeReference, type ThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 
 import { importThemeProfileFromJson, exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
-import { randomUUID } from '@/platform/randomUUID';
 
 import type { ThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
 import type { ThemeSurfacePaintDescriptor } from '@happier-dev/plugin-ui';
@@ -94,8 +93,7 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                     await library.undo(request.input.undoHandle);
                     return { restored: host.readSelection() };
                 case THEME_ACTION_IDS.import: {
-                    const imported = importThemeProfileFromJson(request.input.file.text, { now: new Date().toISOString(),
-                        generateId: randomUUID, existingProfileIds: new Set((await library.list()).map(entry => entry.id)) });
+                    const imported = importThemeProfileFromJson(request.input.file.text, { now: new Date().toISOString() });
                     if (!imported.ok) return { ok: false as const, errorCode: 'theme_document_invalid', error: 'theme_document_invalid' };
                     const result = await library.save({ document: imported.document });
                     if (!result.entry) return { ok: false as const, errorCode: 'theme_not_found', error: 'theme_not_found' };
