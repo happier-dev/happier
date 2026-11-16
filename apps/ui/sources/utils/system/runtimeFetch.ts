@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
+import { resolveTauriRuntimeFetch } from '@/utils/platform/tauri/transferFetch';
 
 export type RuntimeFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -12,7 +13,8 @@ async function resolveDefaultRuntimeFetch(input: RequestInfo | URL): Promise<Rea
     fetch: RuntimeFetch;
     host: 'browser' | 'native';
 }>> {
-    const { resolveTauriRuntimeFetch } = await import('@/utils/platform/tauri/transferFetch');
+    // A static import: the adapter is tiny and loads its Tauri plugin lazily itself. On web an
+    // `import()` here was a separate chunk fetched before the first request of every load.
     const tauriRuntimeFetch = await resolveTauriRuntimeFetch(input);
     if (tauriRuntimeFetch) {
         return { fetch: tauriRuntimeFetch, host: 'native' };
