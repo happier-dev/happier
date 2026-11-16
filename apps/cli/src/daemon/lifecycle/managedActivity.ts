@@ -48,7 +48,11 @@ export type LiveWorkProducerV1 = Readonly<{
 }>;
 
 export type ManagedActivityInventory = Readonly<{
-    read(): Promise<LiveWorkInventoryV1>;
+    /**
+     * Without a scope: a fresh all-owner confirmation. `changed`: a passive all-owner refresh in
+     * which every owner rereads only what its pushed invalidations changed; never a confirmation.
+     */
+    read(scope?: LiveWorkReadScopeV1): Promise<LiveWorkInventoryV1>;
     readDecision(): Promise<ActivityDecisionV1>;
     /** Accepted projection only; does not start observations or retain an invalid idle proof. */
     getCurrentDecision(): ActivityDecisionV1;
@@ -209,15 +213,16 @@ export function createManagedActivityInventory(params: Readonly<{
             }));
         }
     };
-    const read = (changedProducer?: LiveWorkProducerV1): Promise<LiveWorkInventoryV1> => {
+    const read = (changedProducer?: LiveWorkProducerV1, scope?: LiveWorkReadScopeV1): Promise<LiveWorkInventoryV1> => {
         observe();
         const observedEdge = ownerEdge;
+        const passive = changedProducer !== undefined || scope === 'changed';
         // A passive partial projection cannot satisfy a fresh all-owner confirmation.
         // Concurrent full confirmations still share their pending live observation.
-        if (inFlight?.ownerEdge === observedEdge && (changedProducer !== undefined || inFlight.allOwners)) return inFlight.result;
+        if (inFlight?.ownerEdge === observedEdge && (passive || inFlight.allOwners)) return inFlight.result;
         // Capture synchronous owner edges immediately. Deferring the read until
         // a prior asynchronous producer settles would lose busy→idle within one turn.
-        let allOwners = true;
+        let allOwners = scope !== 'changed';
         const observationsPending = Promise.allSettled(params.producers.map(producer => {
             const previous = producerObservations.get(producer);
             if (changedProducer !== undefined && producer !== changedProducer && previous) {
@@ -226,7 +231,7 @@ export function createManagedActivityInventory(params: Readonly<{
             }
             let observation: Promise<Omit<LiveWorkInventoryV1, 'idleSince'>>;
             try {
-                observation = Promise.resolve(producer.read(producer === changedProducer ? 'changed' : undefined))
+                observation = Promise.resolve(producer.read(scope === 'changed' || producer === changedProducer ? 'changed' : undefined))
                     .catch(() => ({ items: [], coverage: 'unknown' as const }));
             } catch {
                 observation = Promise.resolve({ items: [], coverage: 'unknown' as const });
@@ -286,7 +291,7 @@ export function createManagedActivityInventory(params: Readonly<{
         return next;
     };
     return {
-        read,
+        read: scope => read(undefined, scope),
         readDecision: async () => projectManagedActivityDecision(await read()),
         getCurrentDecision: () => priorDecision === undefined || (priorDecision.kind === 'idle' && idleSince === undefined)
             ? { kind: 'unknown', reasons: ['coverage_unknown'] } : priorDecision,

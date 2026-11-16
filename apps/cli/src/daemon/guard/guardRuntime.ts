@@ -7,6 +7,7 @@ import { isSustainedV1 } from '@happier-dev/protocol/machines/vitals/isSustained
 import { effectiveMachineMemoryPressureV1 } from '@happier-dev/protocol/machines/vitals/effectiveMachineMemoryPressureV1';
 import type { MachineVitalsSampler } from '../vitals/createMachineVitalsSampler';
 import { waitForChangeOrDeadline } from '../lifecycle/waitForChangeOrDeadline';
+import type { LiveWorkReadScopeV1 } from '../lifecycle/managedActivity';
 import { equalProcessStart } from '../processes/ownership/types';
 import type { ActivityLog } from './activityLog';
 import { guardTargetRef, planGuard, planIdleSessions, projectGuardLadderV1, type GuardCandidate, type GuardConnectionMinute, type GuardFacts, type GuardLadderPreview, type IdleSessionCandidate } from './guardPlanner';
@@ -40,7 +41,8 @@ export type GuardRuntimeInput = Readonly<{
   subscribePolicy(listener: () => void): () => void;
   /** Incumbent inventory/native ownership invalidations. Enabled only while this rule runs. */
   subscribe(listener: () => void): () => void;
-  readFacts(signal?: AbortSignal): Promise<GuardFacts>;
+  /** `changed` for the planning tick (owners reread only what their pushes changed); fresh when omitted. */
+  readFacts(signal?: AbortSignal, scope?: LiveWorkReadScopeV1): Promise<GuardFacts>;
   policyWork?: GuardPolicyWork;
   stop(candidate: GuardCandidate | IdleSessionCandidate, signal: AbortSignal): Promise<Readonly<{ status: 'stopped' } | { status: 'failed'; reason: string }>>;
   notice(candidate: GuardCandidate | IdleSessionCandidate, state: SessionGuardNoticeStateV1, signal?: AbortSignal): Promise<boolean>;
@@ -278,7 +280,8 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
         }
         let nextAt: number | undefined;
         try {
-          const currentFacts = needsFacts ? observeFacts(await input.readFacts(signal)) : undefined;
+          // Planning consumes pushed owner facts; every action confirms fresh (SessionStop, fire facts).
+          const currentFacts = needsFacts ? observeFacts(await input.readFacts(signal, 'changed')) : undefined;
           if (signal.aborted) break;
           // Inventory changes wake the loop; current policy and target admission,
           // rather than unrelated owner edges, decide whether this read can act.

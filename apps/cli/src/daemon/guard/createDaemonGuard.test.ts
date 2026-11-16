@@ -87,6 +87,7 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
         let present = true;
         let nativeReads = 0;
         let factsReads = 0;
+        let activityReads = 0;
         let stops = 0;
         let working = projectService;
         let connections = 0;
@@ -168,6 +169,7 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
             readSessions: () => projectService || idleSession ? [workspaceSession] : [],
             // Session activity RPC is a network boundary, reconciled by the real inventory producer.
             readActivity: async () => {
+                activityReads++;
                 await activityReadBoundary?.();
                 return { session: working ? 'active' : 'settled', input: 'settled', agents: 'settled', attention: 'settled', settledAt: epoch };
             },
@@ -208,7 +210,7 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
             })),
         });
         const keepAwake = createKeepAwake({ platform: 'linux', exists: () => false }); cleanup.push(() => keepAwake.release());
-        const projectFacts = createReadGuardFacts({ readBrowsers: () => [], trackedSessions: () => idleSession ? [workspaceSession] : [], readInventory: () => inventory.read(),
+        const projectFacts = createReadGuardFacts({ readBrowsers: () => [], trackedSessions: () => idleSession ? [workspaceSession] : [], readInventory: scope => inventory.read(scope),
             readServiceTargets: () => serviceOwner?.readResourceTargets() ?? [], readSessionEligibility: async (tracked, liveWork) => {
                 if (!idleSession) throw new Error('No owned Session root');
                 return (await evaluateSessionEligibility({ tracked, inventory: liveWork, draft: { status: 'absent' }, resume: {
@@ -225,12 +227,13 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
                     processes: new Map(owners.snapshot.rows.map(row => [row.pid, { pid: row.pid, ppid: row.ppid ?? undefined,
                         processStartTimeMs: row.start.startTimeMs, censusRow: row, command: 'vite', processOwnership: 'self' as const }])) });
             } });
-        const readFacts = async (owners: GuardFacts['ownership'], readSignal?: AbortSignal): Promise<GuardFacts> => {
+        // startDaemon's composition: the scope reaches both inventory reads.
+        const readFacts = async (owners: GuardFacts['ownership'], readSignal?: AbortSignal, scope?: 'changed'): Promise<GuardFacts> => {
             factsReads++;
             await factsReadBoundary?.();
             return projectService || idleSession
-            ? projectFacts({ ownership: owners, inventory: await inventory.read(), signal: readSignal }) : ({ ownership: owners,
-            inventory: await inventory.read(), targets: owners.status === 'ok' ? owners.roots.map(root => ({
+            ? projectFacts({ ownership: owners, inventory: await inventory.read(scope), signal: readSignal, scope }) : ({ ownership: owners,
+            inventory: await inventory.read(scope), targets: owners.status === 'ok' ? owners.roots.map(root => ({
                 kind: 'browser', root, ownerRef: root, label: 'private browser', idle: true, settledAt: epoch - 60000,
                 wayBack: [{ label: 'reopen', actionId: 'browser.view.open', input: {} }],
             })) : [] });
@@ -265,7 +268,8 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
             connections: (value: number) => { connections = value; guard!.refreshOnTick(); },
             gone: () => { present = false; sessionProducer.notifyChanged(); }, pressure: (level: typeof pressure) => { pressure = level; },
             available: (bytes: number) => { available = bytes; }, missingVitals: (value: boolean) => { missingVitals = value; },
-            get stops() { return stops; }, get nativeReads() { return nativeReads; }, get factsReads() { return factsReads; } };
+            get stops() { return stops; }, get nativeReads() { return nativeReads; }, get factsReads() { return factsReads; },
+            get activityReads() { return activityReads; }, sessionChanged: () => sessionProducer.notifySessionChanged('workspace-session') };
     }
 
     it('keeps automatic auxiliary and memory observations on minutes while Overview is live, including failed-reader retries', async () => {
@@ -314,6 +318,21 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
         expect(plans).toBe(failedPlans);
         native.advance(60000); await vi.advanceTimersByTimeAsync(2000); await f.drain();
         expect(plans).toBeGreaterThan(failedPlans);
+        expect(f.stops).toBe(0);
+    });
+
+    it('plans each minute from pushed runner facts and rereads a runner only after its own change push', async () => {
+        const f = await setup(undefined, true, false, undefined, 'memory');
+        f.pressure('calm');
+        await vi.advanceTimersByTimeAsync(60000); await f.drain();
+        const reads = f.activityReads;
+        const facts = f.factsReads;
+        await vi.advanceTimersByTimeAsync(5 * 60000); await f.drain();
+        expect(f.factsReads).toBeGreaterThan(facts);
+        expect(f.activityReads).toBe(reads);
+        f.sessionChanged();
+        await vi.advanceTimersByTimeAsync(60000); await f.drain();
+        expect(f.activityReads).toBe(reads + 1);
         expect(f.stops).toBe(0);
     });
 

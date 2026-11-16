@@ -2205,6 +2205,11 @@ Guard lifetime and watch cancellation retire only their awaiting reader, includi
 pending ownership and Session activity reads; the shared native/inventory producer
 and its normal publisher remain live. This reuses the existing change-or-deadline
 primitive without adding a timer or cancelling another consumer's work.
+The Guard's planning tick reads the live-work inventory with the `changed` scope:
+runners push an invalidation after every live-work change, so each owner rereads
+only what its pushes changed and an idle tick makes no runner RPC. That read is
+never an action confirmation: a Session stop's SessionStop admission and a
+browser or service fire still read fresh facts.
 This does not certify the composed loaded daemon or the visual Guard tab.
 
 The development CLI's [process census](../apps/cli/src/processes/census/processCensus.ts)

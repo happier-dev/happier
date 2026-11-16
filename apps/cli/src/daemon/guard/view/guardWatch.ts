@@ -8,6 +8,7 @@ import type { ActivityLog } from '../activityLog';
 import { projectGuardActivityRowsForRequester } from '../activityLog';
 import { createParkWatch } from '../../lifecycle/parkWatch';
 import { waitForChangeOrDeadline } from '../../lifecycle/waitForChangeOrDeadline';
+import type { LiveWorkReadScopeV1 } from '../../lifecycle/managedActivity';
 import { projectGuardLadderV1, type GuardTarget } from '../guardPlanner';
 import type { RequesterWorkAttributionV1 } from '../../lifecycle/requesterWorkAttribution';
 import type { createGuardRuntime } from '../guardRuntime';
@@ -27,7 +28,8 @@ export type GuardWatchInput = Readonly<{
   policy: Pick<MachineResourcesPolicyRuntime, 'read' | 'subscribe'>;
   sampler: Pick<MachineVitalsSampler, 'latest' | 'demand' | 'subscribe' | 'samplesSince'>;
   ownership: Pick<ReturnType<typeof createProcessOwnershipRuntime>, 'readOwners'>;
-  readFacts(ownership: GuardOwnership, signal?: AbortSignal): Promise<GuardFacts>;
+  /** Fresh when `scope` is omitted; `changed` only for the Guard's own planning tick. */
+  readFacts(ownership: GuardOwnership, signal?: AbortSignal, scope?: LiveWorkReadScopeV1): Promise<GuardFacts>;
   readState(): MachineGuardStateV1;
   readTarget(): Readonly<{ serverId: string; machineId: string; installationId: string }>;
   activityLog: Pick<ActivityLog, 'list' | 'subscribe'>;

@@ -1,7 +1,7 @@
 import type { BrowserSidecarResourceTarget } from '../browser/sidecar/controlAdapter';
 import type { NormalizedLocalServiceInventorySnapshot } from '../local/services/inventory/scanner';
 import type { ManagedServiceResourceTarget } from '@/plugins/runtime/invocation/services/managedServicesOwner';
-import { readWorkspaceSessionIdle, type LiveWorkInventoryV1 } from '../lifecycle/managedActivity';
+import { readWorkspaceSessionIdle, type LiveWorkInventoryV1, type LiveWorkReadScopeV1 } from '../lifecycle/managedActivity';
 import type { TrackedSession } from '../types';
 import type { SessionEligibility } from './sessionEligibility';
 import type { GuardFacts, GuardOwnership, GuardTarget } from './guardPlanner';
@@ -13,7 +13,7 @@ import { readGuardSessionTitle } from './readGuardSessionTitle';
 export type ReadGuardFactsDependencies = Readonly<{
   readBrowsers: () => readonly BrowserSidecarResourceTarget[];
   readServices: (signal?: AbortSignal) => Promise<NormalizedLocalServiceInventorySnapshot>;
-  readInventory: () => Promise<LiveWorkInventoryV1>;
+  readInventory: (scope?: LiveWorkReadScopeV1) => Promise<LiveWorkInventoryV1>;
   readServiceTargets?: () => readonly ManagedServiceResourceTarget[];
   trackedSessions: () => Iterable<TrackedSession>;
   readSessionEligibility: (tracked: TrackedSession, inventory: LiveWorkInventoryV1, signal?: AbortSignal) => Promise<SessionEligibility>;
@@ -21,7 +21,8 @@ export type ReadGuardFactsDependencies = Readonly<{
 
 /** Projects already-admitted owners; it never reads or reclassifies a process census. */
 export function createReadGuardFacts(dependencies: ReadGuardFactsDependencies) {
-  return async (input: Readonly<{ ownership: GuardOwnership; inventory: LiveWorkInventoryV1; signal?: AbortSignal }>): Promise<GuardFacts> => {
+  return async (input: Readonly<{ ownership: GuardOwnership; inventory: LiveWorkInventoryV1; signal?: AbortSignal;
+    scope?: LiveWorkReadScopeV1 }>): Promise<GuardFacts> => {
     const { ownership, inventory: initialInventory } = input;
     if (ownership.status !== 'ok') return { ownership, inventory: initialInventory, targets: [] };
     const tracked = [...dependencies.trackedSessions()];
@@ -47,7 +48,7 @@ export function createReadGuardFacts(dependencies: ReadGuardFactsDependencies) {
           ? { serverId: session.requesterWorkAttributionV1.serverId } : {}) } }],
     })));
     // All draft/resume and inventory transports finish before native socket/control observations.
-    const inventory = await dependencies.readInventory();
+    const inventory = await dependencies.readInventory(input.scope);
     const services = await dependencies.readServices(input.signal);
     const serviceTargets = dependencies.readServiceTargets?.() ?? [];
     const sessionsById = new Map<string, TrackedSession | undefined>();

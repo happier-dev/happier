@@ -98,14 +98,14 @@ export async function createDaemonGuard(input: DaemonGuardInput): Promise<Daemon
                 listener();
             });
         }, subscribe: subscribeFacts, policyWork,
-        readFacts: async runtimeSignal => {
+        readFacts: async (runtimeSignal, scope) => {
             const signal = runtimeSignal ?? lifetime.signal;
             let facts: Awaited<ReturnType<DaemonGuardInput['readFacts']>> | undefined;
             // Retire only this reader; incumbent ownership/inventory publishers remain live.
             await waitForChangeOrDeadline({ signal, waitForChange: async () => {
                 const ownership = await input.ownership.readOwners({ freshness: 'fresh' });
                 signal.throwIfAborted();
-                facts = await input.readFacts(ownership, signal);
+                facts = await input.readFacts(ownership, signal, scope);
             } });
             signal.throwIfAborted();
             if (!facts) throw new Error('Guard fact read did not complete');

@@ -2954,7 +2954,7 @@ export async function startDaemon(
       withGuardAccess(tracked, access => readCurrentSessionEligibility({ access }), signal);
     const guardFacts = createReadGuardFacts({ ...guardSources,
       trackedSessions: () => trackedSessionsByKey.values(),
-      readInventory: () => managedActivity.read(),
+      readInventory: scope => managedActivity.read(scope),
       readSessionEligibility: async (tracked, inventory, signal) =>
         // Eligibility consumes current Session record facts (resume id, Pending), so each tick reads them fresh.
         withGuardAccess(tracked, access => readCurrentSessionEligibility({ access, inventory }), signal),
@@ -2992,7 +2992,8 @@ export async function startDaemon(
       activeServerDir: configuration.activeServerDir, policy: machineResourcesPolicy,
       sampler: machineVitals, keepAwake: daemonKeepAwake, summary: machineResourceSummary,
       ownership: processOwnershipRuntime, inventory: managedActivity,
-      readFacts: async (ownership, signal) => guardFacts({ ownership, inventory: await managedActivity.read(), signal }),
+      // The planning tick reads only runners whose pushed live-work changed; actions confirm fresh.
+      readFacts: async (ownership, signal, scope) => guardFacts({ ownership, inventory: await managedActivity.read(scope), signal, scope }),
       readTarget: () => {
         const target = machineResourceTarget();
         if (!target) throw new Error('machine_target_unavailable');
