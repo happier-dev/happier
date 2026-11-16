@@ -26,7 +26,7 @@ const stemOf = file => {
 const label = value => isPublicRuntimeImportDiagnostic(value) && /^[\w@./*+ {},$>-]+$/u.test(value)
   ? value : '[redacted import]';
 
-function gitIn(repo) {
+export function gitIn(repo) {
   return (args, options = {}) => execFileSync('git', args, {
     cwd: repo, encoding: 'utf8', maxBuffer: 2 ** 31 - 1, stdio: ['pipe', 'pipe', 'pipe'], ...options,
   });
@@ -45,8 +45,19 @@ function readBlobs(git, oids) {
   return contents;
 }
 
+// Trees are immutable: one gate process (closure, then import cycles) builds each tree's view once.
+const views = new Map();
+
 /** One revision's files, module resolution and export tables, all read from Git objects. */
-function revisionView(repo, git, rev) {
+export function revisionView(repo, git, rev) {
+  const tree = git(['rev-parse', '--verify', `${rev}^{tree}`]).trim();
+  const key = `${resolve(repo)}\0${tree}`;
+  if (!views.has(key)) views.set(key, buildRevisionView(repo, git, tree));
+  return views.get(key);
+}
+
+function buildRevisionView(repo, git, rev) {
+  ts ??= require('typescript');
   const blobs = new Map();
   for (const record of nul(git(['ls-tree', '-r', '-z', '--full-tree', rev]))) {
     const tab = record.indexOf('\t');
@@ -73,8 +84,11 @@ function revisionView(repo, git, rev) {
   const directories = new Set(['.']);
   for (const name of blobs.keys())
     for (let dir = posix.dirname(name); !directories.has(dir); dir = posix.dirname(dir)) directories.add(dir);
+  // Resolver probes are normalized absolute paths: strip the repository prefix without path.resolve.
+  const prefix = `${resolve(repo)}/`;
   const repoPath = value => {
-    let name = relative(repo, resolve(value)).split(sep).join('/') || '.';
+    let name = value.startsWith(prefix) && !/\/\.\.?(?:\/|$)/u.test(value) ? value.slice(prefix.length)
+      : relative(repo, resolve(value)).split(sep).join('/') || '.';
     // TypeScript's package resolver sees workspace packages as installed links.
     const match = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)(?:\/(.*))?$/u.exec(name);
     if (match && workspaces.has(match[1])) name = posix.join(workspaces.get(match[1]), match[2] ?? '');
@@ -91,8 +105,13 @@ function revisionView(repo, git, rev) {
     realpath: value => resolve(repo, repoPath(value)),
   };
   const configs = new Map();
+  const configOfDir = new Map();
+  // One module-resolution cache per tsconfig: package.json lookups and node_modules walks are shared.
+  const resolutionCaches = new Map();
   const optionsFor = file => {
-    const config = ts.findConfigFile(resolve(repo, posix.dirname(file)), host.fileExists);
+    const dir = posix.dirname(file);
+    if (!configOfDir.has(dir)) configOfDir.set(dir, ts.findConfigFile(resolve(repo, dir), host.fileExists));
+    const config = configOfDir.get(dir);
     if (!configs.has(config)) {
       const options = config ? ts.parseJsonConfigFileContent(ts.readConfigFile(config, host.readFile).config,
         { ...host, readDirectory: () => [], useCaseSensitiveFileNames: true }, dirname(config)).options : {};
@@ -100,6 +119,7 @@ function revisionView(repo, git, rev) {
       configs.set(config, { ...options, allowJs: true, resolveJsonModule: true,
         moduleResolution: options.moduleResolution ?? ts.ModuleResolutionKind.Bundler,
         customConditions: [...new Set([...(options.customConditions ?? []), SOURCE_CONDITION])] });
+      resolutionCaches.set(configs.get(config), ts.createModuleResolutionCache(repo, name => name, configs.get(config)));
     }
     return configs.get(config);
   };
@@ -116,7 +136,8 @@ function revisionView(repo, git, rev) {
     // A path alias is ours only when the file's own tsconfig maps it; an alias that only a bundler
     // or test-runner config defines (e.g. a host-source `@/` alias in plugin tests) is outside the scan.
     if (specifier.startsWith('.') || alias || workspaces.has(workspace)) {
-      const resolved = ts.resolveModuleName(specifier, resolve(repo, file), options, host).resolvedModule;
+      const resolved = ts.resolveModuleName(specifier, resolve(repo, file), options, host,
+        resolutionCaches.get(options)).resolvedModule;
       const target = resolved && repoPath(resolved.resolvedFileName);
       if (!resolved) result = trackedAsset(file, specifier, options) || ignoredOnDisk(file, specifier, options)
         ? { kind: 'external' } : { kind: 'missing' };
@@ -313,7 +334,8 @@ function revisionView(repo, git, rev) {
     }
     return found;
   };
-  return { blobs, read, exportsOf, findings, lockfileImporters: () => lockfileImporters(read('pnpm-lock.yaml')) };
+  return { blobs, read, prefetch, resolveImport, optionsFor, workspaces, exportsOf, findings,
+    lockfileImporters: () => lockfileImporters(read('pnpm-lock.yaml')) };
 }
 
 // pnpm 9 may write several YAML documents; read every importers map.

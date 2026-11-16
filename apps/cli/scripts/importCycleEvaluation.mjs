@@ -106,6 +106,8 @@ export function collectImportBindingReads(sourceFile) {
         eagerReads.set(node.text, {
           moduleSpecifier: imports.get(node.text), binding: node.text,
           parse: parse || previous?.parse === true,
+          // The first line that reads the binding while the module evaluates (gate messages name it).
+          line: previous?.line ?? sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
         });
       }
     }
@@ -154,6 +156,7 @@ export function findEvaluationCycles({ graph, components, eagerReads, relativePa
       files: [...new Set(path.map(relativePath))].sort(),
       edges: path.slice(1).map((to, index) => [relativePath(path[index]), relativePath(to)]),
       read: { from: relativePath(read.from), to: relativePath(read.to), binding: read.binding },
+      line: read.line,
     });
   }
   return cycles;

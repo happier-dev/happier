@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { collectImportBindingReads, findEvaluationCycles } from './importCycleEvaluation.mjs';
 
@@ -112,7 +112,7 @@ export function formatGuardFailure(newCycles) {
 
   newCycles.forEach((cycle, index) => {
     lines.push('', `New cycle ${index + 1}:`);
-    if (cycle.read) lines.push(`  Eager read: ${cycle.read.from} -> ${cycle.read.to} (${cycle.read.binding})`);
+    if (cycle.read) lines.push(`  Eager read: ${cycle.read.from}${cycle.line ? `:${cycle.line}` : ''} -> ${cycle.read.to} (${cycle.read.binding})`);
     for (const file of cycle.files) {
       lines.push(`  - ${file}`);
     }
@@ -234,7 +234,7 @@ function readTsconfig(tsconfigPath) {
   return parsedConfig;
 }
 
-function collectRuntimeModuleSpecifiers(sourceFile, runtimeBindings) {
+export function collectRuntimeModuleSpecifiers(sourceFile, runtimeBindings) {
   const specifiers = [];
 
   sourceFile.forEachChild((node) => {
@@ -340,7 +340,7 @@ function findRuntimeImportCycles(params) {
     .sort(compareCycleKeys);
 }
 
-function findStronglyConnectedComponents(graph) {
+export function findStronglyConnectedComponents(graph) {
   let index = 0;
   const indices = new Map();
   const lowLinks = new Map();
@@ -454,19 +454,19 @@ function isRuntimeSourceFile(filePath, sourceRoot) {
   if (filePath.endsWith('.d.ts')) return false;
   if (!RUNTIME_SOURCE_EXTENSIONS.has(extname(filePath))) return false;
 
-  const relativePath = toPosixRelative(sourceRoot, filePath);
-  const segments = relativePath.split('/');
+  return !isTestModulePath(toPosixRelative(sourceRoot, filePath));
+}
+
+/** Tests, fixtures and test setup never load in a product runtime graph. */
+export function isTestModulePath(posixPath) {
+  const segments = posixPath.split('/');
   if (segments.includes('__tests__') || segments.includes('__fixtures__') || segments.includes('testkit')) {
-    return false;
+    return true;
   }
 
-  const name = basename(filePath);
-  if (TEST_FILE_PATTERN.test(name)) return false;
-  if (TEST_SUPPORT_FILE_PATTERN.test(name)) return false;
-  if (TEST_SETUP_FILE_PATTERN.test(name)) return false;
-  if (name === 'vitestSetup.ts') return false;
-
-  return true;
+  const name = segments.at(-1);
+  return TEST_FILE_PATTERN.test(name) || TEST_SUPPORT_FILE_PATTERN.test(name)
+    || TEST_SETUP_FILE_PATTERN.test(name) || name === 'vitestSetup.ts';
 }
 
 function formatTsDiagnostic(diagnostic) {
