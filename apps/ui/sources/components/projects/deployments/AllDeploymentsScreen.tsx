@@ -206,6 +206,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   ) : null;
   const openNewApp = useOpenNewApp();
   const openDeployApp = React.useCallback(() => openNewApp(), [openNewApp]);
+  const openDescribeApp = React.useCallback(() => openNewApp(null, null, { startOn: 'describe' }), [openNewApp]);
   // One create on Services (reuse map §4): Deploy an app, the flow every entry opens. The empty page's scene carries it
   // instead, so the page never shows two.
   const deployCreate = React.useMemo<PageCreateAction>(() => ({ label: t('newApp.title'), onPress: openDeployApp,
@@ -331,6 +332,8 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
           subtitle={t('projects.deployments.allEmptyBody')}
           // The page's one way in: Deploy an app, the flow every entry opens (lab svcEmpty, reuse map §1/§4).
           primaryAction={{ label: t('newApp.title'), onPress: openDeployApp, testID: 'all-deployments.empty.deployApp' }}
+          // Not sure where to start: the same dialog, on Describe your app (lab empty).
+          prompt={{ question: t('newApp.auto.prompt'), action: { label: t('newApp.auto.entryTitle'), onPress: openDescribeApp, testID: 'all-deployments.empty.describeApp' } }}
         />
       </ItemList>
     );

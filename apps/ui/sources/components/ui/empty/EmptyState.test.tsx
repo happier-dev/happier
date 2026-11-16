@@ -134,6 +134,23 @@ describe('EmptyState', () => {
         expect(collectRenderedTestIds(withoutPrimary.tree.toJSON())).not.toContain('lonely-secondary');
     });
 
+    it('offers a question-led second door beneath the action row, after the primary (journey-deploy empty)', async () => {
+        const describe = vi.fn();
+        const screen = await renderScreen(
+            <EmptyState
+                layout="page"
+                title="Nothing deployed yet"
+                primaryAction={{ label: 'Deploy an app', onPress: vi.fn(), testID: 'empty-deploy' }}
+                prompt={{ question: 'Not sure where to start?', action: { label: 'Describe your app', onPress: describe, testID: 'empty-describe' } }}
+            />,
+        );
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids.filter((id) => id === 'empty-deploy' || id === 'empty-describe')).toEqual(['empty-deploy', 'empty-describe']);
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('Not sure where to start?');
+        await screen.pressByTestIdAsync('empty-describe');
+        expect(describe).toHaveBeenCalledTimes(1);
+    });
+
     it('says a list line\'s ways forward as quiet inline links, in order', async () => {
         const showAll = vi.fn();
         const archived = vi.fn();

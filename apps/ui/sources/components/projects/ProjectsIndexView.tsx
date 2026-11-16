@@ -66,7 +66,8 @@ const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
                 // With nothing here yet, deploying an app is the second way to start (journey-deploy projEmpty).
                 {...(!hasContent ? { secondaryAction: {
                     label: t('newApp.title'), onPress: () => openNewApp(), testID: 'projects-none-open:deploy-app',
-                } } : {})}
+                }, prompt: { question: t('newApp.auto.prompt'), action: { label: t('newApp.auto.entryTitle'),
+                    onPress: () => openNewApp(null, null, { startOn: 'describe' }), testID: 'projects-none-open:describe-app' } } } : {})}
                 action={(
                     <>
                     {firstSaved ? <RoundButton testID="projects-none-open:open-source" size="normal"

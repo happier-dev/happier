@@ -137,6 +137,12 @@ export type CustomModalChromeCardConfig = Readonly<{
      *   scrolls inside it (header and footer stay in view); use it when the content's size varies
      */
     scrollHost?: 'overlay' | 'body' | 'bounded';
+    /**
+     * `bounded` only: names the screen the card shows. The card keeps its tallest height within one screen (a
+     * narrowed list never shrinks under the person); a new key, such as a wizard's next step or a settled run,
+     * lets it fit the new content.
+     */
+    screenKey?: string;
     bodyScroll?: 'none' | 'auto';
     testID?: string;
     titleTestID?: string;

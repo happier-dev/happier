@@ -166,6 +166,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
             subtitleTestID={chrome?.subtitleTestID}
             closeButtonTestID={chrome?.closeButtonTestID}
             scrollHost={chrome?.scrollHost}
+            screenKey={chrome?.screenKey}
             bodyScroll={chrome?.bodyScroll ?? 'none'}
             dimensions={chrome?.dimensions}
             presentation={phoneFullscreen ? 'fullscreen' : phoneSheet ? 'sheet' : 'card'}

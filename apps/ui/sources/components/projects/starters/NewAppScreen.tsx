@@ -66,6 +66,9 @@ import type { DeploymentNewDefinitionKind } from '@/components/projects/deployme
 import type { DeploymentDraftFrame } from '@/components/projects/deployments/DeploymentEnvironmentDraft';
 import { NewAppCodeSources } from './NewAppCodeSources';
 import { NewAppDeploySteps, NewAppDeploySummary, type NewAppDeploySource } from './NewAppDeploySteps';
+import { NewAppAutoStep } from './auto/NewAppAutoStep';
+import { useNewAppAutoSuggestions, type NewAppAutoChosen } from './auto/useNewAppAutoSuggestions';
+import { applyDeploySuggestion } from './applyDeploySuggestion';
 import { isRepositoryAddressCandidate } from '@/components/projects/sources/projectSourceAddress';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -76,12 +79,12 @@ import type { MachineCreationContinuationDraft } from '@/components/machines/add
 const NewAppMachineSetup = React.lazy(() => import('./NewAppMachineSetup').then(module => ({ default: module.NewAppMachineSetup })));
 
 /** A starter's own steps; the other ways continue through `deploy`: the Environment draft's Where → Configure → Review. */
-type Step = 'start' | 'describe' | 'create' | 'deploy';
+type Step = 'start' | 'describe' | 'create' | 'deploy' | 'auto';
 const STEPS: readonly Step[] = ['start', 'describe', 'create'];
 /** Source, then the draft's three steps (journey-deploy D3). */
 const DEPLOY_STEPS: readonly DeploymentDraftFrame['step'][] = ['where', 'configure', 'review'];
 /** Already built (a stored definition the Project draft picks a Project for) or a catalog app's listing. */
-type Door = `built:${DeploymentNewDefinitionKind}` | `catalog:${string}`;
+type Door = `built:${DeploymentNewDefinitionKind}` | `catalog:${string}` | 'describe';
 /** The lab's From the catalog row: three apps, the rest one press away in the Store. */
 const CATALOG_TILES = 3;
 /** A catalog tile says what the app is in its listing's own lead clause (lab: a short line); the listing has the rest. */
@@ -120,6 +123,8 @@ export type NewAppScreenProps = Partial<
     machine?: QualifiedMachineV1 | null;
     /** A Project's Deploy an app: that Project's code starts chosen as Your code. */
     projectSourceId?: string | null;
+    /** An empty state's "Describe your app": the dialog opens on the describe step (journey-deploy S1). */
+    startOn?: 'describe' | null;
   }>;
 
 function readMachineHomeDir(
@@ -164,7 +169,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const starterCatalog = useRegistryItems(search ? { kind: 'starter', query: search } : { kind: 'starter' }, true);
   const starters = starterCatalog.items;
 
-  const [step, setStep] = React.useState<Step>('start');
+  const [step, setStep] = React.useState<Step>(props.startOn === 'describe' ? 'auto' : 'start');
+  // Describe your app (journey-deploy S1/S2/S!): the suggestion owner's last report, and the setup the person chose.
+  const auto = useNewAppAutoSuggestions({ serverId: scope?.serverId ?? null, active: step === 'auto' });
+  const [appliedSuggestion, setAppliedSuggestion] = React.useState<NewAppAutoChosen | null>(null);
   const [starterId, setStarterId] = React.useState<string | null>(
     props.starterId ?? (starters.length === 1 && !props.projectSourceId ? starters[0]!.itemId : null),
   );
@@ -336,6 +344,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // catalog app opens its Store listing; Browse shows the whole catalog. The ways out step aside first.
   const continueThroughDoor = (chosen: Door) => {
     if (!scope) return;
+    if (chosen === 'describe') {
+      setStep('auto');
+      return;
+    }
     if (chosen === 'built:image' || chosen === 'built:compose') {
       startDeploy({ kind: 'definition', definitionKind: chosen === 'built:image' ? 'image' : 'compose' });
       return;
@@ -346,20 +358,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     openStoreListing({ type: 'registryItem', kind: item.kind, sourceId: item.sourceId, itemId: item.itemId,
       ...(item.version === undefined ? {} : { version: item.version }) });
   };
-  // Lab f1src footer: hand the whole job to an agent. New Session opens with the request written, on the door's
-  // Machine when there is one; the person reads it, picks the agent and sends it.
-  const askAgent = async () => {
-    const lifetime = captureActiveServerAccountScopeLifetime();
-    if (!lifetime) return;
-    stepAside();
-    // The authoring owner shows a refusal or a waiting approval; the sheet has already stepped aside.
-    await openSessionAuthoringAction({
-      seed: { prompt: t('newApp.askAgentPrompt'),
-        ...(props.machine ? { placement: { kind: 'exactTarget', serverId: props.machine.serverId, machineId: props.machine.machineId } } : {}) },
-    }, lifetime);
-  };
-  const askAgentRef = React.useRef(askAgent);
-  askAgentRef.current = askAgent;
   const browseCatalog = () => {
     stepAside();
     router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', machine: props.machine ?? null }) as never);
@@ -431,6 +429,29 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     submittedInput.current = actionInput;
     setStep('create');
     setCreate({ kind: 'running' });
+    const suggestion = appliedSuggestion && suggestedStarterItemId(appliedSuggestion) === actionInput.starterId ? appliedSuggestion : null;
+    const lifetime = suggestion ? captureActiveServerAccountScopeLifetime() : null;
+    if (suggestion && lifetime) {
+      // Use this setup: the suggestion owner creates through the same Action with the plan brief, then opens the Session.
+      const { serverId: _serverId, starterId: _starterId, description: _description, ...createInput } = actionInput;
+      const applied = await applyDeploySuggestion({ serverId: scope.serverId, suggestion: suggestion.recommendation,
+        catalog: suggestion.catalog, description: auto.description,
+        create: { input: createInput, lifetime, ...(name.trim() ? { sessionName: name.trim() } : {}) } });
+      if (applied.kind === 'created') {
+        if (applied.sessionOpened) stepAside();
+        else setCreate({ kind: 'projectReady', created: applied.creation });
+        return;
+      }
+      const settled = applied.kind === 'failed' && applied.creation
+        ? applied.creation
+        : readStarterCreateOutcome({ kind: 'failed', code: applied.kind === 'failed' ? applied.code : applied.kind }, actionInput.resume);
+      setCreate(settled);
+      if (settled.kind === 'needsScmAccount') {
+        setOwner({ kind: 'needsAccount' });
+        setStep('describe');
+      }
+      return;
+    }
     let outcome: StarterCreateOutcome;
     try {
       const execute = createFrontDoorUiActionExecutor(undefined, {
@@ -462,7 +483,35 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       if (await startSession(outcome)) stepAside();
       else setCreate({ kind: 'projectReady', created: outcome });
     }
-  }, [create, input, scope, startSession, stepAside]);
+  }, [appliedSuggestion, auto.description, create, input, name, scope, startSession, stepAside]);
+
+  // Use this setup (journey-deploy F4): the suggestion owner routes it. A starter continues in this flow's review, which
+  // creates through the owner with the plan brief; a catalog app continues where catalog apps deploy today (its Store
+  // listing) until this dialog hosts catalog apps in Where it runs (B2).
+  const applyChosenSuggestion = async () => {
+    const chosen = auto.chosen;
+    if (!chosen || !scope) return;
+    const applied = await applyDeploySuggestion({ serverId: scope.serverId, suggestion: chosen.recommendation,
+      catalog: chosen.catalog, description: auto.description });
+    const source = chosen.recommendation.source;
+    if (applied.kind === 'where') {
+      stepAside();
+      openStoreListing({ type: 'registryItem', kind: 'app', sourceId: applied.app.sourceId, itemId: applied.app.itemId });
+      return;
+    }
+    if (applied.kind === 'needsCreateInput' && source.kind === 'starter') {
+      setAppliedSuggestion(chosen);
+      setDescription(auto.description);
+      setStarterId(suggestedStarterItemId(chosen));
+      setPickedStarter(null);
+      setCodeSourceId(null);
+      setDoor(null);
+      setPastedRepository(null);
+      setStep('describe');
+    }
+  };
+  const applySuggestionRef = React.useRef(applyChosenSuggestion);
+  applySuggestionRef.current = applyChosenSuggestion;
 
   const back = React.useCallback(() => {
     if (addingMachine) setAddingMachine(false);
@@ -471,24 +520,38 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       else leaveDeploy();
     }
     else if (step === 'describe') setStep('start');
+    else if (step === 'auto') {
+      auto.stop();
+      setStep('start');
+    }
     else if (
       step === 'create' &&
       (create?.kind === 'failed' || create?.kind === 'outcomeUnknown')
     )
       setStep('describe');
     else close();
-  }, [addingMachine, close, create?.kind, deployFrame, leaveDeploy, step]);
+  }, [addingMachine, auto.stop, close, create?.kind, deployFrame, leaveDeploy, step]);
   const pageBack = usePageBackControl('newApp.back', back);
 
   const deployStep = step === 'deploy' ? deployFrame?.step ?? 'where' : null;
   // The deploy steps count the source step first, then the draft's own (journey-deploy: four dots).
-  const stepIndex = deployStep ? 1 + DEPLOY_STEPS.indexOf(deployStep) : STEPS.indexOf(step);
+  // Describe your app is the source step's other way in: the same first dot of the same stepper.
+  const stepIndex = deployStep ? 1 + DEPLOY_STEPS.indexOf(deployStep) : step === 'auto' ? 0 : STEPS.indexOf(step);
   const stepCount = step === 'deploy' ? 1 + DEPLOY_STEPS.length : STEPS.length;
   // With nothing to pick, the state's own next step (Add a computer, Retry) is the only action. Your code continues
   // in that Project's own new-Environment draft (lab f1cfg); a starter continues here.
+  const autoKind = auto.view.kind;
   const primary = addingMachine ? null :
     step === 'deploy'
       ? deployFrame ? { ...deployFrame.primary, onPress: deployFrame.press } : null
+      : step === 'auto'
+      ? autoKind === 'describe'
+        ? { title: t('newApp.auto.suggest'), disabled: !auto.description.trim() || !scope, onPress: auto.suggest, testID: 'newApp.auto.suggest' }
+        : autoKind === 'recommendations'
+          ? { title: t('newApp.auto.useSetup'), disabled: auto.chosen === null, onPress: () => { void applySuggestionRef.current(); }, testID: 'newApp.auto.useSetup' }
+          : autoKind === 'noAgent'
+            ? { title: t('newApp.auto.addMachine'), disabled: false, onPress: addComputer, testID: 'newApp.auto.addMachine' }
+            : null
       : step === 'start'
       ? {
           title: t('common.continue'),
@@ -546,6 +609,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             }
           : null;
   const footerNote = addingMachine ? null :
+    // A phone footer has room for the actions only (lab autoNoAgentp, autoThinkp).
+    step === 'auto'
+      ? phone ? null
+        : autoKind === 'working' ? t('newApp.auto.workingNote')
+        : autoKind === 'recommendations' ? auto.suggestedBy
+        : autoKind === 'noAgent' ? t('newApp.auto.descriptionKept')
+        : null :
     deployStep === 'where' || deployStep === 'configure' ? t('newApp.deploy.nothingCreated') :
     step === 'start' && !starter && codeSourceId === null && door === null && pastedRepository === null
       ? t('newApp.startPick')
@@ -555,10 +625,19 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // A selected managed creation owns Cancel, including its disabled state while acquisition is pending.
   const machineOwnsExit = addingMachine && machineCreationDraft !== null;
   const showBack = !machineOwnsExit && (
+    (step === 'auto' && (autoKind === 'describe' || autoKind === 'nothing' || autoKind === 'failed')) ||
     step === 'deploy' ||
     step === 'describe' ||
     (step === 'create' && (create?.kind === 'failed' || create?.kind === 'outcomeUnknown'))
   );
+  // The step's quieter ways out, before Back and the primary (lab autoThink: Stop · Close; autoNoAgent: Choose a starter myself).
+  const autoSecondary = step !== 'auto' || addingMachine ? null
+    : autoKind === 'working' ? [
+        { title: t('newApp.auto.stop'), testID: 'newApp.auto.stop', onPress: () => auto.stop() },
+        { title: t('common.close'), testID: 'newApp.auto.close', onPress: () => closeRef.current() },
+      ]
+    : autoKind === 'noAgent' ? [{ title: t('newApp.auto.chooseStarter'), testID: 'newApp.auto.chooseStarter', onPress: () => backRef.current() }]
+    : null;
   const primaryRef = React.useRef(primary);
   primaryRef.current = primary;
   const backRef = React.useRef(back);
@@ -613,6 +692,18 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {search && starterCatalog.hasValue && !starterCatalog.loading && starters.length === 0 ? null : (
         <ItemGroup surface="none" title={t('newApp.startNew')} titleRole="label">
         <View style={dialog ? styles.dialogInset : null}>
+        {/* Describe your app: one full-width choice above the starters (lab src DESCRIBE_ENTRY), chosen like the rest. */}
+        <SelectionTiles
+          density="compact"
+          testIdPrefix="newApp.door"
+          maximumColumns={1}
+          subtitleLines={2}
+          accessibilityLabel={t('newApp.auto.entryTitle')}
+          value={door === 'describe' ? 'describe' : null}
+          onChange={(next) => chooseDoor(next === 'describe' ? 'describe' : null)}
+          options={[{ id: 'describe', testID: 'newApp.describeApp', icon: 'sparkle',
+            title: t('newApp.auto.entryTitle'), subtitle: t('newApp.auto.entrySubtitle') }]}
+        />
         {(starterCatalog.loading || !starterCatalog.hasValue) && !starterCatalog.error && starters.length === 0 ? (
           <SurfaceStateCard testID="newApp.loading" kind="loading" layout="inline" title={t('common.loading')} />
         ) : null}
@@ -650,7 +741,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           />
         ) : null}
         {!search && starterCatalog.hasValue && !starterCatalog.loading && !starterCatalog.error && starterCatalog.sourceFailures.length === 0 && starters.length === 0 ? (
-          <EmptyState testID="newApp.startersEmpty" layout="centered" scene="noPlugins" title={t('capabilities.store.emptyTitle')} />
+          // Inside the picker an empty group is one quiet line; Describe your app above stays the way to start.
+          <EmptyState testID="newApp.startersEmpty" layout="line" title={t('newApp.noStarters')} />
         ) : null}
             {starters.length > 0 ? (
               <SelectionTiles
@@ -748,6 +840,28 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         <NewAppDeploySteps serverId={scope.serverId} source={deploySource} machineId={props.machine?.machineId ?? null}
           phone={phone} steps={deploySteps} onLeave={stepAside} />
       </View>
+    );
+  } else if (step === 'auto') {
+    const recommending = auto.view.kind === 'recommendations';
+    body = (
+      <>
+        {recommending
+          ? header(t('newApp.auto.recommendationsTitle'), t('newApp.auto.recommendationsDescription', {
+              count: auto.view.kind === 'recommendations' ? auto.view.cards.length : 0 }))
+          : header(t('newApp.auto.title'), t('newApp.auto.description'))}
+        <NewAppAutoStep
+          view={auto.view}
+          description={auto.description}
+          onDescriptionChange={auto.setDescription}
+          chosenCardId={auto.chosenCardId}
+          onChooseCard={auto.chooseCard}
+          onEditDescription={auto.backToDescription}
+          onTryAgain={auto.suggest}
+          onChooseStarter={back}
+          phone={phone}
+          insetStyle={dialog ? styles.dialogInset : null}
+        />
+      </>
     );
   } else if (step === 'describe') {
     body = (
@@ -961,12 +1075,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       dialog
         ? {
             kind: 'card' as const,
+            // Each step, and each settled phase of Describe your app, is its own screen: the card fits it.
+            screenKey: step === 'auto' ? `auto:${autoKind}` : step,
             title: headingTitle,
             subtitle: headingDescription,
             actions: <WizardStepDots currentStepIndex={stepIndex} stepCount={stepCount} />,
             footer: (
-              <ModalCardFooterActions note={footerNote}
-                noteAction={step === 'start' && !addingMachine ? { label: t('newApp.askAgent'), onPress: () => askAgentRef.current(), testID: 'newApp.askAgent' } : null}>
+              <ModalCardFooterActions note={footerNote}>
                 {step === 'start' && !addingMachine ? (
                   <RoundButton
                     testID="newApp.cancel"
@@ -976,6 +1091,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                     onPress={() => closeRef.current()}
                   />
                 ) : null}
+                {autoSecondary?.map((action) => (
+                  <RoundButton key={action.testID} testID={action.testID} size="small" display="inverted"
+                    title={action.title} onPress={action.onPress} />
+                ))}
                 {showBack ? (
                   <RoundButton
                     testID="newApp.back"
@@ -1007,6 +1126,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       primary?.testID,
       primary?.title,
       step,
+      autoKind,
       showBack,
       addingMachine,
       stepIndex,
@@ -1025,13 +1145,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       <ItemList testID="newApp.body" style={styles.list}>
         {body}
       </ItemList>
-      {dialog || !primary ? null : (
+      {dialog || (!primary && !autoSecondary) ? null : (
         <KeyboardStickyFooter>
           {/* On a wide page the bar's contents stand on the page's content column (QA #35), not across the pane. */}
           <PagePinnedBar style={phone ? styles.phoneFooter : [styles.wideFooter, { maxWidth: pageMaxWidth }]}>
-            {step === 'start' && !addingMachine ? (
-              <TextLinkButton testID="newApp.askAgent" size="meta" label={t('newApp.askAgent')} onPress={askAgent} />
-            ) : footerNote ? (
+            {footerNote ? (
               <Text
                 variant="meta"
                 numberOfLines={1}
@@ -1040,19 +1158,32 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                 {footerNote}
               </Text>
             ) : null}
-            <RoundButton
-              testID={primary.testID}
-              size="normal"
-              title={primary.title}
-              disabled={primary.disabled}
-              onPress={primary.onPress}
-            />
+            {autoSecondary?.map((action) => (
+              <RoundButton key={action.testID} testID={action.testID} size="normal" display="inverted"
+                title={action.title} onPress={action.onPress} />
+            ))}
+            {primary ? (
+              <RoundButton
+                testID={primary.testID}
+                size="normal"
+                title={primary.title}
+                disabled={primary.disabled}
+                onPress={primary.onPress}
+              />
+            ) : null}
           </PagePinnedBar>
         </KeyboardStickyFooter>
       )}
     </View>
   );
 });
+
+/** The registry item a suggested starter names: the catalog snapshot carries the item id the review selects by. */
+function suggestedStarterItemId(chosen: NewAppAutoChosen): string | null {
+  const source = chosen.recommendation.source;
+  if (source.kind !== 'starter') return null;
+  return chosen.catalog.starters.find((starter) => starter.id === source.starterId)?.itemId ?? source.starterId;
+}
 
 function starterTile(starter: RegistryCatalogItemSummary) {
   return {

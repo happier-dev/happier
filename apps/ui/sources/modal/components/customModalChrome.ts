@@ -52,6 +52,7 @@ export function areChromeConfigsEqual(
             && a.subtitleTestID === b.subtitleTestID
             && a.closeButtonTestID === b.closeButtonTestID
             && a.scrollHost === b.scrollHost
+            && a.screenKey === b.screenKey
             && a.bodyScroll === b.bodyScroll
             && a.phonePresentation === b.phonePresentation
             && a.anchor === b.anchor
@@ -103,6 +104,7 @@ export function mergeChromeConfig(
             subtitleTestID: override.subtitleTestID !== undefined ? override.subtitleTestID : base.subtitleTestID,
             closeButtonTestID: override.closeButtonTestID !== undefined ? override.closeButtonTestID : base.closeButtonTestID,
             scrollHost: override.scrollHost !== undefined ? override.scrollHost : base.scrollHost,
+            screenKey: override.screenKey !== undefined ? override.screenKey : base.screenKey,
             bodyScroll: override.bodyScroll !== undefined ? override.bodyScroll : base.bodyScroll,
             phonePresentation: override.phonePresentation !== undefined ? override.phonePresentation : base.phonePresentation,
             anchor: override.anchor !== undefined ? override.anchor : base.anchor,

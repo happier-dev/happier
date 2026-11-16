@@ -77,6 +77,12 @@ type EmptyStateProps = Readonly<{
      */
     secondaryAction?: EmptyStatePrimaryAction;
     /**
+     * A quieter second door for someone who doesn't know which way to take yet ("Not sure where to start?" ·
+     * Describe your app): the question, then one bordered button with a sparkle, a group's step beneath the action
+     * row. Page and centred layouts only, and only beside a way forward.
+     */
+    prompt?: Readonly<{ question: string; action: EmptyStatePrimaryAction }>;
+    /**
      * Why this viewer cannot take the page's main action, and who can ("Only administrators of Studio
      * can create Teams…"). Shown in the action's place instead of leaving a dead end.
      */
@@ -244,6 +250,24 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
     ) : primaryButton ? primaryButton : props.actionUnavailableReason ? (
         <Text style={stylesheet.unavailableReason}>{props.actionUnavailableReason}</Text>
     ) : props.action;
+    const promptContent = props.prompt && leadAction && props.layout !== 'inline' ? (
+        <View style={stylesheet.actionGroup}>
+            {actionContent}
+            <View style={stylesheet.prompt}>
+                <Text style={stylesheet.promptQuestion}>{props.prompt.question}</Text>
+                <RoundButton
+                    testID={props.prompt.action.testID}
+                    size="normal"
+                    display="secondary"
+                    title={props.prompt.action.label}
+                    accessibilityLabel={props.prompt.action.label}
+                    disabled={props.prompt.action.disabled}
+                    leading={<Icon name="sparkle" size={ICON_SIZE.sm} color={theme.colors.text.primary} />}
+                    action={() => Promise.resolve(props.prompt!.action.onPress())}
+                />
+            </View>
+        </View>
+    ) : null;
 
     if (props.layout === 'inline') {
         return (
@@ -267,7 +291,7 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
         <HappierInfoState
             testID={frame || page ? undefined : props.testID}
             actionTestID={props.actionTestID}
-            action={actionContent}
+            action={promptContent ?? actionContent}
             size={page ? undefined : props.size}
         >
             <CenteredInfoTile
@@ -331,6 +355,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         alignItems: 'center',
         gap: theme.space.s8,
+    },
+    // Journey-deploy empty: the action row, then the question-led group a section step below it.
+    actionGroup: { alignItems: 'center', gap: theme.space.s24 },
+    prompt: { alignItems: 'center', gap: theme.space.s6 },
+    promptQuestion: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+        textAlign: 'center',
     },
     unavailableReason: {
         ...Typography.default(),

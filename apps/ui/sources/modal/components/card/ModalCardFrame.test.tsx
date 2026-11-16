@@ -134,6 +134,24 @@ describe('ModalCardFrame', () => {
         }
     });
 
+    // AUTO-U1 live: Describe your app settled from its tall progress list to a short notice and kept ~120 px of
+    // empty card under it. A new screen (a wizard's next step, a settled run) fits its own content.
+    it('lets a bounded card fit a new screen while keeping its height within one', async () => {
+        const { ModalCardFrame } = await import('./ModalCardFrame');
+        const frame = (screenKey: string) => <ModalCardFrame testID="bounded-card" scrollHost="bounded" screenKey={screenKey}
+            title="Describe your app" dimensions={{ size: 'md', maxHeightRatio: 0.88 }}>{React.createElement('Body')}</ModalCardFrame>;
+        const layout = (height: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width: 640, height } } });
+        const minHeight = () => flattenStyle(screen.findHostByTestId('bounded-card')?.props.style).minHeight || 0;
+        const screen = await renderScreen(frame('auto:working'));
+        act(() => screen.findHostByTestId('bounded-card')?.props.onLayout?.(layout(470)));
+        act(() => screen.findHostByTestId('bounded-card')?.props.onLayout?.(layout(400)));
+        expect(minHeight(), 'the same screen never shrinks under the person').toBe(470);
+        await screen.update(frame('auto:noAgent'));
+        expect(minHeight(), 'a new screen starts from its own content').toBe(0);
+        act(() => screen.findHostByTestId('bounded-card')?.props.onLayout?.(layout(340)));
+        expect(minHeight()).toBe(340);
+    });
+
     it('fills the viewport for full-page chrome and keeps content mounted across presentation changes', async () => {
         windowState.width = 390;
         windowState.height = 844;

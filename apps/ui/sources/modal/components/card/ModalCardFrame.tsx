@@ -43,6 +43,12 @@ type ModalCardFrameProps = Readonly<{
     completion?: React.ReactNode;
     footer?: React.ReactNode;
     scrollHost?: 'overlay' | 'body' | 'bounded';
+    /**
+     * `bounded` only: names the screen the card shows. The card keeps its tallest height within one screen (a
+     * narrowed list never shrinks under the person); a new key, such as a wizard's next step or a settled run,
+     * lets it fit the new content.
+     */
+    screenKey?: string;
     bodyScroll?: 'none' | 'auto';
     onClose?: () => void;
     size?: ModalCardSizePreset;
@@ -177,6 +183,11 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     // A bounded card keeps the tallest height it has shown while it is presented, so a pushed child (a
     // folder browser) or a narrowed list never shrinks the container under the person; it still grows.
     const [shownHeight, setShownHeight] = React.useState(0);
+    const [shownScreen, setShownScreen] = React.useState(props.screenKey);
+    if (shownScreen !== props.screenKey) {
+        setShownScreen(props.screenKey);
+        setShownHeight(0);
+    }
     const [frameHeight, setFrameHeight] = React.useState(0);
     const dragLayout = dismiss ? drag.onLayout : null;
     const onFrameLayout = React.useCallback((event: LayoutChangeEvent) => {
