@@ -141,10 +141,10 @@ it.each(['edit', 'pane', 'surface'] as const)('keeps the %s setup preview mounte
         const anchor = React.useRef<React.ComponentRef<typeof View>>(null);
         return <><View ref={anchor} />{presentation === 'edit'
             ? <WidgetSetupPopover open anchorRef={anchor} setup={() => setup} onRequestClose={() => {}} testID="setup" />
-            : presentation === 'surface' ? <WidgetAddSurface open anchorRef={anchor} title="Add" searchPlaceholder="Search" addLabel="Add" initialEntryId="note"
+            : presentation === 'surface' ? <WidgetAddSurface open anchorRef={anchor} title="Add" searchPlaceholder="Search" addLabel="Add"
                 sections={[{ id: 'custom', title: 'Custom', entries: [{ id: 'note', title: 'Note', icon: 'note', setup: () => setup }] }]}
                 onRequestClose={() => {}} testID="setup" />
-            : <WidgetAddPanel title="Add" searchPlaceholder="Search" addLabel="Add" initialEntryId="note"
+            : <WidgetAddPanel title="Add" searchPlaceholder="Search" addLabel="Add"
                 sections={[{ id: 'custom', title: 'Custom', entries: [{ id: 'note', title: 'Note', icon: 'note', setup: () => setup }] }]}
                 composition={viewport.width === 390 ? 'push' : 'split'} phone={viewport.width === 390}
                 onRequestClose={() => {}} testID="setup" />}</>;
@@ -158,6 +158,11 @@ it.each(['edit', 'pane', 'surface'] as const)('keeps the %s setup preview mounte
     };
     try {
         await render(1440);
+        if (presentation !== 'edit') {
+            await act(async () => {
+                document.querySelector<HTMLElement>('[data-testid="setup.entry.note"]')!.click();
+            });
+        }
         const original = input();
         expect(original).not.toBeNull();
         original!.value = 'Preview state';
@@ -165,6 +170,16 @@ it.each(['edit', 'pane', 'surface'] as const)('keeps the %s setup preview mounte
             await render(width);
             expect(input()).toBe(original);
             expect(input()!.value).toBe('Preview state');
+        }
+        if (presentation !== 'edit') {
+            await render(390);
+            await act(async () => { document.querySelector<HTMLElement>('[data-testid="setup.detail.back"]')!.click(); });
+            expect(input()).toBeNull();
+            expect(original!.isConnected).toBe(false);
+            await act(async () => { document.querySelector<HTMLElement>('[data-testid="setup.entry.note"]')!.click(); });
+            expect(input()).not.toBeNull();
+            expect(input()).not.toBe(original);
+            expect(input()!.value).toBe('');
         }
     } finally {
         await act(async () => root.unmount());

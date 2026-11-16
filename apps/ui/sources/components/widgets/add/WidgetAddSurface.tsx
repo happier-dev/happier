@@ -287,12 +287,14 @@ export function WidgetAddPanel(props: WidgetAddPanelProps): React.ReactElement {
         ...[...sections.flatMap(section => section.entries), ...(ask && askEntry ? [askEntry] : [])].map(entry => ({
             key: `entry:${entry.id}`, title: entry.title, invoke: (push?: import('@happier-dev/protocol/plugins/ui').PluginUiJsonValueV1, callerContext?: ActionExecutorContext) => {
                 setSelection({ id: entry.id, reveal: push === false, callerContext });
-                if (!split && push !== false) { setPushed(true); setDirection('forward'); }
+                // The selected desktop pane remains the open pane when the list folds onto a phone.
+                if (split || push !== false) { setPushed(true); if (!split) setDirection('forward'); }
             },
         })),
         ...(pushed ? [{ key: 'back', title: `${t('common.back')}: ${props.title}`, invoke: () => { setPushed(false); setDirection('backward'); } }] : []),
         { key: 'another', title: `${t('widgetAdd.addAnother')}: ${props.title}`, invoke: () => {
-            if (split) setSelection(null); else { setPushed(false); setDirection('backward'); }
+            setPushed(false);
+            if (split) setSelection(null); else setDirection('backward');
         } },
     ], { unbound: 'local' });
     const select = React.useCallback((id: string) => { void commands.invoke(`entry:${id}`); }, [commands]);
