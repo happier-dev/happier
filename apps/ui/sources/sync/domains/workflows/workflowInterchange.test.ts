@@ -301,12 +301,12 @@ describe('exportWorkflowDocument', () => {
   });
 
   it('lets the canonical schema, not a hand-written filter, reject secret-bearing fields', () => {
-    // `environmentVariables` is not a member of the canonical step selection.
+    // `credentials` is not a member of the canonical step selection.
     // The cast is the only way to present the shape a hand-rolled exporter
     // would have had to strip; the schema must reject it instead.
     const leaking = {
       ...step('leak'),
-      execution: { environmentVariables: { TOKEN: 'secret' } },
+      execution: { credentials: { TOKEN: 'secret' } },
     } as unknown as WorkflowStep;
 
     const result = exportWorkflowDocument({ draft: draftWith([leaking]) });
