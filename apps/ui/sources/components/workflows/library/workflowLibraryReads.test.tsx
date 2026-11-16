@@ -6,6 +6,7 @@ import { createNearViewportTracker, isSpanNearViewport } from '@/components/widg
 import { t } from '@/text';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { chooseDropdownMenuItem } from '@/dev/testkit/harness/dropdownMenuHarness';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -274,8 +275,12 @@ it('expands and pages addressed B trigger History while A stays focused, and kee
                 testIDPrefix="addressed-history" set={set} draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}}
                 status="ready" onRetry={() => {}} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />
         </WorkflowAccountLifetimeProvider>);
-        await screen.pressByTestIdAsync('addressed-history-trigger:saved:b-trigger-more');
-        await screen.pressByTestIdAsync('addressed-history-trigger:saved:b-trigger-history');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const historyMenu = screen.findAllByType(DropdownMenu).find(node => node.props.items.some((item: { id: string }) => item.id === 'history'));
+        expect(historyMenu?.props.items.find((item: { id: string }) => item.id === 'history')?.testID)
+            .toBe('addressed-history-trigger:saved:b-trigger-history');
+        await chooseDropdownMenuItem(screen, 'addressed-history-trigger:saved:b-trigger-more', 'history');
+
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('B first Run'));
         await screen.pressByTestIdAsync('session-work-trigger-history:b-history-automation-loadMore');
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('B next Run'));

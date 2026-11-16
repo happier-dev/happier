@@ -176,6 +176,7 @@ export function WorkflowTriggerBlock(
           {
             id: 'history' as const,
             label: t('workflows.destination.history.title'),
+            testID: `${props.testID}-history`,
             onSelect: props.onToggleHistory,
           },
         ]

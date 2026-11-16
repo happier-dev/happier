@@ -19,6 +19,8 @@ import { t } from '@/text';
 export type WorkflowBlockAction = Readonly<{
     id: 'duplicate' | 'addBranch' | 'addOtherwise' | 'moveUp' | 'moveDown' | 'moveIn' | 'moveOut' | 'history' | 'remove';
     label: string;
+    /** Preserve an existing action selector when its control moves into the menu. */
+    testID?: string;
     destructive?: boolean;
     onSelect: () => void;
 }>;
@@ -91,7 +93,7 @@ function WorkflowBlockActionsDropdown(props: Readonly<{
                 id: action.id,
                 title: action.label,
                 destructive: action.destructive,
-                testID: props.testID === undefined ? undefined : `${props.testID}-${action.id}`,
+                testID: action.testID ?? (props.testID === undefined ? undefined : `${props.testID}-${action.id}`),
             }))}
             onSelect={(id) => props.actions.find((action) => action.id === id)?.onSelect()}
             placement="auto"
