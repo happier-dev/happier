@@ -13,7 +13,7 @@ import {
 } from "@/app/plugins/webhooks/claimStore";
 import { retargetPluginWebhookEndpointV1 } from "@/app/plugins/webhooks/endpointStore";
 import { db } from "@/storage/db";
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import {
@@ -344,27 +344,50 @@ describe("Automation Event source status", () => {
 
     it("writes one bounded source summary only for the exact current source watcher", async () => {
         await seed();
-
-        await expect(reportAutomationEventSourceStatusV1({
-            accountId: ACCOUNT_ID,
-            caller,
-            input: {
-                kind: "source",
-                automationId: AUTOMATION_ID,
-                triggerId: TRIGGER_ID,
-                triggerRevision: TRIGGER_REVISION,
-                eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
-                sourceSelectorId: SOURCE_SELECTOR_ID,
-                state: "observing",
-                code: "none",
-                lastObservedAt: 1_723_247_200_000,
-                lastDispositionAt: 1_723_247_200_001,
-                nextRetryAt: null,
-                observedDelta: 2,
-                admittedDelta: 1,
-                skippedDelta: 1,
-            },
-        })).resolves.toEqual({});
+        let manifestBodyReads = 0;
+        const transaction = db.$transaction;
+        // Observe the actual persistence boundary; report/currentness logic and SQL stay real.
+        db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+            const callback = args[0];
+            if (typeof callback !== "function") return Reflect.apply(target, receiver, args);
+            return Reflect.apply(target, receiver, [async (tx: Tx) => {
+                const findReleases = tx.accountPluginRelease.findMany;
+                tx.accountPluginRelease.findMany = new Proxy(findReleases, {
+                    apply(read, delegate, values: unknown[]) {
+                        const selection = values[0] as { select?: { normalizedManifest?: boolean } } | undefined;
+                        if (selection?.select?.normalizedManifest) manifestBodyReads++;
+                        return Reflect.apply(read, delegate, values);
+                    },
+                });
+                try { return await callback(tx); }
+                finally { tx.accountPluginRelease.findMany = findReleases; }
+            }, ...args.slice(1)]);
+        } });
+        try {
+            await expect(reportAutomationEventSourceStatusV1({
+                accountId: ACCOUNT_ID,
+                caller,
+                input: {
+                    kind: "source",
+                    automationId: AUTOMATION_ID,
+                    triggerId: TRIGGER_ID,
+                    triggerRevision: TRIGGER_REVISION,
+                    eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+                    sourceSelectorId: SOURCE_SELECTOR_ID,
+                    state: "observing",
+                    code: "none",
+                    lastObservedAt: 1_723_247_200_000,
+                    lastDispositionAt: 1_723_247_200_001,
+                    nextRetryAt: null,
+                    observedDelta: 2,
+                    admittedDelta: 1,
+                    skippedDelta: 1,
+                },
+            })).resolves.toEqual({});
+        } finally {
+            db.$transaction = transaction;
+        }
+        expect(manifestBodyReads).toBe(1);
 
         await expect(db.automationEventSourceStatus.findUnique({
             where: { triggerId: TRIGGER_ID },

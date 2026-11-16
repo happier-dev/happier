@@ -429,6 +429,16 @@ when its acknowledged semantic state changes; successful probe deadlines are
 liveness rather than durable retry state. Failed status reports remain eligible
 for publication on the next natural provider cycle.
 
+In 0.3 development, the server resolves the admitted plugin declaration body
+before a serializing Account fence. The shared current-declaration reader then
+checks selection, version, digest and Machine installation using identity
+projections and reuses that body. Source-status publication and managed Acquire
+or legacy registration consume this owner; they do not load another declaration
+body while excluding Account cursor publication. Portable materialization
+correspondence reads release identity and UI-slot facts; inventory content reads
+still return the requested release body. These projections reduce transferred
+content; they do not establish a database statement-duration bound.
+
 An unsettled admission carries its safe failure code and known retryability in
 the SDK disposition. A nonretryable refusal parks the source even when its
 provider supplied a later observation time; it neither advances the checkpoint

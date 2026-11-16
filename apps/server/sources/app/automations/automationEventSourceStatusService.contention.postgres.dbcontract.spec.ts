@@ -9,6 +9,7 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { eventRouter } from "@/app/events/eventRouter";
 import { deleteAutomation, ensureAutomationEventCatalogStateTx } from "./automationCrudService";
 import { reportAutomationEventSourceStatusV1 } from "./automationEventSourceStatusService";
+import { compactReleaseLessDeclarations, createReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
 
 const serverIdentityId = "srv_serialAuditAutomationStatusPg1";
 const pluginId = "com.happier.automation-status-pg";
@@ -120,11 +121,122 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
     async function observeTransactions<T>(observe: (tx: Tx) => void, run: () => Promise<T>, forceReadCommitted = true): Promise<T> {
         const original = db.$transaction.bind(db);
         db.$transaction = (async <R>(callback: (tx: Tx) => Promise<R>, options?: { isolationLevel?: "Serializable" | "RepeatableRead" | "ReadCommitted"; timeout?: number; maxWait?: number }) =>
-            original(async tx => { observe(tx); return await callback(tx); },
+            original(async tx => {
+                const queryRaw = tx.$queryRaw;
+                const queryRawUnsafe = tx.$queryRawUnsafe;
+                const findRelease = tx.accountPluginRelease.findUnique;
+                const findReleases = tx.accountPluginRelease.findMany;
+                const findSourceStatus = tx.automationEventSourceStatus.findUnique;
+                const findCatalogStatus = tx.automationEventSourceCatalogStatus.findUnique;
+                try {
+                    observe(tx);
+                    return await callback(tx);
+                } finally {
+                    tx.$queryRaw = queryRaw;
+                    tx.$queryRawUnsafe = queryRawUnsafe;
+                    tx.accountPluginRelease.findUnique = findRelease;
+                    tx.accountPluginRelease.findMany = findReleases;
+                    tx.automationEventSourceStatus.findUnique = findSourceStatus;
+                    tx.automationEventSourceCatalogStatus.findUnique = findCatalogStatus;
+                }
+            },
                 { ...options, ...(forceReadCommitted ? { isolationLevel: "ReadCommitted" as const } : {}) })) as typeof db.$transaction;
         try { return await run(); }
         finally { db.$transaction = original; }
     }
+
+    it.each([
+        { kind: "catalog", portable: false }, { kind: "source", portable: false },
+        { kind: "catalog", portable: true }, { kind: "source", portable: true },
+    ] as const)("reads the admitted $kind declaration before locking Account publication (portable: $portable)", async ({ kind, portable }) => {
+        const input = await fixture();
+        if (!portable) {
+            await db.accountPluginIntent.update({
+                where: { accountId_pluginId: { accountId: input.account.id, pluginId } },
+                data: { desiredVersion: null, releaseLessDeclaration: compactReleaseLessDeclarations({
+                    schemaVersion: 2,
+                    machines: [{ machineId: input.caller.machineId,
+                        machineInstallationId: input.caller.machineInstallationId,
+                        declaration: createReleaseLessDeclarationV1(release.normalizedManifest) }],
+                    legacyDeclaration: null,
+                }, pluginId) },
+            });
+            await db.pluginMachineMaterialization.updateMany({
+                where: { accountId: input.account.id },
+                data: { sourceClass: "localPath", portableRelease: false, archiveDigestSha256: null },
+            });
+        }
+        let bodyReads = 0;
+        let lockedBodyReads = 0;
+        await observeTransactions(tx => {
+            let accountLocked = false;
+            const recordBodyRead = () => { bodyReads++; if (accountLocked) lockedBodyReads++; };
+            const findRelease = tx.accountPluginRelease.findUnique.bind(tx.accountPluginRelease);
+            tx.accountPluginRelease.findUnique = (async (args: Parameters<typeof findRelease>[0]) => {
+                if (args.select?.normalizedManifest === true) recordBodyRead();
+                return findRelease(args);
+            }) as typeof tx.accountPluginRelease.findUnique;
+            const findReleases = tx.accountPluginRelease.findMany.bind(tx.accountPluginRelease);
+            tx.accountPluginRelease.findMany = (async (args: Parameters<typeof findReleases>[0]) => {
+                if (args?.select?.normalizedManifest === true) recordBodyRead();
+                return findReleases(args);
+            }) as typeof tx.accountPluginRelease.findMany;
+            const unsafe = tx.$queryRawUnsafe.bind(tx);
+            tx.$queryRawUnsafe = (async (sql: string, ...values: unknown[]) => {
+                const rows = await unsafe(sql, ...values);
+                if (sql.includes('FROM "Account"') && sql.includes("FOR NO KEY UPDATE")) accountLocked = true;
+                return rows;
+            }) as typeof tx.$queryRawUnsafe;
+            const query = tx.$queryRaw.bind(tx);
+            tx.$queryRaw = (async (...args: Parameters<typeof query>) => {
+                const sql = args[0];
+                const text = typeof sql === "object" && sql !== null && "sql" in sql ? String(sql.sql) : String(sql);
+                if (text.includes('FROM "Account"') && text.includes("FOR NO KEY UPDATE")) accountLocked = true;
+                if (text.includes("jsonb_to_recordset") && text.includes('"AccountPluginIntent"')) {
+                    recordBodyRead();
+                }
+                return query(...args);
+            }) as typeof tx.$queryRaw;
+        }, () => input.report(kind === "catalog" ? input.catalog : input.source(1)), false);
+        expect({ bodyReads, lockedBodyReads }).toEqual({ bodyReads: 1, lockedBodyReads: 0 });
+        expect(await db.accountChange.count({ where: { accountId: input.account.id, kind: "automation" } })).toBe(1);
+    });
+
+    it.each(["catalog", "source"] as const)("refuses a %s report if its admitted declaration is withdrawn before publication", async kind => {
+        const input = await fixture();
+        let withdrawn = false;
+        await expect(observeTransactions(tx => {
+            const withdraw = async () => {
+                if (withdrawn) return;
+                withdrawn = true;
+                await db.accountPluginIntent.update({
+                    where: { accountId_pluginId: { accountId: input.account.id, pluginId } },
+                    data: { enabled: false },
+                });
+            };
+            if (kind === "source") {
+                const find = tx.automationEventSourceStatus.findUnique.bind(tx.automationEventSourceStatus);
+                // Observe the real persistence boundary; the delegate retains its generic result contract.
+                tx.automationEventSourceStatus.findUnique = (async (args: Parameters<typeof find>[0]) => {
+                    const row = await find(args);
+                    await withdraw();
+                    return row;
+                }) as unknown as typeof tx.automationEventSourceStatus.findUnique;
+            } else {
+                const find = tx.automationEventSourceCatalogStatus.findUnique.bind(tx.automationEventSourceCatalogStatus);
+                tx.automationEventSourceCatalogStatus.findUnique = (async (args: Parameters<typeof find>[0]) => {
+                    const row = await find(args);
+                    await withdraw();
+                    return row;
+                }) as unknown as typeof tx.automationEventSourceCatalogStatus.findUnique;
+            }
+        }, () => input.report(kind === "source" ? input.source(1) : input.catalog), false)).rejects.toMatchObject({
+            code: expect.stringMatching(/^(caller_materialization|event_contribution)_not_current$/),
+        });
+        expect(withdrawn).toBe(true);
+        expect(await db.automationEventSourceStatus.count({ where: { triggerId: input.trigger.id } })).toBe(0);
+        expect(await db.automationEventSourceCatalogStatus.count({ where: { accountId: input.account.id } })).toBe(0);
+    });
 
     it.each(["catalog", "source"] as const)("does not write or publish repeated HTTP-admitted %s facts for two Machines", async kind => {
         const first = await fixture();
