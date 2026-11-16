@@ -327,6 +327,43 @@ describe('Account plugin Settings record storage', () => {
         }
     });
 
+    it('serves repeated reads (one per model probe) from the held record until its change notice', async () => {
+        let notify: ((hint: { kind: 'record'; pluginId: string; revision: number } | { kind: 'full' }) => void) | undefined;
+        let theme = 'dark';
+        const get = vi.fn(async (url: string) => url.endsWith('/encryption')
+            ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+            : { status: 200, data: { status: 'present', revision: theme === 'dark' ? 4 : 5,
+                content: { t: 'plain', v: { v: 1, values: { theme } } } } });
+        const store = createAccountSettingsBackedSettingsRecordStore(createAccountPluginSettingsRecordStorage({
+            readCredentials: async () => plainCredentials, isCurrentAccount: () => true,
+            resolveBaseUrl: () => 'https://server.example', http: { get, post: vi.fn() },
+            subscribeChanges: (listener) => { notify = listener; return () => { notify = undefined; }; },
+            holdReads: true,
+        }));
+        for (let probe = 0; probe < 3; probe++) {
+            expect(await store.read(settingsModel)).toMatchObject({ values: { theme: 'dark' } });
+        }
+        // One record read and one encryption-mode read, for the first probe only.
+        expect(get).toHaveBeenCalledTimes(2);
+        theme = 'light';
+        notify?.({ kind: 'record', pluginId: 'example.tasks', revision: 5 });
+        expect(await store.read(settingsModel)).toMatchObject({ values: { theme: 'light' } });
+        expect(get).toHaveBeenCalledTimes(4);
+    });
+
+    it('reads requester-custody records from the server every time', async () => {
+        const get = vi.fn(async (url: string) => url.endsWith('/encryption')
+            ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+            : { status: 200, data: { status: 'present', revision: 4, content: { t: 'plain', v: { v: 1, values: { theme: 'dark' } } } } });
+        const store = createAccountSettingsBackedSettingsRecordStore(createAccountPluginSettingsRecordStorage({
+            readCredentials: async () => plainCredentials, isCurrentAccount: () => true,
+            resolveBaseUrl: () => 'https://server.example', http: { get, post: vi.fn() },
+        }));
+        await store.read(settingsModel);
+        await store.read(settingsModel);
+        expect(get).toHaveBeenCalledTimes(4);
+    });
+
     it('fails closed when the Account encryption mode and returned record envelope disagree', async () => {
         const get = vi.fn(async (url: string) => {
             if (url.endsWith('/v1/account/encryption')) {

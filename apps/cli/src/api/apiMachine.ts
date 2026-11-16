@@ -267,6 +267,7 @@ import {
     publishPluginAccountCollectionWatchInvalidation,
     publishPluginAccountAvailabilityChanges,
     publishPluginAccountSettingsWatchInvalidation,
+    notePluginAccountSettingsChangeFeedRunning,
     readPluginAccountCollectionWatchInvalidations,
     readPluginAccountSettingsWatchInvalidations,
     retirePluginAccountCollectionWatchScope,
@@ -6504,6 +6505,7 @@ export class ApiMachineClient {
         opts: AccountChangesSyncDemand,
         signal: AbortSignal = new AbortController().signal,
     ): Promise<void> {
+        notePluginAccountSettingsChangeFeedRunning();
         // Startup/reconnect recover the full projection; live wakes classify the changes page first.
         const executionAuthority = opts.reason === 'live'
             ? 'runtime_recovery' as const

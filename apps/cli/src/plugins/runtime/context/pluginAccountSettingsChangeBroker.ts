@@ -249,6 +249,15 @@ export function publishPluginAccountSettingsWatchInvalidation(
     }
 }
 
+let accountChangeFeedRunning = false;
+/** The Account change consumer (daemon machine client) runs in this process, so record notices arrive. */
+export function notePluginAccountSettingsChangeFeedRunning(): void {
+    accountChangeFeedRunning = true;
+}
+export function isPluginAccountSettingsChangeFeedRunning(): boolean {
+    return accountChangeFeedRunning;
+}
+
 export function subscribePluginAccountSettingsWatchInvalidation(
     listener: (invalidation: PluginAccountSettingsWatchInvalidation) => void,
 ): () => void {

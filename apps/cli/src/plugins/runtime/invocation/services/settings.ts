@@ -292,7 +292,8 @@ export type PluginAccountSettingsRecordWriteResult =
 export type PluginAccountSettingsRecordAccess = Readonly<{
     readRecord(
         model: StablePluginSettingsModel,
-        options?: Readonly<{ signal?: AbortSignal }>,
+        /** `reuseHeld`: a plain read may take the adapter's held record; CAS and watch reads stay fresh. */
+        options?: Readonly<{ signal?: AbortSignal; reuseHeld?: boolean }>,
     ): Promise<PluginAccountSettingsRecordRead>;
     writeRecord(
         model: StablePluginSettingsModel,
@@ -340,7 +341,7 @@ function assertAccountSettingsModel(model: StablePluginSettingsModel): void {
 async function readAccountPluginSettingsRecord(
     model: StablePluginSettingsModel,
     adapter: PluginAccountSettingsRecordAccess,
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: Readonly<{ signal?: AbortSignal; reuseHeld?: boolean }>,
 ): Promise<AccountPluginSettingsRecordState> {
     const source = await adapter.readRecord(model, options);
     if (source.status === 'unavailable') {
@@ -416,7 +417,7 @@ export function createAccountSettingsBackedSettingsRecordStore(
         async read(model, options): Promise<unknown | null> {
             assertAccountSettingsModel(model);
             const access = await adapter.bindOperation(options);
-            return (await readAccountPluginSettingsRecord(model, access, options)).record;
+            return (await readAccountPluginSettingsRecord(model, access, { ...options, reuseHeld: true })).record;
         },
         async update<T>(
             model: StablePluginSettingsModel,

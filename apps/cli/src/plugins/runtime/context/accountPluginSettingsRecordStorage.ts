@@ -19,6 +19,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 
 import {
     subscribePluginAccountSettingsWatchInvalidation,
+    isPluginAccountSettingsChangeFeedRunning,
     type PluginAccountSettingsWatchInvalidation,
 } from './pluginAccountSettingsChangeBroker';
 
@@ -140,6 +141,34 @@ function encodePluginId(pluginId: string): string {
     return encodeURIComponent(pluginId);
 }
 
+type HeldRecordReads = {
+    generation: number;
+    entries: Map<string, Readonly<{ pluginId: string; lifetime: unknown; read: PluginAccountSettingsRecordRead }>>;
+};
+/**
+ * Last-known Account plugin Settings records per change-notice source. A record changes only
+ * through the Account change feed, which publishes a notice for it (`record`) or for all
+ * (`full`, on reconnect/cursor loss); a notice drops the held copy and the next read goes to the
+ * server. Account switches retire it through the settings lifetime token and scope key.
+ */
+const heldRecordReadsBySource = new WeakMap<object, HeldRecordReads>();
+function forgetHeldRecord(held: HeldRecordReads, pluginId: string): void {
+    for (const [key, entry] of held.entries) if (entry.pluginId === pluginId) held.entries.delete(key);
+}
+function heldRecordReadsFor(subscribe: (listener: (hint: PluginAccountSettingsChangeHint) => void) => () => void): HeldRecordReads {
+    let held = heldRecordReadsBySource.get(subscribe);
+    if (held) return held;
+    const created: HeldRecordReads = { generation: 0, entries: new Map() };
+    subscribe((hint) => {
+        created.generation += 1;
+        if (hint.kind === 'full') created.entries.clear();
+        else forgetHeldRecord(created, hint.pluginId);
+    });
+    heldRecordReadsBySource.set(subscribe, created);
+    held = created;
+    return held;
+}
+
 /**
  * The only CLI adapter for the reserved Account Settings record. It speaks the
  * explicit envelope/CAS route and never reads or writes Account preference
@@ -152,6 +181,8 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
     resolveBaseUrl?: () => string;
     randomBytes?: (length: number) => Uint8Array;
     subscribeChanges?: (listener: (hint: PluginAccountSettingsChangeHint) => void) => () => void;
+    /** Reuse last-known records between change notices; defaults on for the daemon's own credentials only. */
+    holdReads?: boolean;
 }> = {}): PluginAccountSettingsRecordAdapter {
     const readCredentials = params.readCredentials ?? readStoredCredentials;
     const http: AccountPluginSettingsHttpClient = params.http ?? axios;
@@ -163,6 +194,10 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
     });
     const randomBytes = params.randomBytes ?? ((length: number) => new Uint8Array(nodeRandomBytes(length)));
     const subscribeChanges = params.subscribeChanges ?? subscribePluginAccountSettingsWatchInvalidation;
+    // Requester custody (injected credentials) proves access with its own bearer on every read, and
+    // a process without the Account change consumer never hears a notice, so neither holds.
+    const holdsReads = () => params.holdReads
+        ?? (params.readCredentials === undefined && params.subscribeChanges === undefined && isPluginAccountSettingsChangeFeedRunning());
 
     async function bindOperation(options?: Readonly<{ signal?: AbortSignal }>): Promise<PluginAccountSettingsRecordAccess> {
         options?.signal?.throwIfAborted();
@@ -182,6 +217,24 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
         }
 
         async function readRecord(
+            model: StablePluginSettingsModel,
+            options?: Readonly<{ signal?: AbortSignal; reuseHeld?: boolean }>,
+        ): Promise<PluginAccountSettingsRecordRead> {
+            const held = holdsReads() ? heldRecordReadsFor(subscribeChanges) : null;
+            const heldKey = held && credentials
+                ? JSON.stringify([baseUrl, resolveAccountSettingsScopeKey(credentials), model.identity.pluginId]) : null;
+            const heldEntry = heldKey && options?.reuseHeld ? held!.entries.get(heldKey) : undefined;
+            if (heldEntry && heldEntry.lifetime === lifetime && await isStillCurrent(options?.signal)) return heldEntry.read;
+            const generation = held?.generation ?? 0;
+            const read = await readRecordFromServer(model, options);
+            // A notice that arrived during this read may describe a newer record: do not hold it.
+            if (heldKey && read.status !== 'unavailable' && held!.generation === generation) {
+                held!.entries.set(heldKey, { pluginId: model.identity.pluginId, lifetime, read });
+            }
+            return read;
+        }
+
+        async function readRecordFromServer(
             model: StablePluginSettingsModel,
             options?: Readonly<{ signal?: AbortSignal }>,
         ): Promise<PluginAccountSettingsRecordRead> {
@@ -217,6 +270,30 @@ export function createAccountPluginSettingsRecordStorage(params: Readonly<{
         }
 
         async function writeRecord(
+            model: StablePluginSettingsModel,
+            request: Readonly<{
+                expectedRevision: number | 'absent';
+                values: Readonly<Record<string, JsonValue>>;
+            }>,
+            options?: Readonly<{ signal?: AbortSignal }>,
+        ): Promise<PluginAccountSettingsRecordWriteResult> {
+            // This process's own write supersedes its held copy whatever the outcome; a read that
+            // races the write sees a newer generation and holds nothing.
+            const forgetHeld = () => {
+                const held = heldRecordReadsBySource.get(subscribeChanges);
+                if (!held) return;
+                held.generation += 1;
+                forgetHeldRecord(held, model.identity.pluginId);
+            };
+            forgetHeld();
+            try {
+                return await writeRecordToServer(model, request, options);
+            } finally {
+                forgetHeld();
+            }
+        }
+
+        async function writeRecordToServer(
             model: StablePluginSettingsModel,
             request: Readonly<{
                 expectedRevision: number | 'absent';
