@@ -227,9 +227,15 @@ describe('Api server error handling', () => {
                 throw new Error(`Unexpected POST: ${url}`);
             });
 
+            // The admitted Action's signer binds its proof to the exact birth body the Home receives.
+            const signedBodies: Readonly<Record<string, unknown>>[] = [];
+            const prepareRequestProof = vi.fn(async (body: Readonly<Record<string, unknown>>) => {
+                signedBodies.push(body);
+                return { v: 1, signedTag: body.tag } as never;
+            });
             const created = api.getOrCreateSession({
                 tag: 'test-tag', metadata: testMetadata, state: null,
-                creationAuthorizationToken: 'host-signed-proof',
+                creationAuthorization: { token: 'host-signed-proof', prepareRequestProof },
             });
             await vi.waitFor(() => expect(requests).toEqual(['session', 'access-key']));
             let returned = false;
@@ -244,6 +250,10 @@ describe('Api server error handling', () => {
                 expect.objectContaining({ headers: expect.objectContaining({
                     [SESSION_CREATION_AUTHORIZATION_HEADER_V1]: 'host-signed-proof',
                 }) }));
+            const sessionPost = mockPost.mock.calls.find(([url]) => String(url).endsWith('/v1/sessions'))!;
+            const { creationAuthorizationProof, ...sentBody } = sessionPost[1] as Record<string, unknown>;
+            expect(creationAuthorizationProof).toEqual({ v: 1, signedTag: 'test-tag' });
+            expect(signedBodies).toEqual([sentBody]);
         });
 
         it('delays session creation when HAPPIER_E2E_DELAY_CREATE_SESSION_MS is set', async () => {

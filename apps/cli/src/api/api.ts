@@ -526,7 +526,8 @@ export class ApiClient {
     manager?: import('@happier-dev/protocol').SessionManagerV1,
     primaryTeamId?: string | null,
     teamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1,
-    creationAuthorizationToken?: string,
+    /** The admitted Action's creation token and, for Action-child births, its body-proof signer. */
+    creationAuthorization?: import('@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1').SessionCreationAuthorizationV1,
     signal?: AbortSignal,
   }): Promise<SessionCreateOrLoadResult | null> {
     const environment = sessionProcessEnvironment();
@@ -714,7 +715,9 @@ export class ApiClient {
             ...(opts.organizationPlacement ? { organizationPlacement: opts.organizationPlacement } : {}),
             ...(opts.teamCredentialBindings !== undefined ? { teamCredentialBindings: opts.teamCredentialBindings } : {}),
           },
-          ...(opts.creationAuthorizationToken ? { creationAuthorizationToken: opts.creationAuthorizationToken } : {}),
+          ...(opts.creationAuthorization ? { creationAuthorizationToken: opts.creationAuthorization.token } : {}),
+          ...(opts.creationAuthorization?.prepareRequestProof
+            ? { prepareCreationAuthorizationProof: opts.creationAuthorization.prepareRequestProof } : {}),
           ...(opts.signal ? { signal: opts.signal } : {}),
         });
 

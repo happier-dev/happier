@@ -21,19 +21,24 @@ import { encodeBase64 } from '@/api/encryption';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { addSessionInitialAccessTeamShareStatement, buildSessionInitialAccessCreateFields, materializeSessionInitialAccessCreateFields, prepareSessionInitialAccessDataKeyEnvelopes, readSessionTeamCredentialBindingUpdateRequiredError, readSessionInitialAccessServerError } from '@/api/session/sessionCreationInitialAccess';
 import { SessionCreationCorrespondenceConflictError } from '@/api/session/sessionCreationCorrespondenceConflictError';
+import type { SessionCreationAuthorizationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 
 /** One HTTP boundary for the API client's and seeded creator's Session birth. */
 export async function postSessionCreationRequest<T>(params: Readonly<{
   serverUrl: string;
   token: string;
-  body: unknown;
+  body: Readonly<Record<string, unknown>>;
   creationAuthorizationToken?: string;
+  /** Binds the admitted Action's child-creation proof to the exact birth body posted here. */
+  prepareCreationAuthorizationProof?: SessionCreationAuthorizationV1['prepareRequestProof'];
   /** Host-only signer for the exact birth request under the admitted Action. */
   authorizeRequest?: (request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>>;
   signal?: AbortSignal;
   validateStatus?: (status: number) => boolean;
 }>): Promise<AxiosResponse<T>> {
   params.signal?.throwIfAborted();
+  const creationAuthorizationProof = await params.prepareCreationAuthorizationProof?.(params.body);
+  const body = creationAuthorizationProof ? { ...params.body, creationAuthorizationProof } : params.body;
   const refuseConfirmedRollback = (status: number, data: unknown): void => {
     if (status === 409 && data !== null && typeof data === 'object'
       && 'error' in data && data.error === 'session-managed-target-busy') {
@@ -42,11 +47,11 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
     const rollback = readHomeDomainConfirmedRollbackV1(status, data);
     if (rollback) throw createHttpStatusError(status, 'Session creation transaction rolled back', rollback.code);
   };
-  const response = await axios.post<T>(`${params.serverUrl}/v1/sessions`, params.body, {
+  const response = await axios.post<T>(`${params.serverUrl}/v1/sessions`, body, {
     headers: {
       ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       ...(params.creationAuthorizationToken ? { [SESSION_CREATION_AUTHORIZATION_HEADER_V1]: params.creationAuthorizationToken } : {}),
-      ...(params.authorizeRequest ? params.authorizeRequest({ method: 'POST', path: '/v1/sessions', body: params.body })
+      ...(params.authorizeRequest ? params.authorizeRequest({ method: 'POST', path: '/v1/sessions', body })
         : { Authorization: `Bearer ${params.token}` }),
       'Content-Type': 'application/json',
     },
@@ -184,12 +189,12 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
     ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
     ...(serverSupportsFeatureSnapshot ? { encryptionMode: desiredSessionEncryptionMode } : {}),
   };
-  const creationAuthorizationProof = await params.prepareCreationAuthorizationProof?.(body);
   const response = await postSessionCreationRequest<unknown>({
     serverUrl,
     token: params.credentials.token,
-    body: { ...body, ...(creationAuthorizationProof ? { creationAuthorizationProof } : {}) },
+    body,
     ...(params.creationAuthorizationToken ? { creationAuthorizationToken: params.creationAuthorizationToken } : {}),
+    ...(params.prepareCreationAuthorizationProof ? { prepareCreationAuthorizationProof: params.prepareCreationAuthorizationProof } : {}),
     ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
     validateStatus: () => true,

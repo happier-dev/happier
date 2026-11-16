@@ -349,7 +349,7 @@ describe('commitDaemonLaunchSession', () => {
     };
     // The Home admits the Team binding in the create transaction.
     expect(createInput).toMatchObject({
-      creationAuthorizationToken: 'signed-proof',
+      creationAuthorization: { token: 'signed-proof' },
       teamCredentialBindings: [teamSlotBinding],
       primaryTeamId: 'team-1',
       manager: { sessionId: 'lead-1' },

@@ -117,7 +117,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
       ...pickSessionCreateOriginFields(options),
       ...(options.projectSetupOperation ? { signal: options.projectSetupOperation.signal } : {}),
       tag,
-      ...(options.creationAuthorization ? { creationAuthorizationToken: options.creationAuthorization.token } : {}),
+      ...(options.creationAuthorization ? { creationAuthorization: options.creationAuthorization } : {}),
       metadata: buildCommittedLaunchMetadata({
         options,
         directory: input.directory,
