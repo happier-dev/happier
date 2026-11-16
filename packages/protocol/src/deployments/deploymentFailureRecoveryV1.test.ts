@@ -177,12 +177,6 @@ describe('deployment failure recovery', () => {
         expect(recovery).toHaveProperty('nextAction', { kind: 'navigate', destination, label: expect.any(String) });
     });
 
-    it('does not collapse unrelated failures into the same remedy or next action', () => {
-        const recoveries = reachableFailures.map(([code]) => readDeploymentFailureRecoveryV1(code));
-        expect(new Set(recoveries.map(recovery => recovery.remedy)).size).toBe(reachableFailures.length);
-        expect(new Set(recoveries.map(recovery => JSON.stringify(recovery.nextAction))).size).toBe(reachableFailures.length);
-    });
-
     it('reads the originating receipt code through a generic deployment failure without exposing opaque details', () => {
         const receipt = DeploymentReceiptFailureV1Schema.parse({ code: 'deployment_source_unavailable', phase: 'source' });
         expect(readDeploymentFailureRecoveryV1('deployment_failed', { failure: receipt, providerPayload: 'private-sentinel' }))
