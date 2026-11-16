@@ -47,6 +47,19 @@ export type SessionPlacementChipsHandle = Readonly<{
   close: () => void;
 }>;
 
+/** One value's trigger, for a host that draws its own (`renderChip`). `value` is `null` while it is missing. */
+export type SessionPlacementChipTrigger = Readonly<{
+  field: 'machine' | 'folder';
+  title: string;
+  value: string | null;
+  placeholder: string;
+  anchorRef: React.RefObject<View | null>;
+  open: boolean;
+  disabled: boolean;
+  onPress: () => void;
+  testID: string;
+}>;
+
 const NO_STRINGS: readonly string[] = Object.freeze([]);
 const NO_MACHINE_PATHS: NewSessionMachinePickerInventory['recentMachinePaths'] =
   Object.freeze([]);
@@ -195,6 +208,11 @@ export function SessionPlacementChips(
      */
     renderFieldRow?: (field: 'machine' | 'folder', label: string, control: React.ReactNode) => React.ReactNode;
     /**
+     * A host that draws its own trigger for each value (a workflow's sentence, round 1116c): the Machine and the
+     * folder, each opening the same picker below it. The values, pickers and choices stay here.
+     */
+    renderChip?: (chip: SessionPlacementChipTrigger) => React.ReactNode;
+    /**
      * Which kind of work this placement starts: the chosen Machine's isolation policy for it is said under the
      * chips (`SessionIsolationOutcomeLine`), the same line New Session shows. Hosts that start no Session omit it.
      */
@@ -238,6 +256,21 @@ export function SessionPlacementChips(
       {open === 'folder' ? <PlacementPopover config={pathPopover} anchorRef={folderAnchor} onClose={close} {...(popoverAnchor ? { anchor: popoverAnchor } : {})} /> : null}
     </>
   );
+
+  if (props.renderChip !== undefined) {
+    return (
+      <>
+        {props.renderChip({ field: 'machine', title: t('newSession.wizardSection.machine'), value: machineLabel,
+          placeholder: t('agentInput.runOn'), anchorRef: machineAnchor, open: open === 'machine', disabled: !machineChoosable,
+          onPress: () => setOpen(open === 'machine' ? null : 'machine'), testID: 'agent-input-machine-chip' })}
+        {props.renderChip({ field: 'folder', title: t('newSession.wizardSection.folder'), value: machineKnown && path ? folderLabel : null,
+          placeholder: folderLabel, anchorRef: folderAnchor, open: open === 'folder', disabled: !machineKnown,
+          onPress: () => setOpen(open === 'folder' ? null : 'folder'), testID: 'agent-input-path-chip' })}
+        {open === 'machine' ? <PlacementPopover config={machinePopover} anchorRef={machineAnchor} onClose={close} anchor="field" /> : null}
+        {open === 'folder' ? <PlacementPopover config={pathPopover} anchorRef={folderAnchor} onClose={close} anchor="field" /> : null}
+      </>
+    );
+  }
 
   if (props.presentation === 'fields' && props.renderFieldRow !== undefined) {
     const machineTitle = t('newSession.wizardSection.machine');

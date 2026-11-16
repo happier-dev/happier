@@ -11,6 +11,7 @@ import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEdito
 import { t } from '@/text';
 
 import { formatWorkflowValueReference } from '../presentation/workflowValuePresentation';
+import { WorkflowSentenceChip } from '../sentence/WorkflowSentenceChip';
 import { WorkflowResultFieldPathInput } from './WorkflowStepDataEditor';
 
 /**
@@ -22,6 +23,11 @@ export function WorkflowFinalOutputEditor(props: Readonly<{
     onChange: (value: WorkflowAuthoredResultReference | null) => void;
     /** Absent or true: chosen here; false: the choice is shown, not changed. */
     editable?: boolean;
+    /**
+     * `field` (default): the page-foot row's bordered field select. `chip`: the sentence's final clause
+     * (round 1116c, "→ reports ⟨…⟩"); on a phone the menu is the "Reports" sheet.
+     */
+    presentation?: 'field' | 'chip';
     testIDPrefix: string;
 }>): React.ReactElement {
     const [open, setOpen] = React.useState(false);
@@ -44,7 +50,26 @@ export function WorkflowFinalOutputEditor(props: Readonly<{
                         testID: `${props.testIDPrefix}-final-output-option-${option.blockId}` })),
                     ...(unavailable && selected ? [{ id: `result:${selected.producer.blockId}`, title: t('workflows.contentUnavailable'), disabled: true }] : []),
                 ]}
-                trigger={({ toggle }) => (
+                {...(props.presentation === 'chip' ? {
+                    popoverPhonePresentation: 'sheet' as const,
+                    popoverAccessibilityLabel: t('workflows.sentence.reportsSheet'),
+                    matchTriggerWidth: false,
+                } : {})}
+                trigger={({ toggle }) => props.presentation === 'chip' ? (
+                    <WorkflowSentenceChip
+                        anchorRef={anchorRef}
+                        kind={selected === undefined ? 'placeholder' : 'option'}
+                        icon="check-circle"
+                        title={t('workflows.finalOutput.reports')}
+                        label={selected === undefined ? t('workflows.sentence.resultNone') : formatWorkflowValueReference(props.draft, selected)}
+                        accessibilityHint={t('workflows.finalOutput.explain')}
+                        hasPopup="menu"
+                        open={open}
+                        disabled={props.editable === false}
+                        onPress={toggle}
+                        testID={`${props.testIDPrefix}-final-output-trigger`}
+                    />
+                ) : (
                     <SessionAuthoringFieldSelectTrigger
                         anchorRef={anchorRef}
                         title={t('workflows.finalOutput.reports')}

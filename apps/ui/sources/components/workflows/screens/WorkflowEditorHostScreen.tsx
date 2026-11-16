@@ -2048,32 +2048,36 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 runNowPlacementRef={runNowPlacementRef}
                 testRunAnchorRef={testRunAnchorRef}
                 runPending={testSourcePending || runNow.isPending(pendingRunId ?? '')}
-                {...(canManagePersonalTriggers ? { onSave: saveFromUi, triggersSummary: triggers.summary,
-                triggersSection: (
-                    <WorkflowEditorTriggerSection
-                        draftStore={bodyDraftStore}
-                        accountLifetime={props.accountLifetime}
-                        testIDPrefix="workflow-editor"
-                        workflowDefinitionId={saved?.definitionId}
-                        set={triggers.set}
-                        draft={triggers.draft}
-                        onEditSeedApplied={(trigger, seed) => {
+                {...(canManagePersonalTriggers ? (() => {
+                    // One trigger owner, two presentations: the When card (Steps) and the When clause (Sentence).
+                    const section = {
+                        accountLifetime: props.accountLifetime,
+                        testIDPrefix: 'workflow-editor',
+                        workflowDefinitionId: saved?.definitionId,
+                        set: triggers.set,
+                        draft: triggers.draft,
+                        onEditSeedApplied: (trigger: Parameters<NonNullable<React.ComponentProps<typeof WorkflowTriggerSection>['onEditSeedApplied']>>[0],
+                            seed: Parameters<NonNullable<React.ComponentProps<typeof WorkflowTriggerSection>['onEditSeedApplied']>>[1]) => {
                             const current = snapshotRef.current;
                             if (current) snapshotRef.current = { ...current, triggers: triggers.captureSnapshot(undefined, {
                                 triggerId: seed.triggerId, revision: seed.expectedTriggerRevision, trigger,
                             }) };
-                        }}
-                        onChangeDraft={(next) => {
+                        },
+                        onChangeDraft: (next: React.ComponentProps<typeof WorkflowTriggerSection>['draft']) => {
                             editMountedDraft({ expectedDraftRevision: history.getRevision(), settings: { triggers: triggers.captureSnapshot(next) } }, t('workflows.editor.history.triggers'));
-                        }}
-                        status={triggers.status}
-                        onRetry={triggers.retry}
-                        whereTarget={projectTarget}
-                        whereSummary={formatWorkflowWhereSummary({ target: projectTarget, machineName, machineHomeDir })}
-                        inputs={triggerInputs}
-                        stepsUnsaved={definitionDraftDirty}
-                    />
-                ) } : {})}
+                        },
+                        status: triggers.status,
+                        onRetry: triggers.retry,
+                        whereTarget: projectTarget,
+                        whereSummary: formatWorkflowWhereSummary({ target: projectTarget, machineName, machineHomeDir }),
+                        inputs: triggerInputs,
+                        stepsUnsaved: definitionDraftDirty,
+                        incomplete: { state: triggers.incomplete, onChange: triggers.updateIncomplete },
+                    } satisfies React.ComponentProps<typeof WorkflowTriggerSection>;
+                    return { onSave: saveFromUi, triggersSummary: triggers.summary,
+                        triggersSection: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} />,
+                        triggersSentence: <WorkflowTriggerSection {...section} presentation="sentence" /> };
+                })() : {})}
                 savePending={savePending}
                 saveStatus={saveStatus}
                 resolveActionFieldOptions={resolveActionFieldOptions}

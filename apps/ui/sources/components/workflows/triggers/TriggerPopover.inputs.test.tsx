@@ -450,6 +450,36 @@ describe('Run a workflow trigger inputs', () => {
         expect(change.mock.calls[0]?.[0].adds).toMatchObject([{ trigger: { kind: 'schedule', enabled: true,
             schedule: { kind: 'cron', scheduleExpr: '0 9 * * *' } } }]);
     });
+    it('the Sentence view\'s "or…" writes exactly what the card\'s Add a trigger writes, and both show the same incomplete trigger', async () => {
+        const { EMPTY_WORKFLOW_TRIGGER_INCOMPLETE } = await import('./workflowTriggerStarts');
+        const card = vi.fn();
+        const sentence = vi.fn();
+        function BothPresentations() {
+            const [incomplete, setIncomplete] = React.useState(EMPTY_WORKFLOW_TRIGGER_INCOMPLETE);
+            const shared = { set: null, draft: { adds: [], updates: {}, removes: [] }, status: 'ready' as const, onRetry: vi.fn(),
+                stepsUnsaved: false, whereTarget: null, whereSummary: null, inputs: [],
+                incomplete: { state: incomplete, onChange: (update: (current: typeof incomplete) => typeof incomplete) => setIncomplete(update) } };
+            return <>
+                <WorkflowTriggerSection testIDPrefix="card-workflow" onChangeDraft={card} {...shared} />
+                <WorkflowTriggerSection testIDPrefix="sentence-workflow" onChangeDraft={sentence} presentation="sentence" {...shared} />
+            </>;
+        }
+        const screen = await renderScreen(<BothPresentations />);
+        const sentenceAdd = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'sentence-workflow-sentence-add-trigger-menu')!;
+        await act(async () => { sentenceAdd().props.onOpenChange(true); });
+        await act(async () => { sentenceAdd().props.onSelect('schedule'); });
+        await addTrigger(screen, 'card-workflow', 'schedule');
+        const { clientId: _sentenceClient, ...fromSentence } = sentence.mock.calls[0]![0].adds[0];
+        const { clientId: _cardClient, ...fromCard } = card.mock.calls[0]![0].adds[0];
+        expect(fromSentence).toEqual(fromCard);
+        // An incomplete trigger (no Session yet) added in the sentence shows in the card too.
+        await act(async () => { sentenceAdd().props.onOpenChange(true); });
+        await act(async () => { sentenceAdd().props.onSelect('session:turnEnds'); });
+        expect(screen.findAll(node => typeof node.props.testID === 'string' && /^card-workflow-trigger:new:.+-incomplete$/.test(node.props.testID)).length)
+            .toBeGreaterThan(0);
+        expect(screen.findAll(node => typeof node.props.testID === 'string' && /^sentence-workflow-sentence-trigger:new:/.test(node.props.testID)).length)
+            .toBeGreaterThan(0);
+    });
     it('the When select switches a session trigger to another session event and keeps its Session and How often', async () => {
         const change = vi.fn();
         const trigger = { kind: 'sessionLifecycle' as const, enabled: true, sourceSessionId: 'session-a',

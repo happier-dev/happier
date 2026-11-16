@@ -163,6 +163,8 @@ export function resolveDetailNavigationItems(input: MachineNavigationInput | Wor
         const descriptors: DetailPageNavigationItem[] = input.scope === 'workflowEditor'
             ? [page('steps', t('workflows.tabs.steps'), 'list'),
                 { ...page('flow', t('workflows.tabs.flow'), 'graph'), navigation: { kind: 'both', page: 'flow', companion: 'flow', desktop: 'tabs' } },
+                // The whole workflow as one sentence (round 1116c): the same definition, read and changed in place.
+                page('sentence', t('workflows.tabs.sentence'), 'article'),
                 ...(input.agentAvailable ? [companion('agent', t('workflows.authoring.agent'), 'sparkle')] : [])]
             : [page('flow', t('workflows.tabs.map'), 'graph'), page('steps', t('workflows.tabs.steps'), 'list'),
                 page('activity', t('workflows.tabs.activity'), 'pulse')];

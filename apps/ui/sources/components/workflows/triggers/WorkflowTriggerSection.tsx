@@ -57,13 +57,17 @@ import {
     type WorkflowTriggerRowModel,
     type WorkflowTriggerSetContextDraft,
 } from './workflowTriggerDraft';
+import { WorkflowTriggerSentenceLines, type WorkflowTriggerSentenceLine } from './WorkflowTriggerSentenceLines';
 import {
     buildWorkflowTriggerStartOptions,
+    EMPTY_WORKFLOW_TRIGGER_INCOMPLETE,
     commitWorkflowTriggerWhen,
     createWorkflowTriggerStartWhen,
     readWorkflowTriggerStartId,
     removeWorkflowTriggerRow,
+    type WorkflowTriggerIncomplete,
     type WorkflowTriggerRowRef,
+    type WorkflowTriggerStartContext,
 } from './workflowTriggerStarts';
 
 const styles = StyleSheet.create((theme) => ({
@@ -99,6 +103,18 @@ export type WorkflowTriggerSectionProps = Readonly<{
     /** The workflow's declared inputs, each "Same for all triggers" on the set (03 §5.3). */
     inputs: readonly WorkflowInputDefinition[];
     definition?: React.ComponentProps<typeof WorkflowRunRoles>['definition'];
+    /** `card` (default): the When card's rows. `sentence`: the Sentence view's When clause (round 1116c). */
+    presentation?: 'card' | 'sentence';
+    /** A resource host ("Automate this…"): its own starts lead every start menu (Q5). */
+    startContext?: WorkflowTriggerStartContext;
+    /**
+     * The editor's incomplete triggers (`useWorkflowTriggerEditing`), so the card and the sentence show the
+     * same ones. A host with one presentation may leave them here.
+     */
+    incomplete?: Readonly<{
+        state: WorkflowTriggerIncomplete;
+        onChange: (update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => void;
+    }>;
 }>;
 
 function rowWhen(row: WorkflowTriggerRowModel, set: WorkflowTriggerSetV1 | null, draft: WorkflowTriggerDraft): TriggerWhenValue | null {
@@ -139,8 +155,8 @@ function LegacyWorkflowTriggerSummary(props: Readonly<{ legacy: NonNullable<Retu
         subtitle={time ? formatScheduledRunQualifier(time, nowMs) : props.legacy.qualifier} subtitleLines={0} mode="info" />;
 }
 
-/** A trigger that is not complete yet (no Session or Event chosen): held here, never in the draft. */
-type PendingStart = Readonly<{ clientId: string; when: TriggerWhenValue }>;
+/** A trigger that is not complete yet (no Session or Event chosen): held beside the draft, never in it. */
+type PendingStart = WorkflowTriggerIncomplete['pending'][number];
 
 /**
  * **When it runs** (owner 11-15; lab round 1116 `trig-card-*`, `btrig-v-*`): every trigger of this
@@ -162,8 +178,14 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
             ? [{ ...trigger, automationId: trigger.automationId, triggerId: trigger.triggerId }] : []));
     const [historyKey, setHistoryKey] = React.useState<string | null>(null);
     const toggleHistory = (key: string) => setHistoryKey(current => current === key ? null : key);
-    const [pending, setPending] = React.useState<readonly PendingStart[]>([]);
-    const [edits, setEdits] = React.useState<Readonly<Record<string, TriggerWhenValue>>>({});
+    const [localIncomplete, setLocalIncomplete] = React.useState(EMPTY_WORKFLOW_TRIGGER_INCOMPLETE);
+    const incomplete = props.incomplete?.state ?? localIncomplete;
+    const updateIncomplete = props.incomplete?.onChange ?? setLocalIncomplete;
+    const { pending, edits } = incomplete;
+    const setPending = (update: (current: readonly PendingStart[]) => readonly PendingStart[]) =>
+        updateIncomplete((current) => ({ ...current, pending: update(current.pending) }));
+    const setEdits = (update: (current: WorkflowTriggerIncomplete['edits']) => WorkflowTriggerIncomplete['edits']) =>
+        updateIncomplete((current) => ({ ...current, edits: update(current.edits) }));
     const [addOpen, setAddOpen] = React.useState(false);
     // The plugin Event catalog is read once a menu that lists it opens, or while a plugin trigger shows.
     const [catalogDemanded, setCatalogDemanded] = React.useState(false);
@@ -181,7 +203,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const rowWhens = rows.map((row) => edits[row.key] ?? rowWhen(row, props.set, props.draft));
     const showsEvent = [...rowWhens, ...pending.map((item) => item.when)].some((when) => when?.kind === 'pluginEvent');
     const catalog = useWorkflowTriggerEventOptions({ ...placement, enabled: catalogDemanded || showsEvent });
-    const startOptions = React.useMemo(() => buildWorkflowTriggerStartOptions(catalog.events), [catalog.events]);
+    const startOptions = React.useMemo(() => buildWorkflowTriggerStartOptions(catalog.events, undefined, props.startContext),
+        [catalog.events, props.startContext]);
     // The menu's foot says where plugin triggers come from: the trigger set's Machine.
     const catalogMachineName = placement.machineId === null ? null
         : getMachineDisplayName(machines.find((machine) => machine.id === placement.machineId) ?? null) ?? t('machine.unnamedMachine');
@@ -310,6 +333,49 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                 onRemove={() => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId))} />
         )),
     ];
+    const addFooter = catalogMachineName === null ? undefined : (
+        <Text testID={`${props.testIDPrefix}-triggers-add-source`} style={styles.menuFoot}>
+            {catalog.status === 'ready'
+                ? catalog.events.length === 0 ? t('workflows.triggers.card.noPluginTriggersOn', { machine: catalogMachineName })
+                    : t('workflows.triggers.card.pluginTriggersOn', { count: catalog.events.length, machine: catalogMachineName })
+                : catalog.status === 'unavailable' ? t('workflows.triggers.card.pluginTriggersUnavailable', { machine: catalogMachineName })
+                    : t('workflows.triggers.card.pluginTriggersLoading', { machine: catalogMachineName })}
+        </Text>
+    );
+    const addStart = (id: string) => {
+        const when = createWorkflowTriggerStartWhen(id);
+        if (when !== null) editPending(createClientId(), when);
+    };
+    if (props.presentation === 'sentence') {
+        // The same rows, handlers and pickers as the card: each line's detail chip opens that trigger's own block.
+        const lines: WorkflowTriggerSentenceLine[] = [
+            ...rows.map((row, index): WorkflowTriggerSentenceLine => {
+                const edited = edits[row.key];
+                const when = rowWhens[index] ?? null;
+                const startId = when === null ? null : readWorkflowTriggerStartId(when);
+                const summary = formatTriggerSummary(row.trigger);
+                const title = edited !== undefined ? startTitle(edited) : startId === null ? summary : startTitle(when!) || summary;
+                return { key: row.key, startId, startTitle: title, enabled: row.enabled, incomplete: edited !== undefined,
+                    detail: startId === null ? null : summary === title ? t('workflows.page.inspector.options') : summary,
+                    onSelectStart: (id) => selectStart(when, id, (next) => editRow(row, next)),
+                    onRemove: () => {
+                        setEdits(({ [row.key]: _dropped, ...rest }) => rest);
+                        change(removeWorkflowTriggerRow(props.draft, rowRef(row)));
+                    },
+                    renderRows: () => blocks[index] };
+            }),
+            ...pending.map((item, index): WorkflowTriggerSentenceLine => ({ key: `new:${item.clientId}`,
+                startId: readWorkflowTriggerStartId(item.when), startTitle: startTitle(item.when), detail: null, enabled: true, incomplete: true,
+                onSelectStart: (id) => selectStart(item.when, id, (next) => editPending(item.clientId, next)),
+                onRemove: () => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId)),
+                renderRows: () => blocks[rows.length + index] })),
+        ];
+        return (
+            <WorkflowTriggerSentenceLines testIDPrefix={props.testIDPrefix} lines={lines} startOptions={startOptions}
+                onAdd={addStart} onStartsOpenChange={demandCatalog} addFooter={addFooter}
+                status={props.status === 'failed' ? readState : null} editable />
+        );
+    }
     const before = readState !== null || (props.stepsUnsaved && rows.length > 0);
     const after = sharedTriggers.length > 0 || shared.status === 'failed' || rows.length > 0;
     return (
@@ -369,15 +435,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                             icon: <Icon name={option.glyph} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />,
                         }))}
                         showCategoryTitles
-                        footer={catalogMachineName === null ? undefined : (
-                            <Text testID={`${props.testIDPrefix}-triggers-add-source`} style={styles.menuFoot}>
-                                {catalog.status === 'ready'
-                                    ? catalog.events.length === 0 ? t('workflows.triggers.card.noPluginTriggersOn', { machine: catalogMachineName })
-                                        : t('workflows.triggers.card.pluginTriggersOn', { count: catalog.events.length, machine: catalogMachineName })
-                                    : catalog.status === 'unavailable' ? t('workflows.triggers.card.pluginTriggersUnavailable', { machine: catalogMachineName })
-                                        : t('workflows.triggers.card.pluginTriggersLoading', { machine: catalogMachineName })}
-                            </Text>
-                        )}
+                        footer={addFooter}
                         search
                         searchPlaceholder={t('workflows.triggers.card.searchTriggers')}
                         emptyLabel={t('workflows.triggers.card.noTriggersFound')}
@@ -386,8 +444,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                         matchTriggerWidth={false}
                         onSelect={(id) => {
                             setAddOpen(false);
-                            const when = createWorkflowTriggerStartWhen(id);
-                            if (when !== null) editPending(createClientId(), when);
+                            addStart(id);
                         }}
                         trigger={({ toggle, open }) => (
                             <View style={styles.addRow}>

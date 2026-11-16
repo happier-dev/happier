@@ -17,6 +17,14 @@ export function formatWorkflowSummaryLine(draft: WorkflowEditorDraft, input: Rea
     return parts.map((part, index) => (index === 0 ? part : lowerSentenceStart(part))).join(SEPARATOR);
 }
 
+/**
+ * A top-level block as this line names it mid-sentence ("find the cause"): the Sentence view's step chips
+ * (round 1116c Q4). A step with nothing written yet reads by its kind ("agent step").
+ */
+export function formatWorkflowSummaryStepName(block: WorkflowBlock): string {
+    return lowerSentenceStart(readSummaryPart(block) ?? workflowBlockReferenceLabel(block));
+}
+
 /** A block by its name; an unnamed Agent step by its prompt's first sentence; an empty step says nothing. */
 function readSummaryPart(block: WorkflowBlock): string | null {
     const name = block.name?.trim();

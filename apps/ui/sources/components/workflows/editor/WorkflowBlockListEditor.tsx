@@ -192,6 +192,11 @@ export type WorkflowBlockListEditorProps = Readonly<{
    * past the end row, to its mark. Nested lists ignore it.
    */
   rootFoot?: React.ReactNode;
+  /**
+   * The root list shows this one block's row and nothing else (no Add row, foot or note): the Sentence
+   * view's one card (round 1116c). Selection, numbering and every edit stay this list's.
+   */
+  onlyBlockId?: string;
   /** Names the scope for the Add control's accessible hint. */
   scopeLabel?: string;
   /**
@@ -212,6 +217,30 @@ export type WorkflowBlockListEditorProps = Readonly<{
   currentWorkflowRef?: string | null;
   testIDPrefix?: string;
 }>;
+
+/**
+ * The editor's one Add: inserts the block, selects it, and puts the caret in a new prompt. The list's own
+ * Add row and inserters, and the Sentence view's "Add another step", all add through it.
+ */
+export function addWorkflowEditorBlock(params: Readonly<{
+  draft: WorkflowEditorDraft;
+  list: WorkflowBlockListRef;
+  request: WorkflowAddBlockRequest;
+  afterBlockId?: string;
+  onChange: (next: WorkflowEditorDraft) => void;
+  onSelect: (blockId: string | null) => void;
+  requestPromptFocus?: (blockId: string) => void;
+}>): void {
+  const insertion = insertWorkflowEditorBlock(params.draft, {
+    request: params.request,
+    list: params.list,
+    ...(params.afterBlockId === undefined ? {} : { afterBlockId: params.afterBlockId }),
+  });
+  params.onChange(insertion.draft);
+  params.onSelect(insertion.block.id);
+  if (insertion.block.kind === 'step' || insertion.block.kind === 'wait')
+    params.requestPromptFocus?.(insertion.block.id);
+}
 
 export function WorkflowBlockListEditor(
   props: WorkflowBlockListEditorProps,
@@ -234,6 +263,8 @@ export function WorkflowBlockListEditor(
   const editable = props.presentation?.editable !== false;
   const slotsFor = props.presentation?.step;
   const scopeLabel = props.scopeLabel ?? t('workflows.a11y.blockList');
+  // Only the root list narrows to one block; nested lists (which inherit these props) keep every row.
+  const onlyBlockId = props.list.kind === 'root' ? props.onlyBlockId : undefined;
   const composerScope = React.useMemo<AuthoringComposerScope>(
     () =>
       props.composerScope.kind === 'session'
@@ -289,15 +320,15 @@ export function WorkflowBlockListEditor(
   const addBlock = React.useCallback(
     (request: WorkflowAddBlockRequest, afterBlockId?: string) => {
       const current = owner.current;
-      const insertion = insertWorkflowEditorBlock(current.readDraft?.() ?? current.draft, {
-        request,
+      addWorkflowEditorBlock({
+        draft: current.readDraft?.() ?? current.draft,
         list: current.list,
+        request,
         ...(afterBlockId === undefined ? {} : { afterBlockId }),
+        onChange: current.onChange,
+        onSelect: current.onSelect,
+        requestPromptFocus: current.requestPromptFocus,
       });
-      current.onChange(insertion.draft);
-      current.onSelect(insertion.block.id);
-      if (insertion.block.kind === 'step' || insertion.block.kind === 'wait')
-        current.requestPromptFocus?.(insertion.block.id);
     },
     [],
   );
@@ -380,7 +411,7 @@ export function WorkflowBlockListEditor(
       accessibilityLabel={scopeLabel}
       style={workflowEditorStyles.blockList}
     >
-      {depth === 0 && props.presentation?.note !== undefined ? (
+      {depth === 0 && onlyBlockId === undefined && props.presentation?.note !== undefined ? (
         typeof props.presentation.note === 'string' ||
         typeof props.presentation.note === 'number' ? (
           <Text
@@ -398,6 +429,7 @@ export function WorkflowBlockListEditor(
         )
       ) : null}
       {blocks.map((block, index) => {
+        if (onlyBlockId !== undefined && block.id !== onlyBlockId) return null;
         // With an editing demand, a written prompt block that is neither selected nor being
         // edited is its one-line summary: a long workflow mounts one block editor, not one
         // per block (PERF-WF3). An empty prompt has nothing to summarise and keeps its composer.
@@ -435,7 +467,7 @@ export function WorkflowBlockListEditor(
           block.kind === 'parallel' ||
           block.kind === 'loop' ||
           block.kind === 'if';
-        const leadingGap = index > 0 || (block.runWhen !== undefined && block.runWhen !== 'success');
+        const leadingGap = onlyBlockId === undefined && (index > 0 || (block.runWhen !== undefined && block.runWhen !== 'success'));
         const row = (
           <WorkflowBlockListItem
             key={block.id}
@@ -515,6 +547,7 @@ export function WorkflowBlockListEditor(
 
       {editable &&
       list.kind === 'root' &&
+      onlyBlockId === undefined &&
       !(props.rootAddRow === false && props.onUseExample === undefined) ? (
         <View
           style={blocks.length === 0 ? undefined : grid.listEnd}
@@ -541,7 +574,7 @@ export function WorkflowBlockListEditor(
           />
         </View>
       ) : null}
-      {list.kind === 'root' && blocks.length > 0 ? props.rootFoot ?? null : null}
+      {list.kind === 'root' && blocks.length > 0 && onlyBlockId === undefined ? props.rootFoot ?? null : null}
     </View>
   );
 }

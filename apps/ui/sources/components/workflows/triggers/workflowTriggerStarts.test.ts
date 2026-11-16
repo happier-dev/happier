@@ -46,6 +46,40 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
       eventRef: { pluginId: 'happier.sentry', localId: 'issue' } });
   });
 
+  it('groups the built-in triggers first, then each plugin by plugin name, keeping declaration order within a plugin', () => {
+    const options = buildWorkflowTriggerStartOptions([
+      { eventRef: { pluginId: 'happier.sentry', localId: 'issue' }, title: 'A new issue appears', pluginName: 'Sentry' },
+      { eventRef: { pluginId: 'happier.github', localId: 'pr-opened' }, title: 'A pull request opens', pluginName: 'GitHub' },
+      { eventRef: { pluginId: 'happier.gitlab', localId: 'push' }, title: 'Someone pushes', pluginName: 'GitLab' },
+      { eventRef: { pluginId: 'happier.github', localId: 'pr-merged' }, title: 'A pull request merges', pluginName: 'GitHub' },
+    ]);
+    expect(options.map((option) => [option.section, option.group, option.id])).toEqual([
+      ['builtin', t('workflows.triggers.card.groupTime'), 'schedule'],
+      ['builtin', t('workflows.triggers.card.groupSessions'), 'session:turnEnds'],
+      ['builtin', t('workflows.triggers.card.groupSessions'), 'session:needsYou'],
+      ['builtin', t('workflows.triggers.card.groupSessions'), 'session:sessionArchived'],
+      ['plugins', 'GitHub', 'event:happier.github/pr-opened'],
+      ['plugins', 'GitHub', 'event:happier.github/pr-merged'],
+      ['plugins', 'GitLab', 'event:happier.gitlab/push'],
+      ['plugins', 'Sentry', 'event:happier.sentry/issue'],
+    ]);
+  });
+
+  it('leads with the resource\'s own group in a resource host, then everything else in the usual groups', () => {
+    const options = buildWorkflowTriggerStartOptions([
+      { eventRef: { pluginId: 'happier.github', localId: 'pr-opened' }, title: 'A pull request opens', pluginName: 'GitHub' },
+      { eventRef: { pluginId: 'happier.deploy', localId: 'failed' }, title: 'A deploy fails', pluginName: 'Deployments' },
+    ], undefined, { resource: { title: 'Production · happier-web', startIds: ['event:happier.deploy/failed', 'session:needsYou'] } });
+    expect(options.map((option) => [option.section, option.group, option.id])).toEqual([
+      ['resource', 'Production · happier-web', 'event:happier.deploy/failed'],
+      ['resource', 'Production · happier-web', 'session:needsYou'],
+      ['builtin', t('workflows.triggers.card.groupTime'), 'schedule'],
+      ['builtin', t('workflows.triggers.card.groupSessions'), 'session:turnEnds'],
+      ['builtin', t('workflows.triggers.card.groupSessions'), 'session:sessionArchived'],
+      ['plugins', 'GitHub', 'event:happier.github/pr-opened'],
+    ]);
+  });
+
   it('joins the triggers into one sentence: every summary after the first starts lowercase, a name keeps its capitals', () => {
     const turnEnds = { kind: 'sessionLifecycle' as const, sourceSessionId: 's', events: ['parentTurnCompleted' as const, 'parentTurnFailed' as const,
       'parentTurnCancelled' as const], policy: { kind: 'everyMatch' as const } };

@@ -511,7 +511,7 @@ it('detail-navigation.T1/T2/T6 keeps the editor draft and undo across page and c
     const screen = await renderScreen(<Editor />);
     await vi.waitFor(() => expect(bound).toBe(true));
     await act(async () => edit());
-    expect(readShellColumnActionOwner('main')?.tabs).toEqual(['steps', 'flow']);
+    expect(readShellColumnActionOwner('main')?.tabs).toEqual(['steps', 'flow', 'sentence']);
     await screen.pressByTestIdAsync('workflow-editor-view:flow');
     expect(readShellColumnActionOwner('main')?.activeTab).toBe('flow');
     expect(screen.findAllByTestId('workflow-editor-flow-node-analyze').length).toBeGreaterThan(0);
@@ -3862,5 +3862,121 @@ describe('WorkflowEditorBody unsaved draft commands', () => {
         const asks = screen.findByTestId('workflow-editor-how-where-asks');
         expect(asks?.findAll((node) => node.props?.testID === 'workflow-editor-inputs').length).toBeGreaterThan(0);
         expect(screen.getTextContent()).toContain('workflows.inputs.title');
+    });
+});
+
+describe('the Sentence view (round 1116c)', () => {
+    const settle = () => act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+    function twoStepDraft(harness: Harness): WorkflowEditorDraft {
+        const base = buildDraft(harness);
+        return { ...base, blocks: [...base.blocks, { kind: 'step', id: 'fix', name: 'Fix it', document: { text: 'Fix what broke', references: [], attachments: [] },
+            input: [], result: { kind: 'text' } }] };
+    }
+    function Controlled(props: Readonly<{ harness: Harness; initial: WorkflowEditorDraft; onDraft?: (draft: WorkflowEditorDraft) => void;
+        onSelect?: (blockId: string | null) => void; view?: 'steps' | 'flow' | 'sentence' }>) {
+        const [draft, setDraft] = React.useState(props.initial);
+        const [selected, select] = React.useState<string | null>(null);
+        const [view, setView] = React.useState<'steps' | 'flow' | 'sentence'>(props.view ?? 'sentence');
+        return <props.harness.WorkflowEditorBody draft={draft} onChange={(next) => { props.onDraft?.(next); setDraft(next); }}
+            machineName="Mac Studio" composerScope={MACHINE_COMPOSER_SCOPE} selectedBlockId={selected}
+            onSelectBlock={(id) => { props.onSelect?.(id); select(id); }} onCustomizeBlock={() => {}}
+            view={view} onChangeView={setView} onSave={() => {}} onRunNow={() => {}} />;
+    }
+
+    it('joins the view switch and keeps Sentence while the page re-renders', async () => {
+        const harness = await loadHarness();
+        const screen = await renderScreen(<Controlled harness={harness} initial={buildDraft(harness)} view="steps" />);
+        await flushHookEffects();
+        // The tab strip's control and the page's scope Action select through one navigation owner.
+        await selectColumnTab('main', 'sentence');
+        await flushHookEffects();
+        expect(screen.findHostByTestId('workflow-editor-sentence')).not.toBeNull();
+        // Steps stays mounted but hidden, so its composers keep their caret.
+        expect(screen.findHostByTestId('workflow-editor-steps-presentation')?.props.accessibilityElementsHidden).toBe(true);
+        const name = screen.findHostByTestId('workflow-editor-name')!;
+        await act(async () => invokeTestInstanceHandler(name, 'onChangeText', 'Renamed'));
+        await flushHookEffects();
+        expect(screen.findHostByTestId('workflow-editor-sentence')).not.toBeNull();
+        await screen.unmount();
+    });
+
+    it('selects a step from its chip, shares the selection with Steps and shows only that step\'s card', async () => {
+        const harness = await loadHarness();
+        const selections: (string | null)[] = [];
+        const screen = await renderScreen(<Controlled harness={harness} initial={twoStepDraft(harness)} onSelect={(id) => selections.push(id)} />);
+        await flushHookEffects();
+        const cardSteps = () => screen.findHostByTestId('workflow-editor-sentence-selection')!
+            .findAll((node) => typeof node.props.testID === 'string' && /^workflow-editor-step-(analyze|fix)$/.test(node.props.testID))
+            .map((node) => node.props.testID as string);
+        // The first step is shown on open.
+        expect(new Set(cardSteps())).toEqual(new Set(['workflow-editor-step-analyze']));
+        await screen.pressByTestIdAsync('workflow-editor-sentence-step:fix');
+        await flushHookEffects();
+        expect(selections.at(-1)).toBe('fix');
+        expect(new Set(cardSteps())).toEqual(new Set(['workflow-editor-step-fix']));
+        expect(screen.findHostByTestId('workflow-editor-sentence-step:fix')?.props.accessibilityState?.selected).toBe(true);
+        await screen.unmount();
+    });
+
+    it('adds another step through the Steps view\'s own Add, then selects it', async () => {
+        const harness = await loadHarness();
+        let current: WorkflowEditorDraft | null = null;
+        const selections: (string | null)[] = [];
+        const screen = await renderScreen(<Controlled harness={harness} initial={buildDraft(harness)}
+            onDraft={(draft) => { current = draft; }} onSelect={(id) => selections.push(id)} />);
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('workflow-editor-sentence-add-step');
+        const row = await vi.waitFor(() => {
+            const match = screen.findAll((node) => typeof node.props.testID === 'string'
+                && node.props.testID.endsWith(':option:workflow-editor-sentence-add-step-menu-step') && typeof node.props.onPress === 'function').at(-1);
+            if (!match) throw new Error('No Add step option');
+            return match;
+        });
+        await screen.pressByTestIdAsync(row.props.testID);
+        await settle();
+        const added = current!.blocks.at(-1)!;
+        expect(current!.blocks).toHaveLength(2);
+        expect(added.kind).toBe('step');
+        expect(selections.at(-1)).toBe(added.id);
+        expect(screen.findHostByTestId(`workflow-editor-sentence-step:${added.id}`)).not.toBeNull();
+        await screen.unmount();
+    });
+
+    it('writes the Result through the page-foot Result owner, which then shows the same value', async () => {
+        const harness = await loadHarness();
+        let current: WorkflowEditorDraft | null = null;
+        const screen = await renderScreen(<Controlled harness={harness} initial={buildDraft(harness)} onDraft={(draft) => { current = draft; }} />);
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('workflow-editor-sentence-result-final-output-trigger');
+        await settle();
+        await screen.pressByTestIdAsync('workflow-editor-sentence-result-final-output-option-analyze');
+        await settle();
+        expect(current!.finalOutput).toEqual({ kind: 'result', producer: { blockId: 'analyze', scope: { kind: 'current' } }, path: [] });
+        const sentenceLabel = screen.findHostByTestId('workflow-editor-sentence-result-final-output-trigger')?.props.accessibilityLabel;
+        const footLabel = screen.findHostByTestId('workflow-editor-result-final-output-trigger')?.props.accessibilityLabel;
+        expect(sentenceLabel).toBe(footLabel);
+        await screen.unmount();
+    });
+
+    it('selecting another step re-renders the card, never the placement or Result chips', async () => {
+        const harness = await loadHarness();
+        editorCosts.views.clear();
+        const screen = await renderScreen(<Controlled harness={harness} initial={twoStepDraft(harness)} />);
+        await flushHookEffects();
+        for (const counter of editorCosts.views.values()) counter.reset();
+        await screen.pressByTestIdAsync('workflow-editor-sentence-step:fix');
+        await flushHookEffects();
+        const renders = (pattern: RegExp) => [...editorCosts.views].filter(([id]) => pattern.test(id))
+            .reduce((sum, [, counter]) => sum + counter.read().renders, 0);
+        const measurement = {
+            placementChips: renders(/^agent-input-(machine|path)-chip$|^workflow-editor-sentence-(machine|folder)$/),
+            resultEditor: renders(/^workflow-editor-sentence-result-final-output-editor$/),
+            card: renders(/^workflow-editor-step-fix$/),
+        };
+        console.info('WF-SENTENCE select-step cost', measurement);
+        expect(measurement.card).toBeGreaterThan(0);
+        expect(measurement.placementChips).toBe(0);
+        expect(measurement.resultEditor).toBe(0);
+        await screen.unmount();
     });
 });

@@ -58,6 +58,8 @@ export function WorkflowAddBlockMenu(props: Readonly<{
     revealed?: boolean;
     /** `row` only: the host's own bar holds Add (a phone), so this row offers only Start from an example. */
     examplesOnly?: boolean;
+    /** A host that draws its own Add (the Sentence view's "Add another step" chip); the menu stays this one. */
+    renderTrigger?: (trigger: Readonly<{ open: boolean; toggle: () => void; anchorRef: React.RefObject<View | null> }>) => React.ReactNode;
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -67,6 +69,24 @@ export function WorkflowAddBlockMenu(props: Readonly<{
     const [open, setOpen] = React.useState(false);
     const [examplesOpen, setExamplesOpen] = React.useState(false);
     const close = React.useCallback(() => setOpen(false), []);
+
+    if (props.renderTrigger !== undefined) {
+        return (
+            <>
+                {props.renderTrigger({ open, toggle: () => setOpen((value) => !value), anchorRef })}
+                {open ? (
+                    <WorkflowAddBlockMenuPopover
+                        composerScope={props.composerScope}
+                        anchorRef={anchorRef}
+                        onAdd={props.onAdd}
+                        onClose={close}
+                        {...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef })}
+                        {...(props.testID === undefined ? {} : { testID: props.testID })}
+                    />
+                ) : null}
+            </>
+        );
+    }
 
     if (props.variant === 'inserter') {
         // Under a finger a hidden inserter is inert: its target overlaps its neighbours' edges so the

@@ -10,7 +10,7 @@ import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowWorkspaceSelection } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
 import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
-import { SessionPlacementChips, useSessionPlacementPopovers, type SessionPlacementChipsHandle, type SessionPlacementChoiceProps } from '@/components/sessions/new/placement/SessionPlacementChips';
+import { SessionPlacementChips, useSessionPlacementPopovers, type SessionPlacementChipsHandle, type SessionPlacementChipTrigger, type SessionPlacementChoiceProps } from '@/components/sessions/new/placement/SessionPlacementChips';
 import type { AgentInputContentPopoverRenderArgs } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { useCheckoutSelectionPicker } from '@/components/sessions/new/hooks/screenModel/useCheckoutSelectionPicker';
@@ -178,9 +178,11 @@ type WorkflowProjectTargetControlProps = Readonly<{
      * and Workspace each on a row the host draws on its own label track
      * (`renderRow`), each a bordered field select.
      */
-    presentation?: 'chip' | 'field' | 'inline' | 'value' | 'rows';
+    presentation?: 'chip' | 'field' | 'inline' | 'value' | 'rows' | 'sentence';
     /** `rows`: draws one labelled row of the host's track. */
     renderRow?: WorkflowWhereRowRenderer;
+    /** `sentence`: the host draws the Machine and folder triggers (the workflow's sentence, round 1116c). */
+    renderChip?: (chip: SessionPlacementChipTrigger) => React.ReactNode;
     /**
      * The workflow's Workspace (WF-REDESIGN-1116 change a): the checkout picker, New Session's, writes
      * this choice ("New worktree" per run, or the project folder) instead of only moving the folder.
@@ -233,7 +235,8 @@ export const WorkflowProjectTargetControl = React.forwardRef<
                 title: props.title ?? t('workflows.page.sections.machineAndProject'),
                 ...(props.subtitle === undefined ? {} : { subtitle: props.subtitle }),
                 rowTestID: `${testIDPrefix}-machine-row`,
-            } : props.presentation === 'chip' || props.presentation === 'value' ? { chipVariant: 'bordered' as const } : {})}
+            } : props.presentation === 'sentence' && props.renderChip !== undefined ? { renderChip: props.renderChip }
+                : props.presentation === 'chip' || props.presentation === 'value' ? { chipVariant: 'bordered' as const } : {})}
         />
     ) : null;
     const scope = props.currentUiContextCommandScope;
@@ -299,6 +302,21 @@ export const WorkflowProjectTargetControl = React.forwardRef<
 
     if (props.presentation === 'value') {
         return <View testID={`${testIDPrefix}-where-chips`} style={styles.row}>{editor ?? readOnlyValue}</View>;
+    }
+    if (props.presentation === 'sentence') {
+        if (editor) return editor;
+        // Read-only: the same triggers, which cannot be chosen.
+        const directory = target !== undefined && target !== null && isWorkflowProjectTarget(target)
+            ? formatPathRelativeToHome(target.directory, machineHomeDir, { homeLabel: t('workspacePresentation.homeFolder') }) : null;
+        const noop = () => {};
+        return <>
+            {props.renderChip?.({ field: 'machine', title: t('newSession.wizardSection.machine'), value: props.machineName,
+                placeholder: t('workflows.editor.targetNotChosen'), anchorRef: React.createRef<View>(), open: false, disabled: true, onPress: noop,
+                testID: `${testIDPrefix}-machine` })}
+            {props.renderChip?.({ field: 'folder', title: t('newSession.wizardSection.folder'), value: directory,
+                placeholder: t('newSession.folder.noFolder'), anchorRef: React.createRef<View>(), open: false, disabled: true, onPress: noop,
+                testID: `${testIDPrefix}-project-directory-readonly` })}
+        </>;
     }
 
     if (props.presentation !== 'field') {
@@ -467,6 +485,7 @@ function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
     subtitle?: string;
     rowTestID?: string;
     renderRow?: WorkflowWhereRowRenderer;
+    renderChip?: (chip: SessionPlacementChipTrigger) => React.ReactNode;
     workspace?: WorkflowWhereWorkspace;
 }>): React.ReactElement {
     const { target } = props;
@@ -509,7 +528,8 @@ function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
             // A workflow's Sessions follow the Machine's row for workflows and automations (J6); no one-time override.
             isolationWorkKind="automationsWorkflows"
             {...(props.renderRow === undefined ? {} : { renderFieldRow: props.renderRow })}
-            trailing={target !== null && isWorkflowProjectTarget(target) ? (() => {
+            {...(props.renderChip === undefined ? {} : { renderChip: props.renderChip })}
+            trailing={props.renderChip === undefined && target !== null && isWorkflowProjectTarget(target) ? (() => {
                 const picker = <ProjectCheckoutPicker
                     currentUiContextCommandScope={scope}
                     target={target}

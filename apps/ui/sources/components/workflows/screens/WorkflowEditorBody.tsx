@@ -64,6 +64,7 @@ import {
 } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowValidationIssue } from '@happier-dev/protocol/workflows/workflowV1';
 import { WorkflowHowAndWhereCard } from '../editor/WorkflowHowAndWhereCard';
+import { WorkflowSentenceView } from '../sentence/WorkflowSentenceView';
 import { WorkflowWhenItRunsCard } from '../editor/WorkflowWhenItRunsCard';
 import { NO_DISCLOSURE, resolveWorkflowInspectorGroupExpanded } from '../editor/workflowInspectorGroup';
 import { formatWorkflowSummaryLine } from '../presentation/workflowSummaryLine';
@@ -289,7 +290,7 @@ const STEP_OPTIONS_MAX_WIDTH_PX = 420;
 const IF_OPTIONS_MAX_WIDTH_PX = 520;
 const STEP_OPTIONS_MAX_HEIGHT_PX = 640;
 
-export type WorkflowEditorView = 'steps' | 'flow';
+export type WorkflowEditorView = 'steps' | 'flow' | 'sentence';
 
 type WorkflowEditorCompanion = 'agent';
 
@@ -423,6 +424,8 @@ export type WorkflowEditorBodyProps = Readonly<{
      */
     triggersSummary?: string;
     triggersSection?: React.ReactNode;
+    /** The same triggers as the Sentence view's When clause (round 1116c). */
+    triggersSentence?: React.ReactNode;
     /** The document's reading presentation (04 §4.11), for a read-only workflow. */
     documentPresentation?: WorkflowDocumentPresentation;
     /** Options for Action-step fields with an `optionsSourceId`, for the workflow's Where Machine. */
@@ -1108,7 +1111,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const activeScope = useActiveServerAccountScope();
     const navigationScope = props.accountLifetime === undefined ? activeScope : props.accountLifetime?.scope ?? null;
     const selectPage = React.useCallback((id: string) => {
-        if (id === 'steps' || id === 'flow') props.onChangeView(id);
+        if (id === 'steps' || id === 'flow' || id === 'sentence') props.onChangeView(id);
     }, [props.onChangeView]);
     // Reads the step-options opener declared below at press time, never during render.
     // Below three-column width the newer companion replaces the older (F3): a details companion folds an
@@ -1283,38 +1286,62 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const resultFoot = React.useMemo(() => (
         <WorkflowResultFoot draftStore={draftStore} onChange={onChange} editable={documentEditable} testIDPrefix={testIDPrefix} />
     ), [documentEditable, draftStore, onChange, testIDPrefix]);
-    const blockList = (
-        <WorkflowEditorBlockList
-            draftStore={draftStore}
-            readValidation={readValidation}
-            cardRefs={stepCardRefs}
-            highlightedBlockIds={props.highlightedBlockIds}
-            list={{ kind: 'root' }}
-            depth={0}
-            selectedBlockId={props.selectedBlockId}
-            composerScope={props.composerScope}
-            composerCustody={composerCustody}
-            onChange={onChange}
-            onSelect={props.onSelectBlock}
-            onCustomize={openInspector}
-            onCommitChange={props.onCommitChange}
-            onUseExample={useExample}
-            rootFoot={resultFoot}
-            rootAddRow
-            registerPromptRef={registerPromptRef}
-            requestPromptFocus={requestPromptFocus}
-            editingBlockId={editingBlockId}
-            onRequestEditBlock={setEditingBlockId}
-            {...(props.documentPresentation === undefined ? {} : { presentation: props.documentPresentation })}
+    const blockListProps = {
+            draftStore,
+            readValidation,
+            cardRefs: stepCardRefs,
+            highlightedBlockIds: props.highlightedBlockIds,
+            list: { kind: 'root' as const },
+            depth: 0,
+            selectedBlockId: props.selectedBlockId,
+            composerScope: props.composerScope,
+            composerCustody,
+            onChange,
+            onSelect: props.onSelectBlock,
+            onCustomize: openInspector,
+            onCommitChange: props.onCommitChange,
+            onUseExample: useExample,
+            registerPromptRef,
+            requestPromptFocus,
+            editingBlockId,
+            onRequestEditBlock: setEditingBlockId,
+            ...(props.documentPresentation === undefined ? {} : { presentation: props.documentPresentation }),
             // The page's commands own when issues speak; a composition without
             // them (the Automation wrapper) keeps its incumbent always-on text.
-            revealIssues={!hasPageCommands || issuesRevealed}
-            {...(props.resolveActionFieldOptions === undefined ? {} : { resolveActionFieldOptions: props.resolveActionFieldOptions })}
-            {...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts })}
-            {...(sessionDrop === undefined ? {} : { sessionDrop })}
-            {...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef })}
-            testIDPrefix={testIDPrefix}
-        />
+            revealIssues: !hasPageCommands || issuesRevealed,
+            ...(props.resolveActionFieldOptions === undefined ? {} : { resolveActionFieldOptions: props.resolveActionFieldOptions }),
+            ...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts }),
+            ...(sessionDrop === undefined ? {} : { sessionDrop }),
+            ...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef }),
+            testIDPrefix,
+    } satisfies React.ComponentProps<typeof WorkflowEditorBlockList>;
+    const blockList = <WorkflowEditorBlockList {...blockListProps} rootFoot={resultFoot} rootAddRow />;
+
+    // The Sentence view (round 1116c): the same draft, triggers, Where, step cards and Result owners.
+    const sentenceContent = props.view !== 'sentence' ? null : (
+        <WorkflowDocumentGridContext.Provider value={compactLayout ? 'compact' : 'wide'}>
+            <WorkflowSentenceView
+                draftStore={draftStore}
+                onChange={onChange}
+                documentEditable={documentEditable}
+                selectedBlockId={props.selectedBlockId}
+                onSelectBlock={props.onSelectBlock}
+                requestPromptFocus={requestPromptFocus}
+                {...(props.triggersSentence === undefined ? {} : { whenClause: props.triggersSentence })}
+                place={{
+                    target: props.projectTarget,
+                    machineName: props.machineName,
+                    ...(props.projectMachines === undefined ? {} : { machines: props.projectMachines }),
+                    ...(props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime }),
+                    ...(documentEditable && props.onChangeProjectTarget !== undefined ? { onChange: props.onChangeProjectTarget } : {}),
+                }}
+                composerScope={props.composerScope}
+                {...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef })}
+                renderStepCard={(blockId) => <WorkflowEditorBlockList {...blockListProps} onlyBlockId={blockId} />}
+                renderOptionsCard={() => <WorkflowHowAndWhereCard {...howAndWhereCardProps} expanded onExpandedChange={() => {}} />}
+                testIDPrefix={testIDPrefix}
+            />
+        </WorkflowDocumentGridContext.Provider>
     );
 
     const flowContent = (
@@ -1485,6 +1512,24 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         />
     );
 
+    // How and where it runs: the Steps view's card, and the Sentence view's Workflow options card.
+    const howAndWhereCardProps = {
+        draftStore, onChange, documentEditable, showsWorkflowAgent,
+        accountLifetime: props.accountLifetime, whereRef, projectTarget: props.projectTarget, machineName: props.machineName,
+        projectMachines: props.projectMachines, onChangeProjectTarget: props.onChangeProjectTarget,
+        executionTarget: props.executionTarget, runAsTargets: props.runAsTargets, onChangeExecutionTarget: props.onChangeExecutionTarget,
+        authoringFacts: props.authoringFacts,
+        ...(props.existingSessions === undefined ? {} : { existingSessions: props.existingSessions }),
+        sessionOptionsStatus: props.sessionOptionsStatus,
+        onRetrySessionOptions: props.onRetrySessionOptions,
+        onSessionOptionsDemandChange: props.onSessionOptionsDemandChange,
+        ...(sessionDrop === undefined ? {} : { bindExistingSession: sessionDrop.bind }),
+        ...(props.currentWorkflowRef === null || props.currentWorkflowRef === undefined ? {} : { workflowDefinitionId: props.currentWorkflowRef }),
+        ...(props.description === undefined ? {} : { description: props.description }),
+        ...(props.onChangeDescription === undefined ? {} : { onChangeDescription: props.onChangeDescription }),
+        testIDPrefix,
+    } satisfies Omit<React.ComponentProps<typeof WorkflowHowAndWhereCard>, 'expanded' | 'onExpandedChange'>;
+
     // The page's first cards (owner 2026-11-15): When it runs (the trigger owner's section, where the
     // host has one) and How and where it runs. Both read as one sentence while closed.
     const firstCards = (
@@ -1500,31 +1545,9 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 </WorkflowWhenItRunsCard>
             )}
             <WorkflowHowAndWhereCard
-                draftStore={draftStore}
-                onChange={onChange}
-                documentEditable={documentEditable}
-                showsWorkflowAgent={showsWorkflowAgent}
-                accountLifetime={props.accountLifetime}
-                whereRef={whereRef}
-                projectTarget={props.projectTarget}
-                machineName={props.machineName}
-                projectMachines={props.projectMachines}
-                onChangeProjectTarget={props.onChangeProjectTarget}
-                executionTarget={props.executionTarget}
-                runAsTargets={props.runAsTargets}
-                onChangeExecutionTarget={props.onChangeExecutionTarget}
-                authoringFacts={props.authoringFacts}
+                {...howAndWhereCardProps}
                 expanded={howWhereExpanded}
                 onExpandedChange={(expanded) => setCardExpanded(WORKFLOW_HOW_WHERE_CARD_ID, expanded)}
-                {...(props.existingSessions === undefined ? {} : { existingSessions: props.existingSessions })}
-                sessionOptionsStatus={props.sessionOptionsStatus}
-                onRetrySessionOptions={props.onRetrySessionOptions}
-                onSessionOptionsDemandChange={props.onSessionOptionsDemandChange}
-                {...(sessionDrop === undefined ? {} : { bindExistingSession: sessionDrop.bind })}
-                {...(props.currentWorkflowRef === null || props.currentWorkflowRef === undefined ? {} : { workflowDefinitionId: props.currentWorkflowRef })}
-                {...(props.description === undefined ? {} : { description: props.description })}
-                {...(props.onChangeDescription === undefined ? {} : { onChangeDescription: props.onChangeDescription })}
-                testIDPrefix={testIDPrefix}
             />
         </View>
     );
@@ -1586,6 +1609,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             </View>
             {settingsPopoverNode}
             {props.view === 'flow' ? <View style={styles.document}>{flowContent}</View> : null}
+            {sentenceContent === null ? null : <View style={[styles.document, compactLayout ? null : styles.documentUnderTitle]}>{sentenceContent}</View>}
             </View>
         </KeyboardAwareScrollView>
     );

@@ -174,7 +174,8 @@ it('offers the authoring agent as the editor\'s one companion; settings are a po
     expect(all.filter(item => item.navigation.kind === 'companion').every(item => item.phonePlacement === 'more')).toBe(true);
     // A companion that cannot present is not offered (no authoring agent).
     const quiet = catalog.resolveDetailNavigationItems({ scope: 'workflowEditor' });
-    expect(quiet.map(item => item.id)).toEqual(['steps', 'flow']);
+    // Steps, Flow and Sentence (round 1116c) are pages; nothing else without the agent.
+    expect(quiet.map(item => item.id)).toEqual(['steps', 'flow', 'sentence']);
 });
 
 it('reports the page navigation as shown exactly when it draws something, so its row never keeps an empty band (QA-WAVE-1115)', async () => {

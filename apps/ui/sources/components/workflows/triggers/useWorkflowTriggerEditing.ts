@@ -17,6 +17,7 @@ import {
 } from '@/sync/domains/workflows/workflowTriggerActions';
 
 import { formatTriggerSetSentence } from './formatTriggerSummary';
+import { EMPTY_WORKFLOW_TRIGGER_INCOMPLETE, type WorkflowTriggerIncomplete } from './workflowTriggerStarts';
 import {
     EMPTY_WORKFLOW_TRIGGER_DRAFT,
     WorkflowTriggerSnapshotRestoreError,
@@ -49,6 +50,9 @@ export type WorkflowTriggerEditing = Readonly<{
     }>) => WorkflowTriggerSnapshot;
     restoreSnapshot: (snapshot: WorkflowTriggerSnapshot) => WorkflowTriggerSnapshot | null;
     dirty: boolean;
+    /** Triggers on screen but not complete yet: the When card and the Sentence view show the same ones. */
+    incomplete: WorkflowTriggerIncomplete;
+    updateIncomplete: (update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => void;
     status: 'loading' | 'ready' | 'failed';
     retry: () => void;
     /** The one summary the header chip and the section both show (04 §9.1). */
@@ -88,6 +92,11 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     const pendingSave = React.useRef<Readonly<{ identity: object; draft: WorkflowTriggerDraft }> | null>(null);
     const [state, setState] = React.useState(() => ({ identity, draft: EMPTY_WORKFLOW_TRIGGER_DRAFT }));
     const draft = state.identity === identity ? state.draft : EMPTY_WORKFLOW_TRIGGER_DRAFT;
+    const [incompleteState, setIncompleteState] = React.useState(() => ({ identity, value: EMPTY_WORKFLOW_TRIGGER_INCOMPLETE }));
+    const incomplete = incompleteState.identity === identity ? incompleteState.value : EMPTY_WORKFLOW_TRIGGER_INCOMPLETE;
+    const updateIncomplete = React.useCallback((update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => {
+        setIncompleteState((current) => ({ identity, value: update(current.identity === identity ? current.value : EMPTY_WORKFLOW_TRIGGER_INCOMPLETE) }));
+    }, [identity]);
     const eventProjection = React.useMemo(() => params.definitionId !== null && status !== 'ready'
         ? undefined : projectWorkflowTriggerEvents(set, draft), [params.definitionId, status, set, draft]);
     const mounted = React.useRef(true);
@@ -213,5 +222,5 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         },
         [draft, set, status],
     );
-    return { set, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry, dirty: isWorkflowTriggerDraftDirty(draft), summary, save };
+    return { set, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry, dirty: isWorkflowTriggerDraftDirty(draft), incomplete, updateIncomplete, summary, save };
 }
