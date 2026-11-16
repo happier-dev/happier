@@ -206,6 +206,33 @@ describe('Project Account row sync owner', () => {
             .rejects.toMatchObject({ code: 'project_account_scope_mismatch' });
         expect(h.projection()?.workspaceRefs[0]?.label).toBe('Named');
     });
+    it.each(['plain', 'e2ee'] as const)('persists combined grouping and pin on the destination Project in %s mode', async mode => {
+        const h = harness(mode);
+        const organization = (projectKey: string, pinned: boolean, hidden: boolean) => {
+            const key = { kind: 'project-organization' as const, serverId: 'home', projectKey };
+            h.rows.set(buildProjectAccountRowPhysicalKeyV1(key), { key, revision: 3,
+                content: h.cipher.seal({ key, value: { pinned, hidden } }) });
+        };
+        organization('anchor', true, false);
+        organization('ref', false, true);
+        organization('other-project', true, true);
+        const otherKey = { kind: 'workspace-ref' as const, serverId: 'home', id: 'other' };
+        h.rows.set(buildProjectAccountRowPhysicalKeyV1(otherKey), { key: otherKey, revision: 0,
+            content: h.cipher.seal({ key: otherKey, value: { id: 'other', serverId: 'home', machineId: 'machine',
+                rootPath: '/other', createdAtMs: 1, projectKey: 'other-project' } }) });
+        await expect(h.owner.mutateWorkspaceMetadata({ serverId: 'home', workspaceId: 'ref', projectKey: 'self', pinned: true }))
+            .resolves.toMatchObject({ workspaceRef: { projectKey: 'ref' }, organization: { pinned: true, hidden: true } });
+        await expect(h.owner.mutateWorkspaceMetadata({ serverId: 'home', workspaceId: 'ref', projectKey: 'other-project', pinned: false }))
+            .resolves.toMatchObject({ workspaceRef: { projectKey: 'other-project' }, organization: { pinned: false, hidden: true } });
+        const reloaded = await h.owner.refresh();
+        expect(reloaded.workspaceRefs).toContainEqual(expect.objectContaining({ id: 'ref', projectKey: 'other-project' }));
+        expect(reloaded.organizations).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: { kind: 'project-organization', serverId: 'home', projectKey: 'anchor' }, value: { pinned: true, hidden: false } }),
+            expect.objectContaining({ key: { kind: 'project-organization', serverId: 'home', projectKey: 'ref' }, value: { pinned: true, hidden: true } }),
+            expect.objectContaining({ key: { kind: 'project-organization', serverId: 'home', projectKey: 'other-project' }, value: { pinned: false, hidden: true } }),
+        ]));
+    });
+
     it('groups a checkout with another Project and separates it again by writing only its explicit key (owner 11-08)', async () => {
         const h = harness();
         const other = { id: 'other', serverId: 'home', machineId: 'machine-b', rootPath: '/repo', createdAtMs: 2, projectKey: 'other' };

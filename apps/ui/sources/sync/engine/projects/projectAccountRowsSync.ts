@@ -12,7 +12,7 @@ import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/w
 import type { ProjectRepositoryObservationV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById, resolveWorkspaceRefByScope, resolveWorkspaceRefRemoval, upsertWorkspaceRefByScope,
     workspaceRefResolutionContextV1, type WorkspaceRefAccountMutation, type WorkspaceRefAccountMutationResult } from '@/sync/domains/workspaces/workspaceRefs';
-import { resolveWorkspaceGroupingV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { projectWorkspaceRefV1, resolveWorkspaceGroupingV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import type { ProjectAccountRowsSnapshot, ProjectAccountRowsMaterialization } from '@/sync/store/domains/projectAccountRows';
 import { NO_PINNED_ENVIRONMENTS } from '@/sync/domains/workspaces/projectAccountRows';
@@ -272,15 +272,15 @@ export function createProjectAccountRowsSync(options: Readonly<{
             if (resolved.kind !== 'resolved') throw failure(`workspace_ref_${resolved.kind}`);
             const ref = resolved.ref;
             const key = { kind: 'workspace-ref' as const, serverId: ref.serverId, id: ref.id };
-            const organizationKey = { kind: 'project-organization' as const, serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id };
-            const previous = rowFor(organizationKey)?.payload;
-            const organization = previous && !('id' in previous.value) && !('relationships' in previous.value) && !('pinnedEnvironmentIds' in previous.value) ? previous.value : {};
             // The person's grouping (owner 11-08): the one owner decides the explicit key; nothing else is rewritten.
             const grouping = input.projectKey === undefined ? null
                 : resolveWorkspaceGroupingV1(before.workspaceRefs, ref, input.projectKey, workspaceRefResolutionContextV1());
             if (grouping && !grouping.ok) throw failure(grouping.code);
             const labeled = input.label === undefined ? ref : { ...ref, label: input.label?.trim() || null };
             const nextRef = grouping ? { ...labeled, projectKey: grouping.projectKey } : labeled;
+            const organizationKey = { kind: 'project-organization' as const, ...projectWorkspaceRefV1(nextRef) };
+            const previous = rowFor(organizationKey)?.payload;
+            const organization = previous && !('id' in previous.value) && !('relationships' in previous.value) && !('pinnedEnvironmentIds' in previous.value) ? previous.value : {};
             const nextOrganization = input.pinned === undefined ? organization : { ...organization, pinned: input.pinned };
             const request: ProjectAccountRowMutationRequestV1 = { mutations: [], expectedRefs: [], topologyChange: false };
             if (nextRef.label !== ref.label || nextRef.projectKey !== ref.projectKey) {
