@@ -1,9 +1,12 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectArtifactDocumentV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createAccountNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
@@ -101,7 +104,41 @@ function failedDeploymentNotice() {
 
 // COR5B-OPS-STORE-1115: a notice's offered recovery choices had no renderer in the Inbox.
 describe('Inbox notice recovery choices', () => {
-  it('offers each recovery choice the notice carries and presses through the notice owner', async () => {
+  it.each([
+    { index: 0, actionId: 'deployments.rollback', input: { ...rollback, restoreBackupId: 'backup' } },
+    { index: 1, actionId: 'deployments.rollback', input: rollback },
+    { index: 2, actionId: 'inbox.notice.dismiss', input: {
+      artifactId, expectedRevision: { headerVersion: 3, bodyVersion: 2 },
+    } },
+  ])('runs choice $index with its fresh notice revision and settles the controls', async ({ index, actionId, input }) => {
+    const entry = failedDeploymentNotice();
+    const artifact = projectArtifactDocumentV1({ ...entry.artifact, artifactId,
+      revision: { headerVersion: entry.artifact.headerVersion, bodyVersion: entry.artifact.bodyVersion } });
+    const result = createDeferred<ActionExecuteResult>();
+    // Only Action transport is substituted; parsing, fresh-read validation and choice routing stay real.
+    const execute = vi.fn(async (requestedAction: string): Promise<ActionExecuteResult> => requestedAction === 'artifact.get'
+      ? { ok: true, result: { artifact } }
+      : result.promise);
+    const recovery = createAccountNoticeInvestigation({ scope, execute: createFrontDoorActionExecute({ execute }), isCurrent: () => true });
+    const screen = await renderScreen(<AccountNoticeRecoveryChoices entry={entry} recovery={recovery} testID="notice.recovery" />);
+    expect(screen.getTextContent()).toContain('Restore backup and roll back code');
+    expect(screen.getTextContent()).toContain('Roll back code only');
+    expect(screen.getTextContent()).toContain('Keep and fix forward');
+    await screen.pressByTestIdAsync(`notice.recovery.choice.${index}`);
+    await vi.waitFor(() => expect(execute).toHaveBeenLastCalledWith(actionId, input, expect.anything()));
+    expect(execute).toHaveBeenNthCalledWith(1, 'artifact.get', { artifactId }, expect.anything());
+    for (const choiceIndex of [0, 1, 2]) {
+      expect(screen.findHostByTestId(`notice.recovery.choice.${choiceIndex}`)?.props.accessibilityState?.disabled).toBe(true);
+    }
+    result.resolve({ ok: true, result: actionId === 'inbox.notice.dismiss'
+      ? { artifactId, status: 'dismissed' }
+      : DeploymentReceiptAcceptedResultV1Schema.parse({ ok: true, environmentId: 'environment', deploymentId: 'recovery-deployment',
+        revision: 2, deploymentRevision: 1, state: 'running' }) });
+    await vi.waitFor(() => expect(screen.findHostByTestId(`notice.recovery.choice.${index}`)?.props.accessibilityState?.disabled).toBe(false));
+    expect(Modal.alert).not.toHaveBeenCalled();
+  });
+
+  it('shows a fresh-read refusal without running the offered recovery', async () => {
     // The Action transport is the boundary; the notice owner re-reads the notice before it runs a choice.
     const execute = vi.fn(async (): Promise<ActionExecuteResult> => ({
       ok: false,
@@ -110,7 +147,7 @@ describe('Inbox notice recovery choices', () => {
     }));
     const recovery = createAccountNoticeInvestigation({
       scope,
-      execute,
+      execute: createFrontDoorActionExecute({ execute }),
       isCurrent: () => true,
     });
     const screen = await renderScreen(
@@ -131,6 +168,7 @@ describe('Inbox notice recovery choices', () => {
       { artifactId },
       expect.anything(),
     );
+    expect(execute).toHaveBeenCalledOnce();
     const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]
       ?.find(button => button.text === 'approvals.technicalDetails');
     expect(details).toBeDefined();
@@ -143,7 +181,7 @@ describe('Inbox notice recovery choices', () => {
   it('draws nothing for a notice without recovery choices', async () => {
     const recovery = createAccountNoticeInvestigation({
       scope,
-      execute: vi.fn(),
+      execute: createFrontDoorActionExecute({ execute: vi.fn() }),
       isCurrent: () => true,
     });
     const artifact = createAccountNoticeArtifactFixture({ id: artifactId });

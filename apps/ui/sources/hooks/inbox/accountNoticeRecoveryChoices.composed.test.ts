@@ -1,4 +1,7 @@
+import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { AccountNoticeRecoveryChoices } from '@/components/inbox/cards/AccountNoticeRecoveryChoices';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -18,7 +21,7 @@ const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/act
 const { storage } = await import('@/sync/domains/state/storage');
 const originalState = storage.getState();
 let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
-afterEach(async () => { await account?.dispose(); account = undefined; storage.setState(originalState, true); });
+afterEach(async () => { standardCleanup(); await account?.dispose(); account = undefined; storage.setState(originalState, true); });
 
 describe('notice recovery choices through the existing Account Action ingress', () => {
     it('dismisses a retained usage notice through the ordinary Account Action', async () => {
@@ -93,9 +96,18 @@ describe('notice recovery choices through the existing Account Action ingress', 
             await owner.updateArtifact(artifactId, { ...entry.artifact.header, title: 'New failure evidence' }, entry.artifact.body as string, entry.artifact);
             expect(await model.runRecoveryChoice(entry, 2)).toMatchObject({ ok: false, errorCode: 'usage_notice_changed' });
             const updated = await readEntry();
-            expect(await model.runRecoveryChoice(updated, 2)).toMatchObject({ ok: true, result: { artifactId, status: 'dismissed' } });
+            const screen = await renderScreen(React.createElement(AccountNoticeRecoveryChoices, {
+                entry: updated, recovery: model, testID: 'notice.recovery',
+            }));
+            await screen.pressByTestIdAsync('notice.recovery.choice.2');
+            await vi.waitFor(async () => expect((await readEntry()).header.status).toBe('dismissed'));
             expect((await readEntry()).header).toMatchObject({ status: 'dismissed', resolved: false,
                 recoveryChoices: updated.header.recoveryChoices });
+            const dismissed = await readEntry();
+            await screen.update(React.createElement(AccountNoticeRecoveryChoices, {
+                entry: dismissed, recovery: model, testID: 'notice.recovery',
+            }));
+            expect(screen.findHostByTestId('notice.recovery.choice.2')).toBeNull();
             const context = { surface: 'ui', authority: 'present_user', serverId: home.scope.serverId,
                 runtimeAccountId: home.scope.accountId, expectedAccountId: home.scope.accountId } as const;
             const recoveredId = '33333333-3333-4333-8333-333333333333';

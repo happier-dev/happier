@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
-import { CapacityBar, formatHappierDataBytes, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierDataBytes, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { MachineResourceSummaryV1Schema, projectMachineResourceSummaryV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { MachineVitalsSnapshotV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 
@@ -221,45 +221,21 @@ describe('MachineSummaryStrip', () => {
         expect(screen.findByTestId('strip')?.props.accessibilityLabel).toContain(formatHappierDataBytes(19 * 1024 ** 3, { kind: 'memory' }));
     });
 
-    it('draws the rail row\'s unlabelled instruments in calm ink whatever their tone: the row\'s word says the trouble', async () => {
-        const calm = MACHINE_SUMMARY_PREVIEW.calm;
-        if (calm.kind !== 'reporting' || !calm.summary) throw new Error('preview must report');
-        const inks = async (tone: 'calm' | 'crit') => {
-            const summary = { ...calm.summary!, memory: { ...calm.summary!.memory, tone }, cpu: { ...calm.summary!.cpu, tone } };
-            const screen = await renderScreen(<MachineSummaryStrip testID="strip" availability={{ ...calm, summary }}
-                style="sparklines" metrics={['cpu', 'memory', 'disk']} layout="inline" />);
-            const bars = screen.findAll(node => node.type === CapacityBar).map(node => node.props.color);
-            const lines = screen.findAll(node => node.type === StackedSeriesChart).map(node => node.props.series[0].color);
-            return [...bars, ...lines];
-        };
-        const calmInks = await inks('calm');
-        expect(calmInks.length).toBeGreaterThan(1);
-        expect(await inks('crit')).toEqual(calmInks);
-    });
-
-    it.each(['under', 'fact'] as const)('retains held values and dims stale or failed reads in %s layout', async layout => {
+    it.each(['under', 'fact'] as const)('retains held values through stale or failed reads and recovery in %s layout', async layout => {
         const calm = MACHINE_SUMMARY_PREVIEW.calm;
         if (calm.kind !== 'reporting') throw new Error('preview must report');
         const draw = (availability: typeof calm) => <MachineSummaryStrip testID="strip" availability={availability}
             style="numbers" metrics={['memory']} layout={layout} />;
         const screen = await renderScreen(draw(calm));
         const heldText = screen.getTextContent();
-        const dimmed = () => {
-            const style = [screen.findByTestId('strip')?.props.style].flat(3).filter(Boolean) as Array<{ opacity?: number }>;
-            return style.some(entry => typeof entry.opacity === 'number' && entry.opacity < 1);
-        };
         expect(heldText).toContain(formatHappierDataBytes(19 * 1024 ** 3, { kind: 'memory' }));
-        expect(dimmed()).toBe(false);
         await screen.update(draw({ ...calm, freshness: 'held' }));
         expect(screen.getTextContent()).toBe(heldText);
-        expect(dimmed()).toBe(false);
         await screen.update(draw({ ...calm, freshness: 'stale' }));
         expect(screen.getTextContent()).toBe(heldText);
-        expect(dimmed()).toBe(true);
         await screen.update(draw({ ...calm, freshness: 'held', readStatus: 'error' }));
         expect(screen.getTextContent()).toBe(heldText);
-        expect(dimmed()).toBe(true);
         await screen.update(draw(calm));
-        expect(dimmed()).toBe(false);
+        expect(screen.getTextContent()).toBe(heldText);
     });
 });

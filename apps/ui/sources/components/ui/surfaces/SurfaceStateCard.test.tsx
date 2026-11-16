@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { collectUnexpectedRawTextNodes, createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { collectRenderedTestIds, collectUnexpectedRawTextNodes, createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -156,12 +156,28 @@ describe('SurfaceStateCard', () => {
     });
     it('keeps an action footer in the one action group, right under the actions (OWNER-UI-1115B B4)', async () => {
         const { EmptyState } = await import('@/components/ui/empty/EmptyState');
+        const deploy = vi.fn();
         const screen = await renderScreen(<SurfaceStateCard testID="empty" size="page" kind="empty" title="Nothing here yet"
-            action={{ label: 'Deploy an app here', onPress: vi.fn() }} actionFooter={<View testID="empty-watch" />} />);
+            action={{ label: 'Deploy an app here', onPress: deploy }}
+            secondaryAction={{ label: 'Import an app', onPress: vi.fn() }}
+            actionFooter={<View testID="empty-watch" />} />);
         const tile = screen.tree.findByType(EmptyState);
-        // The footer stands inside the tile with the action it continues, never below the tile's own padding.
-        expect(tile.findAll(node => node.props.testID === 'empty-watch')).toHaveLength(1);
-        expect(tile.findAll(node => node.props.testID === 'empty-action').length).toBeGreaterThan(0);
+        const footer = screen.findHostByTestId('empty-watch');
+        expect(footer).not.toBeNull();
+        // The footer is the next sibling of the region containing both actions, inside the tile.
+        const group = footer!.parent!;
+        expect(group.parent).not.toBeNull();
+        expect(tile.findAll(node => node === group)).toHaveLength(1);
+        const regions = group.children.filter(child => typeof child !== 'string');
+        expect(regions).toHaveLength(2);
+        expect(regions[1]).toBe(footer);
+        const actionIds = ['empty-action', 'empty-secondary-action'];
+        expect(collectRenderedTestIds(screen.tree.toJSON()).filter(id => [...actionIds, 'empty-watch'].includes(id)))
+            .toEqual([...actionIds, 'empty-watch']);
+        expect(regions[0]!.findAll(node => typeof node.type === 'string' && actionIds.includes(node.props.testID)))
+            .toHaveLength(2);
+        await screen.pressByTestIdAsync('empty-action');
+        expect(deploy).toHaveBeenCalledOnce();
     });
     it('keeps a pending line recovery disabled and preserves its caller test identity', async () => {
         const onRetry = vi.fn();
