@@ -74,7 +74,9 @@ function physicalPath(path: string): string | null {
 export function resolveSessionTargetWorkspace(placement: WorkspaceSourcePlacement): WorkspaceSource | null {
     let sessionId = placement.sessionId;
     let entry = sessionId ? entries.get(sessionId) : undefined;
-    if (!entry && placement.rootPath) {
+    // A Session-scoped request uses only its own Session's placement: another Session's root
+    // stays this Machine's path, so the host identity check decides it (SEC1116G item 1).
+    if (!sessionId && placement.rootPath) {
         for (const [id, candidate] of entries) {
             if (isCanonicalAbsolutePathInsideRoot(candidate.workspace.hostRoot, placement.rootPath)) {
                 sessionId = id;

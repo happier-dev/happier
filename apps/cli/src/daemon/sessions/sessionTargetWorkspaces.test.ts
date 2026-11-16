@@ -12,6 +12,7 @@ import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/nod
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 import { spawnSessionHolderChild, type SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
 
+import { createFilesystemEffectAdmission, type FilesystemEffectSessionContext } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from './sessionTargetWorkspaces';
 
 /**
@@ -65,6 +66,15 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
             expect(resolveSessionTargetWorkspace({ rootPath: join(alias, 'nested') })).toBe(source);
             expect(resolveSessionTargetWorkspace({ rootPath: `${root}-sibling` })).toBeNull();
             expect(resolveSessionTargetWorkspace({ rootPath: join(root, 'not-created') })).toBe(source);
+            // Another person's Session scope reaching into this root selects this Machine's source, so the
+            // host identity check decides; the directory match serves only requests without a Session scope.
+            const admission = createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace });
+            const otherSession: FilesystemEffectSessionContext = { authorization: { kind: 'session.write', sessionId: 'unplaced-session' } };
+            expect(admission.selectWorkspaceSource(otherSession, { cwd: child }).kind).toBe('local');
+            expect(admission.selectWorkspaceSource(otherSession, { rootPath: join(alias, 'nested') }).kind).toBe('local');
+            const ownSession: FilesystemEffectSessionContext = { authorization: { kind: 'session.write', sessionId: 'path-session' } };
+            expect(admission.selectWorkspaceSource(ownSession, { cwd: child })).toBe(source);
+            expect(admission.selectWorkspaceSource(undefined, { cwd: child })).toBe(source);
             lifetime.abort();
             expect(resolveSessionTargetWorkspace({ rootPath: child })).toBeNull();
         } finally { lifetime.abort(); }
@@ -76,9 +86,8 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         registerSessionTargetWorkspace({ sessionId: 'session-t1', lifetime: lifetime.signal, primarySocketPath,
             target: { id: 'managed:row-1', holderPath: holderExecutable!, helperPath: helperExecutable!, socketDirectory: directory, ...operations },
             workspace: { hostRoot: '/host/sessions/ws', targetRoot: guestRoot } });
-        expect(resolveSessionTargetWorkspace({ sessionId: 'another-session', rootPath: '/host/sessions/other' })).toBeNull();
-        // The placed root is the target's workspace whichever request addresses it.
-        expect(resolveSessionTargetWorkspace({ sessionId: 'another-session', rootPath: '/host/sessions/ws' })?.kind).toBe('target');
+        // A request scoped to another Session never borrows this Session's placement (SEC1116G item 1).
+        expect(resolveSessionTargetWorkspace({ sessionId: 'another-session', rootPath: '/host/sessions/ws' })).toBeNull();
 
         // Before the Session's Agent holder runs, the target source refuses (typed), never this Machine's disk.
         const early = resolveSessionTargetWorkspace({ sessionId: 'session-t1', rootPath: '/host/sessions/ws' });
