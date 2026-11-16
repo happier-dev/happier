@@ -5,8 +5,8 @@ import { createPluginContributionIdentity} from '@happier-dev/protocol/plugins/c
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
-import { createMachineFixture, createPlainMachineRowFixture, createSessionFixture, standardCleanup } from '@/dev/testkit';
-import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainMachineRowFixture, createSessionFixture, standardCleanup } from '@/dev/testkit';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 const fixtureMetadata = (() => {
     const metadata = createSessionFixture().metadata;
@@ -16,6 +16,7 @@ const fixtureMetadata = (() => {
 import { clearProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -95,9 +96,12 @@ beforeEach(async () => {
         return fallback(input, init);
     });
     const machineIds = ['machine-raw', 'machine-cached', 'machine-target'];
-    storage.setState({ sessions: {}, machines: Object.fromEntries(machineIds.map(id => [id, createMachineFixture({ id })])), sessionListRowsByServerId: {},
+    storage.setState({ sessions: {}, machines: Object.fromEntries(machineIds.map(id => [id,
+        createHydratedPlainMachineFixture({ id, accountId: account.scope.accountId,
+            machine: { activeAt: Date.now() } })])), sessionListRowsByServerId: {},
         ordinarySessionListMembershipByServerId: {}, sessionListIndexByServerId: {},
         concurrentSessionListCacheByServerId: {} });
+    await publishMachineInventoryForTest(account.scope, Object.values(storage.getState().machines));
     const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
     for (const machineId of machineIds) {
         await expect(loadDaemonMergedProjectionInputs({ sections: 'complete', machineId, serverId: account.scope.serverId }))
@@ -111,28 +115,32 @@ afterEach(async () => {
     await account?.dispose();
     await standardCleanup();
 });
-function publishTarget(withReplacement = false) {
+async function publishTarget(withReplacement = false) {
     const serverId = account.scope.serverId;
     storage.setState({ sessions: { s1: createSessionFixture({ id: 's1', serverId,
         // A stale raw row has no usable execution path; the visible row supplies it.
         metadata: { ...fixtureMetadata, machineId: 'machine-raw', path: withReplacement ? '/tmp/raw' : '' } }) },
         machines: {
-            'machine-raw': createMachineFixture({ id: 'machine-raw', active: !withReplacement,
+            'machine-raw': createHydratedPlainMachineFixture({ id: 'machine-raw', accountId: account.scope.accountId,
+                machine: { active: !withReplacement,
                 activeAt: withReplacement ? 1 : Date.now(),
-                ...(withReplacement ? { replacedByMachineId: 'machine-target', replacedAt: 2 } : {}) }),
-            'machine-cached': createMachineFixture({ id: 'machine-cached', activeAt: Date.now() }),
-            'machine-target': createMachineFixture({ id: 'machine-target', activeAt: Date.now() }),
+                ...(withReplacement ? { replacedByMachineId: 'machine-target', replacedAt: 2 } : {}) } }),
+            'machine-cached': createHydratedPlainMachineFixture({ id: 'machine-cached', accountId: account.scope.accountId,
+                machine: { activeAt: Date.now() } }),
+            'machine-target': createHydratedPlainMachineFixture({ id: 'machine-target', accountId: account.scope.accountId,
+                machine: { activeAt: Date.now() } }),
         },
         sessionListRowsByServerId: { [serverId]: { s1: createSessionFixture({ id: 's1', serverId,
             metadata: { ...fixtureMetadata, machineId: 'machine-cached', path: '/tmp/cached' } }) } },
         ordinarySessionListMembershipByServerId: { [serverId]: ['s1'] },
         sessionListIndexByServerId: { [serverId]: [{ type: 'session', sessionId: 's1', serverId, serverName: 'Test' }] },
     });
+    await publishMachineInventoryForTest(account.scope, Object.values(storage.getState().machines));
 }
 
 describe('ensureVoiceAgentInstallablesBackground', () => {
     it('installs on the visible lookup machine when raw session metadata is stale', async () => {
-        publishTarget();
+        await publishTarget();
         const { ensureVoiceAgentInstallablesBackground } = await import('./ensureVoiceAgentInstallablesBackground');
         await ensureVoiceAgentInstallablesBackground({ agentId: externalAgentId, sessionId: 's1' });
         expect(installs).toEqual(['machine-cached']);
@@ -141,7 +149,7 @@ describe('ensureVoiceAgentInstallablesBackground', () => {
         expect(new Set(requests.map(request => request.machineId))).toEqual(new Set(['machine-cached']));
     });
     it('installs on the resolved replacement before raw or visible metadata', async () => {
-        publishTarget(true);
+        await publishTarget(true);
         const { ensureVoiceAgentInstallablesBackground } = await import('./ensureVoiceAgentInstallablesBackground');
         await ensureVoiceAgentInstallablesBackground({ agentId: externalAgentId, sessionId: 's1' });
         expect(installs).toEqual(['machine-target']);
@@ -150,7 +158,7 @@ describe('ensureVoiceAgentInstallablesBackground', () => {
         expect(new Set(requests.map(request => request.machineId))).toEqual(new Set(['machine-target']));
     });
     it('honors an installed external Agent declaration at the raw session machine', async () => {
-        publishTarget();
+        await publishTarget();
         storage.setState({ sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {},
             sessionListIndexByServerId: {} });
         storage.setState({ sessions: { s1: createSessionFixture({ id: 's1', serverId: account.scope.serverId,
