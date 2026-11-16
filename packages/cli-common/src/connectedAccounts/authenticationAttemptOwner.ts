@@ -23,6 +23,7 @@ import type { PluginConnectedAccountAuthenticationModeV2, PluginConnectedAccount
 import type { MachineTargetV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { areConnectedAccountManualFieldsValidV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { normalizeLegacyConnectedServiceUxDiagnosticCode } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { resolveConnectedAccountOAuthCallbackUrlV1 } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
 
 import { ConnectedAccountAuthenticationModeUnavailableError, ConnectedAccountRuntimeInvocationNotStartedError } from './runtimeInvocationError.js';
 import { projectConnectedAccountFailure } from './failureProjection.js';
@@ -529,6 +530,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
     createSavedSecretResourceId?(): string;
     readSelectedSecrets?(selections: NonNullable<ConnectedAccountManualInput['selectedSecrets']>, signal?: AbortSignal): Promise<Readonly<Record<string, string>>>;
     now(): number;
+    /** The Home's advertised web app (`capabilities.server.webappUrl`), whose relay a mode without its own callback uses. */
+    readHomeWebappUrl?(): MaybePromise<string | undefined>;
     resolveExecutionMachine?(): MachineTargetV1 | null;
     onBackgroundTransition?(input: Readonly<{
         response: ConnectedAccountAttemptResponse;
@@ -2630,15 +2633,19 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         const beforeTransaction = attemptOwnershipFailure(attempt);
         if (beforeTransaction) return beforeTransaction;
         let transaction: StoredAttempt['oauthTransaction'];
+        // A provider-fixed callback needs no Home read.
+        const homeWebappUrl = attempt.admission.descriptor.callbackUrl ? undefined : await params.readHomeWebappUrl?.();
         const finishDurableOperation = beginDurableOperation(attempt);
         try {
             transaction = await params.oauth.create({
                 attemptId: attempt.id,
                 service: attempt.admission.service,
                 snapshot: snapshotOAuthTransaction(attempt, 'starting'),
-                ...(attempt.admission.descriptor.callbackUrl
-                    ? { callbackUrl: attempt.admission.descriptor.callbackUrl }
-                    : {}),
+                callbackUrl: resolveConnectedAccountOAuthCallbackUrlV1({
+                    ...(attempt.admission.descriptor.callbackUrl
+                        ? { declared: attempt.admission.descriptor.callbackUrl } : {}),
+                    ...(homeWebappUrl ? { homeWebappUrl } : {}),
+                }),
             });
         } catch {
             finishDurableOperation();

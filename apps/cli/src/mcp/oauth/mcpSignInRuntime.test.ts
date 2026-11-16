@@ -37,7 +37,7 @@ describe('MCP server sign-in runtime', () => {
                 staged.content = await configurationOwner.stageAccountConfiguration({ snapshot: admission.snapshot, replacement });
             },
         };
-        const result = await mode.begin({ callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkce: { challenge: 'canonical-challenge', method: 'S256' } }, context);
+        const result = await mode.begin({ callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkce: { challenge: 'canonical-challenge', method: 'S256' } }, context);
         return { fixture, lease, mode, context, result, entries, controller, staged };
     }
 
@@ -45,11 +45,11 @@ describe('MCP server sign-in runtime', () => {
         const { result, fixture, staged, mode, context } = await begin({ metadata: { client_id_metadata_document_supported: true }, tokenOverrides: { scope: undefined } }, { stepUp: true, grantedScopes: ['existing', 'read'], stepUpScopes: ['write'] });
         if (result.status !== 'awaitingOAuthRedirect') throw new Error('Authorization unavailable');
         const url = new URL(result.authorizationUrl);
-        expect(url.searchParams.get('client_id')).toBe('https://app.happier.dev/oauth/mcp/client-metadata.json');
+        expect(url.searchParams.get('client_id')).toBe('https://cloud.happier.dev/oauth/mcp/client-metadata.json');
         expect(new Set(url.searchParams.get('scope')!.split(' '))).toEqual(new Set(['read', 'existing', 'write']));
         expect(fixture.requests.some(request => request.path === '/register')).toBe(false);
         expect(staged.content?.values).toMatchObject({ stepUp: false, stepUpScopes: [] });
-        await expect(mode.complete({ code: 'code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context))
+        await expect(mode.complete({ code: 'code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context))
             .resolves.toMatchObject({ status: 'connected', scopes: ['read', 'existing', 'write'] });
     });
 
@@ -73,7 +73,7 @@ describe('MCP server sign-in runtime', () => {
         } });
         expect('clientRegistration' in (staged.content?.secretValues ?? {})).toBe(false);
         expect(JSON.parse(staged.content?.secretValues?.clientSecrets ?? '{}')[fixture.base + '/issuer'] === clientSecret).toBe(true);
-        const completion = await mode.complete({ code: 'code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback',
+        const completion = await mode.complete({ code: 'code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback',
             state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context);
         expect(completion.status).toBe('connected');
         const request = fixture.requests.find(candidate => candidate.path === '/token');
@@ -90,7 +90,7 @@ describe('MCP server sign-in runtime', () => {
             new AbortController(), { clientRegistration: JSON.stringify({ clientId: 'unused-app', clientSecret }) });
         expect(result.status).toBe('awaitingOAuthRedirect');
         if (result.status !== 'awaitingOAuthRedirect') return;
-        expect(new URL(result.authorizationUrl).searchParams.get('client_id')).toBe('https://app.happier.dev/oauth/mcp/client-metadata.json');
+        expect(new URL(result.authorizationUrl).searchParams.get('client_id')).toBe('https://cloud.happier.dev/oauth/mcp/client-metadata.json');
         expect(JSON.stringify(staged.content).includes(clientSecret)).toBe(false);
     });
 
@@ -112,14 +112,14 @@ describe('MCP server sign-in runtime', () => {
 
     it('reports invalid_client without exposing the authorization-server error', async () => {
         const { mode, context } = await begin({ tokenStatus: 401, tokenError: 'invalid_client' });
-        const result = await mode.complete({ code: 'code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback',
+        const result = await mode.complete({ code: 'code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback',
             state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context);
         expect(result).toEqual({ status: 'rejected', diagnostic: { code: 'invalid_client', severity: 'error' } });
     });
 
     it('refuses an unusable HTTP OAuth resource before probing, registering or staging', async () => {
         const { result, fixture, staged, entries, mode, context } = await begin({ httpResource: true });
-        const completion = await mode.complete({ code: 'http-code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback',
+        const completion = await mode.complete({ code: 'http-code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback',
             state: 'attempt-failure.state', pkceVerifier: 'http-verifier' }, context);
         expect(result).toMatchObject({ status: 'rejected', diagnostic: { code: 'mcp_oauth_resource_requires_https' } });
         expect(completion).toMatchObject({ status: 'rejected', diagnostic: { code: 'mcp_oauth_resource_requires_https' } });
@@ -140,7 +140,7 @@ describe('MCP server sign-in runtime', () => {
     it('refuses a non-loopback HTTP token endpoint before transmitting code, verifier or client secret', async () => {
         const { result, fixture, mode, context, entries } = await begin({ insecureEndpoint: 'token' });
         expect(result.status).toBe('awaitingOAuthRedirect');
-        const completion = await mode.complete({ code: 'private-code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback',
+        const completion = await mode.complete({ code: 'private-code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback',
             state: 'attempt-failure.state', pkceVerifier: 'private-verifier' }, context);
         expect(completion).toMatchObject({ status: 'rejected', diagnostic: { code: 'mcp_oauth_endpoints_require_https' } });
         expect(fixture.fetches.some(url => url.startsWith(fixture.insecureBase))).toBe(false);
@@ -152,7 +152,7 @@ describe('MCP server sign-in runtime', () => {
     it('refuses stored non-loopback HTTP refresh and revocation endpoints before disclosing or changing credentials', async () => {
         const { result, fixture, mode, context, entries, staged, lease } = await begin();
         expect(result.status).toBe('awaitingOAuthRedirect');
-        await expect(mode.complete({ code: 'code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback',
+        await expect(mode.complete({ code: 'code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback',
             state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context)).resolves.toMatchObject({ status: 'connected' });
         const priorCredentials = [...entries];
         const priorFetches = [...fixture.fetches];
@@ -193,7 +193,7 @@ describe('MCP server sign-in runtime', () => {
     it.each([429, 503])('preserves uncertain exchange outcome without exposing OAuth secrets on HTTP %i', async tokenStatus => {
         const { mode, context, result } = await begin({ tokenStatus });
         expect(result.status).toBe('awaitingOAuthRedirect');
-        const completion = await mode.complete({ code: 'authorization-code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context);
+        const completion = await mode.complete({ code: 'authorization-code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context);
         expect(completion.status).toBe('outcomeUnknown');
         expect(JSON.stringify(completion)).not.toMatch(/authorization-code|registration-secret/);
     });
@@ -201,21 +201,21 @@ describe('MCP server sign-in runtime', () => {
     it('erases canceled attempt metadata and cannot exchange the canceled authorization code', async () => {
         const { mode, context, fixture } = await begin();
         await mode.cancel(context);
-        await expect(mode.complete({ code: 'authorization-code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context)).resolves.toMatchObject({ status: 'rejected' });
+        await expect(mode.complete({ code: 'authorization-code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context)).resolves.toMatchObject({ status: 'rejected' });
         expect(fixture.requests.some(request => request.path === '/token')).toBe(false);
     });
 
     it('does not forward exchange credentials across a redirect', async () => {
         const destination = await authorizationServer();
         const { mode, context } = await begin({ tokenRedirect: `${destination.base}/token` });
-        await expect(mode.complete({ code: 'authorization-code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context))
+        await expect(mode.complete({ code: 'authorization-code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context))
             .rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status: 307 });
         expect(destination.requests).toEqual([]);
     });
 
     it('aborts an in-flight exchange without publishing partial credentials', async () => {
         const { mode, context, fixture, controller, entries } = await begin({ tokenHold: true });
-        const completion = mode.complete({ code: 'authorization-code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context);
+        const completion = mode.complete({ code: 'authorization-code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context);
         const rejection = expect(completion).rejects.toMatchObject({ name: 'AbortError' });
         await vi.waitFor(() => expect(fixture.requests.some(request => request.path === '/token')).toBe(true));
         controller.abort();
@@ -225,7 +225,7 @@ describe('MCP server sign-in runtime', () => {
 
     it('refuses an unsupported token scheme before publishing grant credentials', async () => {
         const { mode, context, entries } = await begin({ tokenOverrides: { token_type: 'DPoP' } });
-        await expect(mode.complete({ code: 'code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context))
+        await expect(mode.complete({ code: 'code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context))
             .resolves.toMatchObject({ status: 'rejected' });
         expect(entries.has('accessToken')).toBe(false);
     });
@@ -261,7 +261,7 @@ describe('MCP server sign-in runtime', () => {
 
     it('honors the DCR-assigned client authentication method when the server advertises several', async () => {
         const { mode, context, fixture } = await begin({ assignedClientAuthMethod: 'client_secret_post', metadata: { token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'] } });
-        await expect(mode.complete({ code: 'authorization-code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context)).resolves.toMatchObject({ status: 'connected' });
+        await expect(mode.complete({ code: 'authorization-code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', state: 'attempt-failure.state', pkceVerifier: 'verifier' }, context)).resolves.toMatchObject({ status: 'connected' });
         expect(Object.fromEntries(new URLSearchParams(fixture.requests.find(request => request.path === '/token')!.body))).toMatchObject({ client_id: 'fixture-client', client_secret: 'registration-secret' });
     });
 
@@ -319,7 +319,7 @@ describe('MCP server sign-in runtime', () => {
         if (started.status !== 'awaitingOAuthRedirect') throw new Error('Authorization was not started');
         const url = new URL(started.authorizationUrl);
         expect(Object.fromEntries(url.searchParams)).toMatchObject({ client_id: 'fixture-client', resource: fixture.resource, code_challenge: 'sealed-challenge', scope: 'read', state: 'attempt-mcp.state' });
-        expect(JSON.parse(fixture.requests.find(request => request.path === '/register')!.body)).toMatchObject({ application_type: 'native', redirect_uris: ['https://app.happier.dev/oauth/mcp/callback'] });
+        expect(JSON.parse(fixture.requests.find(request => request.path === '/register')!.body)).toMatchObject({ application_type: 'native', redirect_uris: ['https://cloud.happier.dev/oauth/mcp/callback'] });
         expect(JSON.stringify(staged.content?.values)).not.toContain('registration-secret');
         expect(staged.content?.secretValues).toBeDefined();
         await expect(nativeMode.complete({ code: 'authorization-code', callbackUrl: mode.callbackUrl!, state: 'attempt-mcp.state', pkceVerifier: 'sealed-verifier' }, context))

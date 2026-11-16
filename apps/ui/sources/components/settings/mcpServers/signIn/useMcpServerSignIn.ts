@@ -197,7 +197,7 @@ export function useMcpServerSignIn(
     [execute, isLocalCurrent, local, scope, setLocal],
   );
 
-  // The callback page hands the answer back to the page that opened it, from app.happier.dev only.
+  // The callback page hands the answer back to the page that opened it, from the hosted web app only.
   const completeRef = React.useRef(complete);
   completeRef.current = complete;
   const listening = local.kind === 'signing' ? local.attempt.attemptId : null;

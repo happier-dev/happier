@@ -56,18 +56,21 @@ credential context when reporting an authentication or quota failure.
 
 ## Authorization-code callback in development
 
-In 0.3 development source, authorization-code Connected Accounts can declare the
-shared callback `https://app.happier.dev/oauth/connected-account/callback`.
-Register that exact URL with the upstream service and require PKCE:
+In 0.3 development source, an authorization-code Connected Account that declares
+no `callbackUrl` uses the Home's Connected Account callback. That is
+`https://cloud.happier.dev/oauth/connected-account/callback` for the hosted web
+app. A Home that serves its own web app (`HAPPIER_WEBAPP_URL` or a bundled UI)
+uses `<web app URL>/oauth/connected-account/callback` instead. Register the
+callback of every Home that will use your OAuth app with the upstream service,
+and require PKCE:
 
 ```ts
 import type { PluginConnectedAccountAuthenticationModeV2 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
 
 const oauthMode = {
   id: 'oauth',
   kind: 'oauthAuthorizationCode',
-  callbackUrl: CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1,
+  // No callbackUrl: the attempt uses the Home's Connected Account callback.
   scopes: ['example.read'], // Use the upstream service's documented scopes.
   pkce: 'required',
   outcomeReconciliation: 'none',
@@ -77,6 +80,8 @@ const oauthMode = {
 The initiating daemon's existing authentication attempt supplies state and the
 S256 challenge to the runtime's `begin` method. Its `complete` method receives
 the authorization code, callback URL and verifier only after host validation.
+Use the callback URL the host passes; the attempt already accepts only its own
+callback, so a runtime does not compare it with a fixed address.
 Implement exchange, refresh, revocation and identity/granted-scope verification in that
 daemon runtime. The callback page never exchanges a code or contacts a vendor.
 

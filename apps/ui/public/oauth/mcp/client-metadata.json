@@ -1,8 +1,8 @@
 {
-  "client_id": "https://app.happier.dev/oauth/mcp/client-metadata.json",
+  "client_id": "https://cloud.happier.dev/oauth/mcp/client-metadata.json",
   "client_name": "Happier",
   "application_type": "native",
-  "redirect_uris": ["https://app.happier.dev/oauth/mcp/callback"],
+  "redirect_uris": ["https://cloud.happier.dev/oauth/mcp/callback"],
   "grant_types": ["authorization_code", "refresh_token"],
   "response_types": ["code"],
   "token_endpoint_auth_method": "none"

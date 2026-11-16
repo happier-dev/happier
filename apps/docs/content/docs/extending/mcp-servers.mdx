@@ -112,8 +112,8 @@ network or permission to invoke an installed CLI. Run
 For a server configured for OAuth, choose **Sign in** on its detail to start an Account-owned attempt through a connected daemon. In 0.3 development, a remote server whose Test returns an HTTP 401 Bearer challenge also offers **Sign in**, even when its definition did not declare OAuth. Choosing it enables the existing OAuth flow for later Tests and Sessions. The collection's **Needs sign-in** fix opens that same saved-server detail; it does not start authorization automatically. Complete authorization in the browser, use the phone handoff, or paste the **full callback URL** into the fallback form, including its `state` and any `iss` value.
 
 The stable client metadata URL is
-`https://app.happier.dev/oauth/mcp/client-metadata.json`, and its callback is
-`https://app.happier.dev/oauth/mcp/callback`. The callback page returns the result to the initiating app flow where supported. Self-hosted web openers use the paste fallback. Publishing these endpoints and verifying installed-app return on devices are release checks; their development source does not imply they are deployed.
+`https://cloud.happier.dev/oauth/mcp/client-metadata.json`, and its callback is
+`https://cloud.happier.dev/oauth/mcp/callback`. The callback page returns the result to the initiating app flow where supported. Self-hosted web openers use the paste fallback. Publishing these endpoints and verifying installed-app return on devices are release checks; their development source does not imply they are deployed.
 
 Sign-in requires HTTPS for the resource and its authorization discovery, registration, browser and token endpoints, including localhost. Happier requires PKCE S256 and uses client metadata when the service supports it, otherwise a saved app registration or dynamic registration. Pasting a callback completes an existing attempt, rather than bypassing registration.
 
@@ -127,7 +127,7 @@ For SSE, an advertised message endpoint may use another path on the initial serv
 
 ### Use your own OAuth app
 
-If automatic registration is refused, choose **Use your own OAuth app** in the sign-in section. Create an OAuth app in the service's console and register the callback URL shown in Happier: `https://app.happier.dev/oauth/mcp/callback`. Enter its **Client ID** and, for a confidential app, its optional **Client secret**, then choose **Sign in**.
+If automatic registration is refused, choose **Use your own OAuth app** in the sign-in section. Create an OAuth app in the service's console and register the callback URL shown in Happier: `https://cloud.happier.dev/oauth/mcp/callback`. Enter its **Client ID** and, for a confidential app, its optional **Client secret**, then choose **Sign in**.
 
 The app registration stays with this server's Account-held sign-in configuration and follows the [Account encryption mode](/security/encryption). Your other machines reuse it. A service that accepts Happier's client metadata identity continues to use that identity; the sign-in section explains that your app is not needed. If the app is rejected, check its details and registered callback URL, then edit it and retry. **Edit your OAuth app** also lets you replace it or remove the server's saved registrations and retry automatic sign-in. The API-key alternative remains available where offered.
 

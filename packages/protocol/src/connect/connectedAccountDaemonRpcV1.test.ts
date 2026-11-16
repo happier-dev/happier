@@ -22,7 +22,7 @@ describe('Connected Account daemon RPC v1', () => {
   });
   it.each(['https://issuer.example', `https://issuer.example/${'issuer-path'.repeat(420)}`])('carries the returned issuer to the daemon completion owner (%#)', (iss) => {
     const request = { v: 1, machineId: 'machine-1', command: { operation: 'completeOAuth', attemptId: 'attempt',
-      completion: { code: 'code', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', state: 'attempt.random', iss } } };
+      completion: { code: 'code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', state: 'attempt.random', iss } } };
     expect(ConnectedAccountAuthenticationCommandRequestSchema.parse(request)).toEqual(request);
   });
   it('carries exact reviewed native responsibility through the existing revoke command and response', () => {

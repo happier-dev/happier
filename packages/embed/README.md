@@ -15,7 +15,7 @@ colour records are additive presentation data. Unknown bridge fields are rejecte
 import { mountHappierSession } from '@happier-dev/embed';
 
 const chat = mountHappierSession(document.getElementById('chat')!, {
-  happierUrl: 'https://app.happier.dev',
+  happierUrl: 'https://cloud.happier.dev',
   sessionId: lead.sessionId,
   title: 'Lead conversation',
   getCredential: async (request) => {

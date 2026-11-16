@@ -243,7 +243,9 @@ describe('manual Connected Account production invocation', () => {
             // Configuration selection and runtime admission below remain real.
             ...(fixture.publicClient ? { resolveServerFeaturesSnapshot: () => ({ status: 'ready' as const, features: FeaturesResponseSchema.parse({
                 features: {},
-                capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 }, publicOAuthClients: [{ service,
+                // This Home serves its own web app, so its operator registered that relay.
+                capabilities: { server: { webappUrl: 'http://happier-qa.localhost:19364' },
+                    connectedServices: { qualifiedAccounts: { protocolVersion: 4 }, publicOAuthClients: [{ service,
                     clientId: 'registered-client', scopesByMode: { 'oauth': [
                         'account-settings.read', 'workers-scripts.write', 'workers-ci.write',
                     ] },
@@ -333,7 +335,15 @@ describe('manual Connected Account production invocation', () => {
                 expect(persisted).toEqual([]);
                 return;
             }
-            expect(await begin()).toMatchObject({ status: fixture.oauth ? 'awaitingOAuth' : 'awaitingManual', attemptId: 'manual-1' });
+            const begun = await begin();
+            expect(begun).toMatchObject({ status: fixture.oauth ? 'awaitingOAuth' : 'awaitingManual', attemptId: 'manual-1' });
+            if (fixture.oauth && begun.status === 'awaitingOAuth') {
+                // The Cloudflare mode declares no callback: the attempt uses the Home's relay.
+                const relay = fixture.publicClient ? 'http://happier-qa.localhost:19364/oauth/connected-account/callback'
+                    : 'https://cloud.happier.dev/oauth/connected-account/callback';
+                expect(begun.callbackUrl).toBe(relay);
+                expect(new URL(begun.authorizationUrl!).searchParams.get('redirect_uri')).toBe(relay);
+            }
             if (fixture.provider === 'email') {
                 // A real Microsoft 401 must reach the Email codec and settle as a
                 // rejection, rather than unavailable before any provider HTTP.

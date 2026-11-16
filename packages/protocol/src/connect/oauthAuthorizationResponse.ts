@@ -1,7 +1,26 @@
+import { HAPPIER_HOSTED_WEBAPP_URL_V1 } from '../server/urls/hostedWebappUrl.js';
 import { isLoopbackHostname } from '../server/urls/loopbackHostname.js';
 
-/** Canonical Connected Account relay; daemon attempts retain OAuth validation and credential custody. */
-export const CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 = 'https://app.happier.dev/oauth/connected-account/callback';
+/** The web app route that relays a Connected Account authorization response to its daemon attempt. */
+export const CONNECTED_ACCOUNT_OAUTH_CALLBACK_PATH_V1 = '/oauth/connected-account/callback';
+/** The hosted web app's relay, for a Home that advertises no web app of its own. */
+export const CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 = `${HAPPIER_HOSTED_WEBAPP_URL_V1}${CONNECTED_ACCOUNT_OAUTH_CALLBACK_PATH_V1}`;
+
+/**
+ * The redirect URI of one authorization-code attempt. A mode that declares no callback uses the relay at
+ * its Home's web app (`capabilities.server.webappUrl`, from `HAPPIER_WEBAPP_URL` or a bundled UI), so a
+ * self-hosted or QA web app registers its own. Daemon attempts retain validation and credential custody.
+ */
+export function resolveConnectedAccountOAuthCallbackUrlV1(input: Readonly<{
+  declared?: string;
+  homeWebappUrl?: string;
+}>): string {
+  if (input.declared) return input.declared;
+  let webapp: URL | null = null;
+  try { webapp = input.homeWebappUrl ? new URL(input.homeWebappUrl) : null; } catch { webapp = null; }
+  if (!webapp || (webapp.protocol !== 'https:' && webapp.protocol !== 'http:')) return CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1;
+  return `${webapp.origin}${webapp.pathname.replace(/\/+$/u, '')}${CONNECTED_ACCOUNT_OAUTH_CALLBACK_PATH_V1}`;
+}
 
 export type OauthAuthorizationResponse =
   | Readonly<{ kind: 'invalid' }>

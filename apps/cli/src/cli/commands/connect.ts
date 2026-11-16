@@ -548,7 +548,7 @@ export async function continueConnectedAccountAuthentication(params: Readonly<{
             : 'Paste the final redirect URL: ', { signal: params.signal });
           const parsed = parseOauthRedirectPaste({
             pasted,
-            redirectUri: mode.callbackUrl ?? response.callbackUrl,
+            redirectUri: response.callbackUrl,
             allowRawAuthorizationCode,
           });
           if (!parsed.ok) {

@@ -5,6 +5,7 @@ import {
   captureConnectedAccountOAuthCallbackUrl,
   readCapturedConnectedAccountOAuthCallbackUrl,
   releaseCapturedConnectedAccountOAuthCallbackUrl,
+  resolveConnectedAccountOAuthCallbackPageUrl,
 } from './connectedAccountOAuthCallbackUrl';
 
 afterEach(() => {
@@ -50,4 +51,20 @@ it('keeps capture repeatable until the matching mounted callback takes custody',
   expect(readCapturedConnectedAccountOAuthCallbackUrl(MCP_OAUTH_CALLBACK_URL_V1)).toBe(original);
   releaseCapturedConnectedAccountOAuthCallbackUrl(MCP_OAUTH_CALLBACK_URL_V1);
   expect(readCapturedConnectedAccountOAuthCallbackUrl(MCP_OAUTH_CALLBACK_URL_V1)).toBeUndefined();
+});
+
+it('answers a Connected Account callback at the web app origin its Home advertised', () => {
+  const qaCallback = 'http://happier-qa.localhost:19364/oauth/connected-account/callback';
+  const browser = browserAt(`${qaCallback}?code=x&state=attempt.nonce`);
+  captureConnectedAccountOAuthCallbackUrl(browser);
+  expect(browser.location.search).toBe('');
+  expect(resolveConnectedAccountOAuthCallbackPageUrl('http://happier-qa.localhost:19364')).toBe(qaCallback);
+  expect(readCapturedConnectedAccountOAuthCallbackUrl(CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1)).toBeUndefined();
+  expect(readCapturedConnectedAccountOAuthCallbackUrl(qaCallback)).toBe(`${qaCallback}?code=x&state=attempt.nonce`);
+  releaseCapturedConnectedAccountOAuthCallbackUrl(qaCallback);
+});
+
+it('answers for the hosted web app where there is no browser origin (native universal link)', () => {
+  expect(resolveConnectedAccountOAuthCallbackPageUrl(undefined)).toBe(CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1);
+  expect(CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1).toBe('https://cloud.happier.dev/oauth/connected-account/callback');
 });

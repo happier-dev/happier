@@ -1,12 +1,13 @@
 import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 import { readServerConfig } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
+import { HAPPIER_HOSTED_WEBAPP_URL_V1 } from '@happier-dev/protocol/server/urls/hostedWebappUrl';
 
 import { readHomeConfigValueSource } from "@/app/home/settings/homeConfigProvenance";
 
 import { resolveUiConfig } from "../api/uiConfig";
 
 /** Last resort when neither `HAPPIER_WEBAPP_URL` nor a bundled UI at the public address applies. */
-export const DEFAULT_WEBAPP_URL = "https://cloud.happier.dev";
+export const DEFAULT_WEBAPP_URL = HAPPIER_HOSTED_WEBAPP_URL_V1;
 
 export function normalizeHttpUrl(raw: string): string | null {
     const value = String(raw ?? "").trim();

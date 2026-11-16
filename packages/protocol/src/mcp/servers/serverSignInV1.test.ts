@@ -8,7 +8,7 @@ import { ConnectedAccountDaemonControlResponseSchema } from '../../connect/conne
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 as service } from '../../connect/qualifiedConnectedAccountPersistence.js';
 
 const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
-const mode = { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback',
+const mode = { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback',
   pkce: 'required', outcomeReconciliation: 'none' } as const;
 const custody = { occurrenceId: 'host-occurrence', sourceCustody: { kind: 'host' } } as const;
 
@@ -46,7 +46,7 @@ function harness(options: { unmarked?: boolean; online?: boolean; revokeFails?: 
       if (command.operation === 'read' && options.httpsRefusal) return { status: 'rejected', attemptId: 'attempt',
         code: options.httpsRefusal, diagnostic: { code: options.httpsRefusal, severity: 'error' } };
       if (command.operation === 'read' && command.waitForProviderStart === true) return { status: 'awaitingOAuth', attemptId: 'attempt',
-        authorizationUrl: `https://issuer.example.test/authorize?state=attempt.nonce${options.clientMetadata ? '&client_id=https%3A%2F%2Fapp.happier.dev%2Foauth%2Fmcp%2Fclient-metadata.json' : ''}`, callbackUrl: mode.callbackUrl, expiresAtMs: 5000 };
+        authorizationUrl: `https://issuer.example.test/authorize?state=attempt.nonce${options.clientMetadata ? '&client_id=https%3A%2F%2Fcloud.happier.dev%2Foauth%2Fmcp%2Fclient-metadata.json' : ''}`, callbackUrl: mode.callbackUrl, expiresAtMs: 5000 };
       throw new Error('Unexpected authentication command');
     },
     async controlCommand(machineId, command) {

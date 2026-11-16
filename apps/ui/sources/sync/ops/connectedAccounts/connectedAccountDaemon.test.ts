@@ -316,12 +316,12 @@ describe('connected-account daemon machine RPC', () => {
         const browser = globalThis as unknown as Record<string, unknown>;
         const browserKeys = ['location', 'history', 'opener', 'navigator'];
         const previous = Object.fromEntries(browserKeys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-        browser.location = new URL('https://app.happier.dev/settings/connected-services');
+        browser.location = new URL('https://cloud.happier.dev/settings/connected-services');
         browser.opener = null;
         const copy = vi.fn(async (_value: string) => {});
         Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: copy } } });
         browser.history = { state: null, replaceState(_state: unknown, _unused: string, href: string) {
-            browser.location = new URL(href, 'https://app.happier.dev');
+            browser.location = new URL(href, 'https://cloud.happier.dev');
         } };
         const native = createNavigationContainerRef();
         const config = { screens: { credentials: 'settings/connected-services', callback: path.slice(1) } };
@@ -331,7 +331,7 @@ describe('connected-account daemon machine RPC', () => {
         }
         const Stack = createNavigatorFactory(Navigator)();
         const navigation = { push: (href: Parameters<typeof resolveHref>[0]) => {
-            const url = new URL(resolveHref(href), 'https://app.happier.dev');
+            const url = new URL(resolveHref(href), 'https://cloud.happier.dev');
             native.dispatch(StackActions.push('callback', Object.fromEntries(url.searchParams)));
         }, replace() {}, back() {} };
         function Credentials() { return React.createElement(DestinationInstanceHost, {
@@ -339,7 +339,7 @@ describe('connected-account daemon machine RPC', () => {
             pathname: '/settings/connected-services', focused: true, visible: true, navigation,
             children: React.createElement(React.Fragment),
         }); }
-        const projectNavigation = () => { browser.location = new URL(getPathFromState(native.getRootState(), config), 'https://app.happier.dev'); };
+        const projectNavigation = () => { browser.location = new URL(getPathFromState(native.getRootState(), config), 'https://cloud.happier.dev'); };
         const screen = await renderScreen(React.createElement(BaseNavigationContainer, { ref: native, onStateChange: projectNavigation,
             children: React.createElement(Stack.Navigator, { initialRouteName: 'credentials' },
                 React.createElement(Stack.Screen, { name: 'credentials', component: Credentials }),
@@ -356,7 +356,7 @@ describe('connected-account daemon machine RPC', () => {
             expect(screen.findAllHostsByTestId(`${prefix}:paste`).length).toBeGreaterThan(0);
             expect(screen.findAllHostsByTestId(`${prefix}:unfinished`)).toHaveLength(0);
             await screen.pressByTestIdAsync(`${prefix}:copy`);
-            expect(copy).toHaveBeenCalledWith(`https://app.happier.dev${path}${query}`);
+            expect(copy).toHaveBeenCalledWith(`https://cloud.happier.dev${path}${query}`);
             expect(homes.requestsFor('/v2/connect/connected-account-attempt-transactions/missing-attempt'))
                 .toEqual([expect.objectContaining({ serverId })]);
             expect(outgoing.filter(request => request.method.endsWith(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD))).toEqual([]);

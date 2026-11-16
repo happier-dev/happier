@@ -391,7 +391,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({ credentials: credentials(7), ...e2eeAccount, api });
     const snapshot = { ...oauthSnapshot(), service: { pluginId: 'happier', localId: 'mcp-sign-in' }, sourceCustody: { kind: 'host' as const } };
     const handle = await owner.oauth.create({ attemptId: snapshot.attemptId, service: snapshot.service, snapshot,
-      callbackUrl: 'https://app.happier.dev/oauth/mcp/callback' });
+      callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback' });
     expect(handle.expiresAtMs).toBe(api.records.get('oauth-attempt')!.expiresAtMs);
     const issuer = `https://issuer.example/${'issuer-path'.repeat(420)}`;
     const discovered = { ...snapshot, phase: 'awaitingOAuth' as const, issuer, issuerResponseParameterRequired: true, stagedAccountConfigurationContent: {
@@ -410,7 +410,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     const adapters = createQualifiedConnectedAccountAttemptTransactionAdapters(params);
     const snapshot = oauthSnapshot();
     const handle = await adapters.oauth.create({ attemptId: snapshot.attemptId, service, snapshot,
-      callbackUrl: 'https://app.happier.dev/oauth/mcp/callback' });
+      callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback' });
     expect(handle.request.state).toMatch(/^oauth-attempt\.[A-Za-z0-9_-]{43}$/);
     const restored = await createQualifiedConnectedAccountAttemptTransactionAdapters(params).oauth.read!(snapshot.attemptId);
     expect(restored).not.toBeNull();

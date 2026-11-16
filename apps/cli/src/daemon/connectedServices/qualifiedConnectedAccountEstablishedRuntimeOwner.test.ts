@@ -738,7 +738,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     const mcpDescriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
       id: 'mcp-sign-in', title: 'MCP server sign-in',
       authentication: { defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode',
-        callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none',
+        callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none',
         configuration: { scope: 'account', changeBehavior: 'refresh', fields: [
           { id: 'resource', title: 'Resource', schema: { type: 'string' }, required: true },
           { id: 'stepUpScopes', title: 'Scopes', schema: { type: 'array', items: { type: 'string' } } },

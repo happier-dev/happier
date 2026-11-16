@@ -73,6 +73,8 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
     credentials: StoredCredentials;
     serverHttpBaseUrl: string;
     operationContext?: SavedSecretOperationContextV1;
+    /** The Home's advertised web app, whose Connected Account relay OAuth attempts use. */
+    readHomeWebappUrl?: () => string | undefined;
     contributions: ReturnType<typeof createConnectedAccountContributionRegistry>;
     invoker: ConnectedAccountHostRuntimeInvoker;
 }>): CredentialedConnectedAccountAuthenticationHost {
@@ -98,6 +100,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
         const attempts = createConnectedAccountAuthenticationAttemptOwner({
             createAttemptId: randomUUID, createAccountId: randomUUID, createSavedSecretResourceId: randomUUID,
             now: Date.now, accounts: persistence.attempts.accounts, configuration,
+            ...(input.readHomeWebappUrl ? { readHomeWebappUrl: input.readHomeWebappUrl } : {}),
             async readSelectedSecrets(selections, signal) {
                 const secrets = persistence.configuration.secrets;
                 await secrets.admit?.(Object.values(selections).map(selection => selection.ref), { signal });

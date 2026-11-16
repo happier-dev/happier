@@ -166,6 +166,10 @@ export async function createUiConnectedAccountAuthenticationRuntime(input: Reado
     const attempts = createConnectedAccountAuthenticationAttemptOwner({
         createAttemptId: randomUUID, createAccountId: randomUUID, createSavedSecretResourceId: randomUUID,
         readSelectedSecrets: persistence.readSelectedSecrets, now: Date.now, accounts: persistence.accounts,
+        async readHomeWebappUrl() {
+            const snapshot = await getServerFeaturesSnapshot({ serverId: account.serverId, signal: registration.lifecycle.signal });
+            return snapshot.status === 'ready' ? snapshot.features.capabilities.server?.webappUrl : undefined;
+        },
         configuration, runtime: {
             async admit(request) {
                 const descriptor = mode(request.modeId);

@@ -9,7 +9,7 @@ import { MCP_SERVER_ACTION_INPUT_SCHEMAS_V1, MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1
 import { commitMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { McpServerCatalogRowReadResponseV1Schema, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { executeConnectedServiceConfigurationActionV1, prepareConnectedServiceRevokeInputV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import {  } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 as service } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { MCP_SIGN_IN_CONNECTED_ACCOUNT_DESCRIPTOR } from '@/mcp/oauth/mcpSignInRuntime';
 import { tryHandleMcpServerCliCommand } from './mcpServersArgv';
@@ -52,8 +52,8 @@ describe('MCP compiled CLI predecessor spellings', () => {
     });
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), mcpServerAction,
       personalSavedSecretActionExecute: ({ actionId, input }) => personalSecret(actionId, input),
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1,
-        approvalWaivedSurfaces: requireApproval ? {} : { 'mcp.servers.create': ['cli'], 'mcp.servers.duplicate': ['cli'] } }), context) });
+      readActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+        approvalWaivedSurfaces: requireApproval ? {} : { 'mcp.servers.create': ['cli'], 'mcp.servers.duplicate': ['cli'] } }) });
     const output = captureConsoleJsonOutput<unknown>();
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const deps = { readCredentialsFn: async () => ({ token: 'test-token', encryption: null }),
@@ -218,8 +218,8 @@ describe('MCP compiled CLI tools', () => {
       async machine() { throw new Error('Tools are Account-owned'); },
     });
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), mcpServerAction,
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1,
-        approvalWaivedSurfaces: requireApproval ? {} : { 'mcp.servers.tools.set': ['cli'] } }), context) });
+      readActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+        approvalWaivedSurfaces: requireApproval ? {} : { 'mcp.servers.tools.set': ['cli'] } }) });
     const output = captureConsoleJsonOutput<unknown>();
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const deps = { readCredentialsFn: async () => ({ token: changed === 'account' && reads++ > 0 ? 'changed-token' : 'test-token', encryption: null }),
@@ -303,8 +303,8 @@ describe('MCP compiled CLI Test', () => {
       async machine(request) { requests.push(request); return { ok: true, toolCount: 1, toolNamesSample: ['echo'], durationMs: 1 }; },
     });
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), mcpServerAction,
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1,
-        approvalWaivedSurfaces: { 'mcp.servers.test': ['cli'] } }), context) });
+      readActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+        approvalWaivedSurfaces: { 'mcp.servers.test': ['cli'] } }) });
     vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await tryHandleMcpServerCliCommand({ argv, actionExecutionDeps: {
       readCredentialsFn: async () => ({ token: 'test-token', encryption: null }),
@@ -400,11 +400,11 @@ describe('MCP compiled CLI sign-in journey', () => {
       resolveAdministrationMachine: async () => 'machine', describeConnectedService: async () => described, connectedServiceAction,
     });
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), mcpServerAction, connectedServiceAction,
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1,
+      readActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
         approvalWaivedSurfaces: { 'mcp.servers.signIn.start': ['cli'],
           'connectedServices.authentication.completeOAuth': ['cli'], 'connectedServices.authentication.cancel': ['cli'],
-          'connectedServices.accounts.revoke': ['cli'] } }), context) });
-    terminal.prompt.mockResolvedValue('https://app.happier.dev/oauth/mcp/callback?code=returned-code&state=attempt.nonce&iss=https%3A%2F%2Fissuer.example.test');
+          'connectedServices.accounts.revoke': ['cli'] } }) });
+    terminal.prompt.mockResolvedValue('https://cloud.happier.dev/oauth/mcp/callback?code=returned-code&state=attempt.nonce&iss=https%3A%2F%2Fissuer.example.test');
     const jsonOutput = argv.includes('--json') ? captureConsoleJsonOutput<unknown>() : null;
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     let credentialReads = 0;

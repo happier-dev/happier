@@ -161,7 +161,7 @@ describe('UI MCP per-Agent tool facts', () => {
         let providerPending = false;
         const service = MCP_SIGN_IN_CONNECTED_SERVICE_REF_V1;
         const mode = { id: 'oauth', kind: 'oauthAuthorizationCode' as const,
-            callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', pkce: 'required' as const,
+            callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', pkce: 'required' as const,
             outcomeReconciliation: 'none' as const };
         const custody = { occurrenceId: 'host-occurrence', sourceCustody: { kind: 'host' as const } };
         // The daemon RPC is the external producer. Keep the mounted Action,
@@ -395,7 +395,7 @@ describe('UI MCP per-Agent tool facts', () => {
             if (request.machineId !== selected.id) throw Object.assign(new Error('Wrong Machine cannot read this grant'), { code: 'RPC_FORBIDDEN' });
             if (command.operation === 'readConfiguration') return ConnectedAccountDaemonControlResponseSchema.parse({
                 status: 'configuration', target: { kind: 'account', account: grant.ref, modeId: 'oauth' },
-                mode: { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback',
+                mode: { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback',
                     pkce: 'required', outcomeReconciliation: 'none' },
                 configuration: { status: 'ready', revision: grant.configurationRevision,
                     values: { serverId: server.id, resource: server.remote.url }, configuredSecretFieldIds: [], missingFieldIds: [] },

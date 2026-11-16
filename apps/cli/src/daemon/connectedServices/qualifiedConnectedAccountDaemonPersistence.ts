@@ -274,6 +274,13 @@ function sealContent(input: Readonly<{
       });
 }
 
+/** The web app the Home advertises (`capabilities.server.webappUrl`); absent until its features are read. */
+export function readHomeWebappUrl(
+  snapshot: CliServerFeaturesSnapshot | undefined,
+): string | undefined {
+  return snapshot?.status === 'ready' ? snapshot.features.capabilities.server?.webappUrl : undefined;
+}
+
 export function createQualifiedConnectedAccountDaemonPersistence(
   params: Readonly<{
     credentials: StoredCredentials;
@@ -629,6 +636,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
       secrets: params.secrets,
     }),
     attempts: Object.freeze({
+      readHomeWebappUrl: () => readHomeWebappUrl(params.resolveServerFeaturesSnapshot?.()),
       assertAuthenticationActionAllowed(
         input: Parameters<
           NonNullable<

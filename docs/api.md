@@ -299,8 +299,8 @@ contracts, not released or loaded-runtime certification.
 
 MCP sign-in uses the host service `happier/mcp-sign-in` and the same attempt
 owner. Its stable client metadata URL is
-`https://app.happier.dev/oauth/mcp/client-metadata.json`, with callback
-`https://app.happier.dev/oauth/mcp/callback`. The app callback controller removes
+`https://cloud.happier.dev/oauth/mcp/client-metadata.json`, with callback
+`https://cloud.happier.dev/oauth/mcp/callback`. The app callback controller removes
 code/state from the browser URL before handoff, forwards only to its pinned
 origin, or completes through an admitted same-Account Machine. The full callback
 URL is retained for the paste fallback when no answering app/attempt owner is

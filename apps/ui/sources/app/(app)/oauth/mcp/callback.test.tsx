@@ -98,7 +98,7 @@ vi.mock('expo-clipboard', () => ({
 
 const { default: McpOAuthCallbackRoute } = await import('./callback');
 const { default: ConnectedAccountOAuthCallbackRoute } = await import('../connected-account/callback');
-const genericCallbackUrl = 'https://app.happier.dev/oauth/connected-account/callback';
+const genericCallbackUrl = 'https://cloud.happier.dev/oauth/connected-account/callback';
 
 const query =
   '?code=code-1&state=attempt-1.nonce&iss=https%3A%2F%2Fissuer.example';
@@ -193,7 +193,7 @@ describe('callback root navigation readiness', () => {
     { path: '/oauth/mcp/callback', Route: McpOAuthCallbackRoute, prefix: 'mcp-oauth-callback' },
   ])('clears $path through its mounted route while the root navigator registers', async ({ path, Route, prefix }) => {
     install();
-    browser.location = new URL('https://app.happier.dev/settings/connected-services');
+    browser.location = new URL('https://cloud.happier.dev/settings/connected-services');
     boundary.realNavigation = true;
     const root = createNavigationContainerRef();
     boundary.globalSetParams = await installedGlobalSetParams(root);
@@ -212,7 +212,7 @@ describe('callback root navigation readiness', () => {
     }
     function App() {
       const [href, setHref] = React.useState<string | null>(null);
-      const url = href ? new URL(href, 'https://app.happier.dev') : null;
+      const url = href ? new URL(href, 'https://cloud.happier.dev') : null;
       const navigation = { push: (next: Parameters<typeof resolveHref>[0]) => setHref(resolveHref(next)), replace: vi.fn(), back: vi.fn() };
       // A string Href resolves to itself, so arrival publishes the pushed path directly.
       arrive = setHref;
@@ -232,7 +232,7 @@ describe('callback root navigation readiness', () => {
     expect(root.isReady()).toBe(true);
     expect(getPathFromState(root.getRootState(), config)).toBe(path);
     await screen.pressByTestIdAsync(`${prefix}:copy`);
-    expect(boundary.clipboard).toHaveBeenCalledWith(`https://app.happier.dev${path}${query}`);
+    expect(boundary.clipboard).toHaveBeenCalledWith(`https://cloud.happier.dev${path}${query}`);
   });
 });
 
@@ -243,7 +243,7 @@ describe('/oauth/mcp/callback', () => {
   ])('keeps $path query-free when its lazy navigator hydrates and after paste recovery', async ({ path, Route, prefix }) => {
     install();
     boundary.realNavigation = true;
-    const original = `https://app.happier.dev${path}${query}&provider_extra=private`;
+    const original = `https://cloud.happier.dev${path}${query}&provider_extra=private`;
     browser.location = new URL(original);
     vi.stubGlobal('window', globalThis);
     const history = {
@@ -296,15 +296,15 @@ describe('/oauth/mcp/callback', () => {
     expect(boundary.clipboard).toHaveBeenCalledWith(original);
     expect(navigation.getRootState().routes[0]!.state!.routes[0]!.params).toBeUndefined();
     expect(history.writes.every(href => new URL(href, original).search === '')).toBe(true);
-    expect(readCapturedConnectedAccountOAuthCallbackUrl(`https://app.happier.dev${path}`)).toBeUndefined();
+    expect(readCapturedConnectedAccountOAuthCallbackUrl(`https://cloud.happier.dev${path}`)).toBeUndefined();
     expect(boundary.execute).not.toHaveBeenCalled();
   });
 
   it('uses the generic callback identity for the actual generic route', async () => {
-    install('https://app.happier.dev');
+    install('https://cloud.happier.dev');
     await renderScreen(<ConnectedAccountOAuthCallbackRoute />);
     expect(replaced).toEqual(['/oauth/connected-account/callback']);
-    expect(posted).toEqual([{ origin: 'https://app.happier.dev', message: {
+    expect(posted).toEqual([{ origin: 'https://cloud.happier.dev', message: {
       type: 'happier.connected-account.oauth', code: 'code-1', state: 'attempt-1.nonce', iss: 'https://issuer.example',
     } }]);
   });
@@ -327,14 +327,14 @@ describe('/oauth/mcp/callback', () => {
     expect(screen.findAllByTestId('mcp-oauth-callback:working').length).toBeGreaterThan(0);
     expect(boundary.execute).not.toHaveBeenCalled();
   });
-  it('hands the answer to an opener on app.happier.dev only, strips the address and calls no Action', async () => {
-    install('https://app.happier.dev');
+  it('hands the answer to an opener on the hosted web app only, strips the address and calls no Action', async () => {
+    install('https://cloud.happier.dev');
     const screen = await renderScreen(<McpOAuthCallbackRoute />);
     await settle(screen, 'mcp-oauth-callback:opener');
     expect(replaced).toEqual(['/oauth/mcp/callback']);
     expect(posted).toEqual([
       {
-        origin: 'https://app.happier.dev',
+        origin: 'https://cloud.happier.dev',
         message: {
           type: 'happier.mcp.oauth',
           code: 'code-1',
@@ -350,7 +350,7 @@ describe('/oauth/mcp/callback', () => {
     expect(boundary.execute).not.toHaveBeenCalled();
   });
 
-  it.each(['https://self-hosted.example', 'inaccessible', 'https://app.happier.dev.evil.example'])('retains the callback for Copy code without closing an untrusted opener: %s', async (origin) => {
+  it.each(['https://self-hosted.example', 'inaccessible', 'https://cloud.happier.dev.evil.example'])('retains the callback for Copy code without closing an untrusted opener: %s', async (origin) => {
     install(origin);
     boundary.signedIn = true;
     getStorage().setState({ settingsScope: { serverId: 'home', accountId: 'account' } });
@@ -456,7 +456,7 @@ describe('/oauth/connected-account/callback', () => {
     expect(boundary.execute).not.toHaveBeenCalled();
   });
 
-  it.each(['https://app.happier.dev.evil.example', 'https://self-hosted.example', 'inaccessible'])('copies the original callback rather than sending it to %s', async origin => {
+  it.each(['https://cloud.happier.dev.evil.example', 'https://self-hosted.example', 'inaccessible'])('copies the original callback rather than sending it to %s', async origin => {
     install(origin);
     signIn();
     const screen = await renderScreen(<ConnectedAccountOAuthCallbackRoute />);
@@ -526,13 +526,13 @@ describe('/oauth/connected-account/callback', () => {
   });
 
   it.each([false, true])('relays an explicit denial only to the exact opener, never to a guessed attempt (opener=%s)', async opener => {
-    install(opener ? 'https://app.happier.dev' : undefined);
+    install(opener ? 'https://cloud.happier.dev' : undefined);
     browser.location = { search: '?error=access_denied&state=attempt-1.nonce&iss=https%3A%2F%2Fissuer.example' };
     signIn();
     const screen = await renderScreen(<ConnectedAccountOAuthCallbackRoute />);
     await settle(screen, `connected-account-oauth-callback:${opener ? 'opener' : 'paste'}`);
     expect(boundary.execute).not.toHaveBeenCalled();
-    if (opener) expect(posted).toEqual([{ origin: 'https://app.happier.dev', message: {
+    if (opener) expect(posted).toEqual([{ origin: 'https://cloud.happier.dev', message: {
       type: 'happier.connected-account.oauth', state: 'attempt-1.nonce', iss: 'https://issuer.example', error: 'access_denied',
     } }]);
     else {

@@ -1,4 +1,4 @@
-import { CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
+import { CONNECTED_ACCOUNT_OAUTH_CALLBACK_PATH_V1, CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
 import { MCP_OAUTH_CALLBACK_URL_V1 } from '@happier-dev/protocol/mcp/oauth/mcpOAuthClientIdentityV1';
 
 type CallbackBrowser = Readonly<{
@@ -8,6 +8,18 @@ type CallbackBrowser = Readonly<{
 
 let captured: Readonly<{ callbackUrl: string; originalUrl: string }> | null = null;
 
+/**
+ * The Connected Account relay this web app answers at: its own origin, which its Home advertises as the
+ * attempt's redirect URI. A native universal link has no origin and answers for the hosted web app.
+ * The daemon attempt still accepts only its own callback.
+ */
+export function resolveConnectedAccountOAuthCallbackPageUrl(
+  origin: string | undefined = (globalThis as { location?: { origin?: string } }).location?.origin,
+): string {
+  return origin && /^https?:\/\//u.test(origin)
+    ? `${origin}${CONNECTED_ACCOUNT_OAUTH_CALLBACK_PATH_V1}` : CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1;
+}
+
 /** Take volatile custody before Expo reads the browser's initial URL. */
 export function captureConnectedAccountOAuthCallbackUrl(
   browser: CallbackBrowser | undefined = typeof window === 'undefined' || !window.location || !window.history ? undefined : window,
@@ -15,7 +27,7 @@ export function captureConnectedAccountOAuthCallbackUrl(
   if (!browser) return;
   const url = new URL(browser.location.href);
   const pathname = url.pathname.replace(/\/+$/, '');
-  const callbackUrl = [CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1, MCP_OAUTH_CALLBACK_URL_V1]
+  const callbackUrl = [resolveConnectedAccountOAuthCallbackPageUrl(url.origin), MCP_OAUTH_CALLBACK_URL_V1]
     .find(callback => new URL(callback).pathname === pathname);
   if (!callbackUrl || !url.search) return;
   captured = { callbackUrl, originalUrl: `${callbackUrl}${url.search}` };

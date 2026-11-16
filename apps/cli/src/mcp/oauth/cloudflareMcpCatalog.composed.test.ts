@@ -159,7 +159,7 @@ describe('Cloudflare MCP catalog composition', () => {
             expect(authorization.searchParams.get('resource')).toBe(resource);
             expect(authorization.searchParams.get('code_challenge_method')).toBe('S256');
             const completed = await daemon.execute({ operation: 'completeOAuth', attemptId: waiting.attemptId,
-                completion: { callbackUrl: 'https://app.happier.dev/oauth/mcp/callback',
+                completion: { callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback',
                     state: authorization.searchParams.get('state')!, code: 'fixture-code', iss: `${fixture.base}/issuer` } });
             expect(completed).toMatchObject({ status: 'connected', account: { service, accountId: saved.id } });
             expect(persisted).toHaveLength(1);

@@ -46,7 +46,7 @@ describe('MCP grant diagnostics demand through the real Action owner', () => {
     if (!grant) throw new Error('Missing grant fixture');
     return ConnectedAccountDaemonControlResponseSchema.parse({ status: 'configuration', occurrenceId: 'host-1', sourceCustody: { kind: 'host' },
       target: { kind: 'account', account: grant.ref, modeId: 'oauth' },
-      mode: { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none' },
+      mode: { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none' },
       configuration: { status: 'ready', revision: grant.configurationRevision,
         values: { serverId: id, resource: id === 'linear' ? server.remote!.url : `https://${id}.example/mcp` }, configuredSecretFieldIds: [], missingFieldIds: [] },
     });

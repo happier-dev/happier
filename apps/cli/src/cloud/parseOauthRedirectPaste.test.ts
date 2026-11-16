@@ -4,7 +4,7 @@ import { parseOauthRedirectPaste } from './parseOauthRedirectPaste';
 
 describe('parseOauthRedirectPaste', () => {
   it('preserves a pasted issuer for daemon admission', () => {
-    expect(parseOauthRedirectPaste({ pasted: 'https://app.happier.dev/oauth/mcp/callback?code=code&state=attempt.random&iss=https%3A%2F%2Fissuer.example' }))
+    expect(parseOauthRedirectPaste({ pasted: 'https://cloud.happier.dev/oauth/mcp/callback?code=code&state=attempt.random&iss=https%3A%2F%2Fissuer.example' }))
       .toEqual({ ok: true, code: 'code', state: 'attempt.random', iss: 'https://issuer.example' });
   });
   it('parses code + state from a pasted redirect url', () => {

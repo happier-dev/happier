@@ -13,7 +13,7 @@ const grant = { ref, status: 'connected', authenticationModeId: 'oauth', configu
 // output. The adjacent producer suite also exercises the real Action and its strict schema.
 function configuration(resource = server.remote!.url, stepUpScopes: string[] = []): NonNullable<McpSignInGrantDiagnostics['configuration']> {
   return { target: { kind: 'account', account: ref, modeId: 'oauth' },
-    mode: { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none' },
+    mode: { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none' },
     configuration: { status: 'ready', revision: 'configuration-1', values: { serverId: server.id, resource, grantedScopes: grant.scopes, stepUpScopes }, configuredSecretFieldIds: [], missingFieldIds: [] } };
 }
 

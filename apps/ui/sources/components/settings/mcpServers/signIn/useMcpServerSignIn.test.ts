@@ -75,7 +75,7 @@ function grant(
 function configuration(resource = server.remote!.url, stepUpScopes: string[] = []) {
   return CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.configuration.get'].parse({
     target: { kind: 'account', account: grant('connected', 1).ref, modeId: 'oauth' },
-    mode: { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none' },
+    mode: { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none' },
     configuration: { status: 'ready', revision: 'configuration-1', values: { serverId: server.id, resource, grantedScopes: ['read', 'write'], stepUpScopes }, configuredSecretFieldIds: [], missingFieldIds: [] },
   });
 }

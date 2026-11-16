@@ -33,7 +33,7 @@ const FRESH_COMPUTER_STATUS = {
     serverUrl: 'https://api.happier.dev',
     localServerUrl: null,
     publicServerUrl: 'https://api.happier.dev',
-    webappUrl: 'https://app.happier.dev',
+    webappUrl: 'https://cloud.happier.dev',
     comparableKey: null,
   },
   daemon: { running: false, pid: null, httpPort: null },

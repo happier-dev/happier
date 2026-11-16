@@ -283,6 +283,8 @@ const linkHostOverride = (process.env.EXPO_APP_LINK_HOST || '').trim();
 const linkHost = linkHostOverride || DEFAULTS.linkHost;
 const hostedLinkHosts = linkHostOverride
     ? [linkHost]
+    // app.happier.dev is the hosted web app's retired name; released 0.2 links still open through it.
+    // Remove once 0.2 links are no longer supported.
     : [DEFAULTS.linkHost, 'app.happier.dev'];
 const iosAssociatedDomainsRaw = (process.env.EXPO_IOS_ASSOCIATED_DOMAINS || '').trim();
 const iosAssociatedDomains = iosAssociatedDomainsRaw

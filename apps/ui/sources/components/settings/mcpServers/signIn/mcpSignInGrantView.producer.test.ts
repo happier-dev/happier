@@ -23,7 +23,7 @@ async function configuration(resource: string, stepUpScopes: string[] = []) {
     request: async () => { throw new Error('unexpected HTTP'); },
     controlCommand: async () => ({ status: 'configuration', target: { kind: 'account', account: ref, modeId: 'oauth' },
       occurrenceId: 'host-1', sourceCustody: { kind: 'host' },
-      mode: { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none' },
+      mode: { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none' },
       configuration: { status: 'ready', revision: 'configuration-1', values: { serverId: server.id, resource, grantedScopes: grant.scopes, stepUpScopes }, configuredSecretFieldIds: [], missingFieldIds: [] },
     }),
   }, 'connectedServices.configuration.get', { machineId: 'm1', target: { kind: 'account', account: ref } });

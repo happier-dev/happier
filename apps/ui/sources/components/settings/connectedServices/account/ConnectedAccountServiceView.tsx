@@ -41,6 +41,8 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useQualifiedConnectedAccountGroups } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountGroups';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
+import { resolveConnectedAccountOAuthCallbackUrlV1 } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
 import { Modal } from '@/modal';
 import { getPreferredLanguage, t } from '@/text';
 import {
@@ -1636,10 +1638,17 @@ const ConnectedAccountServiceController = React.memo(
         shapeHint: resolveProjectedLocalizedText(setup.shapeHint, localizeServiceText),
     });
     const manualGuide = activeMode?.kind === 'manual' && activeMode.setup ? presentSetup(activeMode.setup) : undefined;
-    // A browser mode's own-client guide sits with its client ID field and offers the declared callback to copy.
+    // A browser mode's own-client guide sits with its client ID field and offers the attempt's callback to copy:
+    // the mode's own, else the relay at the Home's web app. Only that guide reads the Home's features.
+    const homeFeatures = useServerFeaturesSnapshotForServerId(serverId, { enabled: activeMode?.kind === 'oauthAuthorizationCode'
+        && !activeMode.callbackUrl && activeMode.setup !== undefined && activeMode.clientConfiguration !== undefined });
+    const homeWebappUrl = homeFeatures.status === 'ready' ? homeFeatures.features.capabilities.server?.webappUrl : undefined;
     const clientGuide = activeMode?.kind === 'oauthAuthorizationCode' && activeMode.setup && activeMode.clientConfiguration ? {
         ...presentSetup(activeMode.setup),
-        ...(activeMode.callbackUrl ? { copyValue: { label: t('connectedServicesSettings.keyRedirectUrl'), value: activeMode.callbackUrl } } : {}),
+        copyValue: { label: t('connectedServicesSettings.keyRedirectUrl'), value: resolveConnectedAccountOAuthCallbackUrlV1({
+            ...(activeMode.callbackUrl ? { declared: activeMode.callbackUrl } : {}),
+            ...(homeWebappUrl ? { homeWebappUrl } : {}),
+        }) },
     } : undefined;
     const combinedFlowActive = panelIntent?.kind === 'add' || pendingIntent !== null || configurationContinuationAttemptId !== null;
     const combinesManualConfiguration = activeMode?.kind === 'manual' && activeMode.configuration !== undefined && combinedFlowActive;

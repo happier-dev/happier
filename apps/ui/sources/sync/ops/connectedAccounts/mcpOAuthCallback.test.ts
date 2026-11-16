@@ -6,17 +6,17 @@ import { completeMcpOAuthCallback } from './mcpOAuthCallback';
 const callbackUrl = `${MCP_OAUTH_CALLBACK_URL_V1}?code=code-1&state=attempt.with.dots.nonce&iss=https%3A%2F%2Fissuer.example`;
 
 describe('MCP OAuth callback controller', () => {
-    it('strips the browser URL before handing off to an app.happier.dev opener only, without an Action', async () => {
+    it('strips the browser URL before handing off to a hosted web app opener only, without an Action', async () => {
         const effects: unknown[] = [];
         const executeAction = vi.fn();
         const outcome = await completeMcpOAuthCallback({
             callbackUrl,
             browser: { replaceUrl: path => effects.push(path), close: () => effects.push('closed'),
-                opener: { origin: 'https://app.happier.dev', postMessage: (message, origin) => effects.push({ message, origin }) } },
+                opener: { origin: 'https://cloud.happier.dev', postMessage: (message, origin) => effects.push({ message, origin }) } },
             account: { serverId: 'home', expectedAccountId: 'account', assertCurrent() {}, executeAction },
         });
         expect(outcome).toEqual({ kind: 'opener' });
-        expect(effects).toEqual(['/oauth/mcp/callback', { origin: 'https://app.happier.dev', message: {
+        expect(effects).toEqual(['/oauth/mcp/callback', { origin: 'https://cloud.happier.dev', message: {
             type: 'happier.mcp.oauth', code: 'code-1', state: 'attempt.with.dots.nonce', iss: 'https://issuer.example',
         } }, 'closed']);
         expect(executeAction).not.toHaveBeenCalled();
@@ -56,9 +56,9 @@ describe('MCP OAuth callback controller', () => {
     it('preserves an explicitly empty issuer for daemon validation', async () => {
         const postMessage = vi.fn();
         expect(await completeMcpOAuthCallback({ callbackUrl: `${MCP_OAUTH_CALLBACK_URL_V1}?code=code&state=attempt.nonce&iss=`,
-            browser: { replaceUrl() {}, close() {}, opener: { origin: 'https://app.happier.dev', postMessage } } }))
+            browser: { replaceUrl() {}, close() {}, opener: { origin: 'https://cloud.happier.dev', postMessage } } }))
             .toEqual({ kind: 'opener' });
-        expect(postMessage).toHaveBeenCalledWith({ type: 'happier.mcp.oauth', code: 'code', state: 'attempt.nonce', iss: '' }, 'https://app.happier.dev');
+        expect(postMessage).toHaveBeenCalledWith({ type: 'happier.mcp.oauth', code: 'code', state: 'attempt.nonce', iss: '' }, 'https://cloud.happier.dev');
     });
 
     it('rejects retired Account custody before Action work', async () => {

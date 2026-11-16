@@ -256,6 +256,7 @@ import {
     type AccountPluginDataStorageHostDependencies,
 } from './context/accountPluginDataStorage';
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
+import { readHomeWebappUrl } from '@/daemon/connectedServices/qualifiedConnectedAccountDaemonPersistence';
 import {
     collectResolvedGeneratedReactNativeCollectionMigrationArtifactOwners,
     findGeneratedReactNativeCollectionMigrationsModule,
@@ -6110,6 +6111,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ? createCredentialedConnectedAccountAuthenticationHost({
             credentials: params.accountExecution.credentials, serverHttpBaseUrl: params.accountExecution.serverUrl,
             ...(savedSecretOperationContext ? { operationContext: savedSecretOperationContext } : {}),
+            ...(resolveServerFeaturesSnapshot ? {
+                readHomeWebappUrl: () => readHomeWebappUrl(resolveServerFeaturesSnapshot()),
+            } : {}),
             contributions: connectedAccountContributions, invoker: connectedAccountRuntimeInvoker,
         }) : undefined;
     let consumersRetired = false;

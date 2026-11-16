@@ -480,14 +480,14 @@ describe('paired terminal Action admission', () => {
                     acknowledge({ ok: true, result: { status: 'described', service: HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1,
                         descriptor: { id: HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1.localId, title: 'MCP sign-in',
                             authentication: { defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode',
-                                callbackUrl: 'https://app.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none' }] } },
+                                callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', pkce: 'required', outcomeReconciliation: 'none' }] } },
                         accounts: [], operationTransport: { kind: 'v4' }, occurrenceId: 'host-occurrence', sourceCustody: { kind: 'host' } } });
                 } else {
                     expect(packet.method).toBe(`remote-machine:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`);
                     expect(packet.params.command).toMatchObject({ operation: 'beginConnect', service: HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1, modeId: 'oauth' });
                     acknowledge({ ok: true, result: { status: 'awaitingOAuth', attemptId: 'attempt',
                         authorizationUrl: 'https://issuer.fixture.test/authorize', expiresAtMs: 5000,
-                        callbackUrl: 'https://app.happier.dev/oauth/mcp/callback' } });
+                        callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback' } });
                 }
             }));
             const admittedCatalog = await runWithServerHttpBaseUrl('https://home.test', () =>

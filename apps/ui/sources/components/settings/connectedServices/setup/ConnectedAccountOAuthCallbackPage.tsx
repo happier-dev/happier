@@ -35,7 +35,7 @@ const RESPONSE_PARAMS = [
 
 /**
  * The provider's answer, as the canonical callback address. The route *is* that address (the web app at
- * app.happier.dev, or the same path opened in the app by its universal link), so only the query is read
+ * its own origin, or the same path opened in the app by its universal link), so only the query is read
  * here, preferring the web entry's pre-router capture. Parsing and validation stay
  * with the callback controller and the daemon.
  */

@@ -1,6 +1,7 @@
-import { CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1, parseOauthAuthorizationResponse } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
+import { parseOauthAuthorizationResponse } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
 import type { ConnectedAccountAttemptResponse } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import type { runConnectedAccountAuthenticationAction } from './connectedAccountDaemon';
+import { resolveConnectedAccountOAuthCallbackPageUrl } from './connectedAccountOAuthCallbackUrl';
 
 export const CONNECTED_ACCOUNT_OAUTH_OPENER_MESSAGE_TYPE = 'happier.connected-account.oauth';
 
@@ -15,7 +16,7 @@ export type ConnectedAccountOAuthCallbackProtocol = Readonly<{
 }>;
 
 export const CONNECTED_ACCOUNT_OAUTH_CALLBACK_PROTOCOL: ConnectedAccountOAuthCallbackProtocol = {
-    callbackUrl: CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1,
+    callbackUrl: resolveConnectedAccountOAuthCallbackPageUrl(),
     openerMessageType: CONNECTED_ACCOUNT_OAUTH_OPENER_MESSAGE_TYPE,
     relayDenial: true,
     connectedReturnPath: () => '/settings/connected-services',

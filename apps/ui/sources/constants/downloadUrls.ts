@@ -1,3 +1,5 @@
+import { HAPPIER_HOSTED_WEBAPP_URL_V1 } from '@happier-dev/protocol/server/urls/hostedWebappUrl';
+
 /**
  * Where people get Happier. The website's download page (`apps/website/src/data/downloads.ts`) is the
  * public owner of these listings; the app links to the same stores and to that page.
@@ -16,4 +18,4 @@ export const HAPPIER_GOOGLE_PLAY_SHORT_URL = 'https://happier.dev/playstore';
  * The app's universal-link origin (`app.config.js` `hostedLinkHosts`): a path under it opens that page in
  * the installed app, and the hosted web app otherwise.
  */
-export const HAPPIER_APP_LINK_ORIGIN = 'https://app.happier.dev';
+export const HAPPIER_APP_LINK_ORIGIN = HAPPIER_HOSTED_WEBAPP_URL_V1;

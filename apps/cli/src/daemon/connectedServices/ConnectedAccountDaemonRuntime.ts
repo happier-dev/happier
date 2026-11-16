@@ -148,7 +148,7 @@ export type ConnectedAccountDaemonPersistence = Readonly<{
     attempts: Pick<
         AttemptOwnerParams,
         'accounts' | 'oauth' | 'settlement'
-    > & Partial<Pick<AttemptOwnerParams, 'deviceTransactions' | 'lateEvidence' | 'attemptAddresses'>>
+    > & Partial<Pick<AttemptOwnerParams, 'deviceTransactions' | 'lateEvidence' | 'attemptAddresses' | 'readHomeWebappUrl'>>
       & Readonly<{
           listPending?(service: PluginContributionRef): Promise<readonly PendingConnectedAccountAttemptTransaction[]>;
           assertAuthenticationActionAllowed?(input: Readonly<{
@@ -401,6 +401,9 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
             : {}),
         ...(params.persistence.attempts.lateEvidence
             ? { lateEvidence: params.persistence.attempts.lateEvidence }
+            : {}),
+        ...(params.persistence.attempts.readHomeWebappUrl
+            ? { readHomeWebappUrl: params.persistence.attempts.readHomeWebappUrl }
             : {}),
         ...(params.persistence.attempts.assertAuthenticationActionAllowed
             ? {

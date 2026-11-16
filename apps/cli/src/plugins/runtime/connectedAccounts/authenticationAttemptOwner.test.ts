@@ -119,7 +119,8 @@ function manualMode(
 function oauthMode(input: Readonly<{
     outcomeReconciliation: 'providerCheck' | 'lateEvidence' | 'none';
     configuration?: PluginConnectedAccountConfigurationV2;
-    callbackUrl?: string;
+    /** `null` declares no callback, so the Home's connected-account callback applies. */
+    callbackUrl?: string | null;
 }>): ConnectedAccountAttemptModeAdmission {
     return Object.freeze({
         service,
@@ -128,7 +129,7 @@ function oauthMode(input: Readonly<{
             kind: 'oauthAuthorizationCode',
             pkce: 'required',
             outcomeReconciliation: input.outcomeReconciliation,
-            callbackUrl: input.callbackUrl ?? 'http://127.0.0.1:4000/auth/callback',
+            ...(input.callbackUrl === null ? {} : { callbackUrl: input.callbackUrl ?? 'http://127.0.0.1:4000/auth/callback' }),
             ...(input.configuration ? { configuration: input.configuration } : {}),
         }),
         occurrenceId: 'generation-1',
@@ -188,6 +189,7 @@ function harness(input: Readonly<{
     destroyAttemptConfiguration?: (attemptId: string) => void | Promise<void>;
     now?: () => number;
     executionMachine?: Readonly<{ serverId: string; machineId: string }>;
+    readHomeWebappUrl?: () => string | undefined;
     resolveExecutionMachine?: () => Readonly<{ serverId: string; machineId: string }> | null;
     onBackgroundTransition?: Parameters<typeof createConnectedAccountAuthenticationAttemptOwner>[0]['onBackgroundTransition'];
     attemptAddresses?: ConnectedAccountAttemptAddressOwner | null;
@@ -303,6 +305,7 @@ function harness(input: Readonly<{
             ? { resolveExecutionMachine: input.resolveExecutionMachine }
             : input.executionMachine ? { resolveExecutionMachine: () => input.executionMachine! } : {}),
         ...(input.onBackgroundTransition ? { onBackgroundTransition: input.onBackgroundTransition } : {}),
+        ...(input.readHomeWebappUrl ? { readHomeWebappUrl: input.readHomeWebappUrl } : {}),
         ...(input.attemptAddresses === null ? {} : {
             attemptAddresses: input.attemptAddresses ?? transactions.address,
         }),
@@ -1462,6 +1465,31 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
             callbackUrl: 'https://provider.example/oauth/callback',
         }));
+    });
+
+    it.each([
+        ["the relay at the Home's web app", 'http://happier-qa.localhost:19364',
+            'http://happier-qa.localhost:19364/oauth/connected-account/callback'],
+        ['the hosted relay when the Home advertises no web app', undefined, 'https://cloud.happier.dev/oauth/connected-account/callback'],
+    ])('uses %s for a mode without its own callback', async (_label, homeWebappUrl, expected) => {
+        const create = vi.fn(async (transactionInput: Readonly<{ snapshot: TestOAuthTransactionSnapshot; callbackUrl: string }>) => ({
+            snapshot: transactionInput.snapshot,
+            request: Object.freeze({ callbackUrl: transactionInput.callbackUrl, state: 'state-1',
+                pkce: Object.freeze({ challenge: 'challenge-1', method: 'S256' as const }) }),
+            acknowledge: async () => {},
+            acceptCompletion: async () => { throw new Error('not invoked'); },
+            close: async () => {},
+        }));
+        const h = harness({
+            admittedMode: oauthMode({ outcomeReconciliation: 'none', callbackUrl: null }),
+            readHomeWebappUrl: () => homeWebappUrl,
+            oauthTransactions: { create, read: vi.fn(async () => null) },
+        });
+
+        await h.owner.beginConnect({ service, modeId: 'oauth' });
+        await expect(waitForAttemptStatus(h.owner, 'attempt-1', 'awaitingOAuth')).resolves.toMatchObject({ callbackUrl: expected });
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({ callbackUrl: expected }));
+        h.owner.dispose();
     });
 
     it('revalidates mutable peer admission before continuing an active provider attempt', async () => {
