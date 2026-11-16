@@ -101,6 +101,8 @@ const SKELETON_ROW_LINES = [
   HAPPIER_MENU_ROW_TEXT.label.lineHeight,
   HAPPIER_MENU_ROW_TEXT.subtitle.lineHeight + MENU_ROW_METRICS.subtitleGapPx,
 ] as const;
+/** Hosted in a page row, the menu-anatomy parts move in by the page row's padding beyond a menu row's. */
+const EMBEDDED_COLUMN_INSET_PX = PAGE_LIST_METRICS.rowPaddingHorizontalPx - MENU_ROW_METRICS.paddingHorizontalPx;
 const SKELETON_ROW_GEOMETRY = {
   insetStart: MENU_ROW_METRICS.paddingHorizontalPx,
   insetEnd: MENU_ROW_METRICS.paddingHorizontalPx,
@@ -118,6 +120,7 @@ export function SessionCapabilitiesContent(
 ): React.ReactElement {
   const { model } = props;
   const embedded = props.presentation === 'embedded';
+  const stateLineStyle = embedded ? styles.stateLineEmbedded : styles.stateLine;
   const groups = React.useMemo(() => (props.kind ? model.groups.filter(group => group.kind === props.kind) : model.groups)
     .flatMap(group => {
       const sectionFor = props.skillSection;
@@ -160,7 +163,7 @@ export function SessionCapabilitiesContent(
   const body = (
     <View testID={`${props.testID}:lists`}>
       {model.state === 'error' ? (
-        <View style={styles.stateLine}>
+        <View style={stateLineStyle}>
           <SurfaceStateCard
             testID={`${props.testID}:error`}
             kind="error"
@@ -177,7 +180,7 @@ export function SessionCapabilitiesContent(
           />
         </View>
       ) : model.state === 'machine_unreachable' ? (
-        <View style={styles.stateLine}>
+        <View style={stateLineStyle}>
           <SurfaceStateCard
             testID={`${props.testID}:offline`}
             kind="unavailable"
@@ -276,7 +279,7 @@ export function SessionCapabilitiesContent(
                 {group.rows.length === 0 &&
                 group.nativeRow === null &&
                 !resolvingWithoutRows ? (
-                  <View style={styles.stateLine}>
+                  <View style={stateLineStyle}>
                     <SurfaceStateCard
                       testID={`${props.testID}:empty:${group.kind}`}
                       kind="empty"
@@ -331,7 +334,7 @@ export function SessionCapabilitiesContent(
   );
 
   const undoLine = props.undo ? (
-    <View style={styles.undoLine}>
+    <View style={embedded ? styles.undoLineEmbedded : styles.undoLine}>
       <SurfaceStateCard
         testID={`${props.testID}:undo`}
         kind="success"
@@ -707,7 +710,17 @@ const styles = StyleSheet.create((theme) => ({
   },
   // The host's page rows sit their text further in than menu rows; this column makes up the difference.
   embeddedColumn: {
-    paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx - MENU_ROW_METRICS.paddingHorizontalPx,
+    paddingHorizontal: EMBEDDED_COLUMN_INSET_PX,
+  },
+  // Among a page section's rows the state line already stands on their text edge and value column (its own
+  // page-row inset and glyph column), so hosted in a page row it leaves the menu column and adds no correction.
+  stateLineEmbedded: {
+    marginHorizontal: -EMBEDDED_COLUMN_INSET_PX,
+    paddingVertical: theme.space.s8,
+  },
+  undoLineEmbedded: {
+    marginHorizontal: -EMBEDDED_COLUMN_INSET_PX,
+    paddingVertical: theme.space.s4,
   },
   trailing: { color: theme.colors.text.tertiary },
   reserved: { opacity: 0 },
