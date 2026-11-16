@@ -3240,20 +3240,24 @@ describe('shared Account workflow run owner', () => {
     expect(resumed).toBe(allowed);
   });
 
-  it('refuses new origin reporting when the captured Account policy is unavailable', async () => {
+  it.each([
+    Object.assign(new Error('run_access_denied'), { code: 'run_access_denied' }),
+    Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' }),
+    new Error('preferences_unavailable'),
+  ])('preserves the originating report-policy read failure: %s', async (failure) => {
     const execute = vi.fn<WorkflowAccountRunActionDeps['storage']['execute']>(async () => {
       throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
     });
     const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute }),
       prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
       resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
-      resolveRunReportPolicy: async () => { throw new Error('preferences_unavailable'); },
+      resolveRunReportPolicy: async () => { throw failure; },
     });
     await expect(owner.execute({ actionId: 'workflow.run.start', input: { runId,
       source: { kind: 'inline', definition }, onComplete: { kind: 'originating_session' } },
       context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'safe-yolo', defaultSessionId: 'origin-1',
         externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } },
-    })).rejects.toMatchObject({ code: 'content_unavailable' });
+    })).rejects.toBe(failure);
     expect(execute.mock.calls.every(([operation]) => operation.operation === 'get')).toBe(true);
   });
 

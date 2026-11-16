@@ -1402,8 +1402,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     let reportPolicy: FollowPolicyV1 | undefined;
     if (resultDelivery?.kind === 'originating_session') {
       if (!deps.resolveRunReportPolicy) throw workflowError('content_unavailable');
+      const resolvedReportPolicy = await deps.resolveRunReportPolicy(args);
       try {
-        reportPolicy = FollowPolicyV1Schema.parse(await deps.resolveRunReportPolicy(args));
+        reportPolicy = FollowPolicyV1Schema.parse(resolvedReportPolicy);
       } catch {
         args.context.signal?.throwIfAborted();
         throw workflowError('content_unavailable');
