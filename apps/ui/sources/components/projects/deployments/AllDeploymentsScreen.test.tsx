@@ -248,6 +248,28 @@ describe('Projects → All deployments', () => {
     controller.retire();
   });
 
+  it('counts the search results instead of the unfiltered Account, and restores the total when cleared', async () => {
+    const { t } = await import('@/text');
+    const items = [environment('env-shop', 'source-shop', 'Production', { projectSourceName: 'storefront' }),
+      environment('env-api', 'source-api', 'API', { projectSourceName: 'payments' })];
+    const { controller } = controllerFor(() => page(items, { nextCursor: 'later' }), {
+      listEnvironments: async (_scope, query) => ({ ok: true, value: {
+        items, nextCursor: 'later', ...(query?.includeTotal ? { totalCount: 2417 } : {}),
+      } }),
+    });
+    try {
+      const screen = await render(controller, 'all-deployments');
+      const head = () => screen.root.findAll((node) => node.props.testID === 'all-deployments.header' && 'search' in node.props)[0]!;
+      await act(async () => { head().props.search.onChangeText('payments'); });
+      expect(screen.findByTestId('all-deployments.row.env-shop')).toBeNull();
+      expect(screen.findByTestId('all-deployments.row.env-api')).not.toBeNull();
+      expect(head().props.count).toContain(t('projects.deployments.services.countEnvironments', { environments: 1, projects: 1 }));
+      expect(head().props.count).not.toContain(t('projects.deployments.services.countEnvironmentsTotal', { count: 2417 }));
+      await act(async () => { head().props.search.onChangeText(''); });
+      expect(head().props.count).toContain(t('projects.deployments.services.countEnvironmentsTotal', { count: 2417 }));
+    } finally { controller.retire(); }
+  });
+
   it('keeps a page that hides every row it read leading on, instead of calling the Account empty', async () => {
     const { controller, calls } = controllerFor((cursor) =>
       cursor
