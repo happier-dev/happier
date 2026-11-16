@@ -2043,6 +2043,7 @@
     "sources/components/settings/appearance/themeProfiles/ThemeProfilePreviewPane.tsx",
     "sources/components/settings/appearance/themeProfiles/ThemeProfilesSettingsScreen.tsx",
     "sources/components/settings/appearance/themeProfiles/index.ts",
+    "sources/components/settings/appearance/themeProfiles/themeProfileEditorActions.ts",
     "sources/components/settings/appearance/themeProfiles/themeProfileEditorModel.ts",
     "sources/components/settings/appearance/themeProfiles/themeProfileFileExport.ts",
     "sources/components/settings/appearance/themeProfiles/themeProfilePresetOptions.ts",

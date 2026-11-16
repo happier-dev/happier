@@ -3180,6 +3180,7 @@
     "sources/components/settings/appearance/themeHorizonTransition.web.test.ts",
     "sources/components/settings/appearance/themePreferenceTransition.test.ts",
     "sources/components/settings/appearance/themeProfiles/ThemeProfileEditorScreen.geometry.test.tsx",
+    "sources/components/settings/appearance/themeProfiles/themeProfileEditorActions.test.ts",
     "sources/components/settings/appearance/themeProfiles/ThemeProfilePreviewPane.surfaceChrome.test.tsx",
     "sources/components/settings/appearance/themeProfiles/themeProfileEditorModel.test.ts",
     "sources/components/settings/appearance/themeProfiles/themeProfileFileExport.test.ts",
