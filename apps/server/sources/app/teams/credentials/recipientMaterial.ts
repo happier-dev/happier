@@ -1,5 +1,6 @@
 import type { TeamCredentialActionOperationConsumerV1 } from '@happier-dev/protocol/teams/credentials/actionOperationV1';
 import { admitTeamCredentialActionDeclarationInTx } from './actionDeclarationAdmission';
+import type { CurrentPluginDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { computeTeamCredentialSourceMemberKeyV1, matchesTeamCredentialSourceVersionBasisV1, parseTeamCredentialDirectMaterialStoredV1, parseTeamCredentialSourceVersionV1, type TeamCredentialDirectMaterialUseV1, type TeamCredentialDirectMaterialStoredV1, type TeamCredentialDirectMaterialMineResponseV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
 import { type TeamCredentialPreparationOutputV1 } from '@happier-dev/protocol/teams/credentials/actionsV1';
@@ -578,7 +579,9 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
             | { kind: "platform_operation"; operationId: string }
             | TeamCredentialActionOperationConsumerV1
         >;
-        actionAdmission?: Readonly<{ rootActionId: string; machineId: string; admittedReviewedChildActionId?: string }>;
+        actionAdmission?: Readonly<{ rootActionId: string; machineId: string; admittedReviewedChildActionId?: string;
+            /** From `readTeamCredentialActionDeclaration`, read before this transaction's Account lock. */
+            preparedDeclaration: CurrentPluginDeclarationV1 | null }>;
         sessionAuthentication: SessionAccessAuthentication;
         authentication: TeamOperationAuthenticationContext;
     }>,
@@ -635,6 +638,7 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
             rootActionId: input.actionAdmission.rootActionId, pluginVersion: input.consumer.pluginVersion,
             consumer: input.consumer, source: admitted.sourceBinding,
             admittedReviewedChildActionId: input.actionAdmission.admittedReviewedChildActionId,
+            preparedDeclaration: input.actionAdmission.preparedDeclaration,
         });
         if (!declaration.ok) return { ok: false, outcome: 'unavailable', reason: 'access_removed' };
     }

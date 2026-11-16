@@ -1,3 +1,4 @@
+import { readTeamCredentialActionDeclaration } from './actionDeclarationAdmission';
 import { PluginManifestV2Schema, type PluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { computeCanonicalDomainSeparatedDigest, encodePlainMachineStoredContent, decodeBase64,
     MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
@@ -99,14 +100,21 @@ export async function createTeamDirectActionMaterialFixture(options: Readonly<{
     const consumer = { kind: 'action_operation' as const, operationId: 'finite-request',
         actionId: `${manifest.id}/actions/${purpose.consumer.localId}` as const, pluginVersion: manifest.version, purpose };
     // The owner admits any root Action id; refusal cases substitute non-plugin roots.
-    const actionAdmission: NonNullable<Parameters<typeof readCurrentTeamCredentialRecipientMaterialInTx>[1]['actionAdmission']> = {
-        rootActionId: consumer.actionId, machineId: machine.id };
+    const actionAdmission: Omit<NonNullable<Parameters<typeof readCurrentTeamCredentialRecipientMaterialInTx>[1]['actionAdmission']>,
+        'preparedDeclaration'> = { rootActionId: consumer.actionId, machineId: machine.id };
     const input = { teamId: team.id, resourceId: resource.id, recipientAccountId: recipient.id,
         slot: { kind: 'connected_service_purpose' as const, purpose }, disclosedMember: sourceAccount, consumer,
         actionAdmission,
         sessionAuthentication: { env: process.env, authority: 'present_user' as const, authenticationEvidence: [] },
         authentication: { authenticationAuthority: 'present_user' as const } };
-    const readCurrent = (override: Partial<typeof input> = {}) => inTx(tx => readCurrentTeamCredentialRecipientMaterialInTx(tx, { ...input, ...override }));
+    // Like the material route, prepare the declaration body before the locked read.
+    const readCurrent = async (override: Partial<typeof input> = {}) => {
+        const current = { ...input, ...override };
+        const preparedDeclaration = await readTeamCredentialActionDeclaration({ accountId: current.recipientAccountId,
+            machineId: current.actionAdmission.machineId, consumer: current.consumer });
+        return await inTx(tx => readCurrentTeamCredentialRecipientMaterialInTx(tx, { ...current,
+            actionAdmission: { ...current.actionAdmission, preparedDeclaration } }));
+    };
     return { custodian, recipient, team, membership, machine, broker, manifest, resource, sourceAccount, sourceMemberKey,
         sourceVersion, payload, stored, purpose, consumer, input, readCurrent, setDeclaredService };
 }

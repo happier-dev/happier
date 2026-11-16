@@ -484,7 +484,7 @@ describe('Team credential Provider broker admission', () => {
         const { PluginManifestV2Schema } = await import('@happier-dev/protocol/plugins/manifest/v2');
         const manifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);
         const { createReleaseLessDeclarationV1 } = await import('@/app/plugins/availability/currentDeclaration');
-        const { admitTeamCredentialActionDeclarationInTx } = await import('./actionDeclarationAdmission');
+        const { admitTeamCredentialActionDeclarationInTx, readTeamCredentialActionDeclaration } = await import('./actionDeclarationAdmission');
         await db.accountPluginIntent.create({ data: { accountId: fixture.requester.id, pluginId: manifest.id,
             enabled: true, desiredVersion: null, writableCollections: [], releaseLessDeclaration: createReleaseLessDeclarationV1(manifest) } });
         const descriptor = manifest.contributes.machineProvisioners[0]!;
@@ -498,7 +498,9 @@ describe('Team credential Provider broker admission', () => {
                 purpose: { consumer: { pluginId: manifest.id, localId }, purpose: 'cloud-api' } };
             const input = { accountId: fixture.requester.id, machineId: fixture.worker.id,
                 rootActionId: role === 'options' ? 'machines.provisioners.options' : 'machines.managed.acquire',
-                pluginVersion: manifest.version, consumer, source };
+                pluginVersion: manifest.version, consumer, source,
+                preparedDeclaration: await readTeamCredentialActionDeclaration({ accountId: fixture.requester.id,
+                    machineId: fixture.worker.id, consumer }) };
             expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, input)))
                 .toMatchObject({ ok: true, action: { id: localId } });
             expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, { ...input,
@@ -514,7 +516,7 @@ describe('Team credential Provider broker admission', () => {
         const fixture = await createBrokerFixture('finite-declaration');
         const { PluginManifestV2Schema } = await import('@happier-dev/protocol/plugins/manifest/v2');
         const { createReleaseLessDeclarationV1 } = await import('@/app/plugins/availability/currentDeclaration');
-        const { admitTeamCredentialActionDeclarationInTx } = await import('./actionDeclarationAdmission');
+        const { admitTeamCredentialActionDeclarationInTx, readTeamCredentialActionDeclaration } = await import('./actionDeclarationAdmission');
         const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: 'example.cloud', version: '1.0.0',
             displayName: 'Cloud', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             hostAccess: { required: [{ id: 'cloud-api', capability: 'connectedAccounts', reason: 'Provision Machines',
@@ -529,8 +531,10 @@ describe('Team credential Provider broker admission', () => {
             purpose: { consumer: { pluginId: manifest.id, localId: 'options' }, purpose: 'cloud-api' } };
         const source = { v: 1 as const, kind: 'connected_account' as const, credentialIncarnation: 'owner-credential',
             target: { kind: 'account' as const, account: { service: { pluginId: manifest.id, localId: 'cloud' }, accountId: 'owner-cloud' } } };
+        const preparedDeclaration = await readTeamCredentialActionDeclaration({ accountId: fixture.requester.id,
+            machineId: fixture.worker.id, consumer });
         const input = { accountId: fixture.requester.id, machineId: fixture.worker.id, rootActionId: consumer.actionId,
-            pluginVersion: manifest.version, consumer, source };
+            pluginVersion: manifest.version, consumer, source, preparedDeclaration };
         const admitted = await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, input));
         expect(admitted).toMatchObject({ ok: true, declaration: { version: manifest.version,
             manifestDigestSha256: createReleaseLessDeclarationV1(manifest).manifestDigestSha256 }, action: { id: 'options' } });
@@ -553,6 +557,8 @@ describe('Team credential Provider broker admission', () => {
             data: { enabled: false } });
         expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, input)))
             .toEqual({ ok: false, reason: 'action_not_declared' });
+        expect(await readTeamCredentialActionDeclaration({ accountId: fixture.requester.id,
+            machineId: fixture.worker.id, consumer })).toBeNull();
     });
 
     it.each(['connected_account', 'connected_pool'] as const)('preserves reconnect-required source health in %s broker admission', async kind => {

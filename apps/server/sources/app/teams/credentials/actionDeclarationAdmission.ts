@@ -10,13 +10,27 @@ import type { PluginActionContributionV2 } from '@happier-dev/protocol/plugins/a
 import type { TeamCredentialActionOperationConsumerV1 } from '@happier-dev/protocol/teams/credentials/actionOperationV1';
 import type { TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
 import type { PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
-import { resolveCurrentPluginDeclarationTx } from '@/app/plugins/availability/currentDeclaration';
+import { resolveCurrentPluginDeclarationTx, type CurrentPluginDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
+import { db } from '@/storage/db';
 import type { Tx } from '@/storage/inTx';
 
 export type TeamCredentialActionDeclarationAdmission =
     | Readonly<{ ok: true; declaration: Readonly<{ version: string; manifestDigestSha256: PluginUiArtifactDigestV1 }>;
         action: PluginActionContributionV2; manifest: ParsedPluginManifestV2 }>
     | Readonly<{ ok: false; reason: 'action_not_declared' | 'purpose_not_declared' | 'source_not_declared' }>;
+
+/** Reads the consumer's selected declaration body before the caller takes its
+ * Account serialization lock; admission rechecks only its identity under it. */
+export async function readTeamCredentialActionDeclaration(input: Readonly<{
+    accountId: string;
+    machineId: string;
+    consumer: TeamCredentialActionOperationConsumerV1;
+}>): Promise<CurrentPluginDeclarationV1 | null> {
+    const identity = parseQualifiedPluginActionId(input.consumer.actionId);
+    if (!identity) return null;
+    return await resolveCurrentPluginDeclarationTx({ tx: db, accountId: input.accountId,
+        pluginId: identity.pluginId, version: input.consumer.pluginVersion, machineId: input.machineId });
+}
 
 /** The Team operation owner admits declared credential use once, from Home's
  * selected declaration. Executing hosts consume the signed result. */
@@ -28,11 +42,17 @@ export async function admitTeamCredentialActionDeclarationInTx(tx: Tx, input: Re
     pluginVersion: string;
     consumer: TeamCredentialActionOperationConsumerV1;
     source: TeamCredentialSourceBindingV1;
+    /** From `readTeamCredentialActionDeclaration`, read before the Account lock. */
+    preparedDeclaration: CurrentPluginDeclarationV1 | null;
 }>): Promise<TeamCredentialActionDeclarationAdmission> {
     const identity = parseQualifiedPluginActionId(input.consumer.actionId);
-    if (!identity || input.consumer.pluginVersion !== input.pluginVersion) return { ok: false, reason: 'action_not_declared' };
+    if (!identity || input.consumer.pluginVersion !== input.pluginVersion || !input.preparedDeclaration) {
+        return { ok: false, reason: 'action_not_declared' };
+    }
+    // Selection is current only if it still names the prepared body's identity.
     const declaration = await resolveCurrentPluginDeclarationTx({ tx, accountId: input.accountId,
-        pluginId: identity.pluginId, version: input.pluginVersion, machineId: input.machineId });
+        pluginId: identity.pluginId, version: input.pluginVersion, machineId: input.machineId,
+        admittedDeclaration: input.preparedDeclaration });
     if (!declaration || (input.rootActionId !== input.consumer.actionId
         && !(input.rootActionId === ACTION_INVOKE_ACTION_ID_V1 && input.admittedReviewedChildActionId === input.consumer.actionId)
         && !isManagedProvisionerOperationActionForRootV1(input.rootActionId, identity, declaration.manifest)

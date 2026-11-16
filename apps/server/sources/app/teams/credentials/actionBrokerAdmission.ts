@@ -25,7 +25,7 @@ import { classifyMachineDaemonPresence, type MachineDaemonPresenceInventory } fr
 import { readProviderBrokerInitiatorEndpointInTx, admitProviderBrokerTopology } from '@/app/providers/brokerConsumerAdmission';
 import { signProviderBrokerActionRouteGrantV3 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
 import { admitTeamCredentialOperationBindingInTx } from './sessionBinding';
-import { admitTeamCredentialActionDeclarationInTx } from './actionDeclarationAdmission';
+import { admitTeamCredentialActionDeclarationInTx, readTeamCredentialActionDeclaration } from './actionDeclarationAdmission';
 import { readTeamCredentialBrokerPresenceDemand, resolveTeamCredentialBrokerPlacementInTx, readTeamCredentialBrokerPlacement, resolveTeamCredentialBrokerPlacementFingerprint } from './brokerPlacementResolver';
 
 export type TeamCredentialActionBrokerOpenInput = Readonly<{
@@ -88,6 +88,9 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
             return { ok: false, reasonCode: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired };
         }
     }
+    const preparedDeclaration = await readTeamCredentialActionDeclaration({ accountId: input.actorAccountId,
+        machineId: request.initiatorMachineId, consumer: request.consumer });
+    input.signal?.throwIfAborted();
     return await inTx(async tx => {
         await acquireAccountChangePublicationLocksInTx(tx, [input.actorAccountId, hint.custodianAccountId],
             { includeSingleAccount: true, intent: 'serializing' });
@@ -111,6 +114,7 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
         const declaration = await admitTeamCredentialActionDeclarationInTx(tx, {
             accountId: input.actorAccountId, machineId: request.initiatorMachineId, rootActionId: input.rootActionId,
             pluginVersion: request.consumer.pluginVersion, consumer: request.consumer, source: admitted.sourceBinding,
+            preparedDeclaration,
             ...(input.admittedReviewedChildActionId ? { admittedReviewedChildActionId: input.admittedReviewedChildActionId } : {}),
         });
         if (!declaration.ok) return { ok: false as const, reasonCode: 'resource_forbidden' as const };

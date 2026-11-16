@@ -2,6 +2,7 @@ import { TeamCredentialErrorCodeV1Schema, teamCredentialErrorHttpStatusV1, TeamC
 import { TeamCredentialTestActionInputV1Schema, TeamCredentialTestActionOutputV1Schema, TeamCredentialPreparationOutputV1Schema } from '@happier-dev/protocol/teams/credentials/actionsV1';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoverInputV1Schema, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { TeamCredentialSourceCandidateListInputV1Schema, TeamCredentialSourceCandidateListOutputV1Schema, TeamCredentialSourceResourceListInputV1Schema, TeamCredentialSourceResourceListOutputV1Schema, TeamCredentialSourceResourceAdministrationV1Schema, TeamCredentialUsageLimitDeleteInputV1Schema, TeamCredentialUsageLimitListInputV1Schema, TeamCredentialUsageLimitListOutputV1Schema, TeamCredentialUsageLimitUpsertInputV1Schema, TeamCredentialUsageLimitUpsertOutputV1Schema, TeamCredentialUsageQueryInputV1Schema, TeamCredentialUsageQueryResultV1Schema, TeamCredentialExternalApiKeyCreateInputV1Schema, TeamCredentialExternalApiKeyAuthorizeInputV1Schema, TeamCredentialExternalApiKeyAuthorizeOutputV1Schema, TeamCredentialExternalApiKeyCreateOutputV1Schema, TeamCredentialExternalApiKeyListInputV1Schema, TeamCredentialExternalApiKeyListOutputV1Schema, TeamCredentialExternalApiKeyRevokeInputV1Schema, TeamCredentialExternalApiKeyRevokeOutputV1Schema, TeamCredentialExternalApiKeyRevokeAllInputV1Schema, TeamCredentialExternalApiKeyRevokeAllOutputV1Schema } from '@happier-dev/protocol/teams';
+import { readTeamCredentialActionDeclaration } from './actionDeclarationAdmission';
 import { RunnerBrokerReadinessRequestV1Schema } from '@happier-dev/protocol/ephemeralRunner/brokerReadinessRequestV1';
 import { RunnerBrokerReadinessResponseV1Schema } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import { TeamCredentialDirectMaterialRouteParamsV1Schema, TeamCredentialDirectMaterialReadQueryV1Schema, TeamCredentialDirectMaterialMineResponseV1Schema, TeamCredentialDirectMaterialOpenRequestV1Schema, TeamCredentialDirectMaterialPreparationResponseV1Schema, TeamCredentialDirectMaterialUpsertRequestV1Schema, TeamCredentialDirectMaterialUpsertResponseV1Schema, TeamCredentialDirectMaterialWithdrawRequestV1Schema, TeamCredentialDirectMaterialWithdrawResponseV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -675,10 +676,16 @@ export function registerTeamCredentialResourceRoutes(
                 status: "unavailable", reason: "access_removed",
             }));
         }
+        const actionAdmission = request.externalActionActionMaterialAdmission;
+        // Declaration bodies are read before the material transaction's Account lock.
+        const preparedDeclaration = actionAdmission && body.data.consumer.kind === "action_operation"
+            ? await readTeamCredentialActionDeclaration({ accountId: request.userId,
+                machineId: actionAdmission.machineId, consumer: body.data.consumer })
+            : null;
         const result = await inTx(tx => readCurrentTeamCredentialRecipientMaterialInTx(tx, {
             ...params.data,
             recipientAccountId: request.userId,
-            ...(request.externalActionActionMaterialAdmission ? { actionAdmission: request.externalActionActionMaterialAdmission } : {}),
+            ...(actionAdmission ? { actionAdmission: { ...actionAdmission, preparedDeclaration } } : {}),
             ...("sourceMemberKey" in body.data
                 ? { slot: body.data.slot, sourceMemberKey: body.data.sourceMemberKey }
                 : { slot: body.data.slot, disclosedMember: body.data.disclosedMember }),
