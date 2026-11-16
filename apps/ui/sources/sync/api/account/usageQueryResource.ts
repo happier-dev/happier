@@ -2378,10 +2378,15 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     allowanceOnlyDemand = allowanceOnlyDemand !== false && !accountModeChanged
                         && (change === 'quota-inputs' || typeof change === 'object' && isUsageQuotaHomeAccountChange(change));
                     woken = true;
-                    // An accounting push changes freshness, not the admitted
+                    const accountingWake = typeof change === 'object'
+                        && change.source !== 'connected' && change.source !== 'snapshot'
+                        && (change.usageAccountingChange !== undefined
+                            || change.feedPageConsumed === true && change.usageAccountingAffects === true)
+                        && !allowanceChanged;
+                    // Accounting pushes and consumed pages change freshness, not the admitted
                     // read's lifetime. Let that read settle as stale instead of
                     // feeding an endless chain of queued replacement reads.
-                    if (!accountModeChanged && typeof change === 'object' && change.usageAccountingChange && activeReadDemand) return;
+                    if (!accountModeChanged && accountingWake && activeReadDemand) return;
                     // Presentation inputs keep the admitted source facts fresh.
                     // The same-process invalidation keeps the store's existing
                     // continuity hint without materializing transport bytes.
@@ -2393,7 +2398,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         ? { kind: 'invalidated' as const, supersede: true as const }
                         : content && event.kind === 'invalidated'
                             ? { kind: 'invalidated' as const, contentIdentity: decodedValues.get(content)?.value } : event;
-                    if (!accountModeChanged && typeof change === 'object' && change.usageAccountingChange) {
+                    if (!accountModeChanged && accountingWake) {
                         // Committed facts in one synchronous burst invalidate now,
                         // then admit their one replacement together. Starting a read
                         // inside the first push queues a redundant pre-dispatch read.

@@ -739,13 +739,26 @@ it('reads each accounting fact once across a cold Usage page mount at fixture sc
 });
 
 
-it('settles a slow accounting read as stale under continuous usage pushes without reissuing it', async () => {
+it.each(['usage-push', 'changes-feed'] as const)('settles a slow accounting read as stale under continuous %s without reissuing it', async delivery => {
     const entered = createDeferred<void>();
     const released = createDeferred<void>();
     let reads = 0;
     const capturedCounts: number[] = [];
     let streaming = true;
     let revision = 1;
+    const publishAccountingChange = (serverId: string) => {
+        if (delivery === 'usage-push') {
+            publishHomeAccountChange(serverId, [], { changeKinds: ['account'], usageQueryAffects: true,
+                usageAccountingChange: { sessionId: null } });
+        } else {
+            // Loaded How-you-work received this mixed durable-page shape while
+            // its accounting HTTP response was still in flight.
+            publishHomeAccountChange(serverId, ['changed-session', 'changed-machine'], {
+                changeKinds: ['machine', 'pluginDomain', 'account', 'automation', 'kv', 'session'],
+                usageQueryAffects: true, usageAccountingAffects: true, feedPageConsumed: true,
+            });
+        }
+    };
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-starvation.test', accountId: 'account-a' }],
         route: async request => {
             if (request.path !== '/v2/usage/query-batch') return undefined;
@@ -757,8 +770,7 @@ it('settles a slow accounting read as stale under continuous usage pushes withou
             await released.promise;
             if (streaming && reads <= 3) {
                 revision++;
-                publishHomeAccountChange(server.id, [], { changeKinds: ['account'], usageQueryAffects: true,
-                    usageAccountingChange: { sessionId: null } });
+                publishAccountingChange(server.id);
                 await flushHookEffects({ cycles: 2 });
             }
             return Response.json({ v: 1, results: input.queries.map(query => ({ query, value: { v: 1,
@@ -779,8 +791,7 @@ it('settles a slow accounting read as stale under continuous usage pushes withou
         await entered.promise;
         for (let index = 0; index < 20; index++) {
             revision++;
-            publishHomeAccountChange(server.id, [], { changeKinds: ['account'], usageQueryAffects: true,
-                usageAccountingChange: { sessionId: null } });
+            publishAccountingChange(server.id);
             await flushHookEffects({ cycles: 2 });
         }
         released.resolve();
