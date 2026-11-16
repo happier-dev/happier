@@ -127,7 +127,16 @@ function isDeepFrozenDataGraph(value: unknown): boolean {
   return true;
 }
 
-// Mutable declarations still pass admission on every read; unchanged bytes keep
+/**
+ * Admitted documents by their strict JSON text. A freshly decoded copy of a schema this process
+ * already admitted (every wire parse of an Action output or manifest carries new objects) is the
+ * same document: it reuses that admission and its compiler identity instead of re-validating.
+ * Ceiling: one entry per distinct schema text, i.e. the declared contribution and output schemas.
+ * A producer minting a new schema text per read would grow this map without bound.
+ */
+const admittedSchemaDocumentsByText = new Map<string, PluginJsonSchemaV2>();
+
+// Mutable declarations still pass strict admission on every read; unchanged bytes keep
 // one immutable compiler identity, and edits replace it instead of reusing stale code.
 export function normalizePluginJsonSchema(schema: object): PluginJsonSchemaV2 {
   const previous = normalizedPluginJsonSchemas.get(schema);
@@ -144,20 +153,26 @@ export function normalizePluginJsonSchema(schema: object): PluginJsonSchemaV2 {
     }
     normalized = Object.freeze({ ...cloned, $schema: CANONICAL_PLUGIN_JSON_SCHEMA_DIALECT });
   }
-  const parsed = PluginJsonSchemaV2Schema.safeParse(normalized);
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    const basePath = issue && issue.path.length > 0 ? `schema.${issue.path.join('.')}` : 'schema';
-    const path = issue?.code === 'unrecognized_keys' && issue.keys[0]
-      ? `${basePath}.${issue.keys[0]}`
-      : basePath;
-    throw invalidSchema(`${path}: ${issue?.message ?? 'outside the public plugin schema vocabulary'}`);
+  // The strict clone above is exact JSON, so its text identifies the document.
+  const text = JSON.stringify(normalized);
+  let jsonSchema = admittedSchemaDocumentsByText.get(text);
+  if (!jsonSchema) {
+    const parsed = PluginJsonSchemaV2Schema.safeParse(normalized);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      const basePath = issue && issue.path.length > 0 ? `schema.${issue.path.join('.')}` : 'schema';
+      const path = issue?.code === 'unrecognized_keys' && issue.keys[0]
+        ? `${basePath}.${issue.keys[0]}`
+        : basePath;
+      throw invalidSchema(`${path}: ${issue?.message ?? 'outside the public plugin schema vocabulary'}`);
+    }
+    // `cloneStrictPluginJsonValue` is the sole strict, recursively immutable
+    // JSON owner. Zod only verifies this established value; returning its
+    // parser output would create a second mutable projection.
+    assertSchemaSemantics(normalized as Readonly<Record<string, unknown>>);
+    jsonSchema = previous && pluginJsonValuesEqual(previous, normalized) ? previous : normalized as PluginJsonSchemaV2;
+    admittedSchemaDocumentsByText.set(text, jsonSchema);
   }
-  // `cloneStrictPluginJsonValue` is the sole strict, recursively immutable
-  // JSON owner. Zod only verifies this established value; returning its
-  // parser output would create a second mutable projection.
-  assertSchemaSemantics(normalized as Readonly<Record<string, unknown>>);
-  const jsonSchema = previous && pluginJsonValuesEqual(previous, normalized) ? previous : normalized as PluginJsonSchemaV2;
   // Object.freeze alone (a frozen root, or accessors) proves nothing; a fully
   // frozen data graph that just passed admission cannot drift from it.
   if (isDeepFrozenDataGraph(schema)) immutableAdmittedSchemas.add(schema);

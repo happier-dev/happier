@@ -127,3 +127,20 @@ it('normalizes each declared document once when serialized provisioners reuse ro
     normalizations.mockRestore();
   }
 });
+
+it('admits each schema text once: a freshly decoded copy reuses the admitted document', () => {
+  const native = documents.defineProtocolObject({ name: documents.defineProtocolString() }, { policy: 'closed' });
+  // Every wire parse of an Action output or manifest carries new objects for the same schema.
+  const text = JSON.stringify({ ...native.jsonSchema, title: 'decoded-copy' });
+  const first = documents.normalizePluginJsonSchema(JSON.parse(text));
+  const copies = Array.from({ length: 40 }, () => documents.normalizePluginJsonSchema(JSON.parse(text)));
+  expect(copies.filter((copy) => copy !== first)).toHaveLength(0);
+  expect(documents.isNormalizedPluginJsonSchema(first)).toBe(true);
+  // An edited text is another document, and a copy that is not strict JSON is still refused.
+  const edited = documents.normalizePluginJsonSchema(JSON.parse(text.replace('decoded-copy', 'edited-copy')));
+  expect(edited).not.toBe(first);
+  expect(edited.title).toBe('edited-copy');
+  const accessor = JSON.parse(text) as Record<string, unknown>;
+  Object.defineProperty(accessor, 'title', { enumerable: true, get: () => 'decoded-copy' });
+  expect(() => documents.normalizePluginJsonSchema(accessor)).toThrow();
+});

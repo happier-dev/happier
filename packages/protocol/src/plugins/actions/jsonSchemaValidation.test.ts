@@ -86,9 +86,10 @@ describe('plugin JSON Schema validation policy', () => {
     try {
       for (let index = 0; index < 100; index += 1) expect(rehydrateCanonicalProtocolComposableSchema(owned)).toBe(first);
       expect(parses.mock.calls.length).toBe(0);
+      // A copy is re-read as strict JSON; its text is the admitted document's, so admission is not repeated.
       const copied = { ...owned };
-      expect(rehydrateCanonicalProtocolComposableSchema(copied)).not.toBeNull();
-      expect(parses.mock.calls.length).toBeGreaterThan(0);
+      expect(rehydrateCanonicalProtocolComposableSchema(copied)?.safeParse({ authority: 'first' }).success).toBe(true);
+      expect(parses.mock.calls.length).toBe(0);
       parses.mockClear();
       const frozen = Object.freeze({ ...raw });
       expect(rehydrateCanonicalProtocolComposableSchema(frozen)?.safeParse({ authority: 'first' }).success).toBe(true);
