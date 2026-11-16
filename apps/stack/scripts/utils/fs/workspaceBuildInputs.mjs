@@ -12,6 +12,14 @@ import { readSourceRuntimeDependencyIdentity } from '../../build/source_author_i
 const SOURCE_ROOTS = ['src', 'sources', 'scripts'];
 const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__snapshots__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
 const SERVER_GENERATED_INPUT_ROOTS = ['node_modules/.prisma/client', 'node_modules/@prisma/client', 'apps/server/generated'];
+/** The server's Prisma generator (apps/server/scripts/generateClients.ts) writes
+ * each client from one schema and stamps it with the sha256 of that schema. */
+export const SERVER_GENERATED_CLIENTS = Object.freeze([
+  { schema: 'apps/server/prisma/schema.prisma', client: 'node_modules/.prisma/client' },
+  { schema: 'apps/server/prisma/sqlite/schema.prisma', client: 'apps/server/generated/sqlite-client' },
+  { schema: 'apps/server/prisma/mysql/schema.prisma', client: 'apps/server/generated/mysql-client' },
+]);
+export const SERVER_GENERATED_CLIENT_STAMP = '.happier-source-schema.sha256';
 
 export function isSourceServerGeneratedInput(path) {
   return SERVER_GENERATED_INPUT_ROOTS.some(root => path.startsWith(`${root}/`));

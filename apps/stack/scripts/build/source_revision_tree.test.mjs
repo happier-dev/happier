@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
+import { generateServerClients, installServerGeneratorFixture, readGeneratedClientFields, writeServerSchemas, FIXTURE_MACHINE_SCHEMA } from '../testkit/core/server_generator_fixture.mjs';
 import { resolveSourceRevision } from './source_revision.mjs';
 import { beginPendingSourceStart } from '../runtime/shared/pending_source_start.mjs';
 import { prepareSourceTreeRuntimeComponents, prepareStackSourceRevisionTree, releaseStackSourceRevisionTree, releaseStackSourceTrees,
@@ -266,4 +267,38 @@ test('a restart onto a new tree keeps the tree it selected; stop releases only t
   // A later plain stop keeps the selected tree for the next start.
   await releaseStackSourceTrees({ stackBaseDir, components: ['server'] });
   assert.equal(await lstat(replacement.entrypoint).then(() => true, () => false), true);
+});
+
+// 2026-11-15: a runtime labelled with a clean revision ran clients generated from
+// another lane's uncommitted schema. A base's generated clients come from its own
+// revision; a committed schema change cannot ride a commit overlay over them.
+test('a base derives generated server clients from its revision schema; a committed schema change builds a new base', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules\napps/server/generated/\n');
+  await installServerGeneratorFixture(repoDir);
+  await gitIn('add', '.gitignore', 'apps/server/scripts/generateClients.ts', 'apps/server/prisma');
+  await gitIn('commit', '--quiet', '-m', 'schema');
+  // Another lane's uncommitted schema edit, generated into the shared checkout.
+  await writeServerSchemas(repoDir, FIXTURE_MACHINE_SCHEMA.replace('  id String\n', '  id String\n  metadataBytes Bytes\n'));
+  await generateServerClients(repoDir);
+  const treesRoot = fixture.path('trees');
+  let reloads = 0;
+  const reload = async () => {
+    const stack = `s${reloads += 1}`;
+    const revision = await resolveSourceTreeRevision({ repoDir, treesRoot, rev: 'HEAD', overlay: [],
+      outputDir: fixture.path(`descriptors-${stack}`) });
+    return await prepareStackSourceRevisionTree({ repoDir, treesRoot, treeDir: fixture.path(`stacks/${stack}/tree`),
+      descriptorPath: revision.descriptorPath });
+  };
+  const first = await reload();
+  assert.deepEqual(await readGeneratedClientFields(first.treeDir), { default: ['id'], sqlite: ['id'], mysql: ['id'] });
+  assert.deepEqual((await readGeneratedClientFields(repoDir)).default, ['id', 'metadataBytes'], 'the checkout keeps its own clients');
+  const committed = FIXTURE_MACHINE_SCHEMA.replace('  id String\n', '  id String\n  name String\n');
+  await writeServerSchemas(repoDir, committed);
+  await gitIn('commit', '--quiet', '-m', 'name', '--', 'apps/server/prisma');
+  await generateServerClients(repoDir);
+  const second = await reload();
+  assert.equal(second.baseBuilt, true);
+  assert.deepEqual(await readGeneratedClientFields(second.treeDir), { default: ['id', 'name'], sqlite: ['id', 'name'], mysql: ['id', 'name'] });
 });

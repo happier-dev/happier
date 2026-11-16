@@ -12,6 +12,7 @@ import { installSourceAdmissionFixture } from '../testkit/core/source_runtime_fi
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { buildSourceRuntimeBundle, captureSourceRuntimeSharedInputs, captureSourceWebBuildInputs, setBundleReadOnly } from './build_source_runtime.mjs';
 import { resolveSourceRevision } from './source_revision.mjs';
+import { generateServerClients, installServerGeneratorFixture, readGeneratedClientFields, writeServerSchemas, FIXTURE_MACHINE_SCHEMA } from '../testkit/core/server_generator_fixture.mjs';
 
 test('source capture includes new undeclared workspace imports and excludes unrelated and ignored sources', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-untracked-import-', registerCleanup: false });
@@ -288,4 +289,45 @@ test('revision capture takes committed bytes plus only the declared overlay, nev
   await writeFile(join(repoDir, overlayPath), 'export const version = "changed-overlay";');
   await assert.rejects(captureSourceRuntimeSharedInputs({ repoDir,
     outputDir: fixture.path('overlay-drift'), revision }), { code: 'BUILD_INPUTS_CHANGED' });
+});
+
+// 2026-11-15: a bundle labelled with a clean revision ran clients generated from
+// another lane's uncommitted schema (Machine.*Bytes, P2022 on /v1/machines).
+test('revision capture derives generated server clients from the revision schema, and reuses matching checkout clients', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-revision-generated-' });
+  const repoDir = fixture.path('repo');
+  await mkdir(repoDir);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+  await gitIn('init', '--quiet');
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules/\napps/server/generated/\n');
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }));
+  await mkdir(join(repoDir, 'apps/server/sources'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/server/package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
+  await writeFile(join(repoDir, 'apps/server/sources/main.light.ts'), 'export const main = true;');
+  await installServerGeneratorFixture(repoDir);
+  await gitIn('add', '-A');
+  await gitIn('commit', '--quiet', '-m', 'rev');
+  // Another lane's uncommitted schema edit, generated into the shared checkout.
+  await writeServerSchemas(repoDir, FIXTURE_MACHINE_SCHEMA.replace('  id String\n', '  id String\n  metadataBytes Bytes\n'));
+  await generateServerClients(repoDir);
+  assert.deepEqual((await readGeneratedClientFields(repoDir)).default, ['id', 'metadataBytes']);
+  const log = fixture.path('generator.log');
+  const env = { ...process.env, HSTACK_TEST_GENERATOR_LOG: log };
+  const generatorRuns = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean).length;
+  const capture = async name => {
+    const revision = await resolveSourceRevision({ repoDir, outputDir: fixture.path(`revisions-${name}`) });
+    const shared = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path(`shared-${name}`), revision, env });
+    return await captureSourceWebBuildInputs({ repoDir, component: 'server', outputDir: fixture.path(`server-${name}`), sharedSourceInputs: shared });
+  };
+  const dirty = await capture('dirty');
+  assert.deepEqual(await readGeneratedClientFields(dirty.repoDir), { default: ['id'], sqlite: ['id'], mysql: ['id'] },
+    'every generated client matches the revision schema');
+  assert.equal(await generatorRuns(), 1, 'the capture regenerates once');
+  assert.deepEqual((await readGeneratedClientFields(repoDir)).default, ['id', 'metadataBytes'], 'the checkout keeps its own clients');
+  // Warm path: checkout clients generated from the revision's schema are reused, never regenerated.
+  await writeServerSchemas(repoDir, FIXTURE_MACHINE_SCHEMA);
+  await generateServerClients(repoDir);
+  const clean = await capture('clean');
+  assert.deepEqual(await readGeneratedClientFields(clean.repoDir), { default: ['id'], sqlite: ['id'], mysql: ['id'] });
+  assert.equal(await generatorRuns(), 1, 'matching checkout clients add no generation');
 });

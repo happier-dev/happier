@@ -15,14 +15,14 @@ import { run } from '../utils/proc/proc.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
-import { readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
+import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 /**
  * QA source Stacks run a revision tree from source (owner 2026-11-14: one shared
  * base build per HEAD, each Stack's overlay applied at runtime from source).
  *
  * - One base tree per revision per host: the whole tracked tree at that revision,
- *   the ignored generated inputs the runtime consumes, and the host's installed
+ *   the ignored generated inputs the runtime consumes (derived from that revision), and the host's installed
  *   dependencies mounted so workspace imports resolve inside the tree. It is
  *   built once under a lock, published by rename and kept read-only.
  * - Each Stack runs a hardlink clone of it with only its declared overlay files
@@ -45,7 +45,8 @@ async function git(repoDir, args) {
 
 /** Paths that change what a base mounts or generates; they cannot be overlaid. */
 function shapesBase(path) {
-  return path === 'pnpm-lock.yaml' || path === 'pnpm-workspace.yaml' || path === 'package.json' || path.endsWith('/package.json');
+  return path === 'pnpm-lock.yaml' || path === 'pnpm-workspace.yaml' || path === 'package.json' || path.endsWith('/package.json')
+    || isRevisionGeneratorInput(path);
 }
 
 /** Bases this controller built or described, newest first. A remote host builds a described base once. */
@@ -161,6 +162,8 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, env = process.e
     const excluded = new Set([...descriptor.untracked, ...Object.keys(descriptor.overlay)]);
     await captureBuildInputFiles({ sourceDir: repoDir, captureDir: staging, readPaths: async () => [...new Set(inputs.flatMap(input => input.files))]
       .filter(path => !Object.hasOwn(descriptor.tree, path) && !excluded.has(path)) });
+    // Those generated inputs follow the revision's sources, not the checkout's.
+    await deriveRevisionGeneratedInputs({ captureDir: staging, sourceDir: repoDir, env, signal });
     await rm(baseDir, { recursive: true, force: true });
     await rename(staging, baseDir);
   } catch (error) {

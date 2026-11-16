@@ -75,7 +75,7 @@ export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, sig
       // One revision application for both roles keeps their shared bytes identical.
       const descriptor = await readSourceRevisionDescriptor(revision.descriptorPath);
       const files = await applySourceRevision({ captureDir: outputDir, sourceDir: repoDir, files: capture.files,
-        ownerDirs: [...new Set(Object.values(ownerDirsByComponent).flat())], descriptor });
+        ownerDirs: [...new Set(Object.values(ownerDirsByComponent).flat())], descriptor, env, signal });
       filesByComponent = Object.fromEntries(Object.entries(filesByComponent).map(([component, componentFiles]) => [component,
         files.filter(path => componentFiles.includes(path) || (!captured.has(path)
           && ownerDirsByComponent[component].some(dir => path.startsWith(`${dir}/`))))]));
@@ -113,7 +113,7 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
   // A shared capture already holds the revision's bytes; a direct capture applies it here.
   const descriptor = !sharedManifest && revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
   if (descriptor) capture.files = await applySourceRevision({ captureDir: outputDir, sourceDir: repoDir, files: capture.files,
-    ownerDirs: workspaceDirs, descriptor });
+    ownerDirs: workspaceDirs, descriptor, signal });
   const revisionIdentity = sharedManifest?.revision ?? (descriptor ? sourceRevisionIdentity(descriptor) : undefined);
   // The checkout's workspace list can name another lane's untracked package,
   // which the revision drops; mount only the workspaces the capture holds.

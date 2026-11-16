@@ -7,8 +7,10 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { createGzip, gunzipSync } from 'node:zlib';
-import { BuildInputDriftError } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
-import { isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
+import { BuildInputDriftError, mountInstalledNodeModules } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs, SERVER_GENERATED_CLIENT_STAMP, SERVER_GENERATED_CLIENTS } from '../utils/fs/workspaceBuildInputs.mjs';
+import { run } from '../utils/proc/proc.mjs';
+import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 
 /**
  * QA source captures run one committed revision plus the paths a Stack
@@ -20,7 +22,9 @@ import { isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs } from
  * that description to the capture it already makes from its own checkout:
  * - every tracked capture input has its revision blob shipped, so later
  *   checkout edits and mirror lag are repaired from Git objects;
- * - untracked authored paths are dropped; ignored generated outputs stay;
+ * - untracked authored paths are dropped; ignored generated outputs stay only
+ *   while they were generated from the revision's own sources, otherwise their
+ *   generator regenerates them in the capture (deriveRevisionGeneratedInputs);
  * - overlay paths keep the checkout's bytes, which must equal their declared digest.
  *
  * A descriptor is gzip(JSON header, "\n", raw blob bytes in header order). A
@@ -244,7 +248,7 @@ async function writeRevisionEntry(target, mode, bytes) {
  * owner directories, which admit revision files the checkout has deleted.
  * @returns {Promise<string[]>} the revision capture's path list
  */
-export async function applySourceRevision({ captureDir, sourceDir, files, ownerDirs = [], descriptor }) {
+export async function applySourceRevision({ captureDir, sourceDir, files, ownerDirs = [], descriptor, env = process.env, signal }) {
   const untracked = new Set(descriptor.untracked);
   const result = new Set();
   const drift = [];
@@ -282,5 +286,51 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
   if (drift.length) {
     throw new BuildInputDriftError(`[source-revision] capture differs from ${descriptor.key} at ${drift.length} path(s) (first: ${drift[0]}); the checkout or its mirror moved after the revision was described`);
   }
+  await deriveRevisionGeneratedInputs({ captureDir, sourceDir, env, signal });
   return [...result].sort();
+}
+
+/** A path whose change changes what a revision's generators produce. */
+export function isRevisionGeneratorInput(path) {
+  return SERVER_GENERATED_CLIENTS.some(({ schema }) => schema === path);
+}
+
+async function readStaleServerGeneratedClients(captureDir) {
+  const stale = [];
+  for (const { schema, client } of SERVER_GENERATED_CLIENTS) {
+    const source = await readCheckoutBytes(join(captureDir, schema));
+    if (!source) continue;
+    const stamp = await readFile(join(captureDir, client, SERVER_GENERATED_CLIENT_STAMP), 'utf8').catch(error =>
+      error.code === 'ENOENT' || error.code === 'ENOTDIR' ? null : Promise.reject(error));
+    if (stamp?.trim() !== sha256(source)) stale.push(client);
+  }
+  return stale;
+}
+
+/**
+ * Ignored generated inputs come from the checkout, which another lane's
+ * uncommitted schema may have regenerated (2026-11-15: a clean-revision bundle
+ * ran Machine.*Bytes clients, P2022). A capture keeps a checkout client only
+ * while the generator's stamp names the capture's (revision's) schema; otherwise
+ * the server's own generator regenerates every client inside the capture from
+ * the revision's schema. Matching clients cost three small reads.
+ * @returns {Promise<string[]>} the regenerated client directories
+ */
+export async function deriveRevisionGeneratedInputs({ captureDir, sourceDir, env = process.env, signal }) {
+  const stale = await readStaleServerGeneratedClients(captureDir);
+  if (!stale.length) return [];
+  const started = performance.now();
+  // Installed tools only, at the capture root: the captured physical clients stay
+  // the generator's output, and no workspace link or package cache leads back
+  // into the checkout for a write.
+  await mountInstalledNodeModules({ sourceModules: join(sourceDir, 'node_modules'), targetModules: join(captureDir, 'node_modules'),
+    excludedNames: ['@happier-dev'] });
+  await run(process.execPath, sourceBuildNodeArgs({ repoDir: captureDir, scriptPath: join(captureDir, 'apps/server/scripts/generateClients.ts') }), {
+    cwd: join(captureDir, 'apps/server'), signal, stdio: ['ignore', 'ignore', 'inherit'], captureFailureDiagnostic: true,
+    // Schema sync only checks: the capture's schemas are the revision's bytes.
+    env: { ...env, HAPPIER_BUILD_DB_PROVIDERS: 'all', HAPPIER_DEV_TARGET_EXECUTION: '1' } });
+  const remaining = await readStaleServerGeneratedClients(captureDir);
+  if (remaining.length) throw new Error(`[source-revision] generated server clients still differ from the captured schema: ${remaining.join(', ')}`);
+  console.error(`[source-revision] regenerated server clients from the captured schema (${stale.join(', ')}) elapsedMs=${Math.round(performance.now() - started)}`);
+  return stale;
 }
