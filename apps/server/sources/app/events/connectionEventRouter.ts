@@ -608,11 +608,10 @@ class EventRouter {
     /**
      * One wake for this node's row-demand sockets. The Account-wide facts of the rows (queued run ids)
      * are read once per wake, and each distinct credential's Session access once per wake, through
-     * the feed's own owner; sockets sharing a credential share its page. A socket the wake's filter
-     * excludes (another push carries its facts) stays contiguous without a page. A page starts at the
-     * last page pushed to its socket when every cursor in between was covered; otherwise at the wake's
-     * first cursor, and a consumer behind it reads the feed. A failed authorization sends the bare
-     * wake: the consumer reads the feed, whose own refusal stays the feed's.
+     * the feed's own owner; sockets sharing a credential share its page. A page covers exactly its
+     * wake, `(fromCursor - 1, toCursor]`, so it never claims rows it does not carry (a wake the socket
+     * was excluded from, a settings-only allocation): a consumer behind it reads that gap. A failed
+     * authorization sends the bare wake: the consumer reads the feed, whose own refusal stays the feed's.
      */
     private async deliverAccountChangeRows(
         delivery: AccountChangeRowsDeliveryV1, recipients: readonly AccountChangeRowsRecipient[],
@@ -625,17 +624,11 @@ class EventRouter {
             const connection = { connectionType: recipient.clientType, machineId: recipient.socket.data.machineId,
                 sessionId: recipient.socket.data.sessionId, socket: recipient.socket } as unknown as ClientConnection;
             if (this.shouldSendToConnection(connection, delivery.recipientFilter as RecipientFilter)) included.push(recipient);
-            else if (state.through === delivery.fromCursor - 1) state.through = delivery.toCursor;
         }
         if (included.length === 0) return;
         const payload = delivery.payload as UpdatePayload;
         const sendBare = (targets: readonly AccountChangeRowsRecipient[]) => {
-            for (const target of targets) {
-                const state = target.socket.data.accountChangeRows!;
-                state.delivered = undefined;
-                state.through = undefined;
-                target.emit(payload);
-            }
+            for (const target of targets) target.emit(payload);
         };
         if (!delivery.rows) return sendBare(included);
 
@@ -688,15 +681,8 @@ class EventRouter {
                 sendBare(group.recipients);
                 continue;
             }
-            for (const recipient of group.recipients) {
-                const state = recipient.socket.data.accountChangeRows!;
-                const after = state.delivered !== undefined && state.through === delivery.fromCursor - 1
-                    ? state.delivered : delivery.fromCursor - 1;
-                const pushed: PushedAccountChangesPageV1 = { v: 1, after, page: page.page };
-                state.delivered = nextCursor;
-                state.through = nextCursor;
-                recipient.emit({ ...payload, body: { ...payload.body, rows: pushed } });
-            }
+            const pushed: PushedAccountChangesPageV1 = { v: 1, after: delivery.fromCursor - 1, page: page.page };
+            for (const recipient of group.recipients) recipient.emit({ ...payload, body: { ...payload.body, rows: pushed } });
         }
     }
 

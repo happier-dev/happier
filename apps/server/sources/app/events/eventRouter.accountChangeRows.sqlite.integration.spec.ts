@@ -207,6 +207,50 @@ describe('Account wake with per-socket authorized change rows (SQLite)', () => {
         }
     });
 
+    it('never lets a page claim the cursors of a wake its socket was excluded from', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain', publicKey: `excluded-${crypto.randomUUID()}` } });
+        const viewed = await db.session.create({ data: { accountId: account.id, tag: 'viewed', encryptionMode: 'plain', metadata: '{}' } });
+        const other = await db.session.create({ data: { accountId: account.id, tag: 'other', encryptionMode: 'plain', metadata: '{}' } });
+        const http = createServer();
+        const io = new Server(http, { path: '/v1/updates' });
+        io.on('connection', socket => {
+            // A session host's Account socket: user-scoped, so a current-view wake excludes it.
+            Object.assign(socket.data, { userId: account.id, clientType: 'user-scoped',
+                authAuthority: 'present_user', authTokenAuthenticationEvidence: [] });
+            writeAccountStoredContentCompatibilityForSocket(socket, evaluateAccountStoredContentSocketCompatibility(socket.handshake.auth));
+            socket.data.accountChangeRows = { kinds: readAccountChangeRowsDemandV1(socket.handshake.auth)!.kinds };
+            void socket.join([getAccountStoredContentV3SocketRoom(account.id), getAccountChangeRowsSocketRoom(account.id), `user-scoped:${account.id}`]);
+            socket.emit('joined');
+        });
+        await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+        const address = http.address();
+        if (!address || typeof address === 'string') throw new Error('Missing test address');
+        eventRouter.setIo(io);
+        const client = connect(`http://127.0.0.1:${address.port}`, { path: '/v1/updates', transports: ['websocket'], reconnection: false,
+            auth: { accountStoredContentCompatibility: { v: 1, protocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION_PROTOCOL_VERSION },
+                accountChangeRows: { v: 1, kinds: ['session'] } } });
+        const wakes: Wake[] = [];
+        client.on('update', (wake: Wake) => { if (wake.body.t === 'account-change') wakes.push(wake); });
+        try {
+            await new Promise<void>((resolve, reject) => { client.once('joined', () => resolve()); client.once('connect_error', reject); });
+            await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: other.id }));
+            await vi.waitFor(() => expect(wakes).toHaveLength(1));
+            // Excluded: its rows reach this socket in no page.
+            await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: viewed.id, currentViewSessionId: viewed.id }));
+            const excludedCursor = (await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq;
+            await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: other.id }));
+            await vi.waitFor(() => expect(wakes).toHaveLength(2));
+            const last = wakes[1]!.body.rows!;
+            // The page covers only its own wake: a consumer still before the excluded cursor reads that gap.
+            expect(last.after).toBe(excludedCursor);
+            expect(last.page.changes.every(change => change.cursor > excludedCursor)).toBe(true);
+        } finally {
+            client.close();
+            eventRouter.clearIo();
+            await io.close();
+        }
+    });
+
     it('judges a filtered feed page full on the stored rows, so its reader reads on', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain', publicKey: `full-${crypto.randomUUID()}` } });
         const session = await db.session.create({ data: { accountId: account.id, tag: 'full', encryptionMode: 'plain', metadata: '{}' } });

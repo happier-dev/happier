@@ -334,11 +334,11 @@ projection is the feed owner's (`app/changes/readAccountChangesPage.ts`): the
 compatibility kind filter, queued execution-run ids (one read per wake) and the
 Session access witness (one batched read per wake per distinct credential;
 sockets with equal demand, compatibility and credential facts share one page).
-Each node delivers an Account's wakes in commit order. A page starts at the
-`nextCursor` of the last page its socket received when every cursor in between
-was covered (wakes the socket was excluded from because another push carried
-their facts count as covered); otherwise at the wake's first cursor. More rows
-than one page carries is a `full` page. A failed authorization sends the bare
+Each node delivers an Account's wakes in arrival order. A page covers exactly
+its own wake, `(fromCursor - 1, toCursor]`: it never claims cursors it does not
+carry, such as a wake its socket was excluded from or a settings-only
+allocation, and a consumer behind it reads that gap. More rows than one page
+carries is a `full` page. A failed authorization sends the bare
 wake. Across nodes the server-side delivery event carries those unprojected
 rows; each node authorizes them for its own sockets. Consumers apply a page
 only when their cursor lies in `[after, nextCursor)` and read the feed for
