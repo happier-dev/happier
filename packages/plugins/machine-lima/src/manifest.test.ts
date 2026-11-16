@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { afterAll, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -377,8 +377,14 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     const effects: string[][] = [];
     const exec: Pick<ExecService, 'run'> = { run: async request => {
       const args = [...(request.args ?? [])];
-      expect(request.env).toEqual(args[0] === 'info' || args[0] === '--version' ? undefined : { LIMA_HOME: resource.store });
-      expect(request.cwd).toBe(args[0] === 'info' || args[0] === '--version' ? undefined : resource.store);
+      if (args[0] === 'info' || args[0] === '--version') {
+        expect(request.env).toBeUndefined();
+        expect(request.cwd).toBeUndefined();
+      } else {
+        expect(request.cwd).toEqual(expect.any(String));
+        expect(request.env?.LIMA_HOME).toEqual(expect.any(String));
+        expect(resolve(request.cwd!, request.env!.LIMA_HOME!)).toBe(request.cwd);
+      }
       if (args[0] === '--version') return processResult(new TextEncoder().encode('limactl version 2.1.0'));
       if (args[0] === 'info') return processResult(new TextEncoder().encode(JSON.stringify({ hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz'] })));
       if (args[0] === 'list') {
@@ -394,7 +400,7 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
           return { ...processResult(), termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } } };
         }
         expect(guests.has(name)).toBe(false);
-        guests.set(name, { ...native, name, dir: `${resource.store}/${name}` });
+        guests.set(name, { ...native, name, dir: `${request.cwd}/${name}` });
       } else if (args[0] === 'delete') guests.delete(args.at(-1)!);
       else if (args[0] === 'stop' || args[0] === 'restart') {
         const guest = guests.get(args.at(-1)!)!;
@@ -422,6 +428,8 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     if (first.kind !== 'bound' || second.kind !== 'bound') throw new Error('expected native creation');
     const firstResource = LimaResourceSchema.parse(first.resource.value);
     const secondResource = LimaResourceSchema.parse(second.resource.value);
+    expect(guests.get(firstResource.instance)?.dir).toBe(join(firstResource.store, firstResource.instance));
+    expect(guests.get(secondResource.instance)?.dir).toBe(join(secondResource.store, secondResource.instance));
     expect(firstResource.instance).not.toBe(resource.instance);
     expect(secondResource.instance).not.toBe(resource.instance);
     expect(firstResource.instance).not.toBe(secondResource.instance);
@@ -486,7 +494,8 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     const effects: string[][] = [];
     const exec: Pick<ExecService, 'run'> = { run: async request => {
       const args = [...(request.args ?? [])];
-      expect(request.env).toEqual({ LIMA_HOME: resource.store });
+      expect(request.env?.LIMA_HOME).toEqual(expect.any(String));
+      expect(resolve(request.cwd!, request.env!.LIMA_HOME!)).toBe(resource.store);
       expect(request.cwd).toBe(resource.store);
       if (args[0] !== 'list') effects.push(args);
       if (args[0] === 'stop') status = 'Stopped';
@@ -587,7 +596,8 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     });
     const shell = requests.find((request) => request.args?.[0] === 'shell');
     expect(shell?.stdin && Array.from(shell.stdin)).toEqual(Array.from(input));
-    expect(shell?.env).toEqual({ LIMA_HOME: resource.store });
+    expect(shell?.env?.LIMA_HOME).toEqual(expect.any(String));
+    expect(resolve(shell!.cwd!, shell!.env!.LIMA_HOME!)).toBe(resource.store);
     expect(shell?.cwd).toBe(resource.store);
     expect(requests.filter((request) => request.stdin !== undefined)).toEqual([shell]);
   });
