@@ -12,6 +12,8 @@ import {
     createActivityAttentionSourceSelector,
     useActivityActiveServer,
     useActivityRuleAudienceScopes,
+    useActivityStoreSourceDetail,
+    type ActivitySourceDetail,
 } from './useActivityAttentionSource';
 import { useActivityPersonalSessionMembership } from './activityPersonalSessionMembership';
 
@@ -48,15 +50,19 @@ type Inputs = Readonly<{
     membership: ActivityPersonalSessionMembership;
     activeServer: ActiveServerSnapshot;
     audienceScopes: ReadonlyMap<string, ServerAccountScope>;
+    /** A detailed projection's transcripts-plus-audience source detail; `null` projects the summary source. */
+    detail: ActivitySourceDetail | null;
 }>;
 
 /** How a shared projection learns that its source moved; see `createActivityAttentionSourceSelector`. */
 export type ActivitySourceChangeDetection = 'signature' | 'identity';
 
+type SharedByProjector = Map<ActivitySourceProjectorFactory<Projected>, SharedProjection<Projected>>;
+
 // Every mounted consumer of the same projection with the same inputs reads one selector, one source
 // signature and one projection per store publication, instead of one each.
 const sharedByMembership = new WeakMap<ActivityPersonalSessionMembership,
-    WeakMap<ActiveServerSnapshot, Map<string, Map<ActivitySourceProjectorFactory<Projected>, SharedProjection<Projected>>>>>();
+    WeakMap<ActiveServerSnapshot, Map<string, Map<ActivitySourceDetail | null, SharedByProjector>>>>();
 
 function audienceScopesKey(scopes: ReadonlyMap<string, ServerAccountScope>): string {
     return JSON.stringify([...scopes].map(([home, scope]) => [home, scope.serverId, scope.accountId]).sort());
@@ -65,8 +71,10 @@ function audienceScopesKey(scopes: ReadonlyMap<string, ServerAccountScope>): str
 function createSharedProjection<T extends Projected>(inputs: Inputs, createProjector: ActivitySourceProjectorFactory<T>,
     retain: (previous: T | undefined, next: T) => T, changeDetection: ActivitySourceChangeDetection): SharedProjection<T> {
     const selectSource = createActivityAttentionSourceSelector({
-        personalMembership: inputs.membership, activeServer: inputs.activeServer, includeSessionMessages: false, changeDetection,
+        personalMembership: inputs.membership, activeServer: inputs.activeServer, includeSessionMessages: inputs.detail !== null,
+        changeDetection,
     });
+    const sourceDetail = inputs.detail ?? { audienceScopes: inputs.audienceScopes };
     let projector = createProjector();
     let previousState: StorageState | undefined;
     let previousSelected: ActivityAttentionSource | undefined;
@@ -89,7 +97,7 @@ function createSharedProjection<T extends Projected>(inputs: Inputs, createProje
                 projector.observeUnchangedSource?.(state);
                 return published;
             }
-            if (!source || previousSelected !== selected) source = { ...selected, audienceScopes: inputs.audienceScopes };
+            if (!source || previousSelected !== selected) source = { ...selected, ...sourceDetail };
             previousSelected = selected;
             published = retain(published, projector.project({ source, nowMs, state }));
             return published;
@@ -100,14 +108,16 @@ function createSharedProjection<T extends Projected>(inputs: Inputs, createProje
     };
 }
 
-function sharedProjectionsFor(inputs: Inputs) {
+function sharedProjectionsFor(inputs: Inputs): SharedByProjector {
     let byServer = sharedByMembership.get(inputs.membership);
     if (!byServer) sharedByMembership.set(inputs.membership, byServer = new WeakMap());
     let byScopes = byServer.get(inputs.activeServer);
     if (!byScopes) byServer.set(inputs.activeServer, byScopes = new Map());
     const scopesKey = audienceScopesKey(inputs.audienceScopes);
-    let byProjector = byScopes.get(scopesKey);
-    if (!byProjector) byScopes.set(scopesKey, byProjector = new Map());
+    let byDetail = byScopes.get(scopesKey);
+    if (!byDetail) byScopes.set(scopesKey, byDetail = new Map());
+    let byProjector = byDetail.get(inputs.detail);
+    if (!byProjector) byDetail.set(inputs.detail, byProjector = new Map());
     return byProjector;
 }
 
@@ -134,10 +144,13 @@ function releaseSharedProjection(inputs: Inputs, createProjector: ActivitySource
     if (shared.consumers > 0) return;
     const byScopes = sharedByMembership.get(inputs.membership)?.get(inputs.activeServer);
     const scopesKey = audienceScopesKey(inputs.audienceScopes);
-    const byProjector = byScopes?.get(scopesKey);
-    if (!byScopes || !byProjector || byProjector.get(createProjector) !== shared) return;
+    const byDetail = byScopes?.get(scopesKey);
+    const byProjector = byDetail?.get(inputs.detail);
+    if (!byScopes || !byDetail || !byProjector || byProjector.get(createProjector) !== shared) return;
     byProjector.delete(createProjector);
-    if (byProjector.size === 0) byScopes.delete(scopesKey);
+    if (byProjector.size > 0) return;
+    byDetail.delete(inputs.detail);
+    if (byDetail.size === 0) byScopes.delete(scopesKey);
 }
 
 /**
@@ -149,15 +162,41 @@ function releaseSharedProjection(inputs: Inputs, createProjector: ActivitySource
  * store's changed-id publication itself uses `identity` change detection, so no publication signs the
  * whole corpus; the same factory is always used with the same mode.
  */
+type SharedActivitySourceProjectionOptions<T extends Projected, R extends Projected> = Readonly<{
+    presented?: boolean;
+    changeDetection?: ActivitySourceChangeDetection;
+    /** A consumer's own reading of the shared value (stable); returning the previous value renders nothing. */
+    pick?: (value: T) => R;
+}>;
+
 export function useSharedActivitySourceProjection<T extends Projected, R extends Projected = T>(
     createProjector: ActivitySourceProjectorFactory<T>,
     retain: (previous: T | undefined, next: T) => T,
-    options: Readonly<{
-        presented?: boolean;
-        changeDetection?: ActivitySourceChangeDetection;
-        /** A consumer's own reading of the shared value (stable); returning the previous value renders nothing. */
-        pick?: (value: T) => R;
-    }> = {},
+    options: SharedActivitySourceProjectionOptions<T, R> = {},
+): R {
+    return useSharedProjection(null, createProjector, retain, options);
+}
+
+/**
+ * The full Activity source (transcripts, Session audience presentation and Home profiles) projected
+ * inside the store subscription, so a consumer renders only when its projection moved: a streamed
+ * transcript delta re-classifies its Session and renders nothing while the projection reads the same.
+ * Only the audience address set is selected outside the projection, and it moves with the Session
+ * census, not with transcripts.
+ */
+export function useSharedActivitySourceDetailProjection<T extends Projected, R extends Projected = T>(
+    createProjector: ActivitySourceProjectorFactory<T>,
+    retain: (previous: T | undefined, next: T) => T,
+    options: SharedActivitySourceProjectionOptions<T, R> = {},
+): R {
+    return useSharedProjection(useActivityStoreSourceDetail(), createProjector, retain, options);
+}
+
+function useSharedProjection<T extends Projected, R extends Projected>(
+    detail: ActivitySourceDetail | null,
+    createProjector: ActivitySourceProjectorFactory<T>,
+    retain: (previous: T | undefined, next: T) => T,
+    options: SharedActivitySourceProjectionOptions<T, R>,
 ): R {
     const presented = options.presented !== false;
     const changeDetection = options.changeDetection ?? 'signature';
@@ -166,7 +205,8 @@ export function useSharedActivitySourceProjection<T extends Projected, R extends
     const membership = useActivityPersonalSessionMembership();
     const activeServer = useActivityActiveServer();
     const audienceScopes = useActivityRuleAudienceScopes();
-    const inputs = React.useMemo<Inputs>(() => ({ membership, activeServer, audienceScopes }), [activeServer, audienceScopes, membership]);
+    const inputs = React.useMemo<Inputs>(() => ({ membership, activeServer, audienceScopes, detail }),
+        [activeServer, audienceScopes, detail, membership]);
     const shared = React.useMemo(() => acquireSharedProjection(inputs, createProjector, retain, changeDetection),
         [changeDetection, createProjector, inputs, retain]);
     React.useEffect(() => {

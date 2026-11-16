@@ -10,23 +10,21 @@ import type { ActivityOverviewSnapshot } from '@/activity/attention/activityAtte
 import { readSessionPersonalAttentionExpirationsForViewer } from '@/sync/domains/session/readState/sessionViewerAttention';
 
 import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
-import { useActivityBoundaryRefresh } from './useActivityBoundaryRefresh';
 import {
     buildActivityOverviewFromSource,
     readActivitySourceAttentionMessages,
     type ActivityOverviewSummary,
 } from './buildActivityOverviewFromSource';
-import { useActivityAttentionSource } from './useActivityAttentionSource';
 import { createActivitySourceAddressTable } from './activitySourceSessionAddresses';
 import { createActivityOverviewSummaryProjector } from './activityOverviewSummaryProjector';
 import {
+    useSharedActivitySourceDetailProjection,
     useSharedActivitySourceProjection,
     type ActivitySourceProjectionInput,
     type ActivitySourceProjector,
     type ActivitySourceProjectorFactory,
 } from './sharedActivitySourceProjection';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { storage } from '@/sync/domains/state/storageStore';
 
 export type MountedActivityOverview = Readonly<{
     source: ActivityAttentionSource;
@@ -75,43 +73,70 @@ function readNextAttentionBoundaryMs(
  * `FaviconPermissionIndicator` pattern): no global scheduler, and no second
  * opinion about what attention means, only about when to look again.
  */
-export function useActivityOverview(): MountedActivityOverview {
-    // This reader follows the changed-address publication itself. Signing every
-    // Session first would repeat a full-corpus read before the exact projection.
-    const source = useActivityAttentionSource({ changeDetection: 'identity' });
-    const [boundaryVersion, advanceBoundary] = React.useReducer((value: number) => value + 1, 0);
-    // A freshness boundary invalidates all time-sensitive facts, as before.
-    const project = React.useMemo(() => createMountedActivityOverviewProjector(), [boundaryVersion]);
-    const { overview, nextAttentionBoundaryMs } = React.useMemo(() => project({ source,
-        state: storage.getState(), nowMs: Date.now() }), [project, source]);
-    useActivityBoundaryRefresh(nextAttentionBoundaryMs, advanceBoundary);
+/**
+ * How a mounted overview classifies. Inbox reads a warm source before data is ready; device surfaces
+ * (Live Activities, widgets) present nothing until it is, name their activity and gate direct actions.
+ * Every option must be stable (a module value or a store-published value).
+ */
+export type MountedActivityOverviewOptions = Readonly<{
+    includeWarmSourceWhenNotReady?: boolean;
+    activityName?: string | null;
+    directActionsEnabled?: boolean;
+    isSessionVisible?: SessionRecordingVisibility;
+}>;
 
-    return React.useMemo(() => ({ source, overview }), [overview, source]);
+const INBOX_OVERVIEW_OPTIONS: MountedActivityOverviewOptions = { includeWarmSourceWhenNotReady: true };
+
+type MountedActivityOverviewProjection = MountedActivityOverview & Readonly<{ nextAttentionBoundaryMs: number | null }>;
+
+/** The mounted projector keeps its published value while nothing moved, so the shared owner retains by identity. */
+const keepProjectedOverview = (_previous: MountedActivityOverviewProjection | undefined, next: MountedActivityOverviewProjection) => next;
+
+/**
+ * The full overview, projected inside the store subscription by the shared projection owner: a
+ * publication that moves no candidate (each streamed transcript delta) renders no consumer. `source`
+ * is the source the published overview was projected from; a reader that needs the live source (for
+ * example to show a transcript's request details) subscribes to it itself.
+ */
+export function useActivityOverview(options: MountedActivityOverviewOptions = INBOX_OVERVIEW_OPTIONS): MountedActivityOverview {
+    const { includeWarmSourceWhenNotReady = false, activityName, directActionsEnabled, isSessionVisible } = options;
+    const createProjector = React.useMemo<ActivitySourceProjectorFactory<MountedActivityOverviewProjection>>(
+        () => () => createMountedActivityOverviewProjector({ includeWarmSourceWhenNotReady, activityName, directActionsEnabled, isSessionVisible }),
+        [activityName, directActionsEnabled, includeWarmSourceWhenNotReady, isSessionVisible],
+    );
+    // This projector follows the changed-address publication itself. Signing every Session first
+    // would repeat a full-corpus read before the exact projection.
+    return useSharedActivitySourceDetailProjection(createProjector, keepProjectedOverview, { changeDetection: 'identity' });
 }
 
-function createMountedActivityOverviewProjector() {
+function createMountedActivityOverviewProjector(options: MountedActivityOverviewOptions): ActivitySourceProjector<MountedActivityOverviewProjection> {
     let nowMs = Date.now();
-    const createTable = () => createActivitySourceAddressTable<ActivityOverviewSnapshot['candidates'][number]>({
-        includeWarmSourceWhenNotReady: true,
+    const includeWarmSourceWhenNotReady = options.includeWarmSourceWhenNotReady === true;
+    const isSessionVisible = options.isSessionVisible;
+    const table = createActivitySourceAddressTable<ActivityOverviewSnapshot['candidates'][number]>({
+        includeWarmSourceWhenNotReady,
         classify: (source, addresses) => new Map(buildActivityOverviewFromSource({
-            source, nowMs, includeWarmSourceWhenNotReady: true, addresses,
-        }).candidates.map(candidate => [sessionAddressKey(candidate.address!), candidate])),
+            source, nowMs, includeWarmSourceWhenNotReady, addresses,
+            activityName: options.activityName, directActionsEnabled: options.directActionsEnabled,
+        }).candidates.filter(candidate => !isSessionVisible || isSessionVisible(candidate.address ?? candidate))
+            .map(candidate => [sessionAddressKey(candidate.address!), candidate])),
         // A re-classified candidate equal to the one held keeps its identity, so an arrival that moves no
         // Activity fact (each streamed delta of a viewed Session) publishes no new overview.
         isSame: areSnapshotProjectionsEquivalent,
     });
-    let table = createTable();
-    let published: Readonly<{ overview: ActivityOverviewSnapshot; nextAttentionBoundaryMs: number | null }> | undefined;
-    return (input: ActivitySourceProjectionInput) => {
-        nowMs = input.nowMs;
-        // An arrival can run after the deadline while its timer is still queued.
-        const expired = published?.nextAttentionBoundaryMs != null && published.nextAttentionBoundaryMs <= nowMs;
-        if (expired) table = createTable();
-        // A publication that moves no candidate keeps the overview, so its readers re-derive nothing.
-        if (!table.update(input.source, input.state) && published && !expired) return published;
-        const overview = buildActivityOverviewFromCandidates([...table.entries().values()]);
-        published = { overview, nextAttentionBoundaryMs: readNextAttentionBoundaryMs(input.source, overview.candidates, nowMs) };
-        return published;
+    let published: MountedActivityOverviewProjection | undefined;
+    return {
+        // A freshness boundary makes the shared owner create a fresh projector, so it re-projects completely.
+        project: ({ source, state, nowMs: projectedAtMs }) => {
+            nowMs = projectedAtMs;
+            const changed = table.update(source, state);
+            // A publication that moves no candidate keeps the overview, so its readers re-derive nothing.
+            if (published && !changed && published.source.isDataReady === source.isDataReady) return published;
+            const overview = changed || !published ? buildActivityOverviewFromCandidates([...table.entries().values()]) : published.overview;
+            published = { source, overview, nextAttentionBoundaryMs: readNextAttentionBoundaryMs(source, overview.candidates, nowMs) };
+            return published;
+        },
+        observeUnchangedSource: state => table.observeUnchangedSource(state),
     };
 }
 

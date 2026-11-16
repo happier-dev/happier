@@ -132,7 +132,23 @@ describe('mounted Activity overview boundary clock', () => {
             });
         }
         expect(latest).toBe(first);
-        expect(renders - rendersBefore).toBeLessThanOrEqual(3);
+        // The overview is projected inside the store subscription, so an unchanged overview renders nothing.
+        expect(renders - rendersBefore).toBe(0);
+        // A transcript update that does move a fact (the request is answered) renders once.
+        await act(async () => {
+            const state = storage.getState();
+            const transcript = state.sessionMessages['legacy-session']!;
+            const message = transcript.messagesById['message-ask-1']!;
+            if (message.kind !== 'tool-call') throw new Error('fixture message is not a tool call');
+            const answered = { ...message, tool: { ...message.tool, state: 'completed' as const, completedAt: NOW_MS,
+                permission: { ...message.tool.permission!, status: 'approved' as const } } };
+            storage.setState({ sessionMessages: { ...state.sessionMessages, 'legacy-session': {
+                ...transcript, messagesById: { ...transcript.messagesById, [answered.id]: answered },
+                messagesVersion: transcript.messagesVersion + 1,
+            } } });
+        });
+        expect(renders - rendersBefore).toBe(1);
+        expect(latest?.candidates.some((candidate) => candidate.hasAttention)).toBe(false);
     });
 
     it('keeps the same request in the full Inbox attention projection while its runtime is live', async () => {

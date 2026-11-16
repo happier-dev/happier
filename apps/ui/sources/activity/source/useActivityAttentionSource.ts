@@ -143,6 +143,42 @@ export function useActivityAttentionSource(options?: Readonly<{
 function useActivityAttentionSourceContext(includeSessionMessages: boolean, detailAddresses?: readonly SessionAddress[],
     changeDetection?: Parameters<typeof createActivityAttentionSourceSelector>[0]['changeDetection']): MountedActivityAttentionSource {
     const summarySource = storage(useActivityAttentionStoreSelector(includeSessionMessages, detailAddresses, changeDetection));
+    const audienceAddresses = React.useMemo(() => collectActivityAudienceAddresses(summarySource), [
+        summarySource.ordinarySessionListMembershipByServerId,
+        summarySource.personalSessionListMembershipByServerId,
+        summarySource.ruleSessionMembershipByServerId,
+        summarySource.sessionsById,
+    ]);
+    const detail = useActivitySourceDetail(audienceAddresses);
+    return React.useMemo(() => ({ ...summarySource, ...detail }), [detail, summarySource]);
+}
+
+/** What a full Activity source adds to the store source: Session audience presentation and Home profiles. */
+export type ActivitySourceDetail = Readonly<Required<Pick<ActivityAttentionSource,
+    'audienceScopes' | 'audiencePresentationsBySessionKey' | 'serverProfilesById'>>>;
+
+/** Every Session address whose audience a full Activity source presents. */
+export function collectActivityAudienceAddresses(source: Pick<ActivityAttentionSource, 'sessionsById'
+    | 'ordinarySessionListMembershipByServerId' | 'personalSessionListMembershipByServerId' | 'ruleSessionMembershipByServerId'>,
+): SessionAddress[] {
+    const fromMembership = (membership: Readonly<Record<string, readonly string[] | undefined>> | undefined) =>
+        Object.entries(membership ?? {}).flatMap(([serverId, ids]) => (ids ?? []).flatMap((id) => {
+            const address = normalizeSessionAddress(serverId, id);
+            return address ? [address] : [];
+        }));
+    return [
+        ...Object.values(source.sessionsById).flatMap((session) => {
+            const address = normalizeSessionAddress(session.serverId, session.id);
+            return address ? [address] : [];
+        }),
+        ...fromMembership(source.ordinarySessionListMembershipByServerId),
+        ...fromMembership(source.personalSessionListMembershipByServerId),
+        ...fromMembership(source.ruleSessionMembershipByServerId),
+    ];
+}
+
+/** The audience and Home-profile detail for `audienceAddresses`, kept while neither moved. */
+export function useActivitySourceDetail(audienceAddresses: readonly SessionAddress[]): ActivitySourceDetail {
     const serverProfilesGeneration = React.useSyncExternalStore(
         subscribeServerProfiles,
         getServerProfilesGeneration,
@@ -155,38 +191,41 @@ function useActivityAttentionSourceContext(includeSessionMessages: boolean, deta
         ]);
         return Object.fromEntries(profileEntries);
     }, [serverProfilesGeneration]);
-
-    const audienceAddresses = React.useMemo(() => [
-        ...Object.values(summarySource.sessionsById).flatMap((session) => {
-            const address = normalizeSessionAddress(session.serverId, session.id);
-            return address ? [address] : [];
-        }),
-        ...Object.entries(summarySource.ordinarySessionListMembershipByServerId ?? {})
-        .flatMap(([serverId, ids]) => (ids ?? []).flatMap((id) => {
-            const address = normalizeSessionAddress(serverId, id);
-            return address ? [address] : [];
-        })),
-        ...Object.entries(summarySource.personalSessionListMembershipByServerId ?? {})
-        .flatMap(([serverId, ids]) => (ids ?? []).flatMap((id) => {
-            const address = normalizeSessionAddress(serverId, id);
-            return address ? [address] : [];
-        })),
-        ...Object.entries(summarySource.ruleSessionMembershipByServerId ?? {})
-        .flatMap(([serverId, ids]) => (ids ?? []).flatMap((id) => {
-            const address = normalizeSessionAddress(serverId, id);
-            return address ? [address] : [];
-        })),
-    ], [
-        summarySource.ordinarySessionListMembershipByServerId,
-        summarySource.personalSessionListMembershipByServerId,
-        summarySource.ruleSessionMembershipByServerId,
-        summarySource.sessionsById,
-    ]);
     const audience = useSessionAudienceContext(audienceAddresses);
     return React.useMemo(() => ({
-        ...summarySource,
         audienceScopes: audience.scopes,
         audiencePresentationsBySessionKey: audience.presentationsBySessionKey,
         serverProfilesById,
-    }), [audience.presentationsBySessionKey, audience.scopes, serverProfilesById, summarySource]);
+    }), [audience.presentationsBySessionKey, audience.scopes, serverProfilesById]);
+}
+
+/** The audience addresses of the store's Sessions and memberships, re-read only when one of them moved. */
+function createActivityAudienceAddressesKeySelector(membership: ActivityPersonalSessionMembership) {
+    let previous: Pick<StorageState, 'sessions' | 'ordinarySessionListMembershipByServerId'> | undefined;
+    let key = '[]';
+    return (state: StorageState): string => {
+        if (previous?.sessions === state.sessions
+            && previous.ordinarySessionListMembershipByServerId === state.ordinarySessionListMembershipByServerId) return key;
+        previous = { sessions: state.sessions, ordinarySessionListMembershipByServerId: state.ordinarySessionListMembershipByServerId };
+        key = JSON.stringify(collectActivityAudienceAddresses({
+            sessionsById: state.sessions,
+            ordinarySessionListMembershipByServerId: state.ordinarySessionListMembershipByServerId,
+            personalSessionListMembershipByServerId: membership.membershipByServerId,
+            ruleSessionMembershipByServerId: membership.ruleSessionMembershipByServerId,
+        }));
+        return key;
+    };
+}
+
+/**
+ * The full source's detail for the store's Session census, for a reader that does not subscribe to the
+ * source itself: it renders when the audience address set, an audience or a Home profile moves, never
+ * for a Session row write or a transcript delta.
+ */
+export function useActivityStoreSourceDetail(): ActivitySourceDetail {
+    const membership = useActivityPersonalSessionMembership();
+    const selectAudienceAddressesKey = React.useMemo(() => createActivityAudienceAddressesKeySelector(membership), [membership]);
+    const audienceAddressesKey = storage(selectAudienceAddressesKey);
+    const audienceAddresses = React.useMemo(() => JSON.parse(audienceAddressesKey) as SessionAddress[], [audienceAddressesKey]);
+    return useActivitySourceDetail(audienceAddresses);
 }

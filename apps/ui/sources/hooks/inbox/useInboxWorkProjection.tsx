@@ -4,6 +4,7 @@ import { useStore } from 'zustand';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import type { SessionAttentionStanding } from '@happier-dev/protocol/sessions/organization/standings';
 import { useActivityOverview } from '@/activity/source/useActivityOverview';
+import { useActivityAttentionSource } from '@/activity/source/useActivityAttentionSource';
 import { readActivitySourceAttentionMessages } from '@/activity/source/buildActivityOverviewFromSource';
 import { buildInboxSessionPresentation, type InboxSessionAttentionEntry } from '@/activity/presentation/buildInboxSessionPresentation';
 import { buildInboxWorkGroups, type InboxWorkGroup } from '@/activity/presentation/buildInboxWorkGroups';
@@ -48,7 +49,9 @@ function isStalledWorker(session: Session, nowMs: number): boolean {
 const EMPTY_SESSIONS: readonly Session[] = Object.freeze([]);
 const EMPTY_STANDINGS: Readonly<Record<string, SessionAttentionStanding>> = Object.freeze({});
 function useCreateInboxWorkProjection() {
-    const { source, overview } = useActivityOverview();
+    const { overview } = useActivityOverview();
+    // Request details and row lookups read the live source (transcripts move without moving the overview).
+    const source = useActivityAttentionSource({ changeDetection: 'identity' });
     // Grouping lists every open request: the full Inbox census while this projection is mounted.
     useInboxArtifactRowDemand();
     const openApprovalEntries = storage(state => state.artifactListedOpenApprovals);
