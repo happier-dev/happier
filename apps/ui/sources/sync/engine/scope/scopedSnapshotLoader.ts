@@ -467,8 +467,15 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
         return false;
     }
 
+    /** A primary-Home reconnect wake: its changes catch-up publishes every row that changed while away. */
+    function isCaughtUpReconnect(event: HomeAccountChangeEvent): boolean {
+        return event.source === 'connected' && event.changesCatchUp === true;
+    }
+
     function handleWake(event: HomeAccountChangeEvent): void {
-        const targets = targetsForServer(event.serverId).filter(target => params.prepareWake?.(event, target) !== false);
+        // A socket gap changes no rows: on reconnect only a read that is not current retries.
+        const targets = targetsForServer(event.serverId).filter(target => (!isCaughtUpReconnect(event) || params.shouldLoadOnObserve(target))
+            && params.prepareWake?.(event, target) !== false);
         if (targets.length === 0) return;
         // Mark the exact Home's rows stale first, so a surface can explain
         // itself before the refetch answers. Other Homes are untouched.
@@ -485,7 +492,9 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
             unsubscribeWake = subscribeHomeAccountChange((event) => {
                 if (params.matchesWake && !params.matchesWake(event)) return;
                 handleWake(event);
-            }, { includeCatchUpPending: params.observeCatchUpPending, reconnect: 'refresh' });
+            }, { includeCatchUpPending: params.observeCatchUpPending, reconnect: {
+                readNotCurrent: () => [...observed.values()].some(({ target }) => params.shouldLoadOnObserve(target)),
+            } });
         }
         if (params.onCredentialMutation && !unsubscribeCredentials) {
             unsubscribeCredentials = subscribeHomeCredentialChange((event) => {

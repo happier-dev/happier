@@ -1078,4 +1078,40 @@ describe('createScopedSnapshotLoader', () => {
         release();
         loader.resetForTests();
     });
+
+    it('re-reads on a primary-Home reconnect only the catalogs whose read is not current', async () => {
+        // The reconnect's changes catch-up publishes what changed while away; a socket gap changes no rows.
+        const current = { key: 'current-catalog', serverId: 'reconnect-home' };
+        const failed = { key: 'failed-catalog', serverId: 'reconnect-home' };
+        const reads: string[] = [];
+        const readCurrent = new Set<string>();
+        let failNext = true;
+        const loader = createScopedSnapshotLoader({
+            subscribeRetainedInvalidation: () => () => {},
+            load: async (target) => {
+                reads.push(target.key);
+                if (target.key === failed.key && failNext) { failNext = false; throw new Error('read failed during the outage'); }
+                readCurrent.add(target.key);
+            },
+            shouldLoadOnObserve: target => !readCurrent.has(target.key),
+            invalidateServer: () => {}, invalidateTarget: () => {},
+        });
+        const settle = () => new Promise<void>(resolve => setImmediate(resolve));
+        const releases = [loader.observe(current), loader.observe(failed)];
+        try {
+            await vi.waitFor(() => expect(reads).toHaveLength(2));
+            await settle();
+            reads.length = 0;
+            publishHomeAccountChange(current.serverId, undefined, { source: 'connected', changesCatchUp: true });
+            await settle();
+            expect(reads).toEqual([failed.key]);
+            reads.length = 0;
+            publishHomeAccountChange(current.serverId, undefined, { source: 'connected', changesCatchUp: true });
+            await settle();
+            expect(reads).toEqual([]);
+            // A secondary-Home transport wake (no catch-up) stays conservative.
+            publishHomeAccountChange(current.serverId, undefined, { source: 'connected' });
+            await vi.waitFor(() => expect(reads.sort()).toEqual([current.key, failed.key].sort()));
+        } finally { for (const release of releases) release(); loader.resetForTests(); }
+    });
 });
