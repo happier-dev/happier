@@ -129,6 +129,12 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'created', projectId: 'project', sourceId: 'source', commit: snapshot.branch.headOid,
       sessionHandoff: { initialMessage: input.description, directory: '/projects/bakery' } } });
     expect(approvals).toBe(0);
+    // F6: one creation publishes one repository and one Source, then hands off;
+    // validation and Production are later effects, never part of create.
+    expect(calls.filter(call => call.actionId === 'scm.hostingRepository.publish')).toHaveLength(1);
+    expect(calls.filter(call => call.actionId === 'projects.sources.create')).toHaveLength(1);
+    expect(calls.filter(call => call.actionId === 'projects.open')).toHaveLength(2);
+    expect(calls.some(call => call.actionId.startsWith('deployments.'))).toBe(false);
   }
   expect(calls.find(call => call.actionId === 'scm.repository.clone')?.input).toMatchObject({ ...starterSelector, initialCheckout: { branch: 'main', revision: 'latest-stable' } });
   expect(calls.find(call => call.actionId === 'scm.repository.clone')?.context).toMatchObject({
@@ -195,12 +201,6 @@ it.each(['source', 'project'] as const)('resumes the exact created repository an
   let shouldFail = true;
   const scmCalls: string[] = [];
   const sourceWrites: unknown[] = [];
-    // F6: one creation publishes one repository and one Source, then hands off;
-    // validation and Production are later effects, never part of create.
-    expect(calls.filter(call => call.actionId === 'scm.hostingRepository.publish')).toHaveLength(1);
-    expect(calls.filter(call => call.actionId === 'projects.sources.create')).toHaveLength(1);
-    expect(calls.filter(call => call.actionId === 'projects.open')).toHaveLength(2);
-    expect(calls.some(call => call.actionId.startsWith('deployments.'))).toBe(false);
   const sourceReads: unknown[] = [];
   const opened: unknown[] = [];
   const executor = createActionExecutor({
