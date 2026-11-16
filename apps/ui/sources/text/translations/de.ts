@@ -19328,6 +19328,9 @@ settingsSession: {
       managedData: {
         title: "Verwaltete Datenbank hinzufügen",
         empty: "Kein Datenbankanbieter ist installiert",
+        connectTitle: (p: { provider: string }) => `Verbinde ${p.provider}, um eine Datenbank hinzuzufügen`,
+        connectBody: (p: { provider: string }) => `Happier erstellt oder verknüpft die Datenbank mit deinem ${p.provider}-Konto und speichert ihre Verbindung für diese Umgebung.`,
+        connectAction: (p: { provider: string }) => `${p.provider} verbinden`,
         operation: "Was möchten Sie tun?",
         unknown: "Das Anbieterergebnis ist unklar",
         recover: "Prüfen Sie die Projekte oder Branches des Anbieters und verknüpfen Sie die genaue Ressource. Klären Sie die vorige Erstellung, bevor Sie erneut erstellen.",

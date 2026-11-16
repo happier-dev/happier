@@ -22664,6 +22664,9 @@ const enProjects = {
       managedData: {
         title: "Add a managed database",
         empty: "No managed database provider is installed",
+        connectTitle: (p: { provider: string }) => `Connect ${p.provider} to add a database`,
+        connectBody: (p: { provider: string }) => `Happier creates or links the database with your ${p.provider} account and saves its connection for this environment.`,
+        connectAction: (p: { provider: string }) => `Connect ${p.provider}`,
         operation: "What would you like to do?",
         unknown: "The provider outcome is uncertain",
         recover: "Read the provider’s projects or branches and link the exact resource. Reconcile an earlier create before creating again.",

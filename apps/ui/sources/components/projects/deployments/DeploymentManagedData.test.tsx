@@ -34,6 +34,31 @@ function connectedProfile(service: { pluginId: string; localId: string }, accoun
     revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', providerIdentity: { organizationId }, scopes: [] });
 }
 
+it.each([neonPlugin, supabasePlugin])('offers first-connection recovery with no saved accounts for $manifest.id', async plugin => {
+  const serverId = await homes.addHome({ name: 'Fresh managed data', serverUrl: 'https://fresh-managed-data.test',
+    accountId: 'fresh-owner', currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+    activate: api => plugin.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activateAccount' }),
+    accountLifetime: account.accountLifetime, publishProjection: true });
+  const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+  const { AccountProfileSchema } = await import('@happier-dev/protocol/account/profile');
+  storage.setState({ profileScope: account.accountLifetime.scope,
+    profile: AccountProfileSchema.parse({ id: 'fresh-owner' }) });
+  const screen = await renderScreen(<DeploymentManagedDataSheet detail={readDetail(detail)} lifetime={account.accountLifetime}
+    actions={createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId)} onApproval={() => {}} onClose={() => {}} />);
+  try {
+    const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+    const { EmptyState } = await import('@/components/ui/empty/EmptyState');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    await waitForHomeGovernance(() => expect(screen.findAllByType(DropdownMenu)
+      .some(node => node.props.testID === 'managed-data.provider')).toBe(true));
+    // The existing platform-link flow uses EmptyState's primary action to open the canonical Connect sheet.
+    expect(screen.findAllByType(EmptyState).some(node => typeof node.props.primaryAction?.onPress === 'function')).toBe(true);
+    expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(0);
+  } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
+});
+
 it.each([neonPlugin, supabasePlugin])('dispatches real $manifest.id project and region reads with the selected organization', async plugin => {
   const manifest = plugin.manifest;
   const service = { pluginId: manifest.id, localId: manifest.contributes.connectedAccountDescriptors[0]!.id };

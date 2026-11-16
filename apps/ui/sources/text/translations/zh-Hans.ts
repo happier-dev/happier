@@ -18835,6 +18835,9 @@ settingsSession: {
       managedData: {
         title: "添加托管数据库",
         empty: "尚未安装托管数据库提供商",
+        connectTitle: (p: { provider: string }) => `连接 ${p.provider} 以添加数据库`,
+        connectBody: (p: { provider: string }) => `Happier 会用你的 ${p.provider} 账户创建或关联数据库，并为此环境保存其连接。`,
+        connectAction: (p: { provider: string }) => `连接 ${p.provider}`,
         operation: "你想做什么？",
         unknown: "提供商的操作结果不确定",
         recover: "请查看提供商的项目或分支并关联准确的资源。再次创建前，请先确认上次创建的结果。",

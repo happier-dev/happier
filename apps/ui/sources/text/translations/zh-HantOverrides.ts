@@ -13671,6 +13671,9 @@ settingsSession: {
                 row: ({ number }: { number: number }) => `資料列 ${number}`,
             },
             managedData: {
+                connectTitle: (p: { provider: string }) => `連接 ${p.provider} 以新增資料庫`,
+                connectBody: (p: { provider: string }) => `Happier 會用你的 ${p.provider} 帳戶建立或連結資料庫，並為此環境儲存其連線。`,
+                connectAction: (p: { provider: string }) => `連接 ${p.provider}`,
                 title: '新增託管資料庫', empty: '尚未安裝託管資料庫提供者', operation: '你想做什麼？',
                 unknown: '提供者的操作結果不確定', recover: '請查看提供者的專案或分支並連結準確的資源。再次建立前，請先確認上次建立的結果。',
                 partial: '部分連線仍需儲存', link: '連結此資料庫', linked: '資料庫已連結',

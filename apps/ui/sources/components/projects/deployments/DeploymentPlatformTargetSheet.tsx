@@ -41,9 +41,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
-import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
-import { connectedAccountPurposeServiceTargets } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
-import { useProfile, useServerScopedMachineLabel } from '@/sync/store/hooks';
+import { useFirstConnection } from './useFirstConnection';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { DeploymentPlatformCredentialDisclosure, DeploymentPlatformCredentialPrincipal } from './DeploymentPlatformCredentialDisclosure';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
@@ -320,12 +319,15 @@ export function DeploymentPlatformTargetEditor(
   );
   const [busy, setBusy] = React.useState<'check' | 'link' | null>(null);
   const [linkRefused, setLinkRefused] = React.useState<Readonly<{ code: string; details?: unknown }> | null>(null);
-  // The Account's own inventory decides whether it has any account for this platform; unknown until it is read.
-  const accountId = props.lifetime.scope.accountId;
-  const service = form?.service ?? null;
-  const hasServiceAccount = useProfile((profile) => profile.id !== accountId || !service ? null
-    : connectedAccountPurposeServiceTargets(profile.connectedAccountsV4 ?? [], [], service).accounts.length > 0);
-  const needsConnect = target !== null && account === null && hasServiceAccount === false;
+  // Add a token runs the one shared connect flow for this service; its account becomes this link's account,
+  // and the platform's own choices and Check (what the token can do) follow in place.
+  const firstConnection = useFirstConnection(props.lifetime, form?.service ?? null, (connected) => {
+    setAccount(connected);
+    resetValues();
+    setCursors({});
+    resetFrom();
+  });
+  const needsConnect = target !== null && account === null && firstConnection.missing;
   const source =
     useProjectSource(props.lifetime, props.environment.projectSourceId).source
       ?.source ?? null;
@@ -451,17 +453,7 @@ export function DeploymentPlatformTargetEditor(
   };
 
   const { onClose, onApproval, actions } = props;
-  // Add a token runs the one shared connect flow for this service; its account becomes this link's account,
-  // and the platform's own choices and Check (what the token can do) follow in place.
-  const connect = async () => {
-    if (!target) return;
-    const result = await presentConnectSheet({ scope: props.lifetime.scope, service: form?.service ?? target.service, intent: 'add' });
-    if (result.kind === 'dismissed' || !props.lifetime.isCurrent()) return;
-    setAccount(result.account);
-    resetValues();
-    setCursors({});
-    resetFrom();
-  };
+  const connect = firstConnection.connect;
   const check = async () => {
     if (!target || !draft || busy) return;
     setBusy('check');

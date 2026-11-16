@@ -19090,6 +19090,9 @@ settingsSession: {
       managedData: {
         title: "Ajouter une base de données gérée",
         empty: "Aucun fournisseur de base gérée installé",
+        connectTitle: (p: { provider: string }) => `Connecte ${p.provider} pour ajouter une base de données`,
+        connectBody: (p: { provider: string }) => `Happier crée ou lie la base de données avec ton compte ${p.provider} et enregistre sa connexion pour cet environnement.`,
+        connectAction: (p: { provider: string }) => `Connecter ${p.provider}`,
         operation: "Que souhaitez-vous faire ?",
         unknown: "Le résultat du fournisseur est incertain",
         recover: "Consultez les projets ou branches du fournisseur et liez la ressource exacte. Vérifiez la création précédente avant de recommencer.",

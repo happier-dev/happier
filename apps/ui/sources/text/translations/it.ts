@@ -19218,6 +19218,9 @@ settingsSession: {
       managedData: {
         title: "Aggiungi un database gestito",
         empty: "Nessun provider di database gestiti installato",
+        connectTitle: (p: { provider: string }) => `Collega ${p.provider} per aggiungere un database`,
+        connectBody: (p: { provider: string }) => `Happier crea o collega il database con il tuo account ${p.provider} e ne salva la connessione per questo ambiente.`,
+        connectAction: (p: { provider: string }) => `Collega ${p.provider}`,
         operation: "Cosa vuoi fare?",
         unknown: "L’esito del provider è incerto",
         recover: "Consulta i progetti o i rami del provider e collega la risorsa esatta. Verifica la creazione precedente prima di crearne un’altra.",

@@ -19130,6 +19130,9 @@ settingsSession: {
       managedData: {
         title: "マネージドデータベースを追加",
         empty: "マネージドデータベースのプロバイダーがインストールされていません",
+        connectTitle: (p: { provider: string }) => `${p.provider} を接続してデータベースを追加`,
+        connectBody: (p: { provider: string }) => `Happier は ${p.provider} アカウントでデータベースを作成またはリンクし、この環境の接続を保存します。`,
+        connectAction: (p: { provider: string }) => `${p.provider} を接続`,
         operation: "何をしますか？",
         unknown: "プロバイダーでの結果が不明です",
         recover: "プロバイダーのプロジェクトやブランチを確認し、正確なリソースをリンクしてください。再作成する前に前回の結果を確認してください。",

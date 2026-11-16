@@ -19216,6 +19216,9 @@ settingsSession: {
       managedData: {
         title: "Añadir una base de datos gestionada",
         empty: "No hay un proveedor de bases gestionadas instalado",
+        connectTitle: (p: { provider: string }) => `Conecta ${p.provider} para añadir una base de datos`,
+        connectBody: (p: { provider: string }) => `Happier crea o vincula la base de datos con tu cuenta de ${p.provider} y guarda su conexión para este entorno.`,
+        connectAction: (p: { provider: string }) => `Conectar ${p.provider}`,
         operation: "¿Qué quieres hacer?",
         unknown: "El resultado del proveedor es incierto",
         recover: "Consulta los proyectos o ramas del proveedor y vincula el recurso exacto. Comprueba la creación anterior antes de crear de nuevo.",

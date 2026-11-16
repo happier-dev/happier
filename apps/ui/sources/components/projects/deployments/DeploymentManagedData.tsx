@@ -19,6 +19,9 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { PluginMark } from '@/components/settings/plugins/PluginMark';
+import { useFirstConnection } from './useFirstConnection';
 import { Text } from '@/components/ui/text/Text';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -60,6 +63,10 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   const operation = operations.find(entry => entry.role === selectedRole)
     ?? (props.linked ? undefined : operations.find(entry => entry.role === 'projects.provision')) ?? operations[0] ?? null;
   const { account, setAccount, setValues, seeded } = useManagedDataForm(operation, props.lifetime);
+  // A fresh Account has no account for this provider yet: the one shared Connect flow adds the first (as platform-link).
+  const firstConnection = useFirstConnection(props.lifetime, props.linked ? null : operation?.credential?.service ?? null,
+    connected => { setAccount(connected); reset(); });
+  const needsConnect = account === null && firstConnection.missing;
   const [results, setResults] = React.useState<Readonly<Record<string, Result>>>({});
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -196,7 +203,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
             items={choices.map(choice => ({ id: choice.id, title: choice.label }))} selectedId={operation.role}
             onSelect={role => { setOperationOpen(false); setRole(role); setCursors([]); setFieldCursors({}); setError(null); }}
             itemTrigger={{ title: t('projects.deployments.managedData.operation'), showSelectedSubtitle: false, itemProps: { disabled: busy } }} />}
-        {!props.linked && operation.credential ? <ConnectedAccountPurposeTargetChooser testID="managed-data.account"
+        {!props.linked && operation.credential && !needsConnect ? <ConnectedAccountPurposeTargetChooser testID="managed-data.account"
           localizedTextPluginId={target.pluginId} accountsOnly disabled={busy || uncertain || partial} value={account ? { kind: 'account', account } : null}
           declaration={{ ...operation.credential, title: t('projects.deployments.platformLink.connection'), required: true }}
           onChange={next => { setAccount(next?.kind === 'account' ? next.account : null); reset(); }} /> : null}
@@ -204,6 +211,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
           lifetime={props.lifetime} busy={busy} editable={!busy && !partial} onPatch={patch}
           cursors={fieldCursors} setCursors={setFieldCursors} />
       </ItemGroup>
+      {needsConnect ? <ManagedDataFirstConnection target={target} onConnect={firstConnection.connect} /> : null}
       {uncertain ? <SurfaceStateCard testID="managed-data.unknown" size="line" kind="unavailable"
         title={t('projects.deployments.managedData.unknown')} reason={t('projects.deployments.managedData.recover')} /> : null}
       {partial ? <SurfaceStateCard testID="managed-data.partial" size="line" kind="unavailable"
@@ -230,6 +238,17 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
 }
 
 /** Both managed-data operations and Duplicate consume the provider's declared Action fields. */
+/** No account for this provider yet: the first Connect, composed as platform-link's (EmptyState + the shared Connect sheet). */
+function ManagedDataFirstConnection(props: Readonly<{ target: ManagedDataTarget; onConnect: () => void }>) {
+  const provider = props.target.title;
+  return <EmptyState testID="managed-data.connect" layout="centered"
+    icon={<PluginMark title={provider} pluginId={props.target.pluginId} />}
+    title={t('projects.deployments.managedData.connectTitle', { provider })}
+    subtitle={t('projects.deployments.managedData.connectBody', { provider })}
+    primaryAction={{ label: t('projects.deployments.managedData.connectAction', { provider }), onPress: props.onConnect,
+      testID: 'managed-data.connect.add' }} />;
+}
+
 function ManagedDataActionFields(props: Readonly<{
   fields: readonly EffectiveActionInputField[]; operation: ManagedDataOperation;
   input: Record<string, unknown>; draft: Record<string, unknown> | null;
@@ -270,6 +289,8 @@ export function DeploymentManagedDataProvisionEditor(props: Readonly<{
   const { account, setAccount, setValues, seeded } = useManagedDataForm(operation, props.lifetime);
   const [requestKey] = React.useState(randomUUID);
   const [cursors, setCursors] = React.useState<Readonly<Record<string, readonly string[]>>>({});
+  const firstConnection = useFirstConnection(props.lifetime, operation?.credential?.service ?? null,
+    connected => { setAccount(connected); setCursors({}); });
   const fields = React.useMemo(() => operation ? disclosePlatformFields(resolveEffectiveActionInputFields(operation, seeded), seeded) : [], [operation, seeded]);
   const draft = React.useMemo(() => target && operation?.credential && account ? buildManagedDataActionDraft({
     target, operation, lifetime: props.lifetime, environment: {}, account, values: seeded, requestKey,
@@ -288,6 +309,7 @@ export function DeploymentManagedDataProvisionEditor(props: Readonly<{
     diagnosticCode={state.code} action={{ label: t('common.retry'), onPress: retry }} />;
   if (!target || !operation?.credential) return <SurfaceStateCard size="line" kind="unavailable" title={t('common.unavailable')}
     reason={t('projects.deployments.copy.dataEmptyUnavailable')} />;
+  if (account === null && firstConnection.missing) return <ManagedDataFirstConnection target={target} onConnect={firstConnection.connect} />;
   return <>
     <ConnectedAccountPurposeTargetChooser testID="managed-data.account" localizedTextPluginId={target.pluginId} accountsOnly
       disabled={props.disabled} value={account ? { kind: 'account', account } : null}
