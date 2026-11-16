@@ -471,9 +471,9 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         : actionId === 'deployments.rollback'
           ? params.dispatchReceipt({ actionId, input: DeploymentRollbackInputV1Schema.parse(input), receipt, context })
           : params.dispatchReceipt({ actionId, input: DeploymentDeployInputV1Schema.parse(input), receipt, context }));
-    // A refused dispatch names its recovery for every caller, as a settled failed receipt already does.
-    if ('errorCode' in settled) return settled.details === undefined || isRecord(settled.details) && !('remedy' in settled.details)
-      ? { ...settled, details: projectDeploymentFailureRecoveryV1(isRecord(settled.details) ? settled.details : {}, settled.errorCode) } : settled;
+    // Preserve the dispatch owner's typed details, including nested receipt recovery.
+    if ('errorCode' in settled) return settled.details === undefined
+      ? { ...settled, details: projectDeploymentFailureRecoveryV1({}, settled.errorCode) } : settled;
     if (!('ok' in settled) || !settled.ok) return settled;
     if (!('deploymentId' in settled)) return settled;
     const settledFailureCode = readDeploymentReceiptFailureCodeV1(settled.state);

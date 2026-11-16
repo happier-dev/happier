@@ -308,7 +308,8 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
             path: `/client/v4/accounts/${providerAccountId}/builds/triggers/production-trigger/builds`, body: { commit_hash: sha } },
             ...(outcome === 'queued' ? [] : [
             { method: 'GET', path: `/client/v4/accounts/${providerAccountId}/workers/scripts/app/deployments`, body: null },
-            { method: 'GET', path: `/client/v4/accounts/${providerAccountId}/builds/builds`, body: null }])] : [{ method: 'POST',
+            { method: 'GET', path: `/client/v4/accounts/${providerAccountId}/builds/builds`, body: null },
+            { method: 'GET', path: `/client/v4/accounts/${providerAccountId}/workers/scripts/app/subdomain`, body: null }])] : [{ method: 'POST',
             path: `/client/v4/accounts/${providerAccountId}/builds/workers/${workerTag}/previews/${previewId}/builds`,
             body: { commit_hash: sha, branch: gitBranch } }, ...(outcome === 'succeeded' ? [{ method: 'GET',
                 path: `/client/v4/accounts/${providerAccountId}/workers/workers/app/previews/${previewId}/deployments/latest`, body: null }] : [])]);
@@ -504,7 +505,7 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
             expect(receipt.state).toBe('succeeded');
             expect(providerRequests.filter(request => request.method === 'POST')).toHaveLength(1);
             expect(providerRequests.at(-1)?.path).toBe(worker
-                ? `/client/v4/accounts/${providerAccountId}/builds/builds`
+                ? `/client/v4/accounts/${providerAccountId}/workers/scripts/app/subdomain`
                 : `/client/v4/accounts/${providerAccountId}/workers/workers/app/previews/${previewId}/deployments/latest`);
         }
     } finally { await mounted.dispose(); restoreHttp(); await app.close(); }
