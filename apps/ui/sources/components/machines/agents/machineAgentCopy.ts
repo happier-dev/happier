@@ -45,6 +45,19 @@ export function formatMachineAgentStatus(status: MachineAgentStatus): string {
     }
 }
 
+/**
+ * An offline machine's last-known fact alone ("Last seen signed in"), for a list that already says once which
+ * machines are offline; null when nothing was known. Elsewhere `formatMachineAgentStatus` keeps "machine offline".
+ */
+export function formatMachineAgentLastKnown(status: Extract<MachineAgentStatus, { kind: 'offline' }>): string | null {
+    switch (status.lastKnown) {
+        case 'signedIn': return t('machineAgents.lastSeenSignedIn');
+        case 'signedOut': return t('machineAgents.lastSeenSignedOut');
+        case 'notInstalled': return t('machineAgents.lastSeenNotInstalled');
+        case 'unknown': return null;
+    }
+}
+
 
 export function formatMachineAgentAction(action: MachineAgentRowAction): string {
     switch (action.kind) {

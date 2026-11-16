@@ -20,6 +20,10 @@ export type MachineAgentsTranslation = Readonly<{
     offlineSignedOut: string;
     offlineNotInstalled: string;
     offlineUnknown: string;
+    /** The last-known fact alone, where the machine's offline state is already said once ("Last seen signed in"). */
+    lastSeenSignedIn: string;
+    lastSeenSignedOut: string;
+    lastSeenNotInstalled: string;
     unknown: string;
     signInUnknown: string;
 
@@ -153,6 +157,9 @@ export const en: MachineAgentsTranslation = {
     offlineSignedOut: 'Last seen signed out · machine offline',
     offlineNotInstalled: 'Not installed when last seen · machine offline',
     offlineUnknown: 'Machine offline',
+    lastSeenSignedIn: 'Last seen signed in',
+    lastSeenSignedOut: 'Last seen signed out',
+    lastSeenNotInstalled: 'Not installed when last seen',
     unknown: 'Couldn’t check this machine',
     signInUnknown: 'Installed · sign-in status unknown',
 

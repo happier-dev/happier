@@ -759,7 +759,8 @@ function AcpCommandMachinesCheck(props: Readonly<{
         return {
             machineId: machine.machineId, machineName: machine.name, namePending: machine.namePending,
             deviceIcon: 'hard-drives', os: machine.os ?? undefined, offline: !machine.online,
-            who: !machine.online ? t('capabilities.status.offline')
+            // An offline machine has no check of its own; the section's offline row says it is offline.
+            who: !machine.online ? null
                 : fact?.commandFound === true ? t('settingsAgents.customAcp.commandFound')
                     : fact?.commandFound === false ? t('settingsAgents.customAcp.commandMissing') : t('common.unknown'),
         };

@@ -343,7 +343,9 @@ describe('AcpBackendEditorScreen', () => {
         expect(screen.findRow(`${EDITOR}.machines:machine:found`)?.props.subtitle).toBe('settingsAgents.customAcp.commandFound');
         expect(screen.findRow(`${EDITOR}.machines:machine:missing`)?.props.subtitle).toBe('settingsAgents.customAcp.commandMissing');
         expect(screen.findRow(`${EDITOR}.machines:machine:unknown`)?.props.subtitle).toBe('common.unknown');
-        expect(screen.findRow(`${EDITOR}.machines:machine:offline`)?.props.subtitle).toBe('capabilities.status.offline');
+        // Offline is said once, by the section's offline row; the machine's own row adds no offline line.
+        expect(screen.findAllByTestId(`${EDITOR}.machines:offline`).length).toBeGreaterThan(0);
+        expect(screen.getTextContent()).not.toContain('capabilities.status.offline');
         expect(commandChecks.sort()).toEqual(['found', 'missing', 'unknown']);
         expect(shared.writes).toEqual([]);
         expect(artifacts.list().length).toBe(0);

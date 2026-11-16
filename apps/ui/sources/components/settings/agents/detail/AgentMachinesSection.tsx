@@ -12,6 +12,7 @@ import {
 } from '@/components/capabilities/detail/CapabilityMachineTruth';
 import { AgentSetupForm } from '@/components/machines/agents/AgentSetupForm';
 import { MachineAgentStatusLine } from '@/components/machines/agents/MachineAgentStatusLine';
+import { formatMachineAgentLastKnown } from '@/components/machines/agents/machineAgentCopy';
 import { canPerformMachineAgentAction } from '@/components/machines/agents/machineAgentPresentation';
 import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import { useServerScopedMachine } from '@/sync/store/hooks';
@@ -233,12 +234,18 @@ function AgentMachineWho(
   props: Readonly<{ row: AgentMachineRow; testID: string }>,
 ) {
   const { row } = props;
+  const lastKnown = row.status.kind === 'offline' ? formatMachineAgentLastKnown(row.status) : null;
   return (
     <View style={styles.who} testID={props.testID}>
       {row.version ? <Text style={styles.version}>{row.version}</Text> : null}
-      <View style={styles.status}>
-        <MachineAgentStatusLine status={row.status} />
-      </View>
+      {/* An offline machine sits behind the section's one offline row: it keeps only what it last reported. */}
+      {row.status.kind === 'offline' ? (
+        lastKnown ? <Text style={styles.quiet} numberOfLines={1}>{lastKnown}</Text> : null
+      ) : (
+        <View style={styles.status}>
+          <MachineAgentStatusLine status={row.status} />
+        </View>
+      )}
       {row.installedOutsideHappier ? (
         <Text
           style={styles.quiet}

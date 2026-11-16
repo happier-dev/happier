@@ -523,7 +523,8 @@ function machineRow(
         ) : (
           t('capabilities.skillDetail.machines.noAgent')
         ),
-      status: machine.offline ? { kind: 'offline' } : null,
+      // Offline is said once by the section's offline row; the row keeps its last-known agents and date.
+      status: null,
       note: machine.offline ? lastKnown(machine.lastSeenAt) : t('common.unknown'),
     };
   }

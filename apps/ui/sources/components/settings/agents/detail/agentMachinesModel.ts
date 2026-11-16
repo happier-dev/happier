@@ -174,10 +174,10 @@ export function buildAgentMachineRows(
 }
 
 /**
- * How many rows the list opens with. Machines with no news wait behind "N more": an offline machine that never reported
- * this agent, and one that did not answer, whose words would only repeat down the list. At least one row always shows.
+ * How many reachable rows the list opens with (offline machines wait behind the section's own offline row). Machines
+ * that did not answer wait behind "N more", since their words would only repeat down the list. At least one row shows.
  */
 export function countAgentMachineRowsToShow(rows: readonly AgentMachineRow[]): number {
-  const withNews = rows.filter((row) => (row.machine.online || row.agent !== null) && !saysCouldNotCheck(row)).length;
+  const withNews = rows.filter((row) => row.machine.online && !saysCouldNotCheck(row)).length;
   return rows.length === 0 ? 0 : Math.max(1, withNews);
 }

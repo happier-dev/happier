@@ -383,7 +383,8 @@ export function McpServerMachinesAndDetails(
       deviceIcon: 'desktop',
       who,
       offline: machine.online === false,
-      status: rowStatus(detail.machineStatuses.get(machine.machineId)),
+      // Offline is said once by the section's offline row; the row keeps its last-known tools and date.
+      status: machine.online === false ? null : rowStatus(detail.machineStatuses.get(machine.machineId)),
       ...(machine.online === null ? { note: t('common.unknown') } : {}),
       ...(machine.online === false && machine.lastSeenAt
         ? {

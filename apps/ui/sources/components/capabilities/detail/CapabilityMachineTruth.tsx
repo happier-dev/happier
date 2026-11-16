@@ -30,7 +30,10 @@ export type CapabilityMachineTruthRow = Readonly<{
     /** A quiet dated line at the end ("last known Oct 9"). */
     note?: string;
     status?: CapabilityStatus | null;
-    /** An offline machine reads dimmed; its last-known facts stay. */
+    /**
+     * An offline machine reads dimmed and waits behind the section's one "N offline machines" row, which says
+     * offline for all of them; its `who`, `status` and `note` carry only its last-known facts, never "offline".
+     */
     offline?: boolean;
     /** That machine's own operations (Install, Update, Remove), in the row's control column. */
     actions?: React.ReactNode;
@@ -77,10 +80,13 @@ export function CapabilityMachineTruth(props: Readonly<{
     // The list form shows its first rows; a long tail (machines that can't run it, offline) folds behind one row.
     const [showAll, setShowAll] = React.useState(false);
     const visibleCount = Math.max(1, props.visibleCount ?? LIST_FOLD_AFTER);
+    // Offline machines are said once: they wait behind one row that names how many, after the reachable ones.
+    const onlineRows = props.rows.filter((row) => !row.offline);
+    const offlineRows = props.rows.filter((row) => row.offline);
     // The machine a page opens (for example, the one a recovery names) is never folded away.
     const shownRows = showAll
-        ? props.rows
-        : props.rows.filter((row, index) => index < visibleCount || row.machineId === props.expandedMachineId);
+        ? onlineRows
+        : onlineRows.filter((row, index) => index < visibleCount || row.machineId === props.expandedMachineId);
     const action = props.sectionAction;
     return (
         <ItemGroup
@@ -115,14 +121,21 @@ export function CapabilityMachineTruth(props: Readonly<{
                             onExpandedChange={props.onExpandedMachineChange}
                         />
                     ))}
-                    {shownRows.length < props.rows.length ? (
+                    {shownRows.length < onlineRows.length ? (
                         <Item
                             testID={`${props.testID}:more`}
-                            title={t('capabilities.detail.moreMachines', { count: props.rows.length - shownRows.length })}
+                            title={t('capabilities.detail.moreMachines', { count: onlineRows.length - shownRows.length })}
                             titleStyle={styles.more}
                             onPress={() => setShowAll(true)}
                         />
                     ) : null}
+                    <OfflineMachines
+                        rows={offlineRows}
+                        testID={props.testID}
+                        alone={onlineRows.length === 0}
+                        expandedMachineId={props.expandedMachineId}
+                        onExpandedMachineChange={props.onExpandedMachineChange}
+                    />
                 </>
             ) : (
                 <ExpandableItem
@@ -145,12 +158,60 @@ export function CapabilityMachineTruth(props: Readonly<{
                         />
                     )}
                 >
-                    {expanded ? props.rows.map((row) => (
-                        <CapabilityMachineTruthRowView key={row.machineId} row={row} testID={props.testID} />
-                    )) : null}
+                    {expanded ? (
+                        <>
+                            {onlineRows.map((row) => (
+                                <CapabilityMachineTruthRowView key={row.machineId} row={row} testID={props.testID} />
+                            ))}
+                            <OfflineMachines rows={offlineRows} testID={props.testID} alone={onlineRows.length === 0} />
+                        </>
+                    ) : null}
                 </ExpandableItem>
             )}
         </ItemGroup>
+    );
+}
+
+/**
+ * The section's offline machines behind one row that says so once ("2 offline machines"). It opens in place into
+ * their dimmed rows with the last-known facts; it starts open when nothing else is listed or the page opened one.
+ */
+function OfflineMachines(props: Readonly<{
+    rows: readonly CapabilityMachineTruthRow[];
+    testID: string;
+    alone: boolean;
+    expandedMachineId?: string | null;
+    onExpandedMachineChange?: (machineId: string | null) => void;
+}>): React.ReactElement | null {
+    const holdsOpenMachine = props.rows.some((row) => row.machineId === props.expandedMachineId);
+    const [open, setOpen] = React.useState(props.alone || holdsOpenMachine);
+    if (props.rows.length === 0) return null;
+    const shown = open || holdsOpenMachine;
+    return (
+        <ExpandableItem
+            testID={`${props.testID}:offline:disclosure`}
+            expanded={shown}
+            onExpandedChange={setOpen}
+            showDivider={false}
+            header={({ headerProps }) => (
+                <Item
+                    {...(headerProps as Readonly<Record<string, unknown>>)}
+                    testID={`${props.testID}:offline`}
+                    title={t('capabilities.detail.offlineMachines', { count: props.rows.length })}
+                    titleStyle={styles.more}
+                />
+            )}
+        >
+            {shown ? props.rows.map((row) => (
+                <CapabilityMachineTruthRowView
+                    key={row.machineId}
+                    row={row}
+                    testID={props.testID}
+                    expanded={props.expandedMachineId === row.machineId}
+                    onExpandedChange={props.onExpandedMachineChange}
+                />
+            )) : null}
+        </ExpandableItem>
     );
 }
 
