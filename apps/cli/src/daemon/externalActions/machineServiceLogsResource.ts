@@ -13,7 +13,9 @@ export function sameMachineServiceLogsResourceInput(input: unknown, operands: Op
   if (actionId !== 'machines.services.logs.read' && actionId !== 'machines.services.list'
     && actionId !== 'deployments.logs.read' && actionId !== 'deployments.health.current') return false;
   const parsed = getActionSpec(actionId).inputSchema.safeParse(input);
-  if (!parsed.success || parsed.data.machineId !== machineId) return false;
+  // A compact platform log input names no Machine; an explicit selector must be the answering one. The continuation
+  // Machine and exact signed input below still bind the read.
+  if (!parsed.success || parsed.data.machineId !== undefined && parsed.data.machineId !== machineId) return false;
   const continuation = operands.resourceContinuation;
   if (!continuation) return actionId === 'machines.services.logs.read' && operands.machineServiceLogsGeneration !== undefined;
   const { resource } = continuation.params;
