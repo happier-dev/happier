@@ -139,8 +139,10 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
       // selects only a candidate whose manifest and complete graph validate.
       artifactRoots[directory] = candidates;
       // Finite runtime construction collects these roots even when UI is
-      // unavailable. Absence of a manifest keeps artifact admission closed.
+      // unavailable, including the consumer-owned root it named for this
+      // plugin. Absence of a manifest keeps artifact admission closed.
       await mkdir(artifactOutputDir, { recursive: true });
+      if (artifactOutputDirs[directory]) await mkdir(artifactOutputDirs[directory], { recursive: true });
     }
   }
   const result = await generateBundledPluginUiArtifacts({

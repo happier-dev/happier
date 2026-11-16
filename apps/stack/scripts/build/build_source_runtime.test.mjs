@@ -797,6 +797,21 @@ test('component capture includes newly discovered bundled plugins and their work
   assert.equal(serverInputs.files.includes('packages/plugins/new-plugin/src/index.ts'), false, 'server has no bundled CLI plugin consumer');
 });
 
+// Runtime construction collects each plugin's consumer-owned output root after preparation. A plugin
+// whose UI fails to compile is isolated as a published failure; its root must still exist, or one
+// broken plugin refuses the whole daemon reload with a raw scandir ENOENT (machine-daytona, 23:35Z).
+test('a plugin whose UI fails to compile still leaves its consumer-owned output root', async t => {
+  await import('../../../../packages/cli-common/registerSourceRuntime.mjs');
+  const { prepareSourcePluginUiArtifacts } = await import('../../../ui/scripts/prepareSourcePluginUiArtifacts.mjs');
+  const { fixture, repoRoot, plugins, entry } = await createSourcePluginUiFixture(t, ['alpha', 'beta']);
+  await writeFile(entry('alpha'), 'export function renderSurface() { return "alpha"; }');
+  await writeFile(entry('beta'), 'export function renderSurface( { return "broken"; }');
+  const outputs = { alpha: fixture.path('runtime/alpha/dist/happier-plugin-ui'), beta: fixture.path('runtime/beta/dist/happier-plugin-ui') };
+  await prepareSourcePluginUiArtifacts({ repoRoot, plugins, outputDir: fixture.path('compiled'), artifactOutputDirs: outputs });
+  assert.equal(existsSync(outputs.alpha), true);
+  assert.equal(existsSync(outputs.beta), true, 'the failed plugin keeps an (empty) consumer-owned root');
+});
+
 test('source plugin UI publication admits complete directories to real Metro', {
   skip: process.platform === 'darwin', // macOS selects Metro's recursive native watcher, not this fallback boundary.
 }, async t => {
