@@ -948,6 +948,8 @@ jobs:
               - 'packages/plugin-sdk/**'
               - 'packages/plugin-ui/**'
               - 'packages/sdk/**'
+              - 'packages/plugins/**'
+              - 'packages/triage-protocol/**'
               - 'scripts/ci/select-ui-e2e-shard.mjs'
               - 'package.json'
               - 'pnpm-lock.yaml'
