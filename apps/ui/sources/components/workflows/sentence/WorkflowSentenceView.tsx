@@ -7,7 +7,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { setWorkflowFinalOutput } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { findWorkflowBlock, setWorkflowFinalOutput } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import type { WorkflowBlock } from '@happier-dev/protocol/workflows/workflowV1';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
@@ -90,12 +90,11 @@ export function WorkflowSentenceView(
   // One identity for the page's writer, so the memoized clauses stay still when a step is selected.
   const onChange = useEventCallback(props.onChange);
   const [card, setCard] = React.useState<WorkflowSentenceCard>('step');
-  // The first step is selected while nothing (or a block outside the root list) is.
-  const shownBlockId = blocks.some(
-    (block) => block.id === props.selectedBlockId,
-  )
-    ? props.selectedBlockId
-    : (blocks[0]?.id ?? null);
+  // A nested selection keeps its containing card shown; the editor's selection stays on the child.
+  const selectedBlockId = props.selectedBlockId;
+  const shownBlockId = (selectedBlockId === null ? undefined : blocks.find(
+    (block) => findWorkflowBlock({ blocks: [block] }, selectedBlockId) !== null,
+  ))?.id ?? blocks[0]?.id ?? null;
   const { onSelectBlock } = props;
   const selectStep = React.useCallback(
     (blockId: string) => {

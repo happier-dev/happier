@@ -3918,6 +3918,31 @@ describe('the Sentence view (round 1116c)', () => {
         await screen.unmount();
     });
 
+    it('keeps a selected container shown while its nested step is selected', async () => {
+        const harness = await loadHarness();
+        const base = buildDraft(harness);
+        const initial = { ...base, blocks: [...base.blocks, {
+            kind: 'loop' as const, id: 'repeat', repetition: { kind: 'count' as const, count: { kind: 'literal' as const, value: 2 } },
+            body: [{ kind: 'step' as const, id: 'inside', document: { text: 'Work', references: [], attachments: [] }, input: [], result: { kind: 'text' as const } }],
+        }] };
+        const selections: (string | null)[] = [];
+        const screen = await renderScreen(<Controlled harness={harness} initial={initial} onSelect={(id) => selections.push(id)} />);
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('workflow-editor-sentence-step:repeat');
+        await flushHookEffects();
+        const region = () => screen.findHostByTestId('workflow-editor-sentence-selection')!;
+        const nestedHeading = region().findAll(node => node.props.testID === 'workflow-editor-step-inside-label'
+            && typeof node.props.onPress === 'function').at(-1)!;
+        expect(nestedHeading).toBeDefined();
+        await act(async () => invokeTestInstanceHandler(nestedHeading, 'onPress'));
+        await flushHookEffects();
+        expect(selections.at(-1)).toBe('inside');
+        expect(region().findAll(node => node.props.testID === 'workflow-editor-repeat-block').length).toBeGreaterThan(0);
+        expect(region().findAll(node => node.props.testID === 'workflow-editor-step-inside').length).toBeGreaterThan(0);
+        expect(screen.findHostByTestId('workflow-editor-sentence-step:repeat')?.props.accessibilityState?.selected).toBe(true);
+        await screen.unmount();
+    });
+
     it('adds another step through the Steps view\'s own Add, then selects it', async () => {
         const harness = await loadHarness();
         let current: WorkflowEditorDraft | null = null;
