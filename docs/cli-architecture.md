@@ -2730,8 +2730,11 @@ config or hooks. Writes there (stage, commit, branch, stash, conflicts,
 worktrees, remotes, fetch/pull/push) use the member's own Git identity and
 credentials; Happier adds no `safe.directory` exception. A clone into a member
 folder (its `destinationParentPath`, spec mark `hostingCredentials`) is refused
-as `credential_scope_denied` before any Git: it would write there with this
-Machine's hosting credentials. Other hosting work runs as it does elsewhere:
+as `credential_scope_denied` before any Git. This is a consistency guard: clone
+writes a new directory with this Machine's hosting credentials, and Git cannot
+check ownership of a directory that does not yet exist. The refusal protects no
+other person and is not a credential or security boundary.
+Other hosting work runs as it does elsewhere:
 methods on an existing repository are refused by the daemon Git's ownership
 check before any hosting call, and address resolution reads no folder.
 A person with Can use (or their own Account automation) gets local repository

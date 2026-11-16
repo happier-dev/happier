@@ -197,8 +197,10 @@ export function registerScmHandlers(
                 // Manage keeps full access to a member folder, but daemon Git never runs a member
                 // repository's config or hooks (F-A ruling, MEMBER-CHILD-READS-1115): its repository
                 // reads and writes (F-B) run in that member's own child, as that member. Happier never
-                // adds a safe.directory exception for it. A clone into it is refused: it would write there
-                // with this Machine's hosting credentials (SEC-FORKC-1116 N1).
+                // adds a safe.directory exception for it. The clone refusal is a consistency guard:
+                // clone writes a new directory with this Machine's hosting credentials, and Git cannot
+                // check ownership of a directory that does not yet exist. It protects no other person
+                // and is not a credential or security boundary (SEC-FORKC-1116B subtraction note).
                 const target = projectRoot ?? readRequestCwd(input);
                 const readOwner = deps.nativeOperationRuntime?.readMemberFolderOwner;
                 const hosting = isScmHostingCredentialRpcMethod(method);
