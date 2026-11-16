@@ -91,6 +91,10 @@ function normalizeKeyName(value: string): string {
     return value.trim().toLowerCase().replace(/[-_\s]/g, '');
 }
 
+export function androidHardwareButtonKeyCode(button: string): string | undefined {
+    return HARDWARE_BUTTON_KEYEVENTS.get(normalizeKeyName(button));
+}
+
 function validDisplaySize(value: AndroidSimulatorInputDisplaySize): boolean {
     return Number.isInteger(value.widthPx)
         && Number.isInteger(value.heightPx)
@@ -332,7 +336,7 @@ function buildAdbInputCommand(input: Readonly<{
             };
         }
         case 'hardware_button': {
-            const keyCode = HARDWARE_BUTTON_KEYEVENTS.get(normalizeKeyName(control.button));
+            const keyCode = androidHardwareButtonKeyCode(control.button);
             if (!keyCode) return { ok: false, status: 'rejected', reasonCode: 'android_simulator_key_unsupported' };
             return {
                 ok: true,

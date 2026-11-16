@@ -1,4 +1,6 @@
 import { Buffer } from 'node:buffer';
+import { spawn, type ChildProcess, type SpawnOptionsWithoutStdio } from 'node:child_process';
+import type { Readable, Writable } from 'node:stream';
 
 import { execFileWithDeadline, type ExecFileWithDeadlineOptions } from '@happier-dev/cli-common/process';
 
@@ -132,3 +134,81 @@ export function createDefaultSimulatorToolRunner(options: SimulatorToolRunnerOpt
 }
 
 export const defaultSimulatorToolRunner: SimulatorToolRunner = createDefaultSimulatorToolRunner();
+
+export type SimulatorOperationProcessResult = Readonly<{
+    exitCode: number | null;
+    stdout: Buffer;
+    stderr: string;
+    signal?: NodeJS.Signals;
+    aborted?: true;
+    errorCode?: string;
+    cause?: string;
+}>;
+
+export type SimulatorOperationRunner = (input: Readonly<{
+    command: string;
+    args: readonly string[];
+    stdin?: string | Buffer;
+    signal?: AbortSignal;
+}>) => Promise<SimulatorOperationProcessResult>;
+
+export type SimulatorOperationChild = Pick<ChildProcess, 'once' | 'removeListener' | 'kill'> & {
+    stdout: Readable | null;
+    stderr: Readable | null;
+    stdin: Writable | null;
+};
+export type SimulatorOperationSpawn = (
+    command: string, args: readonly string[], options: SpawnOptionsWithoutStdio,
+) => SimulatorOperationChild;
+
+/** Interactive device work inherits cancellation, rather than the discovery probe's deadline.
+ * Raw stdout also carries screenshots, which cannot pass through the UTF-8 diagnostic runner.
+ */
+export function createSimulatorOperationRunner(options: Readonly<{
+    spawn?: SimulatorOperationSpawn;
+    env?: Readonly<Record<string, string | undefined>>;
+}> = {}): SimulatorOperationRunner {
+    const spawnProcess = options.spawn ?? ((command, args, spawnOptions) => spawn(command, [...args], spawnOptions));
+    return async (input) => {
+        if (input.signal?.aborted) return { exitCode: null, stdout: Buffer.alloc(0), stderr: '', aborted: true };
+        return await new Promise<SimulatorOperationProcessResult>((resolve) => {
+            const stdout: Buffer[] = [];
+            const stderr: Buffer[] = [];
+            let child: SimulatorOperationChild;
+            const complete = (result: Omit<SimulatorOperationProcessResult, 'stdout' | 'stderr'>) => {
+                input.signal?.removeEventListener('abort', abort);
+                resolve({ ...result, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr).toString('utf8') });
+            };
+            const failed = (error: unknown) => {
+                const code = readErrorField(error, 'code');
+                complete({ exitCode: null, ...(typeof code === 'string' ? { errorCode: code } : {}),
+                    ...(error instanceof Error ? { cause: error.message } : {}),
+                    ...(input.signal?.aborted ? { aborted: true } : {}),
+                });
+            };
+            const abort = () => { child.kill('SIGTERM'); };
+            try {
+                child = spawnProcess(input.command, input.args, { stdio: 'pipe', shell: false, windowsHide: true,
+                    ...(options.env ? { env: options.env } : {}),
+                });
+            } catch (error) {
+                failed(error);
+                return;
+            }
+            child.stdout?.on('data', (chunk: Buffer | string) => stdout.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+            child.stderr?.on('data', (chunk: Buffer | string) => stderr.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+            child.once('error', failed);
+            child.once('close', (exitCode: number | null, signal: NodeJS.Signals | null) => complete({ exitCode,
+                ...(signal ? { signal } : {}), ...(input.signal?.aborted ? { aborted: true } : {}),
+            }));
+            // A tool can exit before consuming all stdin (for example a rejected push payload).
+            // Its exit/stderr remain the authoritative failure rather than a parent EPIPE throw.
+            child.stdin?.on('error', () => {});
+            child.stdin?.end(input.stdin);
+            input.signal?.addEventListener('abort', abort, { once: true });
+            if (input.signal?.aborted) abort();
+        });
+    };
+}
+
+export const defaultSimulatorOperationRunner = createSimulatorOperationRunner();

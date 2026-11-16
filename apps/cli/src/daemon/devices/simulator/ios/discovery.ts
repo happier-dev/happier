@@ -131,7 +131,7 @@ export function createIosSimulatorResource(input: Readonly<{
         deviceId: input.device.udid,
         displayName: input.device.name,
         state,
-        ...(input.device.runtime ? { runtimeId: input.device.runtime } : {}),
+        ...(state === 'running' ? { runtimeId: input.device.udid } : {}),
         ...getSimulatorDeviceOperationCapabilities('ios', state),
     };
 

@@ -1,6 +1,6 @@
 import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
-import { delimiter as PATH_DELIMITER, join } from 'node:path';
+import { delimiter as PATH_DELIMITER, dirname, join } from 'node:path';
 
 import {
     defaultAndroidToolRunner,
@@ -88,6 +88,24 @@ async function defaultFindOnPath(
         }
     }
     return null;
+}
+
+/** The emulator belongs to the selected SDK, with PATH as the existing system-tool fallback. */
+export async function resolveAndroidEmulatorCommand(input: Readonly<{
+    adbCommand: string;
+    env?: Readonly<Record<string, string | undefined>>;
+    pathExists?: (path: string) => Promise<boolean> | boolean;
+}>): Promise<string | null> {
+    const env = input.env ?? process.env;
+    const pathExists = input.pathExists ?? defaultPathExists;
+    const name = process.platform === 'win32' ? 'emulator.exe' : 'emulator';
+    const roots = [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, dirname(dirname(input.adbCommand))];
+    for (const root of roots) {
+        if (!root) continue;
+        const candidate = join(root, 'emulator', name);
+        if (await pathExists(candidate)) return candidate;
+    }
+    return await defaultFindOnPath(name, env);
 }
 
 function boundDiagnosticOutput(value: string): string {

@@ -37,17 +37,19 @@ import {
     type AndroidToolRunner,
 } from './process';
 import {
-    parseAdbDevicesLongOutput,
     resolveAndroidAdbTooling,
-    type AndroidAdbDeviceRecord,
+    resolveAndroidEmulatorCommand,
     type AndroidAdbToolingResolution,
 } from './tooling';
+import { getSimulatorDeviceOperationCapabilities } from '../operations/capabilities';
+import { readAndroidSimulatorInventory } from '../operations/inventory';
 
 export type AndroidSimulatorDiscoveredDevice = Readonly<{
     serial: string;
     kind: 'emulator' | 'physical';
-    state: 'device' | 'offline' | 'unauthorized' | 'unknown';
+    state: 'device' | 'offline' | 'unauthorized' | 'unknown' | 'stopped';
     displayName?: string;
+    avdName?: string;
 }>;
 
 export type AndroidSimulatorDiscoveryReader = () =>
@@ -79,6 +81,7 @@ export type DiscoverAndroidSimulatorResourcesInput = Readonly<{
     runAdb?: AndroidAdbDevicesRunner | AndroidToolRunner;
     timeoutMs?: number;
     signal?: AbortSignal;
+    resolveEmulatorCommand?: (adbCommand: string) => Promise<string | null>;
 }>;
 
 export type CreateDefaultAndroidSimulatorResourcesDiscoveryInput = Readonly<{
@@ -88,6 +91,7 @@ export type CreateDefaultAndroidSimulatorResourcesDiscoveryInput = Readonly<{
     runAdb?: AndroidAdbDevicesRunner | AndroidToolRunner;
     timeoutMs?: number;
     signal?: AbortSignal;
+    resolveEmulatorCommand?: (adbCommand: string) => Promise<string | null>;
 }>;
 
 const ANDROID_DEFAULT_SUPPORTED_INPUT_KINDS = [
@@ -116,6 +120,7 @@ function unavailableReasonForDevice(
     health: AndroidSimulatorAdapterHealthV1,
 ): AndroidSimulatorAdapterUnavailableReasonV1 | null {
     if (device.kind === 'physical') return 'physical_device_not_supported_v1';
+    if (device.state === 'stopped') return 'android_emulator_unavailable';
     if (device.state === 'unauthorized') return 'android_device_unauthorized';
     if (device.state === 'offline' || device.state === 'unknown') return 'android_device_offline';
     if (health.status === 'unavailable') return health.reasonCode;
@@ -127,12 +132,19 @@ export function createAndroidSimulatorResource(input: Readonly<{
     health: AndroidSimulatorAdapterHealthV1;
 }>): SimulatorDeviceResourceV1 {
     const displayName = input.device.displayName ?? input.device.serial;
+    const state = input.device.kind === 'physical' ? 'unavailable' as const
+        : input.device.state === 'device' ? 'running' as const
+        : input.device.state === 'stopped' ? 'stopped' as const : 'unavailable' as const;
     const base = {
         v: 1 as const,
         simulatorId: androidSimulatorId(input.device.serial, input.device.kind),
         platform: 'android' as const,
         deviceId: input.device.serial,
         displayName,
+        state,
+        ...(state === 'running' ? { runtimeId: input.device.serial } : {}),
+        ...(input.device.avdName ? { avdName: input.device.avdName } : {}),
+        ...getSimulatorDeviceOperationCapabilities('android', state),
     };
     const unavailableReason = unavailableReasonForDevice(input.device, input.health);
 
@@ -185,56 +197,21 @@ function unavailableHealth(input: Readonly<{
     });
 }
 
-function androidDeviceKind(record: AndroidAdbDeviceRecord): AndroidSimulatorDiscoveredDevice['kind'] {
-    return record.serial.startsWith('emulator-') ? 'emulator' : 'physical';
-}
-
-function displayNameForAdbRecord(record: AndroidAdbDeviceRecord): string {
-    return record.model ?? record.device ?? record.product ?? record.serial;
-}
-
-function deviceFromAdbRecord(record: AndroidAdbDeviceRecord): AndroidSimulatorDiscoveredDevice {
-    return {
-        serial: record.serial,
-        kind: androidDeviceKind(record),
-        state: record.state,
-        displayName: displayNameForAdbRecord(record),
-    };
-}
-
 async function runAdbDevices(input: Readonly<{
     adb: Extract<AndroidAdbToolingResolution, { ok: true }>;
     runner: AndroidAdbDevicesRunner | AndroidToolRunner;
     timeoutMs: number;
     signal?: AbortSignal;
-}>): Promise<Readonly<
-    | { ok: true; devices: readonly AndroidSimulatorDiscoveredDevice[]; diagnostics: readonly Record<string, unknown>[] }
-    | { ok: false; diagnostics: readonly Record<string, unknown>[] }
->> {
-    const result = await input.runner({
-        command: input.adb.command,
-        args: ['devices', '-l'],
-        timeoutMs: input.timeoutMs,
+    resolveEmulatorCommand?: (adbCommand: string) => Promise<string | null>;
+}>): Promise<Readonly<{ devices: readonly AndroidSimulatorDiscoveredDevice[]; diagnostics: readonly Record<string, unknown>[] }>> {
+    return await readAndroidSimulatorInventory({ adbCommand: input.adb.command,
+        emulatorCommand: await (input.resolveEmulatorCommand ?? ((adbCommand) => resolveAndroidEmulatorCommand({ adbCommand })))(input.adb.command),
+        run: async ({ command, args, signal }) => {
+            const result = await input.runner({ command, args, timeoutMs: input.timeoutMs, ...(signal ? { signal } : {}) });
+            return { ...result, stdout: Buffer.from(result.stdout) };
+        },
         ...(input.signal ? { signal: input.signal } : {}),
     });
-    if (result.exitCode !== 0) {
-        return {
-            ok: false,
-            diagnostics: [{
-                code: 'adb_devices_failed',
-                exitCode: result.exitCode,
-                ...(result.timedOut ? { timedOut: true } : {}),
-                ...(result.aborted ? { aborted: true } : {}),
-            }],
-        };
-    }
-
-    const parsed = parseAdbDevicesLongOutput(result.stdout);
-    return {
-        ok: true,
-        devices: parsed.records.map(deviceFromAdbRecord),
-        diagnostics: parsed.diagnostics,
-    };
 }
 
 function defaultBridgeUnavailableHealth(input: Readonly<{
@@ -308,21 +285,8 @@ export async function discoverAndroidSimulatorResources(
         runner: input.runAdb ?? defaultAndroidToolRunner,
         timeoutMs: input.timeoutMs ?? 5_000,
         ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.resolveEmulatorCommand ? { resolveEmulatorCommand: input.resolveEmulatorCommand } : {}),
     });
-    if (!adbDevices.ok) {
-        const health = unavailableHealth({
-            reasonCode: 'android_emulator_unavailable',
-            diagnostics: adbDevices.diagnostics,
-        });
-        return {
-            resources: [],
-            diagnostics: [diagnostic({
-                reasonCode: 'android_emulator_unavailable',
-                diagnostics: adbDevices.diagnostics,
-            })],
-            health,
-        };
-    }
 
     if (adbDevices.devices.length === 0) {
         const health = unavailableHealth({
@@ -415,5 +379,6 @@ export function createDefaultAndroidSimulatorResourcesDiscovery(
         ...(input.runAdb ? { runAdb: input.runAdb } : {}),
         ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.resolveEmulatorCommand ? { resolveEmulatorCommand: input.resolveEmulatorCommand } : {}),
     });
 }
