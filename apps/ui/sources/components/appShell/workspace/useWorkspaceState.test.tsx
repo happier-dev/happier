@@ -95,8 +95,7 @@ describe('useWorkspaceState', () => {
             expect(hook.getCurrent().state).toEqual(createWorkspaceState(initialTab));
             act(() => hook.getCurrent().dispatch({ type: 'openTab', groupId: 'group:1', tab: storedTab }));
             expect(settingsWrite).not.toHaveBeenCalled();
-            expect(JSON.parse(getPersistenceStorage().getString(`ui-state:workspace-layouts-v1:${key}`)!))
-                .toMatchObject({ tabs: { 'session-a': storedTab } });
+            expect(workspaceLayoutsState.readStrict(key, value => value)).toMatchObject({ tabs: { 'session-a': storedTab } });
             expect(writes.mock.calls.filter(([key]) => key === 'local-settings')).toHaveLength(0);
         } finally { writes.mockRestore(); settingsWrite.mockRestore(); await hook.unmount(); }
     });
@@ -112,7 +111,7 @@ describe('useWorkspaceState', () => {
         const write = mmkv.set.bind(mmkv);
         // MMKV is the OS/browser storage boundary; settings parsing and the real store stay live.
         const set = vi.spyOn(mmkv, 'set').mockImplementation((key, value) => {
-            if (key.startsWith('ui-state:workspace-layouts-v1:')) throw Object.assign(new Error('private storage detail'), { name });
+            if (key.startsWith('ui-state:workspace-layout')) throw Object.assign(new Error('private storage detail'), { name });
             write(key, value);
         });
         const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});

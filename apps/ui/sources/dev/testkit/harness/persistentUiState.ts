@@ -22,7 +22,7 @@ export async function installLegacyNativeMmkvBoundaryForTest(): Promise<Pick<MMK
 
 /** Seed the real keyed persistence owner; production has no test-only reset API. */
 export function replacePersistentUiStateForTest<T>(
-    state: ReturnType<typeof createPersistentUiState<T>>, values: Readonly<Record<string, T>>,
+    state: Pick<ReturnType<typeof createPersistentUiState<T>>, 'readAll' | 'remove' | 'set'>, values: Readonly<Record<string, T>>,
 ): void {
     for (const key of Object.keys(state.readAll())) if (!Object.hasOwn(values, key)) state.remove(key);
     for (const [key, value] of Object.entries(values)) state.set(key, value);

@@ -181,7 +181,9 @@ export function createPersistentUiState<T>(namespace: string, parse: (value: unk
 export const capabilityDismissalState = createPersistentUiState<number | null>('capability-dismissals-v1',
     value => typeof value === 'number' && Number.isFinite(value) ? value : null);
 
-export function usePersistentUiStateValue<T>(state: ReturnType<typeof createPersistentUiState<T>>, key: string | null): T | undefined {
+export function usePersistentUiStateValue<T>(
+    state: Pick<ReturnType<typeof createPersistentUiState<T>>, 'read' | 'subscribeKey'>, key: string | null,
+): T | undefined {
     const subscribe = useCallback((listener: () => void) => key === null ? () => {} : state.subscribeKey(key, listener), [key, state]);
     const read = useCallback(() => key === null ? undefined : state.read(key), [key, state]);
     return useSyncExternalStore(subscribe, read, read);

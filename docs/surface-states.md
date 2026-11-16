@@ -33,6 +33,9 @@ current-UI Close window command requests its normal native Close and guard.
 The Account's `workspace:tabs:v1` record shares intentional open-tab membership,
 order, pins and split membership. The keyed device `workspaceLayoutsState` owner retains
 window/device layout, active tab/group, MRU, maximize and destination presentation.
+It stores each layout in parts (a small head with focus and active tabs, a frame with
+membership, order and splits, and one entry per tab with its MRU rank), so a tab switch
+writes only the head and the activated tab's entry, not the whole layout.
 Receiving a shared record is not a navigation command: an already-open tab keeps
 its destination target and instance, including an unsaved editor. A newly arriving
 singleton cannot replace an existing local instance merely because the peer used
@@ -414,6 +417,12 @@ In unreleased 0.3 source, a dynamic Resource can still be preparing its declared
 runtime before its first read. That pending read is loading, not an empty
 result. The Resource owner awaits preparation and exposes its failure through
 the existing read/retry path; presentation adds no preparation timeout.
+
+Usage's Account reconnect observation replaces an interrupted Resource read
+through the shared Resource owner's existing supersede path. Its host-private
+invalidation keeps admitted content and transient-read recovery; ordinary data
+pushes still coalesce behind admitted work. This is in-process recovery in
+unreleased 0.3 source and changes no plugin wire event or Account authority.
 
 [`SurfaceFreshnessLine`](../apps/ui/sources/components/ui/surfaces/SurfaceFreshnessLine.tsx) presents the retained observation's time, refresh/reconnect reason and optional recovery action. Show it alongside retained content, under the header; when there is no retained content, show the appropriate loading/error/unavailable card instead. It and the public Plugin UI freshness component consume the same `HappierFreshnessLine` renderer and freshness-text formatter. Domain adapters still own observation timestamps and recovery actions.
 

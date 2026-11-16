@@ -24,7 +24,7 @@ import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive, type Work
 import { WorkspaceProvider } from './WorkspaceProvider';
 import { buildBotTemplateRecipientRoute, readBotTemplateRecipientRoute } from '@/components/sessions/bots/templates/botTemplateRecipientDestination';
 import { buildBotTemplateEditorRoute } from '@/components/sessions/bots/templates/botTemplateEditorDestination';
-import { useCurrentRouteParams, useCurrentRoutePathname } from './currentRouteLocation';
+import { useCurrentRouteParams, useCurrentRoutePathname, useCurrentRouteSegments } from './currentRouteLocation';
 import { WorkspaceAppShellProvider } from './WorkspaceAppShellProvider';
 import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
 import { DesktopDestinationWindow } from '@/desktop/window/DesktopDestinationWindow';
@@ -1010,6 +1010,58 @@ describe('consumed workspace navigation owner', () => {
         const focused = navigation().state;
         expect(focused.tabs[focused.groups[focused.focusedGroupId].activeTabId].target.params.id).toBe('A2');
         expect(boundary.mirrors).toEqual([]);
+    });
+
+    it('moves to another hosted route pattern with no Expo navigator update, and every current-route reader follows', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
+        boundary.segments = ['(app)', 'session', '[id]']; onTestFinished(() => { boundary.segments = null; });
+        const location = { pathname: boundary.pathname, search: '?serverId=home-a', hash: '' };
+        const entries: Array<{ state: unknown; href: string }> = [{ state: null, href: '/session/A1?serverId=home-a' }];
+        let index = 0;
+        const show = (href: string) => {
+            const url = new URL(href, 'https://workspace.test');
+            location.pathname = url.pathname; location.search = url.search;
+        };
+        const history = {
+            get state() { return entries[index]!.state; },
+            replaceState(state: unknown, _unused: string, href?: string | URL | null) {
+                const next = href ? String(href) : entries[index]!.href;
+                entries[index] = { state, href: next }; show(next);
+            },
+            pushState(state: unknown, _unused: string, href: string) {
+                entries.splice(index + 1, entries.length, { state, href }); index += 1; show(href);
+            },
+            go(delta: number) {
+                index += delta; show(entries[index]!.href);
+                window.dispatchEvent(Object.assign(new Event('popstate'), { state: entries[index]!.state }));
+            },
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const seen: Record<'shell' | 'hosted', Array<Readonly<{ pathname: string; segments: string }>>> = { shell: [], hosted: [] };
+        function CurrentRouteReader(props: Readonly<{ at: 'shell' | 'hosted' }>) {
+            seen[props.at].push({ pathname: useCurrentRoutePathname(), segments: useCurrentRouteSegments().join('/') });
+            return null;
+        }
+        const screen = await renderScreen(<>
+            <CurrentRouteReader at="shell" />
+            <WorkspaceProvider enabled catalog={catalog}>
+                {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<CurrentRouteReader at="hosted" /></>}
+            </WorkspaceProvider>
+        </>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        boundary.mirrors = [];
+
+        await act(async () => { navigation().openHref('/machines'); });
+        // The browser URL moved; Expo's navigator (a URL mirror while the workspace hosts the route) did not.
+        expect({ url: location.pathname, mirrors: boundary.mirrors, shell: seen.shell.at(-1), hosted: seen.hosted.at(-1) }).toEqual({
+            url: '/machines', mirrors: [],
+            shell: { pathname: '/machines', segments: 'machines' }, hosted: { pathname: '/machines', segments: 'machines' },
+        });
+
+        await act(async () => { history.go(-1); });
+        expect({ mirrors: boundary.mirrors, shell: seen.shell.at(-1)?.pathname, hosted: seen.hosted.at(-1)?.pathname })
+            .toEqual({ mirrors: [], shell: '/session/A1', hosted: '/session/A1' });
     });
 
     it.each([
@@ -2782,15 +2834,15 @@ describe('consumed workspace navigation owner', () => {
         expect(expected.groups['group:1'].activeTabId).toBe('left-b');
         expect(expected.groups.right.mru.slice(0, 2)).toEqual(['right-a', 'right-b']);
         const key = workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'main' });
-        const storageKey = `ui-state:workspace-layouts-v1:${key}`;
-        const raw = getPersistenceStorage().getString(storageKey)!;
-        expect(JSON.parse(raw)).toEqual(serializeWorkspaceLayout(expected));
-        // The current layout parser preserves active/focus/MRU fields.
-        expect(parseWorkspaceLayout(JSON.parse(raw))).toEqual(expected);
+        // The layout is stored in parts (head, frame, one entry per tab); keep exactly those bytes.
+        const stored = getPersistenceStorage().getAllKeys().filter(entry => entry.startsWith('ui-state:workspace-layout'))
+            .map(entry => [entry, getPersistenceStorage().getString(entry)!] as const);
+        // The stored parts read back to the layout, with active/focus/MRU fields preserved.
+        expect(parseWorkspaceLayout(workspaceLayoutsState.readStrict(key, value => value))).toEqual(expected);
         await screen.unmount();
         // Simulate process reload at the isolated device-KV boundary, not a warm owner cache.
         clearPersistenceStorage();
-        getPersistenceStorage().set(storageKey, raw);
+        for (const [entry, raw] of stored) getPersistenceStorage().set(entry, raw);
         history.state = null;
         expect(workspaceLayoutsState.readStrict(key)).toEqual(serializeWorkspaceLayout(expected));
         screen = await renderScreen(element());
@@ -2798,7 +2850,8 @@ describe('consumed workspace navigation owner', () => {
         expect(navigation().state.focusedGroupId).toBe(expected.focusedGroupId);
         expect(navigation().state.root).toEqual(expected.root);
         expect(navigation().state.tabs).toEqual(expected.tabs);
-        expect(getPersistenceStorage().getString(storageKey)).toBe(raw);
+        // Restoring writes nothing back: every stored part keeps its bytes.
+        for (const [entry, raw] of stored) expect(getPersistenceStorage().getString(entry)).toBe(raw);
         await screen.unmount();
     });
     it('admits the initial route over a restored layout without persisting until an explicit navigation', async () => {
