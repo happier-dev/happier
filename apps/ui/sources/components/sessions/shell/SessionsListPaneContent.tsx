@@ -131,17 +131,13 @@ function ActiveSessionsListPaneStateSubscriber(props: SessionsListPaneContentPro
         attentionInteractionHeld: props.surfaceOwnership.interactive && attentionInteractionHeld,
     });
 
+    // Reported before paint: the pane draws it in the same commit pass as the subscription that produced it.
     const onPaneState = props.onPaneState;
-    React.useEffect(() => {
+    React.useLayoutEffect(() => {
         onPaneState(sessionListPaneState);
     }, [onPaneState, sessionListPaneState]);
 
-    return (
-        <SessionsListPaneContentView
-            {...props}
-            sessionListPaneState={sessionListPaneState}
-        />
-    );
+    return null;
 }
 
 /**
@@ -327,6 +323,14 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
         ) ?? retained;
     }, [props.surfaceRoutePathname, retentionIdentity, sessionListSurfaceDataActive]);
 
+    // The subscriber renders nothing: the content view stays at one position whether the data demand is active or
+    // withdrawn (a page over the tab), so a return never remounts it.
+    const [subscribedPaneState, setSubscribedPaneState] = React.useState<VisibleSessionListPaneState | null>(null);
+    const reportPaneState = React.useCallback((paneState: VisibleSessionListPaneState) => {
+        setSubscribedPaneState(paneState);
+        handlePaneState(paneState);
+    }, [handlePaneState]);
+
     const retainedPaneState = sessionListSurfaceDataActive
         ? getRetainablePaneStateSnapshot(
             readRetainedSessionListPaneState(retentionIdentity) ?? retainedPaneStateRef.current,
@@ -334,9 +338,9 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
         )
         : null;
 
-    if (sessionListSurfaceDataActive) {
-        return (
-            <SessionListAttentionInteractionContext.Provider value={attentionInteraction}>
+    return (
+        <SessionListAttentionInteractionContext.Provider value={attentionInteraction}>
+            {sessionListSurfaceDataActive ? (
                 <ActiveSessionsListPaneStateSubscriber
                     {...props}
                     storageKind={storageKind}
@@ -345,18 +349,13 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
                     retainedEmptyState={retainedPaneState?.paneState.showEmptyState}
                     surfaceOwnership={surfaceOwnership}
                     filterController={filterController}
-                    onPaneState={handlePaneState}
+                    onPaneState={reportPaneState}
                 />
-            </SessionListAttentionInteractionContext.Provider>
-        );
-    }
-
-    return (
-        <SessionListAttentionInteractionContext.Provider value={attentionInteraction}>
+            ) : null}
             <SessionsListPaneContentView
                 {...props}
                 storageKind={storageKind}
-                sessionListPaneState={getRetainablePaneState(
+                sessionListPaneState={sessionListSurfaceDataActive && subscribedPaneState ? subscribedPaneState : getRetainablePaneState(
                     readRetainedSessionListPaneState(retentionIdentity) ?? retainedPaneStateRef.current,
                     retentionIdentity,
                 )}

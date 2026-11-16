@@ -773,6 +773,44 @@ describe('visible session-list retained attention through real state', () => {
         } finally { await screen.unmount(); }
     });
 
+    // P03-ANDROID-FIX-2: a page shown over the Sessions tab withdraws its data demand. The pane then drew the same
+    // content view under a different parent, so every return remounted it (on a first-run phone, all of Home).
+    it('keeps its mounted content through a withdrawn and restored data demand', async () => {
+        const { SessionsListPaneContent } = await import('@/components/sessions/shell/SessionsListPaneContent');
+        const a = createSessionFixture({ id: 'pane-demand-a', serverId, owner: 'u1', createdAt: 20,
+            viewer: currentViewer(1, 1), seq: 1, active: false });
+        listedSessions = [a];
+        snapshotResponse.resolve();
+        const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
+        await getSyncSingleton().refreshSessions({ awaitSessionListHydration: true });
+        route.pathname = '/';
+        mountedRowCost.os = 'ios';
+        let mounts = 0;
+        function LeadingProbe() {
+            React.useEffect(() => { mounts += 1; }, []);
+            return null;
+        }
+        const leading = <LeadingProbe />;
+        const pane = (dataActive: boolean) => <InjectedAuthProvider credentials={account!.credentials}>
+            <InboxSummaryProvider><AppPaneProvider><CommandPaletteProvider>
+                <SessionsListPaneContent fallbackGuidanceVariant="sidebar" pathname="/" leading={leading} sessionListSurfaceDataActive={dataActive} />
+            </CommandPaletteProvider></AppPaneProvider></InboxSummaryProvider>
+        </InjectedAuthProvider>;
+        const screen = await renderScreen(pane(true));
+        try {
+            await flushHookEffects({ cycles: 4, turns: 3 });
+            await vi.waitFor(() => expect(mounts).toBeGreaterThan(0));
+            const settled = mounts;
+            for (let visit = 0; visit < 3; visit += 1) {
+                await screen.update(pane(false));
+                await flushHookEffects();
+                await screen.update(pane(true));
+                await flushHookEffects();
+            }
+            expect(mounts - settled).toBe(0);
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps an idle list off an unrelated Machine grace deadline while presence expires on time', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
