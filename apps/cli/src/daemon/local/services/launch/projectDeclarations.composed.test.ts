@@ -336,6 +336,27 @@ describe('accepted Project Service declaration starter', () => {
         }
     });
 
+    it.skipIf(process.platform === 'win32')('starts a literal worker Service without re-reading its executed files on the worker', async () => {
+        const h = await fixture(false, { kind: 'command',
+            command: `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)" || sh locked/fallback.sh` }, false, 'portable');
+        // SOURCE has no fallback script; on the worker its folder is unreadable. The worker's
+        // effect comes from SOURCE's executed files, so nothing there may read it again.
+        h.afterCopy(async () => {
+            await mkdir(join(h.targetRoot, 'locked'), { recursive: true });
+            await writeFile(join(h.targetRoot, 'locked/fallback.sh'), 'exit 1');
+            await chmod(join(h.targetRoot, 'locked'), 0o000);
+        });
+        const review = await h.selectStart();
+        if (!review.reviewedEffectDigest) throw new Error('Expected SOURCE effect review');
+        try {
+            const result = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
+            expect(result).toMatchObject({ status: 'succeeded', machineId: 'worker-machine' });
+        } finally {
+            for (const handle of h.owner.listProjectServices()) await handle.stop();
+            await chmod(join(h.targetRoot, 'locked'), 0o755).catch(() => {});
+        }
+    });
+
     it('starts an exact Project declaration without waiting for unrelated listener discovery', async () => {
         const h = await fixture();
         await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...h.manifest,

@@ -533,7 +533,8 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         if (worker?.serviceEffectDigest && digest({ command, toolchain: plan.toolchain, configEnvironment: preparation.configEnvironment ?? {},
             platform: preparation.platform }) !== worker.serviceEffectDigest) throw new ServiceStartRefusal('project_service_effect_changed');
         let executedFiles: LiteralCommandFileFactV1[] = [];
-        if (command.kind === 'literal') {
+        // A worker literal Start's reviewed effect is SOURCE's (its executed files arrive as executionInputs).
+        if (command.kind === 'literal' && !worker?.serviceEffectDigest) {
             const literal = command;
             const executed = await phase('native_definition', () => readLiteralCommandExecutedFiles(association.workspace.rootPath, literal.cwd, literal.source.command));
             assertNotCancelled();
