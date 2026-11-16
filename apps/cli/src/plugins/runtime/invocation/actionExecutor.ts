@@ -246,6 +246,8 @@ export function createTargetActionExecutor(deps: Readonly<{
     recordOperationCredentialUse?: (use: ActionOperationCredentialUseV1) => void;
   }>, serviceBinding: PluginInvocationServiceBinding) => Promise<TargetActionExecutionResult>;
   redactFailureText?: (action: ResolvedTargetAction, value: string) => string;
+  /** In-process host consumer: return the executed value unredacted as native operands. */
+  hostConsumesExecutedValue?: true;
   /** Captured before executable normalization can consume confidential operands. */
   rawDiagnosticConfidentiality?: ReturnType<typeof readTargetActionDiagnosticConfidentiality>;
   diagnostic?: (fact: Readonly<{ qualifiedId: string; occurrenceId: string; surface: string; status: string; code?: string }>) => void | Promise<void>;
@@ -293,7 +295,9 @@ export function createTargetActionExecutor(deps: Readonly<{
         }
         const redactedAction = action;
         const redactFailureText = deps.redactFailureText;
-        const publicResult = projectTargetActionFailure(result, redactedAction && redactFailureText
+        const publicResult = result.status === 'executed' && deps.hostConsumesExecutedValue
+          ? result
+          : projectTargetActionFailure(result, redactedAction && redactFailureText
           ? value => redactFailureText(redactedAction, value)
           : result.status === 'failed' ? projectPluginFailureMessage : undefined,
           redactedAction ? {

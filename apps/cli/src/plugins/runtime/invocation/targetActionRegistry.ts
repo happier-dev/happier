@@ -175,6 +175,13 @@ export type InvokeTargetActionParams = Readonly<{
     requestId?: string;
     /** Host-private sink captured from an admitted Domain's controller and receiver. */
     machineConnectorSecrets?: PluginServices['machineConnectorSecrets'];
+    /**
+     * Set only by in-process host code that hands the executed value to a native
+     * executor as operands. That value skips the diagnostic redaction which
+     * corrupts machine data (URL userinfo). Failures and every other caller keep
+     * the public projection; the host consumer owns keeping it out of output.
+     */
+    hostConsumesExecutedValue?: true;
     pluginId: string;
     localId: string;
     input: unknown;
@@ -1178,6 +1185,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             };
             const executor = createTargetActionExecutor({
                 rawDiagnosticConfidentiality,
+                ...(invocation.hostConsumesExecutedValue ? { hostConsumesExecutedValue: true as const } : {}),
                 diagnostic: fact => {
                     if (fact.status === 'failed') {
                         logger.warnLocalFile('Plugin Action failed', {

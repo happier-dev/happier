@@ -76,6 +76,8 @@ export async function openDeploymentBackupDestinationForHost(input: Readonly<{
         input: { config: configuration.config, credentialRoles: configuration.credentialBindings.map(binding => binding.role),
             ownershipPrefix: configuration.ownership.prefix } satisfies BackupDestinationOpenInputV1,
         surface: 'plugin', requiredReadOnly: true, signal: input.signal, approvalContext: input.context,
+        // The repository URL is a native restic operand; output paths redact it.
+        hostConsumesExecutedValue: true,
     });
     if (result.status !== 'executed') {
         const reason = result.status === 'deferred' ? 'approval_required' : result.code;
