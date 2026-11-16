@@ -423,8 +423,7 @@ async function recoverProject(input: Input & { name: string; requestKey: string;
   }
   if (matchesFound.length !== 1 || incomplete) return { status: 'outcome_unknown' as const, code: 'outcome_unknown', ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
   const found = matchesFound[0]!;
-  return { ...configured(input, found.projectId, text(found.branch.id), { branch: found.branch, operations: [] }, true),
-    providerResourceOrigin: 'created' as const };
+  return configured(input, found.projectId, text(found.branch.id), { branch: found.branch, operations: [] }, true);
 }
 export async function provision(input: Input & CreatedSaveIntent & { name: string; regionId: string; requestKey: string; recover?: true; cursor?: string }, context: Context) {
   if (input.recover) return recoverProject(input, context);

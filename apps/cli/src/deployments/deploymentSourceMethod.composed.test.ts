@@ -93,7 +93,7 @@ it('retains a real Vercel Create choice through protected storage and omitted-me
             if (path === '/v1/deployments/targets/list') return { status: 200, data: { ok: true, items: [], nextCursor: null, coverage: 'complete' } };
             throw new Error(`Unexpected Home request: ${path}`);
         });
-        const prepared = await prepareTargetLinkForHost({ input: intent, context: {} }, {
+        const prepared = await prepareTargetLinkForHost({ input: intent, context: {}, acknowledgedCreate: true }, {
             serverHttpBaseUrl: origin, artifacts, assertCurrent: async () => {},
             artifactAuthorization: () => async () => ({ Authorization: `Bearer ${boundary.credentials.token}` }),
             readMetadata: async () => ({ ok: true, environment: environment.environment, targetLinks: [] }),

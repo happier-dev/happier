@@ -532,6 +532,24 @@ describe('activated Neon managed data target', () => {
     } finally { await h.kit.dispose(); }
   });
 
+  it.each([false, true])('recovers exact project identity without claiming acknowledged creation (explicit recovery=%s)', async recover => {
+    const h = await host(request => {
+      if (request.method === 'POST') throw new Error('response lost');
+      if (request.url.includes('/regions')) return { regions: [region] };
+      if (request.url.includes('/organizations/')) return organization;
+      if (request.url.includes('/projects?')) return { projects: [project], unavailable_project_ids: [], pagination: {} };
+      return { branches: [mainBranch], pagination: {}, annotations: { [mainBranch.id]: {
+        object: { type: 'branch', id: mainBranch.id }, value: { 'happier.environment': 'environment', 'happier.operation': 'reviewed-request' } } } };
+    });
+    try {
+      const result = await h.kit.invokeAction('projects-provision', { ...base, ...createPair,
+        name: 'Example', regionId: project.region_id, requestKey: 'reviewed-request', ...(recover ? { recover: true } : {}) });
+      expect(result).toMatchObject({ status: 'provisioned', providerProjectId: project.id, branchId: mainBranch.id, recovered: true });
+      expect(result).not.toHaveProperty('providerResourceOrigin');
+      expect(h.requests.filter(request => request.method === 'POST')).toHaveLength(recover ? 0 : 1);
+    } finally { await h.kit.dispose(); }
+  });
+
   it('retains an unknown project create when no exact annotated identity is visible, with zero POST replay', async () => {
     const h = await host(request => {
       if (request.method === 'POST') throw new Error('response lost');

@@ -15,6 +15,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
+import { normalizeDeploymentTargetLinkOriginV1 } from '@happier-dev/protocol/deployments/targetLinkInput';
 import { createDeploymentBackupActionForHost, createDeploymentBackupRecordedHealthForHost } from './actions/backups';
 import { createDeploymentBackupConfigureForHost } from './actions/backupConfigureForHost';
 import { prepareBackupAnotherMachineChildrenForHost } from './backups/anotherMachineForHost';
@@ -55,7 +56,7 @@ import {
     DeploymentTemplateInstantiateInputV1Schema, deploymentOperationForRootActionV1,
 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readHostAdmittedReviewedChildV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostAdmittedReviewedChildV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedRootV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { admitForkPreviewDeploymentForHost, prepareForkPreviewCreateForHost } from './forkPreviewCreateForHost';
 import { readPreviewDomainForHost, preparePreviewDomainFactForHost } from './previewDomainForHost';
 import { createDeploymentCandidatePublicationV1, createDeploymentDomainContentArtifactIdV1, createDeploymentEnvironmentContentArtifactIdV1,
@@ -1813,19 +1814,24 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 }
                 return result;
             }
-            if (actionId === 'deployments.targets.link' && !('contentArtifactId' in input)) {
+            if (actionId === 'deployments.targets.link') {
                 let recovery: DeploymentTargetLinkProviderIntentInputV1 | undefined;
                 try {
                     let intent = DeploymentActionInputSchemasV1[actionId].parse(input);
-                    if ('provider' in intent && intent.provisioned === true) recovery = intent;
+                    // Only the private, exact child issued by the Create parent can carry a data Create acknowledgment.
+                    const createdByParent = readHostReviewedChildOperationV1(context, actionId, input)?.parent.actionId === 'deployments.environments.create';
+                    let acknowledgedCreate = createdByParent && 'provider' in intent && intent.provider.providerResourceOrigin === 'created';
+                    if ('provider' in intent && intent.provisioned === true) recovery = { ...intent,
+                        provider: normalizeDeploymentTargetLinkOriginV1(intent.provider) };
                     if ('providerCreate' in intent) {
                         if (!context.operationOwnerUpdate || !context.hostReviewedChild) return failure('source_unavailable');
                         const created = await createRuntimeTargetForHost(intent, await readRuntimeCreateTarget(intent), context);
                         if (!created.ok) return created;
                         recovery = created.recovery;
                         intent = recovery;
+                        acknowledgedCreate = true;
                     }
-                    const prepared = await prepareTargetLinkForHost({ input: intent, context }, {
+                    const prepared = await prepareTargetLinkForHost({ input: intent, context, acknowledgedCreate }, {
                         serverHttpBaseUrl: host.serverHttpBaseUrl, artifacts,
                         readMetadata: readEnvironmentMetadata, assertCurrent, artifactAuthorization,
                     });

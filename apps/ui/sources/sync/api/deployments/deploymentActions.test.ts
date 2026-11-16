@@ -20,6 +20,8 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
+import { admitPresentUserConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { DeploymentTargetLinkInputV1Schema, DeploymentTargetLinksListInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 
@@ -646,7 +648,8 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         const input = { serverId, environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
             requestKey: 'parent-first-link', role: 'runtime', targetId: 'own-server',
             machines: [{ machineId: 'runtime', installationId: 'installation-runtime' }], ...(managed ? {
-                role: 'data', targetId: 'managed-data', targetKind: 'database', machines: [], provider,
+                role: 'data', targetId: 'managed-data', targetKind: 'database', machines: [],
+                provider: { ...provider, providerResourceOrigin: 'created' as const },
                 source: { kind: 'plugin', contribution: { pluginId: 'example.data', localId: 'database' } },
             } : {}) };
         const { provider: _private, ...storageInput } = { ...input, provider: managed ? provider : undefined };
@@ -679,7 +682,9 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         const created = homes.artifacts(serverId).list().at(-1)!;
         const opened = await writer.readArtifactContent(created.id);
         if (!opened || typeof opened.body !== 'string') throw new Error('Expected text link content');
-        expect(JSON.parse(opened.body)).toEqual(managed ? provider : {});
+        const persisted = JSON.parse(opened.body);
+        expect(persisted).toEqual(managed ? provider : {});
+        expect(persisted).not.toHaveProperty('providerResourceOrigin');
         if (mode === 'e2ee') expect(created.body).not.toContain('providerResourceId');
     });
 
@@ -907,7 +912,8 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         expect(homes.requestsFor(path)).toHaveLength(1);
     });
 
-    it.each(['use', 'manage'] as const)('preserves the receiving Create admission through the public UI executor (%s)', async role => {
+    it.each([['use', 'execute'], ['manage', 'execute'], ['use', 'prepare'], ['manage', 'prepare']] as const)(
+        'preserves the receiving Create admission through the public UI executor (%s, %s)', async (role, ingress) => {
         const input = { serverId, projectSourceId: 'source', requestKey: `create-${role}`,
             protection: 'nonProduction' as const, purpose: 'standard' as const, deployerMode: 'managers' as const,
             controllerMachineId: 'create-controller', ...content };
@@ -917,15 +923,69 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         await answerControllerAction('deployments.environments.create', input.controllerMachineId, (_admitted, transport) => {
             expect(transport.target).toEqual({ kind: 'machine', machineId: input.controllerMachineId });
             return result;
-        });
+        }, () => result.ok ? null : { errorCode: result.error, error: result.error });
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-        const actual = await createDefaultActionExecutor().execute('deployments.environments.create', input,
-            { ...uiHost, serverId, expectedAccountId: 'owner' });
+        const executor = createDefaultActionExecutor();
+        const context = { ...uiHost, serverId, expectedAccountId: 'owner' };
+        const actual = await (async () => {
+            if (ingress === 'execute') return executor.execute('deployments.environments.create', input, context);
+            const prepared = await executor.prepare('deployments.environments.create', input, context);
+            expect(prepared.kind).toBe('ready');
+            expect(homes.requestsFor('/v1/actions/deployments.environments.create')).toHaveLength(0);
+            if (prepared.kind !== 'ready') throw new Error(JSON.stringify(prepared));
+            return prepared.invocation.run();
+        })();
         expect(actual).toMatchObject(role === 'use'
             ? { ok: false, errorCode: 'deployment_access_denied' }
             : { ok: true, result });
         expect(homes.requestsFor('/v1/actions/deployments.environments.create')).toHaveLength(1);
         expect(homes.requestsFor('/v1/deployments/environments')).toHaveLength(0);
+    });
+
+    it.each(['exact', 'target', 'Home', 'Account', 'input', 'automation'] as const)(
+        'keeps native Account consent bound through controller selection (%s)', async changed => {
+        const writer = requireAccount();
+        const detail = createDeploymentEnvironmentDetailV1();
+        const input = { serverId: writer.serverIdentityId!, environmentId: detail.environment.id, expectedRevision: 1, ...content };
+        homes.answer(serverId, `GET /v1/deployments/environments/${input.environmentId}`, { body: {
+            ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
+        } });
+        const original = bindPresentUserActionConfirmation('deployments.environments.update', input, {
+            ...uiHost, serverId, serverIdentityId: writer.serverIdentityId, runtimeAccountId: writer.accountId,
+            actionRequestId: `native-controller-${changed}`,
+        }, 'R'.repeat(43));
+        if (!original.presentUserConfirmation) throw new Error('Expected the native Account confirmation');
+        const confirmation = { ...original.presentUserConfirmation,
+            ...(changed === 'target' ? { target: { kind: 'machine' as const, machineId: 'other-controller' } } : {}),
+            ...(changed === 'Home' ? { serverId: 'other-home' } : {}),
+            ...(changed === 'Account' ? { accountId: 'other-account' } : {}),
+        };
+        const context = { ...original, presentUserConfirmation: confirmation,
+            ...(changed === 'automation' ? { surface: 'agent' as const, authority: 'account_automation' as const } : {}) };
+        let received = false;
+        await answerControllerAction('deployments.environments.update', detail.environment.controllerMachineId, (admittedInput, transport) => {
+            received = true;
+            if (!('authentication' in transport.authorization.binding)) throw new Error('Expected Account authentication');
+            const admitted = admitPresentUserConfirmationV1('deployments.environments.update', admittedInput, {
+                surface: transport.invocation.surface,
+                authority: resolveInvocationAuthority({ credential: transport.authorization.binding.authentication.kind,
+                    surface: transport.invocation.surface, actionId: 'deployments.environments.update' }),
+                actionCaller: transport.invocation.caller, presentUserConfirmation: transport.invocation.presentUserConfirmation,
+                serverId, serverIdentityId: writer.serverIdentityId, runtimeAccountId: writer.accountId,
+                actionRequestId: transport.requestId, externalActionTarget: transport.target,
+                externalActionExecutionAuthorization: transport.authorization,
+            });
+            expect(admitted !== null).toBe(changed === 'exact');
+            expect(transport.invocation.presentUserConfirmation?.reviewDigest).toBe('R'.repeat(43));
+            if (changed === 'exact') expect(transport.invocation.presentUserConfirmation?.target).toEqual(transport.target);
+            else if (changed === 'target') expect(transport.invocation.presentUserConfirmation?.target).toEqual(confirmation.target);
+            return { ok: true, environmentId: input.environmentId, revision: 2 };
+        });
+        const result = await createUiDeploymentActionDeps(writer).deploymentAction!('deployments.environments.update', {
+            ...input, ...(changed === 'input' ? { expectedRevision: 2 } : {}),
+        }, context);
+        if (changed === 'automation') expect(result).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+        expect(received).toBe(changed !== 'automation');
     });
 
     it('resolves update placement from the admitted current Environment and preserves daemon normalization refusal', async () => {

@@ -12597,6 +12597,10 @@ removal retains the existing all-Domains scope.
 The protected Link's `providerResourceOrigin: 'created'` fact selects Delete as
 the default; adopted and historical Links default to Unlink. Explicit
 `providerRemoval: 'delete'` chooses provider deletion for an adopted resource.
+Only a creation host recording an acknowledged provider Create retains this
+origin. Link input, including a prepared Artifact, cannot assert it: content is
+opened and normalized before association. A GET-only project recovery also
+remains linked; finding a resource does not acknowledge a Create.
 Unlink remains an association-only host Action. App confirmation composition
 and security review are required before the new provider deletion flow is shipped.
 

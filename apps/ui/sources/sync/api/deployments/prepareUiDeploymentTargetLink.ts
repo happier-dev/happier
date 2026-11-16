@@ -3,6 +3,7 @@ import { buildDeploymentTargetLinkInputV1, DeploymentTargetLinksListResultV1Sche
     type DeploymentTargetLinkProviderIntentInputV1,
     type DeploymentEnvironmentGetResultV1Schema} from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { normalizeDeploymentTargetLinkOriginV1 } from '@happier-dev/protocol/deployments/targetLinkInput';
 import { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, findExistingDeploymentTargetLinkV1 } from '@happier-dev/deployment-protocol';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
@@ -11,9 +12,11 @@ import { shareDeploymentContentWithOwner } from './shareDeploymentContentWithOwn
 
 /** Content is authored by the admitted parent, never by a second Artifact Action. */
 export async function prepareUiDeploymentTargetLink(account: LazyActionAccountContext,
-    input: DeploymentTargetLinkIntentInputV1 | DeploymentTargetLinkProviderIntentInputV1, context: ActionExecutorContext,
+    suppliedInput: DeploymentTargetLinkIntentInputV1 | DeploymentTargetLinkProviderIntentInputV1, context: ActionExecutorContext,
     current: Extract<ReturnType<typeof DeploymentEnvironmentGetResultV1Schema.parse>, { ok: true }>,
 ): Promise<DeploymentTargetLinkInputV1 | DeploymentTargetLinkAlreadyLinkedResultV1> {
+    const input = 'provider' in suppliedInput
+        ? { ...suppliedInput, provider: normalizeDeploymentTargetLinkOriginV1(suppliedInput.provider) } : suppliedInput;
     const provider = 'provider' in input ? input.provider : undefined;
     if ('provider' in input) {
         const existing = await findExistingDeploymentTargetLinkV1(input, {

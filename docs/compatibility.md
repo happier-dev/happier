@@ -9006,6 +9006,9 @@ belongs to the role grammar.
 Lifecycle observations optionally carry positive `providerResourceAbsent: true`
 evidence. Protected provider Link content optionally records
 `providerResourceOrigin: 'created'`; older records without it default to Unlink.
+Link authoring strips caller-supplied origin, including from prepared Artifacts;
+only the creation host's acknowledged Create path retains it. The stored schema
+continues to read existing acknowledged origin records.
 The unprepared teardown request accepts `providerRemoval: 'unlink' | 'delete'`.
 Source-free provider teardown receipts retain the same provider custody and
 existing teardown content with no native Machine/resource proof inventory.

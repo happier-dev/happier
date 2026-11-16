@@ -27,6 +27,48 @@ import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/own
 
 afterEach(() => vi.restoreAllMocks());
 
+it.each(['provider', 'artifact'] as const)('records a claimed created origin from %s Link input as linked', async form => {
+    const fixture = createPlatformFailureNoticeFixture(true, true);
+    const environment = await fixture.host.readEnvironment();
+    const provider = { providerResourceOrigin: 'created' as const, credentialPrincipal: fixture.credentialPrincipal,
+        providerIdentity: { providerAccountId: 'native-owner', providerResourceId: 'existing-native-id', providerEnvironment: 'production' },
+        providerEnvironment: { kind: 'production' as const } };
+    const artifacts = createCredentialedAccountArtifactStore(fixture.host.credentials);
+    const intent = { serverId: 'home', environmentId: environment.environment.id,
+        expectedRevision: environment.environment.revision, requestKey: `claimed-origin-${form}`,
+        targetId: 'platform', targetKind: 'example', role: 'runtime' as const, machines: [],
+        source: { kind: 'plugin' as const, contribution: { pluginId: 'example.deploy', localId: 'platform' } } };
+    const published = form === 'artifact' ? await artifacts.create({
+        header: { kind: 'deployment-target-link.v1', title: 'Existing project' }, body: JSON.stringify(provider),
+    }) : undefined;
+    let associatedArtifactId: string | undefined;
+    vi.spyOn(axios, 'request').mockImplementation(async request => {
+        const path = new URL(request.url!).pathname;
+        if (request.method === 'GET') return { status: 200,
+            data: { ok: true, environment: environment.environment, targetLinks: [] } };
+        if (path === '/v1/deployments/targets/list') return { status: 200,
+            data: { ok: true, items: [], nextCursor: null, coverage: 'complete' } };
+        if (path.endsWith('/targets')) {
+            const body = readHomeRequestBody(request.data);
+            associatedArtifactId = typeof body.contentArtifactId === 'string' ? body.contentArtifactId : undefined;
+            return { status: 200, data: { ok: true, environmentId: intent.environmentId,
+                revision: 2, targetLinkId: 'linked-resource', targetLinkRevision: 1 } };
+        }
+        throw new Error(`Unexpected Home request: ${path}`);
+    });
+    const deps = createDaemonDeploymentActionDeps({ ...fixture.host, accountArtifacts: artifacts });
+    const input = published ? { ...intent, contentArtifactId: published.artifactId,
+        contentHeaderVersion: published.revision.headerVersion, contentBodyVersion: published.revision.bodyVersion }
+        : { ...intent, provider, provisioned: true as const };
+    expect(await deps.deploymentAction!('deployments.targets.link', input, {})).toMatchObject({ ok: true });
+    expect(associatedArtifactId).toBeTruthy();
+    const row = fixture.rows.get(associatedArtifactId!);
+    expect(row).toBeDefined();
+    const stored = decodePlainArtifactStoredContent(row!.body);
+    expect(stored).toEqual({ body: JSON.stringify({ credentialPrincipal: provider.credentialPrincipal,
+        providerIdentity: provider.providerIdentity, providerEnvironment: provider.providerEnvironment }) });
+});
+
 it.each(['upload', 'gitIntegration'] as const)('completes titled native Create (%s) through the same association owner as a retained Finish linking', async sourceMethod => {
     const fixture = createPlatformFailureNoticeFixture(true, true);
     const environment = await fixture.host.readEnvironment();
@@ -85,6 +127,11 @@ it.each(['upload', 'gitIntegration'] as const)('completes titled native Create (
         expect(associations).toBe(1);
         expect([...fixture.rows.values()].map(row => decodePlainArtifactStoredContent(row.header)))
             .toContainEqual(expect.objectContaining({ kind: 'deployment-target-link.v1', title: input.title }));
+        expect([...fixture.rows.values()].map(row => {
+            const stored = decodePlainArtifactStoredContent(row.body);
+            return stored && typeof stored === 'object' && 'body' in stored && typeof stored.body === 'string'
+                ? JSON.parse(stored.body) : stored;
+        })).toContainEqual({ ...provider, providerResourceOrigin: 'created' });
     } finally { await native.close(); }
 });
 

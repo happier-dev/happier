@@ -283,9 +283,13 @@ describe('Deployment Actions through the default CLI Account front door', () => 
     expect(input).toEqual(original);
   });
 
-  it.each(['deployments.deploy', 'deployments.rollback', 'deployments.promote', 'deployments.teardown',
-    'deployments.targets.link', 'deployments.bindings.set', 'deployments.health.read', 'deployments.drift.read', 'deployments.logs.read'] as const)(
-    'relays %s unchanged to its exact Machine with Home admission and no originating storage mutation', async actionId => {
+  it.each([
+    ...(['deployments.deploy', 'deployments.rollback', 'deployments.promote', 'deployments.teardown',
+      'deployments.targets.link', 'deployments.bindings.set', 'deployments.health.read', 'deployments.drift.read', 'deployments.logs.read'] as const)
+      .map(actionId => ({ actionId, preparedLink: false })),
+    { actionId: 'deployments.targets.link' as const, preparedLink: true },
+  ])(
+    'relays $actionId (prepared Artifact: $preparedLink) unchanged to its exact Machine with Home admission and no originating storage mutation', async ({ actionId, preparedLink }) => {
       const isRead = actionId.endsWith('.read');
       const accountToken = `header.${Buffer.from(JSON.stringify({ sub: 'deployment-account', tokenEpoch: 7,
         provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
@@ -297,7 +301,11 @@ describe('Deployment Actions through the default CLI Account front door', () => 
         controllerMachineId: isRead ? 'environment-controller' : controller.id, buildMachineId: 'selected-builder' });
       const service = { kind: 'deployment' as const, machineId: controller.id, environmentId: 'staging',
         environmentInstanceId: 'deployment-instance', composeService: 'app', serviceId: 'deployment-instance/app' };
-      const input = actionId === 'deployments.targets.link' ? { serverId: 'deployment-home', environmentId: 'staging',
+      const input = actionId === 'deployments.targets.link' ? preparedLink ? {
+        serverId: 'deployment-home', environmentId: 'staging', expectedRevision: 1,
+        requestKey: 'prepared-link', role: 'runtime' as const, targetId: 'own-server',
+        machines: [{ machineId: 'runtime', installationId: 'installed-runtime' }], ...artifact,
+      } : { serverId: 'deployment-home', environmentId: 'staging',
         expectedRevision: 1, requestKey: 'original-intent', role: 'runtime' as const, targetId: 'platform', targetKind: 'platform',
         source: { kind: 'plugin' as const, contribution: { pluginId: 'example.deploy', localId: 'platform' } }, machines: [],
         provider: { credentialPrincipal: { kind: 'account' as const, accountId: 'deployment-account',
@@ -375,23 +383,6 @@ describe('Deployment Actions through the default CLI Account front door', () => 
       expect(storage).toHaveBeenCalledTimes(1);
       expect(transport).toHaveBeenCalledTimes(2);
     });
-
-  it('keeps prepared target links on the existing storage path without controller dispatch', async () => {
-    const input = { serverId: 'deployment-home', environmentId: 'staging', expectedRevision: 1,
-      requestKey: 'prepared-link', role: 'runtime' as const, targetId: 'own-server',
-      machines: [{ machineId: 'runtime', installationId: 'installed-runtime' }], ...artifact };
-    const result = { ok: true, environmentId: 'staging', revision: 2, targetLinkId: 'linked-target', targetLinkRevision: 1 };
-    const requests = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: result });
-    const dispatch = vi.spyOn(axios, 'post').mockImplementation(async () => { throw new Error('Prepared links must not dispatch'); });
-    const deps = createCliActionDeps({ token, credentials: { token, encryption: null },
-      sessionId: 'deployment-session', mode: 'plain', ctx: null, serverId: 'deployment-home',
-      serverHttpBaseUrl: 'https://deployment-home.test' });
-    expect(await deps.deploymentAction!('deployments.targets.link', input, { surface: 'ui', authority: 'present_user',
-      actionCaller: { kind: 'host' }, actionRequestId: 'prepared-link', runtimeAccountId: 'deployment-account' })).toEqual(result);
-    expect(requests.mock.calls.map(([request]) => ({ method: request.method, url: request.url, data: request.data })))
-      .toEqual([{ method: 'POST', url: 'https://deployment-home.test/v1/deployments/environments/staging/targets', data: input }]);
-    expect(dispatch).not.toHaveBeenCalled();
-  });
 
   it('creates and pages keyless metadata using the declared storage routes and preserves a non-retryable conflict', async () => {
     // HTTP is the boundary; the registered Action, Home admission and transport binding remain real.

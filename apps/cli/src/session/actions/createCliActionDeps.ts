@@ -1049,6 +1049,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
 
   const openPrivateLabel = createCliPrivateLabelActionOpener(params.credentials?.token === params.token ? params.credentials.encryption : null);
   const actionDeps: CliActionDeps = {
+    machinePresetPrepare: params.machinePresetPrepare,
     privateLabelOpen: async (request, context) => {
       if (context.serverId && !await isSameActionHomeId(context.serverId)) return null;
       if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
@@ -1241,7 +1242,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         return output.success ? output.data : executionRunActionFailure('invalid_action_output');
       }
       const nativeRead = isDeploymentReadActionIdV1(actionId);
-      const linkPreparation = actionId === 'deployments.targets.link' && !('contentArtifactId' in input);
+      const linkPreparation = actionId === 'deployments.targets.link';
       if (!isControllerDeploymentMutationAction(actionId, input) && !nativeRead && !linkPreparation) return deploymentStorage(actionId, input, context);
       if (!('environmentId' in input)) return executionRunActionFailure('invalid_parameters');
       const loaded = await deploymentStorage('deployments.environments.get', {

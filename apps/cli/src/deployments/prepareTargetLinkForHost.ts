@@ -8,8 +8,12 @@ import { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, findExistingDeploymentTargetLi
 import type { createCredentialedAccountArtifactStore, ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createDeploymentArtifactForHost } from './createArtifactForHost';
+import { normalizeDeploymentTargetLinkOriginV1 } from '@happier-dev/protocol/deployments/targetLinkInput';
+import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
 
-type LinkIntent = DeploymentTargetLinkIntentInputV1 | DeploymentTargetLinkProviderIntentInputV1;
+type LinkIntent = (DeploymentTargetLinkIntentInputV1 & { provider?: never; contentArtifactId?: never })
+    | (DeploymentTargetLinkProviderIntentInputV1 & { contentArtifactId?: never })
+    | (DeploymentTargetLinkInputV1 & { provider?: never });
 
 type PreparationStep = 'admission' | 'environment_read' | 'provider_links_read' | 'provider_links_compare'
     | 'provider_content_read' | 'provider_content_compare' | 'content_publish' | 'prepared_input';
@@ -26,7 +30,9 @@ export class TargetLinkPreparationError extends Error {
 }
 
 /** The admitted link Action authors private content; the existing storage writer owns association/CAS. */
-export async function prepareTargetLinkForHost(request: Readonly<{ input: LinkIntent; context: ActionExecutorContext }>,
+export async function prepareTargetLinkForHost(request: Readonly<{ input: LinkIntent; context: ActionExecutorContext;
+        /** In-process Create acknowledgment, never a field accepted from Link input. */
+        acknowledgedCreate?: boolean }>,
     host: Readonly<{
         serverHttpBaseUrl: string;
         artifacts: ReturnType<typeof createCredentialedAccountArtifactStore>;
@@ -36,14 +42,29 @@ export async function prepareTargetLinkForHost(request: Readonly<{ input: LinkIn
         artifactAuthorization(context: ActionExecutorContext): ArtifactRequestAuthorizationHeaders;
     }>,
 ): Promise<DeploymentTargetLinkInputV1 | DeploymentTargetLinkAlreadyLinkedResultV1> {
-    const { input, context } = request;
+    const { context } = request;
+    const input: LinkIntent = request.input.provider !== undefined && !request.acknowledgedCreate
+        ? { ...request.input, provider: normalizeDeploymentTargetLinkOriginV1(request.input.provider) } : request.input;
     let step: PreparationStep = 'admission';
     try {
         await host.assertCurrent(context);
         step = 'environment_read';
         const current = await host.readMetadata({ environmentId: input.environmentId, context });
-        const provider = 'provider' in input ? input.provider : undefined;
-        if ('provider' in input) {
+        const provider = input.provider;
+        let content = provider ?? {};
+        let title = 'title' in input ? input.title ?? '' : '';
+        if (input.contentArtifactId !== undefined) {
+            step = 'provider_content_read';
+            const opened = readDeploymentTargetLinkArtifactV1(input,
+                await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => host.artifacts.read(input.contentArtifactId, {
+                    signal: context.signal, prepareRecipients: false, includeSharedAudience: false,
+                    authorizationHeaders: host.artifactAuthorization(context) })));
+            if (!opened.ok) throw Object.assign(new Error(opened.error), { code: opened.error });
+            if (opened.content.providerResourceOrigin === undefined) return input;
+            content = normalizeDeploymentTargetLinkOriginV1(opened.content);
+            title = opened.title;
+        }
+        if (input.provider !== undefined) {
             const existing = await findExistingDeploymentTargetLinkV1(input, {
                 async list(selection, cursor) {
                     step = 'provider_links_read';
@@ -77,8 +98,8 @@ export async function prepareTargetLinkForHost(request: Readonly<{ input: LinkIn
             artifacts: host.artifacts, owner: current.environment.owner, assertCurrent: () => host.assertCurrent(context), publication: 'create',
             content: { ...(binding?.actionId === 'deployments.targets.link' && admission
                     ? { artifactId: createDeploymentLinkContentArtifactIdV1({ ...binding, deploymentLinkAdmission: admission }) } : {}),
-        header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'title' in input ? input.title ?? '' : '' },
-                body: JSON.stringify(provider ?? {}), signal: context.signal,
+        header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title },
+                body: JSON.stringify(content), signal: context.signal,
                 beforeWrite: () => host.assertCurrent(context), authorizationHeaders: host.artifactAuthorization(context) },
         }));
         step = 'prepared_input';
