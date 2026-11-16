@@ -1,6 +1,5 @@
 import { PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
-import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 import type { PluginAccountStorageConsumerContext } from '@happier-dev/plugin-sdk/storage';
 import { SessionPullRequestBindingInputV1Schema, type SessionPullRequestBindingInputV1,
   type SessionPullRequestBindingResultV1 } from '@happier-dev/channels-protocol/v1';
@@ -56,32 +55,19 @@ export async function selectSessionPullRequestRelations(
     return matching;
   };
   const entries: Awaited<ReturnType<typeof readSessionPullRequestBindingRows>> = [];
-  if (input.sessionId !== undefined) {
-    const sessionId = SessionIdSchema.parse(input.sessionId);
-    const connections = new Map<string, boolean>();
-    for (const entry of await readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal })) {
-      connectionIds.add(entry.binding.connectionId);
-      let matching = connections.get(entry.binding.connectionId);
-      if (matching === undefined) {
-        const row = await collection.get(entry.binding.connectionId, { signal: context.signal });
-        if (row === null) throw pluginError('channels_pr_link_connection_missing', 'A retained PR link has no verifiable connection.', true);
-        matching = matches(row);
-        connections.set(entry.binding.connectionId, matching);
-      }
-      if (matching) entries.push(entry);
+  const sessionId = input.sessionId === undefined ? undefined : SessionIdSchema.parse(input.sessionId);
+  const connections = new Map<string, boolean>();
+  // Without a Session selector, census only PR bindings, never all connections.
+  for (const entry of await readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal })) {
+    connectionIds.add(entry.binding.connectionId);
+    let matching = connections.get(entry.binding.connectionId);
+    if (matching === undefined) {
+      const row = await collection.get(entry.binding.connectionId, { signal: context.signal });
+      if (row === null) throw pluginError('channels_pr_link_connection_missing', 'A retained PR link has no verifiable connection.', true);
+      matching = matches(row);
+      connections.set(entry.binding.connectionId, matching);
     }
-  } else {
-    let cursor: string | undefined;
-    do {
-      const page = await collection.query({ index: CHANNEL_STATE_INDEX_ID.byKind,
-        prefix: [CHANNEL_STATE_RECORD_KIND.connection], order: 'asc', limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
-        ...(cursor === undefined ? {} : { cursor }) }, { signal: context.signal });
-      for (const row of page.rows) if (matches(row)) {
-        connectionIds.add(row.rowId);
-        entries.push(...await readSessionPullRequestBindingRows({ collection, connectionId: row.rowId, signal: context.signal }));
-      }
-      cursor = page.nextCursor;
-    } while (cursor !== undefined);
+    if (matching) entries.push(entry);
   }
   const links: Array<Extract<SessionPullRequestBindingResultV1, { kind: 'relations' }>['links'][number]> = [];
   for (const { row, binding } of entries) {
@@ -128,10 +114,8 @@ export async function observeSessionPullRequestBindingAction(input: JsonValue, i
           }
           let added = false;
           for (const id of selected.connectionIds) if (!dependencies.has(id)) {
-            dependencies.set(id, collection.watch(sessionId === undefined
-              ? sessionPullRequestBindingSelection({ connectionId: id })
-              : { index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
-                prefix: [id, null, CHANNEL_STATE_RECORD_KIND.connection], order: 'asc' }, notify));
+            dependencies.set(id, collection.watch({ index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
+              prefix: [id, null, CHANNEL_STATE_RECORD_KIND.connection], order: 'asc' }, notify));
             added = true;
           }
           // Cover the asynchronous dependency acquisition gap with one read invalidation.
@@ -140,9 +124,7 @@ export async function observeSessionPullRequestBindingAction(input: JsonValue, i
       } finally { refreshing = undefined; }
     })();
   }
-  const membership = collection.watch(request.kind === 'readRelations' && sessionId === undefined
-    ? { index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [CHANNEL_STATE_RECORD_KIND.connection], order: 'asc' }
-    : sessionPullRequestBindingSelection({ sessionId }), () => {
+  const membership = collection.watch(sessionPullRequestBindingSelection({ sessionId }), () => {
       notify();
       if (request.kind === 'readRelations') void refresh().catch(() => {
         // The next read reports the typed storage/identity failure, not stale membership.

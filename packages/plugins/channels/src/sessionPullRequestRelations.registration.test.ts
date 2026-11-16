@@ -52,6 +52,39 @@ describe('registered GitHub PR source → native Channels relationships', () => 
         kind: 'readRelations', credentialRef: { ...credentialRef, accountId: 'other-account' },
         pullRequest: { repositoryId: '77', number: 12 },
       }, { surface: 'ui' })).toMatchObject({ kind: 'relations', links: [{ sessionId: 'session-1', bindingId: 'account-binding' }] });
+      // Count rows crossing the Account-storage boundary, preserving the real registered Action.
+      const query = vi.spyOn(state, 'query');
+      const readExact = () => core.invokeAction('session-pull-request-relations-v1', {
+        kind: 'readRelations', credentialRef, pullRequest: { repositoryId: '77', number: 12 },
+      }, { surface: 'ui' });
+      await readExact();
+      const beforeRows = (await Promise.all(query.mock.results.map(result => result.value)))
+        .reduce((count, page) => count + page.rows.length, 0);
+      query.mockClear();
+      for (const suffix of ['one', 'two', 'three']) {
+        const id = `unrelated-${suffix}`;
+        await state.put({ ...connection, id, 'connection-id': id, payload: { ...connection.payload,
+          providerConnectionKey: 'github:repository:78' } }, { expectedRevision: 'absent' });
+      }
+      expect(await readExact()).toMatchObject({ kind: 'relations', links: [{ sessionId: 'session-1', bindingId: 'account-binding' }] });
+      const afterRows = (await Promise.all(query.mock.results.map(result => result.value)))
+        .reduce((count, page) => count + page.rows.length, 0);
+      expect(afterRows).toBe(beforeRows);
+      query.mockRestore();
+      const exactInvalidated = Object.assign(vi.fn(), { retire: vi.fn() });
+      const exactObservation = await core.observeAction('session-pull-request-relations-v1', {
+        kind: 'readRelations', credentialRef, pullRequest: { repositoryId: '77', number: 12 },
+      }, exactInvalidated, { surface: 'ui' });
+      exactInvalidated.mockClear();
+      const unrelated = await state.get('unrelated-one');
+      if (unrelated === null) throw new Error('Missing unrelated connection');
+      await state.put({ ...unrelated.value, 'updated-at': 43 }, { expectedRevision: unrelated.revision });
+      expect(exactInvalidated).not.toHaveBeenCalled();
+      const relevant = await state.get('account-binding');
+      if (relevant === null) throw new Error('Missing exact PR binding');
+      await state.put({ ...relevant.value, 'updated-at': 43 }, { expectedRevision: relevant.revision });
+      expect(exactInvalidated).toHaveBeenCalledOnce();
+      await exactObservation.dispose();
       expect(await core.invokeAction('session-pull-request-relations-v1', {
         kind: 'readRelations', credentialRef, pullRequest: { repositoryId: '78', number: 12 },
       }, { surface: 'ui' })).toEqual({ kind: 'relations', links: [] });
@@ -195,15 +228,20 @@ describe('registered GitHub PR source → native Channels relationships', () => 
         const watch = vi.spyOn(state, 'watch');
         const allChanged = vi.fn();
         const all = await management.observeSessionPullRequestBindingAction({ kind: 'readRelations', credentialRef }, allChanged, context);
+        allChanged.mockClear();
         const future = { ...connection, id: 'future-connection', 'connection-id': 'future-connection' };
         await state.put(future, { expectedRevision: 'absent' });
-        await vi.waitFor(() => expect(watch).toHaveBeenCalledWith({ index: 'by-connection-binding-v2',
-          prefix: [future.id], order: 'asc' }, expect.any(Function)));
-        allChanged.mockClear();
+        // Binding-first membership does not subscribe to an unreferenced connection.
+        expect(allChanged).not.toHaveBeenCalled();
         const futureTarget = { ...binding.target, sessionId: 'session-2' };
         await state.put(withChannelStateSessionIdentity({ id: 'future-binding', 'record-kind': 'binding', v: 1,
           'connection-id': future.id, 'binding-id': 'future-binding', 'created-at': 42, 'updated-at': 42,
           payload: { ...payload, target: futureTarget } }, futureTarget), { expectedRevision: 'absent' });
+        expect(allChanged).toHaveBeenCalledOnce();
+        await vi.waitFor(() => expect(watch).toHaveBeenCalledWith({ index: 'by-connection-binding-v2',
+          prefix: [future.id, null, 'connection'], order: 'asc' }, expect.any(Function)));
+        allChanged.mockClear();
+        await state.put({ ...future, 'updated-at': 43 }, { expectedRevision: 1 });
         expect(allChanged).toHaveBeenCalledOnce();
         signal.abort();
         await all.dispose();
