@@ -3,7 +3,7 @@ import { hrefForDestinationRef, resolveDestinationRefFromHref } from '../destina
 import { createWorkspaceNavigationHistory, recordWorkspaceNavigation, stepWorkspaceNavigation, workspaceNavigationRestorationActions, type WorkspaceNavigationEntry } from './workspaceNavigationHistory';
 import { createWorkspaceEmptyTab, sameDestinationRef, type WorkspaceAction, type WorkspaceState, type WorkspaceTab } from './workspaceState';
 export { sameDestinationRef } from './workspaceState';
-import { isWorkspaceSingletonDestination, resolveWorkspaceDestinationScope, workspaceDestinationNavigationIdentity } from './workspaceDestinationPolicy';
+import { isWorkflowDraftDestination, isWorkspaceSingletonDestination, resolveWorkspaceDestinationScope, workspaceDestinationNavigationIdentity } from './workspaceDestinationPolicy';
 import { createWorkspaceDestinationSplit, createWorkspaceSplit } from './workspaceSplit';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -275,7 +275,8 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             // An ordinary open focuses a known destination, including when its
             // router names the source tab. Only explicit new-tab/split intent
             // creates another tab; a phone view replacement can opt out of reuse.
-            const reusable = options.reuseExisting || (mode === 'preview' && options.reuseExisting !== false)
+            const reusable = !isWorkflowDraftDestination(target)
+                && (options.reuseExisting || (mode === 'preview' && options.reuseExisting !== false))
                 // A Project can have several retained instances. An in-Project preview
                 // belongs to its source pane, including that pane's mounted File editor.
                 ? (mode === 'preview' && sourceTab && sameProjectIdentity(sourceTab.target, target)

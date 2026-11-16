@@ -11,7 +11,7 @@ export function workspaceSingletonDestinationIds(catalog: readonly CompactAppDes
 }
 
 /** New workflow documents are independent editors, even though their route belongs to the hub. */
-function isWorkflowDraftDestination(target: DestinationRef): boolean {
+export function isWorkflowDraftDestination(target: DestinationRef): boolean {
     return target.kind === 'workflows' && target.params.workspacePathname === '/workflows/new';
 }
 

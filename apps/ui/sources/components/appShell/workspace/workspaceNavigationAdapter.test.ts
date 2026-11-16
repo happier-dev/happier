@@ -827,14 +827,14 @@ describe('workspace navigation adapter', () => {
       ),
     ).toHaveLength(2);
   });
-  it('gives each Import entrance its own editor instead of reusing the singleton Workflows tab', () => {
+  it.each([undefined, true])('gives each Import entrance its own editor instead of reusing the singleton Workflows tab (reuseExisting=%s)', (reuseExisting) => {
     const h = harness();
     h.adapter.openHref('/workflows', { mode: 'newTab' });
     const library = h.active().id;
-    h.adapter.openHref('/workflows/new?importJson=1', { mode: 'newTab' });
+    h.adapter.openHref('/workflows/new?importJson=1', { mode: 'newTab', reuseExisting });
     const first = h.active();
     expect(first.id).not.toBe(library);
-    h.adapter.openHref('/workflows/new?importJson=1', { mode: 'newTab' });
+    h.adapter.openHref('/workflows/new?importJson=1', { mode: 'newTab', reuseExisting });
     expect(h.active().id).not.toBe(first.id);
     expect(h.state().tabs[first.id]).toBe(first);
     expect(h.state().tabs[library].target).toEqual({ kind: 'workflows', params: {} });
