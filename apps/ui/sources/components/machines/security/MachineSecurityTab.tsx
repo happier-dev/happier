@@ -10,6 +10,10 @@ import { MachineNetworkSection } from '@/components/machines/security/network/Ma
 import { describeNetworkRowSummary, useMachineNetworkLead, useMachineNetworkRowFacts } from '@/components/machines/security/network/useMachineNetworkLead';
 import { MachineSecuritySection } from '@/components/machines/security/MachineSecuritySection';
 import { MachineRolesSection } from '@/components/machines/security/MachineRolesSection';
+import { MachineIsolationPage } from '@/components/machines/security/isolation/MachineIsolationPage';
+import { MachineIsolationSummaryRow } from '@/components/machines/security/isolation/MachineIsolationSummaryRow';
+import { useMachineIsolationSummary } from '@/components/machines/security/isolation/useMachineIsolationSummary';
+import type { MachineIsolationWorkKind } from '@/components/machines/security/isolation/machineIsolationChoices';
 import { MachineApprovalProfileSection } from '@/components/machines/security/MachineApprovalProfileSection';
 import { MachineSharingSection } from '@/components/sharing/machines/MachineSharingSection';
 import { MachineWorkSummaryReader } from '@/components/sharing/machines/MachineWorkSummaryReader';
@@ -21,7 +25,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useActiveServerAccountScope, useMachineField } from '@/sync/store/hooks';
 import { t } from '@/text';
 
-type SecurityPage = 'network' | 'sharing';
+type SecurityPage = 'network' | 'sharing' | 'isolation';
 
 /**
  * The Machine's Security tab (MACH-COMPOSE D1): who can do what on it, what waits to update, then the pages it
@@ -39,6 +43,9 @@ export function MachineSecurityTab(props: MachinePageTabBodyProps) {
     [setParams],
   );
   const openSetup = React.useCallback(() => setParams({ id: 'setup' }), [setParams]);
+  // Another door (the Sandboxes tab, a discovery offer) asks Isolation to open its add flow once.
+  const addFor = props.params.id === 'security' && props.params.page === 'isolation' ? props.params.add : undefined;
+  const clearAddIntent = React.useCallback(() => setParams({ id: 'security', page: 'isolation' }), [setParams]);
   const back = React.useMemo(
     () => ({
       label: t('machineDetailPage.subPages.security'),
@@ -61,6 +68,20 @@ export function MachineSecurityTab(props: MachinePageTabBodyProps) {
         refreshKey={refreshKey}
         needsManage={needsManage}
         back={back}
+      />
+    );
+  }
+  if (page === 'isolation') {
+    return (
+      <MachineSecurityIsolationPage
+        serverId={target.serverId}
+        machine={machine}
+        machineName={machineName}
+        online={props.online}
+        refreshKey={refreshKey}
+        back={back}
+        {...(addFor ? { addFor } : {})}
+        onAddHandled={clearAddIntent}
       />
     );
   }
@@ -97,8 +118,12 @@ export function MachineSecurityTab(props: MachinePageTabBodyProps) {
         canManage={!needsManage}
         shared={machine.isShared === true}
         reach={
-          <MachineSecurityReach serverId={target.serverId} machine={machine} machineName={machineName}
-            needsManage={needsManage} onOpen={open} />
+          <>
+            <MachineIsolationSummaryRow serverId={target.serverId} machine={machine} machineName={machineName}
+              onOpen={() => open('isolation')} />
+            <MachineSecurityReach serverId={target.serverId} machine={machine} machineName={machineName}
+              needsManage={needsManage} onOpen={open} />
+          </>
         }
       />
       <MachineRolesSection serverId={target.serverId} machine={machine} machineName={machineName} online={props.online} />
@@ -191,6 +216,26 @@ function MachineSecurityNetworkPage(
             : null
         }
       />
+    </View>
+  );
+}
+
+/** Isolation (lab machine-sandboxes-1115 scene 1): the head leads with the policy said back, then where each kind of work runs. */
+function MachineSecurityIsolationPage(props: PushedPageProps & Readonly<{
+  addFor?: MachineIsolationWorkKind; onAddHandled: () => void;
+}>) {
+  const summary = useMachineIsolationSummary({ serverId: props.serverId, machine: props.machine, machineName: props.machineName });
+  const [statement, ...detail] = summary ?? [];
+  return (
+    <View testID="machine-security-isolation-page">
+      <MachineTabSubHead
+        testID="machine-sub-page-header-isolation"
+        title={t('machineDetailPage.isolation.title')}
+        back={props.back}
+        lead={statement ? { statement, detail: detail.length > 0 ? detail.join(' ') : null } : null}
+      />
+      <MachineIsolationPage serverId={props.serverId} machine={props.machine} machineName={props.machineName} online={props.online}
+        {...(props.addFor ? { addFor: props.addFor } : {})} onAddHandled={props.onAddHandled} />
     </View>
   );
 }

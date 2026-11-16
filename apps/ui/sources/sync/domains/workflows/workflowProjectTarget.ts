@@ -80,7 +80,8 @@ export function selectWorkflowProjectMachine(input: Readonly<{
     /** Where this Machine starts, resolved by the shared default-directory policy. */
     defaultDirectory: string;
 }> & ProjectMutationContext): WorkflowAuthoringTarget {
-    if (input.current !== null && input.current.machineId === input.machineId) return input.current;
+    // The same Machine chosen again keeps its folder and goes back to running on it (a preset placement ends).
+    if (input.current !== null && input.current.machineId === input.machineId) return setWorkflowProjectSessionPlacement(input.current, undefined);
     if (input.current !== null && !isWorkflowProjectTarget(input.current)) {
         return { machineId: input.machineId, directory: input.current.directory };
     }
@@ -122,4 +123,16 @@ export function setWorkflowProjectDirectory(input: Readonly<{
         ...(isWorkflowProjectTarget(input.current) && input.current.sessionPlacement !== undefined
             ? { sessionPlacement: input.current.sessionPlacement } : {}),
     }, workspaceRefId);
+}
+
+/**
+ * Where a workflow's Sessions run beyond its Machine (J6): a cloud preset chosen in the shared Machine picker, saved
+ * with the workflow (`sessionPlacement`), or none (the Machine and its own policy). The folder and checkout stay.
+ */
+export function setWorkflowProjectSessionPlacement(current: WorkflowAuthoringTarget,
+    placement: WorkflowProjectTargetV1['sessionPlacement']): WorkflowAuthoringTarget {
+    if (!isWorkflowProjectTarget(current)) return current;
+    const { sessionPlacement: previous, ...rest } = current;
+    if (placement === undefined) return previous === undefined ? current : rest;
+    return { ...rest, sessionPlacement: placement };
 }

@@ -51,7 +51,7 @@ it('detail-navigation.Machine: lists core pages without mounting siblings and se
     </AuthProvider>);
     onTestFinished(() => screen.unmount());
     const listed = await invokeScopeAction('shell.column.get', { column: 'main' });
-    expect(listed).toMatchObject({ available: true, activeTab: 'overview', tabs: ['overview', 'services', 'processes', 'storage', 'guard', 'setup', 'security'] });
+    expect(listed).toMatchObject({ available: true, activeTab: 'overview', tabs: ['overview', 'services', 'scheduled', 'processes', 'storage', 'guard', 'setup', 'security', 'sandboxes'] });
     expect(screen.findByTestId('machine-page-tab-body.services')).toBeNull();
     expect(screen.findByTestId('machine-page-tab-body.processes')).toBeNull();
     expect(screen.findByTestId('machine-page-tab-body.storage')).toBeNull();

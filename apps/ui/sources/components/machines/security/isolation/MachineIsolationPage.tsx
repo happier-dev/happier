@@ -1,0 +1,311 @@
+import * as React from 'react';
+import type { MachineIsolationPolicyV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
+import { MachineIsolationMutationResultV1Schema } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
+import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { readMachineProvisionerAgentNativeSandboxSupportV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+
+import { useManagedProvisioners } from '@/components/settings/machines/managed/useManagedProvisioners';
+import {
+  MANAGED_PROVISIONER_MARK_SIZE,
+  ManagedPresetMark,
+  ManagedPresetOfferLine,
+} from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
+import { useMachineIsolationPolicy } from '@/hooks/machine/useMachineIsolationPolicy';
+import { Modal } from '@/modal';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { t } from '@/text';
+
+import {
+  withMachineIsolationLifecycle,
+  withMachineIsolationSandbox,
+  withMachineIsolationWorkTarget,
+  withoutMachineIsolationSandbox,
+  type MachineIsolationLifecycle,
+  type MachineIsolationWorkKind,
+} from './machineIsolationChoices';
+import {
+  MachineIsolationPageView,
+  type MachineIsolationEntryRow,
+  type MachineIsolationFailure,
+  type MachineIsolationPageViewProps,
+} from './MachineIsolationPageView';
+import { useMachineIsolationPresets } from './useMachineIsolationSummary';
+import { MachineIsolationAddSandboxModal, type MachineIsolationAddedSandbox } from './MachineIsolationAddSandboxModal';
+import { randomUUID } from '@/platform/randomUUID';
+
+type SaveFailure = Readonly<
+  | { kind: 'failed'; policy: MachineIsolationPolicyV1; code?: string }
+  | { kind: 'conflict' }
+>;
+type ViewBase = Omit<MachineIsolationPageViewProps, 'entries' | 'checkFailure'>;
+
+/**
+ * Machine → Security → Isolation. The policy is the synced Machine metadata read by `useMachineIsolationPolicy`, so it
+ * stays visible offline; every change is one `machines.isolation.set` with the complete policy. Choosing never creates
+ * a sandbox: they are created when work starts.
+ */
+export function MachineIsolationPage(
+  props: Readonly<{
+    serverId: string;
+    machine: Machine;
+    machineName: string;
+    online: boolean | null;
+    /** Another door asked to add a sandbox for this kind of work: the add flow opens once, then the intent clears. */
+    addFor?: MachineIsolationWorkKind;
+    onAddHandled?: () => void;
+  }>,
+) {
+  const { serverId, machine, machineName } = props;
+  const isolation = useMachineIsolationPolicy({ serverId, machine });
+  const { policy, savePolicy } = isolation;
+  const latestPolicy = React.useRef(policy);
+  latestPolicy.current = policy;
+  const [failure, setFailure] = React.useState<SaveFailure | null>(null);
+  const controller = React.useMemo<ManagedControllerV1 | undefined>(
+    () =>
+      machine.installationId
+        ? { machineId: machine.id, installationId: machine.installationId }
+        : undefined,
+    [machine.id, machine.installationId],
+  );
+  const readOnlyReason = !canManageMachine(machine)
+    ? t('machineDetailPage.isolation.notManager')
+    : props.online !== true
+      ? t('machineDetailPage.isolation.offline', { machine: machineName })
+      : null;
+
+  const save = React.useCallback(
+    async (next: MachineIsolationPolicyV1) => {
+      setFailure(null);
+      try {
+        const result = await savePolicy(next);
+        if (!result) return;
+        const parsed = result.ok
+          ? MachineIsolationMutationResultV1Schema.safeParse(result.result)
+          : null;
+        const status = parsed?.success ? parsed.data.status : null;
+        if (
+          status === 'applied' ||
+          status === 'satisfied' ||
+          status === 'unchanged' ||
+          status === 'cancelled'
+        )
+          return;
+        if (status === 'conflict') {
+          setFailure({ kind: 'conflict' });
+          return;
+        }
+        if (!result.ok && result.errorCode === 'action_account_scope_changed')
+          return;
+        setFailure({
+          kind: 'failed',
+          policy: next,
+          code: result.ok ? (status ?? 'invalid_result') : result.errorCode,
+        });
+      } catch {
+        setFailure({ kind: 'failed', policy: next, code: 'unavailable' });
+      }
+    },
+    [savePolicy],
+  );
+  const onChooseTarget = React.useCallback(
+    (kind: MachineIsolationWorkKind, id: string | null) => {
+      if (latestPolicy.current)
+        void save(
+          withMachineIsolationWorkTarget(latestPolicy.current, kind, id),
+        );
+    },
+    [save],
+  );
+  const onChooseLifecycle = React.useCallback(
+    (kind: MachineIsolationWorkKind, lifecycle: MachineIsolationLifecycle) => {
+      if (latestPolicy.current)
+        void save(
+          withMachineIsolationLifecycle(latestPolicy.current, kind, lifecycle),
+        );
+    },
+    [save],
+  );
+  const onToggleNative = React.useCallback(
+    (on: boolean) => {
+      if (latestPolicy.current)
+        void save({ ...latestPolicy.current, agentNativeSandboxEnabled: on });
+    },
+    [save],
+  );
+  const onRemove = React.useCallback(
+    (entry: MachineIsolationEntryRow) => {
+      void Modal.confirm(
+        t('machineDetailPage.isolation.sandboxes.removeTitle', {
+          name: entry.name,
+        }),
+        t('machineDetailPage.isolation.sandboxes.removeBody'),
+        {
+          confirmText: t('machineDetailPage.isolation.sandboxes.remove'),
+          destructive: true,
+        },
+      ).then((confirmed) => {
+        if (confirmed && latestPolicy.current)
+          void save(
+            withoutMachineIsolationSandbox(latestPolicy.current, entry.id),
+          );
+      });
+    },
+    [save],
+  );
+  const canAdd = readOnlyReason === null && isolation.snapshot.status === 'ready';
+  const openAdd = React.useCallback((useFor?: MachineIsolationWorkKind) => {
+    Modal.show({ component: MachineIsolationAddSandboxModal, props: { serverId, controller,
+      onAdded: (entry: MachineIsolationAddedSandbox) => {
+        if (latestPolicy.current) void save(withMachineIsolationSandbox(latestPolicy.current, { ...entry, ...(useFor ? { useFor } : {}) }, randomUUID).policy);
+      } } });
+  }, [serverId, controller, save]);
+  const onAdd = React.useCallback(() => openAdd(), [openAdd]);
+  const { addFor, onAddHandled } = props;
+  React.useEffect(() => {
+    if (!addFor || !canAdd) return;
+    onAddHandled?.();
+    openAdd(addFor);
+  }, [addFor, canAdd, onAddHandled, openAdd]);
+  const onRetryRead = React.useCallback(() => {
+    void getSyncSingleton()
+      .refreshMachines({ serverId })
+      .catch(() => {});
+  }, [serverId]);
+
+  const saveFailure: MachineIsolationFailure | null =
+    failure?.kind === 'conflict'
+      ? { title: t('machineDetailPage.isolation.changed') }
+      : failure
+        ? {
+            title: t('machineDetailPage.isolation.saveFailed'),
+            code: failure.code,
+            onRetry: () => {
+              void save(failure.policy);
+            },
+          }
+        : null;
+  const view: ViewBase = {
+    machineName,
+    status: isolation.snapshot.status,
+    policy,
+    readOnlyReason,
+    busy: isolation.saving,
+    saveFailure,
+    onRetryRead,
+    onChooseTarget,
+    onChooseLifecycle,
+    onToggleNative,
+    onRemove,
+    // A manager sees the add row even offline (disabled there, like every control on the page).
+    ...(isolation.snapshot.status === 'ready' && canManageMachine(machine) ? { onAdd } : {}),
+  };
+  // Presets and sandbox type declarations are read only once a sandbox is configured.
+  return policy && Object.keys(policy.configuredSandboxes).length > 0 ? (
+    <MachineIsolationConfiguredPage
+      {...view}
+      policy={policy}
+      serverId={serverId}
+      controller={controller}
+    />
+  ) : (
+    <MachineIsolationPageView
+      {...view}
+      entries={NO_ENTRIES}
+      checkFailure={null}
+    />
+  );
+}
+
+const NO_ENTRIES: readonly MachineIsolationEntryRow[] = Object.freeze([]);
+
+function MachineIsolationConfiguredPage(
+  props: ViewBase &
+    Readonly<{
+      policy: MachineIsolationPolicyV1;
+      serverId: string;
+      controller: ManagedControllerV1 | undefined;
+    }>,
+) {
+  const { policy, serverId, controller, ...view } = props;
+  const presets = useMachineIsolationPresets(serverId, policy);
+  const catalog = useManagedProvisioners(serverId, undefined, controller);
+  const accountScope = catalog.binding?.scope ?? null;
+  const catalogSettled = !catalog.loading && !catalog.error;
+  const entries = React.useMemo(
+    () =>
+      Object.entries(policy.configuredSandboxes).map(
+        ([id, configured]): MachineIsolationEntryRow => {
+          const preset = presets.byEntry.get(id) ?? null;
+          const key = buildQualifiedPluginContributionKey(
+            configured.provisioner,
+          );
+          const provisioner = catalog.provisioners.find(
+            (candidate) =>
+              buildQualifiedPluginContributionKey(candidate.contribution) ===
+              key,
+          );
+          return {
+            id,
+            name:
+              preset?.name ??
+              t('machineDetailPage.isolation.sandboxes.presetUnavailable'),
+            supportsAgentNativeSandbox:
+              provisioner && preset?.launch
+                ? readMachineProvisionerAgentNativeSandboxSupportV1(
+                    provisioner.descriptor,
+                    preset.launch.choices,
+                  )
+                : null,
+            missingType: catalogSettled && !provisioner,
+            ...(preset
+              ? {
+                  mark: (
+                    <ManagedPresetMark
+                      serverId={serverId}
+                      accountScope={accountScope}
+                      preset={preset}
+                      size={MANAGED_PROVISIONER_MARK_SIZE.row}
+                    />
+                  ),
+                  renderLine: (extra?: string) => (
+                    <ManagedPresetOfferLine
+                      serverId={serverId}
+                      accountScope={accountScope}
+                      preset={preset}
+                      extra={extra}
+                    />
+                  ),
+                }
+              : {}),
+          };
+        },
+      ),
+    [
+      policy.configuredSandboxes,
+      presets.byEntry,
+      catalog.provisioners,
+      catalogSettled,
+      serverId,
+      accountScope,
+    ],
+  );
+  const checkFailure: MachineIsolationFailure | null = catalog.error
+    ? {
+        title: t('machineDetailPage.isolation.sandboxes.checkFailed'),
+        code: catalog.error,
+        onRetry: catalog.refresh,
+      }
+    : null;
+  return (
+    <MachineIsolationPageView
+      {...view}
+      policy={policy}
+      entries={entries}
+      checkFailure={checkFailure}
+    />
+  );
+}

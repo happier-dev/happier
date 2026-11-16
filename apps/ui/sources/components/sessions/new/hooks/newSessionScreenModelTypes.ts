@@ -80,6 +80,9 @@ export type NewSessionScreenModel =
         setSpaceMembership?: (next: SessionSpaceMembershipTargetV1 | null) => void;
         sessionIsolation?: Readonly<{
             snapshot: import('@happier-dev/protocol/machines/machineIsolationPolicyV1').MachineIsolationGetResultV1;
+            /** The chosen Machine, for the outcome line (`SessionIsolationOutcomeLine`). */
+            serverId: string | null;
+            machineName: string | null;
             /** Proposed stored Machine policy choice; receiver authorization and readiness remain unresolved. */
             proposedOutcome?: ReturnType<typeof import('@/hooks/machine/useMachineIsolationPolicy').useMachineIsolationProposedOutcome>;
             /** Actual accepted Session operation; presentation derives its stages from the existing progress owner. */

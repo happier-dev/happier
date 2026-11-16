@@ -1,3 +1,4 @@
+import type { MachineIsolationPolicyV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import type { HappierStorageCategoryIdV1 } from '@happier-dev/protocol/storage/storageV1';
 
 /** Pure route types: core callers do not depend on the visual tab table and its component graph. */
@@ -34,7 +35,9 @@ export type MachinePageTabParams =
     /** MACH-COMPOSE D1: what the Machine is set up with, or the Tools page it pushes (`page=tools`). */
     | Readonly<{ id: 'setup'; page?: 'tools' }>
     /** MACH-COMPOSE D1: who can do what on the Machine, or a page it pushes: Network, Sharing or Isolation (`page=isolation`). */
-    | Readonly<{ id: 'security'; page?: 'network' | 'sharing' | 'isolation' }>
+    | Readonly<{ id: 'security'; page?: 'network' | 'sharing' | 'isolation';
+        /** Isolation only: open the add flow for this kind of work (`add=sessions`), from another door. */
+        add?: keyof MachineIsolationPolicyV1['workKinds'] }>
     /** The sandboxes this Machine hosts for its work (machine sandboxes plan r3 F6, lab machine-sandboxes-1115). */
     | Readonly<{ id: 'sandboxes' }>
     /** pfc-redesign mSched: what runs on a schedule (MACH-SCHEDULED-READ-1112). */
@@ -86,7 +89,7 @@ const MACHINE_PAGE_TAB_PARAM_KEYS = Object.keys({
     sort: true, page: true, owner: true, process: true, app: true, scope: true, filter: true,
     view: true, categoryId: true, nodeId: true, files: true, prepare: true, volumeId: true,
     pluginId: true, localId: true, pluginPath: true,
-    service: true,
+    service: true, add: true,
 } satisfies Record<MachinePageTabParamKey, true>);
 
 /**

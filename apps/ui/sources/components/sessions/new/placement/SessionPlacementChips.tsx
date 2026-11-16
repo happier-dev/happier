@@ -28,6 +28,12 @@ import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dro
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import type { MachineIsolationPolicyV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
+import { useMachineIsolationProposedOutcome } from '@/hooks/machine/useMachineIsolationPolicy';
+import { readSyncedMachineIsolationPolicy } from '@/sync/domains/machines/machineIsolationPolicy';
+import { SessionIsolationOutcomeLine } from './SessionIsolationOutcomeLine';
+
+type MachineIsolationWorkKind = keyof MachineIsolationPolicyV1['workKinds'];
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import {
   useSessionMachineChoicePopover,
@@ -70,6 +76,12 @@ export type SessionPlacementChoiceProps = Readonly<{
     onSelectNoFolder?: () => void;
     /** Saved projects the folder picker lists first (New Session's "Suggested"); one may move the Machine. */
     placementCandidates?: SessionPathChoiceParams['placementCandidates'];
+    /**
+     * The host can place on a cloud preset too: the Machine picker then lists this Home's presets (New Session's
+     * own offers and use callback). `managedPlacementPreset` marks the one the host holds.
+     */
+    managedPlacementPreset?: SessionMachineChoiceParams['managedPlacementPreset'];
+    onSelectManagedMachine?: SessionMachineChoiceParams['onSelectManagedMachine'];
 }>;
 
 /**
@@ -136,6 +148,8 @@ export function useSessionPlacementPopovers(props: SessionPlacementChoiceProps):
     selectMachineTarget: selectMachine,
     ...(machineGroups === undefined ? { machineInventory } : { machineGroups }),
     useMachinePickerSearch: true,
+    ...(props.onSelectManagedMachine ? { onSelectManagedMachine: props.onSelectManagedMachine,
+      managedPlacementPreset: props.managedPlacementPreset ?? null } : {}),
     ...(props.testIDPrefix === undefined ? {} : { testIdPrefix: `${props.testIDPrefix}-machine` }),
     ...(props.currentUiContextCommandScope === undefined ? {} : { currentUiContextCommandScope: `${props.currentUiContextCommandScope}.machine` }),
   });
@@ -175,8 +189,19 @@ export function SessionPlacementChips(
     rowTestID?: string;
     /** What follows the Machine and folder in the same row (a workflow's checkout picker). */
     trailing?: React.ReactNode;
+    /**
+     * Which kind of work this placement starts: the chosen Machine's isolation policy for it is said under the
+     * chips (`SessionIsolationOutcomeLine`), the same line New Session shows. Hosts that start no Session omit it.
+     */
+    isolationWorkKind?: MachineIsolationWorkKind;
   }>,
 ): React.ReactElement {
+  const isolationSnapshot = React.useMemo(() => readSyncedMachineIsolationPolicy(props.machine ?? null), [props.machine]);
+  const isolationOutcome = useMachineIsolationProposedOutcome(isolationSnapshot, props.isolationWorkKind ?? 'sessions');
+  const outcomeLine = props.isolationWorkKind && props.machine ? (
+    <SessionIsolationOutcomeLine serverId={props.serverId || null} machineName={props.machine ? getMachineDisplayName(props.machine) : null}
+      snapshot={isolationSnapshot} outcome={isolationOutcome} testID="session-placement-isolation-outcome" />
+  ) : null;
   const machineAnchor = React.useRef<View | null>(null);
   const folderAnchor = React.useRef<View | null>(null);
   const [open, setOpen] = React.useState<'machine' | 'folder' | null>(null);
@@ -218,6 +243,7 @@ export function SessionPlacementChips(
         accessoryLayout="stacked"
         showChevron={false}
         selected={false}
+        {...(outcomeLine ? { bottomElement: outcomeLine } : {})}
         rightElement={
           <View style={styles.fields}>
             <PlacementField anchorRef={machineAnchor} testID="agent-input-machine-chip"
@@ -235,7 +261,7 @@ export function SessionPlacementChips(
   }
 
   if (props.chipVariant === 'bordered') {
-    return (
+    return withOutcome(outcomeLine,
       <View style={styles.row}>
         <SelectionListFilterChip filter={{
           id: 'session-placement-machine',
@@ -262,11 +288,10 @@ export function SessionPlacementChips(
           testID: 'agent-input-path-chip',
         }} />
         {props.trailing}
-      </View>
-    );
+      </View>);
   }
 
-  return (
+  return withOutcome(outcomeLine,
     <View style={styles.row}>
       {createMachineActionChip({
         anchorRef: machineAnchor,
@@ -290,8 +315,12 @@ export function SessionPlacementChips(
       />
       {props.trailing}
       {popovers}
-    </View>
-  );
+    </View>);
+}
+
+/** A chip row with the isolation outcome under it; without one, the row alone (no extra wrapper). */
+function withOutcome(outcomeLine: React.ReactNode, row: React.ReactElement): React.ReactElement {
+  return outcomeLine ? <View>{row}{outcomeLine}</View> : row;
 }
 
 /**

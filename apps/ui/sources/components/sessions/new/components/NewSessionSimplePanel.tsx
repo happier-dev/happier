@@ -86,6 +86,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     creationReviewSummary?: string | null;
     /** The requester's own folders on someone else's machine (MEMBER-WORKSPACE): read state and its hint. */
     requesterIsolation?: ReturnType<typeof import('@/hooks/machine/useMachineOwnIsolationStatus').useMachineOwnIsolationStatus>;
+    sessionIsolation?: import('../hooks/newSessionScreenModelTypes').NewSessionScreenModel['sessionIsolation'];
     emptyAutocompleteKinds: React.ComponentProps<typeof AgentInput>['autocompleteKinds'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
     sessionPromptInputMaxHeight?: number;

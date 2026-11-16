@@ -7,6 +7,8 @@ import { GuardTab } from '@/components/machines/guard/GuardTab';
 import { MachineProcessesTab, parseMachineProcessesParams } from '@/components/machines/processes/MachineProcessesTab';
 import { MachineStorageTab, StorageTabBarAccessory } from '@/components/machines/storage/MachineStorageTab';
 import { MachineSecurityTab } from '@/components/machines/security/MachineSecurityTab';
+import { MachineSandboxesTab } from '@/components/machines/sandboxes/MachineSandboxesTab';
+import { MACHINE_ISOLATION_WORK_KINDS } from '@/components/machines/security/isolation/machineIsolationChoices';
 import { MachineScheduledTab } from '@/components/machines/scheduled/MachineScheduledTab';
 import { MachineSetupTab, parseMachineSetupParams } from '@/components/machines/setup/MachineSetupTab';
 import type { TranslationKeyNoParams } from '@/text';
@@ -61,6 +63,7 @@ const GUARD_PARAMS: MachinePageTabParams = Object.freeze({ id: 'guard' });
 const SCHEDULED_PARAMS: MachinePageTabParams = Object.freeze({ id: 'scheduled' });
 const SERVICES_PARAMS: MachinePageTabParams = Object.freeze({ id: 'services' });
 const SECURITY_PARAMS: MachinePageTabParams = Object.freeze({ id: 'security' });
+const SANDBOXES_PARAMS: MachinePageTabParams = Object.freeze({ id: 'sandboxes' });
 
 /** Services' own params: one service's page or the deployment roles page when the route names it, else the list. */
 function parseServicesParams(raw: Readonly<Record<string, string | undefined>>): MachinePageTabParams {
@@ -69,8 +72,12 @@ function parseServicesParams(raw: Readonly<Record<string, string | undefined>>):
     return raw.page === 'service' && service ? { id: 'services', page: 'service', service } : SERVICES_PARAMS;
 }
 
-/** Security's own params: the tab, or the Network or Sharing page it pushes; anything else reads as the tab. */
+/** Security's own params: the tab, or the Network, Sharing or Isolation page it pushes; anything else reads as the tab. */
 function parseSecurityParams(raw: Readonly<Record<string, string | undefined>>): MachinePageTabParams {
+    if (raw.page === 'isolation') {
+        const add = MACHINE_ISOLATION_WORK_KINDS.find(kind => kind === raw.add);
+        return { id: 'security', page: 'isolation', ...(add ? { add } : {}) };
+    }
     return raw.page === 'network' || raw.page === 'sharing' ? { id: 'security', page: raw.page } : SECURITY_PARAMS;
 }
 
@@ -104,6 +111,7 @@ export const MACHINE_PAGE_TABS: readonly MachinePageTabEntry[] = [
     { id: 'guard', icon: 'shield', titleKey: 'machineGuard.tab', Body: GuardTab, hiddenMode: 'activity', BarAccessory: GuardBarAccessory, parseParams: parseGuardParams },
     { id: 'setup', icon: 'file-text', titleKey: 'machineDetailPage.tabs.setup', Body: MachineSetupTab, suspendWhenHidden: true, parseParams: parseMachineSetupParams },
     { id: 'security', icon: 'shield-check', titleKey: 'machineDetailPage.subPages.security', Body: MachineSecurityTab, suspendWhenHidden: true, parseParams: parseSecurityParams },
+    { id: 'sandboxes', icon: 'cube', titleKey: 'machineDetailPage.isolation.host.tab', Body: MachineSandboxesTab, suspendWhenHidden: true, parseParams: () => SANDBOXES_PARAMS },
 ];
 
 export type MachinePagePluginTabEntry = MachinePageTabEntry & Readonly<{ id: 'plugin'; key: string; pluginId: string; localId: string; label: string }>;

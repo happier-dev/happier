@@ -134,6 +134,8 @@ export type ManagedMachineConfigurationViewProps = Readonly<{
     startsSession?: boolean;
     /** Add-to-Preset hand-off: the editor starts from this draft plus the item, and returns after its own Save or Cancel. */
     presetContinuation?: MachinePresetEditContinuation;
+    /** A host that embeds new-preset authoring (Machine Isolation's add flow) keeps the saved preset instead of opening its page. */
+    onPresetSaved?: (preset: Readonly<{ serverId: string; id: string; name: string }>) => void;
 }>;
 const NO_SERVERS: readonly string[] = [];
 const NO_PRESETS: readonly OpenedManagedMachinePresetV1[] = [];
@@ -711,7 +713,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         if (!activeBinding?.isCurrent()) return;
         setBusy(false);
         if (value.kind === 'saved' && continuation) { setError(null); continuation.onReturn(); }
-        else if (value.kind === 'saved') { setSaved({ id: value.preset.id, name: value.preset.name, serverId: activeBinding.serverId }); setError(null); if (props.presetOnly) router.replace(`/settings/machines/presets/${encodeURIComponent(value.preset.id)}?serverId=${encodeURIComponent(activeBinding.serverId)}` as never); }
+        else if (value.kind === 'saved') { setSaved({ id: value.preset.id, name: value.preset.name, serverId: activeBinding.serverId }); setError(null); if (props.presetOnly && props.onPresetSaved) props.onPresetSaved({ serverId: activeBinding.serverId, id: value.preset.id, name: value.preset.name }); else if (props.presetOnly) router.replace(`/settings/machines/presets/${encodeURIComponent(value.preset.id)}?serverId=${encodeURIComponent(activeBinding.serverId)}` as never); }
         else if (value.kind === 'refused' && props.presetId && isMachinePresetAccessLost(value.code)) presetQuery.withdraw(value.code);
         else setError(value.kind === 'conflict' ? 'conflict' : value.code, 'save');
     };

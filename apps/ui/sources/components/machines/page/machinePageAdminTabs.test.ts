@@ -25,6 +25,9 @@ describe('MACH-COMPOSE D1: the Machine admin surfaces live in the tab bar', () =
     [{ id: 'security' }],
     [{ id: 'security', page: 'network' }],
     [{ id: 'security', page: 'sharing' }],
+    [{ id: 'security', page: 'isolation' }],
+    [{ id: 'security', page: 'isolation', add: 'sessions' }],
+    [{ id: 'sandboxes' }],
     [{ id: 'setup' }],
     [{ id: 'setup', page: 'tools' }],
   ] as const)('opens %j from its own link, in both doors', (tab) => {

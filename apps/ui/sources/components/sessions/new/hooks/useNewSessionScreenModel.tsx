@@ -4717,6 +4717,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         spaceMembership: organizationPlacementState.spaceMembership,
         setSpaceMembership: organizationPlacementState.setSpaceMembership,
         sessionIsolation: { snapshot: isolationSnapshot, proposedOutcome: proposedIsolationOutcome,
+            serverId: targetServerId ?? null, machineName: simplePanelProps.machineName ?? null,
             override: isolationOverride, progress: managedMachineCreationProgress,
             ...(!hostSpawnExecutor && selectedMachine && canManageMachine(selectedMachine) ? { onOverrideChange: changeIsolationOverride } : {}) },
         requesterIsolation: ownIsolation,

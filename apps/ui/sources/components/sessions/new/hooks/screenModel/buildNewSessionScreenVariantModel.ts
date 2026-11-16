@@ -19,6 +19,7 @@ import type {
     NewSessionInstructionsCreationModel,
 } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
 import { buildNewSessionManagedProgressBadge } from './newSessionManagedProgressBadge';
+import { buildSessionIsolationProgressBadge } from './sessionIsolationProgressBadge';
 import { buildSessionAuthoringCredentialOperands } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { presentActionApproval } from '@/components/approvals/actionApprovalPresentation';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -60,7 +61,9 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
     const creationReviewSummary = selectedSources.length ? presentActionApproval({
         actionId: 'session.spawn_new', actionArgs, preview: { teamCredentialSources: selectedSources },
     }).summary : null;
-    const managedProgressBadge = buildNewSessionManagedProgressBadge(params.managedMachineDraft);
+    // A created machine and a policy sandbox are different starts; at most one reports progress for this Send.
+    const managedProgressBadge = buildNewSessionManagedProgressBadge(params.managedMachineDraft)
+        ?? buildSessionIsolationProgressBadge(params.sessionIsolation);
     // A Bot is an ordinary composer and an ordinary first turn (lab `b-new`): never the wizard.
     if (!params.useEnhancedSessionWizard || params.botCreation) {
         const simpleProps: NewSessionSimpleScreenProps = {
@@ -72,6 +75,8 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
             setCheckoutCreationDraft: params.setCheckoutCreationDraft,
             // The composer draws the requester's folder hint with its launch notices.
             requesterIsolation: params.requesterIsolation,
+            // The composer says under its chips what Send will do on the chosen Machine.
+            sessionIsolation: params.sessionIsolation,
         };
 
         return {

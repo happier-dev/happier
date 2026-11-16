@@ -18,6 +18,7 @@ import { resolveAvailablePanelHeight } from '@/components/sessions/keyboardAvoid
 import { useComposerAvailablePanelHeight } from '@/components/sessions/keyboardAvoidance/useComposerAvailablePanelHeight';
 import { computeNewSessionComposerPanelMaxHeight } from '@/components/sessions/agentInput/inputMaxHeight';
 import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
+import { SessionIsolationOutcomeLine } from '@/components/sessions/new/placement/SessionIsolationOutcomeLine';
 import { NewSessionRequesterFolderHint } from '@/components/sessions/new/components/NewSessionRequesterFolderHint';
 import { NewSessionCreationReviewLine } from '@/components/sessions/new/components/NewSessionCreationReviewLine';
 import { NewSessionLaunchApprovalNotice } from '@/components/sessions/new/components/NewSessionLaunchApprovalNotice';
@@ -300,6 +301,11 @@ export function NewSessionComposerCard(input: Readonly<{
                             : {})}
                         />}
                         </View>
+                        {props.sessionIsolation && !workflowSelected ? (
+                            <SessionIsolationOutcomeLine serverId={props.sessionIsolation.serverId} machineName={props.sessionIsolation.machineName}
+                                snapshot={props.sessionIsolation.snapshot} outcome={props.sessionIsolation.proposedOutcome}
+                                override={props.sessionIsolation.override} onOverrideChange={props.sessionIsolation.onOverrideChange} />
+                        ) : null}
                         {props.composerBottomContent}
                         {props.composerDocument?.afterComposer}
                     </PluginContextualResourceStoreProvider>

@@ -19,6 +19,7 @@ import { t } from '@/text';
 
 import { MachineCapabilitiesSection } from './MachineCapabilitiesSection';
 import { MachineThisMachineSection } from './MachineThisMachineSection';
+import { MachineIsolationSummaryRow } from '@/components/machines/security/isolation/MachineIsolationSummaryRow';
 import { MachineInventoryBlock } from './MachineInventoryBlock';
 import { MachineResourcesAskBlock } from '@/components/machines/resources/ask/MachineResourcesAskBlock';
 import { useMachinePageState } from './machinePageContext';
@@ -65,6 +66,7 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
     const offlineRetry = React.useMemo(() => ({ onPress: () => void retry(), loading: retrying }), [retry, retrying]);
     const { setParams } = props;
     const openProcesses = React.useCallback(() => setParams({ id: 'processes' }), [setParams]);
+    const openIsolation = React.useCallback(() => setParams({ id: 'security', page: 'isolation' }), [setParams]);
     const triggerSubject = React.useMemo(() => ({ kind: 'machine' as const, machineId: props.machineId }), [props.machineId]);
     const reachabilityScope = React.useMemo(() => ({ serverId: props.serverId, machineId: props.machineId }), [props.serverId, props.machineId]);
 
@@ -125,6 +127,10 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
 
             {/* Skills and MCP servers (Capabilities P8 U8.6): what sessions on this machine get, before This machine. */}
             <MachineCapabilitiesSection machineId={props.machineId} machineName={props.machineName} offline={props.online === false} />
+
+            {/* Where work runs here, said once by the isolation owner; it opens Security → Isolation. */}
+            <MachineIsolationSummaryRow serverId={props.serverId} machine={machine} machineName={target.machineSentenceName}
+                onOpen={openIsolation} testID="machine-overview-isolation-row" />
 
             {/* The machine's own settings and diagnostics, one pushed page each. */}
             <MachineThisMachineSection serverId={props.serverId} machine={machine} />

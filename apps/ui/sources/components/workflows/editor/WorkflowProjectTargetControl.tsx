@@ -26,6 +26,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import {
     selectWorkflowProjectMachine,
     setWorkflowProjectDirectory,
+    setWorkflowProjectSessionPlacement,
     isWorkflowProjectTarget,
     type WorkflowAuthoringTarget,
 } from '@/sync/domains/workflows/workflowProjectTarget';
@@ -34,6 +35,7 @@ import { t } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { hasUnresolvedRequesterDirectories, resolveDefaultDirectoryForMachine, resolveMachineHomeDirectory } from '@/utils/sessions/machineDefaultDirectory';
 import { useMachineOwnIsolationStatus } from '@/hooks/machine/useMachineOwnIsolationStatus';
+import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { useStableRecentPathsResolver } from '@/utils/sessions/useStableRecentPathsForMachine';
 
 import { workflowEditorStyles } from './workflowEditorStyles';
@@ -362,6 +364,14 @@ function useWorkflowWhereChoices(props: WorkflowWhereInput) {
             workspaceRefs,
         }));
     }, [machines, onChange, readOwnStatus, resolveRecentPathsForMachine, serverId, target, workspaceRefs]);
+    const presetPlacement = target !== null && isWorkflowProjectTarget(target) && target.sessionPlacement?.kind === 'preset'
+        ? target.sessionPlacement : null;
+    const selectManagedMachine = React.useCallback((draft: ManagedMachineSelectionDraft) => {
+        // Only a saved preset is a placement a workflow can keep; a one-off machine belongs to one Session.
+        if (!onChange || target === null || draft.selection.kind !== 'preset') return;
+        onChange(setWorkflowProjectSessionPlacement(target,
+            { kind: 'preset', homeId: draft.selection.homeId, presetId: draft.selection.id }));
+    }, [onChange, target]);
     const latest = React.useRef({ target, serverId, workspaceRefs, onChange });
     latest.current = { target, serverId, workspaceRefs, onChange };
     const moveToDirectory = React.useCallback((openedFor: WorkflowAuthoringTarget, directory: string) => {
@@ -379,7 +389,9 @@ function useWorkflowWhereChoices(props: WorkflowWhereInput) {
         machineHomeDir,
         recentPaths: target === null ? EMPTY_RECENT_PATHS : resolveRecentPathsForMachine(target.machineId),
         path: target !== null && isWorkflowProjectTarget(target) ? target.directory : '',
-        ...(machines && onChange ? { machines, onSelectMachine: (selected: Machine) => { void selectMachine(selected); } } : {}),
+        ...(machines && onChange ? { machines, onSelectMachine: (selected: Machine) => { void selectMachine(selected); },
+            // New Session's preset offers and use callback (J6): a workflow saves the chosen preset as its placement.
+            managedPlacementPreset: presetPlacement, onSelectManagedMachine: selectManagedMachine } : {}),
         onSelectPath: selectPath,
     };
     return { choice, serverId, machineHomeDir, machinePlatform, moveToDirectory, latest };
@@ -433,6 +445,8 @@ function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
             {...(props.title === undefined ? {} : { title: props.title })}
             {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle })}
             {...(props.rowTestID === undefined ? {} : { rowTestID: props.rowTestID })}
+            // A workflow's Sessions follow the Machine's row for workflows and automations (J6); no one-time override.
+            isolationWorkKind="automationsWorkflows"
             trailing={target !== null && isWorkflowProjectTarget(target) ? <ProjectCheckoutPicker
                 currentUiContextCommandScope={scope}
                 target={target}

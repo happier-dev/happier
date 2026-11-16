@@ -6,6 +6,7 @@ import {
     resolveWorkflowProjectWorkspaceRefId,
     selectWorkflowProjectMachine,
     setWorkflowProjectDirectory,
+    setWorkflowProjectSessionPlacement,
 } from './workflowProjectTarget';
 
 function ref(input: Readonly<{ id: string; machineId?: string; rootPath: string; serverId?: string }>): WorkspaceRefV1 {
@@ -113,5 +114,21 @@ describe('workflow project target', () => {
             machineId: 'machine-1',
             defaultDirectory: '/somewhere/else',
         })).toBe(current);
+    });
+});
+
+describe('a workflow placed on a cloud preset (J6)', () => {
+    const current = { machineId: 'machine-1', directory: '/repo', workspaceRefId: 'ws-1' };
+    const preset = { kind: 'preset' as const, homeId: 'home-1', presetId: 'boat-node-22' };
+
+    it('saves the chosen preset with the workflow and keeps its folder', () => {
+        expect(setWorkflowProjectSessionPlacement(current, preset)).toEqual({ ...current, sessionPlacement: preset });
+    });
+
+    it('goes back to the Machine when one is chosen again, even the same one', () => {
+        const placed = setWorkflowProjectSessionPlacement(current, preset);
+        expect(setWorkflowProjectSessionPlacement(placed, undefined)).toEqual(current);
+        expect(selectWorkflowProjectMachine({ current: placed, machineId: 'machine-1', defaultDirectory: '/x', serverId: 'server-1', workspaceRefs: [] }))
+            .toEqual(current);
     });
 });
