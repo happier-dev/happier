@@ -509,7 +509,7 @@ export function DeploymentDatabasePage(
       name: detail.content.name, machine: null, provider: managedTarget.title, running: false,
       hasRetainedAssociations: true, canRemove: removal.choices.includes('delete'),
       providerResource: { name: readPlatformResourceName(link.content) ?? managedTarget.title,
-        consequence: managedTarget.teardownConsequence ?? null, defaultChoice: removal.defaultChoice },
+        consequence: managedTarget.teardownConsequence ?? null, defaultChoice: removal.defaultChoice, role: 'data' },
       // A project's removal is one teardown of its data link; the Environment stays.
       run: choice => disposition.stopAndRemove(link.targetLink.id, undefined, undefined,
         { providerRemoval: choice === 'remove' ? 'delete' : 'unlink', removeEnvironment: false }),

@@ -6199,6 +6199,7 @@ const de: typeof en = {
         where: 'Wo es fehlschlägt',
         service: 'Dienst',
         machine: 'Rechner',
+        failing: 'Fehlerhaft',
         environment: 'Umgebung',
         investigate: 'Untersuchen',
         investigateHint: ({ machine }: { machine: string }) => `Untersuchen öffnet eine neue Sitzung auf ${machine} mit diesem Hinweis als Beleg.`,

@@ -184,6 +184,8 @@ export type WorkStatusInput =
         agentName?: string | null;
     }> }>
     /** An execution run, sub-agent or teammate, in the agent-activity vocabulary. */
+    /** An open health notice (a failed deploy, a failing service or backup): the problem is still there. */
+    | Readonly<{ kind: 'health_notice'; facts: Readonly<{ word: string }> }>
     | Readonly<{ kind: 'agent_activity'; facts: Readonly<{ status: AgentActivityStatusV1; isActive?: boolean; machineReachable?: boolean; word: string }> }>;
 
 type StatusShape = Readonly<{ bucket: WorkStatusBucket; tone: WorkStatusTone }>;
@@ -357,6 +359,7 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
             if (setupReview || reviewRequired) return workStatus(state, { bucket: 'needs_you', tone: 'attention' }, word, 'approval');
             return workStatus(state, { bucket: 'working', tone: observation === 'available' ? 'neutral' : 'attention' }, word);
         }
+        case 'health_notice': return workStatus('failing', { bucket: 'finished', tone: 'danger' }, input.facts.word);
         case 'deployment': {
             const { state, word } = input.facts;
             switch (state) {

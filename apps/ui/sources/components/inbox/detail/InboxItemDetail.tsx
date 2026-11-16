@@ -191,7 +191,18 @@ function NoticeDetailAdapter(props: DetailBodyProps) {
   const subject = readNoticeInvestigationSubject(entry.header, model.noticeInvestigation.isEligible(entry));
   const plugin = entry.header.source.kind === 'plugin'
     ? { id: entry.header.source.pluginId, name: item?.source.displayName ?? entry.header.source.pluginId } : undefined;
-  const content = ownPage ? <PageDetailAdapter {...props} plugin={plugin} /> : <InboxNoticeDetail title={item?.title ?? entry.header.title} body={item?.excerpt ?? entry.header.body ?? null}
+  // A notice with its own page (a failed deploy's receipt) still leads with the same recovery choices its row offers:
+  // one list from the notice owner. The page's own actions (Investigate, Fix this deploy, Review rollout) are the
+  // receipt's investigation and settings links, not notice recovery, so they stay on the page below.
+  const page = <PageDetailAdapter {...props} plugin={plugin} />;
+  const content = ownPage ? recovery && model.noticeInvestigation.readRecoveryChoices(entry).length > 0 ? (
+    <View style={styles.root}>
+      <View style={styles.choices}>
+        <AccountNoticeRecoveryChoices entry={recovery.entry} recovery={recovery.binding} testID="inbox.notice.recovery" />
+      </View>
+      {page}
+    </View>
+  ) : page : <InboxNoticeDetail title={item?.title ?? entry.header.title} body={item?.excerpt ?? entry.header.body ?? null}
     source={item?.source.displayName ?? null} createdAt={item?.createdAt ?? entry.artifact.createdAt}
     serverId={props.focus.serverId} subject={subject} investigation={investigation}
     subjectRoute={resolveInboxNoticeSubjectRoute(entry.header)}
@@ -380,6 +391,12 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'flex-end',
     alignItems: 'center',
     gap: theme.space.s4,
+    paddingHorizontal: theme.space.s8,
+    paddingTop: theme.space.s8,
+  },
+  // The notice's decision sits at the pane's top edge at its natural width, like the row's, not as a full-width bar.
+  choices: {
+    alignItems: 'flex-start',
     paddingHorizontal: theme.space.s8,
     paddingTop: theme.space.s8,
   },

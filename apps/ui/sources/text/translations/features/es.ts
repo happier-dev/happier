@@ -6207,6 +6207,7 @@ const es: typeof en = {
         where: 'Dónde falla',
         service: 'Servicio',
         machine: 'Máquina',
+        failing: 'Fallando',
         environment: 'Entorno',
         investigate: 'Investigar',
         investigateHint: ({ machine }: { machine: string }) => `Investigar abre una sesión nueva en ${machine} con este aviso como evidencia.`,

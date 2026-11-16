@@ -6207,6 +6207,7 @@ const ca: typeof en = {
         where: 'On falla',
         service: 'Servei',
         machine: 'Màquina',
+        failing: 'Falla',
         environment: 'Entorn',
         investigate: 'Investiga',
         investigateHint: ({ machine }: { machine: string }) => `Investiga obre una sessió nova a ${machine} amb aquest avís com a evidència.`,

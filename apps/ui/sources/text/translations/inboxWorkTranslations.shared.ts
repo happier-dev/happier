@@ -72,6 +72,7 @@ export const en = {
         where: 'Where it’s failing',
         service: 'Service',
         machine: 'Machine',
+        failing: 'Failing',
         environment: 'Environment',
         investigate: 'Investigate',
         investigateHint: ({ machine }: { machine: string }) => `Investigate opens a new session on ${machine} with this notice as evidence.`,

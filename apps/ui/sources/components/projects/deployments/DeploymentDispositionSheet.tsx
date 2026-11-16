@@ -58,7 +58,9 @@ export type DeploymentDispositionSheetInput = Readonly<{
    * The provider resource a contributed platform target names: its name (typed to confirm deletion), what the provider
    * deletes with it, and the removal owner's default (`selectDeploymentTargetRemovalChoicesV1`). Absent for Machines.
    */
-  providerResource?: Readonly<{ name: string; consequence: string | null; defaultChoice: 'unlink' | 'delete' }>;
+  providerResource?: Readonly<{ name: string; consequence: string | null; defaultChoice: 'unlink' | 'delete';
+    /** A data project (a managed database) keeps its data and is no longer managed; a runtime keeps running. */
+    role?: 'runtime' | 'data' }>;
   /** Something Happier deployed is running there now. */
   running: boolean;
   /** The services a removal stops, by Compose name; empty when not known. */
@@ -351,7 +353,8 @@ function DeploymentDispositionSheet(
               title: platform ? t('projects.deployments.platformLink.keepTitle', { platform })
                 : t('projects.deployments.deleteDetachTitle'),
               subtitle: resource && platform && resourceName && props.canRemove
-                ? t('projects.deployments.platformLink.keepBody', { resource: resourceName, platform })
+                ? t(resource.role === 'data' ? 'projects.deployments.platformLink.keepBodyData'
+                  : 'projects.deployments.platformLink.keepBody', { resource: resourceName, platform })
                 : props.provider
                 ? t('projects.deployments.platformLink.detachBody', { platform: props.provider })
                 : target

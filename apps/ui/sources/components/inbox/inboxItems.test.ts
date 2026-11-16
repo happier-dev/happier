@@ -558,6 +558,16 @@ describe('one Inbox row projection', () => {
         expect(settled[0]).toBe(rows[1]);
     });
 
+    it('reads an open health notice as failing and a recovered one as quiet', () => {
+        const rows = buildInboxItems({ ...emptyInput, notices: (['open', 'recovered'] as const).map(healthPhase => {
+            const artifact = createAccountNoticeArtifactFixture({ id: `health-${healthPhase}`, header: { type: 'update', healthPhase } });
+            return { artifact, header: AccountNoticeArtifactHeaderV1Schema.parse(artifact.rawHeader) };
+        }) });
+        // Colour means state: the failing notice carries the danger status the row owner draws; recovery stays quiet.
+        expect(rows.find(row => row.source.id === 'health-open')?.workStatus).toMatchObject({ tone: 'danger' });
+        expect(rows.find(row => row.source.id === 'health-recovered')?.workStatus).toBeUndefined();
+    });
+
     it('leaves an open usage notice to its own card instead of a second generic row', () => {
         // A host usage notice is drawn once, by its usage/Machines card from the same Artifact's usage projection.
         const usage = createAccountNoticeArtifactFixture({ id: 'usage-notice', header: { title: 'Reset credit expires soon',

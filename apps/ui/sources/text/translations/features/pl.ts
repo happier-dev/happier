@@ -6225,6 +6225,7 @@ const pl: typeof en = {
         where: 'Gdzie występuje błąd',
         service: 'Usługa',
         machine: 'Maszyna',
+        failing: 'Błąd',
         environment: 'Środowisko',
         investigate: 'Zbadaj',
         investigateHint: ({ machine }: { machine: string }) => `Zbadaj otwiera nową sesję na ${machine} z tym powiadomieniem jako dowodem.`,

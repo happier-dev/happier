@@ -6202,6 +6202,7 @@ const ja: typeof en = {
         where: '失敗している場所',
         service: 'サービス',
         machine: 'マシン',
+        failing: '失敗中',
         environment: '環境',
         investigate: '調査',
         investigateHint: ({ machine }: { machine: string }) => `調査を押すと、この通知を証拠として ${machine} で新しいセッションを開きます。`,

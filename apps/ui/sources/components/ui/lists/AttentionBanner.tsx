@@ -113,7 +113,8 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
         ? <BannerButton action={props.action} testID={`${props.testID}.action`} fullWidth={fullWidthAction} beside={besideControl} />
         : null;
     const actions = props.action || props.control || props.secondaryAction || (props.moreActions?.length ?? 0) > 0 ? (
-        <View style={[styles.actions, fullWidthAction ? { width: '100%' } : null]}>
+        // Narrow, the ways forward move beneath one another at one width instead of wrapping ragged.
+        <View style={[styles.actions, compact ? styles.actionsStacked : null, fullWidthAction ? { width: '100%' } : null]}>
             {actionLeads ? actionButton : null}
             {props.control ?? null}
             {actionLeads ? null : actionButton}
@@ -299,6 +300,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         flexWrap: 'wrap',
         gap: theme.space.s6,
+    },
+    actionsStacked: {
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        alignSelf: 'stretch',
     },
     pointText: {
         flex: 1,

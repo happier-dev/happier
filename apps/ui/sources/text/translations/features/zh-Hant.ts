@@ -6196,6 +6196,7 @@ const zhHant: typeof en = {
         where: '故障位置',
         service: '服務',
         machine: '機器',
+        failing: '故障',
         environment: '環境',
         investigate: '調查',
         investigateHint: ({ machine }: { machine: string }) => `調查會在 ${machine} 上開啟新的工作階段，並以此通知作為證據。`,

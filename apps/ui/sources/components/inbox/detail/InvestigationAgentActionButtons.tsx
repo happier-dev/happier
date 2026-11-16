@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { AgentActionButton, Row } from '@happier-dev/plugin-ui/components';
+import { useWindowDimensions } from 'react-native';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { AgentActionButton, Row, Stack } from '@happier-dev/plugin-ui/components';
 
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { t } from '@/text';
@@ -44,6 +46,8 @@ export function InvestigationAgentActionButtons(props: Readonly<{
   onLaunch: (mode: 'start' | 'review', actionId: string | undefined) => void;
 }>): React.ReactElement | null {
   const openEditor = useOpenTriageActionEditor();
+  // A phone-width window recomposes a banner's actions (rowStackBelowWidthPx), whatever device class the page passed.
+  const narrowWindow = useWindowDimensions().width < PAGE_LIST_METRICS.rowStackBelowWidthPx;
   if (props.actions.length === 0) return null;
   const buttons = props.actions.map((action, index) => (
     <AgentActionButton
@@ -62,7 +66,10 @@ export function InvestigationAgentActionButtons(props: Readonly<{
   // Core draws the public presenter inside the core Happier UI scope, as every other core consumer does.
   return (
     <CorePluginUiPresentationScope>
-      {buttons.length === 1 ? buttons[0] : <Row gap="small" align="center" wrap>{buttons}</Row>}
+      {buttons.length === 1 ? buttons[0]
+        // A phone stacks the split controls at one width (wider controls move beneath) instead of wrapping them ragged.
+        : props.compact || narrowWindow ? <Stack gap="small" align="stretch">{buttons}</Stack>
+        : <Row gap="small" align="center" wrap>{buttons}</Row>}
     </CorePluginUiPresentationScope>
   );
 }

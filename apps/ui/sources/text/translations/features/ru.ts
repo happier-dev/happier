@@ -6234,6 +6234,7 @@ const ru: typeof en = {
         where: 'Где сбой',
         service: 'Сервис',
         machine: 'Машина',
+        failing: 'Сбой',
         environment: 'Окружение',
         investigate: 'Расследовать',
         investigateHint: ({ machine }: { machine: string }) => `«Расследовать» открывает новую сессию на ${machine} с этим уведомлением в качестве доказательства.`,
