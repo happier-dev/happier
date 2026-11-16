@@ -1,5 +1,5 @@
+import { redactProcessArgv } from '@/processes/redaction/redactProcessCommand';
 import { configuration } from '@/configuration';
-import { redactCliApiTokenArgv } from '@/auth/cliApiToken';
 
 export interface EnvironmentInfo {
     PWD: string | undefined;
@@ -35,7 +35,7 @@ export function getEnvironmentInfo(): EnvironmentInfo {
         NODE_ENV: process.env.NODE_ENV,
         DEBUG: process.env.DEBUG,
         workingDirectory: process.cwd(),
-        processArgv: redactCliApiTokenArgv(process.argv),
+        processArgv: redactProcessArgv(process.argv),
         happyDir: configuration?.happyHomeDir,
         serverUrl: configuration?.serverUrl,
         logsDir: configuration?.logsDir,

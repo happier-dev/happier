@@ -4,6 +4,25 @@ import { createHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUser
 import { createWindowsJobCustodyName } from '@/subprocess/supervision/processCustody';
 
 describe('redactProcessCommand', () => {
+    it.each([
+        '--key=fixture-key',
+        String.raw`--reauth-proof-json={\"proof\":\"fixture proof\"}`,
+        '--current-password=a b',
+    ])('hides a whole quoted Windows argument %s and preserves following flags', argument => {
+        for (const quote of ['"', "'"]) {
+            for (const suffix of ['', 'fixture-suffix']) {
+                expect(redactProcessCommand(`happier ${quote}${argument}${quote}${suffix} --port=5173`))
+                    .toBe(`happier ${argument.slice(0, argument.indexOf('='))}=[REDACTED] --port=5173`);
+            }
+        }
+    });
+    it.each(['--access-token', '--credential', '--session-id', '--recovery', '--proof'])('preserves Doctor follow-on privacy for %s', flag => {
+        for (const args of [[flag, 'fixture private words'], [`${flag}=fixture private words`]]) {
+            const redacted = redactProcessCommand(['agent', ...args, '--port=5173']);
+            expect(redacted).not.toContain('fixture private words');
+            expect(redacted).toContain('--port=5173');
+        }
+    });
     it.each(['/usr/local/bin/codex', String.raw`C:\Program Files\Codex\codex.exe`])('hides relay bearer inline-table assignments in %s argv and native command strings', executable => {
         const bearer = 'b'.repeat(43);
         for (const prefix of ['', 'PUBLIC_MODE="development",']) {

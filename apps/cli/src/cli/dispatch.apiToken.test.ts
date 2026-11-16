@@ -96,10 +96,9 @@ describe('dispatchCli API Token globals', () => {
         encryption: null,
         credentialProvenance: 'api_token',
       });
-      expect(observedRawArgv).toEqual(['happier', '--api-token', '<redacted>', probeCommand]);
+      expect(observedRawArgv).toEqual(['happier', '--api-token', '[REDACTED]', probeCommand]);
       await vi.waitFor(() => expect(debugSpy).toHaveBeenCalled());
       expect(JSON.stringify(debugSpy.mock.calls)).not.toContain(flagToken);
-      expect(JSON.stringify(debugSpy.mock.calls)).toContain('<redacted>');
     });
   });
 

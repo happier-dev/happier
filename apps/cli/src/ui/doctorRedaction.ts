@@ -1,31 +1,15 @@
-import { isBaseCredentialDiagnosticKey, splitSensitiveDiagnosticKeySegments } from '@happier-dev/protocol/diagnostics/sensitive-keys';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { sanitizeBugReportUrl } from '@happier-dev/protocol/bugs/reports/sanitize';
 
 import type { DaemonLocallyPersistedState } from '@/persistence';
 import type { readSettings } from '@/persistence';
-import { redactProcessArgv, redactProcessCommand } from '@/processes/redaction/redactProcessCommand';
+import { isSensitiveProcessDiagnosticKey as isSensitiveDoctorDiagnosticKey, redactProcessArgv, redactProcessCommand } from '@/processes/redaction/redactProcessCommand';
 
 const DOCTOR_REDACTED_VALUE = '<redacted>';
 const DOCTOR_STRING_REDACTION_MARKER = '[redacted]';
 
 const OMIT_DIAGNOSTIC_KEY_NORMALIZED = new Set([
   'localenvironmentvariables',
-]);
-
-const DOCTOR_CREDENTIAL_SEGMENTS = new Set([
-  'auth',
-  'authentication',
-  'credential',
-  'credentials',
-  'password',
-  'proof',
-  'recovery',
-  'secret',
-]);
-
-const DOCTOR_CREDENTIAL_SUFFIXES = new Set([
-  'token',
 ]);
 
 const URL_PATTERN = /\bhttps?:\/\/[^\s"'<>]+/giu;
@@ -45,17 +29,6 @@ function normalizeDiagnosticKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9]/gu, '');
 }
 
-function isSensitiveDoctorDiagnosticKey(key: string): boolean {
-  const normalized = normalizeDiagnosticKey(key);
-  if (normalized === 'notsecret' || normalized === 'notauthentication') return false;
-  if (isBaseCredentialDiagnosticKey(key)) return true;
-  const segments = splitSensitiveDiagnosticKeySegments(key);
-  return segments.some((segment) => DOCTOR_CREDENTIAL_SEGMENTS.has(segment))
-    || DOCTOR_CREDENTIAL_SUFFIXES.has(segments.at(-1) ?? '')
-    || (segments.length === 1 && segments[0] === 'session')
-    || segments.some((segment, index) => segment === 'session' && segments[index + 1] === 'id');
-}
-
 function shouldOmitDoctorDiagnosticKey(key: string): boolean {
   return OMIT_DIAGNOSTIC_KEY_NORMALIZED.has(normalizeDiagnosticKey(key));
 }
@@ -63,12 +36,6 @@ function shouldOmitDoctorDiagnosticKey(key: string): boolean {
 function isProcessArgvKey(key: string): boolean {
   const normalized = normalizeDiagnosticKey(key);
   return normalized === 'argv' || normalized === 'args' || normalized === 'processargv' || normalized === 'processargs';
-}
-
-function isSensitiveCliFlagWithoutInlineValue(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith('-') || trimmed.includes('=')) return false;
-  return isSensitiveDoctorDiagnosticKey(trimmed.replace(/^-+/u, ''));
 }
 
 function redactDoctorDiagnosticUrl(rawUrl: string): string {
@@ -139,29 +106,10 @@ export function redactDoctorDiagnosticText(value: string): string {
 }
 
 function redactProcessArgvArray(value: readonly unknown[], state: RedactionState): readonly unknown[] {
-  const output: unknown[] = [];
-  let redactNext = false;
   const redactedArgs = redactProcessArgv(value.map(item => typeof item === 'string' ? item : ''));
-
-  for (const [index, item] of value.entries()) {
-    if (typeof item !== 'string') {
-      output.push(redactDoctorDiagnosticValueInternal(item, state));
-      redactNext = false;
-      continue;
-    }
-
-    if (redactNext) {
-      output.push(DOCTOR_REDACTED_VALUE);
-      redactNext = false;
-      continue;
-    }
-
-    const redacted = redactDoctorDiagnosticText(redactedArgs[index]!);
-    output.push(redacted);
-    redactNext = isSensitiveCliFlagWithoutInlineValue(item);
-  }
-
-  return output;
+  return value.map((item, index) => typeof item === 'string'
+    ? redactDoctorDiagnosticText(redactedArgs[index]!)
+    : redactDoctorDiagnosticValueInternal(item, state));
 }
 
 function redactArray(value: readonly unknown[], key: string | undefined, state: RedactionState): readonly unknown[] {

@@ -1,14 +1,10 @@
 import type { Readable } from 'node:stream';
 
-const AUTH_SECRET_FLAGS = Object.freeze({
-  password: '--password',
-  currentPassword: '--current-password',
-  newPassword: '--new-password',
-  recoveryKey: '--key',
-  invitationToken: '--invitation-token',
-  verificationToken: '--verification-token',
-  resetToken: '--token',
-} satisfies Readonly<Record<string, string>>);
+import { SENSITIVE_CLI_VALUE_FLAG_DEFINITIONS } from '@/auth/cliApiToken';
+
+const AUTH_SECRET_FLAGS: Readonly<Record<string, string>> = Object.freeze(Object.fromEntries(
+  SENSITIVE_CLI_VALUE_FLAG_DEFINITIONS.flatMap(entry => 'stdinField' in entry ? [[entry.stdinField, entry.flag]] : []),
+));
 
 export class AuthSecretsStdinError extends Error {}
 
@@ -43,7 +39,7 @@ export async function expandAuthSecretsFromStdin(
 
   const output = args.filter((arg) => arg !== '--secrets-json-stdin');
   for (const [key, secret] of Object.entries(record.secrets as Record<string, unknown>)) {
-    const flag = AUTH_SECRET_FLAGS[key as keyof typeof AUTH_SECRET_FLAGS];
+    const flag = AUTH_SECRET_FLAGS[key];
     if (!flag || typeof secret !== 'string' || secret.length === 0) {
       throw new AuthSecretsStdinError(`Invalid auth secret field: ${key}.`);
     }

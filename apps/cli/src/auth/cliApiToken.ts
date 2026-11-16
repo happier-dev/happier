@@ -110,44 +110,22 @@ export function takePrefixCliApiTokenFlag(args: readonly string[]): Readonly<{
   return null;
 }
 
-/** Happier CLI flags whose value is a secret; the process-view redactor consumes this list too. */
-export const SENSITIVE_CLI_VALUE_FLAG_NAMES = Object.freeze([
-  '--api-token',
-  '--password',
-  '--current-password',
-  '--new-password',
-  '--key',
-  '--recovery-key',
-  '--token',
-  '--invitation-token',
-  '--verification-token',
-  '--reauth-proof-json',
+/** One declaration of secret CLI flags and their supported stdin aliases. */
+export const SENSITIVE_CLI_VALUE_FLAG_DEFINITIONS = Object.freeze([
+  { flag: '--api-token' },
+  { flag: '--password', stdinField: 'password' },
+  { flag: '--current-password', stdinField: 'currentPassword' },
+  { flag: '--new-password', stdinField: 'newPassword' },
+  { flag: '--key', stdinField: 'recoveryKey' },
+  { flag: '--recovery-key' },
+  { flag: '--token', stdinField: 'resetToken' },
+  { flag: '--invitation-token', stdinField: 'invitationToken' },
+  { flag: '--verification-token', stdinField: 'verificationToken' },
+  { flag: '--reauth-proof-json' },
 ] as const);
+export const SENSITIVE_CLI_VALUE_FLAG_NAMES = Object.freeze(SENSITIVE_CLI_VALUE_FLAG_DEFINITIONS.map(({ flag }) => flag));
 const SENSITIVE_CLI_VALUE_FLAGS: ReadonlySet<string> = new Set(SENSITIVE_CLI_VALUE_FLAG_NAMES);
 
 export function isSensitiveCliValueFlag(flag: string): boolean {
   return SENSITIVE_CLI_VALUE_FLAGS.has(flag);
-}
-
-/** Redacts secret-bearing CLI compatibility spellings before argv reaches logs or command contexts. */
-export function redactCliApiTokenArgv(argv: readonly string[]): string[] {
-  const redacted: string[] = [];
-  for (let index = 0; index < argv.length; index += 1) {
-    const value = String(argv[index] ?? '');
-    if (SENSITIVE_CLI_VALUE_FLAGS.has(value)) {
-      redacted.push(value);
-      if (index + 1 < argv.length) {
-        redacted.push('<redacted>');
-        index += 1;
-      }
-      continue;
-    }
-    const equals = value.indexOf('=');
-    if (equals > 0 && SENSITIVE_CLI_VALUE_FLAGS.has(value.slice(0, equals))) {
-      redacted.push(`${value.slice(0, equals)}=<redacted>`);
-      continue;
-    }
-    redacted.push(value);
-  }
-  return redacted;
 }

@@ -1,3 +1,4 @@
+import { redactProcessArgv } from '@/processes/redaction/redactProcessCommand';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import {
   commandRegistry,
@@ -23,7 +24,6 @@ import { isTopLevelVersionRequest, printCliVersion } from '@/cli/version';
 import { resolveExplicitSpawnScopedEnvironmentFromProcessEnv } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
 import {
   CliApiTokenChildContinuationError,
-  redactCliApiTokenArgv,
   takeCliApiTokenEnvironment,
   takePrefixCliApiTokenFlag,
   validateCliApiTokenEnvironment,
@@ -301,7 +301,7 @@ export async function dispatchCli(params: Readonly<{
     const dispatchWithGlobalOptions = async () => await dispatchCli({
       ...params,
       args: globalOptions.args,
-      rawArgv: redactCliApiTokenArgv(params.rawArgv),
+      rawArgv: redactProcessArgv(params.rawArgv),
       globalOptionsApplied: true,
       ...(globalOptions.explicitServerSelection
         ? { explicitServerSelection: globalOptions.explicitServerSelection }

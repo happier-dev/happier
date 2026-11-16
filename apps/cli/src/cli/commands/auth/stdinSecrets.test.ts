@@ -1,8 +1,8 @@
+import { redactProcessArgv } from '@/processes/redaction/redactProcessCommand';
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 
 import { expandAuthSecretsFromStdin } from './stdinSecrets';
-import { redactCliApiTokenArgv } from '@/auth/cliApiToken';
 
 describe('auth stdin secret document', () => {
   it('materializes representative auth secrets without requiring secret-bearing process argv', async () => {
@@ -15,7 +15,8 @@ describe('auth stdin secret document', () => {
       processArgv.slice(2),
       Readable.from([JSON.stringify({
         v: 1,
-        secrets: { password, recoveryKey, invitationToken, verificationToken },
+        secrets: { password, recoveryKey, invitationToken, verificationToken,
+          currentPassword: 'fixture-current', newPassword: 'fixture-new', resetToken: 'fixture-reset' },
       })]),
     );
 
@@ -28,6 +29,9 @@ describe('auth stdin secret document', () => {
       '--key', recoveryKey,
       '--invitation-token', invitationToken,
       '--verification-token', verificationToken,
+      '--current-password', 'fixture-current',
+      '--new-password', 'fixture-new',
+      '--token', 'fixture-reset',
     ]));
   });
 
@@ -54,7 +58,7 @@ describe('auth stdin secret document', () => {
 
   it('redacts every retained secret-bearing compatibility flag from diagnostics', () => {
     const secrets = ['PAT_VALUE_123', 'PASS_VALUE_123', 'KEY_VALUE_123', 'REC_VALUE_123', 'INV_VALUE_123', 'VER_VALUE_123', 'PROOF_VALUE_123'];
-    const redacted = redactCliApiTokenArgv([
+    const redacted = redactProcessArgv([
       '--api-token', secrets[0], '--password', secrets[1], '--recovery-key', secrets[2],
       '--key', secrets[3], `--invitation-token=${secrets[4]}`, '--verification-token', secrets[5],
       '--reauth-proof-json', secrets[6],
