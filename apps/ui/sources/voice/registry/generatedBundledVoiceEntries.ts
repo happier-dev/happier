@@ -233,10 +233,35 @@ export const ELEVENLABS_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManif
                 "effect": "read",
                 "id": "voices",
                 "parameters": {
-                  "mapping": [],
+                  "mapping": [
+                    {
+                      "parameter": "nextPageToken",
+                      "target": {
+                        "kind": "query",
+                        "name": "next_page_token"
+                      }
+                    },
+                    {
+                      "parameter": "voiceId",
+                      "target": {
+                        "kind": "query",
+                        "name": "voice_ids"
+                      }
+                    }
+                  ],
                   "schema": {
                     "additionalProperties": false,
-                    "properties": {},
+                    "properties": {
+                      "nextPageToken": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "voiceId": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
                     "type": "object"
                   }
                 },
@@ -260,8 +285,17 @@ export const ELEVENLABS_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManif
                   "maxBodyBytes": 0,
                   "method": "GET",
                   "origin": "https://api.elevenlabs.io",
-                  "pathTemplate": "/v1/voices",
-                  "queryTemplate": [],
+                  "pathTemplate": "/v2/voices",
+                  "queryTemplate": [
+                    {
+                      "name": "page_size",
+                      "value": "100"
+                    },
+                    {
+                      "name": "include_total_count",
+                      "value": "false"
+                    }
+                  ],
                   "redirect": "error"
                 },
                 "response": {
