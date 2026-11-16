@@ -156,6 +156,46 @@ test('the rolling HEAD typecheck coalesces commits, bisects only when red, and a
   assert.equal(posts.length, 1);
 });
 
+test('a red rolling pass bisects only the packages that carry a new error', async t => {
+  // 2026-11-16 18:50Z-22:15Z: one packages pass spent 3.5 h recompiling all 23 packages at every
+  // bisection probe (packages/tests alone 8-14 min each), so apps/* scopes were never reached.
+  const { repo } = await workspace(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const state = await mkdtemp(join(tmpdir(), 'happier-rolling-typecheck-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  t.after(() => { try { git('worktree', 'unlock', join(state, 'worktree')); git('worktree', 'remove', '--force', join(state, 'worktree')); } catch {} });
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const step = async (label, files) => {
+    for (const [path, content] of Object.entries(files)) await writeFile(join(repo, path), content);
+    await writeFile(join(repo, '.tree-marker'), `${label}\n`);
+    git('add', '-A');
+    git('commit', '--quiet', '-m', label);
+    return git('rev-parse', 'HEAD');
+  };
+  const compiled = [];
+  const record = fakeCompiler([]);
+  const compile = (worktree, dir, compileEnv) => {
+    let label = 'base';
+    try { label = readFileSync(join(worktree, '.tree-marker'), 'utf8').trim(); } catch {}
+    compiled.push(`${label}:${dir}`);
+    return record(worktree, dir, compileEnv);
+  };
+  const options = { repo, env, compile, bootstrap: () => {}, post: () => {}, boardPaths: [], log: () => {} };
+  await step('c0', { 'packages/protocol/src/index.ts': 'export const value = 0;\n' });
+  await rollingHeadTypecheckPass(options);
+  await step('c1', { 'packages/protocol/src/index.ts': 'export const value = 1;\n' });
+  const c2 = await step('c2', { 'packages/leaf/src/index.ts': 'export const value: string = 2;\n', 'packages/leaf/errors.txt': '1:2322:Type number is not assignable to type string.\n' });
+  await step('c3', { 'packages/protocol/src/index.ts': 'export const value = 3;\n' });
+  await step('c4', { 'packages/protocol/src/index.ts': 'export const value = 4;\n' });
+  compiled.length = 0;
+  const red = await rollingHeadTypecheckPass(options);
+  assert.deepEqual(red.attributions.map(entry => entry.commit), [c2]);
+  assert.ok(red.packages.length > 1, `range selects several packages: ${red.packages}`);
+  const probes = compiled.filter(entry => !/^c[04]:/u.test(entry));
+  assert.ok(probes.length > 0, 'the pass bisected');
+  assert.deepEqual(probes.filter(entry => !entry.endsWith(':packages/leaf')), [], `bisection recompiled green packages: ${probes}`);
+});
+
 test('apps/server, apps/cli and apps/ui are selected when the range touches the app or a package it depends on', async t => {
   const { repo, commit } = await workspace(t);
   const appSha = await commit('apps/cli/src/index.ts', 'export const value = 4;\n');

@@ -461,11 +461,14 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   if (!compared.fresh.length) { record(compared.incomplete.length ? 'INCOMPLETE' : 'ok'); return result; }
   // Bisect, only when red. A diagnostic exists at a commit when it is not new at HEAD relative to that commit.
   const commits = git(['rev-list', '--first-parent', '--reverse', `${base}..${head}`]).split('\n').filter(Boolean);
+  // A probe compiles only the packages that still carry an unattributed error; the green ones
+  // cannot change an attribution (2026-11-16: 23 packages per probe kept apps/* unreached for hours).
   const presentAt = (commit, items) => {
     const tree = treeOf(commit);
     if (tree === headTree) return new Set(items);
-    const atCommit = rowsAt(tree, packages, commit.slice(0, 10));
-    const newAtHead = new Set(freshBetween(git, tree, headTree, packages, atCommit, headRows).fresh.map(({ row }) => row));
+    const dirs = packages.filter(dir => items.some(item => item.dir === dir));
+    const atCommit = rowsAt(tree, dirs, commit.slice(0, 10));
+    const newAtHead = new Set(freshBetween(git, tree, headTree, dirs, atCommit, headRows).fresh.map(({ row }) => row));
     return new Set(items.filter(item => atCommit.get(item.dir) && !newAtHead.has(item.row)));
   };
   let remaining = compared.fresh;
