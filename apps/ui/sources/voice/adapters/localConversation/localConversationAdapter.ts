@@ -103,8 +103,6 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
     const config = settings?.voice?.adapters?.local_conversation ?? {};
     const dispatch = prepareVoiceTextTurn({
       sessionId: opts.controlSessionId,
-      settings,
-      userText: opts.text,
       playbackController: localVoicePlaybackController,
       voiceAgentSessions,
     });
@@ -112,7 +110,7 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
       if ((config?.conversationMode ?? 'direct_session') !== 'agent') {
         throw new Error('voice_session_native_send_only');
       }
-      await dispatch(durableDispatch);
+      await dispatch({ settings, userText: opts.text, durableDispatch });
     };
   };
 

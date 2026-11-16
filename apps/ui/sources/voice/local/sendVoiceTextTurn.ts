@@ -62,15 +62,18 @@ export async function sendVoiceTextTurn(params: {
     handoffMode: 'interrupt_and_send';
   }>;
 }): Promise<void> {
-  return prepareVoiceTextTurn(params)();
+  const { sessionId, playbackController, voiceAgentSessions, ...input } = params;
+  return prepareVoiceTextTurn({ sessionId, playbackController, voiceAgentSessions })(input);
 }
 
-/** Capture output ownership before durable admission while preserving the submitted turn itself. */
+type VoiceTextTurnContext = Pick<Parameters<typeof sendVoiceTextTurn>[0], 'sessionId' | 'playbackController' | 'voiceAgentSessions'>;
+
+/** Capture output ownership before recognition or durable admission, then dispatch the accepted input. */
 export function prepareVoiceTextTurn(
-  params: Parameters<typeof sendVoiceTextTurn>[0],
-): (durableDispatch?: NonNullable<typeof params.durableDispatch>) => Promise<void> {
+  params: VoiceTextTurnContext,
+): (input: Omit<Parameters<typeof sendVoiceTextTurn>[0], keyof VoiceTextTurnContext>) => Promise<void> {
   const playbackEpoch = params.playbackController.captureEpoch();
-  return (durableDispatch = params.durableDispatch) => dispatchVoiceTextTurn({ ...params, durableDispatch }, playbackEpoch);
+  return (input) => dispatchVoiceTextTurn({ ...params, ...input }, playbackEpoch);
 }
 
 async function dispatchVoiceTextTurn(

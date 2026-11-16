@@ -159,10 +159,12 @@ describe('local conversation voice adapter', () => {
     expect(prepareVoiceTextTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-        userText: 'hello from composer',
         voiceAgentSessions,
       }),
     );
+    expect(dispatchVoiceTextTurn).toHaveBeenLastCalledWith(expect.objectContaining({
+      userText: 'hello from composer', durableDispatch: { localId: 'voice-local-1', handoffMode: 'interrupt_and_send' },
+    }));
   });
 
   it('routes typed sends through the local voice text turn path for daemon-backed agent sessions too', async () => {
@@ -181,9 +183,11 @@ describe('local conversation voice adapter', () => {
     expect(prepareVoiceTextTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-        userText: 'hello from daemon composer',
         voiceAgentSessions,
       }),
     );
+    expect(dispatchVoiceTextTurn).toHaveBeenLastCalledWith(expect.objectContaining({
+      userText: 'hello from daemon composer', durableDispatch: { localId: 'voice-local-2', handoffMode: 'interrupt_and_send' },
+    }));
   });
 });
