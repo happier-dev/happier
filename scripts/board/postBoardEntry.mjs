@@ -21,6 +21,31 @@ function validateEntry(entry) {
   if (headings.length === 0) throw new Error('Add a board heading with an allowed type: CLAIM, RESULT, ASK, URGENT, RULING or HOLD.');
 }
 
+// Orchestrators read their lanes' reports; the board is for another lane's action.
+const isOrchestrator = (name) => /(^|[\s-])ORCH(?![a-z])|orchestrator|^Coordination$/i.test(name);
+
+/** Advisory checks for OWNER-RULINGS 2026-10-31 (13) and the 2026-11-16 reload
+ * convention. They never block: the writer cannot know every live need. */
+function warnNonActionable(entry) {
+  for (const heading of entry.toString('utf8').match(/^### [^\r\n]*/gm) ?? []) {
+    const match = /^### .+? — .+? → (.+?) — ([A-Z]+) — (.+)$/.exec(heading);
+    if (!match) continue;
+    const [, to, kind, subject] = match;
+    const addressees = to.split(',').map((name) => name.trim());
+    if (kind === 'RESULT' && addressees.every(isOrchestrator)) {
+      console.error('Warning: this RESULT is addressed only to orchestrators; it belongs in your lane report unless another lane must act (OWNER-RULINGS 2026-10-31 (13)). Post will still land.');
+    }
+    if (addressees.some((name) => /^all leads\b/i.test(name)) && !['URGENT', 'RULING', 'HOLD'].includes(kind)) {
+      console.error('Warning: address ALL leads only with URGENT, RULING, HOLD or LIFTED (a HOLD); name the lanes that must act. Post will still land.');
+    }
+    // Shared-DB restarts (repo-dev, migrations) keep HOLD/LIFTED. A QA stack
+    // reload prepares beside its incumbent, so its lanes need only the READY.
+    if (kind === 'HOLD' && /\b(swap|LIFTED|reload)\b/i.test(subject) && !/repo-dev|shared[- ]DB|migration/i.test(subject)) {
+      console.error('Warning: a stack reload that does not restart the shared DB posts only its final READY (or NOT_READY), addressed to that stack\'s lanes; keep HOLD/LIFTED for repo-dev and shared-DB restarts. Post will still land.');
+    }
+  }
+}
+
 async function warnEndedAddressees(entry) {
   const addressees = new Set([...entry.toString('utf8').matchAll(/^### .*? → (.+?) — /gm)]
     .flatMap((match) => match[1].split(',').map((name) => name.trim())));
@@ -187,6 +212,7 @@ async function replaceBoard(board, current, candidate, archived, mode, minimumBy
 export async function postBoardEntry(board, entryFile, { rotateBefore } = {}) {
   const entry = await fs.readFile(entryFile);
   validateEntry(entry);
+  warnNonActionable(entry);
   try { await warnEndedAddressees(entry); }
   catch (error) { console.error(`Warning: could not inspect addressee reports (${error.code ?? error.name}); post will still land.`); }
   let cutoff;

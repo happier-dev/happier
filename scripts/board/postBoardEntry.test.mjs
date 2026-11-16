@@ -294,3 +294,29 @@ test('warns for ended addressees in known report trees while the post still land
   assert.match(warnings[1], /STOPPED.*BLOCKED-ended/);
   assert.ok((await fs.readFile(f.board, 'utf8')).includes(entry));
 });
+
+test('warns, without blocking, on orchestrator-only RESULTs, informal ALL-leads posts and QA swap HOLDs', async (t) => {
+  const f = await fixture(t);
+  const cases = [
+    ['P03-LANE → P03 ORCH, Coordination — RESULT — done', /RESULT is addressed only to orchestrators/],
+    ['Lane 12 Main → Lane 12 lanes, ALL leads using agent-qa-l12-main — RESULT — reload 144', /ALL leads.*URGENT, RULING, HOLD or LIFTED/],
+    ['Lane 12 Main → Lane 12 lanes — HOLD — reload 144 swap: c87aa975c7e7 prepared, short drop starting', /final READY/],
+    ['Lane 12 Main → Lane 12 lanes — HOLD — LIFTED: agent-qa-l12-main on reload 144', /final READY/],
+  ];
+  for (const [heading, warning] of cases) {
+    const entry = `### 2026-11-16 08:00 UTC — ${heading}\nBody\n`;
+    await fs.writeFile(f.entryFile, entry);
+    const { stderr } = await run(process.execPath, [writer, f.board, f.entryFile], { cwd: f.directory });
+    assert.match(stderr, warning, heading);
+    assert.ok((await fs.readFile(f.board, 'utf8')).includes(entry), 'the post still lands');
+  }
+  for (const heading of [
+    'P03-LANE → Lane 12 Main, P03 ORCH — RESULT — 1a2b3c4d5e6 committed; Lane 12 Main: reload',
+    'Systemic → ALL leads — HOLD — repo-dev restart for migration 20261116',
+    'Lane 12 Main → Lane 12 lanes — RESULT — READY145: agent-qa-l12-main at c87aa975c7e7',
+  ]) {
+    await fs.writeFile(f.entryFile, `### 2026-11-16 08:01 UTC — ${heading}\nBody\n`);
+    const { stderr } = await run(process.execPath, [writer, f.board, f.entryFile], { cwd: f.directory });
+    assert.equal(stderr.trim(), '', heading);
+  }
+});
