@@ -72,9 +72,9 @@ it.each([false, true])('gives the machine its identity glyph and whole name row 
     expect(pageRow.findAll(node => node.type === Icon).some(node => node.props.name === (isThisComputer ? 'laptop' : 'hard-drives'))).toBe(true);
 });
 
-// Owner 2026-11-15 (A5, ade8e626): the column's search stood open under "Machines", and a "Machines" label sat over
-// "Your machines". A long fleet's search waits behind the magnifier beside "+"; the named group heads its machines.
-it('keeps a long fleet\'s search behind the magnifier and heads the machines with their own group alone', async () => {
+// Owner 2026-11-15 (A5, ade8e626): a "Machines" label sat over "Your machines". The named group heads its machines.
+// (The column's search behind the magnifier is the shell column's one rule: CollectionList.navigationRow.test.ts.)
+it('heads the machines with their own group alone', async () => {
     await home.reset();
     const profileId = await home.addHome({
         name: 'Studio Home', serverUrl: 'https://studio.example',
@@ -97,9 +97,6 @@ it('keeps a long fleet\'s search behind the magnifier and heads the machines wit
         expect(screen.getTextContent()).toContain('machines.destinations.yours');
     });
     expect(screen.findByTestId('settings.machines.rail.machinesLabel')).toBeNull();
-    expect(screen.findByTestId('settings.machines.rail.search')).toBeNull();
-    await screen.pressByTestIdAsync('settings.machines.rail.search:toggle');
-    expect(screen.findByTestId('settings.machines.rail.search')).not.toBeNull();
 });
 
 // Owner 2026-11-15 (B2, ade8e626): an online machine whose daemon publishes no vitals stood at the two-line height

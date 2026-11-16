@@ -359,8 +359,11 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
     const { surface: ownSurface, toolsInsetPx, phonePage, create, headerAction, children, ...listRest } = props;
     const shellColumnSurface = React.useContext(CollectionShellColumnSurfaceContext);
     const surface = ownSurface ?? shellColumnSurface;
+    // A list standing in the shell column keeps its search behind the magnifier beside "+" until pressed: one rule for
+    // every column, Settings included, decided here rather than by each column (UI refinements 2026-11-16, A5).
+    const search = shellColumnSurface && listRest.search ? { ...listRest.search, collapsible: true } : listRest.search;
     // The column states its own rows' order, so each draws the one list-row rule (owner 2026-11-15).
-    const listProps = { ...listRest, children: orderCollectionColumnRows(children) };
+    const listProps = { ...listRest, search, children: orderCollectionColumnRows(children) };
     const largeTitle = useNavigationLeavesLargeTitle();
     const pageToolsInsetPx = React.useContext(CollectionPageToolsInsetContext);
     const resolvedToolsInsetPx = toolsInsetPx ?? pageToolsInsetPx;

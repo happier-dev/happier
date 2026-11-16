@@ -393,7 +393,6 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
           searchable
             ? {
                 testID: 'services-column:search',
-                collapsible: true,
                 value: query,
                 onChangeText: setQuery,
                 placeholder: t(

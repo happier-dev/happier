@@ -63,6 +63,18 @@ describe('navigation row parity between core and the plugin list anatomy', () =>
             .toBe(glassSurfaceBackgroundColor(pageColor, 'content', true));
     });
 
+    // UI refinements ruling 2026-11-16 (A5): every column's search waits behind the magnifier beside "+", Settings'
+    // included. The shell column decides it once; no column names its own default.
+    it('keeps the search of a list standing in the shell column behind its magnifier until pressed', async () => {
+        const { CollectionShellColumnSurfaceContext } = await import('./CollectionList');
+        const search = { value: '', onChangeText: () => {}, placeholder: 'Search settings', testID: 'column-search' };
+        const screen = await renderScreen(React.createElement(CollectionShellColumnSurfaceContext.Provider, { value: 'plane' },
+            React.createElement(CollectionList, { testID: 'column-list', title: 'Settings', search })));
+        expect(screen.findByTestId('column-search')).toBeNull();
+        await screen.pressByTestIdAsync('column-search:toggle');
+        expect(screen.findByTestId('column-search')).not.toBeNull();
+    });
+
     // Owner 2026-11-11 (desktop #13 / OWNER-1334-ROWS 05): the Settings sidebar's selected row painted an opaque
     // brownish chip on glass while hover was translucent. A selected navigation row resolves through the plane's material.
     it('fills a selected navigation row through the containing material, never the raw opaque chip', async () => {

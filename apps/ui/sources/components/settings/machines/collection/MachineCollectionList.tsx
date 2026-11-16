@@ -604,8 +604,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                 onChangeText: setQuery,
                 placeholder: t('settingsMachines.searchPlaceholder'),
                 testID: 'settings.machines.rail.search',
-                // Behind the magnifier beside "+" until pressed, as every main column's search (Store/Services ruling, A5).
-                collapsible: true,
             } : null}
         >
             {/* The fleet first (lab `R`): the Overview is the index of both doors. Defaults head the list, above the

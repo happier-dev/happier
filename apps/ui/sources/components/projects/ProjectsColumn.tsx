@@ -211,7 +211,6 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
                 count={model.projectCount > 0 ? model.projectCount : undefined}
                 search={{
                     testID: 'projects-column:search',
-                    collapsible: true,
                     value: query,
                     onChangeText: setQuery,
                     placeholder: t('projects.searchPlaceholder'),
