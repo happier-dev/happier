@@ -481,7 +481,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                 actorAccountId: custodian.id, machineId: machine.id,
                 principal: { kind: "account", accountId: requester.id }, level: "admin",
             }), { isolationLevel: "ReadCommitted" })).toMatchObject({ kind: "saved", readiness: "ready" });
-            await db.managedMachine.create({ data: {
+            const managed = await db.managedMachine.create({ data: {
                 homeId, custodianAccountId: custodian.id, controllerMachineId: controller.id,
                 controllerInstallationId: controller.installationId!, admittedActionRequestId: randomUUID(), admittedInput: {},
                 allocation: "bound", creationState: "active", enrolledMachineId: guest.id, desired: "stop",
@@ -573,8 +573,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
             expect(await db.session.findUniqueOrThrow({ where: { id: session.id }, select: {
                 pendingActivationRequestId: true, pendingActivationStatus: true,
             } })).toEqual({ pendingActivationRequestId: requestId, pendingActivationStatus: "waiting" });
-            expect(await db.accountChange.findMany({ where: { accountId: custodian.id, kind: "machine", entityId: controller.id } }))
-                .toHaveLength(1);
+            expect(await db.accountChange.findMany({ where: { accountId: custodian.id, kind: "account", entityId: managed.id } }))
+                .toMatchObject([{ hint: { managedMachinePolicy: true, machineId: controller.id } }]);
         } finally {
             allowInitialLock?.(); allowRevalidation?.();
             await Promise.all([pendingResult, peerResult]);

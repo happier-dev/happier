@@ -14,6 +14,7 @@ import { eventRouter } from '@/app/events/eventRouter';
 import { auth } from '@/app/auth/auth';
 import { initEncrypt } from '@/modules/encrypt';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
+import { decodeSessionStoredContent } from '@/storage/sessionMachineStoredContent';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { registerAccountSettingsRoutes } from '../account/registerAccountSettingsRoutes';
 import { registerAccountEncryptionRoutes } from '../account/registerAccountEncryptionRoutes';
@@ -141,7 +142,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('L
                 const conflicting = { ...patch, sharedMetadata: { ...patch.sharedMetadata, ciphertext: encode({ v: 1, botFace: { seed: 'other' } }) } };
                 expect((await request('face-conflict', 'PATCH', `/v2/sessions/${sessionId}`, conflicting)).statusCode).toBe(409);
                 expect(counts.at(-1)?.facePublications).toBe(0);
-                expect((await db.session.findUniqueOrThrow({ where: { id: sessionId } })).metadata).toBe(nextShared);
+                expect((await db.session.findUniqueOrThrow({ where: { id: sessionId } }).then(decodeSessionStoredContent)).metadata).toBe(nextShared);
                 const legacyMetadata = encode(metadata);
                 const legacy = await db.session.create({ data: { accountId: account.id, tag: randomUUID(),
                     metadata: legacyMetadata, metadataLayoutVersion: 0, encryptionMode: mode } });
