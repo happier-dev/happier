@@ -57,6 +57,16 @@ Replies are converted to plain speech before any TTS provider reads them. Markdo
 
 If the selected TTS provider fails, Happier reports a speech error in Local voice instead of silently reading the reply with a different voice. Stopping playback or interrupting it with your voice is not treated as an error.
 
+### Read a transcript message (development)
+
+Development builds containing per-message read-aloud let you read a message from its speaker action beside Copy. Enable Voice and select Local voice with a configured TTS provider first. A live voice conversation is not required.
+
+Press the speaker action to read the message. Press its Stop action to stop, or press another message's speaker action to switch. Playback continues when you leave the transcript; the global voice control keeps Stop available on the current screen, including while speech is preparing. The same Markdown cleanup described above applies.
+
+Reading cancels and discards an active Local voice recording before speech starts. Starting the microphone stops read-aloud. Turning Voice off or removing the required voice setup also stops read-aloud.
+
+With OpenAI-compatible or Google Cloud TTS, reading sends that message's text to the configured speech service. Device TTS and local neural TTS use their selected platform execution paths.
+
 ## Conversation modes
 
 Local voice supports two conversation modes.

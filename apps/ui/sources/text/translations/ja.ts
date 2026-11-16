@@ -11238,6 +11238,9 @@ settingsSession: {
     switchedToMode: ({ mode }: { mode: string }) =>
       `${mode}モードに切り替えました`,
     discarded: "破棄済み",
+    readAloudA11y: "読み上げ",
+    stopReadAloudA11y: "読み上げを停止",
+    readAloudFailed: "このメッセージを読み上げられませんでした。音声設定を確認してください。",
     recoveredHistory: "復元された履歴",
     unknownEvent: "不明なイベント",
     contextCompactionStarted: "コンテキストを圧縮中...",

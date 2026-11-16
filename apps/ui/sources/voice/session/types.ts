@@ -20,10 +20,12 @@ export type VoiceAdapterController = Readonly<{
   toggle: (opts: Readonly<{ sessionId: string }>) => Promise<void>;
   interrupt: (opts: Readonly<{ sessionId: string }>) => Promise<void>;
   sendContextUpdate: (opts: Readonly<{ sessionId: string; update: string }>) => void;
-  sendTextTurn?: (opts: Readonly<{
+  /** Captures submission intent now; the returned dispatch performs effects after durable admission. */
+  prepareTextTurn?: (opts: Readonly<{
     controlSessionId: string;
     conversationSessionId: string;
     text: string;
+  }>) => (dispatch: Readonly<{
     localId: string;
     handoffMode: 'interrupt_and_send';
   }>) => Promise<void>;

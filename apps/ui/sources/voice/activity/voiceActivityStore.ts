@@ -12,6 +12,12 @@ export type VoiceActivityState = Readonly<{
   replaceSessionEvents: (sessionId: string, events: ReadonlyArray<VoiceActivityEvent>) => void;
 }>;
 
+/** Null selects the global feed; counts include all stored events, independent of the visible tail. */
+export function selectVoiceActivityEventCount(state: VoiceActivityState, sessionId: string | null): number {
+  if (sessionId !== null) return state.eventsBySessionId[sessionId]?.length ?? 0;
+  return Object.values(state.eventsBySessionId).reduce((count, events) => count + events.length, 0);
+}
+
 function clampMaxEvents(value: number | null | undefined): number {
   const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : 0;
   // Allow small caps for tests; production defaults to 200.

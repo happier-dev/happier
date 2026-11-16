@@ -7,6 +7,7 @@ import {
   VoiceLocalSttSchema,
   type VoiceLocalSttProvider,
 } from '@/sync/domains/settings/voiceLocalSttSettings';
+import { isVoiceLocalTtsConfigured, VoiceLocalTtsSchema } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { normalizeTurnEndpointPolicy, type TurnEndpointPolicy } from '@/voice/input/TurnEndpointDetector';
 
 export type LocalVoiceSettingsInput = Readonly<Pick<Settings, 'voice'>>;
@@ -94,4 +95,18 @@ export function resolveGoogleAndroidCertSha1(settings: LocalVoiceSettingsInput):
 export function isVoiceBargeInEnabled(settings: LocalVoiceSettingsInput): boolean {
   const { config } = resolveLocalVoiceAdapterSettings(settings);
   return config?.tts?.bargeInEnabled !== false;
+}
+
+/**
+ * Whether per-message "read aloud" has configured TTS. It follows settings, not a live voice session:
+ * a local voice provider must be selected and its TTS provider filled in. These are the same
+ * required-configuration check used by `speakWithLocalTtsProvider`; feature policy is separate.
+ */
+export function isReadAloudAvailable(settings: LocalVoiceSettingsInput): boolean {
+  const providerId = settings?.voice?.providerId;
+  if (providerId !== 'local_direct' && providerId !== 'local_conversation') return false;
+
+  const { config } = resolveLocalVoiceAdapterSettings(settings);
+  const parsed = VoiceLocalTtsSchema.safeParse(config?.tts ?? {});
+  return parsed.success && isVoiceLocalTtsConfigured(parsed.data);
 }

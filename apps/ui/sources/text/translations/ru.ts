@@ -10896,6 +10896,9 @@ settingsSession: {
     switchedToMode: ({ mode }: { mode: string }) =>
       `Переключено в режим ${mode}`,
     discarded: "Отброшено",
+    readAloudA11y: "Прочитать вслух",
+    stopReadAloudA11y: "Остановить чтение вслух",
+    readAloudFailed: "Не удалось прочитать это сообщение вслух. Проверьте настройки голоса.",
     recoveredHistory: "Восстановленная история",
     unknownEvent: "Неизвестное событие",
     contextCompactionStarted: "Сжатие контекста...",

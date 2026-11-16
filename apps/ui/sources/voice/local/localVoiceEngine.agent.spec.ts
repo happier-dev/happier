@@ -1189,6 +1189,37 @@ describe('local voice engine agent behavior', () => {
         expect(expoSpeechSpeak).toHaveBeenCalled();
     });
 
+    it('does not speak a delayed welcome after a newer playback interruption', async () => {
+        const storage = await getStorage();
+        const voice = storage.getState().settings.voice;
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...voice, providerId: 'local_conversation', adapters: { ...voice.adapters, local_conversation: {
+                ...voice.adapters.local_conversation, conversationMode: 'agent',
+                stt: { ...voice.adapters.local_conversation.stt, baseUrl: 'http://localhost:8000' },
+                tts: { ...voice.adapters.local_conversation.tts, provider: 'device', autoSpeakReplies: true },
+                agent: { ...voice.adapters.local_conversation.agent, backend: 'daemon', prewarmOnConnect: true,
+                    welcome: { enabled: true, mode: 'immediate', templateId: null } },
+            } },
+        } }, sessions: { ...storage.getState().sessions,
+            s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        } });
+        daemonVoiceAgentStart.mockResolvedValueOnce({ voiceAgentId: 'va1' });
+        let finishWelcome: ((value: { assistantText: string }) => void) | undefined;
+        daemonVoiceAgentWelcome.mockImplementationOnce(() => new Promise(resolve => { finishWelcome = resolve; }));
+        const { localVoicePlaybackController } = await import('@/voice/runtime/VoicePlaybackController');
+
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        await waitForMockCalls(daemonVoiceAgentWelcome, 1);
+        // Read aloud uses this existing output-only interruption, preserving the Agent operation.
+        localVoicePlaybackController.interrupt();
+        finishWelcome?.({ assistantText: 'Delayed welcome' });
+        await waitForCondition(() => (useVoiceActivityStore.getState().eventsBySessionId.s1 ?? [])
+            .some(event => event.kind === 'assistant.text' && event.text === 'Delayed welcome'), 'welcome transcript');
+        await flushMicrotasks(20);
+
+        expect(expoSpeechSpeak).not.toHaveBeenCalled();
+    });
+
     it('keeps the mic status truthful while the immediate welcome plays during recording', async () => {
         const storage = await getStorage();
         storage.__setState({

@@ -40,3 +40,10 @@ export function createVoicePlaybackController(): VoicePlaybackController {
     registerStopper,
   };
 }
+
+/**
+ * The one playback owner for local voice output: live voice replies and per-message read-aloud
+ * share it, so starting or interrupting one stops the other instead of overlapping on the same
+ * audio output (or cutting off device speech through its global stop).
+ */
+export const localVoicePlaybackController = createVoicePlaybackController();
