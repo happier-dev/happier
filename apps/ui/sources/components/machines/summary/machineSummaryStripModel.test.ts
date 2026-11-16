@@ -33,10 +33,10 @@ describe('the Machine summary value convention', () => {
         expect(MachineResourceSummaryV1Schema.safeParse({ ...legacy, memory: { ...legacy.memory, totalBytes: -1 } }).success).toBe(false);
     });
     it.each([
-        { capacity: 8 * GB, expected: [0.5, null, 0.75, 0, 1] },
+        { capacity: 8 * GB, expected: [0.5, null, 0.25, 1, 0] },
         { capacity: 0, expected: [null, null, null, null, null] },
         { capacity: null, expected: [null, null, null, null, null] },
-    ])('projects daemon byte samples into a free-memory line with capacity $capacity', ({ capacity, expected }) => {
+    ])('projects daemon byte samples into an in-use memory line with capacity $capacity (OWNER-UI-1115B B1)', ({ capacity, expected }) => {
         const memory: MachineVitalsSampleV1['memory'] = capacity === null
             ? { reported: false, reason: 'unavailable' }
             : { reported: true, totalBytes: capacity, availableBytes: 6 * GB, usedBytes: 2 * GB,
@@ -78,12 +78,15 @@ describe('the Machine summary value convention', () => {
         expect(instruments.cpu.exact).toBeNull();
     });
 
-    it('says the pressure word in tone when memory is not calm', () => {
+    it('says how much memory is in use, in tone, when memory is not calm; the pressure word stays in its exact reading (OWNER-UI-1115B B1)', () => {
         const instruments = buildMachineSummaryInstruments(summary({
             memory: { availableBytes: 0.2 * GB, totalBytes: 4 * GB, pressure: 'critical', tone: 'crit', series: line([0.25 / 4 * 100, 0.2 / 4 * 100]) },
         }));
         expect(instruments.memory.tone).toBe('crit');
-        expect(instruments.memory.figure).toBe(t('machineSummary.pressure.critical'));
+        expect(instruments.memory.figure).toBe('95%');
+        expect(instruments.memory.exact).toContain(t('machineSummary.pressure.critical'));
+        // The line reads like CPU's and the meters' fill: in use, so tight memory draws high, never along the floor.
+        expect(instruments.memory.line).toEqual([0.9375, 0.95]);
     });
 
     it('keeps a 2 → 3 % CPU wiggle flat: the line scales to its peak, never below 40 %', () => {

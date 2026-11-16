@@ -225,8 +225,8 @@ const MachineSummaryInstrumentView = React.memo(function MachineSummaryInstrumen
 });
 
 /**
- * "71 GB free" under a ring: the number at the figure's weight, its unit quieter beside it. A word in tone
- * ("Critical") and a percentage stand alone; an unmeasured value keeps its line, empty.
+ * "71 GB free" under a ring: the number at the figure's weight, its unit quieter beside it. A percentage stands
+ * alone; an unmeasured value keeps its line, empty.
  */
 function MachineSummaryRingValue(props: Readonly<{ metric: MachineSummaryMetric; figure: string | null; color: string }>) {
     const styles = stylesheet;

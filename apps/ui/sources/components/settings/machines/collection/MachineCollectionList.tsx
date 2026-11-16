@@ -66,7 +66,7 @@ import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetMark } from '@/components/s
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { useMachineResourceFleetAttention } from '@/sync/domains/machines/resources/useMachineResourceFleetAttention';
 import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
-import { MachineListRowSummary } from '@/components/machines/summary/MachineListRowSummary';
+import { MachineListRowSummary, useMachineCanShowLiveSummary } from '@/components/machines/summary/MachineListRowSummary';
 import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { useThisComputerServiceSummary } from '../localControl/useThisComputerServiceSummary';
 
@@ -213,8 +213,9 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
     // says Offline, its last-seen time staying in the accessible name and on its page.
     const railWord = row.reason ?? (row.kind === 'managed' || row.presenceSource?.managedPresence ? row.presenceWord
         : row.fleetPresence?.online === false ? t('machineDetailPage.offline') : row.presenceWord) ?? row.ownership;
-    // Only a reachable machine with instruments chosen has a live summary to show.
-    const liveSummary = row.kind === 'machine' && row.online && summaryMetrics > 0;
+    // Only a reachable machine with instruments chosen, whose daemon can report them, has a live summary to show.
+    const canShowSummary = useMachineCanShowLiveSummary(row.serverId, row.kind === 'machine' ? row.machineId : '');
+    const liveSummary = row.kind === 'machine' && row.online && summaryMetrics > 0 && canShowSummary;
     return (
         rail ? (
             // One line (lab m-defaults rail): the name, then its one word at the row's end. A machine whose live summary

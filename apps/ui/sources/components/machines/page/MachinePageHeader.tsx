@@ -320,8 +320,10 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             testID="machine-detail-header"
             wrapPart={wrapPart}
             alwaysShowTitle
-            // The mark and the actions hang from the name's line; the sentence and facts run beneath both (lab `rm` R).
+            // The mark and the actions hang from the name's line; the sentence and facts run beneath both (lab `rm` R),
+            // starting on the mark's edge: only the name stands beside the mark (OWNER-UI-1115B B3).
             actionsLayout="hang"
+            markSpan="title"
             // Start session and the rest stay beside the Machine's identity, not folded into a phone's bar menu.
             actionsPlacement="page"
             title={machine ? machineName : t('machineDetailPage.placeholderTitle')}

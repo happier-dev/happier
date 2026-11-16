@@ -230,6 +230,12 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   // split column's width at which they wrapped is remembered; only a wider column tries the line again.
   const [splitWidthPx, setSplitWidthPx] = useState<number | null>(null);
   const [identityHeightPx, setIdentityHeightPx] = useState(0);
+  // A title-only mark row puts the purpose and facts under the whole row; wrapped controls start beneath them.
+  const [textBelowRowHeightPx, setTextBelowRowHeightPx] = useState(0);
+  const handleTextBelowRowLayout = useCallback((event: HappierLayoutChangeEvent) => {
+    const { height } = event.nativeEvent.layout;
+    setTextBelowRowHeightPx(current => current === height ? current : height);
+  }, []);
   const [leadingHeightPx, setLeadingHeightPx] = useState(0);
   const [actionsHeightPx, setActionsHeightPx] = useState(0);
   const [actionsWrapWidthPx, setActionsWrapWidthPx] = useState<number | null>(null);
@@ -414,7 +420,8 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
     ? Math.max(0, columnContentWidthPx - splitWidthPx) : 0;
   const sharedLeadingHeightPx = leadingInsetPx > 0 ? leadingHeightPx : 0;
   const identityOffsetTopPx = Math.max(0, sharedLeadingHeightPx - identityHeightPx) / 2;
-  const wrappedActionsTopPx = Math.max(sharedLeadingHeightPx, identityHeightPx) - identityOffsetTopPx + 12;
+  const wrappedActionsTopPx = Math.max(sharedLeadingHeightPx, identityHeightPx) - identityOffsetTopPx + 12
+    + (markOnTitleRow ? textBelowRowHeightPx : 0);
   const wrappedActionsWidthPx = splitWidthPx === null ? undefined : splitWidthPx + leadingInsetPx;
   const actionsContent = props.actions || props.status ? (
             <View
@@ -548,7 +555,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
               {(splitTitleLine || hangsFromTitle) && !markOnTitleRow ? textBelowTitle : null}
           </View>
         </View>
-        {markOnTitleRow ? textBelowTitle : null}
+        {markOnTitleRow ? (
+          <View testID={props.testID ? `${props.testID}-supporting` : undefined} onLayout={handleTextBelowRowLayout}>{textBelowTitle}</View>
+        ) : null}
         {/* The controls keep their title-line parent even while drawn below the whole identity row.
             This empty row reserves exactly their measured height without mounting a second control. */}
         {actionsBelowIdentity ? <View testID={props.testID ? `${props.testID}-actions-reserve` : undefined} pointerEvents="none" style={{ height: actionsHeightPx, marginTop: 12 }} /> : null}

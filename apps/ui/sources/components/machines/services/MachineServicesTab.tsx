@@ -338,7 +338,8 @@ function MachineServicesList(
           {state ? (
             <StateCard state={state} machineName={machineName} onRetry={() => { void list.refresh(); }} />
           ) : list.rows?.length === 0 ? (
-            <SurfaceStateCard testID="machine-services-empty" kind="empty" iconName="hard-drives"
+            // The Services catalogue scene (as the Services page's own empty states), with its two ways to add as one group (B4).
+            <SurfaceStateCard testID="machine-services-empty" kind="empty" iconName="hard-drives" scene="nothingListening"
               title={t('machineServices.empty.title', { machine: machineName })}
               reason={t('machineServices.empty.body')}
               {...(recipient ? {} : { action: { label: t('machineServices.deployHere'), onPress: deployHere, testID: 'machine-services-deploy-here' } })}

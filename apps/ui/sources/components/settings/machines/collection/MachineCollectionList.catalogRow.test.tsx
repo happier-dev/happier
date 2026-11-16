@@ -101,3 +101,37 @@ it('keeps a long fleet\'s search behind the magnifier and heads the machines wit
     await screen.pressByTestIdAsync('settings.machines.rail.search:toggle');
     expect(screen.findByTestId('settings.machines.rail.search')).not.toBeNull();
 });
+
+// Owner 2026-11-15 (B2, ade8e626): an online machine whose daemon publishes no vitals stood at the two-line height
+// with an empty line under its name. Only a machine that can show a summary reserves its line.
+it('keeps a summary line only for an online machine that publishes vitals', async () => {
+    await home.reset();
+    const profileId = await home.addHome({
+        name: 'Studio Home', serverUrl: 'https://studio.example',
+        serverIdentityId: 'studio', accountId: 'account-a', active: true,
+    });
+    home.answer(profileId, '/v1/machines/managed/actions/list', { body: { machines: [] } });
+    home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
+    home.answer(profileId, '/v1/machines/pools/list', { body: { pools: [] } });
+    const features = createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId: 'studio' } } });
+    home.answer(profileId, '/v1/features', { body: features });
+    home.answer(profileId, '/v1/features/authenticated', { body: features });
+    primeServerFeaturesSnapshot({ serverId: profileId, snapshot: { status: 'ready', features } });
+    const base = createMachineFixture();
+    const online = (id: string, daemonState: Record<string, unknown>) => createMachineFixture({
+        id, active: true, activeAt: Date.now(), daemonState: { ...base.daemonState, ...daemonState },
+        metadata: { ...base.metadata!, displayName: id, host: `${id}.internal`, platform: 'linux' },
+    });
+    const reporting = online('reporting-machine', { resources: { v: 1, vitals: { state: 'reporting' }, attention: { level: 'calm', reasons: [] } } });
+    const silent = online('silent-machine', {});
+    await publishMachineInventoryForTest({ serverId: profileId, accountId: 'account-a' }, [reporting, silent]);
+    const screen = await renderScreen(<MachineCollectionRail />);
+    await waitForHomeGovernance(() => {
+        expect(screen.getTextContent()).toContain('silent-machine');
+        expect(screen.findByTestId(`settings.machines.row.${profileId}.reporting-machine.summary`)).not.toBeNull();
+    });
+    expect(screen.findByTestId(`settings.machines.row.${profileId}.silent-machine.summary`)).toBeNull();
+    const silentRow = screen.tree.findAll(node => typeof node.type !== 'string'
+        && node.props.testID === `settings.machines.row.${profileId}.silent-machine` && 'title' in node.props)[0]!;
+    expect(silentRow.props.subtitle).toBeUndefined();
+});

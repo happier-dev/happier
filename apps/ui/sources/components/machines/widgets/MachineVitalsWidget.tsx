@@ -493,7 +493,7 @@ const METRIC_TITLE_KEYS = {
   network: 'machineVitals.network.title',
 } as const;
 
-/** The figure in the convention of the strip (CPU in use; memory and disk free; the pressure word in tone). */
+/** The figure in the convention of the strip (CPU in use; memory and disk free; memory under pressure in use, in tone). */
 function describeRowValue(
   metric: MachineSummaryMetric,
   summary: MachineResourceSummaryV1,

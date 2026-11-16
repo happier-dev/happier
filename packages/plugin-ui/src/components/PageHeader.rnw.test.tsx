@@ -161,6 +161,43 @@ describe('public PageHeader composition', () => {
     }
   });
 
+  it('keeps the purpose and facts under a title-only mark row before controls that wrap beneath (OWNER-UI-1115B B3)', () => {
+    const context = createSurfaceContext();
+    const view = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <PageHeader testID="header" title="NLDW6-3-11-20 · 2e0f" actionsLayout="hang" markSpan="title" description="Short on memory. Swapping for 2 h."
+        meta={[{ key: 'presence', text: 'Online' }]} leading={<View />} actions={<View testID="controls" />} />
+    </PluginUiProvider>);
+    const handler = (node: Element) => Reflect.get(node, '__reactLayoutHandler') as ((event: HappierLayoutChangeEvent) => void) | undefined;
+    const layout = (node: Element | null | undefined, width: number, height: number) => {
+      if (node && handler(node)) act(() => handler(node)!({ nativeEvent: { layout: { x: 0, y: 0, width, height } } }));
+    };
+    const header = view.container.querySelector<HTMLElement>('[data-testid="header"]')!;
+    const measured = (node: Element) => {
+      const boxes: Element[] = [];
+      for (let parent = node.parentElement; parent && parent !== header; parent = parent.parentElement) if (handler(parent)) boxes.push(parent);
+      return boxes;
+    };
+    const controls = () => view.container.querySelector('[data-testid="controls"]')!;
+    const identityColumn = () => measured(header.querySelector('[role="heading"]')!).at(-1);
+    try {
+      layout(header, 900, 120);
+      layout(measured(controls())[0], 280, 34);
+      layout(identityColumn(), 760, 30);
+      layout(header, 390, 160);
+      layout(identityColumn(), 318, 30);
+      layout(measured(header.querySelector('[role="heading"]')!)[0], 220, 30);
+      layout(measured(controls())[0], 280, 34);
+      layout(identityColumn(), 318, 30);
+      layout(view.container.querySelector('[data-testid="header-supporting"]'), 358, 50);
+      const below = view.container.querySelector<HTMLElement>('[data-testid="header-actions-below"]');
+      expect(below).not.toBeNull();
+      // The controls start under the sentence and facts (30 title + 50 text), never over them.
+      expect(Number.parseFloat(below!.style.top)).toBeGreaterThanOrEqual(80);
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('shows a column summary after the identity row and retains an actionable control', () => {
     const context = createSurfaceContext();
     let refreshed = false;

@@ -311,7 +311,7 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
   const tone =
     props.kind === 'empty' || props.kind === 'success' ? 'filled' : 'secondary';
   const compact = size === 'pane' || size === 'details' || size === 'page';
-  const buttons = actions.some(Boolean) ? (
+  const actionButtons = actions.some(Boolean) ? (
     <View
       style={[
         {
@@ -349,9 +349,17 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
         ) : null,
       )}
     </View>
-  ) : (
-    (props.actionSlot ?? null)
-  );
+  ) : null;
+  // A footer that continues the actions (a second way to add, the options under Start) stands right under them, in
+  // the one action group, rather than below the tile's padding (OWNER-UI-1115B B4).
+  // The group keeps one shape whether or not a footer shows, so a footer arriving never remounts the buttons.
+  const footerInGroup = Boolean(actionButtons) && props.layout !== 'inline';
+  const buttons = actionButtons ? (footerInGroup ? (
+    <View style={[{ alignItems: 'center', gap: ACTION_GAP_PX }, fullWidth ? { alignSelf: 'stretch' } : null]}>
+      {actionButtons}
+      {props.actionFooter ?? null}
+    </View>
+  ) : actionButtons) : (props.actionSlot ?? null);
   const caption =
     props.actionCaption && buttons
       ? bindings.renderText({
@@ -393,7 +401,7 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
   const supplemental = (
     <>
       {/* Sits under the actions at the same step as the note, so a footer never touches the buttons. */}
-      {props.actionFooter ? <View style={{ alignSelf: 'stretch', alignItems: 'center', marginTop: quiet.gapPx }}>{props.actionFooter}</View> : null}
+      {props.actionFooter && !footerInGroup ? <View style={{ alignSelf: 'stretch', alignItems: 'center', marginTop: quiet.gapPx }}>{props.actionFooter}</View> : null}
       {quietLine}
       {diagnosticDetails}
     </>

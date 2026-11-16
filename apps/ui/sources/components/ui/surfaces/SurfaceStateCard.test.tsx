@@ -154,6 +154,15 @@ describe('SurfaceStateCard', () => {
         const line = await renderScreen(<SurfaceStateCard size="line" kind="success" title="Ready" body={<span>Current commit</span>} />);
         expect(line.getTextContent()).not.toContain('Current commit');
     });
+    it('keeps an action footer in the one action group, right under the actions (OWNER-UI-1115B B4)', async () => {
+        const { EmptyState } = await import('@/components/ui/empty/EmptyState');
+        const screen = await renderScreen(<SurfaceStateCard testID="empty" size="page" kind="empty" title="Nothing here yet"
+            action={{ label: 'Deploy an app here', onPress: vi.fn() }} actionFooter={<View testID="empty-watch" />} />);
+        const tile = screen.tree.findByType(EmptyState);
+        // The footer stands inside the tile with the action it continues, never below the tile's own padding.
+        expect(tile.findAll(node => node.props.testID === 'empty-watch')).toHaveLength(1);
+        expect(tile.findAll(node => node.props.testID === 'empty-action').length).toBeGreaterThan(0);
+    });
     it('keeps a pending line recovery disabled and preserves its caller test identity', async () => {
         const onRetry = vi.fn();
         const screen = await renderScreen(<SurfaceStateCard testID="error" size="line" kind="error" title="Try again" action={{ testID: 'retry', label: 'Retry', onPress: onRetry, disabled: true, busy: true }} />);

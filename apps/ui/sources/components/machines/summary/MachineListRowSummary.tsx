@@ -7,12 +7,30 @@ import { Typography } from '@/constants/Typography';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { storage } from '@/sync/domains/state/storageStore';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { readMachineMonitoringMode } from '@/sync/domains/machines/resources/useMachineMonitoringMode';
 
 import { describeMachineAttentionWord, readMachinePublishedResources, selectHeadlineReason } from './machineResourceSentences';
 import { resolveMachineAttentionWordColor } from './machineSummaryStripModel';
 
 import { MachineSummaryStrip } from './MachineSummaryStrip';
 import { useMachineSummarySettingValue } from './useMachineSummarySetting';
+
+/**
+ * Whether this machine can show a summary line at all: its daemon publishes vitals as reporting, or its monitoring
+ * is Off (which the strip says). A machine that publishes neither (an older daemon) has no line to reserve, so its
+ * row keeps the one-line height (OWNER-UI-1115B B2). Selects one boolean, so other publications render nothing.
+ */
+export function useMachineCanShowLiveSummary(serverId: string, machineId: string): boolean {
+    return storage(React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]) => {
+        const machine = resolveServerScopedMachine(state, serverId, machineId);
+        if (!machine) return false;
+        if (readMachineMonitoringMode(machine.metadata ?? null) === 'off') return true;
+        const daemonState: unknown = machine.daemonState;
+        const resources = daemonState !== null && typeof daemonState === 'object' ? (daemonState as { resources?: unknown }).resources : null;
+        const vitals = resources !== null && typeof resources === 'object' ? (resources as { vitals?: unknown }).vitals : null;
+        return vitals !== null && typeof vitals === 'object' && (vitals as { state?: unknown }).state === 'reporting';
+    }, [machineId, serverId]));
+}
 
 /**
  * The right of a machine list column row (MPG-22): an online machine's strip on the name's line once it has

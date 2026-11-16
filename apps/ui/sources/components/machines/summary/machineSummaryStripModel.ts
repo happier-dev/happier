@@ -37,7 +37,7 @@ export function resolveMachineResourceToneColor(
 /** One instrument as every style draws it: the figure, its fill (0–1, by used), its line, its tone and its exact name. */
 export type MachineSummaryInstrument = Readonly<{
     metric: MachineSummaryMetric;
-    /** The short figure ("12%", "71 GB", "Critical"); `null` when the machine did not measure it (never "0"). */
+    /** The short figure ("12%", "71 GB", memory under pressure "94%"); `null` when the machine did not measure it (never "0"). */
     figure: string | null;
     /** How full the meter or ring is, by what is used (R9); `null` when unmeasured. */
     used: number | null;
@@ -75,6 +75,11 @@ function scaleLine(points: MachineResourceSummaryV1['cpu']['series'], max: numbe
     return points.map(point => (point.y === null ? null : Math.max(0, Math.min(1, point.y / max))));
 }
 
+/** The summary's memory line is percent available; drawn, it reads in use like CPU's line and the meters' fill. */
+function memoryInUseLine(points: MachineResourceSummaryV1['memory']['series']): (number | null)[] {
+    return scaleLine(points, 100).map(free => (free === null ? null : 1 - free));
+}
+
 function formatRate(bps: number): string {
     return t('machineSummary.rate', { value: formatHappierDataBytes(bps, { kind: 'storage' }) });
 }
@@ -104,6 +109,7 @@ export function buildMachineSummaryInstruments(summary: MachineResourceSummaryV1
         ? Math.max(0, Math.min(1, 1 - memory.availableBytes / memory.totalBytes)) : null;
     const pressureWord = memory.pressure === 'critical' ? t('machineSummary.pressure.critical')
         : memory.pressure === 'elevated' ? t('machineSummary.pressure.elevated') : null;
+    const pressured = pressureWord !== null && memory.tone !== 'calm';
     const memoryFree = memory.availableBytes !== null ? formatHappierDataBytes(memory.availableBytes, { kind: 'memory' }) : null;
     const memoryExact = memoryFree === null ? null : memory.availableBytes !== null && memory.totalBytes !== null
         ? t('machineSummary.exact.memory', { free: memoryFree, used: formatHappierDataBytes(Math.max(0, memory.totalBytes - memory.availableBytes), { kind: 'memory' }) })
@@ -126,12 +132,14 @@ export function buildMachineSummaryInstruments(summary: MachineResourceSummaryV1
         },
         memory: {
             metric: 'memory',
-            // A machine under pressure says the word in tone; a calm one (or one without a pressure signal) its free memory.
-            figure: pressureWord && memory.tone !== 'calm' ? pressureWord : memoryFree,
+            // Memory under pressure says how full it is, in tone (the tone is the pressure, never a word in the
+            // number's place); a calm one, or one without a pressure signal, says its free memory (OWNER-UI-1115B B1).
+            figure: pressured ? (memoryUsed !== null ? `${Math.round(memoryUsed * 100)}%` : pressureWord) : memoryFree,
             used: memoryUsed,
-            line: scaleLine(memory.series, 100),
+            line: memoryInUseLine(memory.series),
             tone: memory.tone,
-            exact: memoryExact === null ? null : [memoryExact, formatMachineMemoryPressureSource(memory.pressureSource)].filter(Boolean).join(', '),
+            exact: memoryExact === null ? null
+                : [pressured ? pressureWord : null, memoryExact, formatMachineMemoryPressureSource(memory.pressureSource)].filter(Boolean).join(', '),
         },
         disk: {
             metric: 'disk',
