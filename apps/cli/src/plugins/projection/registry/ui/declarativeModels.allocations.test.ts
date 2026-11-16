@@ -9,7 +9,9 @@ function action(pluginId: string, id: string): ResolvedActionContribution {
     return {
         provenance: 'external', source: { kind: 'path' }, pluginId,
         definition: {
-            id, title: id, description: id, dangerLevel: 'safe', execution: { target: 'daemon' }, scopes: [],
+            kindVersion: 1, id, title: id, description: id, safety: 'safe', dangerLevel: 'safe',
+            placements: [], slash: null, bindings: null, examples: null, inputHints: null, inputSchema: {},
+            execution: { target: 'daemon' }, scopes: [], connectedAccountPurposeBindings: [],
             surfaces: { ui: true, voice: false, agent: false, mcp: false, cli: false, rpc: false, api: false, plugin: false },
         },
     };
