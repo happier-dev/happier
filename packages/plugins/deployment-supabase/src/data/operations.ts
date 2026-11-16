@@ -115,10 +115,13 @@ async function options(input: Scope & Operands<'provision-options'>, context: Co
   const [available, entitlementResult] = await Promise.all([
     request(context, `/v1/projects/available-regions?${query}`), request(context, `/v1/organizations/${encode(organization)}/entitlements`),
   ]);
-  if (!object(available) || !Array.isArray(available.all) || !object(entitlementResult) || !Array.isArray(entitlementResult.entitlements)) return failure('provider_response_invalid');
-  const regions = available.all.map(value => {
-    if (!object(value) || !text(value.code) || !text(value.name) || !['specific', 'smartGroup'].includes(String(value.type)) || !text(value.provider)) return failure('provider_response_invalid');
-    return { code: value.code, name: value.name, type: String(value.type), provider: value.provider, ...(text(value.status) ? { status: value.status } : {}) };
+  if (!object(available) || !object(available.all) || !Array.isArray(available.all.smartGroup)
+    || !Array.isArray(available.all.specific) || !object(entitlementResult) || !Array.isArray(entitlementResult.entitlements)) return failure('provider_response_invalid');
+  const regions = [...available.all.smartGroup, ...available.all.specific].map(value => {
+    if (!object(value) || !text(value.code) || !text(value.name) || !['specific', 'smartGroup'].includes(String(value.type))
+      || value.type === 'specific' && !text(value.provider)) return failure('provider_response_invalid');
+    return { code: value.code, name: value.name, type: String(value.type), ...(text(value.provider) ? { provider: value.provider } : {}),
+      ...(text(value.status) ? { status: value.status } : {}) };
   });
   // Subscription is fixed by the organization. Entitlements are not a price
   // quote and their open provider payload is never copied into Action output.

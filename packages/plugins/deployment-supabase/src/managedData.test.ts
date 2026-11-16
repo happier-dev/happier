@@ -18,6 +18,11 @@ const base = preparation('projects-link');
 const linked = DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ ...base, targetLinkId: 'data-link', expectedTargetLinkRevision: 1,
   providerIdentity: { providerAccountId: 'org-example', providerResourceId: 'parent-ref', providerEnvironment: 'parent-ref' } });
 const project = { ref: 'parent-ref', id: 'deprecated-id', organization_slug: 'org-example', name: 'Example', region: 'eu-central-1', status: 'ACTIVE_HEALTHY', database: { host: 'db.parent-ref.supabase.co', version: '17.4' } };
+// Reduced from COR3-164's 2026-11-16 live available-regions response. The
+// Management API groups smart regions and specific regions; smart groups have no provider.
+const availableRegions = { recommendations: { smartGroup: { name: 'Americas', code: 'americas', type: 'smartGroup' }, specific: [] },
+  all: { smartGroup: [{ name: 'Europe', code: 'emea', type: 'smartGroup' }],
+    specific: [{ name: 'Central EU (Frankfurt)', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] } };
 const pair = { password: { ref: 'saved:password', resourceRevision: 1 },
   id: 'database', purpose: 'data.connection',
   secrets: { DATABASE_URL: { label: 'Application database' }, DIRECT_URL: { label: 'Migration database' } },
@@ -117,7 +122,7 @@ describe('activated Supabase managed data target', () => {
 
   it.each(['ui', 'agent'] as const)('reads project choices before Environment creation through %s', async surface => {
     const h = await host(request => request.url.includes('available-regions')
-      ? { recommendations: [], all: [{ name: 'Europe', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] }
+      ? availableRegions
       : request.url.includes('entitlements') ? { entitlements: [] } : [project]);
     // COR3B-DATA-1115 captured this production draft without Environment coordinates.
     // The organization is the admitted selected-account default or the person's override.
@@ -127,7 +132,10 @@ describe('activated Supabase managed data target', () => {
     };
     try {
       expect(await h.kit.invokeAction('provision-options', draft('provision-options'), { surface }))
-        .toMatchObject({ organizationSlug: 'org-example', regions: [{ code: 'eu-central-1' }] });
+        .toEqual({ organizationSlug: 'org-example', regions: [
+          { code: 'emea', name: 'Europe', type: 'smartGroup' },
+          { code: 'eu-central-1', name: 'Central EU (Frankfurt)', type: 'specific', provider: 'AWS' }],
+        subscription: 'organization', price: 'unknown', entitlementsObserved: true });
       expect(await h.kit.invokeAction('projects-list', draft('projects-list'), { surface }))
         .toMatchObject({ projects: [{ ref: project.ref, organizationSlug: 'org-example' }] });
       expect(h.requests.every(request => request.method === 'GET')).toBe(true);
@@ -150,7 +158,7 @@ describe('activated Supabase managed data target', () => {
 
   it('offers only observed region objects as creation choices through the options Action', async () => {
     const h = await host(request => request.url.includes('available-regions')
-      ? { recommendations: [], all: [{ name: 'Europe', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] }
+      ? availableRegions
       : { entitlements: [] });
     try {
       const resource = h.kit.registration('resources', 'input-options');
@@ -163,7 +171,8 @@ describe('activated Supabase managed data target', () => {
       expect(h.requests).toHaveLength(0);
       const bytes = await resource.read({ ...context, query: { draftInput: preparation('projects-provision'), fieldPath: 'regionSelection' } });
       expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
-        .toEqual({ options: [{ value: { type: 'specific', code: 'eu-central-1' }, label: 'Europe' }] });
+        .toEqual({ options: [{ value: { type: 'smartGroup', code: 'emea' }, label: 'Europe' },
+          { value: { type: 'specific', code: 'eu-central-1' }, label: 'Central EU (Frankfurt)' }] });
       expect(h.requests.every(request => request.method === 'GET')).toBe(true);
     } finally { await h.kit.dispose(); }
   });
@@ -209,7 +218,7 @@ describe('activated Supabase managed data target', () => {
 
   it('creates projects with current region_selection and password custody', async () => {
     const h = await host(request => request.method === 'POST' ? { ...project, status: 'COMING_UP' }
-      : request.url.includes('available-regions') ? { recommendations: [], all: [{ name: 'Europe', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] }
+      : request.url.includes('available-regions') ? availableRegions
         : request.url.includes('entitlements') ? { entitlements: [] } : [{ id: 'org-id', slug: 'org-example', name: 'Example' }]);
     try {
       const result = await h.kit.invokeAction('projects-provision', { ...preparation('projects-provision'), providerEnvironment: { kind: 'production' }, name: 'Example', password: pair.password, regionSelection: { type: 'specific', code: 'eu-central-1' } });
@@ -242,7 +251,7 @@ describe('activated Supabase managed data target', () => {
         return { ...project, status: 'COMING_UP' };
       }
       return request.url.includes('available-regions')
-        ? { recommendations: [], all: [{ name: 'Europe', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] }
+        ? availableRegions
         : request.url.includes('entitlements') ? { entitlements: [] } : [{ id: 'org-id', slug: 'org-example', name: 'Example' }];
     });
     try {
@@ -340,7 +349,7 @@ describe('activated Supabase managed data target', () => {
 
   it('preserves a typed saved-secret read failure envelope', async () => {
     const h = await host(request => request.url.includes('available-regions')
-      ? { recommendations: [], all: [{ name: 'Europe', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] }
+      ? availableRegions
       : { entitlements: [] }, undefined, undefined,
     new PluginError({ code: 'secret_scope_revoked', message: 'private-message', details: { requestId: 'req-2' }, remediation: { kind: 'retry' } }));
     try {
@@ -357,7 +366,7 @@ describe('activated Supabase managed data target', () => {
         ? { ...project, ref: 'created-ref', name: null, db_pass: 'private-password' }
         : { id: 'branch-id', project_ref: 'created-ref', parent_project_ref: 'parent-ref', name: null, persistent: false, db_pass: 'private-password' }
       : request.url.includes('available-regions')
-        ? { recommendations: [], all: [{ name: 'Europe', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] }
+        ? availableRegions
         : { entitlements: [] });
     try {
       const result = await h.kit.invokeAction(operation, operation === 'projects-provision'

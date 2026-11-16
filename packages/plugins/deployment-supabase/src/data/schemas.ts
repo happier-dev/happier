@@ -91,7 +91,7 @@ export function resultSchema(operation: Operation): PluginJsonSchema {
     case 'projects-delete': return DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema;
     case 'projects-observe': return DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema;
     case 'projects-list': return resultObject({ projects: array(projectResult) });
-    case 'provision-options': return resultObject({ organizationSlug: s, regions: array(resultObject({ code: s, name: s, type: s, provider: s, status: s }, ['status'])),
+    case 'provision-options': return resultObject({ organizationSlug: s, regions: array(resultObject({ code: s, name: s, type: s, provider: s, status: s }, ['provider', 'status'])),
       subscription: literal('organization'), price: literal('unknown'), entitlementsObserved: b, desiredInstanceSize: s }, ['desiredInstanceSize']);
     case 'projects-provision': return { anyOf: [nativeResult, unknownProject, unavailable] };
     case 'projects-link': return nativeResult;
