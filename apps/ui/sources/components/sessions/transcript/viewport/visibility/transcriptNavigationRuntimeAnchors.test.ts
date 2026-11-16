@@ -106,6 +106,25 @@ describe('transcriptNavigationRuntimeAnchors', () => {
     // first-match scan hands each pinned tool the group's source index and a
     // second pinned tool in the same group resolves to the identical anchor —
     // the rail then shows one marker where two turns exist.
+    it('reads each rendered row a bounded number of times however many entries a long transcript has', () => {
+        let messageReads = 0;
+        const renderedSources = Array.from({ length: 3000 }, (_, sourceIndex) => {
+            const messages = [{ messageId: `m${sourceIndex}`, routeMessageId: `local:m${sourceIndex}`, seq: sourceIndex + 1,
+                transcriptBlockIndex: 0, role: sourceIndex % 3 === 0 ? 'user' as const : 'assistant' as const }];
+            return { sourceIndex, messageIds: [`m${sourceIndex}`], get messages() { messageReads += 1; return messages; } };
+        });
+        const entries = Array.from({ length: 1000 }, (_, turn) => ({
+            id: `s:user-turn:${turn * 3 + 1}`, sessionId: 's', seq: turn * 3 + 1, routeMessageId: `local:m${turn * 3}`,
+            transcriptBlockIndex: 0, kind: 'user-turn' as const, role: 'user' as const, label: 'turn', promptPreview: 'turn',
+            responsePreview: null, createdAtMs: turn, pinned: false, pinnedAtMs: null, loaded: true,
+        }));
+        const anchors = deriveTranscriptNavigationRuntimeAnchors({ entries, renderedSources });
+        expect(anchors).toHaveLength(1000);
+        expect(anchors[999]).toMatchObject({ sourceIndex: 2997, routeMessageId: 'local:m2997' });
+        // One read per row to index it, one per matched candidate.
+        expect(messageReads).toBe(4000);
+    });
+
     it('resolves a pinned tool to its own row rather than its group header', () => {
         const anchors = deriveTranscriptNavigationRuntimeAnchors({
             entries: [

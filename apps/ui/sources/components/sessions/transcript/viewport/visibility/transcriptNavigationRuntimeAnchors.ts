@@ -60,38 +60,37 @@ function dedupeStrings(values: readonly unknown[]): readonly string[] {
     return out;
 }
 
-function sourceMatchesEntry(
-    source: TranscriptNavigationRenderedAnchorSource,
-    entry: TranscriptNavigationEntry,
-): boolean {
-    const entryRouteMessageId = normalizeString(entry.routeMessageId);
-    const entrySeq = normalizeInteger(entry.seq);
-    const entryBlockIndex = normalizeInteger(entry.transcriptBlockIndex);
-    const entryRole = normalizeRole(entry.role);
-    const matchesEntryRowProof = (message: TranscriptNavigationRuntimeAnchorMessage): boolean => {
-        if (entrySeq !== null && normalizeInteger(message.seq) !== entrySeq) return false;
-        if (entryRole !== 'unknown' && normalizeRole(message.role) !== entryRole) return false;
-        const messageBlockIndex = normalizeInteger(message.transcriptBlockIndex);
-        return entryBlockIndex === null || messageBlockIndex === entryBlockIndex;
+type RenderedAnchorCandidate = Readonly<{
+    source: TranscriptNavigationRenderedAnchorSource;
+    message: TranscriptNavigationRuntimeAnchorMessage;
+}>;
+
+/**
+ * Rendered rows indexed by the identities an entry can name: route/message id, and seq for
+ * entries without a route id. One pass over the rendered rows, then each entry reads only its
+ * own candidates, so deriving anchors stays linear in the loaded transcript instead of
+ * entries x rows. Candidates keep rendered order.
+ */
+function indexRenderedSources(renderedSources: readonly TranscriptNavigationRenderedAnchorSource[]) {
+    const byId = new Map<string, RenderedAnchorCandidate[]>();
+    const bySeq = new Map<number, RenderedAnchorCandidate[]>();
+    const add = <K,>(map: Map<K, RenderedAnchorCandidate[]>, key: K, candidate: RenderedAnchorCandidate) => {
+        const list = map.get(key);
+        if (list) list.push(candidate); else map.set(key, [candidate]);
     };
-
-    if (entryRouteMessageId) {
-        return source.messages.some((message) => (
-            (
-                normalizeString(message.routeMessageId) === entryRouteMessageId ||
-                normalizeString(message.messageId) === entryRouteMessageId
-            ) &&
-            matchesEntryRowProof(message)
-        ));
+    for (const source of renderedSources) {
+        if (normalizeInteger(source.sourceIndex) === null) continue;
+        for (const message of source.messages) {
+            const candidate = { source, message };
+            const routeMessageId = normalizeString(message.routeMessageId);
+            const messageId = normalizeString(message.messageId);
+            if (routeMessageId) add(byId, routeMessageId, candidate);
+            if (messageId && messageId !== routeMessageId) add(byId, messageId, candidate);
+            const seq = normalizeInteger(message.seq);
+            if (seq !== null) add(bySeq, seq, candidate);
+        }
     }
-
-    if (entrySeq === null) return false;
-    return source.messages.some((message) => {
-        if (normalizeInteger(message.seq) !== entrySeq) return false;
-        if (entryRole !== 'unknown' && normalizeRole(message.role) !== entryRole) return false;
-        const messageBlockIndex = normalizeInteger(message.transcriptBlockIndex);
-        return entryBlockIndex === null || messageBlockIndex === entryBlockIndex;
-    });
+    return { byId, bySeq };
 }
 
 /**
@@ -103,17 +102,25 @@ function sourceMatchesEntry(
  * rendered row.
  */
 function resolveMostSpecificSourceForEntry(
-    renderedSources: readonly TranscriptNavigationRenderedAnchorSource[],
+    index: ReturnType<typeof indexRenderedSources>,
     entry: TranscriptNavigationEntry,
 ): TranscriptNavigationRenderedAnchorSource | null {
+    const entryRouteMessageId = normalizeString(entry.routeMessageId);
+    const entrySeq = normalizeInteger(entry.seq);
+    const entryBlockIndex = normalizeInteger(entry.transcriptBlockIndex);
+    const entryRole = normalizeRole(entry.role);
+    const candidates = entryRouteMessageId
+        ? index.byId.get(entryRouteMessageId)
+        : entrySeq === null ? undefined : index.bySeq.get(entrySeq);
     let best: TranscriptNavigationRenderedAnchorSource | null = null;
     let bestSpecificity = Number.POSITIVE_INFINITY;
-    for (const candidate of renderedSources) {
-        if (normalizeInteger(candidate.sourceIndex) === null) continue;
-        if (!sourceMatchesEntry(candidate, entry)) continue;
-        const specificity = candidate.messages.length;
+    for (const { source, message } of candidates ?? []) {
+        if (entrySeq !== null && normalizeInteger(message.seq) !== entrySeq) continue;
+        if (entryRole !== 'unknown' && normalizeRole(message.role) !== entryRole) continue;
+        if (entryBlockIndex !== null && normalizeInteger(message.transcriptBlockIndex) !== entryBlockIndex) continue;
+        const specificity = source.messages.length;
         if (specificity < bestSpecificity) {
-            best = candidate;
+            best = source;
             bestSpecificity = specificity;
         }
     }
@@ -126,10 +133,11 @@ export function deriveTranscriptNavigationRuntimeAnchors(params: Readonly<{
 }>): TranscriptNavigationRuntimeAnchor[] {
     const anchors: TranscriptNavigationRuntimeAnchor[] = [];
     const seen = new Set<string>();
+    const index = indexRenderedSources(params.renderedSources);
     for (const entry of params.entries) {
         const id = normalizeString(entry.id);
         if (!id || seen.has(id)) continue;
-        const source = resolveMostSpecificSourceForEntry(params.renderedSources, entry);
+        const source = resolveMostSpecificSourceForEntry(index, entry);
         if (!source) continue;
         anchors.push({
             id,
