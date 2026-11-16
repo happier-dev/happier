@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import nacl from 'tweetnacl';
 import { describe, expect, it } from 'vitest';
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
-import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { createDeploymentSecretVariableBindingV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { authorizePluginExecLaunchForHost, createProjectNativeToolchainIoForHost, createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { createPluginExecSystemToolResolver } from '@/plugins/runtime/exec/system/tools/resolveGrant';
 import { createNativeRuntimeProjectionForHost } from '@/daemon/local/services/launch/candidateRuntimeProjection';
@@ -97,9 +97,8 @@ async function withInvocation(run: (input: Readonly<{
         await mkdir(outside);
         const seed = new Uint8Array(32).fill(42);
         const bindings: EnvironmentSecretBindingV1[] = [
-            { purpose: 'variable', phase: 'runtime', name: 'PASSWORD', source: { kind: 'secret',
-                ref: formatSharedSavedSecretRefV1('credential'), resourceRevision: 3 } },
-            { purpose: 'variable', phase: 'runtime', name: 'PORT', source: { kind: 'value', value: '3000' } },
+            createDeploymentSecretVariableBindingV1({ phase: 'runtime', name: 'PASSWORD', resourceId: 'credential', resourceRevision: 3 }),
+            createDeploymentVariableBindingV1({ phase: 'runtime', name: 'PORT', source: { kind: 'value', value: '3000' } }),
         ];
         const resource: SavedSecretCatalogResourceInputV1 = { resourceId: 'credential', ownerAccountId: 'account',
             displayName: 'Credential', kind: 'password', encryptionMode: 'plain', revision: 3,
@@ -111,8 +110,7 @@ async function withInvocation(run: (input: Readonly<{
                 ['DATABASE_URL', 'pooled-connection', pooledSentinel],
                 ...(connections === 'pooledOnly' ? [] : [['DIRECT_URL', 'direct-connection', directSentinel]]),
             ]) {
-                bindings.push({ purpose: 'variable', phase: 'runtime', name, source: { kind: 'secret',
-                    ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 3 } });
+                bindings.push(createDeploymentSecretVariableBindingV1({ phase: 'runtime', name, resourceId, resourceRevision: 3 }));
                 resources.push({ ...resource, resourceId, displayName: 'Connection', storedContent: { t: 'plain', v: {
                     v: 1, name: 'Connection', kind: 'password', value,
                 } } });
@@ -124,8 +122,7 @@ async function withInvocation(run: (input: Readonly<{
                 ['SHARED_BUILD', 'build', 'shared', sharedSentinel],
                 ['SHARED_RUNTIME', 'runtime', 'shared', sharedSentinel],
             ] as const) {
-                bindings.push({ purpose: 'variable', phase, name, source: { kind: 'secret',
-                    ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 3 } });
+                bindings.push(createDeploymentSecretVariableBindingV1({ phase, name, resourceId, resourceRevision: 3 }));
                 if (!resources.some(resource => resource.resourceId === resourceId)) resources.push({ ...resource, resourceId, displayName: resourceId,
                     storedContent: { t: 'plain', v: { v: 1, name: resourceId, kind: 'password', value } } });
             }
@@ -133,18 +130,17 @@ async function withInvocation(run: (input: Readonly<{
         if (connections === 'nativeInterpolation') for (const [name, value] of Object.entries(nativeInterpolationValues)) {
             if (name === 'AM9_DOLLAR') {
                 const resourceId = 'native-interpolation-secret';
-                bindings.push({ purpose: 'variable', phase: 'runtime', name, source: { kind: 'secret',
-                    ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 3 } });
+                bindings.push(createDeploymentSecretVariableBindingV1({ phase: 'runtime', name, resourceId, resourceRevision: 3 }));
                 resources.push({ ...resource, resourceId, displayName: 'Native fixture secret', storedContent: { t: 'plain', v: {
                     v: 1, name: 'Native fixture secret', kind: 'password', value,
                 } } });
-            } else bindings.push({ purpose: 'variable', phase: 'runtime', name, source: { kind: 'value', value } });
+            } else bindings.push(createDeploymentVariableBindingV1({ phase: 'runtime', name, source: { kind: 'value', value } }));
         }
         if (connections === 'nativeRepository' || connections === 'nativeActivation') for (const [name, value] of [
             ['ORDINARY_UNUSED', 'ordinary-unreferenced-binding'],
             ['DOCKER_HOST', 'tcp://application-only.invalid:2375'],
             ['COMPOSE_PARALLEL_LIMIT', 'application-not-an-integer'],
-        ]) bindings.push({ purpose: 'variable', phase: 'runtime', name, source: { kind: 'value', value } });
+        ]) bindings.push(createDeploymentVariableBindingV1({ phase: 'runtime', name, source: { kind: 'value', value } }));
         const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [],
             resources, resourceCatalogState: 'ready', isCurrent: () => true });
         const installation = { machineId: source.machineId, installationId: source.installationId,
