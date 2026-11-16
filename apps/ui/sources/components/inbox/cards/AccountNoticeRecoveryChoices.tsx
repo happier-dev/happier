@@ -7,7 +7,8 @@ import { isOpenAccountNotice, type AccountNoticeArtifact } from '@/sync/domains/
 import { AccountNoticeInvestigationBoundary, useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { InboxArtifactSourceBoundary, useInboxArtifactItems } from '@/hooks/inbox/useInboxArtifactSource';
 import { findInboxDeploymentNotice } from '@/components/inbox/inboxItemFocus';
-import { Modal } from '@/modal';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { t } from '@/text';
 
 type NoticeRecovery = Pick<
@@ -51,8 +52,17 @@ export const AccountNoticeRecoveryChoices = React.memo(
           props.entry,
           index,
         );
-        if (!result.ok)
-          Modal.alert(t('common.error'), t('errors.unknownError'));
+        if (!result.ok) {
+          const presentation = presentActionExecutionFailure(result);
+          alertActionFailure({
+            reason: presentation.reason,
+            code: result.errorCode,
+            requestId: result.requestId,
+            context: Object.fromEntries(presentation.technicalDetails
+              .filter(line => line.key !== 'code' && line.key !== 'requestId')
+              .map(line => [line.key, line.value])),
+          });
+        }
       } finally {
         setBusyIndex(null);
       }

@@ -18,6 +18,8 @@ vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
   return createTextModuleMock({ translate: (key) => key });
 });
+vi.mock('@/modal', async () =>
+  (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 afterEach(() => {
   standardCleanup();
@@ -29,6 +31,7 @@ const { createAccountNoticeInvestigation } =
   await import('@/hooks/inbox/accountNoticeInvestigation');
 const { readAccountNoticeArtifactHeader } =
   await import('@/sync/domains/artifacts/usageNoticeArtifacts');
+const { Modal } = await import('@/modal');
 
 const scope = { serverId: 'home-a', accountId: 'account-a' } as const;
 const artifactId = '11111111-1111-4111-8111-111111111111';
@@ -127,6 +130,13 @@ describe('Inbox notice recovery choices', () => {
       'artifact.get',
       { artifactId },
       expect.anything(),
+    );
+    const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]
+      ?.find(button => button.text === 'approvals.technicalDetails');
+    expect(details).toBeDefined();
+    details!.onPress?.();
+    expect(Modal.alert).toHaveBeenLastCalledWith(
+      'approvals.technicalDetails', 'action_disabled',
     );
   });
 

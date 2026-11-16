@@ -29,6 +29,44 @@ const { EVENT_WATCHERS_SPECIMEN_MODEL } =
 const { Popover } = await import('@/components/ui/popover/Popover');
 const { View } = await import('react-native');
 
+it('keeps focus and selection on the second field while an open popover becomes a phone sheet', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+    () => new DOMRect(100, 200, 160, 40),
+  );
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  function Harness() {
+    const anchor = React.useRef<View | null>(null);
+    return <>
+      <View ref={anchor}><button data-testid="focus-opener">Open</button></View>
+      <Popover open anchorRef={anchor} phonePresentation="sheet" accessibilityLabel="Edit fields"
+        portal={{ web: true }} onRequestClose={() => {}}>
+        {() => <><input data-testid="first-field" /><textarea data-testid="second-field" defaultValue="A reviewed result" /></>}
+      </Popover>
+    </>;
+  }
+  try {
+    await act(async () => root.render(<Harness />));
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    const field = document.querySelector<HTMLTextAreaElement>('[data-testid="second-field"]')!;
+    field.focus();
+    field.setSelectionRange(2, 10);
+    expect(document.activeElement).toBe(field);
+    viewport.width = 390;
+    viewport.height = 844;
+    await act(async () => root.render(<Harness />));
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    expect(document.querySelector('[role="dialog"]')?.contains(field)).toBe(true);
+    expect(document.activeElement).toBe(field);
+    expect([field.selectionStart, field.selectionEnd]).toEqual([2, 10]);
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+  }
+});
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();

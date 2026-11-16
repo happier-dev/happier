@@ -921,9 +921,8 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
                     restoreFocusToBestTarget(undefined, focusReturnFallbackRef);
                 }
             };
-            restore();
-            // A content still in the document (leaving with its exit) gets its focus back from React after this
-            // commit; re-assert once the commit is done, as the overlay focus containment does.
+            // Let the commit finish first: a retained body moving into a phone sheet restores its field there.
+            // Only focus still stranded in this outgoing content (or nowhere) returns to the opener.
             queueMicrotask(restore);
         };
         // Read at close: the return targets and the content element are refs owned by this popover.
