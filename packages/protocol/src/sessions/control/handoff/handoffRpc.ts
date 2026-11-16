@@ -159,6 +159,7 @@ export {
   WorkspaceSyncModeV1Schema,
   WorkspaceSyncPersistentModeV1Schema,
   computeWorkspaceSyncPolicyDigest,
+  createDefaultWorkspaceContentPolicyV1,
   type WorkspaceSyncConflictResolveActionInputV1,
   type WorkspaceSyncConflictResolveRpcInputV1,
   type HandoffWorkspaceActionV1,

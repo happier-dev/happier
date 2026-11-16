@@ -78,6 +78,18 @@ export function computeWorkspaceSyncPolicyDigest(
   return bytesToHex(sha256(utf8ToBytes(canonical)));
 }
 
+/** Default Included selection shared by Session acquisition and Workspace handoff. */
+export function createDefaultWorkspaceContentPolicyV1(): WorkspaceContentPolicyV1 {
+  const policy = {
+    v: 1 as const,
+    selection: 'git_worktree' as const,
+    extraIgnorePatterns: [],
+    extraIncludePatterns: [],
+  };
+  return { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) };
+}
+
+
 export const WorkspaceSyncWorkerCopyProvenanceV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('worker_clean_copy'),
   sourceWorkspaceRefId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_WORKSPACE_REF_ID_LENGTH)),
