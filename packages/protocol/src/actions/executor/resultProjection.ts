@@ -110,8 +110,12 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
   // An adapter may retain a child's public failure as its standard Error cause.
   // Raw exception causes never acquire the public Action contract implicitly.
   let carried = parseActionExecuteFailure(error);
-  if (!carried && error instanceof Error) {
-    try { carried = parseActionExecuteFailure(error.cause); }
+  const codeWrapper = carried && Object.keys(carried).every(key => key === 'ok' || key === 'errorCode' || key === 'error');
+  if (error instanceof Error && (!carried || codeWrapper)) {
+    try {
+      const child = parseActionExecuteFailure(error.cause);
+      if (child && (!carried || carried.errorCode === child.errorCode)) carried = child;
+    }
     catch { /* A private cause accessor cannot replace the original failure. */ }
   }
   const failure = carried ?? classifyActionExecutorThrownError(error);
