@@ -1,0 +1,59 @@
+import { parseThemeProfileDocument, type ThemeLibraryEntry, type ThemeMiniatureData, type ThemeProfileDocument, type ThemeProfileSource, type ThemeProfileV1 } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { THEME_MINIATURE_OVERRIDE_TOKENS, type ThemeProfileArtifactHeader } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
+import { resolveKnownFontFamily } from '@/constants/Typography';
+import { DEFAULT_THEME_RADIUS_SCALE_NAME } from '@/theme/themeStyleScales';
+import { resolveThemeProfile } from './resolveThemeProfile';
+import { resolveThemeProfileAssetAppearance } from './themeProfileAssetAppearance';
+import { getThemeProfileTokenDefinition } from './themeProfileTokenRegistry';
+import { readThemeProfilePathValue } from './themeProfilePathAccess';
+
+/** UI presentation support is platform-owned; the canonical raw document remains untouched. */
+export function projectThemeProfileDocumentPresentation(document: ThemeProfileDocument): ThemeProfileDocument {
+    const fontFamily = document.profile.style?.fontFamily;
+    if (fontFamily === undefined) return document;
+    const supported = resolveKnownFontFamily(fontFamily);
+    if (supported === fontFamily) return document;
+    const { fontFamily: _unsupported, ...style } = document.profile.style!;
+    return { ...document, profile: { ...document.profile, style: { ...style, ...(supported ? { fontFamily: supported } : {}) } },
+        compatibility: supported ? document.compatibility : { ...document.compatibility, status: 'partial',
+            unsupportedPaths: [...new Set([...document.compatibility.unsupportedPaths, 'style.fontFamily'])] } };
+}
+
+export type ThemeMiniatureInput = Pick<ThemeProfileV1, 'overrides' | 'seeds' | 'assetAppearance' | 'style'>;
+
+/** The admitted plugin declaration joins the library without an Artifact copy. */
+export function projectPluginThemeProfileDocument(theme: ThemeProfileV1, source: Extract<ThemeProfileSource, { kind: 'plugin' }>): ThemeProfileDocument {
+    const parsed = parseThemeProfileDocument({ ...theme, source });
+    if (!parsed.ok) throw new Error('Invalid admitted plugin theme');
+    return projectThemeProfileDocumentPresentation(parsed.document);
+}
+
+/** Retain only authored inputs needed by the read-time miniature. */
+export function projectThemeMiniaturePalette(profile: ThemeMiniatureInput): ThemeProfileArtifactHeader['palette'] {
+    const mode = resolveThemeProfileAssetAppearance(profile);
+    const authored = profile.overrides[mode];
+    return { seeds: profile.seeds, radius: profile.style?.radius ?? DEFAULT_THEME_RADIUS_SCALE_NAME,
+        overrides: Object.fromEntries(Object.values(THEME_MINIATURE_OVERRIDE_TOKENS).flatMap(token =>
+            authored[token] === undefined ? [] : [[token, authored[token]]])) };
+}
+
+/** Resolve the same compact presentation for Artifact headers, built-ins and plugin declarations. */
+export function projectThemeMiniature(profile: ThemeMiniatureInput): ThemeMiniatureData {
+    const mode = resolveThemeProfileAssetAppearance(profile);
+    const { colors } = resolveThemeProfile({ mode, profile });
+    const values = Object.fromEntries(Object.entries(THEME_MINIATURE_OVERRIDE_TOKENS).map(([role, token]) =>
+        [role, readThemeProfilePathValue(colors, getThemeProfileTokenDefinition(token)!.path)!])) as Record<keyof typeof THEME_MINIATURE_OVERRIDE_TOKENS, string>;
+    return { mode, ...values, radius: profile.style?.radius ?? DEFAULT_THEME_RADIUS_SCALE_NAME };
+}
+
+export function projectThemeLibraryEntry(document: ThemeProfileDocument, provenance?: ThemeProfileSource): ThemeLibraryEntry {
+    const presented = projectThemeProfileDocumentPresentation(document);
+    const source = provenance ?? presented.profile.source ?? { kind: 'yours' };
+    const miniature = projectThemeMiniature(presented.profile);
+    const reference = source.kind === 'built-in' ? { kind: 'built-in' as const, presetId: source.presetId }
+        : source.kind === 'plugin' ? { kind: 'plugin' as const, pluginId: source.pluginId, contributionId: source.contributionId }
+            : { kind: 'artifact' as const, id: document.profile.id };
+    return { id: document.profile.id, reference, name: document.profile.name, mode: miniature.mode, source,
+        editable: source.kind === 'yours', deletable: source.kind === 'yours' || source.kind === 'store',
+        compatibility: presented.compatibility, miniature };
+}

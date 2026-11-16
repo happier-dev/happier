@@ -55,6 +55,13 @@ describe('resolveThemeProfile', () => {
         expect(resolveThemeProfile({ mode: 'dark', profile: null })).toBe(darkTheme);
     });
 
+    it('keeps the registered theme identity for CSS-only profiles and metadata edits', () => {
+        const cssOnly = { ...profile({ light: {}, dark: {} }), css: '[data-surface="card"] { padding: 24px }' };
+        const renamed = { ...cssOnly, name: 'Renamed' };
+        expect(resolveThemeProfile({ mode: 'light', profile: cssOnly })).toBe(lightTheme);
+        expect(resolveThemeProfile({ mode: 'light', profile: renamed })).toBe(lightTheme);
+    });
+
     it('applies valid overrides to light and dark separately and falls back for missing tokens', () => {
         const effectiveLight = resolveThemeProfile({
             mode: 'light',
@@ -199,7 +206,7 @@ describe('resolveThemeProfile', () => {
         expect(effectiveDark.colors.glass).toEqual(darkTheme.colors.glass);
     });
 
-    it('caches effective themes by mode, profile id, updated timestamp, and override hash', () => {
+    it('caches effective themes by mode and authored color values', () => {
         clearEffectiveThemeCache();
         const firstProfile = profile({ light: { 'background.canvas': '#fafafa' }, dark: {} });
         const sameProfile = profile({ light: { 'background.canvas': '#fafafa' }, dark: {} });

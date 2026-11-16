@@ -7,7 +7,8 @@ import { Platform } from 'react-native';
  * `applyThemeRuntimeSelection`'s `style`; absent part choices inherit the global finish.
  */
 
-export type ThemeRadiusScaleName = 'sharp' | 'soft' | 'round';
+import type { ThemeRadiusScaleName } from '@happier-dev/protocol/account/settings/themeProfiles';
+export type { ThemeRadiusScaleName } from '@happier-dev/protocol/account/settings/themeProfiles';
 export type ThemeDensityName = 'compact' | 'comfortable';
 export type ThemeRadiusStep = 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard';
 export type ThemeSurfaceFinish = 'flat' | 'soft';
@@ -17,6 +18,7 @@ export type ThemeSurfaceFinishRole = typeof THEME_SURFACE_FINISH_ROLES[number];
 export type ThemeSurfaceFinishOverrides = Readonly<Partial<Record<ThemeSurfaceFinishRole, ThemeSurfaceFinish>>>;
 
 type RadiusScale = Readonly<Record<ThemeRadiusStep, number>>;
+export const DEFAULT_THEME_RADIUS_SCALE_NAME: ThemeRadiusScaleName = 'soft';
 
 /**
  * Every scale is one base with the shared derived steps (`@happier-dev/plugin-ui/environment` → `radius.ts`;
@@ -92,7 +94,7 @@ function normalizeFamily(value: string | null | undefined): string | null {
 }
 
 export function resolveThemeStyleScales(selection: ThemeStyleSelection | null = null): ThemeStyleScales {
-    const borderRadius = RADIUS_SCALES[selection?.radius ?? 'soft'];
+    const borderRadius = RADIUS_SCALES[selection?.radius ?? DEFAULT_THEME_RADIUS_SCALE_NAME];
     const density = DENSITY_SCALES[selection?.density ?? 'comfortable'];
     const finish = selection?.finish ?? 'soft';
     const parts = Object.fromEntries(PART_NAMES.map((part) => {

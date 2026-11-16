@@ -3,6 +3,9 @@ import { createBuiltInProfile } from './builtInThemeProfileFactory';
 import { classicDarkProfile } from './classicDarkThemeProfile';
 import { pitchDarkProfile, premiumDarkProfile, sunsetDarkProfile, tokyoNightProfile } from './builtInDarkThemeProfiles';
 import type { BuiltInThemeProfileDefinition, BuiltInThemeProfilePresetId } from './themeProfileTypes';
+import type { ThemeLibraryEntry, ThemeProfileDocument, ThemeProfileV1 } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { isJsonObject, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectThemeLibraryEntry, projectThemeProfileDocumentPresentation } from './themeProfilePresentation';
 
 export const BUILT_IN_THEME_PROFILES: readonly BuiltInThemeProfileDefinition[] = [
     {
@@ -211,3 +214,25 @@ export const getBuiltInThemeProfileDefinition = (presetId: BuiltInThemeProfilePr
 );
 
 export { isBuiltInThemeProfilePresetId } from '@happier-dev/protocol/account/settings/themeProfiles';
+
+const builtInDocuments = new WeakMap<BuiltInThemeProfileDefinition, ThemeProfileDocument>();
+
+/** Built-ins are authored profiles; the custom import boundary reserves their ids. */
+export function getBuiltInThemeProfileDocument(presetId: BuiltInThemeProfilePresetId): ThemeProfileDocument | null {
+    const definition = getBuiltInThemeProfileDefinition(presetId);
+    if (!definition) return null;
+    const existing = builtInDocuments.get(definition);
+    if (existing) return existing;
+    const profile: ThemeProfileV1 = { ...definition.profile, source: { kind: 'built-in', presetId } };
+    const raw = projectNativeJsonValueForTransport(profile);
+    if (!isJsonObject(raw)) throw new TypeError('Built-in theme must be an object');
+    const document = projectThemeProfileDocumentPresentation({ profile, raw, compatibility: { status: 'supported', unsupportedPaths: [] } });
+    builtInDocuments.set(definition, document);
+    return document;
+}
+
+let builtInLibraryEntries: readonly ThemeLibraryEntry[] | undefined;
+/** Built-in miniatures are demanded only by the library. */
+export function getBuiltInThemeLibraryEntries(): readonly ThemeLibraryEntry[] {
+    return builtInLibraryEntries ??= BUILT_IN_THEME_PROFILES.map(definition => projectThemeLibraryEntry(getBuiltInThemeProfileDocument(definition.presetId)!));
+}

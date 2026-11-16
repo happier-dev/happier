@@ -150,7 +150,7 @@ export type ThemeLibraryMutationResult = Readonly<{
     entry: ThemeLibraryEntry | null; change: ThemeLibraryChange; undo?: ThemeUndoHandle;
 }>;
 export interface ThemeProfileLibrary {
-    list(): readonly ThemeLibraryEntry[];
+    list(): Promise<readonly ThemeLibraryEntry[]>;
     get(reference: ThemeReference): Promise<ThemeProfileDocument | null>;
     save(input: Readonly<{ document: ThemeProfileDocument }>): Promise<ThemeLibraryMutationResult>;
     keep(input: Readonly<{ document: ThemeProfileDocument; mode: ThemeProfileMode }>): Promise<ThemeLibraryMutationResult>;

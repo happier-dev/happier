@@ -60,6 +60,12 @@ export const FontFamilies = {
     },
 };
 
+/** Resolve authored family identifiers through the existing platform font catalog. */
+export function resolveKnownFontFamily(value: string): string | null {
+    const family = value.trim();
+    return Object.values(FontFamilies).some(group => Object.values(group).includes(family)) ? family : null;
+}
+
 // Helper functions for easy access to font families
 /**
  * Default-family weights.
