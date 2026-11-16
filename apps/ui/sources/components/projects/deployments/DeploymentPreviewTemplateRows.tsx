@@ -112,7 +112,7 @@ export function PreviewTemplateRows(props: PreviewTemplateRowsProps) {
       ...(branchUnavailable ? { disabled: true, unavailableReason: unavailable(false) } : {}) },
     { id: 'none', label: t('projects.deployments.settingsSections.previewsDataNone') },
   ];
-  const runsOnSubtitle = sharesProduction ? t('projects.deployments.settingsSections.previewsProductionMachine') : undefined;
+  const runsOnSubtitle = sharesProduction ? t('projects.deployments.settingsSections.previewsProductionTarget') : undefined;
   const runsOnLeading = sharesProduction ? <StatusDot size={6} color={theme.colors.state.warning.foreground} /> : undefined;
   return (
     <>
