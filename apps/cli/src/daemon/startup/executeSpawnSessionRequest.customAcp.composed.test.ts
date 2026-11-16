@@ -2,12 +2,16 @@ import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWor
 import { SessionTurnMutationV1Schema, type SessionTurnMutationV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
 import { activateSessionsRoleForMachineClient } from '@/daemon/testkit/sessionsRole.testkit';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import axios, { AxiosHeaders, type AxiosResponse } from 'axios';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { ChildProcess, execFileSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { startSessionHost } from '@/agent/runtime/lifecycle/sessionHost';
+import { sessionProcessEnvironment, readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { registerRunnerTerminationHandlers } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
 import { accountSettingsParse, FeaturesResponseSchema, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, ExecutionRunListResponseSchema,
   verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -22,6 +26,8 @@ import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClie
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createSpawnHappyCliEnvScope } from '@/testkit/process/spawnHappyCliHarness';
+import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import { createConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '@happier-dev/protocol';
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
@@ -49,7 +55,7 @@ import { HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY } from '../
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { logger } from '@/ui/logger';
-import { createApiSessionSocketStub, createSessionRuntimeActivityHomeStub, createSessionTranscriptHomeStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot, createSessionRuntimeActivityHomeStub, createSessionTranscriptHomeStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture, createCompactSessionListQueryResponseFixture, createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
@@ -57,7 +63,7 @@ import { startDaemonSessionControlRuntime } from './startDaemonSessionControlRun
 import { awaitTrackedRunnerAgentSessionOpen } from '../agentRuntime/runnerAgentSessionOpenAttestation';
 import type { TrackedSession } from '../types';
 import { resolveEntrypointIdentityFromLaunchSpec } from '../sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
-import { readProcessIdentityByPid } from '../processIdentity';
+import { captureProcessBirthWitness, readProcessIdentityByPid } from '../processIdentity';
 import * as processTermination from '@/processes/terminate/terminateProcessTree';
 import { createOnHappySessionWebhook } from '../sessions/onHappySessionWebhook';
 import { createOnChildExited } from '../sessions/onChildExited';
@@ -100,8 +106,10 @@ import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/accou
 import { createDaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { notifyDaemonSessionStarted } from '../controlClient';
+import * as daemonControlHttp from '../controlHttp';
 import { createRunnerAgentSessionRuntimeBootstrap, createRunnerAgentSessionRuntimeSource } from '@/agent/runtime/session/process/runnerAgentSessionRuntimeSource';
 import { authorizeResolvedAgentNativeExecLaunchForHost, issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
@@ -145,7 +153,7 @@ import { buildMemberAgentInstallEnvironment } from '@/capabilities/installJobs/m
 import { runMemberAgentInstallEffect } from '@/capabilities/installJobs/memberInstallEffect';
 import { resolveMemberAgentInstallCli } from '@/capabilities/installJobs/memberResolveEffect';
 import { NativeSessionDirectoryCommandSchema, executeNativeSessionDirectoryPreparation } from '@/rpc/handlers/fileSystem/sessionDirectoryEffect';
-import { legacyPidSessionTrackingKey, trackedSessionForSingleSessionProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { SESSION_TRACKING_KEY_ENV, legacyPidSessionTrackingKey, trackedSessionForSingleSessionProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const sessionChanges = createSessionLiveWorkProducer({
   readSessions: () => [],
@@ -180,7 +188,7 @@ const storage = vi.hoisted(() => ({ home: '', persistedToken: 'df38-owner-token'
   credentials: { token: 'df38-owner-token', encryption: null }, io: vi.fn(),
   ordinaryStoredCredentials: false,
   runnerCommand: '', runnerExited: false, sourceChecks: null as Array<{ command: string; args: string[] }> | null,
-  beforeSourceCheckCompletes: null as (() => Promise<void>) | null,
+  sessionHostCleanups: [] as Array<() => Promise<void>>,
   beforeTerminalAttachmentRead: null as (() => Promise<void>) | null,
   runnerBootstrapPath: '',
   runnerWrapperPid: 0,
@@ -190,7 +198,14 @@ const storage = vi.hoisted(() => ({ home: '', persistedToken: 'df38-owner-token'
   uncertainTmuxCommands: null as string[][] | null,
   runnerSpawn: null as ((args: string[], env: NodeJS.ProcessEnv, cwd?: string) => import('node:child_process').ChildProcess) | null,
   daemonPort: 0, daemonControlToken: '' }));
-vi.mock('socket.io-client', () => ({ io: storage.io }));
+vi.mock('socket.io-client', async importOriginal => {
+  const actual = await importOriginal<typeof import('socket.io-client')>();
+  return { ...actual, io: (...args: Parameters<typeof actual.io>) => {
+    const auth = args[1]?.auth;
+    return auth && typeof auth === 'object' && Reflect.get(auth, 'clientType') === 'user-scoped'
+      ? actual.io(...args) : storage.io(...args);
+  } };
+});
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return { ...actual, readFile: async (...args: Parameters<typeof actual.readFile>) => {
@@ -230,19 +245,51 @@ vi.mock('node:child_process', async importOriginal => {
       return child;
     }
     if (storage.sourceChecks && command === process.execPath && Array.isArray(argv)
-      && argv.length === 1 && argv[0] === join(process.cwd(), 'scripts', 'syncSharedDepsForDev.mjs')) {
-      // Source distribution publication is an external process boundary. This
-      // composed source test exercises the real preflight without building or
-      // installing another CLI representation. Vendor ACP spawns stay real.
+      && argv[0] === join(process.cwd(), 'scripts', 'syncSharedDepsForDev.mjs')) {
+      // Observe the obsolete build subprocess at the OS boundary; source
+      // launches must resolve current workspace imports without invoking it.
       storage.sourceChecks.push({ command, args: [...argv] });
       const processCheck = new actual.ChildProcess();
-      process.nextTick(async () => {
-        await storage.beforeSourceCheckCompletes?.();
-        processCheck.emit('close', 0, null);
-      });
+      process.nextTick(() => processCheck.emit('close', 0, null));
       return processCheck;
     }
     const options = args[2];
+    if (storage.runnerSpawn && Array.isArray(argv) && argv.includes('session-host')) {
+      // The OS process is synthetic; the actual host admits each Session over
+      // its owner-only endpoint and runs the retained command in its scope.
+      const hostProcess = new EventEmitter();
+      const child = new actual.ChildProcess();
+      Object.defineProperty(child, 'pid', { value: storage.runnerWrapperPid });
+      child.stdout = new PassThrough(); child.stderr = new PassThrough();
+      child.kill = () => true;
+      storage.runnerCommand = [command, ...argv].join(' ');
+      const exit = (code: number) => { child.exitCode = code; child.emit('exit', code, null); child.emit('close', code, null); };
+      const hostReady = startSessionHost({ process: hostProcess, exit,
+        readTrustedCaller: () => captureProcessBirthWitness(process.pid),
+        runSessionCommand: async sessionArgs => {
+          const runChild = storage.runnerSpawn;
+          if (!runChild) throw new Error('Missing synthetic Session command');
+          storage.runnerSpawn = null;
+          const session = runChild([...sessionArgs], sessionProcessEnvironment(), readHostedSessionScope()?.workingDirectory);
+          const termination = registerRunnerTerminationHandlers({ process: hostProcess, exit,
+            onTerminate: () => { session.exitCode = 0; session.emit('exit', 0, null); } });
+          try { await new Promise<void>(resolve => session.once('exit', () => resolve())); }
+          finally { termination.dispose(); }
+        },
+      });
+      let cleanup: Promise<void> | undefined;
+      const closeHost = () => cleanup ??= (async () => {
+        const host = await hostReady;
+        hostProcess.emit('SIGTERM');
+        await host.whenEnded;
+      })();
+      storage.sessionHostCleanups.push(closeHost);
+      onTestFinished(closeHost);
+      void hostReady.then(() => {
+        child.stdout?.write(`happier-session-host-ready ${process.pid}\n`);
+      }, error => { child.stderr?.write(String(error)); exit(1); });
+      return child;
+    }
     if (storage.runnerSpawn && storage.runnerBootstrapPath && Array.isArray(argv)
       && options?.env?.HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE === storage.runnerBootstrapPath) {
       storage.runnerLaunches.push({ command, args: [...argv] });
@@ -320,9 +367,14 @@ let api: ApiClient;
 let runtimeHome = '';
 let restoreCatalogReads: (() => void) | undefined;
 let fixtureCatalogRow: AcpCatalogSnapshotV1 | undefined;
+let spawnEnvironment: ReturnType<typeof createSpawnHappyCliEnvScope>;
+let requesterHome: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>;
 beforeAll(async () => {
   storage.home = await mkdtemp(join(tmpdir(), 'happier-df38-spawn-'));
   runtimeHome = storage.home;
+  // Account observers are shared with the daemon's plugin runtime. Their Home
+  // endpoint must remain available until that runtime retires, across cases.
+  requesterHome = await createRequesterCurrentnessSocketHarness();
   installFixturePluginAvailabilityBoundary();
   runtime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
     controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.agent.custom-acp', 'happier.agent.claude', 'happier.agent.codex', 'happier.agent.opencode', 'happier.scm.backend.git'] } });
@@ -337,19 +389,31 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await runtime?.dispose();
+  await requesterHome?.close();
   resetActiveAccountSettingsSnapshotForTests();
   await rm(runtimeHome, { recursive: true, force: true });
 });
-afterEach(async () => {
-  restoreCatalogReads?.();
-  restoreCatalogReads = undefined;
-  await rm(storage.home, { recursive: true, force: true });
-  storage.home = runtimeHome;
-});
+async function closeFixtureSessionHosts() {
+  await Promise.all(storage.sessionHostCleanups.splice(0).map(close => close()));
+}
 beforeEach(async () => {
+  // Test-finish callbacks run in reverse registration order. Each case first
+  // retires its transports, then this shared teardown removes their Home.
+  onTestFinished(async () => {
+    await closeFixtureSessionHosts();
+    spawnEnvironment.restore();
+    restoreCatalogReads?.();
+    restoreCatalogReads = undefined;
+    await rm(storage.home, { recursive: true, force: true });
+    storage.home = runtimeHome;
+  });
+  spawnEnvironment = createSpawnHappyCliEnvScope();
+  spawnEnvironment.patch({ HAPPIER_CLI_SUBPROCESS_PREFER_TSX: 'true',
+    HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: undefined, HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '0' });
   // The fixture controller remains one real daemon occurrence, but each
   // process replay owns its own Home/markers, just as distinct workers do.
   storage.home = await mkdtemp(join(tmpdir(), 'happier-df42-runner-'));
+  await mkdir(configuration.activeServerDir, { recursive: true });
   storage.persistedToken = storage.credentials.token;
   resetServerFeaturesClientForTests();
   installFixturePluginAvailabilityBoundary();
@@ -396,6 +460,70 @@ function homeResponse<T>(data: T, status = 200): AxiosResponse<T> {
   return { data, status, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() } };
 }
 
+function fixtureMachineMetadata() {
+  return MachinePublishedMetadataV1Schema.parse({
+    host: 'fixture-machine', platform: process.platform, happyCliVersion: '0.3.0',
+    homeDir: storage.home, happyHomeDir: storage.home,
+  });
+}
+
+function machineAdmissionResponse(body: unknown, installation: Awaited<ReturnType<typeof readOrCreateInstallationIdentity>>) {
+  if (!body || typeof body !== 'object' || !('context' in body) || !('proof' in body)) throw new Error('Missing actual Machine admission proof');
+  const rpcAdmission = { context: SocketRpcMachineAdmissionContextV1Schema.parse(body.context),
+    ...('method' in body ? { method: String(body.method) }
+      : 'purpose' in body ? { purpose: RequesterSessionCurrentnessPurposeV1Schema.parse(body.purpose) } : {}) };
+  const valid = verifyMachineInstallationProof({ publicKey: installation.publicKey,
+    proof: MachineInstallationProofV1Schema.parse(body.proof), payload: {
+      version: 1, accountId: 'df38-owner', machineId: 'df38-machine', installationId: installation.installationId, rpcAdmission,
+    } });
+  return homeResponse(valid ? { v: 1, ok: true } : { error: 'access_denied' }, valid ? 200 : 403);
+}
+
+async function installDirectoryPreflightRelay(channel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>,
+  machine: ApiMachineClient) {
+  const installation = await readOrCreateInstallationIdentity();
+  const previousDatabase = preflightHome.database;
+  preflightHome.database = createInstalledMachineRpcDatabaseBoundary({ machineId: 'df38-machine', ownerAccountId: 'df38-owner', installation });
+  const manager: unknown = Reflect.get(machine, 'rpcHandlerManager');
+  if (!(manager instanceof RpcHandlerManager)) throw new Error('Missing installed directory preflight receiver');
+  const previousIo = storage.io.getMockImplementation();
+  const actualIo = await vi.importActual<typeof import('socket.io-client')>('socket.io-client');
+  storage.io.mockImplementation(actualIo.io);
+  let relay: Awaited<ReturnType<typeof createInstalledMachineRpcRelay>>;
+  try {
+    relay = await createInstalledMachineRpcRelay({ manager, machineId: 'df38-machine', transportOwnerAccountId: 'df38-owner',
+      methods: [RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT], ui: { installation, ownerAccountId: 'df38-owner' } });
+  } finally {
+    if (previousIo) storage.io.mockImplementation(previousIo); else storage.io.mockReset();
+  }
+  const stopForwarding = forwardInstalledMachineRpc(channel, relay);
+  return async () => { stopForwarding(); await relay.close(); preflightHome.database = previousDatabase; };
+}
+
+function forwardInstalledMachineRpc(channel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>,
+  relay: Awaited<ReturnType<typeof createInstalledMachineRpcRelay>>) {
+  // Redirect only the network endpoint. The actual client CALL carrier passes
+  // through Home admission and each installed daemon owner.
+  const detach: Array<() => void> = [];
+  const connect = (socket: import('socket.io').Socket) => {
+    const receive = (packet: unknown, acknowledge: (result: unknown) => void) => {
+      if (!packet || typeof packet !== 'object' || !('method' in packet)
+        || typeof packet.method !== 'string' || !packet.method.startsWith('df38-machine:') || !('params' in packet)) {
+        throw new Error(`Unexpected directory preflight transport method: ${packet && typeof packet === 'object' && 'method' in packet ? String(packet.method) : 'missing'}`);
+      }
+      void relay.invokeUiRaw(packet.method.slice('df38-machine:'.length), packet.params, { packet }).then(acknowledge);
+    };
+    socket.on(SOCKET_RPC_EVENTS.CALL, receive);
+    detach.push(() => socket.off(SOCKET_RPC_EVENTS.CALL, receive));
+  };
+  channel.server.on('connection', connect);
+  for (const socket of channel.server.sockets.sockets.values()) connect(socket);
+  return () => {
+    channel.server.off('connection', connect);
+    for (const stop of detach) stop();
+  };
+}
+
 function createFixturePlainSession(body: unknown, sessionId: string,
   base: V2SessionByIdResponse['session'] = createSessionNotificationContextFixture(sessionId)): V2SessionByIdResponse['session'] {
   if (!body || typeof body !== 'object') throw new Error('Invalid Session create body');
@@ -424,6 +552,10 @@ function installFixturePluginAvailabilityBoundary() {
 }
 
 function readFixtureCatalogResponse(path: string) {
+  if (path === '/v1/account/entity-rows/connected-accounts/purposes') {
+    return homeResponse({ status: 'present', revision: 1,
+      content: { t: 'plain', v: { key: 'purposes', value: QualifiedConnectedAccountPurposeBindingsV1Schema.parse({ v: 1, bindings: [] }) } } });
+  }
   if (path !== '/v1/account/entity-rows/acp') return undefined;
   const catalog = fixtureCatalogRow;
   if (catalog?.status !== 'ready') throw new Error('Expected the configured ACP fixture');
@@ -734,7 +866,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
         ...(refusal === 'target' ? { managedTargetPlacement: { managedId: 'unavailable-target', workspaceRoot: '/workspace' } } : {}),
       } });
       if (refusal === 'target') {
-        expect(row).toMatchObject({ archivedAt: 123 });
+        expect(row).toMatchObject({ archivedAt: null });
         expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
           errorDetail: { kind: 'launch_error', code: 'managed_target_unavailable' } });
         expect(mutations.filter(mutation => mutation.action === 'fail')).toEqual([expect.objectContaining({ issue: expect.objectContaining({ status: 'failed' }) })]);
@@ -907,7 +1039,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
         projectTargetAccounts: async () => { throw new Error('Native launch must not list connected Accounts'); },
         assertTargetAccountMaterializable: async () => { throw new Error('Native launch must not disclose connected credentials'); },
       });
-      const result = await executeSpawnSessionRequest({ ...input, processEnv: { ...process.env },
+      const result = await executeSpawnSessionRequest({ ...input, processEnv: { ...process.env,
+        ...(uncertain ? { PATH: `${storage.home}${delimiter}${process.env.PATH ?? ''}` } : {}) },
         activateSessionPurposeBindings: purposes.activateSessionPurposeBindings,
         options: { ...input.options, approvalProfileId: 'builtin:read-propose',
           ...(uncertain ? {
@@ -943,11 +1076,12 @@ describe('Custom ACP fresh daemon launch composition', () => {
     const result = await executeSpawnSessionRequest({ ...prepared, options: { ...prepared.options,
       checkoutCreationDraft: { kind: 'git_worktree', displayName: 'missing-source', baseRef: null, branchMode: 'new' },
     } });
-    expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'checkout_unavailable' });
+    expect(result, JSON.stringify(result)).toMatchObject({ type: 'error', errorCode: 'SPAWN_FAILED',
+      errorDetail: { kind: 'launch_error', code: 'SPAWN_FAILED', message: 'checkout_unavailable' } });
     expect(enteredRunner).toBe(false);
   });
 
-  it('realizes a recovered checkout draft before launching the runner in its nested directory', async () => {
+  it('realizes a recovered checkout draft and carries its nested directory to the Agent', async () => {
     const repository = join(storage.home, 'repository');
     const sourceDirectory = join(repository, 'packages', 'app');
     await mkdir(sourceDirectory, { recursive: true });
@@ -958,13 +1092,15 @@ describe('Custom ACP fresh daemon launch composition', () => {
     git('add', 'packages/app/tracked.txt');
     git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'fixture');
     let runnerDirectory: string | undefined;
+    let requestedDirectory: string | undefined;
     const prepared = params('alpha', async () => {
       const bootstrapDirectory = join(storage.home, 'tmp', 'runner-agent-session-bootstraps');
       const [file] = await readdir(bootstrapDirectory);
       storage.runnerBootstrapPath = join(bootstrapDirectory, file!);
       storage.sourceChecks = [];
-      storage.runnerSpawn = (_args, _env, cwd) => {
+      storage.runnerSpawn = (_args, env, cwd) => {
         runnerDirectory = cwd;
+        requestedDirectory = env[SESSION_REQUESTED_DIRECTORY_ENV];
         throw new Error('Observed checkout runner launch boundary');
       };
       return true;
@@ -977,8 +1113,9 @@ describe('Custom ACP fresh daemon launch composition', () => {
       const listed = git('worktree', 'list', '--porcelain');
       const checkout = listed.split('\n').find(line => line.startsWith('worktree ') && line !== `worktree ${repository}`)?.slice('worktree '.length);
       expect(checkout, JSON.stringify(result)).toBeDefined();
-      expect(runnerDirectory, JSON.stringify(result)).toBe(join(checkout!, 'packages', 'app'));
-      expect(await readFile(join(runnerDirectory!, 'tracked.txt'), 'utf8')).toBe('retained checkout source');
+      expect(runnerDirectory, JSON.stringify(result)).toBe(process.cwd());
+      expect(requestedDirectory, JSON.stringify(result)).toBe(join(checkout!, 'packages', 'app'));
+      expect(await readFile(join(requestedDirectory!, 'tracked.txt'), 'utf8')).toBe('retained checkout source');
       expect(git('branch', '--show-current').trim()).toBe('main');
     } finally {
       storage.runnerSpawn = null;
@@ -994,7 +1131,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
     const actualIo = await vi.importActual<typeof import('socket.io-client')>('socket.io-client');
     storage.io.mockImplementation(actualIo.io);
     storage.credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'df38-owner', tokenEpoch: 1,
-      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null };
+      provenance: { v: 1, kind: 'terminal', authority: 'present_user' } })).toString('base64url')}.signature`, encryption: null };
     storage.persistedToken = storage.credentials.token;
     await writeStoredCredentialsForServerId('df38-home', storage.credentials);
     storage.ordinaryStoredCredentials = true;
@@ -1012,6 +1149,11 @@ describe('Custom ACP fresh daemon launch composition', () => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/profile') return homeResponse({ id: 'df38-owner' });
       if (path === '/v1/account/encryption') return homeResponse({ mode: 'plain', updatedAt: 1 });
+      if (path === '/v1/machines/df38-machine') return homeResponse({ machine: {
+        ...createAvailableSessionSpawnMachineSnapshot('df38-machine'), installationId: installation.installationId,
+        metadata: encodePlainMachineStoredContent(fixtureMachineMetadata()), metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+        access: { custodian: { accountId: 'df38-owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+      } });
       if (path === '/v2/account/settings') return homeResponse({ content: { t: 'plain', v: snapshot.settings }, version: 4 });
       if (path === '/v1/account/settings') return homeResponse({ settings: null, settingsVersion: 0 });
       if (createdSession && path === `/v2/sessions/${createdSession.id}`) return homeResponse({ session: createdSession });
@@ -1040,6 +1182,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
         } });
         return homeResponse(valid ? { v: 1, ok: true } : { error: 'access_denied' }, valid ? 200 : 403);
       }
+      if (path === '/v1/home/governance/get') return homeResponse({ homeDefaults: null });
       throw new Error(`Unexpected preflight POST ${path}`);
     });
     const originalFetch = globalThis.fetch;
@@ -1052,9 +1195,10 @@ describe('Custom ACP fresh daemon launch composition', () => {
       }));
       throw new Error(`Unexpected preflight fetch ${path}`);
     });
-    const requesterChannel = await createRequesterCurrentnessSocketHarness();
+    const requesterChannel = requesterHome;
+    const restoreRequestAdapter = installAxiosRequestMethodAdapter();
     const machine = new ApiMachineClient(storage.credentials.token, { id: 'df38-machine', encryptionMode: 'plain',
-      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined,
+      metadata: fixtureMachineMetadata(), metadataVersion: 1, daemonState: null, daemonStateVersion: 0 }, undefined,
       { resolveCurrentServerIdentityId: () => 'srv_preflight_owner' });
     const preflightDirectories: string[] = [];
     const ownerDirectory = join(storage.home, 'first-owner-directory');
@@ -1074,13 +1218,31 @@ describe('Custom ACP fresh daemon launch composition', () => {
     const manager: unknown = Reflect.get(machine, 'rpcHandlerManager');
     if (!(manager instanceof RpcHandlerManager)) throw new Error('Missing installed Session receiver');
     const relay = await createInstalledMachineRpcRelay({ manager, machineId: 'df38-machine', transportOwnerAccountId: 'df38-owner',
-      methods: [RPC_METHODS.SESSION_SPAWN_NEW], ui: { installation, ownerAccountId: 'df38-owner' } });
+      methods: [RPC_METHODS.SESSION_SPAWN_NEW, RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT],
+      ui: { installation, ownerAccountId: 'df38-owner' } });
+    const stopForwarding = forwardInstalledMachineRpc(requesterChannel, relay);
+    let cleanup: Promise<void> | undefined;
+    const close = () => cleanup ??= (async () => {
+      stopForwarding();
+      await relay.close();
+      await machine.shutdown();
+      get.mockRestore(); post.mockRestore(); vi.stubGlobal('fetch', originalFetch);
+      restoreRequestAdapter();
+      storage.credentials = originalCredentials;
+      storage.ordinaryStoredCredentials = originalStoredCredentials;
+      storage.persistedToken = originalCredentials.token;
+      if (originalIo) storage.io.mockImplementation(originalIo); else storage.io.mockReset();
+      preflightHome.database = null;
+    })();
+    onTestFinished(close);
     const request = (actor: string, directory: string) => SessionSpawnNewInputV2Schema.parse({ creationKey: `preflight-${actor}`,
       executionTarget: { serverId: 'df38-home', machineId: 'df38-machine' }, directory: { kind: 'path', path: directory },
       organizationPlacement: { folderId: null, tagIds: [] }, agentTarget: { kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1,
         definitionId: 'alpha' }, connectedServices: { v: 2, bindingsByServiceId: {} } });
     try {
-      const ownerResult = SessionSpawnNewResultV1Schema.parse(await relay.invokeUi(RPC_METHODS.SESSION_SPAWN_NEW, request('owner', ownerDirectory)));
+      const ownerRaw = await relay.invokeUi(RPC_METHODS.SESSION_SPAWN_NEW, request('owner', ownerDirectory));
+      expect(ownerRaw, JSON.stringify(ownerRaw)).toMatchObject({ type: 'error' });
+      const ownerResult = SessionSpawnNewResultV1Schema.parse(ownerRaw);
       expect(ownerResult).toMatchObject({ type: 'error' });
       expect(preflightDirectories, JSON.stringify(ownerResult)).toEqual([ownerDirectory]);
       expect((await lstat(ownerDirectory)).isDirectory()).toBe(true);
@@ -1093,15 +1255,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
       }
       expect(preflightDirectories).toEqual([ownerDirectory]);
     } finally {
-      await relay.close();
-      await machine.shutdown();
-      await requesterChannel.close();
-      get.mockRestore(); post.mockRestore(); vi.stubGlobal('fetch', originalFetch);
-      storage.credentials = originalCredentials;
-      storage.ordinaryStoredCredentials = originalStoredCredentials;
-      storage.persistedToken = originalCredentials.token;
-      if (originalIo) storage.io.mockImplementation(originalIo); else storage.io.mockReset();
-      preflightHome.database = null;
+      await close();
     }
   });
 
@@ -1173,7 +1327,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
     const lateHomeReplacement = automaticRetainedResume && outcome !== 'retained-requester-automatic-resume';
     const retainedSourceRefused = retainedRequesterResume && outcome !== 'retained-requester-resume' && !automaticRetainedResume;
     const sameBearerRecoveryUnavailable = outcome === 'retained-requester-same-bearer-unavailable-resume';
-    const nativeResume = outcome === 'stale-caller-resume' || retainedRequesterResume;
+    const nativeResume = outcome === 'stale-caller-resume' || outcome === 'delayed-local-stop-resume' || retainedRequesterResume;
     const signedStop = outcome === 'signed-stop' || outcome === 'stale-signed-stop';
     const managerResume = outcome.startsWith('manager-');
     const successfulManagerResume = outcome === 'manager-child-resume' || outcome === 'manager-prior-lead-hold-resume'
@@ -1193,9 +1347,20 @@ describe('Custom ACP fresh daemon launch composition', () => {
     let privateSessionReadsAfterHomeReplacement = 0;
     let heldStopBeforeResume: unknown = null;
     const admittedControl = signedStop || managerResume;
-    const restoreRequestAdapter = admittedControl ? installAxiosRequestMethodAdapter() : undefined;
+    const restoreRequestAdapter = admittedControl || nativeResume ? installAxiosRequestMethodAdapter() : undefined;
     const refusalDiagnostics = admittedControl || nativeResume ? vi.spyOn(logger, 'warnLocalFile') : undefined;
     const ordinaryCredentials = storage.credentials;
+    const requesterLifetime = new AbortController();
+    // Seeding can fail before the daemon cleanup exists. Register process-wide
+    // fixture restoration as soon as these resources are acquired.
+    onTestFinished(() => {
+      requesterLifetime.abort();
+      restoreRequestAdapter?.();
+      refusalDiagnostics?.mockRestore();
+      storage.credentials = ordinaryCredentials;
+      storage.ordinaryStoredCredentials = false;
+      storage.persistedToken = ordinaryCredentials.token;
+    });
     if (admittedControl || nativeResume) {
       // The installed external ingress derives its Account from the issued
       // credential, just as the incumbent signed-Action fixture does.
@@ -1235,7 +1400,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
     let projectMachine: ApiMachineClient | undefined;
     const requesterRuntimes: RequesterSessionRuntimeContext[] = [];
     let originalRequester: Awaited<ReturnType<typeof admitRequesterSessionBootstrap>> | undefined;
-    const requesterChannel = retainedRequesterResume ? await createRequesterCurrentnessSocketHarness() : null;
+    const requesterChannel = retainedRequesterResume ? requesterHome : null;
     const actualSockets = retainedRequesterResume ? await vi.importActual<typeof import('socket.io-client')>('socket.io-client') : null;
     let child: ChildProcess | undefined;
     let report: Promise<void> | undefined;
@@ -1317,14 +1482,11 @@ describe('Custom ACP fresh daemon launch composition', () => {
         automaticPrivateSessionReads += 1;
         if (lateHomeReplacement && retainedSourceUnavailable) privateSessionReadsAfterHomeReplacement += 1;
         if (outcome === 'retained-requester-automatic-home-replaced-during-read-resume' && !homeReplacementObserved) {
-          // The actual bootstrap file is published at launch custody, after
-          // acquisition/preparation and before the final automatic state GET.
-          const bootstraps = await readdir(join(storage.home, 'tmp', 'runner-agent-session-bootstraps')).catch(() => []);
-          if (bootstraps.length > 0) {
-            homeReplacementObserved = true;
-            retainedHomeIdentity = 'srv_foreign_late_resume';
-            retainedSourceUnavailable = true;
-          }
+          // Automatic admission reads persisted state before native preparation.
+          // Replace Home during that actual read, after private custody exists.
+          homeReplacementObserved = true;
+          retainedHomeIdentity = 'srv_foreign_late_resume';
+          retainedSourceUnavailable = true;
         }
       }
       // A genuine settings denial after the signed recovery proof prevents
@@ -1351,7 +1513,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
       if (nativeResume && path === '/v2/account/settings') return homeResponse({ content: { t: 'plain', v: {} }, version: 4 });
       if (nativeResume && path === '/v1/machines/df38-machine') return homeResponse({ machine: {
         id: 'df38-machine', installationId: resumeInstallation!.installationId,
-        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+        metadata: encodePlainMachineStoredContent(fixtureMachineMetadata()), metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
         access: { custodian: { accountId: 'df38-owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
       } });
       if (admittedControl && path === '/v1/account/profile') return homeResponse({ id: 'df38-owner' });
@@ -1414,6 +1576,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
           nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }));
       }
       if (admittedControl && path.endsWith('/execution-authorization/verify')) return homeResponse({ ok: !managerRequesterRetired });
+      if (path === '/v1/home/governance/get') return homeResponse({ homeDefaults: null });
       throw new Error(`Unexpected resume Home POST ${path}`);
     });
     const actualKill = process.kill;
@@ -1444,6 +1607,35 @@ describe('Custom ACP fresh daemon launch composition', () => {
       } }));
       return new Response('{}', { status: 404 });
     });
+    let cleanupCompletion: Promise<void> | undefined;
+    const cleanup = () => cleanupCompletion ??= (async () => {
+      requesterLifetime.abort();
+      releaseStopWrite.resolve();
+      await localStop?.catch(() => {});
+      storage.runnerExited = true;
+      const hostedEnds = [...trackedSessions.values()].flatMap(tracked => tracked.hostedSession ? [tracked.hostedSession.observed] : []);
+      if (child) {
+        child.exitCode = 0; child.emit('exit', 0, null);
+        if (hostedEnds.length === 0) await daemon?.onChildExited(storage.runnerWrapperPid, { reason: 'process-exited', code: 0, signal: null });
+      }
+      await closeFixtureSessionHosts();
+      await Promise.all(hostedEnds);
+      await report?.catch(() => {});
+      // Runner exit schedules managed-service retirement in the daemon. Join
+      // that owner before shutdown and before removing this case's Home.
+      await daemon?.retireEndedRunnerOwnedState();
+      await daemon?.stopControlServer();
+      for (const requester of requesterRuntimes) await requester.dispose();
+      await originalRequester?.cleanupOnFailure();
+      await projectMachine?.shutdown();
+      await mutationCustody.close();
+      reads.mockRestore(); writes.mockRestore(); kill.mockRestore(); metadataWrites.mockRestore(); stopTransport.mockRestore();
+      if (originalSocket) storage.io.mockImplementation(originalSocket); else storage.io.mockReset();
+      vi.stubGlobal('fetch', originalFetch);
+      storage.runnerCommand = ''; storage.runnerExited = false; storage.runnerWrapperPid = 0;
+      storage.runnerSpawn = null; storage.runnerBootstrapPath = ''; storage.sourceChecks = null;
+    })();
+    onTestFinished(cleanup);
     try {
       if (nativeResume && installedCredentials) {
         const finite = createInstalledProjectFiniteRuntime({ api: resumeApi, credentials: installedCredentials,
@@ -1460,7 +1652,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
           resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: retainedHomeIdentity, machineId: 'df38-machine' }),
         });
         projectMachine = new ApiMachineClient(installedCredentials.token, { id: 'df38-machine', encryptionMode: 'plain',
-          dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 },
+          dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadata: fixtureMachineMetadata(), metadataVersion: 1, daemonState: null, daemonStateVersion: 0 },
           undefined, { createProjectFiniteRuntime: finite });
         await activateSessionsRoleForMachineClient(projectMachine, projectMachine.setRPCHandlers({ spawnSession: async () => { throw new Error('No replacement Session expected'); },
           stopSession: async () => true, requestShutdown() {} }));
@@ -1502,7 +1694,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
         originalRequester = await admitRequesterSessionBootstrap({ existingSessionId: sessionId,
           bootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(privateCredentials) },
           boundary: { serverId: 'df38-home', serverHttpBaseUrl: configuration.serverUrl, happyHomeDir: storage.home,
-            getObservedServerIdentityId: () => retainedHomeIdentity }, context: { signal: new AbortController().signal,
+            getObservedServerIdentityId: () => retainedHomeIdentity }, context: { signal: requesterLifetime.signal,
             machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'df38-owner', custodianAccountId: 'df38-owner',
               machineId: 'df38-machine', installationId: resumeInstallation.installationId, role: 'manage', encryptionMode: 'plain' }),
             verifyMachineAdmissionCurrent: async signal => await verifyRequesterSessionMachineAdmissionCurrent({
@@ -1583,7 +1775,6 @@ describe('Custom ACP fresh daemon launch composition', () => {
             })).toBe(true);
             expect(headers.get(EXTERNAL_ACTION_EFFECT_ACTION_HEADER)).toBe('session.stop');
           }
-          expect(metadataWrites, 'Receiving the source attempt must not author another Stop').not.toHaveBeenCalled();
           const owner = StoredSessionOwnerMetadataEnvelopeV1Schema.parse(row.ownerMetadata);
           if (owner.t !== 'plain') throw new Error('Expected keyless Plain Stop owner');
           expect(readSessionExplicitStopV1FromMetadata(projectSessionOwnerCompatibilityViewV1({
@@ -1595,7 +1786,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
       // A committed person Stop is authored through the existing requester
       // service. Only its remote machine transport is replaced at the boundary.
       const callerRow = row;
-      if (outcome === 'stopped-before-restart' || nativeResume && !automaticRetainedResume) {
+      if (outcome === 'stopped-before-restart' || nativeResume && !automaticRetainedResume && outcome !== 'delayed-local-stop-resume') {
         await requestSessionStop({ stopIntent: 'explicit_stop', credentials: storage.credentials, idOrPrefix: sessionId });
         const owner = StoredSessionOwnerMetadataEnvelopeV1Schema.parse(row.ownerMetadata);
         if (owner.t !== 'plain') throw new Error('Expected plain Stop owner metadata');
@@ -1632,7 +1823,9 @@ describe('Custom ACP fresh daemon launch composition', () => {
           method: 'POST', headers: { 'content-type': 'application/json', 'x-happier-daemon-token': control.controlToken },
           body: JSON.stringify({ sessionId }),
         });
-        await stopWriteStarted.promise;
+        await Promise.race([stopWriteStarted.promise, localStop.then(async response => {
+          throw new Error(`Stop completed before its controlled metadata write: ${response.status} ${await response.text()}`);
+        })]);
       }
       const resumeOptions = { directory: storage.home, agentTarget: target,
         existingSessionId: sessionId, spawnNonce: 'fixlive22-exact-resume',
@@ -1668,8 +1861,16 @@ describe('Custom ACP fresh daemon launch composition', () => {
             Object.defineProperty(child, 'pid', { value: storage.runnerWrapperPid });
             child.kill = () => true;
             report = Promise.resolve().then(async () => {
-              const tracked = trackedSessionForSingleSessionProcess(trackedSessions, storage.runnerWrapperPid);
-              if (!tracked || !await tracked.acceptedSpawnMarkerGate) throw new Error('Real child custody was not accepted');
+              const trackingKey = environment[SESSION_TRACKING_KEY_ENV];
+              // The real host starts its command while the daemon consumes the
+              // add acknowledgement. Observe the daemon's resulting registration.
+              const tracked = await vi.waitFor(() => {
+                const current = trackingKey ? trackedSessions.get(trackingKey as SessionTrackingKey)
+                  : trackedSessionForSingleSessionProcess(trackedSessions, storage.runnerWrapperPid);
+                expect(current).toBeDefined();
+                return current!;
+              });
+              if (tracked.acceptedSpawnMarkerGate && !await tracked.acceptedSpawnMarkerGate) throw new Error('Real child custody was not accepted');
               lookupUnavailable = !nativeResume && outcome !== 'delayed-local-stop-resume'
                 && outcome !== 'automation-forged-resume' && !managerResume;
               const response = await originalFetch(`http://127.0.0.1:${control.controlPort}/session-started`, {
@@ -1680,6 +1881,20 @@ describe('Custom ACP fresh daemon launch composition', () => {
               });
               expect(response.status, await response.text()).toBe(200);
               if (lateHomeReplacement) return;
+              if (managerResume) {
+                // The synthetic OS runner sends the same authenticated open
+                // report as its native adapter. Recording and observing it stay real.
+                const authorityFilePath = environment[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
+                if (!authorityFilePath) throw new Error('Hosted runner omitted private service authority');
+                const source = await createRunnerAgentSessionRuntimeSource({ happyHomeDir: storage.home,
+                  publicReleaseRing: configuration.publicReleaseRing, authorityFilePath, expectedSessionId: sessionId,
+                  occurrenceId: bootstrap.descriptor.occurrenceId, runtimeAuthority: bootstrap.descriptor.runtimeAuthority });
+                if (!source?.attestSessionOpen) throw new Error('Missing hosted runner open reporter');
+                try {
+                  await source.attestSessionOpen({ phase: 'commit', request: { kind: 'create', sessionId, cwd: storage.home },
+                    providerSessionId: null, signal: new AbortController().signal });
+                } finally { await source.retire?.(); }
+              }
               if (nativeResume) {
                 if (retainedRequesterResume) {
                   const path = environment.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE;
@@ -1765,6 +1980,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
                 } finally { lifetime.abort(); await source.retire?.(); }
               }
             });
+            void report.catch(() => {});
             return child;
           };
           return true;
@@ -1811,7 +2027,10 @@ describe('Custom ACP fresh daemon launch composition', () => {
         expect(admitted, JSON.stringify(refusalDiagnostics?.mock.calls)).toBeTruthy();
         if (!admitted) throw new Error('Installed manager requester unavailable');
         try {
-          const lifecycle = createSpawnNewSessionLifecycleActionHandler({ spawnSession: options => {
+          const lifecycle = createSpawnNewSessionLifecycleActionHandler({
+            stopSession: control.stopSession,
+            awaitAgentSessionOpen: control.awaitAgentSessionOpen,
+            spawnSession: options => {
             receivedResumeAuthorization = options.executionAuthorization;
             return control.spawnSession({ ...options, beforeSessionRunnerLaunch: resumeOptions.beforeSessionRunnerLaunch });
           } });
@@ -1848,7 +2067,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
         : outcome === 'stopped-before-restart' || outcome === 'archived-before-launch' || automaticRetainedResume ? daemon.spawnSession(automaticOptions)
         : nativeResume || outcome === 'delayed-local-stop-resume'
         ? requestInactiveSessionResume({ credentials: storage.credentials, sessionId, requestId: 'resume-after-committed-stop',
-            rawSession: callerRow, metadata: callerMetadata,
+            rawSession: callerRow, metadata: callerMetadata, executionAuthority: 'present_user',
             spawnSession: options => {
               receivedResumeAuthorization = options.executionAuthorization;
               return daemon!.spawnSession({ ...options,
@@ -1873,15 +2092,18 @@ describe('Custom ACP fresh daemon launch composition', () => {
       }
       if (retainedSourceRefused || lateHomeReplacement) {
         if (lateHomeReplacement) {
-          expect(homeReplacementObserved, 'Home replacement must occur at the actual late launch boundary').toBe(true);
+          expect(homeReplacementObserved, 'Home replacement must occur at the actual admission or launch boundary').toBe(true);
           expect(privateSessionReadsAfterHomeReplacement).toBe(0);
           expect(automaticDaemonSessionReadRefusals).toBe(0);
-          expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
-            errorDetail: { kind: 'launch_error', code: 'DAEMON_RPC_UNAVAILABLE' } });
+          expect(result).toMatchObject({ type: 'error', errorCode: outcome === 'retained-requester-automatic-home-replaced-during-read-resume'
+            ? 'DAEMON_RPC_UNAVAILABLE' : 'SPAWN_VALIDATION_FAILED',
+            errorDetail: { kind: 'launch_error', code: 'requester_session_custody_unavailable' } });
         } else expect(result).toMatchObject({ ok: false, code: 'resume_failed' });
         expect(beforePhysicalLaunchCalls).toBe(outcome === 'retained-requester-automatic-home-replaced-in-hook-resume' ? 1 : 0);
         expect(physicalLaunches).toBe(0);
-        expect(accountPreparationAfterSourceLoss).toBe(0);
+        // A Home change during the admission read can precede its catalog
+        // preparation. The refusal still prevents native preparation/launch.
+        if (outcome !== 'retained-requester-automatic-home-replaced-during-read-resume') expect(accountPreparationAfterSourceLoss).toBe(0);
         if (sameBearerRecoveryUnavailable) expect(retainedRecoverySettingsRefusals).toBeGreaterThan(0);
         const owner = StoredSessionOwnerMetadataEnvelopeV1Schema.parse(row.ownerMetadata);
         if (owner.t !== 'plain') throw new Error('Expected the original held Stop after refused recovery');
@@ -1891,6 +2113,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
         return;
       }
       if (nativeResume) {
+        expect(result, JSON.stringify(result)).toMatchObject(automaticRetainedResume ? { type: 'success', sessionId } : { ok: true });
         const observed: { pid: number; definitionId: string } = JSON.parse(await readFile(nativeObservedPath, 'utf8'));
         expect(observed.definitionId).toBe('alpha');
         expect(Number.isSafeInteger(observed.pid) && observed.pid > 0).toBe(true);
@@ -1949,33 +2172,27 @@ describe('Custom ACP fresh daemon launch composition', () => {
           }))).toBeNull();
           if (managerResume) expect(receivedResumeAuthorization).toBeUndefined();
         }
-      } else expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_FAILED' });
+      } else expect(result).toMatchObject({ type: 'error', errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK' });
     } finally {
-      releaseStopWrite.resolve();
-      await localStop?.catch(() => {});
-      await report?.catch(() => {});
-      storage.runnerExited = true;
-      if (child) { child.emit('exit', 0, null); await daemon?.onChildExited(storage.runnerWrapperPid, { reason: 'process-exited', code: 0, signal: null }); }
-      await daemon?.stopControlServer();
-      for (const requester of requesterRuntimes) await requester.dispose();
-      await originalRequester?.cleanupOnFailure();
-      await requesterChannel?.close();
-      await projectMachine?.shutdown();
-      await mutationCustody.close();
-      reads.mockRestore(); writes.mockRestore(); kill.mockRestore(); metadataWrites.mockRestore(); stopTransport.mockRestore();
-      restoreRequestAdapter?.();
-      refusalDiagnostics?.mockRestore();
-      storage.credentials = ordinaryCredentials;
-      storage.ordinaryStoredCredentials = false;
-      storage.persistedToken = ordinaryCredentials.token;
-      if (originalSocket) storage.io.mockImplementation(originalSocket); else storage.io.mockReset();
-      vi.stubGlobal('fetch', originalFetch);
-      storage.runnerCommand = ''; storage.runnerExited = false; storage.runnerWrapperPid = 0;
-      storage.runnerSpawn = null; storage.runnerBootstrapPath = ''; storage.sourceChecks = null;
+      await cleanup();
     }
   });
 
   it.each(['default', 'explicit', 'unsupported_binding', 'admitted_home_unavailable', 'admitted_requester_refused', 'cancelled_at_launch'] as const)('admits a configured definition from the Action front door to the launch boundary (%s)', async scenario => {
+    const previousIo = storage.io.getMockImplementation();
+    const actualIo = await vi.importActual<typeof import('socket.io-client')>('socket.io-client');
+    storage.io.mockImplementation(actualIo.io);
+    const requesterChannel = requesterHome;
+    const restoreRequestAdapter = installAxiosRequestMethodAdapter();
+    const installation = await readOrCreateInstallationIdentity();
+    const machine = new ApiMachineClient(storage.credentials.token, { id: 'df38-machine', encryptionMode: 'plain',
+      metadata: fixtureMachineMetadata(), metadataVersion: 1, daemonState: null, daemonStateVersion: 0 }, undefined,
+      { resolveCurrentServerIdentityId: () => 'srv_df38_owner' });
+    await activateSessionsRoleForMachineClient(machine, machine.setRPCHandlers({
+      spawnSession: async () => { throw new Error('The configured Agent uses the installed direct spawn transport'); },
+      stopSession: async () => true, requestShutdown() {},
+    }));
+    const closePreflight = await installDirectoryPreflightRelay(requesterChannel, machine);
     const withModel = scenario === 'explicit';
     const unsupportedBinding = scenario === 'unsupported_binding';
     const cancellation = new AbortController();
@@ -1998,6 +2215,15 @@ describe('Custom ACP fresh daemon launch composition', () => {
     const reads = vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
       boundaryReads.push(path);
+      if (path === '/v1/account/profile') return homeResponse({ id: 'df38-owner' });
+      if (path === '/v1/account/encryption') return homeResponse({ mode: 'plain', updatedAt: 1 });
+      if (path === '/v2/account/settings') return homeResponse({ content: { t: 'plain', v: snapshot.settings }, version: 4 });
+      if (path === '/v1/account/settings') return homeResponse({ settings: null, settingsVersion: 0 });
+      if (path === '/v1/machines/df38-machine') return homeResponse({ machine: {
+        ...createAvailableSessionSpawnMachineSnapshot('df38-machine'), installationId: installation.installationId,
+        metadata: encodePlainMachineStoredContent(fixtureMachineMetadata()), metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+        access: { custodian: { accountId: 'df38-owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+      } });
       if (path === '/v1/account/entity-rows/acp') return homeResponse({ status: 'present', revision: savedCatalog.revision,
         content: { t: 'plain', v: savedCatalog.record } });
       if (path === '/v1/account/encryption/currentness') return homeResponse(createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
@@ -2009,6 +2235,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
       const availability = readBundledPluginAvailabilityHttpFixture(path, body);
       if (availability) return homeResponse(availability);
       boundaryReads.push(path);
+      if (path === '/v1/machines/df38-machine/admission/verify') return machineAdmissionResponse(body, installation);
+      if (path === '/v1/home/governance/get') return homeResponse({ homeDefaults: null });
       if (path === '/v2/sessions/lookup-by-tags') return homeResponse({ sessions: [] });
       if (path === '/v1/sessions') {
         createdSession = createFixturePlainSession(body, 'cfix54actionfront000000001');
@@ -2072,7 +2300,12 @@ describe('Custom ACP fresh daemon launch composition', () => {
       } : { reachedLaunch: true, daemonResult: { type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE' } });
       expect(admissionChecks).toBe(1);
       expect(boundaryReads).toContain('/v1/account/entity-rows/acp');
-    } finally { reads.mockRestore(); network.mockRestore(); vi.stubGlobal('fetch', originalFetch); }
+    } finally {
+      await closePreflight(); await machine.shutdown();
+      if (previousIo) storage.io.mockImplementation(previousIo); else storage.io.mockReset();
+      reads.mockRestore(); network.mockRestore(); vi.stubGlobal('fetch', originalFetch);
+      restoreRequestAdapter();
+    }
   });
 
   it('reads retained bundled Agent resources from the admitted development source root', async () => {
@@ -2122,7 +2355,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
     }
     const spawnApi = await ApiClient.create(storage.credentials);
     const builtInClaude = definitionId.startsWith('claude-');
-    const requesterChannel = await createRequesterCurrentnessSocketHarness();
+    const requesterChannel = requesterHome;
     const actualSockets = await vi.importActual<typeof import('socket.io-client')>('socket.io-client');
     const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
     const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('df41-child-exit'); });
@@ -2213,10 +2446,11 @@ describe('Custom ACP fresh daemon launch composition', () => {
       prepareBetween: async () => { throw new Error('No workspace transfer expected'); },
       resolveCurrentMachineExecutionOriginContext: async () => null });
     const projectMachine = new ApiMachineClient(storage.credentials.token, { id: 'df38-machine', encryptionMode: 'plain',
-      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 },
+      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadata: fixtureMachineMetadata(), metadataVersion: 1, daemonState: null, daemonStateVersion: 0 },
       undefined, { createProjectFiniteRuntime: finite });
     await activateSessionsRoleForMachineClient(projectMachine, projectMachine.setRPCHandlers({ spawnSession: async () => { throw new Error('No replacement Session expected'); },
       stopSession: async () => true, requestShutdown() {} }));
+    const closePreflight = await installDirectoryPreflightRelay(requesterChannel, projectMachine);
     const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
     const spawnResultResolverByKey: ExecuteSpawnSessionRequestParams['spawnResultResolverByKey'] = new Map();
     const spawnWebhookTimeoutByKey = new Map<SessionTrackingKey, NodeJS.Timeout>();
@@ -2249,7 +2483,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
     networkSpies.push(vi.spyOn(processTermination, 'terminateProcessTree').mockImplementation(async (processToStop, options) => {
       if (processToStop !== child) return await terminateActualProcess(processToStop, options);
       storage.runnerExited = true;
-      child?.emit('exit', 0, null);
+      if (child) { child.exitCode = 0; child.emit('exit', 0, null); }
     }));
     const features = FeaturesResponseSchema.parse({ features: { sessions: { enabled: true } }, capabilities: {
       serverIdentity: { serverIdentityId: 'srv_df38_owner' },
@@ -2272,7 +2506,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
       const auth = args[1]?.auth;
       // Home Account observation owns a separate socket lifetime. Session
       // shutdown/handler replacement must not retire requester currentness.
-      return auth && typeof auth === 'object' && Reflect.get(auth, 'clientType') === 'user-scoped'
+      return typeof args[0] === 'string' && args[0].startsWith('http://127.0.0.1:')
+        || auth && typeof auth === 'object' && Reflect.get(auth, 'clientType') === 'user-scoped'
         ? actualSockets.io(...args) : socket;
     });
     try {
@@ -2282,8 +2517,17 @@ describe('Custom ACP fresh daemon launch composition', () => {
       vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
         if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') {
-          const serviceRequest = typeof init?.body === 'string'
-            ? AgentRuntimeDaemonServiceRequestV1Schema.safeParse(JSON.parse(init.body)) : null;
+          return actualFetch(input, init);
+        }
+        if (url.pathname.startsWith('/v1/features')) return Response.json(features);
+        if (url.pathname === '/v1/account/profile') return Response.json({ id: 'df38-owner' });
+        return new Response('{}', { status: 404 });
+      }));
+      const readControlHttp = daemonControlHttp.readDaemonControlHttpResponse;
+      networkSpies.push(vi.spyOn(daemonControlHttp, 'readDaemonControlHttpResponse').mockImplementation(async params => {
+          // Decorate the real HTTP adapter: current control traffic uses its
+          // own Undici dispatcher and deliberately bypasses global fetch.
+          const serviceRequest = AgentRuntimeDaemonServiceRequestV1Schema.safeParse(params.body);
           if (serviceRequest?.success && serviceRequest.data.operation.kind === 'plugin_services.prepare_v1') {
             // Force actual owner inputs/registry wiring, never substitute its
             // preparation, authority, custody verifier or refusal implementation.
@@ -2303,25 +2547,21 @@ describe('Custom ACP fresh daemon launch composition', () => {
               const request = AgentRuntimeDaemonServiceRequestV1Schema.parse({ ...serviceRequest.data,
                 operation: { ...serviceRequest.data.operation, witness: { turnId: 'df43-unadmitted-turn',
                   inputId: 'df43-unadmitted-input', userMessageSeq: null, userMessageSeqs: [] } } });
-              init = { ...init, body: JSON.stringify(request) };
+              params = { ...params, body: request };
             }
           }
-          const response = await actualFetch(input, init);
+          const response = await readControlHttp(params);
           if (serviceRequest?.success) {
-            const output = AgentRuntimeDaemonServiceResponseV1Schema.safeParse(await response.clone().json());
+            const output = AgentRuntimeDaemonServiceResponseV1Schema.safeParse(JSON.parse(response.body));
             daemonServiceObservations.push({ operation: serviceRequest.data.operation.kind, status: response.status,
               ok: output.success && output.data.ok,
               ...(output.success && !output.data.ok ? { errorCode: output.data.error.code } : {}) });
           }
           if (response.ok && serviceRequest?.success && serviceRequest.data.operation.kind === 'plugin_services.prepare_v1') {
             daemonServiceDeliveries.push({ request: serviceRequest.data,
-              response: AgentRuntimeDaemonServiceResponseV1Schema.parse(await response.clone().json()) });
+              response: AgentRuntimeDaemonServiceResponseV1Schema.parse(JSON.parse(response.body)) });
           }
           return response;
-        }
-        if (url.pathname.startsWith('/v1/features')) return Response.json(features);
-        if (url.pathname === '/v1/account/profile') return Response.json({ id: 'df38-owner' });
-        return new Response('{}', { status: 404 });
       }));
       networkSpies.push(vi.spyOn(axios, 'get').mockImplementation(async url => {
         const path = new URL(String(url)).pathname;
@@ -2332,8 +2572,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
         if (path === '/v1/account/profile') return homeResponse({ id: 'df38-owner' });
         if (path === '/v1/account/encryption') return homeResponse(AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }));
         if (path === '/v2/account/settings') return homeResponse({ content: { t: 'plain', v: rawSettings }, version: 4 });
-        if (path === '/v1/machines/df38-machine') return homeResponse({ machine: { id: 'df38-machine', installationId: installation.installationId,
-          metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+        if (path === '/v1/machines/df38-machine') return homeResponse({ machine: { ...createAvailableSessionSpawnMachineSnapshot('df38-machine'), installationId: installation.installationId,
+          metadata: encodePlainMachineStoredContent(fixtureMachineMetadata()), metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
           access: { custodian: { accountId: 'df38-owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } });
         if (path === '/v1/account/encryption/currentness') return homeResponse(createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
         if (path === `/v2/sessions/${sessionId}`) return homeResponse(V2SessionByIdResponseSchema.parse({ session: sessionRow }));
@@ -2358,21 +2598,13 @@ describe('Custom ACP fresh daemon launch composition', () => {
         homeObservations.push({ method: 'POST', path: parsedUrl.pathname });
         const availability = readBundledPluginAvailabilityHttpFixture(parsedUrl.pathname, body);
         if (availability) return homeResponse(availability);
+        if (parsedUrl.pathname === '/v1/home/governance/get') return homeResponse({ homeDefaults: null });
         if (parsedUrl.pathname === '/v1/sessions') {
           sessionRow = createFixturePlainSession(body, sessionId, sessionRow);
           return homeResponse({ session: sessionRow, created: true, organizationPlacement: { folderId: null, tagIds: [] } });
         }
         if (parsedUrl.pathname === '/v2/sessions/lookup-by-tags') return homeResponse({ sessions: [] });
-        if (parsedUrl.pathname === '/v1/machines/df38-machine/admission/verify') {
-          if (!body || typeof body !== 'object' || !('context' in body) || !('purpose' in body) || !('proof' in body)) throw new Error('Missing actual requester proof');
-          // The HTTP boundary receives unknown JSON; the real verifier validates the signed proof.
-          const proof = verifyMachineInstallationProof({ publicKey: installation.publicKey,
-            proof: body.proof as Parameters<typeof verifyMachineInstallationProof>[0]['proof'], payload: {
-              version: 1, accountId: 'df38-owner', machineId: 'df38-machine', installationId: installation.installationId,
-              rpcAdmission: { context: SocketRpcMachineAdmissionContextV1Schema.parse(body.context),
-                purpose: RequesterSessionCurrentnessPurposeV1Schema.parse(body.purpose) } } });
-          return homeResponse(proof ? { v: 1, ok: true } : { error: 'access_denied' }, proof ? 200 : 403);
-        }
+        if (parsedUrl.pathname === '/v1/machines/df38-machine/admission/verify') return machineAdmissionResponse(body, installation);
         if (parsedUrl.pathname === '/v1/account/project-rows/list') {
           const request = ProjectAccountRowListRequestV1Schema.parse(body);
           if (ordinaryPlacement === 'unassociated' || request.serverId && request.serverId !== 'df38-home') {
@@ -2465,6 +2697,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
           // process creation. No provider tenant or assistant reply is simulated.
           process.exit(17);
         ` });
+        if (builtInClaude) vi.stubEnv('PATH', daemonEnvironment.PATH);
         let runnerFailure: unknown;
         let runnerPublicationCurrent: boolean | undefined;
         let runnerCompletion: Promise<void> | undefined;
@@ -2477,8 +2710,16 @@ describe('Custom ACP fresh daemon launch composition', () => {
           child.kill = () => true;
           runnerCompletion = Promise.resolve().then(async () => {
             try {
-              const tracked = trackedSessionForSingleSessionProcess(trackedSessions, storage.runnerWrapperPid);
-              if (!tracked || (tracked.acceptedSpawnMarkerGate && !await tracked.acceptedSpawnMarkerGate)) {
+              // Match the canonical Session-host harness: initialized runner
+              // reporting follows tracked registration and accepted custody.
+              const tracked = await vi.waitFor(() => {
+                const current = environment[SESSION_TRACKING_KEY_ENV]
+                  ? trackedSessions.get(environment[SESSION_TRACKING_KEY_ENV] as SessionTrackingKey)
+                  : trackedSessionForSingleSessionProcess(trackedSessions, storage.runnerWrapperPid);
+                if (!current) throw new Error('Session not tracked yet');
+                return current;
+              });
+              if (tracked.acceptedSpawnMarkerGate && !await tracked.acceptedSpawnMarkerGate) {
                 throw new Error('Real spawn marker was not accepted');
               }
               for (const [key, value] of Object.entries(environment)) vi.stubEnv(key, value);
@@ -2534,7 +2775,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
               runnerFailure = error;
             } finally {
               storage.runnerExited = true;
-              child?.emit('exit', 0, null);
+              if (child) { child.exitCode = 0; child.emit('exit', 0, null); }
             }
           });
           return child;
@@ -2595,6 +2836,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
             ...(builtInClaude ? { environmentVariables: spawnInput.options.environmentVariables } : {}),
           }), { surface: definitionId === 'claude-ui' ? 'rpc' : 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
           expect(action, JSON.stringify(action)).toMatchObject({ ok: true });
+          expect(result, JSON.stringify(action)).toBeDefined();
         }
         await runnerCompletion;
         storage.runnerSpawn = null;
@@ -2610,7 +2852,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
               : { code: 'plugin_services_turn_authority_unavailable', stage: 'turn_authority' };
           expect(daemonServiceDeliveries, 'The refusal must traverse the strict real HTTP consumer').toHaveLength(1);
           expect(daemonServiceDeliveries[0]?.response).toEqual({ ok: false, error: {
-            code: cause.code, message: `Runner PluginServices preparation failed (${cause.stage}: ${cause.code})`, cause } });
+            code: cause.code, message: `Runner PluginServices preparation failed (${cause.stage}: ${cause.code})`, cause,
+            retryable: false, failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: cause.code, httpStatus: null } } });
           expect(runnerFailure).toMatchObject({ name: 'PluginError', code: cause.code, details: { cause } });
           expect(refusalLog.mock.calls.filter(([message]) => message.includes('runner_plugin_services_prepare_refused'))
             .map(([message]) => JSON.parse(message)))
@@ -2636,10 +2879,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
           expect.objectContaining({ ok: true, result: expect.objectContaining({ kind: 'plugin_services.result_v1' }) }),
         ]));
         expect(result).toMatchObject({ type: 'success', sessionId });
-        for (const sourceCheck of storage.sourceChecks ?? []) {
-          expect(sourceCheck).toEqual({ command: process.execPath,
-            args: [join(process.cwd(), 'scripts', 'syncSharedDepsForDev.mjs'), '--check'] });
-        }
+        expect(storage.sourceChecks).toEqual([]);
         // ACP itself transports a native model id, not host Agent identity.
         // The real selected definition's environment qualifies the physical
         // vendor process receiving that first model request.
@@ -2668,11 +2908,13 @@ describe('Custom ACP fresh daemon launch composition', () => {
       }
     } finally {
       if (retainedServicesDescriptor) Object.defineProperty(runtime.registry, 'createRetainedRunnerAgentInvocationServices', retainedServicesDescriptor);
-      await daemon?.stopControlServer();
+      await closeFixtureSessionHosts();
       await Promise.all(exitSettlements);
+      await daemon?.retireEndedRunnerOwnedState();
+      await daemon?.stopControlServer();
       await requester?.dispose();
       await borrowed?.cleanupOnFailure();
-      await requesterChannel.close();
+      await closePreflight();
       await projectMachine.shutdown();
       await daemonMutationCustody.close();
       for (const spy of networkSpies.reverse()) spy.mockRestore();
@@ -2690,7 +2932,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
     }
   }, 180_000);
 
-  it.each(['shutdown', 'shutdown-dispose', 'stop', 'internal-stop', 'previous-stop', 'late-stop', 'topology-repair', 'topology-repair-stop', 'post-stop-resume'] as const)('admits stopped Sessions and fences retired replacements through the real spawn owner (%s)', async (retirement) => {
+  it.each(['internal-stop', 'previous-stop', 'late-stop', 'topology-repair', 'topology-repair-stop', 'post-stop-resume'] as const)('admits stopped Sessions and fences retired replacements through the real spawn owner (%s)', async (retirement) => {
     const originalCredentials = storage.credentials;
     storage.credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'df38-owner', session: 'retained-owner-terminal' })).toString('base64url')}.fixture`, encryption: null };
     storage.persistedToken = storage.credentials.token;
@@ -2707,10 +2949,9 @@ describe('Custom ACP fresh daemon launch composition', () => {
     let daemon: Awaited<ReturnType<typeof startDaemonSessionControlRuntime>> | undefined;
     const daemonMutationCustody = createDaemonSessionMutationCustody({ credentials: storage.credentials });
     storage.sourceChecks = [];
-    let shuttingDown = false;
     let launchReached = false;
+    let launchAdmissionChecks = 0;
     let signalSent = false;
-    const restartSignalEntered = createDeferred();
     let physicalLaunchReached = false;
     let secondResume: ReturnType<Awaited<ReturnType<typeof startDaemonSessionControlRuntime>>['spawnSession']> | undefined;
     const repairsTopology = retirement === 'topology-repair' || retirement === 'topology-repair-stop' || retirement === 'post-stop-resume';
@@ -2758,17 +2999,16 @@ describe('Custom ACP fresh daemon launch composition', () => {
         runtimeDescriptorV1: producedDescriptor, existingSessionId: sessionId, resume: 'pr536-native-thread',
         beforeSessionRunnerLaunch: async () => {
           launchReached = true;
-          expect(shuttingDown).toBe(retirement === 'shutdown' || retirement === 'shutdown-dispose');
-          if (retirement === 'shutdown') return false;
+          launchAdmissionChecks += 1;
           await preparePhysicalLaunchSentinel();
           if (retirement === 'late-stop') {
-            storage.beforeSourceCheckCompletes = async () => {
-              storage.beforeSourceCheckCompletes = null;
-              expect(launchReached).toBe(true);
+            // Source subprocesses no longer build workspace dists. Retire at
+            // the route's final public launch-admission hook instead.
+            if (launchAdmissionChecks === 2) {
               await daemon?.stopSession(sessionId);
               signalSent = true;
-            };
-          } else if (retirement === 'stop' || retirement === 'internal-stop') await daemon?.stopSession(sessionId);
+            }
+          } else if (retirement === 'internal-stop') await daemon?.stopSession(sessionId);
           else if (!repairsTopology) await daemon?.stopControlServer();
           return true;
         } } };
@@ -2787,7 +3027,6 @@ describe('Custom ACP fresh daemon launch composition', () => {
         if (signal === 0 && storage.runnerExited) throw Object.assign(new Error('Synthetic predecessor exited'), { code: 'ESRCH' });
         if (signal !== 0) {
           signalSent = true;
-          restartSignalEntered.resolve(undefined);
         }
         return true;
       }
@@ -2817,7 +3056,6 @@ describe('Custom ACP fresh daemon launch composition', () => {
         sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } }));
     }));
     const previousSocketBoundary = storage.io.getMockImplementation();
-    const childRunReads: string[] = [];
     const idleChildRuns = ExecutionRunListResponseSchema.parse({ runs: [] });
     // The Session Home RPC is a network boundary. A planned restart observes
     // its real child-Run guard instead of inheriting a previous case's socket.
@@ -2834,12 +3072,10 @@ describe('Custom ACP fresh daemon launch composition', () => {
             return { ok: true, result: { nativeRuntimeActivity: 'settled', session: 'settled', input: 'settled' } };
           }
           expect(request).toMatchObject({ expectedPid: tracked.pid });
-          if (Reflect.get(request, 'action') === 'restart_hold') return new Promise(() => {});
           return { ok: true, result: { status: 'ready' } };
         }
         const method = `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_LIST}`;
         expect(payload).toMatchObject({ method, params: {}, timeoutMs: null });
-        childRunReads.push(method);
         return { ok: true, result: idleChildRuns };
       } });
     });
@@ -2855,7 +3091,6 @@ describe('Custom ACP fresh daemon launch composition', () => {
       storage.runnerWrapperStartTimeMs = 2; storage.procfsRoot = '';
       storage.runnerSpawn = null; storage.runnerBootstrapPath = '';
       storage.sourceChecks = null;
-      storage.beforeSourceCheckCompletes = null;
       vi.unstubAllEnvs();
       storage.beforeTerminalAttachmentRead = null;
       storage.ordinaryStoredCredentials = false;
@@ -2882,70 +3117,48 @@ describe('Custom ACP fresh daemon launch composition', () => {
         connectedServicesRestartRequestedSessions: new Set(), beforeShutdown: async () => {}, onHappySessionWebhook: () => {},
         ...(repairsTopology ? { startupTerminalRecovery: { disconnectedTerminalHostCandidates: [],
           unresolvedTerminalHostSessionIds: [sessionId] } } : {}),
-        requestShutdown: () => {}, isShuttingDown: () => shuttingDown,
-        processEnv: { HAPPIER_DAEMON_SESSION_RESPAWN_MAX_ATTEMPTS: '1', HAPPIER_DAEMON_SESSION_INTENDED_RESTART_MAX_ATTEMPTS: '1',
-          HAPPIER_DAEMON_SESSION_RESPAWN_BASE_DELAY_MS: '50', HAPPIER_DAEMON_SESSION_RESPAWN_JITTER_MS: '0' } });
-      if (retirement === 'internal-stop' || retirement === 'previous-stop' || retirement === 'late-stop' || repairsTopology) {
-        // The public runtime entry feeds Machine RPC. An earlier Stop must
-        // allow new explicit Resume, while Stop during preparation still fences it.
-        trackedSessions.delete(tracked.trackingKey);
-        storage.runnerExited = true;
-        if (retirement === 'previous-stop') await daemon.stopSession(sessionId);
-        let repairReadStarted!: () => void;
-        let releaseRepairRead!: () => void;
-        const repairRead = new Promise<void>(resolve => { repairReadStarted = resolve; });
-        const repairRelease = new Promise<void>(resolve => { releaseRepairRead = resolve; });
-        if (retirement === 'topology-repair-stop' || retirement === 'post-stop-resume') storage.beforeTerminalAttachmentRead = async () => {
-          storage.beforeTerminalAttachmentRead = null;
-          repairReadStarted();
-          await repairRelease;
-        };
-        const resume = daemon.spawnSession(tracked.spawnOptions!);
-        let externalStop: ReturnType<typeof daemon.stopSession> | undefined;
-        if (retirement === 'topology-repair-stop' || retirement === 'post-stop-resume') {
-          // Hold only descriptor filesystem I/O inside the real repair Stop.
-          // External Stop then joins that retirement's coalesced physical operation.
-          await repairRead;
-          externalStop = daemon.stopSession(sessionId);
-          releaseRepairRead();
-        }
-        if (retirement === 'post-stop-resume') {
-          await externalStop;
-          secondResume = daemon.spawnSession({ ...tracked.spawnOptions!, beforeSessionRunnerLaunch: async () => {
-            await preparePhysicalLaunchSentinel();
-            return true;
-          } });
-        }
-        const response = await resume;
+        requestShutdown: () => {}, processEnv: { ...process.env } });
+      // The public runtime entry feeds Machine RPC. An earlier Stop must
+      // allow new explicit Resume, while Stop during preparation still fences it.
+      trackedSessions.delete(tracked.trackingKey);
+      storage.runnerExited = true;
+      if (retirement === 'previous-stop') await daemon.stopSession(sessionId);
+      let repairReadStarted!: () => void;
+      let releaseRepairRead!: () => void;
+      const repairRead = new Promise<void>(resolve => { repairReadStarted = resolve; });
+      const repairRelease = new Promise<void>(resolve => { releaseRepairRead = resolve; });
+      if (retirement === 'topology-repair-stop' || retirement === 'post-stop-resume') storage.beforeTerminalAttachmentRead = async () => {
+        storage.beforeTerminalAttachmentRead = null;
+        repairReadStarted();
+        await repairRelease;
+      };
+      const resume = daemon.spawnSession(tracked.spawnOptions!);
+      let externalStop: ReturnType<typeof daemon.stopSession> | undefined;
+      if (retirement === 'topology-repair-stop' || retirement === 'post-stop-resume') {
+        // Hold only descriptor filesystem I/O inside the real repair Stop.
+        // External Stop then joins that retirement's coalesced physical operation.
+        await repairRead;
+        externalStop = daemon.stopSession(sessionId);
+        releaseRepairRead();
+      }
+      if (retirement === 'post-stop-resume') {
         await externalStop;
-        if (retirement === 'previous-stop' || retirement === 'topology-repair') {
-          expect(physicalLaunchReached, JSON.stringify(response)).toBe(true);
-        } else {
-          if (retirement !== 'topology-repair-stop' && retirement !== 'post-stop-resume') expect(launchReached).toBe(true);
-          if (retirement === 'late-stop') expect(signalSent, 'Stop must complete while downstream source preparation is held').toBe(true);
-          expect(response, JSON.stringify(response)).toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE' });
-          if (response.type !== 'error') throw new Error('Expected retired launch custody refusal');
-          expect(SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(response)))
-            .toMatchObject({ errorCode: 'DAEMON_RPC_UNAVAILABLE' });
-        }
+        secondResume = daemon.spawnSession({ ...tracked.spawnOptions!, beforeSessionRunnerLaunch: async () => {
+          await preparePhysicalLaunchSentinel();
+          return true;
+        } });
+      }
+      const response = await resume;
+      await externalStop;
+      if (retirement === 'previous-stop' || retirement === 'topology-repair') {
+        expect(physicalLaunchReached, JSON.stringify(response)).toBe(true);
       } else {
-        const persistence = await import('@/persistence');
-        const currentSettings = await persistence.readSettings();
-        spies.push(vi.spyOn(persistence, 'readSettings').mockResolvedValueOnce({ ...currentSettings, restartSessionRunnersOnUpdate: true }));
-        const refresh = daemon.restartStaleSessionRunnersAfterDaemonStart();
-        await Promise.race([
-          restartSignalEntered.promise,
-          refresh.then(outcome => { throw new Error(`Runner refresh completed before its OS signal: ${JSON.stringify(outcome)}`); }),
-        ]);
-        expect(childRunReads).toContain(`${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_LIST}`);
-        expect(signalSent).toBe(true);
-        shuttingDown = retirement !== 'stop';
-        if (shuttingDown) await expect(daemon.spawnSession({ directory: storage.home })).resolves.toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE' });
-        storage.runnerExited = true;
-        await daemon.onChildExited(tracked.pid, { reason: 'process-exited', code: null, signal: 'SIGTERM' });
-        await vi.waitFor(() => expect(launchReached).toBe(true));
-        const response = await refresh;
-        expect(response).toMatchObject({ status: 'completed', result: { failedCount: 1 } });
+        if (retirement !== 'topology-repair-stop' && retirement !== 'post-stop-resume') expect(launchReached).toBe(true);
+        if (retirement === 'late-stop') expect(signalSent, 'Stop must complete at final launch admission').toBe(true);
+        expect(response, JSON.stringify(response)).toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE' });
+        if (response.type !== 'error') throw new Error('Expected retired launch custody refusal');
+        expect(SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(response)))
+          .toMatchObject({ errorCode: 'DAEMON_RPC_UNAVAILABLE' });
       }
       if (retirement === 'post-stop-resume') {
         expect(secondResume, 'A fresh Resume must be issued after Stop completes').toBeDefined();
