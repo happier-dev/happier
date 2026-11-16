@@ -24,6 +24,8 @@ export type {
 } from './sorting.js';
 export { TRIAGE_SAVE_ACTION_DEFAULTS_ACTION_REF_V1, TRIAGE_SAVE_ACTION_DEFAULTS_WORKSPACE_MODE_REASON_V1, TriageSaveActionDefaultsInputV1Schema, readTriageSavedActionDefaultProfileIdV1, type TriageSaveActionDefaultsInputV1 } from './actionDefaults.js';
 export * from './resourceLinks.js';
+export { TriagePullRequestLocalCauseV1Schema, TriagePullRequestLocalFormInputV1Schema, TriagePullRequestLocalFormResultV1Schema,
+    type TriagePullRequestLocalCauseV1, type TriagePullRequestLocalFormInputV1, type TriagePullRequestLocalFormResultV1 } from './pullRequestLocalForm.js';
 export { TriageActionLabelV1Schema, TriageSourceScopeUnitIdV1Schema, type TriageSourceScopeUnitIdV1 } from './identity.js';
 export {
     TriageSourceScopeSelectionV1Schema,

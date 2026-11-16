@@ -150,6 +150,9 @@ export const TriageSourceDescriptorV1Schema = defineProtocolObject({
      * when it is present.
      */
     settingsPageId: TriageIdentifierV1ProtocolSchema.optional(),
+    /** This source's own client Action accepting TriagePullRequestLocalFormInputV1.
+     * It opens an unsent local form without executing a job or reading the provider. */
+    pullRequestLocalFormActionId: TriageIdentifierV1ProtocolSchema.optional(),
     scopeUnit: TriageSourceScopeUnitDescriptorV1Schema.optional(),
     /** Declares relationship ownership independently of executable availability.
      * Omitted kindIds retains the source's legacy all-kind relation scope. */

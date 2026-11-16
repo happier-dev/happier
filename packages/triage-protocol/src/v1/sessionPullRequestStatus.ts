@@ -34,7 +34,7 @@ export const SessionPullRequestStatusResourceResultV1Schema = defineProtocolUnio
     defineProtocolObject({ kind: defineProtocolLiteral('ready'), sessionId: SessionIdSchema,
         pullRequests: defineProtocolArray(defineProtocolObject({ ...SessionPullRequestBindingMetadataFieldsV1,
             entry: defineProtocolObject({ entryRef: TriageEntryRefV1Schema,
-                sourceInstanceId: TriageSourceInstanceIdV1Schema }, closed).optional(),
+                sourceInstanceId: TriageSourceInstanceIdV1Schema.optional() }, closed).optional(),
             nativeStatus: SessionPullRequestNativeStatusV1Schema }, closed)) }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('unavailable'), sessionId: SessionIdSchema,
         failure: TriageSourceFailureV1Schema }, closed),
