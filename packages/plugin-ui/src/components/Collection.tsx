@@ -1217,13 +1217,17 @@ function LeadingByline(props: Readonly<{ lead: ReactNode; line: ReactNode; textS
       {/* The state word stays whole; the line after it gives way (an ellipsis at the row's edge). */}
       <View style={bylineLeadStyle}>{props.lead}</View>
       {empty ? null : text ? <SlotContent value={`· ${String(line)}`} textStyle={props.textStyle} /> : (
-        <><SlotContent value="·" textStyle={props.textStyle} />{line}</>
+        // An element line (a Check's bars) may be wider than what the state word leaves: its frame gives way and
+        // clips at the row's trailing inset, never past the row's edge (r11-f3-checks-390).
+        <><View style={bylineLeadStyle}><SlotContent value="·" textStyle={props.textStyle} /></View>
+          <View style={bylineElementLineStyle}>{line}</View></>
       )}
     </View>
   );
 }
 
 const bylineLeadStyle: HappierPortableStyle = { flexShrink: 0 };
+const bylineElementLineStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0, overflow: 'hidden' };
 const leadingBylineStyle: HappierPortableStyle = {
   flexDirection: 'row', alignItems: 'center', gap: HAPPIER_SPACE_STEPS.s4, minWidth: 0, maxWidth: '100%', alignSelf: 'stretch',
 };
@@ -2520,7 +2524,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     // The list's columns named once, on the first sheet: what the rows are, then each column over its figures.
     <View
       testID={props.testID === undefined ? undefined : `${props.testID}:sheet-header`}
-      style={[pageSheetHeaderStyle, listColumnsHeaderStyle, { borderBottomColor: palette?.rowDivider ?? theme.colors.divider }]}
+      // Its rule runs the rows' content width, like their own rules; after the last head it keeps the rows' ⋯ slot, so
+      // each head stands over its figures (Services → Apps).
+      style={[pageSheetHeaderStyle, listColumnsHeaderStyle, { borderBottomColor: palette?.rowDivider ?? theme.colors.divider,
+        paddingRight: rowAccessoryWidth }]}
     >
       <View style={pageRowGlyphStyle} />
       <HappierText variant="meta" tone="muted" numberOfLines={1} style={flexTextStyle}>{anatomy.columnTitles.title}</HappierText>
@@ -2530,7 +2537,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         </View>
       ))}
     </View>
-  ), [accessibility.textScale, anatomy.columnTitles.title, listColumns, palette?.rowDivider, props.testID, theme.colors.divider]);
+  ), [accessibility.textScale, anatomy.columnTitles.title, listColumns, palette?.rowDivider, props.testID, rowAccessoryWidth, theme.colors.divider]);
   const pageSheetHeader = useMemo(() => listColumnsHeader ?? (!pageSections || (grouped && !pageTable) || sort === undefined || sortedField === undefined ? null : (
     <View
       testID={props.testID === undefined ? undefined : `${props.testID}:sheet-header`}
@@ -3503,7 +3510,9 @@ const pageSheetHeaderStyle: HappierPortableStyle = {
 };
 const flexTextStyle: HappierPortableStyle = { flex: 1, minWidth: 0 };
 /** The bar over a list's columns keeps the rows' gaps: mark, title, then each column (`pageRowContentStyle`). */
-const listColumnsHeaderStyle: HappierPortableStyle = { gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx };
+const listColumnsHeaderStyle: HappierPortableStyle = {
+  gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx, paddingLeft: 0, marginHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
+};
 
 /** A list row's `listColumn` cell and its bar title: one fixed width, so the column lines up down every sheet. */
 function listColumnCellStyle<Item>(field: CollectionField<Item>, textScale: number): HappierPortableStyle {

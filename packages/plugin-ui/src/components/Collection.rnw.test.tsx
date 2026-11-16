@@ -3313,6 +3313,29 @@ describe('render scope', () => {
       } finally { view.unmount(); }
     },
   );
+  it('names list columns over their figures when each row ends in its ⋯: the bar keeps the rows\' action slot', () => {
+    // A Services row: no peek chevron, so the ⋯ is the row's only end control.
+    const { peek: _peek, ...rowWithoutPeek } = anatomy;
+    const columnsAnatomy: CollectionAnatomy<Entry> = {
+      ...rowWithoutPeek,
+      byline: (entry) => entry.repo,
+      fields: [{ key: 'age', title: 'Age', render: (entry) => entry.age, minWidth: 64, priority: 1, align: 'end', listColumn: true }],
+    };
+    const barEnd = (withActions: boolean) => {
+      const view = mount({
+        presentation: 'list', scroll: 'page', anatomy: columnsAnatomy,
+        grouping: { ...groups, axis: groups.axis.map((group) => ({ ...group, section: { key: 'all', title: 'All work' } })) },
+        ...(withActions ? { useRowActions: () => ({ secondaryActions: [{ id: 'pin', label: 'Pin' }], onSecondaryAction: () => undefined }) } : {}),
+      });
+      try {
+        view.measure(1200);
+        return Number.parseFloat(getComputedStyle(view.query('collection:sheet-header')!).paddingRight);
+      } finally { view.unmount(); }
+    };
+    // Services → Apps (live 1440): every head stood 40 px right of its figures, the State head over the ⋯. A row's ⋯
+    // slot is the action's 28 pt cell plus its 12 pt end inset; the bar keeps the same slot after its last head.
+    expect(barEnd(true) - barEnd(false)).toBe(40);
+  });
   it('draws listColumn fields as aligned end columns on a wide page-section list, named once, and leaves them to the byline on a phone', () => {
     const bylineLayouts: Array<boolean | undefined> = [];
     const columnsAnatomy: CollectionAnatomy<Entry> = {
@@ -3371,6 +3394,32 @@ describe('render scope', () => {
       // A row with no lead keeps its byline as it was.
       expect(view.query('lead:c')).toBeNull();
       expect(view.query('row:c')?.textContent).not.toContain('·');
+    } finally { view.unmount(); }
+  });
+  it('keeps an element line after a state word inside the row\'s trailing inset: its frame gives way and clips', () => {
+    // A phone Checks row: "Not checked since …" leads, then a run of bars that cannot shrink (r11-f3-checks-390).
+    const view = mount({
+      presentation: 'list', scroll: 'page',
+      anatomy: {
+        ...anatomy,
+        byline: (entry) => <View testID={`bars:${entry.id}`} style={{ width: 600, flexShrink: 0 }} />,
+        bylineLead: (entry, layout) => entry.id === 'a' && layout?.fieldColumns !== true
+          ? <Text testID={`lead:${entry.id}`}>Not checked since Nov 15, 4:26 PM</Text> : null,
+      },
+    });
+    try {
+      view.measure(390);
+      const lead = view.query('lead:a')!;
+      const line = lead.parentElement!.parentElement!;
+      const bars = view.query('bars:a')!;
+      // Between the line and the bars sits one frame that shrinks to what is left of the row and clips the rest.
+      let frame: HTMLElement | null = bars.parentElement;
+      const frames: HTMLElement[] = [];
+      while (frame !== null && frame !== line) { frames.push(frame); frame = frame.parentElement; }
+      const clipping = frames.find((node) => getComputedStyle(node).overflowX === 'hidden');
+      expect(clipping).toBeDefined();
+      expect(getComputedStyle(clipping!).flexShrink).toBe('1');
+      expect(getComputedStyle(clipping!).minWidth).toBe('0px');
     } finally { view.unmount(); }
   });
   it.each([[390, false], [1200, true]] as const)('a shared sheet band at %ipx keeps its name on line 1 and its fact with its action %s on the same line', (width, sameLine) => {
