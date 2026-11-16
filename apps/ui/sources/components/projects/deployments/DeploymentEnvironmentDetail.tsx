@@ -100,6 +100,7 @@ import {
 } from './deploymentActionOutcome';
 import { DeploymentExecutionFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { createDeploymentActions } from './deploymentActions';
+import { prepareDeploymentSourceCheckout } from './prepareDeploymentSourceCheckout';
 import { DeploymentEnvironmentAgentActions } from './DeploymentEnvironmentAgentActions';
 import { DeploymentEnvironmentSettingsPanel, type DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
 import { showDeploymentFleetSheet } from './DeploymentFleetSheet';
@@ -530,7 +531,14 @@ export const DeploymentEnvironmentDetail = React.memo(
           ? { lifetime: props.lifetime, projectSourceId: detail.environment.projectSourceId } : undefined}
         compact={props.phone} emphasis={ready ? 'secondary' : 'primary'} placement={ready ? 'section' : 'facts'} />
     );
-    const { deploy, review, environmentId } = props;
+    const { review, environmentId } = props;
+    const deployAction = props.deploy;
+    const deploy: typeof props.deploy = deployAction ? async (...args) => {
+      const [input] = args;
+      if (props.lifetime && !('sourceIntent' in input && input.sourceIntent?.kind === 'stored')) await prepareDeploymentSourceCheckout(props.lifetime, detail,
+        projectSource.source?.source ?? null, 'sourceMethod' in input ? input.sourceMethod : sourceMethod);
+      return deployAction(...args);
+    } : null;
     const pressDeploy = async () => {
       if (!deploy || availability.kind !== 'ready') return;
       await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), ...(sourceMethod ? { sourceMethod } : {}) }));

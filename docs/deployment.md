@@ -1,5 +1,14 @@
 # Deployment
 
+## First repository deploy (0.3 development)
+
+The app's Environment Deploy gesture prepares a missing Source checkout on its
+controller through the existing `projects.open` Action before dispatching
+`deployments.deploy`. It uses Open's destination suggestion and input builders
+and the person's ordinary destination review. An Open refusal or uncertain
+outcome stops the sequence. Stored definitions and provider Git integration do
+not require this checkout step. Deploy itself never opens a checkout internally.
+
 ## Activity selection (0.3 development)
 
 The existing `readDeploymentActivityPage` accepts `actorAccountId`,

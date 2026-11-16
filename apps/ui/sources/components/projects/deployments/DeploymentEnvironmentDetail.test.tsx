@@ -206,6 +206,99 @@ it.each([{ phone: false, receiptPage: false, stored: false }, { phone: true, rec
 });
 const noReview = { pendingId: null, request: () => {}, open: () => {} };
 
+// These neighboring flows start with an existing checkout; only the fresh-deploy cases below need Open.
+async function answerExistingDeploymentCheckout(detail: ReturnType<typeof environmentDetailForHome>) {
+  const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+  const sourceId = detail.environment.projectSourceId;
+  homes.answer(scope.serverId, `GET /v1/projects/sources/${sourceId}?serverId=${encodeURIComponent(scope.serverId)}`, {
+    body: { ok: true, source: { id: sourceId, revision: 1, name: 'My app', audience: [], createdByAccountId: scope.accountId,
+      repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'owner/app' }, protocol: 'https' } }, canManage: true } });
+  homes.answer(scope.serverId, 'POST /v1/account/project-rows/list', { body: createPlainProjectAccountRowListFixture({
+    workspaceRefs: [{ id: 'existing-checkout', serverId: scope.serverId, machineId: detail.environment.controllerMachineId,
+      rootPath: '/workspace/app', label: null, createdAtMs: 1, lastOpenedAtMs: null, source: { sourceId, revision: 1 } }],
+  }) });
+}
+
+it.each(['opened', 'refused', 'declined'] as const)('prepares a fresh first deploy through reviewed Open checkout (%s)', async openResult => {
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+  const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+  const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  const { OpenProjectInputV1Schema } = await import('@happier-dev/protocol/projects/openProjectV1');
+  const { createDeploymentActions } = await import('./deploymentActions');
+  const { Modal, ModalProvider } = await import('@/modal');
+  const account = await captureLazyActionAccountContext(scope.serverId);
+  const base = environmentDetailForHome();
+  const detail = { ...base,
+    targetLinks: base.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink, state: 'configured' as const, activeDeploymentId: undefined } })) };
+  const machineId = detail.environment.controllerMachineId;
+  const installationId = detail.targetLinks[0]!.targetLink.members[0]!.installationId;
+  await publishMachineInventoryForTest(scope, [createMachineFixture({ id: machineId, installationId, activeAt: Date.now(),
+    metadata: { host: 'devbox', platform: 'linux', homeDir: '/home/me', happyHomeDir: '/home/me/.happier', happyCliVersion: '0.0.0' } })]);
+  const source = { id: detail.environment.projectSourceId, revision: 1, name: 'My app', audience: [], createdByAccountId: scope.accountId,
+    repository: { provider: { id: 'github', kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'owner/app' }, protocol: 'https' as const } };
+  homes.answer(scope.serverId, 'POST /v1/account/project-rows/list', { body: createPlainProjectAccountRowListFixture() });
+  // First deploy reads the current Source from the Home, through the real Source controller.
+  homes.answer(scope.serverId, `GET /v1/projects/sources/${source.id}?serverId=${encodeURIComponent(scope.serverId)}`, {
+    body: { ok: true, source: { ...source, revision: 2 }, canManage: true } });
+  const effects: string[] = [];
+  const sourceRevisions: number[] = [];
+  const reviewDigest = 'R'.repeat(43);
+  await answerExternalActionAccountForHome(homes, scope.serverId, { machineId, installationId, actionId: 'projects.open', tokenEpoch: 0, requesterInvocation: 'optional',
+    failure: result => typeof result === 'object' && result !== null && 'reviewRequired' in result
+      ? { errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+          details: { review: { actionArgs: result.reviewRequired, preview: { summary: `Clone /home/me/src/app on ${machineId}` } }, reviewDigest } } : null,
+    execute: (raw, context) => {
+      const input = OpenProjectInputV1Schema.parse(raw);
+      if (input.source.kind === 'source') sourceRevisions.push(input.source.revision);
+      expect(input).toMatchObject({ machineId, source: { kind: 'source', id: source.id },
+        materialization: { kind: 'clone', destinationParentPath: '/home/me/src', destinationDirectoryName: 'app' } });
+      // The native receiver requires its destination review, exactly as manual Open does.
+      if (context.invocation?.presentUserConfirmation?.reviewDigest !== reviewDigest) return { reviewRequired: input };
+      effects.push('open');
+      return openResult === 'refused' ? { kind: 'refused', code: 'destination_exists', effectAttempted: false } : {
+        kind: 'opened', workspace: { serverId: scope.serverId, machineId, workspaceId: 'checkout', rootPath: '/home/me/src/app' },
+        directory: '/home/me/src/app', setup: 'approvalRequired' };
+    } });
+  await answerExternalActionAccountForHome(homes, scope.serverId, { machineId, installationId,
+    deploymentSource: { id: source.id, revision: 2 }, actionId: 'deployments.deploy', tokenEpoch: 0,
+    execute: () => { effects.push('deploy'); return { ok: true, environmentId: detail.environment.id,
+      revision: 1, deploymentId: 'first-deploy', deploymentRevision: 1, state: 'succeeded',
+    } satisfies import('@happier-dev/protocol/deployments/deploymentActionsV1').DeploymentReceiptAcceptedResultV1; } });
+  homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {
+    body: { ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
+  vi.mocked(Modal.confirm).mockResolvedValue(true);
+  const { controller } = controllerFor({ detail, history: [] });
+  const actions = createDeploymentActions(account.accountLifetime, source.id);
+  const openedReceipts: string[] = [];
+  try {
+    const screen = await renderScreen(<ModalProvider>
+      <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
+        accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={actions.deploy} review={noReview}
+        onOpenReceipt={id => openedReceipts.push(id)} lifetime={account.accountLifetime} />
+    </ModalProvider>);
+    await waitForContent(screen, 'project-deployments.environment.deploy');
+    act(() => { screen.pressByTestId('project-deployments.environment.deploy'); });
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(screen.findByTestId('actions.confirmation-review.decision-approve'), JSON.stringify({ effects,
+        outcomes: screen.findAllByType(DeployOutcomeBanner).map(node => node.props.controller?.outcome) })).not.toBeNull();
+    });
+    expect(sourceRevisions[0]).toBe(2);
+    expect(effects).toEqual([]);
+    await screen.pressByTestIdAsync(openResult === 'declined' ? 'actions.confirmation-review.decision-reject' : 'actions.confirmation-review.decision-approve');
+    await waitForHomeGovernance(() => {
+      expect(effects, JSON.stringify(screen.findAllByType(DeployOutcomeBanner).map(node => node.props.controller?.outcome)))
+        .toEqual(openResult === 'opened' ? ['open', 'deploy'] : openResult === 'declined' ? [] : ['open']);
+      if (openResult === 'opened') expect(openedReceipts).toEqual(['first-deploy']);
+      else expect(screen.findByTestId('project-deployments.outcome.refused.other')).not.toBeNull();
+    });
+  } finally { account.dispose(); await act(async () => { controller.retire(); }); }
+});
+
 it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
   'opens the owning review or source repair from the Environment catalog notice (%s)', async state => {
     await homes.switchAccount(scope.serverId, scope.accountId, { currentAccount: true });
@@ -1450,6 +1543,7 @@ describe('Project deployments page', () => {
     const binding = createDeploymentSecretVariableBindingV1({ name: 'TOKEN', phase: 'runtime', resourceId: 'credential', resourceRevision: 2 });
     const detail = { ...base, content: { ...base.content, bindings: [binding] },
       savedSecretRevisions: [{ resourceId: 'credential', revision: 2 }] };
+    await answerExistingDeploymentCheckout(detail);
     const original = createDeploymentReceiptDetailV1();
     const receipt = createDeploymentReceiptDetailV1({ content: { ...original.content, ownServer: { approvedInputBasis: {
       v: 1, environmentId: detail.environment.id, environmentRevision: 1,
@@ -2253,6 +2347,7 @@ describe('Project deployments page', () => {
         providerIdentity: { providerAccountId: 'cloud', providerResourceId: 'site', providerEnvironment: 'production' },
         providerEnvironment: { kind: 'production' as const }, ...(recorded ? { sourceMethod: recorded } : {}) },
     })) };
+    await answerExistingDeploymentCheckout(detail);
     await context.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
       header: { kind: 'deployment-environment.v1', title: detail.content.name }, body: JSON.stringify(detail.content) });
     for (const row of detail.targetLinks) await context.createArtifactDocument({ artifactId: row.targetLink.contentArtifactId,
@@ -3046,6 +3141,9 @@ it.each(['rollbackAll', 'keepPartial'] as const)('passes the selected fleet fail
   const second = { machineId: 'machine-b', installationId: 'installation-b', state: 'active' as const };
   const fleet = { ...link, machines: [...link.machines, second.machineId], members: [...link.members, second] };
   const { controller, detail } = controllerFor({ detail: { ...base,
+    // Fleet policy is independent of repository preparation; this also exercises stored deploys without Open.
+    content: { ...base.content, definition: { kind: 'stored', document: 'services:\n  app:\n    image: app:tested\n',
+      contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: ['app'] } },
     targetLinks: [{ ...base.targetLinks[0]!, targetLink: fleet }] } });
   await publishMachineInventoryForTest(scope, fleet.members.map(member => createMachineFixture({
     id: member.machineId, installationId: member.installationId, activeAt: Date.now(),

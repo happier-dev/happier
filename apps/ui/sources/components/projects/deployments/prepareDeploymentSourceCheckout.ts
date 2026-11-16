@@ -1,0 +1,54 @@
+import type { DeploymentEnvironmentDetailV1, DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { storage } from '@/sync/domains/state/storage';
+import { selectSourceCheckoutWorkspaceRefs } from '@/sync/domains/workspaces/workspaceRefs';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { HappyError } from '@/utils/errors/errors';
+import { buildProjectOpenDraft, buildProjectOpenInput, suggestProjectOpenDestination, type ProjectOpenChoiceState } from '../activation/projectOpenChoices';
+
+/** The app's Deploy gesture prepares its Source through Open's ordinary destination review, never deploy authority. */
+export async function prepareDeploymentSourceCheckout(
+  lifetime: ServerAccountScopeLifetime,
+  detail: DeploymentEnvironmentDetailV1,
+  source: ProjectSourceV1 | null,
+  sourceMethod?: DeploymentSourceMethodV1,
+): Promise<void> {
+  if (detail.content.definition.kind !== 'repository') return;
+  const target = detail.targetLinks.find(row => row.targetLink.id === detail.environment.runtimeTargetLinkId);
+  if (target?.targetLink.source.kind === 'plugin' && resolveDeploymentSourceMethodV1({
+    explicit: sourceMethod, recorded: target.content?.sourceMethod,
+  }) === 'gitIntegration') return;
+  if (!lifetime.isCurrent()) throw new HappyError('action_account_scope_changed', false, { code: 'action_account_scope_changed' });
+  const account = await captureLazyActionAccountContext(lifetime.scope.serverId);
+  try {
+    const rows = await createUiProjectAccountRowsClient(account).read();
+    const machineId = detail.environment.controllerMachineId;
+    const checkouts = rows.workspaceRefs;
+    if (source && selectSourceCheckoutWorkspaceRefs(checkouts, source.id, lifetime.scope.serverId)
+      .some(ref => ref.machineId === machineId && ref.source?.revision === source.revision)) return;
+    if (!source?.repository) throw new HappyError('deployment_source_unavailable', false, { code: 'deployment_source_unavailable' });
+    const machineHomeDir = resolveServerScopedMachine(storage.getState(), lifetime.scope.serverId, machineId)?.metadata?.homeDir ?? null;
+    const choice: ProjectOpenChoiceState = {
+      serverId: lifetime.scope.serverId, machineId, machineHomeDir,
+      subject: { kind: 'source', source }, ref: detail.content.definition.ref, use: 'clone',
+      branch: '', destination: '', checkouts,
+    };
+    const input = buildProjectOpenInput(buildProjectOpenDraft({ ...choice, destination: suggestProjectOpenDestination(choice) }), checkouts);
+    if (!input) throw new HappyError('invalid_parameters', false, { code: 'invalid_parameters' });
+    const executed = await createFrontDoorActionExecute()('projects.open', input, {
+      surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
+    });
+    requireActionSuccess(executed, 'projects.open');
+    const result = OpenProjectResultV1Schema.parse(executed.result);
+    if (result.kind !== 'opened') {
+      const code = result.kind === 'refused' ? result.code : 'outcome_unknown';
+      throw new HappyError(code, false, { code, details: result });
+    }
+  } finally { account.dispose(); }
+}
