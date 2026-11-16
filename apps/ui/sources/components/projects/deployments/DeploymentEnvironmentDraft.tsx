@@ -1,12 +1,12 @@
 import { OWN_SERVER_DEPLOYMENT_TARGET_V1, resolvePublishTargetRecommendation } from '@happier-dev/deployments';
 import { isMachineRoleActiveV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
-import { deploymentRecommendationDescription } from './deploymentRecommendationDescription';
+import { deploymentRecommendationDescription, deploymentRecommendationReason } from './deploymentRecommendationDescription';
 import { projectDeploymentConfigurePreflightV1 } from './deploymentPreflightWarnings';
 import * as React from 'react';
 import { MachineCreationContinuation, type MachineCreationContinuationDraft } from '@/components/machines/add/MachineCreationContinuation';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionConfirmationReviewFacts } from '@/components/approvals/ActionConfirmationReview';
-import { DeploymentCreationReviewFacts } from '@/components/approvals/ApprovalReviewFacts';
+import { DeploymentCreationReviewFacts, type DeploymentCreationReviewPlan } from '@/components/approvals/ApprovalReviewFacts';
 import { useInStepActionConfirmation } from '@/components/approvals/useInStepActionConfirmation';
 import type { DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 import { DeploymentPartialProgress } from './DeploymentPartialProgress';
@@ -70,6 +70,7 @@ import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { DeploymentPlatformTargetEditor, useDeploymentPlatformTargets } from './DeploymentPlatformTargetSheet';
+import { DeploymentTargetPlans } from './DeploymentTargetPlans';
 import { buildPlatformTargetCreateLinkInput, buildPlatformTargetLinkInput, type PreparedPlatformTargetLink } from './platformTargetLink';
 import type { readDeploymentPlatformTargets } from './platformTargetLink';
 import {
@@ -419,14 +420,18 @@ export const DeploymentEnvironmentDraft = React.memo(
     // Stepped (journey-deploy where): the targets read as cards. The recommended one carries its reason and badge,
     // and More platforms always closes the grid, also where a stored definition runs on a Machine only.
     const recommendedId = recommendation.evidence.length > 0 ? recommendation.target?.id ?? null : null;
-    const recommendationReason = recommendedId ? deploymentRecommendationDescription(recommendation) : null;
+    const recommendationReason = recommendedId ? deploymentRecommendationReason(recommendation) : null;
+    // The recommended target (else the first one) leads the grid across its row (journey-deploy where, whereM); the
+    // others keep two columns beneath. Choosing another target only moves the selection, never the grid.
+    const choiceTiles = targetTiles.filter(tile => tile.id !== PLUGINS_TILE);
+    const leadId = choiceTiles.some(tile => tile.id === recommendedId) ? recommendedId : choiceTiles[0]?.id ?? null;
     const stepTiles: Array<SelectionTile<string>> = stepped ? [
-      // The chosen target leads the grid across its row (journey-deploy where); the others keep two columns beneath.
-      ...targetTiles.filter(tile => tile.id !== PLUGINS_TILE).map((tile): SelectionTile<string> => ({
+      ...[...choiceTiles.filter(tile => tile.id === leadId), ...choiceTiles.filter(tile => tile.id !== leadId)]
+        .map((tile): SelectionTile<string> => ({
         ...tile,
         ...(tile.id === recommendedId ? { badge: t('newApp.deploy.recommended'),
           subtitle: [recommendationReason, tile.subtitle].filter(Boolean).join('\n') } : {}),
-        ...(tile.id === targetKey ? { span: 'row' as const } : {}),
+        ...(tile.id === leadId ? { span: 'row' as const } : {}),
       })),
       { id: PLUGINS_TILE, icon: 'plus', title: t('newApp.deploy.morePlatforms'), subtitle: t('newApp.deploy.morePlatformsBody') },
     ] : targetTiles;
@@ -572,6 +577,19 @@ export const DeploymentEnvironmentDraft = React.memo(
               details={[refusal.code]}
             />
           ) : null;
+    // Stepped, the review reads as groups (journey-deploy rev, revM) from the operands the prepared review was made
+    // from; any edit drops it, so they stay what was reviewed.
+    const reviewPlan: DeploymentCreationReviewPlan | null = stepped && prepared && chosen ? {
+      newProjectName: projectSelection && 'newProject' in projectSelection ? projectSelection.newProject.name.trim() || null : null,
+      environment: { name: name.trim(), production, deployers: deployerMode },
+      runs: props.copyFrom ? null : props.catalogApp ? { kind: 'app', name: props.catalogApp.title }
+        : definitionKind === 'image' ? { kind: 'image', image: imageName.trim() }
+        : storedDefinition ? { kind: 'compose' } : branch ? { kind: 'repository', ref: branch } : null,
+      runsOn: onPlatform && platformTarget ? { kind: 'platform', platform: platformTarget.title, pluginId: platformTarget.pluginId,
+        machine: machineName(chosen.id), resource: platformProvider?.kind === 'existing' ? 'existing' : 'create' }
+        : { kind: 'machine', machine: machineName(chosen.id) },
+      answered: refusal !== null,
+    } : null;
     const reviewFacts = stepReview ? (
             <ActionConfirmationReviewFacts actionId={stepReview.actionId} actionArgs={stepReview.actionArgs}
               summaryPlacement="host"
@@ -579,7 +597,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               testID="project-deployments.draft.confirmation" />
           ) : prepared ? (
             <DeploymentCreationReviewFacts review={prepared.review} serverId={props.lifetime?.scope.serverId ?? null}
-              testID="project-deployments.draft" />
+              testID="project-deployments.draft" plan={reviewPlan ?? undefined} />
           ) : null;
     const projectChoiceGroups = props.projectChoice ? <DeploymentProjectChoiceGroups model={props.projectChoice}
             testIDPrefix="project-deployments.draft.project"
@@ -662,8 +680,11 @@ export const DeploymentEnvironmentDraft = React.memo(
           machineId={machineId ?? chosen?.id ?? null}
           machineName={t('approvals.machineNotKnown')}
           title={onPlatform ? t('projects.deployments.platformLink.deploysFrom') : t('projects.deployments.machine')}
-          {...(chosen ? { subtitle: presence.get(chosen.id)?.label } : {})}
+          /* An answering Machine whose Docker setup the Plan reports satisfied says it is ready to host (whereM). */
+          {...(chosen ? { subtitle: !machineAway && host.readiness === 'ready' ? t('newApp.deploy.readyToHost')
+            : presence.get(chosen.id)?.label } : {})}
           awayMachinesChoosable
+          showDivider={false}
           onSelectMachine={(machine) => setMachineId(machine.id)}
         />
         {chosen && props.lifetime ? <MachineCardFacts serverId={props.lifetime.scope.serverId} machineId={chosen.id} /> : null}
@@ -689,7 +710,15 @@ export const DeploymentEnvironmentDraft = React.memo(
               minimumColumns={1}
               maximumColumns={props.phone ? 1 : 2}
               descriptionPlacement="below"
-              renderOptionFooter={({ option }) => option.id === OWN_SERVER_TARGET ? machineCard : null}
+              // Each card carries its own facts (journey-deploy where): the Machine card stays with A machine, and a
+              // platform shows its declared plans; which Machine a platform deploys from is Configure's (On <platform>).
+              renderOptionFooter={({ option }) => {
+                const plans = option.id === OWN_SERVER_TARGET ? undefined
+                  : offeredPlatformTargets.find(target => target.key === option.id)?.plans;
+                const body = option.id === OWN_SERVER_TARGET ? machineCard
+                  : plans ? <DeploymentTargetPlans plans={plans} columns={!props.phone && option.id === leadId} /> : null;
+                return body ? <View testID={`project-deployments.draft.target:${option.id}:footer`}>{body}</View> : null;
+              }}
             />
             </BareSectionContent>
           </ItemGroup>
@@ -947,7 +976,8 @@ export const DeploymentEnvironmentDraft = React.memo(
               )}
             </View>
           )}
-          {draftStep === 'review' ? (partialProgress ?? <>{refusalBanner}{reviewFacts}</>) : null}
+          {draftStep === 'review' ? (partialProgress ?? <>{machineCausedRefusal ? machineAwayNotice : refusalBanner}
+            {reviewFacts}</>) : null}
         </View>
       );
     }

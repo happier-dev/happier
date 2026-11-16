@@ -10,6 +10,10 @@ import { DeploymentTemplateInstantiationReviewV1Schema, type DeploymentTemplateI
 import { ArtifactEditProposalReview } from '@/components/artifacts/ArtifactEditProposal';
 import { renderDeploymentCreationDefaultsRows } from '@/components/projects/deployments/DeploymentCreationDefaultsRows';
 import { MACHINE_DEPLOYMENT_ROLES, machineServiceDisplayName } from '@/components/machines/services/machineServicesPresentation';
+import { deployersLabel } from '@/components/projects/deployments/DeploymentDeployerFields';
+import { PluginMark } from '@/components/settings/plugins/PluginMark';
+import { Icon } from '@/components/ui/icons/Icon';
+import { SetupSteps, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -131,28 +135,90 @@ function readDeploymentTemplateApprovalReview(preview: unknown): DeploymentTempl
   return parsed.success ? parsed.data : null;
 }
 
-/** Both prepared drafts and carried reviews show the resolver's exact frozen defaults. */
+/**
+ * What a stepped draft asked to create, read from the exact operands its prepared review was made from (any edit
+ * drops the prepared review, so these stay the reviewed facts). Carried approval reviews have no draft and omit it.
+ */
+export type DeploymentCreationReviewPlan = Readonly<{
+  newProjectName: string | null;
+  environment: Readonly<{ name: string; production: boolean; deployers: Parameters<typeof deployersLabel>[0] }>;
+  runs: Readonly<{ kind: 'repository'; ref: string } | { kind: 'compose' } | { kind: 'image'; image: string } | { kind: 'app'; name: string }> | null;
+  runsOn: Readonly<{ kind: 'machine'; machine: string }
+    | { kind: 'platform'; platform: string; pluginId: string; machine: string; resource: 'create' | 'existing' }>;
+  /** Create has answered (a refusal or an approval request): what was asked stays, what would follow goes. */
+  answered: boolean;
+}>;
+
+/** The order things happen after Create, from what the prepared review creates (journey-deploy rev "What happens next"). */
+export function deploymentCreationNextSteps(plan: DeploymentCreationReviewPlan): readonly SetupStep[] {
+  const { runsOn } = plan;
+  return [
+    { key: 'create', title: plan.newProjectName ? t('newApp.deploy.plan.stepCreateProject', { name: plan.newProjectName })
+      : t('newApp.deploy.plan.stepCreate'), detail: t('newApp.deploy.plan.stepCreateNote') },
+    ...(runsOn.kind === 'platform' ? [{ key: 'link', title: runsOn.resource === 'create'
+      ? t('newApp.deploy.plan.stepPlatformCreate', { platform: runsOn.platform })
+      : t('newApp.deploy.plan.stepPlatformLink', { platform: runsOn.platform }) }] : []),
+    { key: 'deploy', title: t('newApp.deploy.plan.stepDeploy'), detail: t('newApp.deploy.plan.stepDeployNote') },
+  ];
+}
+
+/**
+ * Both prepared drafts and carried reviews show the resolver's exact frozen defaults. A stepped draft also passes
+ * its plan, and the defaults then read as the review's groups: what Happier creates, how it deploys, what happens next.
+ */
 export function DeploymentCreationReviewFacts(props: Readonly<{
   review: DeploymentEnvironmentCreationReviewV1;
   serverId: string | null;
   testID: string;
+  plan?: DeploymentCreationReviewPlan;
 }>) {
-  const { review, testID } = props;
+  const { review, testID, plan } = props;
   const builder = useServerScopedMachineLabel(props.serverId, review.creationDefaults.values.buildMachineId ?? null);
   const controller = useServerScopedMachineLabel(props.serverId, review.creationDefaults.values.controllerMachineId ?? null);
   const machineName = (id: string) => (id === review.creationDefaults.values.buildMachineId ? builder : controller) ?? t('approvals.machineNotKnown');
+  const defaultsRows = renderDeploymentCreationDefaultsRows({ defaults: review.creationDefaults, machineName, testID: `${testID}.defaults` });
+  const runsOn = plan?.runsOn;
   return <>
-    <ItemGroup testID={`${testID}.defaults`} title={t('projects.deployments.creationReview.title')}
-      description={t('projects.deployments.creationReview.description')}>
-      {renderDeploymentCreationDefaultsRows({ defaults: review.creationDefaults, machineName, testID: `${testID}.defaults` })}
-    </ItemGroup>
-    {review.copy?.included.length ? <ItemGroup title={t('projects.deployments.copy.include')}>
-      {review.copy.included.map(value => <Item key={value} mode="info" title={value} />)}
+    {plan ? <ItemGroup testID={`${testID}.creates`} title={t('newApp.deploy.plan.createsTitle')}>
+      {plan.newProjectName ? <Item testID={`${testID}.creates.project`} mode="info" icon={<Icon name="folder" />}
+        title={t('newApp.deploy.plan.project', { name: plan.newProjectName })} subtitle={t('newApp.deploy.plan.projectNote')} /> : null}
+      <Item testID={`${testID}.creates.environment`} mode="info" icon={<Icon name="rocket" />}
+        title={t('newApp.deploy.plan.environment', { name: plan.environment.name })}
+        subtitle={[plan.environment.production ? t('newApp.deploy.plan.production') : null,
+          t('newApp.deploy.plan.deployers', { who: deployersLabel(plan.environment.deployers) })].filter(Boolean).join(' · ')} />
+      {runsOn?.kind === 'platform' ? <Item testID={`${testID}.creates.platform`} mode="info"
+        icon={<PluginMark title={runsOn.platform} pluginId={runsOn.pluginId} />}
+        title={runsOn.resource === 'create' ? t('newApp.deploy.plan.platformCreate', { platform: runsOn.platform })
+          : t('newApp.deploy.plan.platformLink', { platform: runsOn.platform })}
+        subtitle={runsOn.resource === 'create' ? t('newApp.deploy.plan.platformCreateNote', { platform: runsOn.platform })
+          : t('newApp.deploy.plan.platformLinkNote')} /> : null}
     </ItemGroup> : null}
-    {review.copy?.omitted.length ? <ItemGroup title={t('projects.deployments.copy.omit')}>
-      {review.copy.omitted.map(value => <Item key={value} mode="info" title={value} />)}
-    </ItemGroup> : null}
-    {review.template ? <DeploymentTemplateFacts review={review.template} serverId={props.serverId} testID={`${testID}.template`} /> : null}
+    {plan?.answered ? null : <>
+      {plan && runsOn ? <ItemGroup testID={`${testID}.defaults`} title={t('newApp.deploy.plan.howTitle')}>
+        {plan.runs ? <Item testID={`${testID}.runs`} mode="info"
+          icon={<Icon name={plan.runs.kind === 'repository' ? 'git-branch' : 'cube'} />}
+          title={plan.runs.kind === 'repository' ? t('newApp.deploy.plan.buildsRef', { ref: plan.runs.ref })
+            : plan.runs.kind === 'image' ? t('newApp.deploy.plan.runsImage', { image: plan.runs.image })
+            : plan.runs.kind === 'app' ? t('newApp.deploy.plan.runsApp', { name: plan.runs.name })
+            : t('newApp.deploy.plan.runsCompose')}
+          subtitle={runsOn.kind === 'platform' ? t('newApp.deploy.plan.onPlatform', { platform: runsOn.platform, machine: runsOn.machine })
+            : t('newApp.deploy.plan.onMachine', { machine: runsOn.machine })} /> : null}
+        {defaultsRows}
+      </ItemGroup> : <ItemGroup testID={`${testID}.defaults`} title={t('projects.deployments.creationReview.title')}
+        description={t('projects.deployments.creationReview.description')}>
+        {defaultsRows}
+      </ItemGroup>}
+      {review.copy?.included.length ? <ItemGroup title={t('projects.deployments.copy.include')}>
+        {review.copy.included.map(value => <Item key={value} mode="info" title={value} />)}
+      </ItemGroup> : null}
+      {review.copy?.omitted.length ? <ItemGroup title={t('projects.deployments.copy.omit')}>
+        {review.copy.omitted.map(value => <Item key={value} mode="info" title={value} />)}
+      </ItemGroup> : null}
+      {review.template ? <DeploymentTemplateFacts review={review.template} serverId={props.serverId} testID={`${testID}.template`} /> : null}
+      {plan ? <ItemGroup title={t('newApp.deploy.plan.nextTitle')}><SectionContentRow>
+        <SetupSteps testID={`${testID}.next`} steps={deploymentCreationNextSteps(plan)} />
+      </SectionContentRow></ItemGroup> : null}
+    </>}
   </>;
 }
 

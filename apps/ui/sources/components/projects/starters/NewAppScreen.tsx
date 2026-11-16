@@ -164,7 +164,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // A pasted repository link is read by Your code, not searched for: starters and the catalog stay as they were.
   const search = isRepositoryAddressCandidate(query) ? '' : query.trim();
   const starterCatalog = useRegistryItems(search ? { kind: 'starter', query: search } : { kind: 'starter' }, true);
-  const starters = starterCatalog.items;
+  // Only app starters: the starter owner marks one by its app deploy shape (`starterDeploy`); a workspace template
+  // such as Coder's declares none and is not a way to deploy an app.
+  const starters = React.useMemo(() => starterCatalog.items.filter((item) => item.starterDeploy !== undefined),
+    [starterCatalog.items]);
 
   const [step, setStep] = React.useState<Step>(props.startOn === 'describe' ? 'auto' : 'start');
   // Describe your app (journey-deploy S1/S2/S!): the suggestion owner's last report, and the setup the person chose.
@@ -712,7 +715,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         <View>
         {search && starterCatalog.hasValue && !starterCatalog.loading && starters.length === 0 ? null : (
         <ItemGroup surface="none" title={t('newApp.startNew')} titleRole="label">
-        <View style={dialog ? styles.dialogInset : null}>
+        {/* Describe your app sits a tile gap above the starters (lab .jd-descopt), not flush against them. */}
+        <View style={[dialog ? styles.dialogInset : null, styles.startNewStack]}>
         {/* Describe your app: one full-width choice above the starters (lab src DESCRIBE_ENTRY), chosen like the rest. */}
         <SelectionTiles
           density="compact"
@@ -1225,6 +1229,7 @@ const styles = StyleSheet.create((theme) => ({
   // twice: once around the group (its title lines up with the page title), once around tiles that have no sheet, so
   // they line up with the title and the run-existing row (measured live on #136: 416 → 432 against a 434 title).
   dialogInset: { paddingHorizontal: theme.space.s16 },
+  startNewStack: { gap: theme.space.s8 },
   forgeRepair: { alignItems: 'flex-end', paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s12 },
 
   phoneFooter: { gap: theme.space.s8 },

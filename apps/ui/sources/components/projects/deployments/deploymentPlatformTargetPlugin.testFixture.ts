@@ -48,7 +48,7 @@ export async function answerDeploymentTargetInspectForHome(params: Readonly<{
 
 /** A third-party plugin declaring two runtime platforms, Alpha and Beta, through the public deployment target contract. */
 export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: (name: string, input: JsonValue) => Promise<void> = async () => {},
-  options: Readonly<{ emptyChoices?: boolean; upload?: boolean; create?: boolean; teardown?: boolean }> = {}) {
+  options: Readonly<{ emptyChoices?: boolean; upload?: boolean; create?: boolean; teardown?: boolean; plans?: boolean }> = {}) {
   const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
   const execution = DEPLOYMENT_TARGETS_TEST_EXECUTION;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
@@ -114,6 +114,10 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
         inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.teardown.jsonSchema } } as const : {}) },
     deploymentTargets: {
       alpha: { role: 'runtime', title: 'Alpha runtime', targetKind: 'alpha', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
+        // Dated display facts, as a platform plugin declares them (Protocol DeploymentTargetPlanV1).
+        ...(options.plans ? { description: 'Hosting for web apps', plans: [{ id: 'free', title: 'Free',
+          facts: [{ label: 'Price', value: '$0 a month' }, { label: 'Requests', value: '100,000 a day' }],
+          source: { url: 'https://alpha.example/pricing', checkedAt: '2026-11-16' } }] } : {}),
         actions: { inspect: 'inspect-alpha', link: 'link', deploy: 'deploy', observe: 'observe' } },
       beta: { role: 'runtime', title: 'Beta runtime', targetKind: 'beta', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
         actions: { inspect: 'inspect-beta', link: 'link', deploy: 'deploy', observe: 'observe',

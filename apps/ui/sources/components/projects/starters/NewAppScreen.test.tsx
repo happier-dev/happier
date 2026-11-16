@@ -70,6 +70,20 @@ async function describeApp(onClose: () => void) {
   return screen;
 }
 
+it('offers only app starters under Start something new: a starter that declares no app deploy shape is not one (journey-deploy src)', async () => {
+  const fixture = await starterHome('https://new-app-app-starters.test');
+  try {
+    const screen = await renderScreen(<NewAppScreen onClose={() => {}} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.starter:static-website')).toBeTruthy());
+    expect(screen.findByTestId('newApp.starter:expo-blank')).toBeTruthy();
+    expect(screen.findByTestId('newApp.starter:coder-docker'), 'a workspace template is not an app starter').toBeNull();
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('keeps the selected starter and writing while adding a Machine, including cancellation', async () => {
   const fixture = await starterHome('https://new-app-starter-machine.test');
   try {

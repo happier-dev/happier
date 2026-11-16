@@ -45,6 +45,7 @@ const { FieldTextInput } = await import('@/components/ui/forms/FieldTextInput');
 const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
+const { SetupSteps } = await import('@/components/ui/setupBlocks/SetupSteps');
 const { createDeploymentActions } = await import('./deploymentActions');
 const { answerExternalActionAccountForHome } =
   await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
@@ -213,6 +214,11 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       expect(
         screen.findByTestId('project-deployments.draft.defaults'),
       ).not.toBeNull();
+      // Review says what Happier creates and what happens next, from the operands it prepared (journey-deploy revM):
+      // a new Project and its Environment are saved, then the person deploys from the Environment.
+      expect(screen.findByTestId('project-deployments.draft.creates.project')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.draft.creates.environment')).not.toBeNull();
+      expect(nextSteps(screen)).toEqual(['create', 'deploy']);
       expect(authored).toHaveLength(1);
       expect(authored[0]).toMatchObject({
         newProject: { name: 'Operations' },
@@ -279,6 +285,54 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       expect(authored).toHaveLength(1);
       expect(authored[0]).toMatchObject({ newProject: { name: 'Plausible' }, definition: { from: 'catalogApp', templateRef },
         firstTargetLink: { machines: [{ machineId: 'runtime', installationId: 'runtime-installation' }] } });
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
+  it('a refused Create keeps what was asked under the lifecycle owner’s notice and drops what would have happened next (journey-deploy revFail)', async () => {
+    const serverId = await homes.addHome({ name: 'Deploy refused', serverUrl: 'https://draft-steps-refused.test', accountId: 'alice',
+      serverIdentityId: `srv_${'9'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const frames: DeploymentDraftFrame[] = [];
+    const templateRef = { sourceId: 'apps', itemId: 'plausible', version: '2.1.0', ref: { kind: 'content' as const, digest: `sha256:${'b'.repeat(64)}` } };
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources', { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
+          if (typeof input !== 'object' || input === null || !('mode' in input)) return { refused: true };
+          const { mode: _mode, name: _name, definition: _definition, firstTargetLink: _link, ...selectors } =
+            DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
+          return DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: { ...selectors,
+            controllerMachineId: 'runtime', contentArtifactId: 'reviewed-content', contentHeaderVersion: 1, contentBodyVersion: 1 },
+            review: { creationDefaults: { values: { controllerMachineId: 'runtime', retainPreviousDeployments: 1 },
+              sources: { controllerMachineId: 'explicit', retainPreviousDeployments: 'builtin' } } } });
+        },
+        failure: result => typeof result === 'object' && result !== null && 'refused' in result
+          ? { errorCode: 'invalid_parameters', error: 'invalid_parameters' } : null });
+      await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
+      const steps = { onFrame: (frame: DeploymentDraftFrame) => { frames.push(frame); }, onExit: () => {} };
+      function CatalogDraft() {
+        const projectChoice = useDeploymentProjectChoice({ lifetime: account.accountLifetime, initiallyNew: true, initialNewProjectName: 'Plausible' });
+        return <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null} projectChoice={projectChoice}
+          catalogApp={{ templateRef, title: 'Plausible' }} phone={false} actions={createDeploymentActions(account.accountLifetime)}
+          steps={steps} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />;
+      }
+      const screen = await renderScreen(<CatalogDraft />);
+      const frame = () => frames[frames.length - 1]!;
+      const settle = (check: () => void) => waitForHomeGovernance(async () => { await act(async () => {}); check(); });
+      await settle(() => expect(frame().primary.disabled).toBe(false));
+      await act(async () => frame().press());
+      await settle(() => expect(frame().primary.disabled).toBe(false));
+      await act(async () => frame().press());
+      await settle(() => expect(frame().step).toBe('review'));
+      expect(nextSteps(screen)).toEqual(['create', 'deploy']);
+
+      await act(async () => frame().press());
+      await settle(() => expect(screen.findByTestId('project-deployments.draft.refused')).not.toBeNull());
+      expect(frame().step).toBe('review');
+      expect(screen.findByTestId('project-deployments.draft.creates.environment')).not.toBeNull();
+      expect(nextSteps(screen)).toBeUndefined();
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
@@ -437,6 +491,11 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
     }
   });
 });
+
+function nextSteps(screen: Awaited<ReturnType<typeof renderScreen>>): string[] | undefined {
+  return screen.findAllByType(SetupSteps).find(node => node.props.testID === 'project-deployments.draft.next')
+    ?.props.steps.map((step: { key: string }) => step.key);
+}
 
 function field(screen: Awaited<ReturnType<typeof renderScreen>>, id: string) {
   return screen.findAllByType(FieldTextInput).find(node => node.props.testID === id)!;

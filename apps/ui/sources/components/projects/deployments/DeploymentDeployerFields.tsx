@@ -233,7 +233,7 @@ function TeamDeployerPicker(props: Readonly<{
     label={props.multiple ? `${label} · ${name}` : label} disabled={false} onChoose={props.onChoose} />;
 }
 
-function deployersLabel(mode: DeployerMode): string {
+export function deployersLabel(mode: DeployerMode): string {
   switch (mode) {
     case 'managers':
       return t('projects.deployments.deployersManagers');

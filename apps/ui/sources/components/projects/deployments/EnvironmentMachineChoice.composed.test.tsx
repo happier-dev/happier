@@ -27,6 +27,41 @@ const { SoftwareInputFields } = await import('@/components/store/StoreSoftwareIn
 const { MachineSetupRecipeInputs } = await import('@/components/settings/machines/managed/MachineSetupRecipeInputs');
 const { DEPLOY_HOST_DOCKER_ITEM } = await import('./EnvironmentMachineChoice');
 
+it('says a ready Machine is ready to host deploys in its Where card (journey-deploy whereM)', async () => {
+  const serverId = await homes.addHome({ name: 'Host ready', serverUrl: 'https://deploy-host-ready-card.test',
+    accountId: 'alice', serverIdentityId: `srv_${'3'.repeat(32)}`, currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const previous = storage.getState();
+  const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
+  const { t } = await import('@/text');
+  native.rpc.mockImplementation(async () => ({ ok: false, code: 'unsupported' }));
+  try {
+    storage.getState().setEndpointConnectivity({ status: 'online', reason: null, attempt: 0,
+      nextRetryAt: null, lastConnectedAt: Date.now(), lastDisconnectedAt: null, lastErrorMessage: null });
+    // The current setup Plan (a network boundary) reports the Docker recipe satisfied on this Machine.
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: 'host', installationId: 'host-installation',
+      actionId: 'machines.setup.plan', tokenEpoch: 0, requesterInvocation: 'none', execute: raw => {
+        const input = ManagedMachineActionInputSchemasV1['machines.setup.plan'].parse(raw);
+        if (!('targets' in input)) throw new Error('Expected the production combined Plan request');
+        const target = input.targets[0]!;
+        return { targets: [{ homeId: target.homeId, machineId: target.machineId, plan: {
+          desiredRevision: 0, sources: [{ kind: 'direct', setup: { items: [DEPLOY_HOST_DOCKER_ITEM] } }], exclusions: [],
+          support: [{ sourceIndex: 0, itemIndex: 0, status: 'satisfied' }],
+        } }], review: { machineId: 'host', machines: [{ machineId: 'host', online: true }] } };
+      } });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({
+      id: 'host', installationId: 'host-installation', activeAt: Date.now(),
+    })]);
+    const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null}
+      definitionKind="compose" phone={false} actions={null} steps={{ onFrame: () => {}, onExit: () => {} }}
+      onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+    try {
+      const machine = () => screen.findAllByType(SessionMachineField).find(node => node.props.testID === 'project-deployments.draft.machine');
+      await waitForHomeGovernance(() => expect(machine()?.props.subtitle).toBe(t('newApp.deploy.readyToHost')));
+    } finally { await screen.unmount(); }
+  } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+});
+
 it.each(['satisfied', 'drifted'] as const)('uses the reviewed Docker %s fact after an empty current setup Plan', async status => {
   const serverId = await homes.addHome({ name: 'Host facts', serverUrl: `https://deploy-host-${status}.test`,
     accountId: 'alice', serverIdentityId: `srv_${(status === 'satisfied' ? '1' : '2').repeat(32)}`, currentAccount: true });

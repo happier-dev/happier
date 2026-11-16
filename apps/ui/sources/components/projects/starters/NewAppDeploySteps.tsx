@@ -172,6 +172,8 @@ function DefinitionDeploy(
       definitionKind={props.definitionKind}
       phone={props.phone}
       actions={actions}
+      // Every source reads the declared platforms: one it can't use is listed as unable to run it (whereM).
+      platformAvailable
       initialMachineId={props.machineId}
       steps={props.steps}
       onApprovalRequested={onApprovalRequested}
@@ -224,7 +226,7 @@ function CatalogAppDraft(props: BoundProps & Readonly<{ templateRef: NonNullable
   const catalogApp = React.useMemo(() => ({ templateRef: props.templateRef, title: props.title }), [props.templateRef, props.title]);
   const { leaveTo, onApprovalRequested } = useDeployExits(props);
   return <DeploymentEnvironmentDraft lifetime={lifetime} sourceId={null} projectChoice={projectChoice} catalogApp={catalogApp}
-    phone={props.phone} actions={actions} initialMachineId={props.machineId} initialTargetKey={props.targetId}
+    phone={props.phone} actions={actions} platformAvailable initialMachineId={props.machineId} initialTargetKey={props.targetId}
     steps={props.steps} onApprovalRequested={onApprovalRequested} onDiscard={props.onLeave}
     onSaved={(environmentId, next) => {
       const selection = projectChoice.selection;

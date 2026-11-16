@@ -1,5 +1,5 @@
 import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
-import type { DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentRuntimeTargetV1, DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { patchHappierActionInputPath, readHappierActionInputPath } from '@happier-dev/plugin-ui/presentation';
@@ -40,6 +40,8 @@ export type DeploymentPlatformTarget = Readonly<{
   sourceMethods: readonly DeploymentSourceMethodV1[];
   accepts?: DeploySuggestionCatalogV1['targets'][number]['accepts'];
   needs?: DeploySuggestionCatalogV1['targets'][number]['needs'];
+  /** The plugin's dated plan facts, printed as declared (Protocol DeploymentTargetPlanV1). */
+  plans?: DeploymentRuntimeTargetV1['plans'];
   runtimeLogs?: true;
   teardown?: true;
   /** The provider's own words for what its teardown deletes ("Delete this Vercel project and its deployments?"). */
@@ -166,6 +168,7 @@ export function readDeploymentPlatformTargets(
             return normalized?.role === 'runtime' ? {
               ...(normalized.accepts === undefined ? {} : { accepts: normalized.accepts }),
               ...(normalized.needs === undefined ? {} : { needs: normalized.needs }),
+              ...(normalized.plans?.length ? { plans: normalized.plans } : {}),
             } : {};
           })(),
           ...(record(target.actions) && text(target.actions.teardown) ? { teardown: true as const,
