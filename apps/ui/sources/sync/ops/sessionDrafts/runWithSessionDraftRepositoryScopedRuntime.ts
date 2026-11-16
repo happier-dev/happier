@@ -1,3 +1,4 @@
+import { lendAccountEncryptionObservation } from '@/sync/http/accountEncryptionObservationBinding';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { isTokenOnlyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { createApiSessionDraftsTransport } from '@/sync/api/account/apiSessionDrafts';
@@ -53,12 +54,12 @@ export async function runWithSessionDraftRepositoryScopedRuntime<TResult>(params
         if (!isCurrent()) return null;
         const credentials = authority.context.credentials;
         if (!credentials) return null;
-        const request: ActiveRequest = async (path, init, options) => {
+        const request: ActiveRequest = lendAccountEncryptionObservation(async (path, init, options) => {
             if (!isCurrent()) throw new Error('Session draft Account authority retired');
             const response = await authority.request(path, init, options);
             if (!isCurrent()) throw new Error('Session draft Account authority retired');
             return response;
-        };
+        }, authority.request);
         const featureDecision = await resolveRuntimeFeatureDecisionOrThrow({
             featureId: 'sessions.drafts',
             serverId: authority.scope.serverId,

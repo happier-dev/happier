@@ -85,6 +85,15 @@ export function bindCurrentAccountEncryptionObservation<T extends object>(
     return request;
 }
 
+/**
+ * A request that forwards to another Account request (adding a currentness check, a signal or a
+ * response guard) lends that request's socket observation, resolved at read time, so wrapping a
+ * request never turns an identity read that could borrow the held observation into an HTTP read.
+ */
+export function lendAccountEncryptionObservation<T extends object>(forwarder: T, source: object): T {
+    return bindCurrentAccountEncryptionObservation(forwarder, credentials => readAccountEncryptionObservationBinding(source, credentials));
+}
+
 export function readAccountEncryptionObservationBinding(
     request: object,
     credentials: AuthCredentials,

@@ -1,3 +1,4 @@
+import { lendAccountEncryptionObservation } from '@/sync/http/accountEncryptionObservationBinding';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import {
     captureServerRequestAuthorityForServerAccountScope,
@@ -249,10 +250,10 @@ export async function readMemorySearchSessionForServerScope(
         sessionId: args.target.sessionId,
         serverId: args.target.serverId,
         activeCredentials: credentials,
-        activeRequest: (path, init) => args.authority.request(path, { ...init, signal: args.signal }),
+        activeRequest: lendAccountEncryptionObservation((path: string, init?: RequestInit) => args.authority.request(path, { ...init, signal: args.signal }), args.authority.request),
         authority: {
             ...args.authority,
-            request: (path, init) => args.authority.request(path, { ...init, signal: args.signal }),
+            request: lendAccountEncryptionObservation((path: string, init?: RequestInit) => args.authority.request(path, { ...init, signal: args.signal }), args.authority.request),
         },
         sessionDataKeys: new Map(),
         sessionDataKeyEnvelopes: new Map(),

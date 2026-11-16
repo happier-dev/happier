@@ -894,3 +894,51 @@ it('lets owner display maintenance after a full legacy Session read borrow the s
         expect(reads - before).toBe(0);
     } finally { context.dispose(); }
 });
+
+it('lets a Session draft invocation borrow the settled Account observation through its forwarding request', async () => {
+    // Every Session open materializes its draft through an exact-Home runtime whose request forwards to
+    // the captured authority. The forwarder must lend that authority's socket observation, or each open
+    // reads Account currentness over HTTP while the socket already holds it (Android signed-in: one read
+    // per open and per draft retry).
+    const accountId = 'draft-runtime-borrows-observation';
+    const serverUrl = 'https://draft-runtime-borrows-observation.test';
+    const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }) };
+    const serverId = await home.addHome({ name: 'Draft borrows', serverUrl, accountId, credentials,
+        accountEncryptionMode: 'plain', currentAccount: true });
+    const sessionId = 'draft-session';
+    let reads = 0;
+    setRuntimeFetch(createSessionReadBatchFetchBoundary(async (rawUrl, init) => {
+        const path = new URL(String(rawUrl)).pathname;
+        if (path === '/v1/account/encryption/currentness') {
+            reads++;
+            return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        }
+        if (path === `/v2/sessions/${sessionId}` && (init?.method ?? 'GET') === 'GET') {
+            return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: sessionId }) });
+        }
+        return home.request(rawUrl, init);
+    }));
+    let socket: Socket | undefined;
+    installDisconnectedServerSocketBoundary(current => { socket = current; configureConnectedServerSocketBoundary(current); });
+    apiSocket.initialize({ endpoint: serverUrl, token: credentials.token, credentials, serverId,
+        generation: getActiveServerSnapshot().generation,
+        request: createServerFetchAtEndpoint({ endpointUrl: serverUrl, serverId, credentials }), isCurrent: () => true }, null);
+    await waitForHomeGovernance(() => expect(socket?.connected).toBe(true));
+    const context = await captureLazyActionAccountContext(serverId);
+    try {
+        await context.resolveAccountMode();
+        const before = reads;
+        const { runWithSessionDraftRepositoryScopedRuntime } = await import('@/sync/ops/sessionDrafts/runWithSessionDraftRepositoryScopedRuntime');
+        const invocations = 3;
+        for (let index = 0; index < invocations; index += 1) {
+            const outcome = await runWithSessionDraftRepositoryScopedRuntime({
+                binding: { scope: context.accountLifetime.scope, isCurrent: () => true },
+                activeRequest: context.request,
+                sessionId,
+                operation: async ({ runtime }) => runtime.cipher !== null,
+            });
+            expect(outcome).toBe(true);
+        }
+        expect(reads - before).toBe(0);
+    } finally { context.dispose(); }
+});

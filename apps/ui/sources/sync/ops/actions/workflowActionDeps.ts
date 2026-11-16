@@ -1,3 +1,4 @@
+import { lendAccountEncryptionObservation } from '@/sync/http/accountEncryptionObservationBinding';
 import { createUiSessionRead } from './sessionReadAction';
 import { resolveValidatedAutomationAccountEncryptionV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
@@ -113,8 +114,8 @@ export function createUiTriggerSessionResolver(account: LazyActionAccountContext
             : await runWithServerRequestAuthorityForServerAccountScope({
                 scope: account.accountLifetime.scope, activeRequest: account.request,
             }, async (authority) => (await readSessionSnapshotForAuthority({
-                authority: { ...authority, request: (path, init, options) => authority.request(path,
-                    { ...init, ...(signal ? { signal } : {}) }, options) },
+                authority: { ...authority, request: lendAccountEncryptionObservation((path: string, init?: RequestInit, options?: Parameters<typeof authority.request>[2]) => authority.request(path,
+                    { ...init, ...(signal ? { signal } : {}) }, options), authority.request) },
                 sessionId, isCurrent: account.accountLifetime.isCurrent,
             })).session);
         account.assertCurrent();
