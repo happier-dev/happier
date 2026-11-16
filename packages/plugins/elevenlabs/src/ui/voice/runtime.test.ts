@@ -720,7 +720,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
     const delivery = startOptions.clientTools?.readSession?.(parameters);
     const control = await connection.controlEvents(signal)[Symbol.asyncIterator]().next();
     const decoded = runtime.protocol.decodeControl(control.value);
-    expect(decoded).toMatchObject([{ type: 'tool_calls', responseId: 'provider-read' }]);
+    expect(decoded).toMatchObject([{ type: 'tool_calls', calls: [{ callId: 'provider-read', toolName: 'readSession' }] }]);
     for (const event of runtime.encodeToolResults([{
       v: 1, responseId: 'provider-read', callId: 'provider-read', toolName: 'readSession', order: 0,
       status: 'success', output: { status: 'ok', path: '[redacted]' },

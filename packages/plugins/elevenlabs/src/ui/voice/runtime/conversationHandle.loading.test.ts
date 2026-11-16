@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Compile the real host contract during collection rather than the timed SDK-loading probe.
 import '@happier-dev/plugin-sdk/voice/client';
+import { createElevenLabsConversationHandle } from './conversationHandle.js';
 
 const platform = vi.hoisted(() => ({ OS: 'web' }));
 vi.mock('react-native', () => ({ Platform: platform }));
@@ -27,7 +28,6 @@ describe('ElevenLabs browser SDK demand loading', () => {
             return { setSetupStrategy, createConnection: vi.fn(), setupWebRTCSession: vi.fn() };
         });
         vi.doMock('@elevenlabs/client', () => ({ Conversation: { startSession } }));
-        const { createElevenLabsConversationHandle } = await import('./conversationHandle.js');
         const handle = createElevenLabsConversationHandle({ tools: [], loadConversationSdk: () => import('@elevenlabs/client') });
         const started = handle.startSession({});
         await loading;
@@ -60,7 +60,6 @@ describe('ElevenLabs browser SDK demand loading', () => {
             return { getId: () => 'portable-conversation', endSession: async () => {} };
         });
         vi.doMock('@elevenlabs/client', () => ({ Conversation: { startSession } }));
-        const { createElevenLabsConversationHandle } = await import('./conversationHandle.js');
         const handle = createElevenLabsConversationHandle({ tools: [], loadConversationSdk: () => import('@elevenlabs/client') });
         expect(nativeLoaded).toBe(false);
         expect(await handle.startSession({ connectionType: 'webrtc' })).toBe('portable-conversation');
@@ -82,7 +81,6 @@ describe('ElevenLabs browser SDK demand loading', () => {
             loaded = true;
             return { Conversation: { startSession } };
         });
-        const { createElevenLabsConversationHandle } = await import('./conversationHandle.js');
         const handle = createElevenLabsConversationHandle({ tools: [], loadConversationSdk: () => import('@elevenlabs/client') });
         handle.setMicMuted(true);
         handle.setOutputVolume(0.18);
