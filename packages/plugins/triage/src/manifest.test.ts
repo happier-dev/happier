@@ -68,9 +68,20 @@ describe('Triage plugin manifest', () => {
         .toMatchObject({ status: 'admitted' });
       expect(await gate(true).admit({ surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user', input }), `${id} explicit Ask`)
         .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
-      for (const surface of ['agent', 'mcp']) {
+      // Configured starts and review continuations use the trusted plugin
+      // service; explicit Ask still applies there through the shared owner.
+      const automatedSurfaces = id === TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1
+        || id === TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1
+        ? ['agent', 'mcp', 'plugin'] : ['agent', 'mcp'];
+      for (const surface of automatedSurfaces) {
+        expect(action.surfaces, `${id} exposes its configured caller surface`).toContain(surface);
         expect(await gate().admit({ surface, invocationSurface: surface, input: {} }), `${id} ${surface}`)
-          .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+          .toMatchObject(surface === 'plugin' ? { status: 'admitted' }
+            : { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+        if (surface === 'plugin') {
+          expect(await gate(true).admit({ surface, invocationSurface: surface, input: {} }), `${id} explicit plugin Ask`)
+            .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+        }
       }
     }
   });

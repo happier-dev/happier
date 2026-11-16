@@ -50,7 +50,8 @@ import { readTriageSessionHandoffChoicesV1, type TriageSessionHandoffHostV1 } fr
 import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';
 import { buildAgentTargetKeyV2 } from '@happier-dev/plugin-sdk/agents';
 import { runTriageConfiguredHandoffV1 } from './sessions/configuredActionRun.js';
-import { createTestkitActionInvoker, spawnSuccess, testkitReadOnlySourceSnapshot, TESTKIT_LINK_DISPLAY } from './sessions/testkit/entrySessionTestkit.test-support.js';
+import { createTestkitActionInvoker, spawnSuccess, testkitReadOnlySourceSnapshot, TESTKIT_LINK_DISPLAY, TESTKIT_SPAWN_REQUEST } from './sessions/testkit/entrySessionTestkit.test-support.js';
+import { TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1, TriageStartEntrySessionResultV1Schema } from './actions/entrySessionProtocol.js';
 import { PLUGIN_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol';
 import { TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1, TriageReadSourceSessionLinksActionResultV1Schema } from './actions/sessionLinksProtocol.js';
 import { linkEntryToSession } from './sessions/entrySessionLinks.js';
@@ -62,7 +63,8 @@ async function withRegisteredPlugin(run: (fixture: Readonly<{
   plugin: PluginTestkit;
   corpus: ReturnType<typeof createTestkitCorpusCollections>;
   kv: ReturnType<typeof createTestkitAccountKv>;
-}>) => Promise<void>, module: Parameters<typeof createPluginTestkit>[0]['module'] = TRIAGE_PLUGIN) {
+}>) => Promise<void>, module: Parameters<typeof createPluginTestkit>[0]['module'] = TRIAGE_PLUGIN,
+  actions?: PluginServices['actions']) {
   const corpus = createTestkitCorpusCollections();
   const kv = createTestkitAccountKv();
   // Account storage is the network/database boundary. The existing testkits
@@ -92,7 +94,7 @@ async function withRegisteredPlugin(run: (fixture: Readonly<{
     },
     dispose: () => {},
   }) } as unknown as PluginServices['targetedContributions'];
-  plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module, services: { storage, targetedContributions } });
+  plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module, services: { storage, targetedContributions, ...(actions === undefined ? {} : { actions }) } });
   try {
     await run({ plugin, corpus, kv });
   } finally {
@@ -101,6 +103,33 @@ async function withRegisteredPlugin(run: (fixture: Readonly<{
 }
 
 describe('Triage activation', () => {
+  it('lets configured plugin callers reach the registered Session creator', async () => {
+    const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
+    // Session RPC is the external boundary; SDK target admission, the actual
+    // manifest, registered handler and creation-result consumption remain real.
+    const actions = { execute: invoker.execute } as unknown as PluginServices['actions'];
+    await withRegisteredPlugin(async ({ plugin }) => {
+      const caller = await createPluginTestkit({
+        manifest: { schemaVersion: 2, id: 'qa.configured-caller', version: '1.0.0',
+          displayName: 'Configured caller', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+          contributes: { actions: [{ id: 'start', title: 'Start', execution: { target: 'daemon' },
+            scopes: ['global'], surfaces: ['cli'], placementBindings: [], dangerLevel: 'safe' }] } },
+        actionTargets: [plugin],
+        module: { activate(api) { api.actions.register('start', async (_input, context) => context.services.actions.execute(
+          { pluginId: PLUGIN_MANIFEST.id, localId: TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 },
+          { v: 1, workspaceMode: 'reference_only', entryRef: testkitEntryRef(), display: TESTKIT_LINK_DISPLAY,
+            destination: { kind: 'new', creationKey: 'configured-child-key', spawn: TESTKIT_SPAWN_REQUEST,
+              materialization: { kind: 'referenceOnly', directory: '/workspace/project' } } },
+        )); } },
+      });
+      try {
+        const result = TriageStartEntrySessionResultV1Schema.parse(await caller.invokeAction('start', null));
+        expect(result).toMatchObject({ sessionId: 'session-a' });
+        expect(invoker.callsFor('session.spawn_new')).toHaveLength(1);
+        expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({ creationKey: 'configured-child-key' });
+      } finally { await caller.dispose(); }
+    }, TRIAGE_PLUGIN, actions);
+  });
   it.each(['agent', 'mcp', 'cli'] as const)('returns own-Session links through the declared portable %s Action', async surface => {
     await withRegisteredPlugin(async ({ plugin, corpus }) => {
       const sessionId = SessionIdSchema.parse('source-links-session');

@@ -732563,7 +732563,8 @@
           "voice",
           "agent",
           "mcp",
-          "cli"
+          "cli",
+          "plugin"
         ],
         "title": "Start a session on an entry"
       },
@@ -733569,7 +733570,8 @@
           "ui",
           "agent",
           "mcp",
-          "cli"
+          "cli",
+          "plugin"
         ],
         "title": "Start a pull request review"
       }

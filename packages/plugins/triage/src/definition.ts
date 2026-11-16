@@ -387,8 +387,8 @@ function createTriagePlugin(): TriagePlugin {
       [TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1]: {
         title: 'Start a session on an entry',
         description: 'Creates or rejoins one session for a pull request, issue or error group, records the link, and opens it.',
-        // The UI press supplies intent; automated callers keep the shared Ask default.
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'],
+        // The UI press supplies intent; explicit Ask remains with the shared gate.
+        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         // Selected review-workspace preparation remains in this invocation
         // while its native child waits for approval.
@@ -410,7 +410,7 @@ function createTriagePlugin(): TriagePlugin {
       [TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]: {
         title: 'Start a pull request review',
         description: 'Rereads the selected pull request and starts the chosen review engine.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
         dangerLevel: 'writesLocal',
