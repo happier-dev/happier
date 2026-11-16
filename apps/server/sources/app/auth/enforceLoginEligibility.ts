@@ -52,6 +52,15 @@ function getLoginEligibilityPositiveCache(env: NodeJS.ProcessEnv): LRUTtlMap<str
     return loginEligibilityPositiveCache;
 }
 
+/**
+ * A Home sign-in policy change re-decides eligibility at once: cached positive results were
+ * decided under the previous policy.
+ */
+export function invalidateLoginEligibilityPositiveCache(): void {
+    loginEligibilityPositiveCache?.clear();
+    loginEligibilityInflight = new Map();
+}
+
 export async function enforceLoginEligibility(params: {
     accountId: string;
     /**

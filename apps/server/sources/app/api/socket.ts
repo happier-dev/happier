@@ -9,6 +9,8 @@ import { buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnecti
 import { ACCOUNT_CHANGE_ROWS_DELIVERY_EVENT, CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT } from "@/app/events/socketRoomEmitter";
 import { readAccountChangeRowsDemandV1 } from '@happier-dev/protocol/changes';
 import { registerMachineAccessLossHandler } from '@/app/events/machineAccessLoss';
+import { registerSignInPolicyChangeHandler } from '@/app/events/signInPolicyChange';
+import { evictSignInIneligibleSockets, registerSignInPolicyEviction } from '@/app/auth/signInPolicyEviction';
 import { LEGACY_MACHINE_HEARTBEAT_EVENT } from '@/app/events/connectionEventRouter';
 import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetadataFromSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
 import { Server, Socket } from "socket.io";
@@ -399,10 +401,18 @@ export function startSocket(app: Fastify): () => Promise<void> {
         });
     });
     const releaseMachineAccessLoss = registerMachineAccessLossHandler(io, input => eventRouter.receiveMachineAccessLoss(input));
-    // The cluster access-loss push is at-most-once Pub/Sub; re-check local Session-scoped sockets
-    // once when this node's adapter subscriber is ready again.
+    const releaseSignInPolicyChange = registerSignInPolicyChangeHandler(io, () => eventRouter.receiveSignInPolicyChange());
+    const releaseSignInPolicyEviction = registerSignInPolicyEviction({ sockets: () => io.of('/').sockets.values(),
+        onSignInPolicyChange: listener => eventRouter.onSignInPolicyChange(listener) });
+    // Access-loss and sign-in policy pushes between nodes are at-most-once Pub/Sub; re-check this
+    // node's live sockets once when its adapter subscriber is ready again.
     const releaseAdapterResubscribed = shouldEnableRedisAdapter
-        ? onSocketClusterAdapterResubscribed(() => { void reconfirmSessionScopedMachineAccess(io.of('/').sockets.values()); })
+        ? onSocketClusterAdapterResubscribed(() => {
+            void reconfirmSessionScopedMachineAccess(io.of('/').sockets.values());
+            void evictSignInIneligibleSockets(io.of('/').sockets.values()).catch(error => {
+                log({ module: 'auth-sign-in-policy', error }, 'Sign-in policy socket re-check after Redis resubscription failed');
+            });
+        })
         : () => {};
     const tunnelRelayBridge = createPeerTcpTunnelRelayBridge(io);
     const peerMediationObservabilityStore = createPeerMediationObservabilityStore();
@@ -1314,6 +1324,8 @@ export function startSocket(app: Fastify): () => Promise<void> {
     const close = async () => {
         releasePresenceDeadlineNotifications();
         releaseMachineAccessLoss();
+        releaseSignInPolicyChange();
+        releaseSignInPolicyEviction();
         releaseAdapterResubscribed();
         try {
             emitSocketPlannedRestart(io, plannedRestartRetryAfterMs);

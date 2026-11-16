@@ -34,6 +34,7 @@ import { cancelRpcTarget } from '@/app/api/socket/rpc/cancelRpcTarget';
 import { classifyLiveSessionDelivery, projectSessionDeliveryForSocket, socketConsumesSessionDelivery } from './sessionDeliveryProjection';
 import { admitLiveSessionDelivery, withdrawSessionConsumption } from '@/app/api/socket/sessionConsumption';
 import { MACHINE_ACCESS_LOSS_EVENT, type MachineAccessLoss } from './machineAccessLoss';
+import { SIGN_IN_POLICY_CHANGED_EVENT } from './signInPolicyChange';
 import { PRESENCE_DEADLINE_EVENT, type PresenceDeadlineNotification } from '@/app/presence/presenceDeadlineNotification';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
 import { db, getDbProviderFromEnv } from '@/storage/db';
@@ -224,6 +225,23 @@ class EventRouter {
 
     receiveMachineAccessLoss(input: MachineAccessLoss): void {
         for (const listener of this.machineAccessLossListeners) listener(input);
+    }
+
+    private readonly signInPolicyChangeListeners = new Set<() => void>();
+
+    onSignInPolicyChange(listener: () => void): () => void {
+        this.signInPolicyChangeListeners.add(listener);
+        return () => { this.signInPolicyChangeListeners.delete(listener); };
+    }
+
+    receiveSignInPolicyChange(): void {
+        for (const listener of [...this.signInPolicyChangeListeners]) listener();
+    }
+
+    /** The Home sign-in policy changed: every node re-decides its connected Accounts. */
+    announceSignInPolicyChange(): void {
+        this.receiveSignInPolicyChange();
+        this.broadcastServerSideEvent?.(SIGN_IN_POLICY_CHANGED_EVENT, { v: 1 });
     }
 
     disconnectAccountSockets(accountId: string): void {

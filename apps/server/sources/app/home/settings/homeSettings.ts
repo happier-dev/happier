@@ -16,7 +16,8 @@ import { peekInferredPublicServerUrl } from "@/app/integrations/publicUrl/public
 import { SERVER_CONFIG_REGISTRY } from "@/config/serverConfigRegistry";
 import { decryptString, encryptString } from "@/modules/encrypt";
 import { db, isPrismaErrorCode } from "@/storage/db";
-import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
+import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
+import { eventRouter } from "@/app/events/eventRouter";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 
 import { buildHomeConfigEnv, composeHomeConfigEnv, projectHomeSettings } from "./homeConfigOverlay";
@@ -443,6 +444,11 @@ export async function setHomeSettingsInTx(
             data: { revision: current.revision + 1, ...data },
         });
         if (updated.count === 0) return { status: "revision_conflict" };
+    }
+
+    // Live sockets were admitted under the previous sign-in policy; each node re-decides them.
+    if (changes.some((change) => registry[change.key]?.section === "policies")) {
+        afterTx(tx, () => eventRouter.announceSignInPolicyChange());
     }
 
     const actor: HomeAdministrationActor = { kind: "account", accountId: input.actorAccountId };
