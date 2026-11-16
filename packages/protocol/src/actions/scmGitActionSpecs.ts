@@ -58,6 +58,7 @@ import { ScmReviewedMarkInputSchema, ScmReviewedUnmarkInputSchema, ScmReviewedMa
 import { ScmCommitPlanAcceptInputSchema, ScmCommitPlanControlInputSchema, ScmCommitPlanIncludeHookChangesInputSchema } from '../scm/diffSummaryCommitPlan.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc/methods.js';
 import * as scm from '../scm/index.js';
+import { ScmNativeOperationRefusalSchema } from '../scm/operationError.js';
 import * as branches from '../scm/branches.js';
 import * as stash from '../scm/stash.js';
 import * as worktrees from '../scm/worktrees.js';
@@ -110,7 +111,7 @@ export type ScmActionSpecDefinition<
 > = Omit<PreNormalizedActionSpec, 'id' | 'inputSchema' | 'outputSchema'> & Readonly<{
   id: TId;
   inputSchema: TInput;
-  outputSchema: TOutput;
+  outputSchema: TOutput | z.ZodMiniUnion<[typeof ScmNativeOperationRefusalSchema, TOutput]>;
   /**
    * Works only on the local repository at the input's folder, with Git alone, so it can run as the OS user who
    * owns that folder. `read` (status, history, diffs, file content) may also run as a requesting person with Can
@@ -145,8 +146,14 @@ function defineScmActionSpec<
   const TId extends ActionId,
   TInput extends z.ZodMiniType,
   TOutput extends z.ZodMiniType,
->(spec: ScmActionSpecDefinition<TId, TInput, TOutput>): ScmActionSpecDefinition<TId, TInput, TOutput> {
-  return { executionPlacement: 'machine', ...spec };
+>(spec: Omit<ScmActionSpecDefinition<TId, TInput, TOutput>, 'outputSchema'> & { outputSchema: TOutput }): ScmActionSpecDefinition<TId, TInput, TOutput> {
+  return { executionPlacement: 'machine', ...spec,
+    // The native owner may refuse before Git runs: operation-specific result fields
+    // (publication evidence, per-file results) do not exist at that boundary.
+    outputSchema: spec.localRepository || spec.hostingCredentials
+      ? lazyZodSchema(() => z.union([ScmNativeOperationRefusalSchema, spec.outputSchema]))
+      : spec.outputSchema,
+  };
 }
 
 const SessionScmStatusInputSchema = lazyZodSchema(() => z.extend(scm.ScmStatusSnapshotRequestSchema, {

@@ -60,6 +60,14 @@ export const SCM_OPERATION_ERROR_CODES = {
 export type ScmOperationErrorCode =
   (typeof SCM_OPERATION_ERROR_CODES)[keyof typeof SCM_OPERATION_ERROR_CODES];
 
+/** Native admission can refuse before an operation has any repository result. */
+export const ScmNativeOperationRefusalSchema = lazyZodSchema(() => z.strictObject({
+  success: z.literal(false),
+  errorCode: z.literal(SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE),
+  actionErrorCode: z.string(),
+  error: z.optional(z.string()),
+}));
+
 export const ScmOperationErrorCodeSchema = lazyZodSchema(() => z.enum([
   SCM_OPERATION_ERROR_CODES.CHANGE_MOVED_ON,
   SCM_OPERATION_ERROR_CODES.FILE_CHANGED,
