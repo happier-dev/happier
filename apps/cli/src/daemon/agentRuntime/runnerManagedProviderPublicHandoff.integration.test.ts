@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
+import { applyModelIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import type {
     AgentRuntime,
     AgentSessionOpenRequest,
@@ -49,6 +50,7 @@ import type {
     NativeAgentSessionHostServiceOwners,
 } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionHostServiceOwners';
 import {
+    createRunnerAgentSessionRuntimeBootstrap,
     createRunnerAgentSessionRuntimeSource,
 } from '@/agent/runtime/session/process/runnerAgentSessionRuntimeSource';
 import {
@@ -163,6 +165,7 @@ const testState = vi.hoisted(() => ({
         };
     }),
     callSessionRpc: vi.fn(),
+    readSessionMetadata: (() => null) as () => Readonly<Record<string, unknown>> | null,
     fetchAccountEncryptionCurrentness: vi.fn(async () => ({
         mode: 'plain' as const,
         version: 1,
@@ -210,7 +213,8 @@ vi.mock('@/daemon/controlServer', () => ({
     startDaemonControlServer: testState.startDaemonControlServer,
 }));
 
-vi.mock('@/daemon/processIdentity', () => ({
+vi.mock('@/daemon/processIdentity', async importOriginal => ({
+    ...await importOriginal<typeof import('@/daemon/processIdentity')>(),
     readProcessIdentityByPid: testState.readProcessIdentityByPid,
 }));
 
@@ -238,6 +242,7 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
         fetchSessionById: vi.fn(async ({ sessionId }: { sessionId: string }) => ({
             id: sessionId,
             encryptionMode: 'plain',
+            metadata: JSON.stringify(testState.readSessionMetadata()),
         })),
         fetchSessionByIdCompat: vi.fn(async () => null),
         fetchSessionsPage: vi.fn(async () => ({
@@ -436,6 +441,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         testState.nextControlPort = 43_219;
         testState.startDaemonControlServer.mockClear();
         testState.callSessionRpc.mockReset();
+        testState.readSessionMetadata = () => null;
         testState.fetchAccountEncryptionCurrentness.mockReset();
         testState.readProcessIdentityByPid.mockReset();
         testState.acquireRuntimeLease.mockReset();
@@ -447,7 +453,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         composedStartedAt = 0;
     });
 
-    it('keeps one direct-retained G/P across H/Q adoption and A/B/C authority rotation, then fences exact P on live-policy or hard revocation', async () => {
+    it.each([false, true])('keeps direct-retained G/P authority through native replacement or daemon rotation (replace native: %s)', async (replaceNativeRuntime) => {
         composedStartedAt = Date.now();
         composedPhase = 'P/G fixture package and generation admission';
         const happyHomeDir = await mkdtemp(
@@ -1124,6 +1130,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             metadata: initialSessionMetadata,
             overrides: { updateMetadataAsCurrentPublisher },
         });
+        testState.readSessionMetadata = () => session.getMetadataSnapshot();
         const custodyRequests: Array<
             ReturnType<
                 typeof RunnerManagedServicesCustodyRequestV1Schema.parse
@@ -1356,15 +1363,16 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             return createPendingProcess(disposed);
         });
 
-        const source = await createRunnerAgentSessionRuntimeSource({
+        const initialSource = await createRunnerAgentSessionRuntimeSource({
             happyHomeDir,
             publicReleaseRing: 'stable',
             authorityFilePath,
             expectedSessionId: sessionId,
         });
-        if (!source) {
+        if (!initialSource) {
             throw new Error('Expected the current Runner Agent runtime source');
         }
+        let source = initialSource;
         expect(source.identity).toMatchObject({
             pluginId: FIXTURE_AGENT_PLUGIN_ID,
             agentId: FIXTURE_AGENT_ROUTING_ID,
@@ -1375,6 +1383,32 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                 installSource: 'archive',
             },
         });
+        if (replaceNativeRuntime) {
+            const bootstrapFilePath = join(happyHomeDir, 'runtime-bootstrap.json');
+            await writeFile(bootstrapFilePath, JSON.stringify({
+                v: 1,
+                descriptor: {
+                    v: 1,
+                    pluginId: source.identity.pluginId,
+                    pluginVersion: source.identity.pluginVersion,
+                    agentId: source.identity.agentId,
+                    backendId: source.identity.backendId,
+                    occurrenceId: source.identity.occurrenceId,
+                    sourceCustody: source.identity.sourceCustody,
+                    agentDeclaration: {
+                        provenance: source.agentContribution.provenance,
+                        source: { kind: 'archive' },
+                        definition: source.agentContribution.richDefinition?.definition,
+                    },
+                },
+            }));
+            await source.retire?.();
+            const bootstrap = await createRunnerAgentSessionRuntimeBootstrap({
+                happyHomeDir, publicReleaseRing: 'stable', authorityFilePath, bootstrapFilePath,
+            });
+            if (!bootstrap) throw new Error('Expected the exact runner bootstrap');
+            source = bootstrap;
+        }
         const managedServicesCustodyPort =
             source.managedServicesCustodyPort;
         if (!managedServicesCustodyPort) {
@@ -1464,6 +1498,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         );
         const plan = await createNativeAgentRuntimeSessionPlan({
             createRuntime: createObservedRuntime,
+            prepareRuntimeSource: source.prepareForSession,
             identity: source.identity,
             backend,
             agent,
@@ -1549,6 +1584,25 @@ describe('representative public Provider-to-SVC09 handoff', () => {
         }>).admittedProviderBindingHandoff?.sessionBindingMetadata).toEqual(
             sessionBindingMetadata,
         );
+        if (replaceNativeRuntime) {
+            const firstRequest = observedOpenRequest.current;
+            const oldLifetime = composed.operations.getRuntimeLifetimeSignal?.();
+            const nextModelId = 'gpt-public-p-replacement';
+            session.updateMetadata(current => applyModelIntentSessionMetadata(current ?? initialSessionMetadata, {
+                v: 1, updatedAt: 3, selection: { ...selection, modelId: nextModelId },
+            }));
+            await composed.operations.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' });
+            expect(oldLifetime?.aborted).toBe(true);
+            expect(source.identity.isCurrent()).toBe(true);
+            expect(observedOpenRequest.current).not.toBe(firstRequest);
+            expect(observedOpenRequest.current).toMatchObject({
+                configuration: { model: { value: nextModelId } },
+                providerBinding: { model: { id: nextModelId } },
+            });
+            expect(daemonRequests.filter(request => request.operation.kind
+                === 'plugin_services.managed_provider.materialize_agent_binding_v1')).toHaveLength(2);
+            return;
+        }
 
         const nativeOpenRequest = observedOpenRequest.current;
         if (!nativeOpenRequest) {

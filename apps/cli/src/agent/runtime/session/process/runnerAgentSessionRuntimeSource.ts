@@ -670,6 +670,11 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
                         signal.addEventListener(
                             'abort',
                             () => {
+                                if (claimed === claimedSource) {
+                                    claimed = null;
+                                    claimPromise = null;
+                                    claimRetirementBound = false;
+                                }
                                 void claimedSource.retire?.()
                                     .catch(() => undefined);
                             },

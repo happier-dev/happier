@@ -5254,6 +5254,11 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     const lateInput: PluginSessionBindingInput =
                         Object.freeze({
                             ...params.sessionInput,
+                            runtimePreferences: Object.freeze({
+                                ...params.sessionInput.runtimePreferences,
+                                // Validate this lifetime's admitted binding against its current intent.
+                                ...(modelSelection ? { modelSelection } : {}),
+                            }),
                             bootstrap: Object.freeze({
                                 ...params.sessionInput.bootstrap,
                                 environmentVariables: Object.freeze({

@@ -1,4 +1,5 @@
 import { createManagedProviderAuthorityError } from './managedProviderAuthorityError';
+import { resolveModelSelectionIntentFromSessionMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isRetainedManagedProviderInvocationCurrent, isManagedProviderSessionInvocationCurrent } from "@/providers/broker/invocationCurrentness";
 import { createAgentIsolationSessionContext } from "@/daemon/agentIsolation/agentIsolationSessionContext";
@@ -52,7 +53,7 @@ import { readRunnerConnectedAccountBinding } from './runnerConnectedAccountBindi
 import { isCurrentTrackedSession, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 export function createDaemonRunnerInvocationServices({
-  params, findTrackedSessionByHappySessionId, runnerExecutionRunSnapshots, acquireDaemonPluginRuntimeRegistryLease, createSessionManagedProviderCustodyDispatch, createSessionManagedProviderCustodyClient, resolveSessionAccountContext, withSessionAccountHome, shutdownCancellationDomains, releaseSessionAccountContext, connectedServiceRuntimeRegistry,
+  params, findTrackedSessionByHappySessionId, runnerExecutionRunSnapshots, acquireDaemonPluginRuntimeRegistryLease, createSessionManagedProviderCustodyDispatch, createSessionManagedProviderCustodyClient, resolveSessionAccountContext, withSessionAccountHome, shutdownCancellationDomains, releaseSessionAccountContext, connectedServiceRuntimeRegistry, readSessionMetadata,
 }: Readonly<{
   params: Readonly<{
 agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
@@ -80,6 +81,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
   shutdownCancellationDomains: ReturnType<typeof createDaemonShutdownCancellationDomains>;
   releaseSessionAccountContext: (context: RequesterSessionRuntimeContext | null) => Promise<void>;
   connectedServiceRuntimeRegistry: ConnectedServiceRuntimeRegistry;
+  readSessionMetadata(sessionId: string): Promise<Record<string, unknown> | null>;
 }>): ReturnType<typeof createRunnerDaemonPluginServicesHost> {
   return createRunnerDaemonPluginServicesHost({
     createInvocation: async ({
@@ -735,6 +737,13 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             ) {
               return null;
             }
+            const requestedModelSelection = resolveModelSelectionIntentFromSessionMetadata(
+              await readSessionMetadata(sessionId),
+              trackedSelection.agentTargetKey,
+            )?.selection ?? trackedSelection;
+            if (requestedModelSelection.providerConnectionId === null) {
+              throw createManagedProviderAuthorityError('authorization_binding');
+            }
             const authority = resolveDaemonSessionModelTransitionAuthority({
               trackedAgentId: resolveTrackedSessionCatalogAgentId(tracked),
               authorizedAgentId: retainedAgent.agentId,
@@ -742,8 +751,8 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               trackedSessionBindingMetadata: trackedBindingMetadata,
               requestAgentId: retainedAgent.agentId,
               requestedSelection: {
-                ...trackedSelection,
-                providerConnectionId: trackedSelection.providerConnectionId,
+                ...requestedModelSelection,
+                providerConnectionId: requestedModelSelection.providerConnectionId,
               },
             });
             const authorization =

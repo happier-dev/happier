@@ -7089,6 +7089,7 @@ export async function startDaemonSessionControlRuntime(
     });
   };
   const runnerDaemonPluginServicesHost = createDaemonRunnerInvocationServices({
+    readSessionMetadata: readPersistedConnectedServiceSwitchSessionMetadata,
     params, findTrackedSessionByHappySessionId, runnerExecutionRunSnapshots, acquireDaemonPluginRuntimeRegistryLease, createSessionManagedProviderCustodyDispatch, createSessionManagedProviderCustodyClient, resolveSessionAccountContext, withSessionAccountHome, shutdownCancellationDomains, releaseSessionAccountContext, connectedServiceRuntimeRegistry,
   });
   const withRetainedRunnerAgentServiceBinding = async <T>(

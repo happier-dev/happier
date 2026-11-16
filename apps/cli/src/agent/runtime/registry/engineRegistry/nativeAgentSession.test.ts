@@ -13,6 +13,7 @@ import { createJiti } from 'jiti';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { ErrorCode as McpErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { readEffectiveAgentSessionCompactionCapability } from '@happier-dev/agents';
+import { applyModelIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
 import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
 import { createWorkspaceWritesPolicyPreparation } from '@/session/roles/workspaceWritesPolicyPreparation';
@@ -8121,12 +8122,12 @@ describe('native Agent session host adapter', () => {
         expect(open).not.toHaveBeenCalled();
     });
 
-    it('keeps the public managed Provider marker and CodeBuddy cleared settings through native sessions.open', async () => {
+    it.each([false, true])('keeps the public managed Provider marker and CodeBuddy cleared settings through native sessions.open (replace model: %s)', async (replaceModel) => {
         const placeholder =
             'happier_runner_placeholder_AAAAAAAAAAAAAAAAAAAAAAAAAAA';
         const credential = 'runner-owned-secret';
         const agentId = 'acme-runner-public-provider-agent';
-        const metadata = managedProviderBindingMetadata(
+        let metadata = managedProviderBindingMetadata(
             'pc_public',
             'provider-model-public',
             `backend:${agentId}`,
@@ -8311,8 +8312,27 @@ describe('native Agent session host adapter', () => {
         expect(prepareManagedProviderBinding).toHaveBeenCalledOnce();
         expect(createInvocationServices).toHaveBeenCalledOnce();
         expect(transformAgentChildLaunchEnvironment).not.toHaveBeenCalled();
+        if (replaceModel) {
+            const nextModelId = 'provider-model-replacement';
+            metadata = managedProviderBindingMetadata('pc_public', nextModelId, `backend:${agentId}`);
+            await session.updateMetadata(current => applyModelIntentSessionMetadata({
+                ...current,
+                providerBindingV1: managedProviderBindingMetadata('pc_public', 'provider-model-public', `backend:${agentId}`),
+            }, {
+                v: 1,
+                updatedAt: 103,
+                selection: { agentTargetKey: `backend:${agentId}`, providerConnectionId: 'pc_public', modelId: nextModelId },
+            }));
+            await created.operations.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' });
+            expect(open).toHaveBeenCalledTimes(2);
+            expect(open.mock.calls[1]?.[0]).toMatchObject({
+                configuration: { model: { value: nextModelId } },
+                providerBinding: { model: { id: nextModelId } },
+            });
+            expect(prepareManagedProviderBinding).toHaveBeenCalledTimes(2);
+        }
         await created.operations.resetOrDisposeRuntime();
-        expect(cleanup).toHaveBeenCalledOnce();
+        expect(cleanup).toHaveBeenCalledTimes(replaceModel ? 2 : 1);
     });
 
     it.each(['early', 'late'] as const)('keeps an authoritative %s external Provider handoff without runner-managed custody', async (handoffPhase) => {

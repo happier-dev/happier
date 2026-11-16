@@ -2614,26 +2614,29 @@ describe('runner Agent session runtime source', () => {
                 authorityFilePath:
                     '/tmp/happier-runner-source/authority.json',
             });
-        const signal = new AbortController().signal;
-        await source!.prepareForSession?.({
-            sessionId: 'session-1',
-            signal,
-        });
-        await expect(source!.createRuntime({ signal }))
-            .resolves.toBe(runtimeG);
+        const controller = new AbortController();
+        const signal = controller.signal;
+        await source!.prepareForSession?.({ sessionId: 'session-1', signal });
+        await expect(source!.createRuntime({ signal })).resolves.toBe(runtimeG);
 
         expect(source).not.toHaveProperty(
             'resolveTerminalGenerationTransition',
         );
         expect(factoryG).toHaveBeenCalledTimes(1);
+        controller.abort();
+        const nextSignal = new AbortController().signal;
+        await source!.prepareForSession?.({ sessionId: 'session-1', signal: nextSignal });
+        await expect(source!.createRuntime({ signal: nextSignal })).resolves.toBe(runtimeG);
+        expect(factoryG).toHaveBeenCalledTimes(2);
         expect(source!.identity.pluginVersion).toBe('1.0.0');
         expect(source!.identity.sourceCustody).toEqual({
             kind: 'managed',
             immutableGenerationId: 'immutable-generation-1',
             installSource: 'localPath',
         });
-        await expect(source!.createRuntime({ signal }))
+        await expect(source!.createRuntime({ signal: nextSignal }))
             .resolves.toBe(runtimeG);
-        expect(factoryG).toHaveBeenCalledTimes(1);
+        expect(factoryG).toHaveBeenCalledTimes(2);
+        await source!.retire?.();
     });
 });
