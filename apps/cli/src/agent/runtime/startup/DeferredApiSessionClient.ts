@@ -5,7 +5,7 @@ import type {
 } from './deferredSessionBuffer';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import type { RpcHandler, RpcHandlerManagerLike } from '@/api/rpc/types';
-import type { AgentState, Metadata, UserMessage } from '@/api/types';
+import type { AgentState, Metadata, Session, UserMessage } from '@/api/types';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type {
   MaterializeNextPendingOptions,
@@ -46,6 +46,7 @@ export type DeferredApiSessionTarget = Readonly<{
   updateAgentStateRequestSettlement: (updater: (state: AgentState) => AgentState) => Promise<void>;
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
   getMetadataSnapshot: () => Metadata | null;
+  getProjectKey?: () => Session['projectKey'];
   getPendingMessageEditHoldIds?: () => readonly string[] | null;
   getAgentStateSnapshot: () => AgentState | null;
   fetchLatestUserPermissionIntentFromTranscript?: (
@@ -494,6 +495,10 @@ export class DeferredApiSessionClient {
     const target = this.target;
     if (!target) return null;
     return target.getMetadataSnapshot();
+  }
+
+  getProjectKey(): Session['projectKey'] {
+    return this.target?.getProjectKey?.();
   }
 
   getPendingMessageEditHoldIds(): readonly string[] | null {

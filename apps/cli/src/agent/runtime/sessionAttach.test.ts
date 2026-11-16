@@ -128,6 +128,8 @@ describe('readSessionAttachFromEnv', () => {
         encryptionMode: 'plain',
         lastObservedMessageSeq: 55,
         initialTranscriptAfterSeq: 0,
+        snapshot: { projectKey: 'accepted-project', metadata: {}, metadataVersion: 1,
+          agentState: null, agentStateVersion: 1 },
       };
 
       await writeFile(filePath, JSON.stringify(payload), { mode: 0o600 });
@@ -138,6 +140,7 @@ describe('readSessionAttachFromEnv', () => {
         encryptionMode: 'plain',
         lastObservedMessageSeq: 55,
         initialTranscriptAfterSeq: 0,
+        snapshot: payload.snapshot,
       });
       expect(process.env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
 

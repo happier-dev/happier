@@ -410,6 +410,7 @@ export function createHappierMcpServer(
       rawSession,
       getCurrentSessionBackendTarget: () => resolveLiveClientBackendTarget(client),
       getCurrentSessionMetadata: () => client.getMetadataSnapshot?.() ?? null,
+      getCurrentSessionProjectKey: () => client.getProjectKey?.(),
       ...(client.getSessionRoleContext ? { getSessionRoleContext: () => client.getSessionRoleContext!() } : {}),
       ...(client.getCurrentSessionSkillItems ? { getCurrentSessionSkillItems: () => client.getCurrentSessionSkillItems!() } : {}),
       ...(client.getCurrentResolvedRoles ? { getCurrentResolvedRoles: () => client.getCurrentResolvedRoles!() } : {}),

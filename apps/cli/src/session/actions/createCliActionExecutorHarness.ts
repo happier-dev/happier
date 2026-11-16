@@ -36,6 +36,9 @@ import type { ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accoun
 import { createCliApprovalsArtifactStore } from './approvals/artifactStore';
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readCliActionBoundSessionId } from './resolveCliActionCallerSession';
+import { readSessionLegacyMetadata } from './cliActionDeps/sessionStateReaders';
+import { readSessionOwnerLocality } from '@/session/transport/encryption/sessionEncryptionContext';
 
 type MutableActionExecutorDeps = {
   -readonly [Key in keyof ActionExecutorDeps]: ActionExecutorDeps[Key];
@@ -162,7 +165,7 @@ export function createCliActionExecutorHarness(
     requiresOriginalCliFiniteAdmission(id, ctx) ? 'receiver' as const : 'local' as const;
   const rawDeps: MutableActionExecutorDeps = {
     ...baseDepsForRuntime,
-    prepareApprovalExecutionOriginContext: async () => {
+    prepareApprovalExecutionOriginContext: async ({ targetSessionId }) => {
       // Session features can arrive after composition. Capture authenticated
       // Home identity at the existing origin boundary, without changing caller custody.
       const context = await enrichCliActionApprovalContext({
@@ -171,7 +174,22 @@ export function createCliActionExecutorHarness(
         fixedServerId: params.serverId ?? null,
         resolveServerFeaturesSnapshot: async () => params.resolveServerFeaturesSnapshot?.(),
       });
-      return context.serverIdentityId ? { serverIdentityId: context.serverIdentityId } : {};
+      const boundSessionId = readCliActionBoundSessionId(params.sessionId);
+      const isBoundSession = Boolean(targetSessionId && targetSessionId === boundSessionId);
+      const metadata = isBoundSession
+        ? params.getCurrentSessionMetadata ? params.getCurrentSessionMetadata() : readSessionLegacyMetadata(params)
+        : null;
+      const machineId = metadata ? readSessionOwnerLocality({ metadata, rawSession: params.rawSession ?? {} })?.machineId : null;
+      const projectKey = isBoundSession ? params.getCurrentSessionProjectKey?.() : undefined;
+      return context.serverIdentityId ? { serverIdentityId: context.serverIdentityId,
+        ...(machineId ? { defaultSessionMachineId: machineId } : {}),
+        ...(machineId || projectKey ? { automationSubjects: [
+          ...(machineId ? [{ role: 'context' as const,
+            subject: { kind: 'machine' as const, serverId: context.serverIdentityId, machineId } }] : []),
+          ...(projectKey ? [{ role: 'context' as const,
+            subject: { kind: 'project' as const, serverId: context.serverIdentityId, projectKey } }] : []),
+        ] } : {}),
+      } : {};
     },
     projectAction: async args => {
       if (requiresOriginalCliFiniteAdmission(args.actionId, args.context)

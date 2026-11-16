@@ -809,6 +809,7 @@ export class ApiClient {
           opts.signal?.throwIfAborted();
           return {
             id: raw.id,
+            ...(raw.projectKey !== undefined ? { projectKey: raw.projectKey } : {}),
             seq: raw.seq,
             ...(raw.archivedAt === undefined ? {} : { archivedAt: raw.archivedAt }),
             workDepth: typeof raw.workDepth === 'number' ? raw.workDepth : 0,
@@ -879,6 +880,7 @@ export class ApiClient {
 
         return {
           id: raw.id,
+          ...(raw.projectKey !== undefined ? { projectKey: raw.projectKey } : {}),
           seq: raw.seq,
           ...(raw.archivedAt === undefined ? {} : { archivedAt: raw.archivedAt }),
           workDepth: typeof raw.workDepth === 'number' ? raw.workDepth : 0,

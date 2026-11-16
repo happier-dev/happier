@@ -319,6 +319,7 @@ export interface ClientToServerEvents extends Record<typeof SESSION_FOLLOW_OBSER
  */
 type SessionSharedFields = Readonly<{
   id: string;
+  projectKey?: string | null;
   archivedAt?: number | null;
   manager?: import('@happier-dev/protocol').SessionManagerV1;
   origin?: import('@happier-dev/protocol').SessionAwarenessOriginV1;
@@ -487,6 +488,7 @@ export const CreateSessionResponseSchema = lazyZodSchema(() => z.object({
   organizationPlacement: mini.optional(SessionOrganizationPlacementV1Schema),
   session: z.looseObject({
     id: z.string(),
+    projectKey: z.optional(z.nullable(z.string())),
     tag: z.string(),
     seq: z.number(),
     createdAt: z.number(),

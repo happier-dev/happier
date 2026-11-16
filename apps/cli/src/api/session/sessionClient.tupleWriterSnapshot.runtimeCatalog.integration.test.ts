@@ -60,6 +60,11 @@ describe('ApiSessionClient owner tuple writer snapshot', () => {
     vi.mocked(axios.get).mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/auth/ping') return { status: 200, data: {} };
+      if (path === '/v1/account/profile') return { status: 200, data: { id: 'tuple-writer-account' } };
+      if (path === '/v2/changes') return { status: 200, data: { changes: [
+        { cursor: 1, kind: 'session', entityId: row.id, changedAt: 1, hint: {} },
+      ], nextCursor: 1 } };
+      if (path === `/v2/sessions/${row.id}/messages`) return { status: 200, data: { messages: [], nextAfterSeq: null } };
       if (path === '/v1/account/encryption/currentness') {
         currentnessReads += 1;
         return { status: 200, data: currentness };
@@ -99,7 +104,7 @@ describe('ApiSessionClient owner tuple writer snapshot', () => {
     mockIo.mockImplementation(() => {
       const activity = createSessionRuntimeActivityHomeStub({ machineId: 'machine-1', committedFenceMs: 1_000 });
       const transcript = createSessionTranscriptHomeStub();
-      return createApiSessionSocketStub({ emitWithAck: (event, payload) => {
+      return createApiSessionSocketStub({ disconnectReason: 'transport close', emitWithAck: (event, payload) => {
         if (event === 'session-publisher-authority-check') publisherChecks += 1;
         return activity.answer(event, payload) ?? transcript.answer(event, payload) ?? { result: 'success' };
       } });
@@ -131,6 +136,39 @@ describe('ApiSessionClient owner tuple writer snapshot', () => {
   afterEach(async () => {
     await Promise.all(clients.splice(0).map(client => client.close()));
     vi.unstubAllGlobals();
+  });
+
+  it('retains the accepted Project through the existing Session snapshot without reading on access', async () => {
+    const owner = createOwnerSession('accepted-project-snapshot');
+    row = { ...owner.row, projectKey: 'refreshed-project' };
+    serve(owner.currentness);
+    const client = createClient({ ...owner.session, projectKey: 'initial-project' }, owner.credentials);
+    expect(client.getProjectKey?.()).toBe('initial-project');
+    const socket = mockIo.mock.results.find(result => result.value?.getHandler('session'))?.value;
+    expect(socket).toBeDefined();
+    await vi.waitFor(() => expect(socket.connected).toBe(true));
+    await client.refreshSessionSnapshotFromServerRequired({ reason: 'explicit-drain' });
+    const reads = sessionReads;
+    expect(client.getProjectKey()).toBe('refreshed-project');
+    expect(client.getProjectKey()).toBe('refreshed-project');
+    expect(sessionReads).toBe(reads);
+    const admittedProject = client.getProjectKey();
+    // A Project-only push does not invalidate the metadata tuple or need a GET.
+    socket.trigger('update', { id: 'project-association', seq: 1, createdAt: 1,
+      body: { t: 'update-session', id: owner.session.id, projectKey: 'live-project' } });
+    expect(client.getProjectKey()).toBe('live-project');
+    socket.trigger('update', { id: 'other-project', seq: 2, createdAt: 2,
+      body: { t: 'update-session', id: 'another-session', projectKey: 'foreign-project' } });
+    expect(client.getProjectKey()).toBe('live-project');
+    socket.trigger('update', { id: 'project-removed', seq: 3, createdAt: 3,
+      body: { t: 'update-session', id: owner.session.id, projectKey: null } });
+    expect(client.getProjectKey()).toBeNull();
+    expect(admittedProject).toBe('refreshed-project');
+    expect(sessionReads).toBe(reads);
+    // Existing reconnect snapshot recovery also carries an association missed offline.
+    row.projectKey = 'reconnected-project';
+    socket.disconnect();
+    await vi.waitFor(() => expect(client.getProjectKey()).toBe('reconnected-project'), { timeout: 3_000 });
   });
 
   it.each(['plain', 'e2ee', 'team'] as const)('writes from its admitted %s Account tuple with one HTTP per change and none for a no-op', async accountMode => {

@@ -14,6 +14,7 @@ const { mockPost, mockGet } = vi.hoisted(() => ({ mockPost: vi.fn(), mockGet: vi
 
 vi.mock('axios', () => ({
   default: {
+    defaults: {},
     post: mockPost,
     get: mockGet,
     isAxiosError: () => false,
@@ -92,6 +93,7 @@ describe('ApiClient.getOrCreateSession (dataEncryptionKey)', () => {
       data: {
         session: {
           id: 'session-1',
+          projectKey: 'accepted-project',
           seq: 1,
           metadata: encryptedMetadata,
           metadataVersion: 1,
@@ -117,6 +119,7 @@ describe('ApiClient.getOrCreateSession (dataEncryptionKey)', () => {
     expect(session.encryptionVariant).toBe('dataKey');
     expect(Array.from(session.encryptionKey)).toEqual(Array.from(sessionDataKey));
     expect(session.metadata).toEqual(metadata);
+    expect(session).toMatchObject({ projectKey: 'accepted-project' });
   });
 
   it.each(['AAECAw==', '', 123])('throws when a present server envelope is unusable (%j), even when Account fallback could decrypt the metadata', async (invalidEnvelope) => {

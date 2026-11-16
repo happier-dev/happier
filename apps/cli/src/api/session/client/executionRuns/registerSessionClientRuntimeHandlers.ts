@@ -800,6 +800,7 @@ export function registerSessionClientRuntimeHandlers(
             : {}),
         sessionId: params.sessionId,
         getCurrentSessionMetadata: params.getSessionMetadata,
+        getCurrentSessionProjectKey: () => parentSessionForTools?.getProjectKey(),
         ...(parentSessionForTools ? {
             postSessionUpdate: async (report: SessionUpdatePostInputV1) => await parentSessionForTools.enqueueSessionEventCommitted({ type: 'worker-report', ...report }),
             sessionMessageReplyPublisher: parentSessionForTools,

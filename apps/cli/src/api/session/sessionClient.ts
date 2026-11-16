@@ -575,6 +575,7 @@ export class ApiSessionClient extends EventEmitter {
     private readonly token: string;
     readonly sessionId: string;
     private readonly workDepth: number;
+    private projectKey: Session['projectKey'];
     private rolePromptOrganization: Pick<import('@happier-dev/protocol').V2SessionByIdResponse['session'], 'manager' | 'origin'>;
     private hostCurrentTurnFacts: Readonly<{ turnId: string; facts: import('@happier-dev/protocol').SessionTurnFactsV1 }> | null = null;
     private questionWaitTurnId: string | null = null;
@@ -1191,6 +1192,7 @@ export class ApiSessionClient extends EventEmitter {
 	        this.sessionId = session.id;
             this.archivedAt = session.archivedAt;
             this.workDepth = session.workDepth ?? 0;
+            this.projectKey = session.projectKey;
             this.rolePromptOrganization = {
                 ...(session.manager ? { manager: session.manager } : {}),
                 ...(session.origin ? { origin: session.origin } : {}),
@@ -1284,6 +1286,7 @@ export class ApiSessionClient extends EventEmitter {
             getServerIdentityId: () => this.getServerIdentityId(),
             sessionId: this.sessionId,
             onArchivedAtFromServer: archivedAt => this.applyArchivedAtSnapshot(archivedAt),
+            onProjectKeyFromServer: projectKey => { this.projectKey = projectKey; },
             ...this.storedContentCrypto,
             getMetadataLayoutVersion: () => this.metadataLayoutVersion,
             getMetadata: () => this.metadata,
@@ -2676,6 +2679,7 @@ export class ApiSessionClient extends EventEmitter {
                     setOrganizationSnapshot: (organization) => {
                         this.rolePromptOrganization = organization;
                     },
+                    setProjectKeySnapshot: projectKey => { this.projectKey = projectKey; },
                     setArchivedAtSnapshot: async archivedAt => {
                         this.applyArchivedAtSnapshot(archivedAt);
                         await this.agentStateRequestStore?.reconcileSessionArchive();
@@ -3842,6 +3846,11 @@ export class ApiSessionClient extends EventEmitter {
 
     getWorkDepth(): number {
         return this.workDepth;
+    }
+
+    /** Accepted Home-local Project identity from this Session's server projection. */
+    getProjectKey(): Session['projectKey'] {
+        return this.projectKey;
     }
 
     /** Current server-owned worker/origin projection, never role metadata lineage. */

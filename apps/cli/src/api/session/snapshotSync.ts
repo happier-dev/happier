@@ -111,6 +111,7 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
     reason: SessionSnapshotRefreshReason;
 } & SessionStoredContentCryptoContext): Promise<{
     archivedAt?: number | null;
+    projectKey?: V2SessionByIdResponse['session']['projectKey'];
     organization?: Pick<V2SessionByIdResponse['session'], 'manager' | 'origin'>;
     metadataLayoutVersion?: number;
     metadataTuple?: SessionMetadataEnvelopeTupleSnapshot;
@@ -130,6 +131,7 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
 
     const out: {
         archivedAt?: number | null;
+        projectKey?: V2SessionByIdResponse['session']['projectKey'];
         organization?: Pick<V2SessionByIdResponse['session'], 'manager' | 'origin'>;
         metadataLayoutVersion?: number;
         metadataTuple?: SessionMetadataEnvelopeTupleSnapshot;
@@ -142,6 +144,7 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
         latestTurnStatusObservedAt?: number;
     } = {};
     if (raw.archivedAt !== undefined) out.archivedAt = raw.archivedAt;
+    out.projectKey = raw.projectKey;
     out.organization = {
         ...(raw.manager ? { manager: raw.manager } : {}),
         ...(raw.origin ? { origin: raw.origin } : {}),

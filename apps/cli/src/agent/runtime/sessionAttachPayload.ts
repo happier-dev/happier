@@ -8,6 +8,7 @@ import { SessionAwarenessOriginV1Schema } from '@happier-dev/protocol/sessions/a
 import type { SessionManagerV1, SessionAwarenessOriginV1, SessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1 } from '@happier-dev/protocol';
 
 type AttachSnapshotPayload = Readonly<{
+  projectKey?: string | null;
   acceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentV1 | null;
   manager?: SessionManagerV1;
   origin?: SessionAwarenessOriginV1;
@@ -54,6 +55,7 @@ export type SessionAttachPayload =
   | LegacyAttachPayload;
 
 const AttachSnapshotSchema = lazyZodSchema(() => z.object({
+  projectKey: z.optional(z.nullable(z.string())),
   acceptedTeamCredentialBinding: z.optional(z.nullable(SessionTeamCredentialBindingIntentV1Schema)),
   manager: z.optional(SessionManagerV1Schema),
   origin: z.optional(SessionAwarenessOriginV1Schema),

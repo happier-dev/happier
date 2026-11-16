@@ -508,6 +508,7 @@ import {
   type CreateDefaultRuntimeActionExecutorInput,
 } from './defaultRuntimeActionExecutor';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { createUiActionExecutionOriginContextPreparer } from './prepareActionExecutionOriginContext';
 import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/settings/accountPluginDataEraseAction';
 import { createPluginExecutionOriginActionDeps } from './pluginExecutionOriginActionDeps';
 import { createUiPluginSettingsAdministrationAction } from './pluginSettingsAdministrationAction';
@@ -2093,10 +2094,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         // The acquisition hydrated the admitted rows; resolve on the store after it.
       }, options ? { state: storage.getState(), options } : null);
     }),
-    prepareApprovalExecutionOriginContext: async ({ targetSessionId }) => ({
-      ...(accountContext?.serverIdentityId ? { serverIdentityId: accountContext.serverIdentityId } : {}),
-      ...(targetSessionId ? { defaultSessionMachineId: resolveSessionMachineId(targetSessionId, accountContext?.serverId) } : {}),
-    }),
+    prepareApprovalExecutionOriginContext: createUiActionExecutionOriginContextPreparer(accountContext),
     isApprovalExecutionOriginCurrent: async ({ origin, request, signal, reportStale }) => {
       const stale = (reason: ApprovalStaleReason) => { reportStale?.(reason); return false; };
       if (!accountContext) return stale('account_unavailable');

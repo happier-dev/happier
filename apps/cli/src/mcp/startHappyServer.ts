@@ -66,6 +66,7 @@ export type HappyMcpExecutionRunService = Readonly<{
 }>;
 
 export type HappyMcpSessionClient = {
+    getProjectKey?: import('@/api/session/sessionClient').ApiSessionClient['getProjectKey'];
     /** Immutable context from this exact Run's signed Account Voice admission. */
     getRunActionInvocation?(): import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1 | undefined;
     getSessionRoleContext?: import('@/mcp/runtime/applyRunnerMcpSessionContext').RunnerMcpSessionContextAccessors['getSessionRoleContext'];

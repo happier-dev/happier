@@ -222,6 +222,32 @@ async function expectPromiseStillPending(promise: Promise<unknown>): Promise<voi
 }
 
 describe('createCliActionExecutorHarness', () => {
+  it('projects accepted context only from the exact bound Session without guessing a Project', async () => {
+    let projectReads = 0;
+    let projectKey: string | null = 'accepted-project';
+    const { deps } = createCliActionExecutorHarness({ token: 'fixture-token', sessionId: 'bound-session',
+      mode: 'plain', ctx: null, serverId: 'home', serverIdentityId: 'home',
+      getCurrentSessionMetadata: () => ({ machineId: 'bound-machine', path: '/work', id: 'incidental-project' }),
+      getCurrentSessionProjectKey: () => { projectReads++; return projectKey; },
+    });
+    expect(projectReads).toBe(0);
+    expect(await deps.prepareApprovalExecutionOriginContext?.({ targetSessionId: 'bound-session' }))
+      .toMatchObject({ automationSubjects: [{ role: 'context', subject: {
+        kind: 'machine', serverId: 'home', machineId: 'bound-machine',
+      } }, { role: 'context', subject: { kind: 'project', serverId: 'home', projectKey: 'accepted-project' } }] });
+    expect(await deps.prepareApprovalExecutionOriginContext?.({ targetSessionId: 'other-session' }))
+      .not.toHaveProperty('automationSubjects');
+    expect(await deps.prepareApprovalExecutionOriginContext?.({ targetSessionId: null }))
+      .not.toHaveProperty('automationSubjects');
+    expect(projectReads).toBe(1);
+    const admitted = await deps.prepareApprovalExecutionOriginContext?.({ targetSessionId: 'bound-session' });
+    projectKey = null;
+    expect((await deps.prepareApprovalExecutionOriginContext?.({ targetSessionId: 'bound-session' }))?.automationSubjects)
+      .toEqual([{ role: 'context', subject: { kind: 'machine', serverId: 'home', machineId: 'bound-machine' } }]);
+    expect(admitted?.automationSubjects).toContainEqual({ role: 'context',
+      subject: { kind: 'project', serverId: 'home', projectKey: 'accepted-project' } });
+  });
+
   it.each(['authenticated', 'public'] as const)('records only an authenticated Home learned after Session harness creation (%s)', async provenance => {
     const serverId = 'stack_agent-qa-prs-issues__id_default';
     const serverIdentityId = 'srv_approval-home';

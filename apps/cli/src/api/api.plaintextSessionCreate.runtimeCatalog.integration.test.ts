@@ -35,6 +35,7 @@ function serverFeaturesResponse(capabilities: Record<string, unknown>): Response
 
 vi.mock('axios', () => ({
   default: {
+    defaults: {},
     post: (...args: any[]) => mockPost(...args),
     get: (...args: any[]) => mockGet(...args),
     isAxiosError: (value: unknown) =>
@@ -388,6 +389,7 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
       agentState: string | null;
     }>) => ({ status: 200, data: { session: {
       id: 'session-no-stored-content-requirements',
+      projectKey: 'accepted-project',
       seq: 1,
       encryptionMode: 'plain',
       metadata: body.sharedMetadata.ciphertext,
@@ -416,6 +418,7 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
     });
     expect(session).toMatchObject({
       id: 'session-no-stored-content-requirements',
+      projectKey: 'accepted-project',
       encryptionMode: 'plain',
       metadataLayoutVersion: 1,
       metadata: { path: '/private', host: 'private-host' },

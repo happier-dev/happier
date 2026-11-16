@@ -2837,7 +2837,10 @@ export type ActionExecutorDeps = Readonly<{
   /** Code-only host diagnostic for best-effort retirement after an already-confirmed effect. */
   recordApprovalRetirementWarning?: (warning: Readonly<{ artifactId?: string; code: string }>) => void | Promise<void>;
   /** Host-owned Home and resolved Session placement, demanded only when constructing an approval origin. Never serialized. */
-  prepareApprovalExecutionOriginContext?: (args: Readonly<{ targetSessionId: string | null; signal?: AbortSignal }>) => Promise<Readonly<Pick<ActionExecutorContext, 'serverIdentityId' | 'defaultSessionMachineId'>>>;
+  prepareApprovalExecutionOriginContext?: (args: Readonly<{ targetSessionId: string | null; signal?: AbortSignal }>) => Promise<Readonly<Pick<ActionExecutorContext, 'serverIdentityId' | 'defaultSessionMachineId'> & {
+    /** Context from the exact admitted Session, never a caller default or inferred path. */
+    automationSubjects?: readonly import('../../automations/automationSubjectV1.js').AutomationSubjectContextV1[];
+  }>>;
   /** Revalidates the origin against current credential/runtime/target owners before effects. */
   isApprovalExecutionOriginCurrent?: (args: Readonly<{
     origin: ApprovalExecutionOriginV1;

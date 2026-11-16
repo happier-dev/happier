@@ -95,9 +95,11 @@ describe('createBaseSessionForAttach', () => {
           inheritedFrom: 'old-lead', overrides: {}, sessionRoles: {}, notes: '',
         } } }, metadataVersion: 1, agentState: null, agentStateVersion: 1,
         manager: { sessionId: 'current-lead' }, origin: { kind: 'run_step' },
+        projectKey: 'accepted-project',
       } },
     });
-    expect(session).toMatchObject({ manager: { sessionId: 'current-lead' }, origin: { kind: 'run_step' } });
+    expect(session).toMatchObject({ manager: { sessionId: 'current-lead' }, origin: { kind: 'run_step' },
+      projectKey: 'accepted-project' });
   });
   it('accepts a process-local attach secret without consulting ambient process state', async () => {
     envScope.patch({ HAPPIER_SESSION_ATTACH_FILE: '/ambient/must-not-be-read.json' });

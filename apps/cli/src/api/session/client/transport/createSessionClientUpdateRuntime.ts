@@ -51,6 +51,7 @@ export function createSessionClientUpdateRuntime(
         turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
         onRuntimeActivityProjectionFromServer?: (projection: PendingQueueRuntimeActivityProjection) => void;
         onArchivedAtFromServer?: (archivedAt: number | null) => void;
+        onProjectKeyFromServer?: (projectKey: string | null) => void;
     }> & SessionStoredContentCryptoContext,
 ): SessionClientUpdateRuntime {
     const receivedMessageIds = new Set<string>();
@@ -141,6 +142,10 @@ export function createSessionClientUpdateRuntime(
                         newMessageHandlingResult.lastObservedUserMessageSeq,
                     );
                     return;
+                }
+
+                if (body.t === 'update-session' && body.id === deps.sessionId && body.projectKey !== undefined) {
+                    deps.onProjectKeyFromServer?.(body.projectKey);
                 }
 
                 let shouldEmitMetadataUpdated = false;

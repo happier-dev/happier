@@ -84,6 +84,7 @@ export async function createBaseSessionForAttach(opts: Readonly<{
   const agentState = attach.snapshot?.agentState ?? opts.state;
   const agentStateVersion = attach.snapshot?.agentStateVersion ?? -1;
   const organization = {
+    ...(attach.snapshot?.projectKey !== undefined ? { projectKey: attach.snapshot.projectKey } : {}),
     ...(attach.snapshot?.acceptedTeamCredentialBinding !== undefined
       ? { acceptedTeamCredentialBinding: attach.snapshot.acceptedTeamCredentialBinding } : {}),
     ...(attach.snapshot?.manager ? { manager: attach.snapshot.manager } : {}),

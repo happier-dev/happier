@@ -33,6 +33,7 @@ export async function syncSessionSnapshotFromServer(
         setAgentStateSnapshot: (agentState: AgentState | null, version: number) => void;
         setArchivedAtSnapshot?: (archivedAt: number | null) => void | Promise<void>;
         setOrganizationSnapshot?: (organization: Pick<V2SessionByIdResponse['session'], 'manager' | 'origin'>) => void;
+        setProjectKeySnapshot?: (projectKey: V2SessionByIdResponse['session']['projectKey']) => void;
         setMetadataEnvelopeTupleSnapshot: (
             snapshot: SessionMetadataEnvelopeTupleSnapshot,
         ) => void;
@@ -74,6 +75,7 @@ export async function syncSessionSnapshotFromServer(
 
     if (params.isClosed()) return false;
     if (update.organization) params.setOrganizationSnapshot?.(update.organization);
+    if ('projectKey' in update) params.setProjectKeySnapshot?.(update.projectKey);
 
     if (update.metadataTuple) {
         params.setMetadataEnvelopeTupleSnapshot(update.metadataTuple);

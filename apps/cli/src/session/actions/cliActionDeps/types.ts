@@ -264,6 +264,7 @@ export type CliActionDepsParams = Readonly<{
   }> | null;
   getCurrentSessionBackendTarget?: (() => PersistedBackendTargetRefV2 | null | undefined) | null;
   getCurrentSessionMetadata?: () => Readonly<Record<string, unknown>> | null;
+  getCurrentSessionProjectKey?: () => string | null | undefined;
   /** Current delivered plan of this runner; absent on a remote Account client. */
   getCurrentSessionSkillItems?: () => readonly SessionSkillReadItemV1[] | null;
   getCurrentAppliedChildSelection?: () => Promise<import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection> | import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection;
