@@ -174,7 +174,7 @@ it('nested Environment owns desktop column Actions and leaving restores its encl
     function Fixture() {
         const [shown, setShown] = React.useState(true);
         show = setShown;
-        return <AppPaneScopeControls scopeId="project" focused rightOpen={false} detailsOpen={false}
+        return <AppPaneScopeControls scopeId="project" rightOpen={false} detailsOpen={false}
             sideAvailable={false} arrangementHonoured={false} setHidden={() => {}} setSideVisible={() => {}} sideActions={projectActions}>
             <ProjectShellHeader projectName="Project" checkout={null}
                 pages={[{ id: 'overview', title: 'Overview', icon: 'folder', disabledReason: null }]}

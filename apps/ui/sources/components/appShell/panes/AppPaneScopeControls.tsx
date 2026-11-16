@@ -4,6 +4,8 @@ import { useMountedScopeActionCommand } from '@/components/approvals/useMountedS
 import { usePresentedDetailNavigationChrome, type DetailNavigationMainColumnControls } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
 import { registerShellColumnActionOwner, notifyShellColumnActionOwnersChanged, type ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
+import { useDestinationFocusSignal } from '@/components/appShell/workspace/destinationInstanceContext';
+import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { RightSidebarActions } from '@/components/appShell/rightSidebar/rightSidebarActions';
 import { useOptionalAppPaneScopeLayout } from './hooks/useAppPaneScopeLayout';
 import { createPaneMainChipClaims, PaneMainChipClaimsContext, PaneMainColumnContext, type PaneMainColumnDescriptor, type PaneMainColumnState } from './mainColumn/usePaneMainColumn';
@@ -13,7 +15,6 @@ import type { PaneSurfaceScope } from './types';
 /** Measured host controls: one raw Action terminal and admitted explicit commands. */
 export function AppPaneScopeControls(props: Readonly<{
     scopeId: string;
-    focused: boolean;
     surfaceScope?: PaneSurfaceScope | null;
     descriptor?: PaneMainColumnDescriptor;
     rightOpen: boolean;
@@ -82,26 +83,32 @@ export function AppPaneScopeControls(props: Readonly<{
         return () => props.onControlsChange?.(null);
     }, [props.onControlsChange, value]);
     const arrangementAvailable = props.arrangementHonoured && layout?.multiPaneEnabled === true && layout.deviceType !== 'phone';
+    // The destination's focus owns these registrations by subscription: a tab switch does not render the
+    // pane scope.
+    const focus = useDestinationFocusSignal();
+    React.useEffect(() => followSignal(focus, (focused) => {
+        if (focused) notifyShellColumnActionOwnersChanged();
+    }), [arrangementAvailable, focus]);
     React.useEffect(() => {
-        if (props.focused) notifyShellColumnActionOwnersChanged();
-    }, [arrangementAvailable, props.focused]);
-    React.useEffect(() => {
-        if (!props.focused || layout?.deviceType === 'phone') return;
-        const unregisterMain = detailNavigation ? detailNavigation.bindMainColumn(readPhysicalMain)
-            : registerShellColumnActionOwner('main', readMain);
-        const unregisterSide = !detailNavigation || detailNavigation.registerSide === false
-            ? registerShellColumnActionOwner('side', readSide) : () => {};
-        return () => { unregisterMain(); unregisterSide(); };
-    }, [layout?.deviceType, props.focused, props.scopeId, readMain, readPhysicalMain, readSide,
+        if (layout?.deviceType === 'phone') return;
+        return followSignal(focus, (focused) => {
+            if (!focused) return;
+            const unregisterMain = detailNavigation ? detailNavigation.bindMainColumn(readPhysicalMain)
+                : registerShellColumnActionOwner('main', readMain);
+            const unregisterSide = !detailNavigation || detailNavigation.registerSide === false
+                ? registerShellColumnActionOwner('side', readSide) : () => {};
+            return () => { unregisterMain(); unregisterSide(); };
+        });
+    }, [focus, layout?.deviceType, props.scopeId, readMain, readPhysicalMain, readSide,
         detailNavigation?.bindMainColumn, detailNavigation?.registerSide]);
-    useKeyboardShortcutHandlers(React.useMemo(() => !props.focused ? {} : ({
+    useKeyboardShortcutHandlers(React.useMemo(() => ({
         'panes.main.toggle': () => { if (!canHide) return false; void requestToggle(); return true; },
         'panes.side.toggle': () => {
             if (!props.sideAvailable || !layout?.multiPaneEnabled || layout.deviceType === 'phone') return false;
             void execute('shell.column.set', { column: 'side', visible: !props.rightOpen }, { kind: 'shell.column', column: 'side', read: readSide });
             return true;
         },
-    }), [canHide, execute, layout?.deviceType, layout?.multiPaneEnabled, props.focused, props.rightOpen, props.sideAvailable, readSide, requestToggle]));
+    }), [canHide, execute, layout?.deviceType, layout?.multiPaneEnabled, props.rightOpen, props.sideAvailable, readSide, requestToggle]), focus);
     const [chipClaims] = React.useState(createPaneMainChipClaims);
     return <PaneMainColumnContext.Provider value={value}>
         <PaneMainChipClaimsContext.Provider value={chipClaims}>

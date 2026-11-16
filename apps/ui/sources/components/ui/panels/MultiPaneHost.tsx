@@ -114,7 +114,8 @@ export type MultiPaneHostProps = Readonly<{
      * the right column renders in `host`, beside the page sheet, and `hidden` while this page is not on
      * screen. The column keeps one mounted instance whichever place it stands in.
      */
-    rightTail?: Readonly<{ host: HTMLElement | null; hidden: boolean }>;
+    /** The canvas tail the docked right column stands in, drawn while `focus` says its page is focused. */
+    rightTail?: Readonly<{ host: HTMLElement | null; focus: Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }> }>;
     /** How the docked right panel, joined to the page, is divided from it (R11-3); a hairline by default. */
     rightDivider?: AppShellPanelDivider;
 }>;
@@ -541,8 +542,14 @@ function MaybeTailSlot(props: Readonly<{
     host: HTMLElement | null;
     children: React.ReactElement;
 }>): React.ReactNode {
-    return <AppShellTailSlot host={props.host} hidden={props.tail?.hidden}>{props.children}</AppShellTailSlot>;
+    // The slot reads its page's focus itself, so a focus change renders this slot, not the pane host.
+    const focus = props.tail?.focus;
+    const focused = React.useSyncExternalStore(focus?.subscribe ?? subscribeToNothing,
+        () => focus?.get() ?? null, () => focus?.get() ?? null);
+    return <AppShellTailSlot host={props.host} hidden={focused === null ? undefined : !focused}>{props.children}</AppShellTailSlot>;
 }
+
+const subscribeToNothing = () => () => {};
 
 /** The header's shade depth (`PaneHeaderShade`), turned on its side: the joined panel casts its own softer shade this far. */
 const JOINED_PANEL_SHADE_PX = 14;

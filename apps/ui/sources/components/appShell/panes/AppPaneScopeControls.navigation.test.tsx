@@ -44,7 +44,7 @@ it('keeps physical main arrangement, search and visibility when presented detail
             effectiveDetailsOpen: false, detailsAvailable: false, containerWidthPx: 1200, containerHeightPx: 900,
             mainRegionWidthPx: 800, mainRegionHeightPx: 900, multiPaneEnabled: true, deviceType: 'tablet',
             layout: { kind: 'twoPane', main: 'docked', right: 'docked', details: 'hidden' }, bottomPresentation: 'hidden' };
-        return <AppPaneScopeLayoutProvider value={layout}><AppPaneScopeControls scopeId="project" focused
+        return <AppPaneScopeLayoutProvider value={layout}><AppPaneScopeControls scopeId="project"
             descriptor={{ hideLabel: 'Hide Project', showLabel: 'Show Project', identity: { name: 'Project' } }}
             surfaceScope={{ targetKind: 'project', projectContext, projectionPhase: 'current', accountLifetime: {
                 scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }),

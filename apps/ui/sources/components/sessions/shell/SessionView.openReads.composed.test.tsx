@@ -9,6 +9,7 @@ import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shipped
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { SessionDestinationBody } from './SessionDestinationBody';
+import { PaneColumnsHost } from '@/components/appShell/panes/PaneColumnsHost';
 import { storage } from '@/sync/domains/state/storageStore';
 import { sync } from '@/sync/sync';
 import { hasCurrentSessionTurnsProjection } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
@@ -207,10 +208,17 @@ it('renders only its focus readers when its retained Session tab is hidden and s
         // The transcript list draws nothing from focus: only its focus-reading leaves (Find, Next landing, row
         // content demand) render, never the list or its renderer.
         expect(counts.read().commitsFor(ChatListInternal), summary).toBe(0);
+        expect(renders.get('ChatListContent') ?? 0, summary).toBe(0);
         expect(renders.get('LegendListTranscriptRendererInner') ?? 0, summary).toBe(0);
-        // HEAD before W5: ~564 (A/B arm); W5: 434; transcript list off the switch: 393. The remaining readers
-        // are listed in P03-SESSION-CONTENT-READERS.
-        expect(total, summary).toBeLessThan(400);
+        // Presence reaches the composer, the Session body, its header and the pane hosts by subscription:
+        // none of them draws anything from a hide or show.
+        expect(renders.get('SessionHeaderSlot') ?? 0, summary).toBe(0);
+        expect(counts.read().commitsFor(SessionDestinationBody), summary).toBe(0);
+        expect(counts.read().commitsFor(PaneColumnsHost), summary).toBe(0);
+        // HEAD before W5: ~564 (A/B arm); W5: 434; transcript list: 393; composer, body and pane hosts: 159.
+        // What remains draws from focus (test IDs, atmosphere) or is the destination host chain itself; see
+        // P03-SESSION-CONTENT-READERS.
+        expect(total, summary).toBeLessThan(170);
     } finally {
         await screen.unmount();
     }

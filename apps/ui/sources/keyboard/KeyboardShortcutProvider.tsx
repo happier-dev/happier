@@ -1,5 +1,6 @@
 import { ShortcutsSheet } from './shortcutsSheet/ShortcutsSheet';
 import * as React from 'react';
+import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type { HappierFindBarProps } from '@happier-dev/plugin-ui/presentation';
 import { useFindSurfaceRegistrationWithHost, type FindSurfaceRegistrationHost } from '@happier-dev/plugin-ui/advanced';
@@ -131,7 +132,14 @@ function buildKeyboardShortcutOverridesSignature(
         .join(HANDLER_KEY_SIGNATURE_SEPARATOR);
 }
 
-export function useKeyboardShortcutHandlers(handlers: KeyboardShortcutHandlers): boolean {
+export function useKeyboardShortcutHandlers(
+    handlers: KeyboardShortcutHandlers,
+    /**
+     * The host's focus, followed by subscription: the handlers are registered only while it is true, and a
+     * focus change re-registers without rendering the host. Absent means always.
+     */
+    active?: Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>,
+): boolean {
     const registration = React.useContext(KeyboardShortcutRegistrationContext);
     const latestHandlersRef = React.useRef(handlers);
     latestHandlersRef.current = handlers;
@@ -150,8 +158,9 @@ export function useKeyboardShortcutHandlers(handlers: KeyboardShortcutHandlers):
     React.useEffect(() => {
         if (!registration) return;
         if (!handlerKeySignature) return;
-        return registration.registerHandlers(registeredHandlers);
-    }, [handlerKeySignature, registeredHandlers, registration]);
+        if (!active) return registration.registerHandlers(registeredHandlers);
+        return followSignal(active, (isActive) => isActive ? registration.registerHandlers(registeredHandlers) : undefined);
+    }, [active, handlerKeySignature, registeredHandlers, registration]);
 
     return registration != null;
 }

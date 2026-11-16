@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { resolveBrowserMaterialPaint } from '@/dev/testkit/glassBackdrop';
 
+const FOCUSED = Object.freeze({ get: () => true, subscribe: () => () => {} });
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
@@ -41,7 +43,7 @@ describe('MultiPaneHost docked sheet', () => {
                     <GlassSurface plane surfaceGroup="content" finishRole={null} atmosphereCoat="reading">
                         <GlassSurface testID="pane-material-reference" surfaceGroup="content" nested={!onCanvas}>{null}</GlassSurface>
                         <MultiPaneHost main={null} rightPane={<Panel />} detailsPane={null}
-                            rightTail={onCanvas ? { host: null, hidden: false } : undefined}
+                            rightTail={onCanvas ? { host: null, focus: FOCUSED } : undefined}
                             layout={{ main: 'docked', kind: 'twoPane', right: 'docked', details: 'hidden' }}
                             rightDockWidthPx={360} detailsDockWidthPx={520} onCloseRight={() => {}} onCloseDetails={() => {}}
                             onCommitRightDockWidthPx={() => {}} onCommitDetailsDockWidthPx={() => {}} />
@@ -111,7 +113,7 @@ describe('MultiPaneHost docked sheet', () => {
     it.each([false, true])('leaves the docked pane\'s seam unclipped so its resize target reaches over the page beside it (on canvas: %s)', async (onCanvas) => {
         // The handle's web target reaches past the pane edge; a clipping column would cut that outer part off.
         const screen = await renderScreen(<MultiPaneHost main={null} rightPane={<Panel />} detailsPane={null}
-            rightTail={onCanvas ? { host: null, hidden: false } : undefined}
+            rightTail={onCanvas ? { host: null, focus: FOCUSED } : undefined}
             layout={{ main: 'docked', kind: 'twoPane', right: 'docked', details: 'hidden' }}
             rightDockWidthPx={360} rightDockMinWidthPx={280} rightDockMaxWidthPx={640} detailsDockWidthPx={520}
             onCloseRight={() => {}} onCloseDetails={() => {}}

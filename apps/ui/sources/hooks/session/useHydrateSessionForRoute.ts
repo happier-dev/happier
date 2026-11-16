@@ -12,7 +12,9 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { hasCurrentSessionTurnsProjection } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
 import { readHydratedRouteSnapshot, readHydratedRouteServerSnapshot, resolveHydratedServerIdForRouteResult, type SessionRouteEncryptionReader } from './routeHydrationSnapshot';
 import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
-import { useDestinationPageTitle, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationPageTitle } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationVisibilitySignal } from '@/components/appShell/workspace/destinationInstanceContext';
+import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { t } from '@/text';
 
 type SessionRouteHydrationStateRecord = Readonly<{
@@ -97,8 +99,13 @@ export function useHydrateSession(
     const forceRefresh = options?.forceRefresh === true;
     const hydrateMessages = options?.hydrateMessages;
     const includeTurnsProjection = options?.includeTurnsProjection;
-    const destinationVisible = useDestinationVisibility();
-    const turnsDemanded = includeTurnsProjection === true && destinationVisible;
+    // Turn facts are demanded while the destination is visible; that is followed by subscription, so a tab
+    // switch re-runs the demand below without rendering the route's host.
+    const destinationVisibility = useDestinationVisibilitySignal();
+    const turnsDemand = React.useMemo(() => ({
+        get: () => includeTurnsProjection === true && destinationVisibility.get(),
+        subscribe: destinationVisibility.subscribe,
+    }), [destinationVisibility, includeTurnsProjection]);
     const subscribeHydration = React.useCallback((listener: () => void) => storage.subscribe(listener, {
         sessions: [normalizedSessionId], sessionListRowsByServerId: true,
     }), [normalizedSessionId]);
@@ -128,144 +135,146 @@ export function useHydrateSession(
     }, [routeKey]);
 
     React.useEffect(() => {
-        let canceled = false;
-        let retryTimeoutId: ReturnType<typeof setTimeout> | null = null;
-        let attemptCount = 0;
-        let pending = false;
+        return followSignal(turnsDemand, (turnsDemanded) => {
+            let canceled = false;
+            let retryTimeoutId: ReturnType<typeof setTimeout> | null = null;
+            let attemptCount = 0;
+            let pending = false;
 
-        if (!normalizedSessionId) {
-            publishRouteState({ routeKey, state: createMissingState('', routeServerId, 'not_found') });
-            return;
-        }
-        const session = storage.getState().sessions[normalizedSessionId];
-        const needsTurnsProjection = turnsDemanded
-            && session !== undefined
-            && !hasCurrentSessionTurnsProjection(session)
-            && isSessionContentReadable(readSessionContentAvailability(session));
-        const alreadyAvailable = !forceRefresh && hasHydratedSession && !needsTurnsProjection;
-        // An update can leave an already-shown Session briefly behind its observed documents (an owner
-        // view still at the previous metadata revision). Re-reading it is revalidation, not loading:
-        // the route keeps showing the Session, so its surface is not redrawn through `loading` and back.
-        const revalidatingAvailable = !forceRefresh && !needsTurnsProjection
-            && routeStateRecordRef.current.routeKey === routeKey
-            && routeStateRecordRef.current.state.kind === 'available';
-        if (alreadyAvailable) {
-            publishRouteState({ routeKey, state: createAvailableState(normalizedSessionId, routeServerId) });
-        } else if (!revalidatingAvailable) {
-            publishRouteState({
-                routeKey,
-                state: createLoadingState(normalizedSessionId, routeServerId, forceRefresh ? 'refreshing' : 'store-miss'),
-            });
-        }
+            if (!normalizedSessionId) {
+                publishRouteState({ routeKey, state: createMissingState('', routeServerId, 'not_found') });
+                return;
+            }
+            const session = storage.getState().sessions[normalizedSessionId];
+            const needsTurnsProjection = turnsDemanded
+                && session !== undefined
+                && !hasCurrentSessionTurnsProjection(session)
+                && isSessionContentReadable(readSessionContentAvailability(session));
+            const alreadyAvailable = !forceRefresh && hasHydratedSession && !needsTurnsProjection;
+            // An update can leave an already-shown Session briefly behind its observed documents (an owner
+            // view still at the previous metadata revision). Re-reading it is revalidation, not loading:
+            // the route keeps showing the Session, so its surface is not redrawn through `loading` and back.
+            const revalidatingAvailable = !forceRefresh && !needsTurnsProjection
+                && routeStateRecordRef.current.routeKey === routeKey
+                && routeStateRecordRef.current.state.kind === 'available';
+            if (alreadyAvailable) {
+                publishRouteState({ routeKey, state: createAvailableState(normalizedSessionId, routeServerId) });
+            } else if (!revalidatingAvailable) {
+                publishRouteState({
+                    routeKey,
+                    state: createLoadingState(normalizedSessionId, routeServerId, forceRefresh ? 'refreshing' : 'store-miss'),
+                });
+            }
 
-        const attemptHydration = (refresh = forceRefresh) => {
-            if (canceled || pending) return;
-            pending = true;
+            const attemptHydration = (refresh = forceRefresh) => {
+                if (canceled || pending) return;
+                pending = true;
 
-            attemptCount++;
-            const hydrationOptions = {
-                ...(refresh ? { forceRefresh: true } : {}),
-                ...(routeServerId ? { serverId: routeServerId } : {}),
-                ...(hydrateMessages !== undefined ? { hydrateMessages } : {}),
-                ...(includeTurnsProjection !== undefined ? { includeTurnsProjection } : {}),
-                onHydratedSessionReader: (read: SessionRouteEncryptionReader) => {
-                    if (!canceled) hydratedReader.current = { routeKey, read };
-                },
-            };
-            const promise = (sync.ensureSessionVisibleForMessageRoute as (
-                sessionId: string,
-                options?: Readonly<{ forceRefresh?: boolean; serverId?: string; hydrateMessages?: boolean; includeTurnsProjection?: boolean }>,
-            ) => Promise<EnsureSessionVisibleForRouteResult>)(normalizedSessionId, Object.keys(hydrationOptions).length > 0 ? hydrationOptions : undefined);
-            fireAndForget(promise, { tag });
+                attemptCount++;
+                const hydrationOptions = {
+                    ...(refresh ? { forceRefresh: true } : {}),
+                    ...(routeServerId ? { serverId: routeServerId } : {}),
+                    ...(hydrateMessages !== undefined ? { hydrateMessages } : {}),
+                    ...(includeTurnsProjection !== undefined ? { includeTurnsProjection } : {}),
+                    onHydratedSessionReader: (read: SessionRouteEncryptionReader) => {
+                        if (!canceled) hydratedReader.current = { routeKey, read };
+                    },
+                };
+                const promise = (sync.ensureSessionVisibleForMessageRoute as (
+                    sessionId: string,
+                    options?: Readonly<{ forceRefresh?: boolean; serverId?: string; hydrateMessages?: boolean; includeTurnsProjection?: boolean }>,
+                ) => Promise<EnsureSessionVisibleForRouteResult>)(normalizedSessionId, Object.keys(hydrationOptions).length > 0 ? hydrationOptions : undefined);
+                fireAndForget(promise, { tag });
 
-            void promise
-                .then((result) => {
-                    if (canceled) return;
-                    if (result.kind === 'missing') {
-                        publishRouteState({
-                            routeKey,
-                            state: createMissingState(
-                                normalizedSessionId,
-                                routeServerId ?? (normalizeRouteId(result.serverId) || undefined),
-                                result.cause,
-                            ),
-                        });
-                        return;
-                    }
-                    if (result.kind === 'awaiting_push') {
-                        // The canonical owner refused this observation. Retain recovery controls;
-                        // a fresh store publication or explicit retry advances the route, not a timer.
-                        publishRouteState({ routeKey, state: createRetryingState(normalizedSessionId, routeServerId, 'unknown') });
-                        return;
-                    }
-                    if (result.kind === 'available') {
-                        const hydratedServerId = resolveHydratedServerIdForRouteResult(
-                            normalizedSessionId,
-                            routeServerId,
-                            result,
-                            hydratedReader.current?.routeKey === routeKey ? hydratedReader.current.read : undefined,
-                        );
-                        if (hydratedServerId !== null) {
+                void promise
+                    .then((result) => {
+                        if (canceled) return;
+                        if (result.kind === 'missing') {
                             publishRouteState({
                                 routeKey,
-                                state: createAvailableState(normalizedSessionId, hydratedServerId),
+                                state: createMissingState(
+                                    normalizedSessionId,
+                                    routeServerId ?? (normalizeRouteId(result.serverId) || undefined),
+                                    result.cause,
+                                ),
                             });
                             return;
                         }
-                    }
-                    publishRouteState({
-                        routeKey,
-                        state: createRetryingState(
-                            normalizedSessionId,
-                            routeServerId,
-                            result.kind === 'retryable_failure' ? result.cause : 'decrypting',
-                        ),
-                    });
-                    // Retry with exponential backoff: 2s, 4s, 8s, 16s, max 30s
-                    const retryDelayMs = Math.min(2000 * Math.pow(2, attemptCount - 1), 30000);
-                    retryTimeoutId = setTimeout(() => {
-                        if (!canceled) {
-                            attemptHydration(refresh);
+                        if (result.kind === 'awaiting_push') {
+                            // The canonical owner refused this observation. Retain recovery controls;
+                            // a fresh store publication or explicit retry advances the route, not a timer.
+                            publishRouteState({ routeKey, state: createRetryingState(normalizedSessionId, routeServerId, 'unknown') });
+                            return;
                         }
-                    }, retryDelayMs);
-                })
-                .catch(() => {
-                    if (canceled) return;
-                    publishRouteState({
-                        routeKey,
-                        state: createRetryingState(normalizedSessionId, routeServerId, 'unknown'),
-                    });
-                    // Retry with exponential backoff: 2s, 4s, 8s, 16s, max 30s
-                    const retryDelayMs = Math.min(2000 * Math.pow(2, attemptCount - 1), 30000);
-                    retryTimeoutId = setTimeout(() => {
-                        if (!canceled) {
-                            attemptHydration(refresh);
+                        if (result.kind === 'available') {
+                            const hydratedServerId = resolveHydratedServerIdForRouteResult(
+                                normalizedSessionId,
+                                routeServerId,
+                                result,
+                                hydratedReader.current?.routeKey === routeKey ? hydratedReader.current.read : undefined,
+                            );
+                            if (hydratedServerId !== null) {
+                                publishRouteState({
+                                    routeKey,
+                                    state: createAvailableState(normalizedSessionId, hydratedServerId),
+                                });
+                                return;
+                            }
                         }
-                    }, retryDelayMs);
-                })
-                .finally(() => { pending = false; });
-        };
+                        publishRouteState({
+                            routeKey,
+                            state: createRetryingState(
+                                normalizedSessionId,
+                                routeServerId,
+                                result.kind === 'retryable_failure' ? result.cause : 'decrypting',
+                            ),
+                        });
+                        // Retry with exponential backoff: 2s, 4s, 8s, 16s, max 30s
+                        const retryDelayMs = Math.min(2000 * Math.pow(2, attemptCount - 1), 30000);
+                        retryTimeoutId = setTimeout(() => {
+                            if (!canceled) {
+                                attemptHydration(refresh);
+                            }
+                        }, retryDelayMs);
+                    })
+                    .catch(() => {
+                        if (canceled) return;
+                        publishRouteState({
+                            routeKey,
+                            state: createRetryingState(normalizedSessionId, routeServerId, 'unknown'),
+                        });
+                        // Retry with exponential backoff: 2s, 4s, 8s, 16s, max 30s
+                        const retryDelayMs = Math.min(2000 * Math.pow(2, attemptCount - 1), 30000);
+                        retryTimeoutId = setTimeout(() => {
+                            if (!canceled) {
+                                attemptHydration(refresh);
+                            }
+                        }, retryDelayMs);
+                    })
+                    .finally(() => { pending = false; });
+            };
 
-        const retryNow = () => {
-            if (canceled || pending) return;
-            if (retryTimeoutId !== null) {
-                clearTimeout(retryTimeoutId);
-                retryTimeoutId = null;
-            }
-            publishRouteState({ routeKey, state: createLoadingState(normalizedSessionId, routeServerId, 'refreshing') });
-            attemptHydration(true);
-        };
-        retryCurrent.current = { routeKey, invoke: retryNow };
-        if (!alreadyAvailable) attemptHydration();
+            const retryNow = () => {
+                if (canceled || pending) return;
+                if (retryTimeoutId !== null) {
+                    clearTimeout(retryTimeoutId);
+                    retryTimeoutId = null;
+                }
+                publishRouteState({ routeKey, state: createLoadingState(normalizedSessionId, routeServerId, 'refreshing') });
+                attemptHydration(true);
+            };
+            retryCurrent.current = { routeKey, invoke: retryNow };
+            if (!alreadyAvailable) attemptHydration();
 
-        return () => {
-            canceled = true;
-            if (retryCurrent.current?.invoke === retryNow) retryCurrent.current = null;
-            if (retryTimeoutId !== null) {
-                clearTimeout(retryTimeoutId);
-            }
-        };
-    }, [forceRefresh, hasHydratedSession, hydrateMessages, includeTurnsProjection, normalizedSessionId, publishRouteState, routeKey, routeServerId, tag, turnsDemanded]);
+            return () => {
+                canceled = true;
+                if (retryCurrent.current?.invoke === retryNow) retryCurrent.current = null;
+                if (retryTimeoutId !== null) {
+                    clearTimeout(retryTimeoutId);
+                }
+            };
+        });
+    }, [forceRefresh, hasHydratedSession, hydrateMessages, includeTurnsProjection, normalizedSessionId, publishRouteState, routeKey, routeServerId, tag, turnsDemand]);
 
     const routeState = routeStateRecord.routeKey === routeKey
         ? routeStateRecord.state

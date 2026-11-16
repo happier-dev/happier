@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
-import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import {
     createPluginSurfacePaneLaunchStore,
@@ -23,7 +23,7 @@ import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback'
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { ModalPaneBoundaryView } from '@/components/ui/panels/ModalPaneBoundary';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { useDestinationFocus } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationFocusSignal } from '@/components/appShell/workspace/destinationInstanceContext';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useAppPaneContext } from './AppPaneProvider';
 import { AppPaneContext } from './AppPaneContext';
@@ -273,17 +273,19 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
     const deviceType = useDeviceType();
     const appProjection = useAppShellPluginUiProjection(value => right?.selectedDestination?.kind === 'plugin'
         ? value.pluginUiProjection : null);
-    const screenFocused = useDestinationFocus();
+    // Focus only starts and stops this scope's activation and reconciliation: followed by subscription,
+    // so a tab switch does not render the pane scope.
+    const screenFocus = useDestinationFocusSignal();
     // Activation reads the current creation input; resizing or changing preferences
     // must not activate the scope again. The reducer ignores it for retained scopes.
 
     // The page on screen owns the active scope; a page left behind (still mounted under the one on
     // screen) releases it, so "the current page's right sidebar" always names the page the user sees.
-    React.useEffect(() => {
+    React.useEffect(() => followSignal(screenFocus, (screenFocused) => {
         if (!screenFocused) return;
         dispatch({ type: 'activateScope', scopeId: props.scopeId });
         return () => dispatch({ type: 'releaseScope', scopeId: props.scopeId });
-    }, [dispatch, props.scopeId, screenFocused]);
+    }), [dispatch, props.scopeId, screenFocus]);
 
     const rightOpen = isSelectedPaneSlotVisible(right, 'right', props.selectedPaneTabKey);
     const bottomOpen = isSelectedPaneSlotVisible(bottom, 'bottom', props.selectedPaneTabKey);
@@ -303,12 +305,12 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
         props.mainColumn !== undefined && mainHiddenPreference && layout.kind !== 'single'
         && (rightOpen || effectiveDetailsOpen)
     ), [effectiveDetailsOpen, mainHiddenPreference, props.mainColumn, rightOpen]);
-    React.useEffect(() => {
+    React.useEffect(() => followSignal(screenFocus, (screenFocused) => {
         // Route-owned details cannot be seen by the reducer. Reconcile them here with every host.
         if (props.selectedPaneTabKey === undefined && screenFocused && mainHiddenPreference && !rightOpen && !effectiveDetailsOpen) {
             dispatch({ type: 'setMainHidden', scopeId: props.scopeId, hidden: false });
         }
-    }, [dispatch, effectiveDetailsOpen, mainHiddenPreference, props.scopeId, props.selectedPaneTabKey, rightOpen, screenFocused]);
+    }), [dispatch, effectiveDetailsOpen, mainHiddenPreference, props.scopeId, props.selectedPaneTabKey, rightOpen, screenFocus]);
     const drawerControls = React.useRef<Readonly<{ open(): void; close(): void }> | null>(null);
     const receiveDrawerControls = React.useCallback((controls: typeof drawerControls.current) => {
         drawerControls.current = controls;
@@ -718,7 +720,6 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
             <RightPanePlacementReporterContext.Provider value={setRightPresentation}>
                 <AppPaneScopeControls
                     scopeId={props.scopeId}
-                    focused={screenFocused}
                     surfaceScope={paneSurfaceScope}
                     descriptor={props.mainColumn}
                     rightOpen={presentedRightOpen}
@@ -736,7 +737,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
             </RightSidebarActionsContext.Provider>
         </PluginSurfaceDestinationNavigationBindingProvider>
     ), [effectiveDetailsOpen, enclosingNavigationBinding, paneNavigationBinding, paneSurfaceScope, props.arrangement, props.mainColumn, props.onMainColumnControlsChange, props.scopeId,
-        presentedRightOpen, rightPaneBuiltinAdapter, rightSidebarAdapter, screenFocused, setMainHidden, setSideVisible, wrapScopeContent]);
+        presentedRightOpen, rightPaneBuiltinAdapter, rightSidebarAdapter, setMainHidden, setSideVisible, wrapScopeContent]);
 
     if (props.selectedPaneTabKey !== undefined) {
         const selectedSlot = readSelectedPaneDestinationSlot(props.selectedPaneTabKey);

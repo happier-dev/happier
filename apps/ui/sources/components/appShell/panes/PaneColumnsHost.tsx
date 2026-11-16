@@ -30,7 +30,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import type { RightPanePlacement, RightPaneSurface } from './rightPanePlacement';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { AppShellTailContext, AppShellTailSlot, useAppShellTail } from '@/components/navigation/shell/appShellTail';
-import { useDestinationFocus } from '@/components/appShell/workspace/destinationInstanceContext';
+import { useDestinationFocusSignal, type DestinationFocusSignal } from '@/components/appShell/workspace/destinationInstanceContext';
 import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { ScreenBackdropBoundary } from '@/components/navigation/safeArea/HorizontalSafeArea';
 
@@ -140,13 +140,15 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     // the trailing edge (not Editor first, not one pane of a split). The layout keeps budgeting the
     // width the sheet has when the tail is empty, so every placement resolves the same columns.
     const shellTail = useAppShellTail();
-    const destinationFocused = useDestinationFocus();
+    // The tail slots draw this page's rail and docked column only while it is focused; they read that
+    // themselves by subscription, so a tab switch renders the slots, not this host.
+    const destinationFocus = useDestinationFocusSignal();
     const soleScope = useOptionalWorkspaceNavigation(selectSoleScope);
     const railTail = shellTail?.railOnCanvas === true && Platform.OS === 'web' && !mirrored && soleScope ? shellTail : null;
     const canvasTail = railTail?.placement === 'canvas' ? railTail : null;
     const hostWidthPx = railTail?.containerWidthPx ?? measuredHostWidthPx;
-    const rightTail = React.useMemo(() => (canvasTail ? { host: canvasTail.rightHost, hidden: !destinationFocused } : undefined),
-        [canvasTail, destinationFocused]);
+    const rightTail = React.useMemo(() => (canvasTail ? { host: canvasTail.rightHost, focus: destinationFocus } : undefined),
+        [canvasTail, destinationFocus]);
     // The swap travels (lab FL): read the columns where they are before the new order commits, then
     // slide each from there once it has.
     const reducedMotion = useReducedMotionPreference();
@@ -561,7 +563,11 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const railOnCanvas = railTail !== null;
     // Focus reaches the rail only through the vacant ⋯ host it chooses: a tab switch that leaves that host
     // unchanged keeps the rail's context, so its consumers (the whole action rail) do not render.
-    const vacantMoreHost = railVacant && destinationFocused ? railTail?.railMoreHost ?? null : null;
+    // Only a vacant rail follows focus here (its ⋯ moves to the title bar of the focused page).
+    const destinationFocusedWhileVacant = React.useSyncExternalStore(
+        railVacant ? destinationFocus.subscribe : subscribeToNothing,
+        () => railVacant && destinationFocus.get(), () => railVacant && destinationFocus.get());
+    const vacantMoreHost = destinationFocusedWhileVacant ? railTail?.railMoreHost ?? null : null;
     const railContext = React.useMemo(() => ({
         visible: showActionRail,
         mirrored,
@@ -677,7 +683,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 bottomOverlayFocusReturnRef={props.bottomOverlayFocusReturnRef}
             />
             {mountActionRail ? (
-                <RailTailSlot tail={railTail ? { hidden: !destinationFocused } : undefined} host={railTail?.railHost ?? null}>
+                <RailTailSlot focus={railTail ? destinationFocus : undefined} host={railTail?.railHost ?? null}>
                 <View
                     ref={railColumnRef}
                     testID="pane-action-rail-column"
@@ -734,12 +740,16 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
 });
 
 function RailTailSlot(props: Readonly<{
-    tail: Readonly<{ hidden: boolean }> | undefined;
+    focus: DestinationFocusSignal | undefined;
     host: HTMLElement | null;
     children: React.ReactElement;
 }>): React.ReactNode {
-    return <AppShellTailSlot host={props.host} hidden={props.tail?.hidden}>{props.children}</AppShellTailSlot>;
+    const focused = React.useSyncExternalStore(props.focus?.subscribe ?? subscribeToNothing,
+        () => props.focus?.get() ?? null, () => props.focus?.get() ?? null);
+    return <AppShellTailSlot host={props.host} hidden={focused === null ? undefined : !focused}>{props.children}</AppShellTailSlot>;
 }
+
+const subscribeToNothing = () => () => {};
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
