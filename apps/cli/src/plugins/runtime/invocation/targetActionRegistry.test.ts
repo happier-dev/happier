@@ -1,5 +1,6 @@
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
@@ -68,6 +69,15 @@ import {
     createPluginInvocationSecretRedactor,
     type PluginInvocationLogRecord,
 } from './services/logger';
+
+// A durable 'approved' read is history, never a live decision witness
+// (b299635bd52). Live-only approvals settle only through the authenticated
+// decision ingress, so these fixtures deliver that host-private witness.
+function deliverApprovedWitness(artifactId: string, request: TargetActionApprovalRequestV1) {
+    setImmediate(() => { void getSharedBlockingApprovalCoordinator().resolveBlockingDecision({ artifactId,
+        request: { ...request, status: 'approved', decision: { kind: 'approve', decidedAtMs: 2 } },
+        decision: 'approve', decisionAuthority: 'present_user' }); });
+}
 
 function isJsonRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -339,7 +349,7 @@ describe('target action invocation registry', () => {
         } finally { await Promise.all(subscriptions.map(subscription => subscription.dispose())); registry.dispose(); }
     });
 
-    it('executes reversible Triage link and unlink from UI and CLI while agent, MCP and Ask remain held', async () => {
+    it('executes reversible Triage link and unlink directly on every surface while a saved Ask remains held', async () => {
         const plugin = await createPluginTestkit({ manifest: TRIAGE_MANIFEST, module: TRIAGE_PLUGIN });
         const { collections } = createTestkitCorpusCollections();
         const manifest = normalizePluginManifestV2(TRIAGE_MANIFEST);
@@ -435,8 +445,12 @@ describe('target action invocation registry', () => {
             ...(ask ? { isApprovalRequiredByActionSettings: () => true } : {}),
         });
         try {
+            // Reversible own-Account relationship writes are Direct by the Action's
+            // one approval default, not per surface (owner ruling 2026-11-01).
             for (const surface of ['agent', 'mcp'] as const) {
-                expect(await invoke(localIds[0]!, surface)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+                expect(await invoke(localIds[0]!, surface)).toMatchObject({ status: 'executed', value: { status: 'linked' } });
+                expect(await rows()).toHaveLength(1);
+                expect(await invoke(localIds[1]!, surface)).toMatchObject({ status: 'executed', value: { status: 'unlinked' } });
                 expect(await rows()).toHaveLength(0);
             }
             expect(await invoke(localIds[0]!, 'ui', true)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
@@ -445,10 +459,6 @@ describe('target action invocation registry', () => {
             // therefore proves that default person confirmation was not requested.
             expect(await invoke(localIds[0]!, 'ui')).toMatchObject({ status: 'executed', value: { status: 'linked' } });
             expect(await rows()).toHaveLength(1);
-            for (const surface of ['agent', 'mcp'] as const) {
-                expect(await invoke(localIds[1]!, surface)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
-                expect(await rows()).toHaveLength(1);
-            }
             expect(await invoke(localIds[1]!, 'ui', true)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
             expect(await rows()).toHaveLength(1);
             expect(await invoke(localIds[1]!, 'ui')).toMatchObject({ status: 'executed', value: { status: 'unlinked' } });
@@ -541,7 +551,15 @@ describe('target action invocation registry', () => {
             expect(await invoke(localIds[1]!, 'ui')).toMatchObject({ status: 'executed' });
             workers = ['session-a'];
             requireApproval = true;
-            const proposal = await executor.execute('action.invoke', targetInput, { ...context, serverIdentityId: 'home-identity' });
+            // A present person's own-UI Ask is confirmed in that UI from the carried
+            // review, never by a self-approval Artifact (eb1a5146c42). It still holds.
+            expect(await executor.execute('action.invoke', targetInput, { ...context, serverIdentityId: 'home-identity' }))
+                .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+            expect(dispatches).toBe(1);
+            // A non-present requester's Ask creates the durable approval whose replay
+            // must retain the admitted Session target and its origin currentness.
+            const requesterContext = { ...context, surface: 'cli', authority: 'account_automation', serverIdentityId: 'home-identity' } as const;
+            const proposal = await executor.execute('action.invoke', targetInput, requesterContext);
             expect(proposal, JSON.stringify(proposal))
                 .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
             expect(approval).toMatchObject({ executionOriginV1: { sessionTargetsV1: {
@@ -567,8 +585,7 @@ describe('target action invocation registry', () => {
                 targets: [{ serverId: 'home', sessionId: 'session-a' }] });
             expect(await rows()).toHaveLength(1);
             requireApproval = true;
-            expect(await executor.execute('action.invoke', { ...targetInput, input: linkInput },
-                { ...context, serverIdentityId: 'home-identity' }))
+            expect(await executor.execute('action.invoke', { ...targetInput, input: linkInput }, requesterContext))
                 .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
             originCurrent = false;
             const staleReplay = await executor.execute('approval.request.decide', { artifactId: 'triage-link-approval', decision: 'approve' },
@@ -895,11 +912,11 @@ describe('target action invocation registry', () => {
                 create: async request => {
                     settled = undefined;
                     stored = StoredTargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify(request)));
+                    deliverApprovedWitness(`parser-${surface}`, request);
                     return { artifactId: `parser-${surface}` };
                 },
                 update: async ({ request }) => { settled = request; return { ok: true }; },
-                read: async () => settled ?? (stored ? { ...stored, status: 'approved',
-                    decision: { kind: 'approve', decidedAtMs: stored.updatedAtMs } } : null),
+                read: async () => settled ?? stored ?? null,
             });
             const reject = () => {
                 if (phase === 'result') expect(owners.redactDiagnosticText(scopes.at(-1)!, secret)).toBe('[REDACTED]');
@@ -950,12 +967,11 @@ describe('target action invocation registry', () => {
                         expect(owners.redactDiagnosticText(scopes.at(-1)!, secret)).toBe('[REDACTED]');
                     }
                     stored = StoredTargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify(request)));
+                    deliverApprovedWitness(`confidential-egress-${surface}`, request);
                     return { artifactId: `confidential-egress-${surface}` };
                 },
                 update: async ({ request }) => { settled = request; return { ok: true }; },
-                read: async () => settled ?? (stored ? {
-                    ...stored, status: 'approved', decision: { kind: 'approve', decidedAtMs: stored.updatedAtMs },
-                } : null),
+                read: async () => settled ?? stored ?? null,
             });
             for (const failure of ['error', 'pluginError'] as const) {
                 let context: PluginInvocationContext | undefined;
@@ -1065,14 +1081,11 @@ describe('target action invocation registry', () => {
             create: async request => {
                     settled = undefined;
                 requests.push(StoredTargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify(request))));
+                deliverApprovedWitness(`confidential-rotation-${surface}`, request);
                 return { artifactId: `confidential-rotation-${surface}` };
             },
             update: async ({ request }) => { settled = request; return { ok: true }; },
-            read: async () => {
-                const request = requests.at(-1);
-                if (settled) return settled;
-                return request ? { ...request, status: 'approved', updatedAtMs: 2, decision: { kind: 'approve', decidedAtMs: 2 } } : null;
-            },
+            read: async () => settled ?? requests.at(-1) ?? null,
         });
         const registry = createRegistry({ actions: [{
             pluginId: actionContractProducer.manifest.id,
@@ -1112,14 +1125,11 @@ describe('target action invocation registry', () => {
             create: async request => {
                     settled = undefined;
                 requests.push(StoredTargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify(request))));
+                deliverApprovedWitness(`confidential-release-${surface}`, request);
                 return { artifactId: `confidential-release-${surface}` };
             },
             update: async ({ request }) => { settled = request; return { ok: true }; },
-            read: async () => {
-                const request = requests.at(-1);
-                if (settled) return settled;
-                return request ? { ...request, status: 'approved', updatedAtMs: 2, decision: { kind: 'approve', decidedAtMs: 2 } } : null;
-            },
+            read: async () => settled ?? requests.at(-1) ?? null,
         });
         const input = { releaseTag: 'synthetic-confidential-release', benign: 'public-endpoint' };
         const registry = createRegistry({ actions: [{
@@ -2286,18 +2296,22 @@ describe('target action invocation registry', () => {
         const local = createRegistry({ actions: [{ ...action(), handler }] });
         await expect(local.invoke({ pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli' }))
             .resolves.toMatchObject({ status: 'executed' });
+        // HostAccess declarations describe consent; trusted plugins get no
+        // capability fence, so a declared network request does not gate admission.
+        const declaredNetwork = createRegistry({ actions: [{ ...action({
+            hostAccessRequests: [{
+                required: true,
+                request: {
+                    id: 'api',
+                    capability: 'network',
+                    reason: 'API',
+                    scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }] },
+                },
+            }],
+        }), handler }] });
+        await expect(declaredNetwork.invoke({ pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli' }))
+            .resolves.toMatchObject({ status: 'executed' });
         const cases = [
-            action({
-                hostAccessRequests: [{
-                    required: true,
-                    request: {
-                        id: 'api',
-                        capability: 'network',
-                        reason: 'API',
-                        scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }] },
-                    },
-                }],
-            }),
             action({ availability: { when: { fact: 'host.feature', operator: 'enabled', value: 'x' } } }),
             action({ surfaces: ['agent'] }),
             action({ scopes: ['session'] }),
@@ -2308,7 +2322,7 @@ describe('target action invocation registry', () => {
             await expect(registry.invoke({ pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli' }))
                 .resolves.toMatchObject({ status: 'unavailable' });
         }
-        expect(handler).toHaveBeenCalledTimes(1);
+        expect(handler).toHaveBeenCalledTimes(2);
     });
 
     it('evaluates action availability from canonical invocation facts', async () => {
