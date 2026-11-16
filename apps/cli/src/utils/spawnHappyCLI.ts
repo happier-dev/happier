@@ -1274,7 +1274,9 @@ export function spawnHappyCLI(
 ): ChildProcess {
   const environment = sessionProcessEnvironment();
   const directory = 'cwd' in options ? options.cwd : sessionWorkingDirectory();
-  const runtimeDirectory = directory instanceof URL ? fileURLToPath(directory) : directory ?? process.cwd();
+  const runtimeDirectory = typeof directory === 'string' || directory === undefined
+    ? directory ?? process.cwd()
+    : fileURLToPath(directory);
   // Note: We're actually executing 'node' with the calculated entrypoint path below,
   // bypassing the 'happier' wrapper that would normally be found in the shell's PATH.
   // However, we log it as 'happier' here because other engineers are typically looking
