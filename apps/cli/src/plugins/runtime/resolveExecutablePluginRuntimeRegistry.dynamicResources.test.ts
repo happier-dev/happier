@@ -2,6 +2,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import fastify from 'fastify';
 
 import { describe, expect, it, vi } from 'vitest';
 import { transform } from 'esbuild';
@@ -19,6 +20,8 @@ import {
 } from '../../../../../packages/plugin-sdk/examples/public-authoring/usageCoach';
 
 import * as persistence from '@/persistence';
+import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import {
     createResolvedContributionRegistry,
@@ -37,10 +40,14 @@ import { createCommittedInputTypeDeps } from './invocation/actions/createCommitt
 import { executeContributedAction } from './invocation/actions/executeContributedAction';
 import type { ResolveSessionResourceAccess } from './invocation/services/resources';
 
+// Load the real fixture before registering the filesystem mock: its policy module also imports fs.
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(
+    () => import('@/plugins/projection/registry/builtIn/locators.testkit'),
+);
+
 // Only replace the packaged-publication filesystem read; all catalog and runtime owners remain real.
 vi.mock('node:fs', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:fs')>();
-    const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
     return createBundledPluginPublicationFsFixture(actual);
 });
 
@@ -1169,6 +1176,15 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
     it('registers the bundled Channels global Resources before strict owner projection', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-channels-resource-home-'));
         const providerPluginRoot = await mkdtemp(join(tmpdir(), 'happier-channels-resource-provider-'));
+        const accountOrigin = 'https://data.example.test';
+        const accountHttp = fastify();
+        accountHttp.post('*', async (request, reply) => {
+            const response = absentAccountPluginAvailabilityHttpResponse(new URL(request.url, accountOrigin).href, request.body);
+            if (!response) throw new Error('Unexpected Channels fixture Account request');
+            return reply.code(response.status).send(response.data);
+        });
+        await accountHttp.ready();
+        const restoreAccountHttp = installAxiosFastifyAdapter({ app: accountHttp, origin: accountOrigin });
         type AccountDataWireRow = Readonly<{
             rowId: string;
             revision: number;
@@ -1220,7 +1236,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
                 return credentials.token === 'channels-resource-test-token';
             },
             resolveAccountScopeKey: () => accountScopeKey,
-            resolveBaseUrl: () => 'https://data.example.test',
+            resolveBaseUrl: () => accountOrigin,
             resolveAccountEncryptionCurrentness: async () => ({
                 mode: 'plain' as const,
                 version: 1,
@@ -1463,7 +1479,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
             });
 
             const installed = await loadInstalledPlugins({ happyHomeDir });
-            const contributes = await resolveMergedContributionRegistry({ happyHomeDir });
+            const contributes = await resolveMergedContributionRegistry({ happyHomeDir, accountStorageDependencies });
             expect(installed.diagnosticsByPluginId).toEqual({
                 [CHANNELS_PROVIDER_FIXTURE_ID]: [],
             });
@@ -1534,6 +1550,8 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
             await runtimeLease?.release();
             await reloadController?.shutdown();
             if (!reloadController) await runtime?.dispose();
+            restoreAccountHttp();
+            await accountHttp.close();
             await rm(happyHomeDir, { recursive: true, force: true });
             await rm(providerPluginRoot, { recursive: true, force: true });
         }
