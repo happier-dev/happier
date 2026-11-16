@@ -2,32 +2,33 @@ import * as React from 'react';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
-import { readActionOperationSudoPrompt } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { readActionOperationTaskQuestion } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationAddressKey, type QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 type Submission = Readonly<{ ok: true }> | Readonly<{ ok: false; errorCode: string }>;
 
-/** The password lives only in this transient call, never in an Action or UI store. */
-export async function submitActionOperationSudoPassword(
+/** Transient answers use the current task's authenticated Machine transport and owning Account lifetime. */
+export async function submitActionOperationTaskAnswer(
     operation: QualifiedActionOperation,
-    password: string,
+    answer: Readonly<{ password: string }> | Readonly<{ trusted: boolean }>,
     signal?: AbortSignal,
 ): Promise<Submission> {
-    const question = readActionOperationSudoPrompt(operation.snapshot);
+    const question = readActionOperationTaskQuestion(operation.snapshot);
     const current = () => {
         const retained = actionOperationStore.getSnapshot().operationsByKey.get(actionOperationAddressKey({
             serverId: operation.serverId, operationId: operation.snapshot.operationId,
         }))?.snapshot;
         const domain = retained?.domainRef;
-        const prompt = retained ? readActionOperationSudoPrompt(retained) : null;
+        const prompt = retained ? readActionOperationTaskQuestion(retained) : null;
         return question && retained && retained.actionId === operation.snapshot.actionId
             && retained.scope.accountId === operation.snapshot.scope.accountId
             && retained.scope.machineId === operation.snapshot.scope.machineId
-            && (domain?.kind === 'machineSetup' || domain?.kind === 'machineReboot')
-            && areServerProfileIdentifiersEquivalent(domain.serverId, operation.serverId)
+            && (domain?.kind === 'systemTask' || (domain?.kind === 'machineSetup' || domain?.kind === 'machineReboot')
+                && areServerProfileIdentifiersEquivalent(domain.serverId, operation.serverId))
             && prompt?.id === question.id && prompt.taskKind === question.taskKind
-            && prompt.prompt.adminUsername === question.prompt.adminUsername;
+            && sameStrictJsonValue(prompt.prompt, question.prompt);
     };
     if (!current()) return { ok: false, errorCode: 'action_operation_unavailable' };
     const controller = new AbortController();
@@ -45,7 +46,7 @@ export async function submitActionOperationSudoPassword(
         }
         const response = await machineCapabilitiesInvoke(operation.snapshot.scope.machineId, {
             id: 'tool.systemTasks', method: 'respond', params: {
-                taskId: question!.id, expectedPromptKind: 'sudo.password', answer: { password },
+                taskId: question!.id, expectedPromptKind: question!.prompt.kind, answer,
             },
         }, { serverId: operation.serverId, accountId: account.accountId, signal: controller.signal });
         account.assertCurrent();
@@ -61,9 +62,9 @@ export async function submitActionOperationSudoPassword(
     }
 }
 
-/** Semantic control shared by setup and reboot; the detail surface owns rendering. */
-export function useActionOperationSudoPassword(operation: QualifiedActionOperation | null | undefined) {
-    const target = React.useMemo(() => operation ? readActionOperationSudoPrompt(operation.snapshot) : null, [operation?.snapshot]);
+/** One response lifetime for setup, reboot and SSH trust; the question owns presentation. */
+export function useActionOperationTaskQuestion(operation: QualifiedActionOperation | null | undefined) {
+    const target = React.useMemo(() => operation ? readActionOperationTaskQuestion(operation.snapshot) : null, [operation?.snapshot]);
     const [pending, setPending] = React.useState(false);
     const [failureCode, setFailureCode] = React.useState<string | null>(null);
     const request = React.useRef<AbortController | null>(null);
@@ -73,14 +74,14 @@ export function useActionOperationSudoPassword(operation: QualifiedActionOperati
         setFailureCode(null);
         return () => { request.current?.abort(); request.current = null; };
     }, [key]);
-    const respond = React.useCallback(async (password: string): Promise<boolean> => {
+    const respond = React.useCallback(async (answer: Parameters<typeof submitActionOperationTaskAnswer>[1]): Promise<boolean> => {
         if (!operation || !target || request.current) return false;
         const controller = new AbortController();
         request.current = controller;
         setPending(true);
         setFailureCode(null);
         try {
-            const result = await submitActionOperationSudoPassword(operation, password, controller.signal);
+            const result = await submitActionOperationTaskAnswer(operation, answer, controller.signal);
             if (controller.signal.aborted) return false;
             if (!result.ok) setFailureCode(result.errorCode);
             return result.ok;

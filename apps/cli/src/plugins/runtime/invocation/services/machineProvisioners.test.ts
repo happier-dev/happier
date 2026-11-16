@@ -20,6 +20,31 @@ import { createManagedBootstrapSshCredential, ManagedMachineControllerError, rea
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
+it('requires host-owned SSH trust and preserves decline before bootstrap credential acquisition', async () => {
+    let credentialReads = 0;
+    const lifetime = createPluginInvocationLifetime();
+    const invocation: PluginInvocationServicesSeed = {
+        plugin: { id: 'fixture.compute', version: '0' }, contribution: { id: 'bootstrap', qualifiedId: 'fixture.compute/bootstrap' },
+        occurrenceId: 'occurrence', correlationId: 'bootstrap', surface: 'plugin', signal: lifetime.signal,
+        isOccurrenceCurrent: () => true, retainCleanup: lifetime.retainCleanup,
+        managedBootstrapCredential: { role: 'bootstrap', isCurrent: () => true,
+            readBootstrapCredential: async () => { credentialReads++; return new Uint8Array(); } },
+    };
+    const host = { kind: 'ssh' as const, address: '192.0.2.1', user: 'guest',
+        hostKeyEvidence: { hostKey: '192.0.2.1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest', fingerprint: 'SHA256:observed' } };
+    try {
+        const unavailable = createMachineProvisionersInvocationService({ seed: invocation })!;
+        await expect(unavailable.establishSshHostTrust(host)).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+        const declined = createMachineProvisionersInvocationService({ seed: { ...invocation,
+            managedSshHostTrust: async () => { throw new PluginError({ code: 'host_trust_declined' }); },
+        } })!;
+        await expect(declined.establishSshHostTrust(host)).rejects.toMatchObject({ code: 'host_trust_declined' });
+        expect(credentialReads).toBe(0);
+        await lifetime.complete();
+        await expect(declined.establishSshHostTrust(host)).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+    } finally { await lifetime.complete(); }
+});
+
 it('waits for native snapshot observation under the admitted invocation cancellation without opening an SSH key', async () => {
     vi.useFakeTimers();
     const controller = new AbortController();

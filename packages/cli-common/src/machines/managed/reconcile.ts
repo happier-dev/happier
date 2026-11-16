@@ -15,7 +15,8 @@ import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/actions/pro
 import { ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal, ManagedMachineNativeRefusal } from './controllerErrors.js';
 export { captureManagedPendingNativeIdentity, captureManagedSubmittedNativeIdentity, readManagedIssuedNativeFact,
     type CapturedManagedNativeIdentity } from './issuedNativeIdentity.js';
-export { bindManagedMachineRoleCredentials, projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1 } from './roleCredentials.js';
+export { bindManagedMachineRoleCredentials, captureManagedMachineRoleCredentialConfigurationsV1,
+    projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1 } from './roleCredentials.js';
 
 export type ManagedNativeRole = keyof MachineProvisionerContributionV1['actions'] | 'exec' | 'putFile' | 'stream' | 'reconcile' | 'cleanup' | 'nativeCredentialApply';
 /** The live byte channel of the `stream` role, for the life of its invocation. */

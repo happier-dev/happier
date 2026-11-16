@@ -15,6 +15,9 @@ import { defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
 import { lumeConfigurationLabel as label } from './ui/translations.js';
 import { LUME_PLUGIN_ID, LUME_PROVISIONER_ID, LUME_DEPENDENCY_ID, LUME_BILLING } from './machine/definition.js';
 import { LumeLaunchV1Schema, LumeResourceV1Schema, LumeNativeOperationV1Schema, LumeOptionsInputV1Schema } from './machine/schemas.js';
+import { LumePreparationInputSchema, LumePreparedArtifactSchema, LumePreparationOperationSchema,
+  PREPARATION_SCHEMAS, createLumePreparationClient } from './machine/preparation.js';
+import { createLumePreparationBuildExecutor } from './machine/preparationGuest.js';
 
 export const LUME_ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: LumeLaunchV1Schema, resource: LumeResourceV1Schema, continueAcquire: true });
 export const LUME_RECONCILIATION_SCHEMAS = defineMachineProvisionerReconciliationSchemas({ launch: LumeLaunchV1Schema,
@@ -67,6 +70,16 @@ async function runtime(context: PluginInvocationContext) {
       warn: warning => context.services.logger.warn('Lume image caching could not be enabled; continuing acquisition.', warning) }) };
 }
 
+async function preparationRuntime(context: PluginInvocationContext) {
+  const { native } = await runtime(context);
+  return createLumePreparationClient({ native, observedAt: context.invokedAtMs, signal: context.signal,
+    waitForNativeObservation: () => context.services.machineProvisioners.waitForNativeObservation(),
+    executeBuild: createLumePreparationBuildExecutor({ native, exec: context.services.exec,
+      waitForNativeObservation: () => context.services.machineProvisioners.waitForNativeObservation(),
+      establishSshHostTrust: carrier => context.services.machineProvisioners.establishSshHostTrust(carrier) }),
+  });
+}
+
 export const LUME_MACHINE_PROVISIONER = {
   title: 'Lume', icon: 'desktop', resourceKind: 'lume-vm', schemaVersion: 1,
   enrollmentRole: 'personal',
@@ -77,6 +90,9 @@ export const LUME_MACHINE_PROVISIONER = {
   billing: LUME_BILLING, retention: { supportedIntents: ['start', 'stop', 'delete'] },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   reconciliation: { nativeOperationSchema: LumeNativeOperationV1Schema.jsonSchema, action: 'reconcile', continueAcquire: true },
+  preparation: { inputSchema: LumePreparationInputSchema.jsonSchema, artifactSchema: LumePreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: LumePreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const LUME_PLUGIN = definePlugin({
@@ -138,6 +154,24 @@ export const LUME_PLUGIN = definePlugin({
     { locale: "ja", resourceId: "i18n-ja" },
   ] },
   actions: {
+    'prepare-build': { ...defaults, hostAccess: [...defaults.hostAccess, registryAccess], title: 'Prepare Lume base VM', dangerLevel: 'writesLocal',
+      confirmation: { title: 'Prepare this Lume image?', body: 'Download the selected image and install the CLI and reusable Setup steps in an owned VM. The stopped base uses disk space; each sandbox clones it.', confirmLabel: 'Prepare image' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return (await preparationRuntime(context)).build(input); },
+    },
+    'prepare-inspect': { ...defaults, title: 'Inspect Lume prepared image', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return (await preparationRuntime(context)).inspect('nativeOperation' in input
+        ? { nativeOperation: input.nativeOperation.value } : input); },
+    },
+    'prepare-destroy': { ...defaults, title: 'Delete Lume prepared image', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Lume image?', body: 'Permanently delete this owned prepared base VM and its disk.', confirmLabel: 'Delete image' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return (await preparationRuntime(context)).destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); },
+    },
     install: { ...defaults, title: 'Install Lume', dangerLevel: 'writesLocal',
       confirmation: { title: 'Install Lume on this Mac?', body: 'Download the verified Lume app bundle for Apple silicon. This does not create a VM or start the Lume service.', confirmLabel: 'Install' },
       inputSchema: LUME_ROLE_SCHEMAS.checkInput, resultSchema: defineProtocolLiteral(null),

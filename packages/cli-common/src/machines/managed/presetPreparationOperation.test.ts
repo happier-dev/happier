@@ -78,6 +78,35 @@ async function editAuthor(fixture: ReturnType<typeof storageFixture>, content: M
 }
 
 describe('private preset preparation operation', () => {
+  it.each(['confirmed', 'refused', 'throws'] as const)('cleans up a thrown build failure without replacing its cause when cleanup %s', async cleanup => {
+    const fixture = storageFixture();
+    const original = new Error('SSH host trust declined');
+    const effects: string[] = [];
+    let allocated = false;
+    const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one', ...identity,
+      composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
+      native: nativeFixture({ build: async () => { effects.push('build'); allocated = true; throw original; },
+        inspect: async input => {
+          effects.push('inspect');
+          expect(input).toEqual({ operationId: 'operation-one', launch: definition.launch!.choices });
+          return { kind: 'pending', nativeOperationRef };
+        },
+        destroy: async input => {
+          effects.push('destroy');
+          expect(input).toEqual({ nativeOperation: nativeOperationRef });
+          if (cleanup === 'throws') throw new Error('Native cleanup unavailable');
+          if (cleanup === 'refused') return { kind: 'refused', code: 'cleanup_unavailable' };
+          allocated = false;
+          return { kind: 'confirmed' };
+        } }) });
+    await expect(settling).rejects.toBe(original);
+    expect(effects).toEqual(['build', 'inspect', 'destroy']);
+    expect(fixture.opened().prepared).toMatchObject({ status: 'cancelled' });
+    expect(allocated).toBe(cleanup !== 'confirmed');
+    if (cleanup === 'confirmed') expect(fixture.opened().prepared).not.toHaveProperty('nativeOperationRef');
+    else expect(fixture.opened().prepared).toHaveProperty('nativeOperationRef', nativeOperationRef);
+  });
+
   it.each(['plain', 'e2ee'] as const)('retains the actual supplier CLI path before build and exposes it only after ready in %s', async mode => {
     let nonce = 23;
     const custody: ManagedMachinePresetPreparationCustodyV1 = mode === 'plain' ? { mode }

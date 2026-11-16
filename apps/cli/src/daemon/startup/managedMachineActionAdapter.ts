@@ -28,6 +28,7 @@ import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolve
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
 import type { ManagedProviderOperationAuthority } from '../connectedServices/purposeBindings/managedProviderOperationAuthority';
+import type { ConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 import type { PrepareExternalActionRequesterAccountContext } from '../externalActions/executeExternalAction';
@@ -79,7 +80,6 @@ type ManagedMachineActionAdapterParams = Readonly<{
     executeTeamCredentialBrokerAction?: Parameters<typeof resolveAccountExecutionRuntime>[0]['executeTeamCredentialBrokerAction'];
     managedGuestLocalStop?: ManagedGuestLocalStop;
     observeActionExecution?: ApiMachineClient['observeActionExecution'];
-    cancelAndWaitForActionOperation?: ApiMachineClient['cancelAndWaitForActionOperation'];
     waitForActionOperationCompletion?: ApiMachineClient['waitForActionOperationCompletion'];
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
@@ -106,7 +106,8 @@ function isManagedMachinePolicyRetentionSatisfiedAbort(reason: unknown): boolean
 async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, signal: AbortSignal | undefined,
     execute: (driver: ReturnType<typeof import('@/machines/managed/acquire')['createManagedMachineAcquisitionDriver']>,
         controllerCredentials: StoredCredentials, host: Readonly<{ homeId: string; installationId: string;
-            registry: PluginRuntimeRegistryLease['registry']; isCurrent(): boolean }>) => Promise<T>): Promise<T> {
+            registry: PluginRuntimeRegistryLease['registry']; isCurrent(): boolean;
+            readCredentialConfigurationRevision: ConnectedAccountPurposeBindingOwner['readCredentialConfigurationRevision'] }>) => Promise<T>): Promise<T> {
         if (!params.managedProviderOperationAuthority) {
             throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
         }
@@ -146,15 +147,20 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
                 });
                 const runtime = await accountRuntime;
                 if (!runtime.purposeRuntime) throw Object.assign(new Error('credential_unavailable'), { code: 'credential_unavailable' });
-                return { runtimeRegistry: runtime.registry, managedProviderOperationAuthority:
+                return { runtimeRegistry: runtime.registry,
+                    readCredentialConfigurationRevision: runtime.purposeRuntime.purposes.readCredentialConfigurationRevision,
+                    managedProviderOperationAuthority:
                     params.managedProviderOperationAuthority!.forPurposeBindingOwner(runtime.purposeRuntime.purposes) };
             };
+            const readCredentialConfigurationRevision: ConnectedAccountPurposeBindingOwner['readCredentialConfigurationRevision'] =
+                async (account, signal) => (await resolveAccountRuntime()).readCredentialConfigurationRevision(account, signal);
             return await execute(createManagedMachineAcquisitionDriver({
                 token: controllerCredentials.token, serverUrl: params.serverBaseUrl,
                 homeId: origin.serverIdentityId,
                 controller: { machineId: params.machineId, installationId: params.installationIdentity.installationId },
                 runtimeRegistry: lease.registry,
                 resolveAccountRuntime,
+                readCredentialConfigurationRevision,
                 externalActionMachineRequestPrivateKey: params.installationIdentity.privateKey,
                 managedProviderOperationAuthority: params.managedProviderOperationAuthority,
                 ...(params.managedGuestLocalStop ? { managedGuestLocalStop: params.managedGuestLocalStop } : {}),
@@ -168,7 +174,7 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
             }), controllerCredentials, { homeId: origin.serverIdentityId, installationId: params.installationIdentity.installationId,
                 // Finite Prepare retains this registry until its owned cleanup
                 // settles; the operation signal separately stops new work.
-                registry: lease.registry, isCurrent: () => current });
+                registry: lease.registry, isCurrent: () => current, readCredentialConfigurationRevision });
         } finally {
             current = false;
             try { if (accountRuntime) await accountRuntime.then(runtime => runtime.registry.dispose(), () => {}); }
@@ -315,8 +321,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
     };
     return Object.assign(actionAdapter, {
         preparePreset: (async request => await withBoundDriver(params, request.signal, async (_driver, _credentials, host) =>
-            await prepareMachinePresetOnHost(request, { ...host, machineId: params.machineId, serverBaseUrl: params.serverBaseUrl,
-                ...(params.cancelAndWaitForActionOperation ? { cancelAndWait: params.cancelAndWaitForActionOperation } : {}) }))) satisfies NonNullable<ActionExecutorDeps['machinePresetPrepare']>,
+            await prepareMachinePresetOnHost(request, { ...host, machineId: params.machineId, serverBaseUrl: params.serverBaseUrl }))) satisfies NonNullable<ActionExecutorDeps['machinePresetPrepare']>,
         acquireSessionIsolationSandbox: (async request => {
             const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal);
             if (!origin || !params.installationIdentity) throw new ManagedMachineControllerError('controller_unavailable');

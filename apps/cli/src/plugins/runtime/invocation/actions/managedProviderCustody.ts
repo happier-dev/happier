@@ -32,6 +32,7 @@ export type AdmittedManagedProviderOperationExecutionRequest = Readonly<{
   readBootstrapCredential?(): Promise<Uint8Array>;
   /** Acquire installer's generated guest-host identity from that same retained resource. */
   readGuestHostCredential?(): Promise<Uint8Array>;
+  managedSshHostTrust?: import('@happier-dev/protocol/actions/executor/types').HostReviewedChildInvocationServicesV1['managedSshHostTrust'];
   /** Deferred, exact-binding inference material, independent of cloud-purpose custody. */
   managedNativeCredentials?: ManagedNativeCredentialInvocationBinding;
   /** Existing purpose lease; the operation owner retains its cleanup lifetime. */

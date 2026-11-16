@@ -593,7 +593,8 @@ describe('action operation observation RPC handlers', () => {
         .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     } finally { network.mockRestore(); }
   });
-  it('joins the current managed installation question without settling or cancelling the producer', async () => {
+  it.each(['machines.managed.acquire', 'session.spawn_new', 'machines.presets.prepare'])(
+    'joins the current task question without settling or cancelling its %s producer', async actionId => {
     const store = createActionOperationStore();
     const scope = { accountId: 'requester', machineId: 'controller' };
     const runner = createActionOperationRunner({ store, generateOperationId: () => 'managed-question',
@@ -601,7 +602,7 @@ describe('action operation observation RPC handlers', () => {
         visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } } }) });
     let publish!: Parameters<Parameters<typeof runner.observe>[0]['execute']>[0]['publishOwnerUpdate'];
     let release!: () => void;
-    await runner.observe({ actionId: 'machines.managed.acquire', scope, execute: async context => {
+    await runner.observe({ actionId, scope, response: 'admission', execute: async context => {
       publish = context.publishOwnerUpdate;
       context.operationAcceptance?.accept({ managedId: 'exact-resource', operation: { operationId: 'managed-question' } });
       await new Promise<void>(resolve => { release = resolve; });
@@ -614,10 +615,13 @@ describe('action operation observation RPC handlers', () => {
     try {
       const waiting = handlers.getV2({ operationId: 'managed-question', waitForTerminal: true, includeManagedPrompt: true },
         { signal: observer.signal });
-      publish({ domainRef: { kind: 'managedMachine', id: 'exact-resource', bootstrapTask: {
-        id: 'installer-task', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt: question } }, state: 'running' });
+      const domainRef = actionId === 'machines.presets.prepare' ? { kind: 'systemTask' as const, id: 'installer-task',
+        taskKind: 'remote.ssh.bootstrapMachine.v1' as const, prompt: question }
+        : { kind: 'managedMachine' as const, id: 'exact-resource', bootstrapTask: {
+            id: 'installer-task', taskKind: 'remote.ssh.bootstrapMachine.v1' as const, prompt: question } };
+      publish({ domainRef, state: 'running' });
       await expect(waiting).resolves.toMatchObject({ kind: 'found', operation: { state: 'running',
-        domainRef: { id: 'exact-resource', bootstrapTask: { prompt: question } } } });
+        domainRef } });
       expect(store.get(scope, 'managed-question')).not.toHaveProperty('settledAt');
       await expect(handlers.getV2({ operationId: 'managed-question', includeManagedPrompt: true })).rejects.toBeDefined();
     } finally { observer.abort(); release(); await runner.waitForTerminal(scope, 'managed-question'); }

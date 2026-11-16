@@ -26,6 +26,16 @@ import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeExternalActionHttpBodyV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { reloadConfiguration } from '@/configuration';
+
+const trustBoundary = vi.hoisted(() => ({ stopScan: false }));
+vi.mock('node:child_process', async original => {
+    const actual = await original<typeof import('node:child_process')>();
+    return { ...actual, spawnSync: (...args: Parameters<typeof actual.spawnSync>) => {
+        if (trustBoundary.stopScan && args[0] === 'ssh-keyscan') throw new Error('Fixture stops at the SSH observation boundary');
+        return actual.spawnSync(...args);
+    } };
+});
 
 /**
  * A Session placed in a managed target: the already-admitted Session spawn is the
@@ -54,13 +64,16 @@ function guestExec(input: unknown) {
         stdoutBase64: Buffer.from(stdout).toString('base64'), stderrBase64: '', stdoutTruncated: false, stderrTruncated: false };
 }
 
-function harness(options: Readonly<{ streamRole?: boolean; holdStream?: boolean; guest?: boolean; targetExec?: (body: unknown) => Promise<ReturnType<typeof guestExec>>; targetPutFile?: (body: unknown) => Promise<void> }> = {}) {
+function harness(options: Readonly<{ streamRole?: boolean; holdStream?: boolean; guest?: boolean; targetExec?: (body: unknown) => Promise<ReturnType<typeof guestExec>>; targetPutFile?: (body: unknown) => Promise<void>;
+    onNativeRole?: NonNullable<Parameters<typeof fixture>[0]>['onNativeRole'] }> = {}) {
     const calls: string[] = [];
     const inputs: unknown[] = [];
     const native = fixture({ credentialPurposes: [], streamRole: options.streamRole ?? true,
+        nativeCredentialService: Boolean(options.onNativeRole),
         ...(options.guest || options.targetExec ? { nativeRoleResults: { exec: (options.targetExec ?? guestExec) as never } } : {}),
         async onNativeRole(role, input, context) {
             calls.push(role); inputs.push(input);
+            await options.onNativeRole?.(role, input, context);
             if (role === 'putFile') await options.targetPutFile?.(input);
             // A held channel runs until its invocation is aborted (the provider's carrier process).
             if (role === 'stream' && options.holdStream) await new Promise(resolve => context.signal?.addEventListener('abort', resolve, { once: true }));
@@ -191,6 +204,30 @@ describe('Session placement on a managed target (driver)', () => {
     const holder = { version: 'v1', resolveArtifacts: async () => ({ holder: { bytes: new Uint8Array([1]), sha256: 'a'.repeat(64) },
         helper: { bytes: new Uint8Array([2]), sha256: 'b'.repeat(64) } }) };
 
+    it('publishes native SSH bootstrap trust on the original Session launch operation before network observation', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'session-bootstrap-trust-'));
+        vi.stubEnv('HAPPIER_HOME_DIR', root); reloadConfiguration();
+        onTestFinished(async () => { vi.unstubAllEnvs(); reloadConfiguration(); await rm(root, { recursive: true, force: true }); });
+        trustBoundary.stopScan = true;
+        onTestFinished(() => { trustBoundary.stopScan = false; });
+        const updates: unknown[] = [];
+        const h = harness({ onNativeRole: async (role, _input, context) => {
+            if (role === 'bootstrap') await context.services.machineProvisioners.establishSshHostTrust({
+                kind: 'ssh', address: '192.0.2.7', user: 'guest',
+            });
+        } });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => machine });
+        await expect(driver.openSessionTarget({ managedId: machine.id, sessionId: 'session',
+            requesterAccountId: 'owner', lifetime: new AbortController().signal, holder,
+            operation: { actionRequestId: 'startup-operation', signal: new AbortController().signal,
+                operationProgress: { update() {} }, operationOwnerUpdate: { update(value) { updates.push(value); } } },
+        })).rejects.toBeTruthy();
+        expect(updates).toContainEqual(expect.objectContaining({ domainRef: expect.objectContaining({
+            kind: 'managedMachine', id: machine.id, bootstrapTask: expect.objectContaining({ taskKind: 'remote.ssh.bootstrapMachine.v1' }),
+        }) }));
+        expect(h.calls).toEqual(['bootstrap']);
+    });
+
     it.each(['absent', 'empty', 'succeeded', 'skipped'] as const)('skips full Happier CLI installation and reports when Setup is %s', async state => {
         const h = harness({ guest: true });
         const row = ManagedMachineV1Schema.parse({ ...machine, acquisitionMode: 'resource-bound',
@@ -219,8 +256,8 @@ describe('Session placement on a managed target (driver)', () => {
         const { MachineRecipeV1Schema } = await import('@happier-dev/protocol/machines/setup/machineRecipeV1');
         const recipe = MachineRecipeV1Schema.parse({ id: 'tool', revision: '1', title: 'Guest tool',
             inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-            steps: [{ id: 'tool', kind: 'command', executable: '/bin/true', args: [],
-                check: { executable: '/bin/true', args: [], unsatisfiedExitCodes: [1] } }] });
+            steps: [{ id: 'tool', kind: 'command', executable: 'true', args: [],
+                check: { executable: 'true', args: [], unsatisfiedExitCodes: [1] } }] });
         const root = await mkdtemp(join(tmpdir(), 'bound-session-cli-'));
         onTestFinished(() => rm(root, { recursive: true, force: true }));
         const guestHome = join(root, 'guest'), payload = join(root, 'payload');

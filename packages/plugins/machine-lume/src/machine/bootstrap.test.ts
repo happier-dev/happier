@@ -12,7 +12,9 @@ import { createLumeNativeClient } from './nativeClient.js';
 import { resolveLumeBootstrap } from './bootstrap.js';
 
 const resource = { keepPasswordLogin: true, storage: 'home', vmName: 'happier-cmvnxb7gn009mmcagisyszwlh' };
-const credentials = { materializeBootstrapCredential: async () => ({ kind: 'file' as const, path: '/private/controller-key', dispose: async () => {} }) };
+// The host trust dialogue is a UI/system boundary; ordinary carrier cases accept it.
+const credentials = { establishSshHostTrust: async () => {},
+  materializeBootstrapCredential: async () => ({ kind: 'file' as const, path: '/private/controller-key', dispose: async () => {} }) };
 const credentialRef = { kind: 'shared_resource', resourceId: 'controller-private-key' } as const;
 const hostKeyBytes = Buffer.from('public-host-key');
 const hostKey = `ssh-ed25519 ${hostKeyBytes.toString('base64')}`;
@@ -30,6 +32,22 @@ function execBoundary(run: ExecService['run']): ExecService {
 }
 
 describe('Lume ordinary SSH carrier', () => {
+  it('settles host trust before acquiring a per-clone key or issuing any guest command', async () => {
+    const events: string[] = [];
+    const refused = new PluginError({ code: 'ssh_host_trust_rejected' });
+    const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: async () => Response.json(details) });
+    const exec = execBoundary(async request => {
+      if (request.executable.id.localId === 'ssh-keyscan') { events.push('observe'); return result(`192.168.64.7 ${hostKey}\n`); }
+      events.push('guest-command');
+      return result();
+    });
+    const guarded = { establishSshHostTrust: async () => { events.push('trust'); throw refused; },
+      materializeBootstrapCredential: async () => { events.push('key'); return credentials.materializeBootstrapCredential(); } };
+    await expect(resolveLumeBootstrap({ credentials: guarded, native, exec, resource, credentialRef,
+      bootstrapPublicKey: 'ssh-ed25519 cHVibGlj' })).rejects.toBe(refused);
+    expect(events).toEqual(['observe', 'trust']);
+  });
+
   it('retains an authored key-probe failure without attempting password setup', async () => {
     const failure = new PluginError({ code: 'credential_unavailable', message: 'Repair the selected SSH credential.',
       remediation: { kind: 'retry' }, failureCause: { phase: 'machines.managed.bootstrap.retry', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } });
@@ -316,6 +334,7 @@ describe('macOS password policy (owner opt-in ruling 2026-11-06)', () => {
         privateCarrier: { kind: 'lume-default-password', guestOs: 'macos', user: 'guest-admin' },
         ...(keepPasswordLogin === undefined ? {} : { keepPasswordLogin }) },
       credentialRef, bootstrapPublicKey: 'ssh-ed25519 cHVibGlj', credentials: {
+        establishSshHostTrust: async () => {},
         materializeBootstrapCredential: async () => ({ kind: 'file' as const, path: '/private/controller-key', dispose: async () => { leaseDisposed = true; } }),
       } });
     return { work, requests, writes, state: () => ({ disposed, leaseDisposed }) };

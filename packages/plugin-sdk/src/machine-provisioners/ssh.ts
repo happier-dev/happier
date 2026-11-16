@@ -13,6 +13,7 @@ type SshBootstrapCarrier = Extract<MachineProvisionerBootstrapCarrierV1, { kind:
 type ObservedSshBootstrapCarrier = SshBootstrapCarrier & Readonly<{
     hostKeyEvidence: NonNullable<SshBootstrapCarrier['hostKeyEvidence']>;
 }>;
+type ObservedSshHost = Omit<ObservedSshBootstrapCarrier, 'credentialRef' | 'hostKeySource'>;
 type SshBootstrapInput = Readonly<{
     exec?: ExecService;
     connection: Readonly<{ address: string; user: string; port?: number }>;
@@ -27,6 +28,16 @@ export async function resolveMachineProvisionerSshBootstrap(input: SshBootstrapI
     if (!input.credentialRef) throw new PluginError({ code: 'credential_unavailable' });
     input.signal?.throwIfAborted();
     if (!input.exec) return { kind: 'ssh', ...input.connection, credentialRef: input.credentialRef };
+    return { ...await observeMachineProvisionerSshHost({ ...input, exec: input.exec }), credentialRef: input.credentialRef };
+}
+
+/** Observe a guest before any credential exists; only the host's trust service can approve it. */
+export async function observeMachineProvisionerSshHost(input: Readonly<{
+    exec: ExecService;
+    connection: SshBootstrapInput['connection'];
+    signal?: AbortSignal;
+}>): Promise<ObservedSshHost> {
+    input.signal?.throwIfAborted();
     try {
         const invocation = buildSshKeyscanInvocation({ host: input.connection.address, port: input.connection.port, keyType: 'ed25519' });
         input.signal?.throwIfAborted();
@@ -38,7 +49,7 @@ export async function resolveMachineProvisionerSshBootstrap(input: SshBootstrapI
             throw new PluginError({ code: 'native_ssh_host_key_unavailable' });
         }
         const key = extractFirstScannedSshKnownHostLine(new TextDecoder('utf-8', { fatal: true }).decode(result.stdout));
-        return { kind: 'ssh', ...input.connection, hostKeyEvidence: { hostKey: key.line, fingerprint: key.fingerprint }, credentialRef: input.credentialRef };
+        return { kind: 'ssh', ...input.connection, hostKeyEvidence: { hostKey: key.line, fingerprint: key.fingerprint } };
     } catch (error) {
         input.signal?.throwIfAborted();
         if (isPluginError(error)) throw error;

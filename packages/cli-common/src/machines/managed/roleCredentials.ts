@@ -1,6 +1,9 @@
-import type { QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
+import { sameQualifiedConnectedAccountRef,
+    type QualifiedConnectedAccountPurposeV1, type QualifiedConnectedAccountPurposeBindingsV1,
+    type QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import type { PluginContributionRef } from '../../plugins/registration/contracts.js';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachinePresetPreparationBindingV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
 import { isMachineProvisionerCredentialPurposeRequiredV1,
     type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ManagedMachineControllerError } from './controllerErrors.js';
@@ -46,4 +49,24 @@ export function readManagedMachineRoleCredentialConfigurationsV1(authorizations:
 }>[]) {
     return authorizations.flatMap(({ credential }) => !('account' in credential) || credential.configurationRevision === undefined
         ? [] : [{ account: credential.account, revision: credential.configurationRevision }]);
+}
+
+/** Captures the current non-secret configuration basis once for each selected Account. */
+export async function captureManagedMachineRoleCredentialConfigurationsV1(input: Readonly<{
+    authorizations: readonly Readonly<{
+        credential: NonNullable<ManagedMachineFullV1['launch']['credentials']>[number];
+    }>[];
+    readCredentialConfigurationRevision(account: QualifiedConnectedAccountRef, signal: AbortSignal): Promise<string | null>;
+    signal: AbortSignal;
+}>): Promise<ManagedMachinePresetPreparationBindingV1['credentialConfigurations']> {
+    const accounts: QualifiedConnectedAccountRef[] = [];
+    for (const { credential } of input.authorizations) {
+        if (!('account' in credential)) continue;
+        const selected = credential.account;
+        if (!accounts.some(account => sameQualifiedConnectedAccountRef(account, selected))) accounts.push(selected);
+    }
+    return await Promise.all(accounts.map(async account => ({
+        account,
+        revision: await input.readCredentialConfigurationRevision(account, input.signal),
+    })));
 }

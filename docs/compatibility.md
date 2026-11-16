@@ -12576,6 +12576,19 @@ change is introduced. The scoped-clean `../0.2` frontier at
 `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no corresponding
 `packages/protocol/src/providers/brokerRouteGrantV1.ts` contract.
 
+## Prepared-guest SSH trust (unreleased 0.3)
+
+The existing `systemTask` Action operation attachment optionally carries the
+non-secret `ManagedMachineBootstrapPromptV1` while Prepare waits for SSH host
+trust. Attachments without a prompt remain valid. The existing task response
+uses its task id and expected prompt kind; Prepare does not invent a managed
+Machine id. The SDK observes the host before credentials exist, then asks the
+host's admitted trust service before guest access. Matching Protocol, SDK, CLI
+and UI development readers reload together; older strict 0.3 readers reject
+the new optional field. This is a direct development cut with no persisted
+format migration, epoch or feature gate. Existing managed-resource trust
+identities and known-host pins retain their format.
+
 ## Promote source admission (unreleased 0.3)
 
 The closed native deployment admission adds a `kind: 'promote'` variant with

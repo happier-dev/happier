@@ -82,6 +82,7 @@ describe('Lume managed provisioner', () => {
     expect(projected).toMatchObject({ kind: 'ready', guestPlatform, launch: selected });
     expect(projected.nativeFacts).toMatchObject({ image: { id: selected.image.reference }, location: { id: 'home' },
       size: { cpuCores: launch.cpu, memoryBytes: launch.memoryBytes, diskBytes: launch.diskBytes } });
+    expect(projected.nativeFacts).not.toHaveProperty('preparationGuest');
     expect(requests.map(request => request.url.pathname)).toEqual(['/lume/config/locations', '/lume/vms']);
   });
 
@@ -125,6 +126,7 @@ describe('Lume managed provisioner', () => {
       expect(choice).toMatchObject({ guestPlatform: 'darwin' });
       expect(projected).toMatchObject({ kind: 'ready', guestPlatform: 'darwin', launch: { ...launch, image: { kind: 'catalog', id: choice.id } } });
       expect(projected.nativeFacts).toMatchObject({ image: { id: choice.id }, location: { id: 'home' },
+        preparationGuest: { target: { os: 'darwin', arch: 'arm64' }, remoteHomeDir: '/Users/lume/.happier' },
         size: { cpuCores: launch.cpu, memoryBytes: launch.memoryBytes, diskBytes: launch.diskBytes } });
     }
     expect(options.dimensions.location[0]).toMatchObject({ id: 'home', assignments: [{ path: 'storage', value: 'home' }] });

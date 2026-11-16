@@ -95,6 +95,7 @@ export type PluginInvocationServicesSeed = Readonly<{
     processOwner?: ProcessOwnerRef;
     /** Exact host-admitted managed row; never plugin input or SDK context. */
     managedBootstrapCredential?: ManagedBootstrapCredentialInvocationBinding;
+    managedSshHostTrust?: import('@happier-dev/protocol/actions/executor/types').HostReviewedChildInvocationServicesV1['managedSshHostTrust'];
     /** Host-admitted complete native apply; never copied from Action operands. */
     managedNativeCredentials?: ManagedNativeCredentialInvocationBinding;
     /** Canonical invocation owner retains private material cleanup. */

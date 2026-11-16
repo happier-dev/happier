@@ -196,6 +196,7 @@ export function createPluginSurfaceAccountActionServices(input: Readonly<{
         http: network.http, secrets: network.secrets,
         connectedAccounts,
         machineProvisioners: {
+            establishSshHostTrust: async () => { throw unavailableCredential(); },
             materializeBootstrapCredential(request) {
                 if (request.kind !== 'bytes') return Promise.reject(unavailableCredential());
                 return byteService.materializeBootstrapCredential();

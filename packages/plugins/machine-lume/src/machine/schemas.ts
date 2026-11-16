@@ -31,10 +31,18 @@ const privateCarrierFields = {
   user: defineProtocolString({ minLength: 1, pattern: '^[^\\s\\u0000]+(?![\\s\\S])' }),
 };
 export const LumePrivateCarrierV1Schema = defineProtocolObject(privateCarrierFields, closed);
+const preparedVmName = defineProtocolString({ pattern: `^happier-prepared-${vmNameCharacters}(?![\\s\\S])` });
+export const LumePreparedResourceFields = { storage: nativeText, vmName: preparedVmName };
+export const LumePreparedResourceV1Schema = defineProtocolObject(LumePreparedResourceFields, closed);
+export const LumePreparedImageV1Schema = defineProtocolObject({ kind: defineProtocolLiteral('prepared'),
+  ...LumePreparedResourceFields,
+  privateCarrier: LumePrivateCarrierV1Schema.optional(),
+}, closed);
 export const LumeImageV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('catalog'), id: LumeImageReferenceSchema }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('native-image'), reference: LumeImageReferenceSchema,
     privateCarrier: LumePrivateCarrierV1Schema.optional() }, closed),
+  LumePreparedImageV1Schema,
 ]);
 export const LumeLaunchV1Schema = defineProtocolObject({
   keepPasswordLogin,

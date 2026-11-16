@@ -7,7 +7,7 @@ import type { ManagedBootstrapCarrierV1 } from '@happier-dev/protocol/machines/m
 export { extractFirstScannedSshKnownHostLine, parseSshKnownHostLine, type ParsedSshKnownHostLine } from './sshKnownHostLine.js';
 
 /** Only a provider-installed retained identity supplies an automatic managed SSH pin. */
-export function readManagedSshTrustedHostKey(carrier: Extract<ManagedBootstrapCarrierV1, { kind: 'ssh' }>, guestHostPublicKey?: string): string | undefined {
+export function readManagedSshTrustedHostKey(carrier: Pick<Extract<ManagedBootstrapCarrierV1, { kind: 'ssh' }>, 'address' | 'port' | 'hostKeySource'>, guestHostPublicKey?: string): string | undefined {
   const host = carrier.port && carrier.port !== 22 ? `[${carrier.address}]:${carrier.port}` : carrier.address;
   const trustedHostKey = carrier.hostKeySource === 'retained-credential' && guestHostPublicKey !== undefined
     ? parseSshKnownHostLine(`${host} ${guestHostPublicKey}`)?.line : undefined;

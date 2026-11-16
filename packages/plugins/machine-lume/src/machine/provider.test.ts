@@ -11,6 +11,50 @@ const details = {
   cpuCount: 2, memorySize: 4294967296, diskSize: { allocated: 1073741824, total: 21474836480 }, display: '1024x768',
 };
 
+describe('Lume prepared launch', () => {
+  it.each(['personal-vm', 'happier-prepared-a/b', 'happier-prepared-a:b'])('rejects a non-owned or aliased prepared source (%s) before native effects', async vmName => {
+    let effects = 0;
+    const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: async () => { effects++; throw new Error('unexpected native effect'); } });
+    expect(await createLumeProvider({ native, observedAt: 1 }).acquire({ storage: 'home',
+      image: { kind: 'prepared', storage: 'home', vmName }, cpu: 2, memoryBytes: 4 * 1024 ** 3,
+      diskBytes: 150 * 1024 ** 3 }, 'managed-1')).toEqual({ kind: 'rejected', code: 'invalid_request' });
+    expect(effects).toBe(0);
+  });
+  it('clones the owned stopped prepared base and keeps the ordinary hardware/start owner', async () => {
+    const source = { storage: 'prepared_disk', vmName: 'happier-prepared-operation-1' };
+    const destination = { storage: 'home', vmName: 'happier-managed-1' };
+    const requests: Array<{ path: string; method: string; body?: unknown }> = [];
+    let cloned = false;
+    const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      const body: unknown = init?.body ? JSON.parse(String(init.body)) : undefined;
+      requests.push({ path: url.pathname, method, body });
+      if (url.pathname === '/lume/host/status') return Response.json({ version: '0.6.1' });
+      if (url.pathname === '/lume/config/locations') return Response.json([{ name: 'home' }]);
+      if (url.pathname === '/lume/vms/clone') {
+        cloned = true;
+        return Response.json({ source: source.vmName, destination: destination.vmName });
+      }
+      if (url.pathname === '/lume/vms') return Response.json([{ ...details, ...source, name: source.vmName, locationName: source.storage, status: 'stopped' }]);
+      if (url.pathname.endsWith('/run')) return new Response(null, { status: 202 });
+      const identity = url.pathname.endsWith(source.vmName) ? source : destination;
+      if (identity === destination && !cloned) return Response.json({ message: `Virtual machine not found: ${identity.vmName}` }, { status: 400 });
+      return Response.json({ ...details, name: identity.vmName, locationName: identity.storage, status: 'stopped' });
+    } });
+    const result = await createLumeProvider({ native, observedAt: 1 }).acquire({ storage: destination.storage,
+      image: { kind: 'prepared', ...source, privateCarrier: { kind: 'lume-default-password', guestOs: 'linux', user: 'lume' } },
+      cpu: details.cpuCount, memoryBytes: details.memorySize, diskBytes: details.diskSize.total }, 'managed-1');
+    expect(result).toMatchObject({ kind: 'bound', startPending: true, resource: { value: { ...destination,
+      privateCarrier: { guestOs: 'linux', user: 'lume' } } } });
+    expect(requests.filter(request => request.method !== 'GET')).toEqual([
+      { path: '/lume/vms/clone', method: 'POST', body: { name: source.vmName, newName: destination.vmName,
+        sourceLocation: source.storage, destLocation: destination.storage } },
+      { path: `/lume/vms/${destination.vmName}/run`, method: 'POST', body: { storage: destination.storage, noDisplay: true, vnc: 'disabled' } },
+    ]);
+  });
+});
+
 // Only the native HTTP boundary is replaced. Recovery and response interpretation stay real.
 function setup(responses: Array<Response | Error>) {
   const requests: Array<{ url: URL; init?: RequestInit }> = [];

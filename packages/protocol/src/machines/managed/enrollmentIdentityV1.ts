@@ -5,6 +5,14 @@ import { agentIsolationMetadataFieldV1, type MachineAgentIsolationPolicyV1, type
 
 export { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from './actionIdsV1.js';
 
+/** A member enrolling their own Account uses requester approval; the custodian uses ordinary host approval. */
+export function readManagedMachineRequesterEnrollmentAccountIdV1(row: Readonly<{
+  custodianAccountId: string; enrollmentAccountId?: string;
+}>): string | undefined {
+  const accountId = row.enrollmentAccountId ?? row.custodianAccountId;
+  return accountId === row.custodianAccountId ? undefined : accountId;
+}
+
 /** Reviewed creation intent; credentials never belong to this retained value. */
 export const ManagedMachineEnrollmentIdentityV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
   z.strictObject({

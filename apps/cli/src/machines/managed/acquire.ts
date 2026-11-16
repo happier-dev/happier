@@ -603,7 +603,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             const lifetime = AbortSignal.any([request.lifetime, revoked.signal]);
             const finiteSignal = AbortSignal.any([preparationSignal, revoked.signal]);
             const hydrator = createManagedPresetHydrator(input);
-            const options = { requestId: `session-target:${request.sessionId}`, signal: lifetime };
+            const options = { requestId: `session-target:${request.sessionId}`, signal: lifetime, context: request.operation };
             const admit = async (row: ManagedMachineV1 | null, signal = lifetime): Promise<ManagedMachineFullV1> => {
                 if (!row || row.id !== request.managedId) { revoked.abort(); throw new ManagedMachineControllerError('admission_unavailable'); }
                 if (row.custodianAccountId !== request.requesterAccountId) {

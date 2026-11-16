@@ -279,6 +279,14 @@ export async function settleManagedMachinePresetPreparationOperationV1(
         await (cancelling ? cleanupWait : wait)();
       } catch (error) {
         if (!cancelling && input.signal?.aborted) { cancelling = true; continue; }
+        if (!cancelling && current.content.prepared?.operationId === request.operationId
+          && current.content.prepared.status === 'building') {
+          // A thrown native failure can follow allocation before a response
+          // supplied its reference. The original admission still owns cleanup.
+          try { await follow(request, true); } catch {
+            // Retain uncertain ownership and surface the original build failure.
+          }
+        }
         throw error;
       }
     }

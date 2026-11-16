@@ -33,6 +33,30 @@ function executeContributedAction(request: Parameters<typeof dispatchContributed
 }
 
 describe('managed native-role custody at contributed dispatch', () => {
+    it.each([true, false])('settles the original host SSH trust before a bootstrap handler opens its key (approved=%s)', async approved => {
+        const order: string[] = [];
+        const host = { kind: 'ssh' as const, address: '192.0.2.1', user: 'guest',
+            hostKeyEvidence: { hostKey: '192.0.2.1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest', fingerprint: 'SHA256:observed' } };
+        const f = fixture({ bootstrapCredential: 'ssh', nativeCredentialService: true,
+            onNativeRole: async (role, _input, context) => {
+                if (role !== 'bootstrap') return;
+                await context.services.machineProvisioners.establishSshHostTrust(host);
+                const lease = await context.services.machineProvisioners.materializeBootstrapCredential({ kind: 'bytes' });
+                await lease.dispose();
+                order.push('guest');
+            } });
+        const result = await executeContributedAction({ runtimeRegistry: f.runtimeRegistry,
+            actionId: `${pluginId}/bootstrap`, context: { surface: 'plugin' },
+            admittedManagedProviderOperation: { ...f.custody, role: 'bootstrap',
+                managedSshHostTrust: async () => {
+                    order.push('trust');
+                    if (!approved) throw Object.assign(new Error('SSH host trust declined'), { code: 'host_trust_declined' });
+                },
+                readBootstrapCredential: async () => { order.push('key'); return new Uint8Array([7, 8, 9]); },
+            } });
+        expect(order).toEqual(approved ? ['trust', 'key', 'guest'] : ['trust']);
+        expect(result).toMatchObject({ result: { ok: approved } });
+    });
     it.each(['prepare-build', 'prepare-destroy'] as const)('refuses an ordinary native %s without the admitted Prepare parent', async localId => {
         const manifest = normalizePluginManifestV2(createMachineProvisionerPreparationAuthorFixture().manifest);
         let effects = 0;

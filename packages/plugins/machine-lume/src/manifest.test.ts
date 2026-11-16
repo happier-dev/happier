@@ -87,7 +87,8 @@ async function activated(ready = true, response?: (input: Parameters<HttpService
     },
   };
   const context = { signal: new AbortController().signal, invokedAtMs: 123, services: { exec, http,
-    machineProvisioners: { materializeBootstrapCredential: async () => ({ kind: 'file', path: '/private/controller-key', dispose: async () => {} }) },
+    machineProvisioners: { establishSshHostTrust: async () => {},
+      materializeBootstrapCredential: async () => ({ kind: 'file', path: '/private/controller-key', dispose: async () => {} }) },
     logger: { warn: (message: string, fields: unknown) => warnings.push({ message, fields }) },
     managedServices: { dependencies: { status: async (): Promise<ManagedDependencyStatus> => ready ? ({
       state: 'ready', id: 'lume-cli', version: '0.6.1', sourceId: 'system',
@@ -459,6 +460,7 @@ describe('activated Lume provisioner Actions', () => {
   it('projects native Stop/disk retention facts without disclosing guest connection details', async () => {
     const { action, context } = await activated();
     expect(await action('inspect')({ resource }, context)).toEqual({ observedAt: 123, availability: 'present',
+      size: { cpuCores: 2, memoryBytes: 4 * 1024 ** 3, diskBytes: 150 * 1024 ** 3 },
       power: 'running', storage: 'retained', billing: { location: 'local', stoppedBilling: 'not-billed' } });
   });
 

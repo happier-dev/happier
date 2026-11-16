@@ -26,18 +26,28 @@ function qualifiedSshImage(reference: string) {
     'ghcr.io/trycua/macos-tahoe-cua:26.5.2'].includes(reference);
 }
 function qualifiedImage(image: LumeLaunchV1['image']) {
+  if (image.kind === 'prepared') return true;
   const reference = image.kind === 'catalog' ? image.id : image.reference;
   if (qualifiedSshImage(reference)) return image.kind === 'catalog' || !image.privateCarrier
     || (image.privateCarrier.guestOs === 'macos' && image.privateCarrier.user === 'lume');
   return image.kind === 'native-image' && image.privateCarrier !== undefined;
 }
 function imageGuestPlatform(image: LumeLaunchV1['image']): 'linux' | 'darwin' | undefined {
+  if (image.kind === 'prepared') return image.privateCarrier?.guestOs === 'linux' ? 'linux' : 'darwin';
   const reference = image.kind === 'catalog' ? image.id : image.reference;
   if (qualifiedSshImage(reference)) return 'darwin';
   if (image.kind === 'native-image' && image.privateCarrier) {
     return image.privateCarrier.guestOs === 'macos' ? 'darwin' : 'linux';
   }
   return undefined;
+}
+// These vendor images establish both the Apple-silicon guest target and its
+// published login home. A custom account's home cannot be inferred from its name.
+function preparationGuest(image: LumeLaunchV1['image']) {
+  if (image.kind === 'prepared') return undefined;
+  const reference = image.kind === 'catalog' ? image.id : image.reference;
+  return qualifiedImage(image) && qualifiedSshImage(reference)
+    ? { target: { os: 'darwin' as const, arch: 'arm64' as const }, remoteHomeDir: '/Users/lume/.happier' } : undefined;
 }
 function nativeIdentity(resource: LumeResourceV1) {
   return { storage: resource.storage, vmName: resource.vmName };
@@ -46,7 +56,7 @@ export function lumeOperationForLaunch(launch: LumeLaunchV1, managedId: string |
   return LumeNativeOperationV1Schema.safeParse({ storage: launch.storage,
     ...(launch.keepPasswordLogin === undefined ? {} : { keepPasswordLogin: launch.keepPasswordLogin }),
     vmName: managedId === undefined ? undefined : `happier-${managedId}`,
-    ...(launch.image.kind === 'native-image' && launch.image.privateCarrier ? { privateCarrier: launch.image.privateCarrier } : {}) });
+    ...(launch.image.kind !== 'catalog' && launch.image.privateCarrier ? { privateCarrier: launch.image.privateCarrier } : {}) });
 }
 
 /** Native facts and IO only; managed custody, retry and policy stay at C50/C52. */
@@ -137,12 +147,13 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
         size: sizeFact ? [{ id: sizeFact.id, title: sizeFact.title, assignments: [], nativeFacts: { size: sizeFact } }] : [],
         image: qualified.map(({ reference, image, available }) => {
           const guestPlatform = imageGuestPlatform(image);
+          const preparation = preparationGuest(image);
           const refusal = guestPlatform === 'darwin' && inventory.kind === 'inventory' ? inventory.macosStartRefusal : undefined;
           return { id: reference, title: reference, available: available && !refusal,
             ...(refusal && inventory.kind === 'inventory' ? { unavailableReason: { code: refusal.code,
               status: { ...lumeConfigurationLabel('macosVmLimitReached'), params: { count: inventory.runningMacosCount, limit: LUME_MACOS_VM_LIMIT } } } } : {}),
             ...(guestPlatform ? { guestPlatform } : {}),
-            assignments: [{ path: 'image', value: image }], nativeFacts: { image: { id: reference, title: reference,
+            assignments: [{ path: 'image', value: image }], nativeFacts: { ...(preparation ? { preparationGuest: preparation } : {}), image: { id: reference, title: reference,
               description: macosVmStatus } } };
         }),
         location: locations.locations.map(location => ({ id: location.name, title: location.name,
@@ -159,7 +170,6 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
       const launch = parsed.data;
       const identity = lumeOperationForLaunch(launch, managedId);
       if (!identity.success) return { kind: 'rejected', code: 'invalid_request' };
-      const reference = launch.image.kind === 'catalog' ? launch.image.id : launch.image.reference;
       if (!qualifiedImage(launch.image)) return { kind: 'rejected', code: 'provider_unavailable', nativeCause: { localCause: 'native_route_unavailable' } };
       const resource = identity.data;
       if (rawResource !== undefined) {
@@ -189,6 +199,12 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
         return { kind: 'rejected', code: 'provider_unavailable', ...(nativeCause ? { nativeCause } : {}) };
       }
       if (!locations.locations.some(location => location.name === launch.storage)) return { kind: 'rejected', code: 'invalid_request' };
+      if (launch.image.kind === 'prepared') {
+        const cloned = await native.clone({ storage: launch.image.storage, vmName: launch.image.vmName }, nativeIdentity(resource), signal);
+        if (cloned.kind !== 'clone-accepted') return pending(resource, nativeCauseOf(cloned));
+        return configureAndStart(launch, resource, await native.inspect(nativeIdentity(resource), signal));
+      }
+      const reference = launch.image.kind === 'catalog' ? launch.image.id : launch.image.reference;
       if (launch.image.kind === 'catalog') {
         const images = await native.catalog(reference.startsWith('ghcr.io/trycua/macos-tahoe-cua:') ? 'macos-tahoe-cua' : 'macos', signal);
         if (images.kind !== 'catalog') return { kind: 'rejected', code: 'provider_unavailable', ...failureCause(images) };
@@ -229,7 +245,11 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
       // CD1 makes name-keyed native status exact for Happier-owned resources.
       // Native initialized() permits an incomplete provisioning marker without
       // a disk. Only settled running/stopped details prove the retained files.
-      return observeMachineProvisionerNativeRead(observedAt, { kind: 'present', storage: observed.vendorStatus === 'running' || observed.vendorStatus === 'stopped' ? 'retained' : 'unknown',
+      return observeMachineProvisionerNativeRead(observedAt, { kind: 'present',
+        size: { cpuCores: observed.cpu,
+          ...(observed.memoryBytes > 0 ? { memoryBytes: observed.memoryBytes } : {}),
+          ...(observed.diskBytes > 0 ? { diskBytes: observed.diskBytes } : {}) },
+        storage: observed.vendorStatus === 'running' || observed.vendorStatus === 'stopped' ? 'retained' : 'unknown',
         power: observed.vendorStatus === 'running' ? 'running'
         : observed.vendorStatus === 'stopped' ? 'stopped' : 'unknown', billing: LUME_BILLING });
     },

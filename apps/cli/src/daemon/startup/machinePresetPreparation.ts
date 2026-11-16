@@ -4,8 +4,11 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { ManagedMachinePresetGetResultV1Schema, PresetMutationResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { openManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import type { ManagedMachinePresetPreparationBindingV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
 import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
-    readMachineProvisionerSelectionForLaunchV1, readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+    readMachineProvisionerSelectionForLaunchV1, readMachineProvisionerActionRolesV1,
+    type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { MachineProvisionerPreparationBuildResultV1Schema, MachineProvisionerPreparationInspectResultV1Schema,
     MachineProvisionerPreparationDestroyResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -15,6 +18,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { createManagedOpaquePresetReviewedChildPortV1, bindManagedMachineRoleCredentials,
     projectManagedMachineRolePurposeBindingsV1, composeManagedMachinePresetPreparationBuildInputV1,
     settleManagedMachinePresetPreparationOperationV1, type ManagedMachinePresetPreparationRootV1 } from '@happier-dev/cli-common/machines/managed';
+import { captureManagedMachineRoleCredentialConfigurationsV1 } from '@happier-dev/cli-common/machines/managed/reconcile';
 import { prepareManagedGuestCliBuildInput } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { prepareManagedGuestCliLocalBuildPayload } from '@happier-dev/cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller';
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
@@ -22,9 +26,12 @@ import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/re
 import { createManagedPresetHydrator } from '@/machines/managed/presetHydration';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { prepareMachineSetupPreparationV1 } from '@/machines/setup/prepareMachineSetupPreparation';
+import { createManagedBootstrapTaskRunner } from '@/machines/managed/enrollmentTask';
+import { runPreparedPresetSshHostTrust } from '@/machines/managed/enrollmentSshTrust';
+import type { ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { resolveRegistryConnectedAccountActionPurposeAuthorizations } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
-import type { ApiMachineClient } from '@/api/apiMachine';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 
 type PrepareRequest = Parameters<NonNullable<ActionExecutorDeps['machinePresetPrepare']>>[0];
 
@@ -32,7 +39,7 @@ type PrepareRequest = Parameters<NonNullable<ActionExecutorDeps['machinePresetPr
 export async function prepareMachinePresetOnHost(request: PrepareRequest, host: Readonly<{
     homeId: string; machineId: string; installationId: string; serverBaseUrl: string;
     registry: ResolvedExecutablePluginRuntimeRegistry; isCurrent(): boolean;
-    cancelAndWait?: ApiMachineClient['cancelAndWaitForActionOperation'];
+    readCredentialConfigurationRevision: ConnectedAccountPurposeBindingOwner['readCredentialConfigurationRevision'];
 }>) {
     const { input, context, signal } = request;
     const authorization = context.externalActionExecutionAuthorization;
@@ -75,8 +82,32 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
         return { launch, provisioner: contribution.definition };
     };
     const parent = { actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, input };
-    const invoke = async ({ launch, provisioner }: ReturnType<typeof qualify>,
-        role: ReturnType<typeof readMachineProvisionerActionRolesV1>[number]['role'], nativeInput: unknown) => {
+    const managedSshHostTrust = async (carrier: Parameters<typeof runPreparedPresetSshHostTrust>[0]['carrier']) => {
+        let taskId: string | undefined;
+        let prompt: ManagedMachineBootstrapPromptV1 | null = null;
+        const publish = () => {
+            if (!taskId) return;
+            context.operationOwnerUpdate?.update({ domainRef: { kind: 'systemTask', id: taskId,
+                taskKind: 'remote.ssh.bootstrapMachine.v1', ...(prompt ? { prompt } : {}) } });
+        };
+        const runner = createManagedBootstrapTaskRunner({ ...(signal ? { signal } : {}),
+            onTask: task => { taskId = task.taskId; publish(); },
+            onPrompt: question => { prompt = question; publish(); },
+            onEvent: event => {
+                if (event.type === 'progress' && event.message) context.operationOwnerUpdate?.update({ progress: {
+                    ...(event.stepId ? { phase: event.stepId } : {}), label: event.message,
+                } });
+            },
+        });
+        await runner.run({ run: async task => {
+            task.emit({ type: 'progress', stepId: 'ssh.trust', message: 'Verifying SSH host trust' });
+            await runPreparedPresetSshHostTrust({ correlation: { homeId: input.homeId, presetId: input.id,
+                operationId: acceptance.operationId }, carrier, signal: task.signal, prompt: task.prompt });
+            return { trusted: true };
+        } });
+    };
+    const bindRole = ({ launch, provisioner }: ReturnType<typeof qualify>,
+        role: ReturnType<typeof readMachineProvisionerActionRolesV1>[number]['role']) => {
         const localId = readMachineProvisionerActionRolesV1(provisioner).find(binding => binding.role === role)?.action;
         if (!localId) throw new ManagedMachineControllerError('provider_unavailable');
         const identity = { pluginId: launch.provider.pluginId, localId };
@@ -85,11 +116,21 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
         if (!authorizations) throw new ManagedMachineControllerError('provider_unavailable');
         const selected = bindManagedMachineRoleCredentials({ authorizations, provider: launch.provider,
             credentials: launch.credentials, qualification: { descriptor: provisioner, launch: launch.choices } });
+        return { identity, localId, selected };
+    };
+    const invoke = async (qualified: ReturnType<typeof qualify>,
+        role: ReturnType<typeof readMachineProvisionerActionRolesV1>[number]['role'], nativeInput: unknown,
+        credentialConfigurations: ManagedMachinePresetPreparationBindingV1['credentialConfigurations']) => {
+        const { launch, provisioner } = qualified;
+        const { identity, localId, selected } = bindRole(qualified, role);
         const cleanup = role === 'preparationDestroy' || role === 'preparationInspect' && signal?.aborted === true;
         const invocationContext = cleanup ? admittedContext : context;
         const childContext = { ...invocationContext, actionsSettings, invocationServices: { ...context.invocationServices,
+            managedSshHostTrust,
             connectedAccountPurposeBinding: { identity, operationId: acceptance.operationId,
                 purposes: selected.map(item => item.purpose), purposeBindings: projectManagedMachineRolePurposeBindingsV1(selected),
+                managedOperation: { role, credentialConfigurations,
+                    isCurrent: (currentRole: MachineProvisionerRoleV1) => currentRole === role && host.isCurrent() && (cleanup || !signal?.aborted) },
                 isCurrent: () => host.isCurrent() && (cleanup || !signal?.aborted) } } };
         const port = createManagedOpaquePresetReviewedChildPortV1({ parent, context: childContext,
             launch, provisioner, localId, role, execute: (body, next) => execute('action.invoke', {
@@ -104,16 +145,19 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
     const accepted = { status: 'accepted' as const, operationId: acceptance.operationId, machineId: host.machineId };
     let acceptedOnce = false;
     const accept = () => { if (!acceptedOnce) { acceptedOnce = true; acceptance.accept(accepted); } };
-    const cancelAndWait = host.cancelAndWait;
     const run = async (custody: Parameters<typeof settleManagedMachinePresetPreparationOperationV1>[0]['custody']) => {
+        const opening = { presetId: preset.id, content: preset.content };
+        const content = custody.mode === 'plain' ? openManagedMachinePresetContentV1({ ...opening, mode: 'plain' })
+            : openManagedMachinePresetContentV1({ ...opening, ...custody, recipients: preset.recipients });
+        if (!content?.launch) throw new ManagedMachineControllerError('credential_unavailable');
+        const credentialConfigurations = await captureManagedMachineRoleCredentialConfigurationsV1({
+            authorizations: bindRole(qualify(content.launch), 'preparationBuild').selected,
+            readCredentialConfigurationRevision: host.readCredentialConfigurationRevision,
+            signal: signal ?? new AbortController().signal,
+        });
         let firstRead = true;
         const result = await settleManagedMachinePresetPreparationOperationV1({ operationId: acceptance.operationId,
-            expectedRevision: input.expectedRevision, custody, ...(signal ? { signal } : {}),
-            ...(cancelAndWait ? { stopIncumbentBuild: async (operationId: string) => {
-                const retirement = await cancelAndWait({ accountId: authorization.binding.accountId,
-                    machineId: host.machineId }, operationId);
-                return retirement.kind === 'requested' || retirement.kind === 'already_settled';
-            } } : {}),
+            expectedRevision: input.expectedRevision, custody, credentialConfigurations, ...(signal ? { signal } : {}),
             storage: { read: async () => { if (firstRead) { firstRead = false; return preset; } return await read(); },
                 compareAndSwap: async update => PresetMutationResultV1Schema.parse(await post('update', {
                     homeId: input.homeId, id: input.id, expectedRevision: update.expectedRevision,
@@ -124,11 +168,11 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
                 const qualified = qualify(capturedContent.launch);
                 const { launch, provisioner } = qualified;
                 const optionsAction = provisioner.actions.options;
-                const action = optionsAction && host.registry.contributes.actions.find(candidate =>
-                    candidate.pluginId === launch.provider.pluginId && candidate.definition.id === optionsAction);
-                if (!optionsAction || !action) throw new ManagedMachineControllerError('provider_unavailable');
+                const action = optionsAction ? host.registry.contributes.actions.find(candidate =>
+                    candidate.pluginId === launch.provider.pluginId && candidate.definition.id === optionsAction) : undefined;
+                if (!optionsAction || !action?.definition.inputSchema) throw new ManagedMachineControllerError('provider_unavailable');
                 const selectors = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(action.definition.inputSchema)).parse(launch.choices);
-                const options = MachineProvisionerOptionsResultV1Schema.parse(await invoke(qualified, 'options', selectors));
+                const options = MachineProvisionerOptionsResultV1Schema.parse(await invoke(qualified, 'options', selectors, credentialConfigurations));
                 const projection = projectMachineProvisionerSelectionV1({ options, launchSchema: provisioner.launchSchema,
                     selection: readMachineProvisionerSelectionForLaunchV1(options, launch.choices) });
                 if (projection.kind !== 'ready' || !projection.nativeFacts.preparationGuest) throw new ManagedMachineControllerError('provider_unavailable');
@@ -143,9 +187,9 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
                     ...(setup ? { setup } : {}) });
             },
             native: {
-                build: async (body, root) => { accept(); return MachineProvisionerPreparationBuildResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationBuild', body)); },
-                inspect: async (body, root) => { accept(); return MachineProvisionerPreparationInspectResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationInspect', body)); },
-                destroy: async (body, root) => MachineProvisionerPreparationDestroyResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationDestroy', body)),
+                build: async (body, root) => { accept(); return MachineProvisionerPreparationBuildResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationBuild', body, credentialConfigurations)); },
+                inspect: async (body, root) => { accept(); return MachineProvisionerPreparationInspectResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationInspect', body, credentialConfigurations)); },
+                destroy: async (body, root) => MachineProvisionerPreparationDestroyResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationDestroy', body, credentialConfigurations)),
             },
         });
         if (result.kind !== 'ready') throw new ManagedMachineControllerError('code' in result ? result.code : result.kind === 'conflict' ? 'request_conflict' : 'cancelled');

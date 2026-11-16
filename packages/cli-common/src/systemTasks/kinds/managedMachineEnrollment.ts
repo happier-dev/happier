@@ -1,6 +1,7 @@
 import type { ResolvedHomeTarget } from '../../homeTarget/homeTarget.js';
 import type { ManagedEnrollmentCorrelationV1, ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { readManagedMachineRequesterEnrollmentAccountIdV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { MachineProvisionerProcessConfigV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { InteractiveSystemTaskContext, InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
@@ -126,8 +127,8 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
   }
   // Admission binds the retained row once; subsequent phases observe local cancellation.
   const assertCurrent = async () => { input.signal?.throwIfAborted(); };
-  const enrollmentAccountId = row.enrollmentAccountId ?? row.custodianAccountId;
-  const requesterEnrollment = enrollmentAccountId !== row.custodianAccountId;
+  const enrollmentAccountId = readManagedMachineRequesterEnrollmentAccountIdV1(row);
+  const requesterEnrollment = enrollmentAccountId !== undefined;
   const deliverAuthApproval = requesterEnrollment
     ? deps.createPairingDelivery?.(enrollmentAccountId) ?? deps.deliverAuthApproval
     : deps.deliverAuthApproval;

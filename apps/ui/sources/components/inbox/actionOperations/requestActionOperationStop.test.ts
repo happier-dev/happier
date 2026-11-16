@@ -46,7 +46,7 @@ await loadSyncSingletonForTests();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 const { requestActionOperationStop, requestAcceptedActionOperationStop } = await import('./requestActionOperationStop');
 const { useActionOperationStopControl } = await import('./useActionOperationStopControl');
-const { submitActionOperationSudoPassword } = await import('./useActionOperationSudoPassword');
+const { submitActionOperationTaskAnswer } = await import('./useActionOperationTaskQuestion');
 const { ActionOperationLedgerView } = await import('./ActionOperationLedger');
 const { ActionOperationDetailControls } = await import('./ActionOperationDetailControls');
 const { projectActionOperationDetail } = await import('./actionOperationDetailPresentation');
@@ -128,7 +128,7 @@ describe('requestActionOperationStop', () => {
         actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
         await harness.addHome({ name: 'Ambient', serverUrl: 'https://ambient.test', accountId: 'alice' });
         rpc.machine.mockResolvedValue({ ok: true, result: { ok: true } });
-        await expect(submitActionOperationSudoPassword(held, 'one-use-password')).resolves.toEqual({ ok: true });
+        await expect(submitActionOperationTaskAnswer(held, { password: 'one-use-password' })).resolves.toEqual({ ok: true });
         expect(rpc.machine).toHaveBeenCalledTimes(1);
         expect(rpc.machine.mock.calls[0]?.[0]).toMatchObject({ serverId, accountId: 'alice', machineId: 'machine-1',
             payload: { id: 'tool.systemTasks', method: 'respond', params: {
@@ -137,7 +137,7 @@ describe('requestActionOperationStop', () => {
         expect(rpc.machine.mock.calls[0]?.[0].payload.params).not.toHaveProperty('responseAuthorization');
         actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...snapshot, revision: snapshot.revision + 1,
             domainRef: { ...snapshot.domainRef, setupTask: { id: 'actual-task', taskKind: 'machine.setup.apply.v1' } } }] });
-        await expect(submitActionOperationSudoPassword(held, 'another-password')).resolves.toEqual({ ok: false, errorCode: 'action_operation_unavailable' });
+        await expect(submitActionOperationTaskAnswer(held, { password: 'another-password' })).resolves.toEqual({ ok: false, errorCode: 'action_operation_unavailable' });
         expect(rpc.machine).toHaveBeenCalledTimes(1);
     });
 

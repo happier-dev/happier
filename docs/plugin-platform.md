@@ -4644,6 +4644,15 @@ a changed key before remote execution. Existing address-only trust does not
 silently authorize a managed resource's first connection. This development-only
 carrier extension is closed: older readers refuse the new generated-source field
 rather than dropping its trust meaning; the bundled producer and host update together.
+Native leaves observe a credential-free SSH guest through
+`observeMachineProvisionerSshHost` and await
+`services.machineProvisioners.establishSshHostTrust` before materializing its
+login key, sending a password or executing a guest command. The original host
+operation supplies this service's private trust callback. Managed bootstrap
+reuses the managed enrollment question and retained resource trust; a preset
+Prepare guest uses that preset's admitted operation identity and question,
+without inventing a managed row. Both use the same host trust resolver and
+persist only an approved key. A missing prompt binding refuses the service.
 DigitalOcean and Hetzner acquire/bootstrap are Account Actions using the existing foreground
 Account recipe and its private provisioner service. Native SSH performs installation;
 retained credentials without a guest pin use the native host's existing trust prompt.

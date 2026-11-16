@@ -5,6 +5,15 @@ import { parse } from 'yaml';
 import { MachineProvisionerBootstrapCarrierV1Schema } from '../machineProvisioners.js';
 
 describe('public managed SSH evidence carrier', () => {
+  it('observes a preparation guest without opening or selecting a retained credential', async () => {
+    const result: PluginProcessResult = { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+      stdout: new TextEncoder().encode('192.0.2.1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest\n'), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
+    const exec = { systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'ssh-keyscan' } }) }, run: async () => result } as unknown as ExecService;
+    expect(await ssh.observeMachineProvisionerSshHost({ exec, connection: { address: '192.0.2.1', user: 'admin', port: 2222 } })).toEqual({
+      kind: 'ssh', address: '192.0.2.1', user: 'admin', port: 2222,
+      hostKeyEvidence: { hostKey: '192.0.2.1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest', fingerprint: expect.stringMatching(/^SHA256:/) },
+    });
+  });
   it('leaves retained native SSH first trust to the host when no daemon exec is available', async () => {
     const credentialRef = { kind: 'shared_resource' as const, resourceId: 'retained-key' };
     const carrier = await ssh.resolveMachineProvisionerSshBootstrap({

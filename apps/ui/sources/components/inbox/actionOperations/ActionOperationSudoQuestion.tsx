@@ -11,7 +11,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import { t } from '@/text';
 
-import { useActionOperationSudoPassword } from './useActionOperationSudoPassword';
+import { useActionOperationTaskQuestion } from './useActionOperationTaskQuestion';
 
 function describeSudoFailure(code: string | null): string | null {
   switch (code) {
@@ -38,17 +38,17 @@ export const ActionOperationSudoQuestion = React.memo(
     props: Readonly<{ operation: QualifiedActionOperation }>,
   ) {
     const { theme } = useUnistyles();
-    const question = useActionOperationSudoPassword(props.operation);
+    const question = useActionOperationTaskQuestion(props.operation);
     const [draft, setDraft] = React.useState('');
     const [sent, setSent] = React.useState(false);
-    if (!question.target) return null;
+    if (question.target?.prompt.kind !== 'sudo.password') return null;
     const username = question.target.prompt.adminUsername;
     const error = describeSudoFailure(question.failureCode);
     const send = () => {
       if (question.pending || draft.length === 0) return;
       const password = draft;
       setDraft('');
-      void question.respond(password).then((ok) => {
+      void question.respond({ password }).then((ok) => {
         if (ok) setSent(true);
       });
     };

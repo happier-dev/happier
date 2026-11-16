@@ -604,6 +604,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['machineProvisioners'] {
             return Object.freeze({
                 materializeNativeCredentialHeaders: async () => ({ ok: false as const, code: 'native_credential_binding_unavailable' as const }),
+                establishSshHostTrust: unavailableMethod('machineProvisioners', code, diagnostic),
                 waitForNativeObservation: unavailableMethod('machineProvisioners', code, diagnostic),
                 materializeGuestHostCredential: unavailableMethod('machineProvisioners', code, diagnostic),
                 materializeBootstrapCredential: unavailableMethod('machineProvisioners', code, diagnostic),

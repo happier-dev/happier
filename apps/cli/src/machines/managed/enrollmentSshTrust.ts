@@ -1,46 +1,49 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parseSshKnownHostLine, persistSshKnownHostTrust, resolveSshKnownHostTrust, SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
+import { parseSshKnownHostLine, persistSshKnownHostTrust, resolveSshKnownHostTrust, SystemTaskExecutionError, type InteractiveSystemTaskContext } from '@happier-dev/cli-common/systemTasks';
 import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedBootstrapCarrierV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { configuration } from '@/configuration';
 import { readManagedSshTrustedHostKey, resolveSshBootstrapHostKeyPin, settleRemoteSshHostTrust } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { createManagedBootstrapTaskRunner } from './enrollmentTask';
 
+type SshHost = Readonly<Omit<Extract<ManagedBootstrapCarrierV1, { kind: 'ssh' }>, 'credentialRef'>>;
+type SshTrustIdentity = Pick<ManagedEnrollmentCorrelationV1, 'homeId' | 'managedId'>
+    | Readonly<{ homeId: string; presetId: string; operationId: string }>;
+
 /** Resource acquisition owns first-use trust through the same managed operation question as enrollment. */
 export async function runManagedSessionSshTrust(input: Readonly<{
     correlation: ManagedEnrollmentCorrelationV1;
-    carrier: ManagedBootstrapCarrierV1;
+    carrier: ManagedBootstrapCarrierV1 | SshHost;
     guestHostPublicKey?: string;
     operationId?: string;
+    /** Only delegated Account enrollment uses Home's requester response authorization. */
+    requesterEnrollmentAccountId?: string;
 }> & Omit<Parameters<typeof createManagedBootstrapTaskRunner>[0], 'readResponseOwner'>): Promise<void> {
     if (input.carrier.kind !== 'ssh') return;
     const carrier = input.carrier;
     const trustedHostKey = readManagedSshTrustedHostKey(carrier, input.guestHostPublicKey);
-    const trust = await resolveManagedEnrollmentSshTrust({ ...input, carrier, trustedHostKey });
-    const taskRunner = createManagedBootstrapTaskRunner({ ...input, readResponseOwner: () => input.operationId ? {
+    const taskRunner = createManagedBootstrapTaskRunner({ ...input, readResponseOwner: () => input.operationId && input.requesterEnrollmentAccountId ? {
         correlation: input.correlation, operationId: input.operationId, readTaskId: taskRunner.readTaskId,
     } : undefined });
     await taskRunner.run({ run: async ctx => {
-        const { resolveLiveRemoteHostTrust } = await import('@/capabilities/systemTasks/ssh/liveRemoteSshBootstrap');
         ctx.emit({ type: 'progress', stepId: 'ssh.trust', message: 'Verifying SSH host trust' });
-        const resolution = await resolveLiveRemoteHostTrust({ ssh: { target: `${carrier.user}@${carrier.address}`,
-            auth: 'agent', ...(carrier.port === undefined ? {} : { port: carrier.port }),
-            ...(carrier.hostKeyEvidence === undefined ? {} : { hostKeyEvidence: carrier.hostKeyEvidence }), ...trust },
-            knownHostsMode: 'app', signal: ctx.signal });
+        const resolution = await resolveManagedSshHostTrust({ ...input, carrier, trustedHostKey, signal: ctx.signal });
         await settleRemoteSshHostTrust(ctx, resolution);
         return { trusted: true };
     } });
 }
 
-/** The admitted managed row, rather than its reusable network address, owns trust. */
+/** The admitted resource or preparation operation, rather than its reusable network address, owns trust. */
 export async function resolveManagedEnrollmentSshTrust(input: Readonly<{
-    correlation: Pick<ManagedEnrollmentCorrelationV1, 'homeId' | 'managedId'>;
-    carrier: Extract<ManagedBootstrapCarrierV1, { kind: 'ssh' }>;
+    correlation: SshTrustIdentity;
+    carrier: SshHost;
     trustedHostKey?: string;
 }>): Promise<Readonly<{ knownHostsPath: string; trustedHostKey?: string }>> {
-    const identity = createHash('sha256').update(JSON.stringify([input.correlation.homeId, input.correlation.managedId])).digest('hex');
+    const owner = input.correlation;
+    const identity = createHash('sha256').update(JSON.stringify('managedId' in owner
+        ? [owner.homeId, owner.managedId] : [owner.homeId, 'preset', owner.presetId, owner.operationId])).digest('hex');
     const knownHostsPath = join(configuration.happyHomeDir, 'ssh', 'managed', identity, 'known_hosts');
     let text: string;
     try { text = await readFile(knownHostsPath, 'utf8'); }
@@ -64,6 +67,36 @@ export async function resolveManagedEnrollmentSshTrust(input: Readonly<{
         }
     }
     return { knownHostsPath, trustedHostKey };
+}
+
+async function resolveManagedSshHostTrust(input: Readonly<{
+    correlation: SshTrustIdentity;
+    carrier: SshHost;
+    trustedHostKey?: string;
+    signal?: AbortSignal;
+}>) {
+    const trust = await resolveManagedEnrollmentSshTrust(input);
+    const { resolveLiveRemoteHostTrust } = await import('@/capabilities/systemTasks/ssh/liveRemoteSshBootstrap');
+    return resolveLiveRemoteHostTrust({ ssh: {
+        target: `${input.carrier.user}@${input.carrier.address}`, auth: 'agent',
+        ...(input.carrier.port === undefined ? {} : { port: input.carrier.port }),
+        ...(input.carrier.hostKeyEvidence === undefined ? {} : { hostKeyEvidence: input.carrier.hostKeyEvidence }), ...trust,
+    }, knownHostsMode: 'app', signal: input.signal });
+}
+
+/** A temporary preparation guest belongs to the preset's original finite admission, before a managed row exists. */
+export async function runPreparedPresetSshHostTrust(input: Readonly<{
+    correlation: Readonly<{ homeId: string; presetId: string; operationId: string }>;
+    carrier: SshHost;
+    signal?: AbortSignal;
+    prompt: InteractiveSystemTaskContext['prompt'];
+}>): Promise<void> {
+    const resolution = await resolveManagedSshHostTrust(input);
+    await settleRemoteSshHostTrust({ prompt: async request => {
+        const answer = await input.prompt(request);
+        input.signal?.throwIfAborted();
+        return answer;
+    } }, resolution);
 }
 
 /** Session placement consumes retained/previously approved trust without enrolling a guest daemon. */

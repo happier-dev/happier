@@ -23,7 +23,7 @@ export type LumeNativeUnknown = Readonly<{
 }>;
 export type LumeNativeResourceUnknown = LumeNativeUnknown & Readonly<{ resource: LumeNativeResource }>;
 export type LumeNativeAbsent = Readonly<{ kind: 'absent'; resource: LumeNativeResource }>;
-export type LumeNativeMutationKind = 'pull-accepted' | 'start-accepted' | 'configure-accepted' | 'stop-accepted' | 'delete-accepted';
+export type LumeNativeMutationKind = 'pull-accepted' | 'clone-accepted' | 'start-accepted' | 'configure-accepted' | 'stop-accepted' | 'delete-accepted';
 export type LumeNativeMutation = Readonly<{ kind: LumeNativeMutationKind; resource: LumeNativeResource }> | LumeNativeResourceUnknown | LumeNativeAbsent
   | Readonly<{ kind: 'refused'; code: 'native_route_unavailable'; nativeCause: { localCause: 'native_route_unavailable' }; resource: LumeNativeResource }>
   | (NonNullable<NonNullable<ReturnType<typeof readLumeCapacity>>['macosStartRefusal']> & Readonly<{ resource: LumeNativeResource }>);
@@ -261,6 +261,24 @@ export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeo
       } catch { /* A lost response body leaves creation uncertain. */ }
       return { kind: 'unknown', resource, reason: 'response' };
     },
+    async clone(sourceInput: unknown, destinationInput: unknown, signal?: AbortSignal): Promise<LumeNativeMutation> {
+      const source = LumeNativeResourceSchema.parse(sourceInput);
+      const resource = LumeNativeResourceSchema.parse(destinationInput);
+      // lume-v0.6.1 refuses running sources and existing destinations. Clone is
+      // a disk copy, not a credential scrub; the preparation owner supplies a
+      // clean stopped base and retains the destination before this mutation.
+      const response = await request('/lume/vms/clone', 200, {
+        method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: source.vmName, newName: resource.vmName,
+          sourceLocation: source.storage, destLocation: resource.storage }),
+      });
+      if (!(response instanceof Response)) return mutationFailure(resource, response);
+      try {
+        const result = z.object({ source: z.literal(source.vmName), destination: z.literal(resource.vmName) }).safeParse(await response.json());
+        if (result.success) return { kind: 'clone-accepted', resource };
+      } catch { /* A lost clone response leaves the retained destination uncertain. */ }
+      return { kind: 'unknown', resource, reason: 'response' };
+    },
     async inspect(input: unknown, signal?: AbortSignal): Promise<LumeNativeInspection> {
       const resource = LumeNativeResourceSchema.parse(input);
       const response = await request(`${vmPath(resource)}?${new URLSearchParams({ storage: resource.storage })}`, [200, 400], { method: 'GET', signal }, 'inspect');
@@ -300,6 +318,10 @@ export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeo
       if (observed.kind !== 'present') return observed.kind === 'unknown' ? mutationFailure(resource, observed) : observed;
       return stopPresent(resource, signal);
     },
+    // Preparation has just authenticated this exact acquired guest and removed
+    // its host keys. Re-inspection would probe SSH and regenerate template keys.
+    // Consume that known-present identity at the same native Stop owner.
+    stopPresent,
     async destroy(input: unknown, signal?: AbortSignal): Promise<LumeNativeMutation> {
       const resource = LumeNativeResourceSchema.parse(input);
       let observed = await client.inspect(resource, signal);

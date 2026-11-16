@@ -699,8 +699,8 @@ export function createActionOperationRunner(deps: Readonly<{
   const waitForTerminal = async (scope: ActionOperationQueryScope, operationId: string, signal?: AbortSignal,
     requireSettlement = false, includeSetupReview = false, includeManagedPrompt = false) => {
     const hasManagedPrompt = (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1) => includeManagedPrompt
-      && (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
-      && snapshot.domainRef?.kind === 'managedMachine' && Boolean(snapshot.domainRef.bootstrapTask?.prompt);
+      && (snapshot.domainRef?.kind === 'systemTask' && Boolean(snapshot.domainRef.prompt)
+        || snapshot.domainRef?.kind === 'managedMachine' && Boolean(snapshot.domainRef.bootstrapTask?.prompt));
     const hasApprovalHold = (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1) => includeSetupReview
       && snapshot.progress?.kind === 'phase' && snapshot.progress.phase === 'waiting_for_approval';
     const snapshot = deps.store.get(scope, operationId);

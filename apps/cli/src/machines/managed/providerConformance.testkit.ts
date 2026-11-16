@@ -511,7 +511,10 @@ export function cloudFixture(leaf: string, contribution: string) {
                     : leaf === 'machine-agent37' ? { authorization: `Bearer ${PRIVATE_BINDING}`, 'x-agent37-key': PRIVATE_BINDING }
                     : leaf === 'machine-upstash-box' ? { 'x-box-api-key': PRIVATE_BINDING } : { authorization: `Bearer ${PRIVATE_BINDING}` } },
         },
-        machineProvisioners: { materializeBootstrapCredential: async (request: { kind: 'file' | 'bytes' }) => {
+        machineProvisioners: {
+            // The plugin-facing host interaction boundary approves this native fixture guest.
+            establishSshHostTrust: async () => {},
+            materializeBootstrapCredential: async (request: { kind: 'file' | 'bytes' }) => {
             const bytes = text.encode('private-bootstrap-fixture-key');
             if (request.kind === 'bytes') return { kind: 'bytes' as const, bytes, dispose: async () => { bytes.fill(0); } };
             const path = join(directory, 'bootstrap-key');

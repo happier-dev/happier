@@ -1,1 +1,1 @@
-export { resolveMachineProvisionerSshBootstrap } from '../ssh.js';
+export { observeMachineProvisionerSshHost, resolveMachineProvisionerSshBootstrap } from '../ssh.js';

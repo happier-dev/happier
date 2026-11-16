@@ -1,4 +1,4 @@
-import type { ActionOperationSnapshotV1} from '@happier-dev/protocol/actions/operations/v1';
+import type { ActionOperationSnapshotV1, ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { MachineSudoPasswordPromptV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import { isSameInputOptionValue } from '@happier-dev/protocol/inputs';
 import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -47,6 +47,22 @@ export function readActionOperationSudoPrompt(snapshot: ActionOperationSnapshotV
         || domain.machineId !== snapshot.scope.machineId) return null;
     const task = domain.kind === 'machineSetup' ? domain.setupTask : domain.task;
     return task?.prompt ? { id: task.id, taskKind: task.taskKind, prompt: task.prompt } : null;
+}
+
+export type ActionOperationTaskQuestion = ActionOperationSudoPrompt | Readonly<{
+    id: string;
+    taskKind: 'remote.ssh.bootstrapMachine.v1';
+    prompt: Extract<ManagedMachineBootstrapPromptV1, { kind: 'ssh.trustHost' | 'ssh.replaceHostKey' }>;
+}>;
+
+/** Consume the finite task's current question through its operation, without inventing a managed resource. */
+export function readActionOperationTaskQuestion(snapshot: ActionOperationSnapshotV1): ActionOperationTaskQuestion | null {
+    const sudo = readActionOperationSudoPrompt(snapshot);
+    if (sudo) return sudo;
+    if (isActionOperationTerminal(snapshot.state)) return null;
+    const domain = snapshot.domainRef;
+    if (domain?.kind !== 'systemTask' || domain.prompt?.kind !== 'ssh.trustHost' && domain.prompt?.kind !== 'ssh.replaceHostKey') return null;
+    return { id: domain.id, taskKind: domain.taskKind, prompt: domain.prompt };
 }
 
 export type InboxActionOperationEntry = Readonly<{

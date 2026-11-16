@@ -66,6 +66,7 @@ import { MachineFirewallRecovery } from '@/components/machines/security/network/
 import { projectActionOperationSourceContext } from './actionOperationSourceContext';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { ActionOperationSudoQuestion } from './ActionOperationSudoQuestion';
+import { ActionOperationSshQuestion } from './ActionOperationSshQuestion';
 import { readActionOperationSudoPrompt } from '@/sync/domains/actionOperations/actionOperationSelectors';
 
 function translateDetailField(field: ActionOperationDetailField): string {
@@ -420,6 +421,9 @@ export const ActionOperationDetailModal = React.memo(
         {/* Keyed by the Machine's question: a new question never inherits a draft, error or receipt. */}
         {sudoPrompt ? (
           <ActionOperationSudoQuestion key={sudoPrompt.id} operation={operation} />
+        ) : null}
+        {snapshot.domainRef?.kind === 'systemTask' && snapshot.domainRef.prompt ? (
+          <ActionOperationSshQuestion key={snapshot.domainRef.id} operation={operation} />
         ) : null}
 
         <ItemGroup title={t('inbox.actionOperations.details')}>

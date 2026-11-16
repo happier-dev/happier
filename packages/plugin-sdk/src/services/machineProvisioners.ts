@@ -1,4 +1,5 @@
 /** @moduleRealm any */
+import type { MachineProvisionerBootstrapCarrierV1 } from '../machineProvisioners.js';
 
 /** Private material for the host-admitted managed resource, never an Action input. */
 export type MachineProvisionerBootstrapCredentialLeaseV1 =
@@ -11,6 +12,9 @@ export type MachineProvisionerNativeCredentialHeadersResultV1 =
     | Readonly<{ ok: false; code: 'native_credential_binding_unavailable' }>;
 
 export interface MachineProvisionersService {
+    /** Ask the host to establish this admitted guest's SSH trust before credentials or guest effects. */
+    establishSshHostTrust(host: Readonly<Pick<Extract<MachineProvisionerBootstrapCarrierV1, { kind: 'ssh' }>,
+        'kind' | 'address' | 'user' | 'port' | 'hostKeyEvidence'>>): Promise<void>;
     /** Wait on the host's native observation cadence with this invocation's cancellation signal. */
     waitForNativeObservation(): Promise<void>;
     /**

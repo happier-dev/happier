@@ -18,6 +18,7 @@ import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerpr
 import type { ActionExecutorContext, JsonValue } from '@happier-dev/protocol';
 import type { ActionOperationProgressV1, ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { readManagedMachineRequesterEnrollmentAccountIdV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import type { DevcontainerRebuildIntentV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -417,6 +418,16 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                     controller: params.input.controller,
                     contribution: { ...contribution.identity, occurrenceId },
                     role,
+                    ...(role === 'bootstrap' ? { managedSshHostTrust: async (carrier: Parameters<NonNullable<AdmittedManagedProviderOperationExecutionRequest['managedSshHostTrust']>>[0]) => {
+                        const { runManagedSessionSshTrust } = await import('./enrollmentSshTrust');
+                        await runManagedSessionSshTrust({ carrier, correlation: {
+                            homeId: machine.homeId, managedId: machine.id, controller: params.input.controller,
+                            requestId: params.options.requestId, expectedIntentRevision: machine.intentRevision,
+                        }, signal,
+                        operationId: params.options.context?.operationAcceptance?.operationId,
+                        requesterEnrollmentAccountId: readManagedMachineRequesterEnrollmentAccountIdV1(machine),
+                        ...createManagedBootstrapProgress(params, machine) });
+                    } } : {}),
                     ...(io?.managedNativeCredentials
                         ? { managedNativeCredentials: io.managedNativeCredentials } : {}),
                     ...(bootstrapCredentialKind
@@ -665,6 +676,7 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                 const { runManagedSessionSshTrust } = await import('./enrollmentSshTrust');
                 await runManagedSessionSshTrust({ ...transport, signal: params.options.signal,
                     operationId: params.options.context?.operationAcceptance?.operationId,
+                    requesterEnrollmentAccountId: readManagedMachineRequesterEnrollmentAccountIdV1(transport.machine),
                     ...createManagedBootstrapProgress(params, transport.machine),
                 });
             },
@@ -686,7 +698,7 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
     return params.action === 'machines.managed.inspect' ? projectNativeJsonValueForTransport({ machine }) : null;
 }
 
-function createManagedBootstrapProgress(params: ManagedMachineReconciliationInput, machine: ManagedMachineFullV1,
+function createManagedBootstrapProgress(params: Pick<ManagedMachineReconciliationInput, 'options'>, machine: ManagedMachineFullV1,
     onEnrollmentWait?: () => void): Pick<Parameters<typeof import('./enrollmentTask').createManagedBootstrapTaskRunner>[0], 'onTask' | 'onPrompt' | 'onEvent'> {
     const domainRef = { kind: 'managedMachine' as const, id: machine.id, controller: machine.controller, resource: machine.resource };
     let bootstrapTask: Readonly<{ id: string; taskKind: 'remote.ssh.bootstrapMachine.v1' }> | undefined;

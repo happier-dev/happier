@@ -2,6 +2,7 @@ import '../../../../ui/sources/dev/vitestSetup';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import * as fsPromises from 'node:fs/promises';
 import { createCliPayloadFixture } from '../../../../../packages/cli-common/src/systemTasks/testkit/createCliPayloadFixture';
 import { join } from 'node:path';
 import axios from 'axios';
@@ -112,6 +113,8 @@ import { CuaLocalLaunchV1Schema } from '../../../../../packages/plugins/machine-
 import { projectMachineProvisionerSelectionV1, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
+import { createPluginInvocationServicesFactory } from '@/plugins/runtime/invocation/services/factory';
+import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -119,6 +122,7 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 
 import { createMachineProvisionerSpecializedPreparationAuthorFixture } from '../../../../../packages/plugin-sdk/fixtures/authoring-inference/machineProvisioners';
 
@@ -135,6 +139,12 @@ import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actio
 const approvalWire = vi.hoisted(() => ({ sockets: [] as Array<{ update(value: unknown): void }>,
     registrations: new Map<string, { deliver(packet: unknown, acknowledge: (value: unknown) => void): void }>(),
 }));
+vi.mock('node:child_process', async original => {
+    const actual = await original<typeof import('node:child_process')>();
+    return { ...actual, spawnSync: (...args: Parameters<typeof actual.spawnSync>) => args[0] === 'ssh-keyscan'
+        ? { status: 0, stdout: '192.168.64.7 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\n', stderr: '' }
+        : actual.spawnSync(...args) };
+});
 vi.mock('socket.io-client', async importOriginal => (
     await import('../../../../ui/sources/dev/testkit/harness/serverAccountConnectionHarness')
 ).createSocketIoClientBoundary(importOriginal));
@@ -208,7 +218,7 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
     executeEnvironmentSetup?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['executeEnvironmentSetup'],
     observeActionExecution?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['observeActionExecution'],
     runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry, installationId = 'installation',
-    cancelAndWaitForActionOperation?: ReturnType<typeof createHostActionOperationRuntime>['runner']['cancelAndWait']) {
+    waitForActionOperationCompletion?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['waitForActionOperationCompletion']) {
     // The module-loading boundary has no installed plugin. The empty catalog
     // itself is produced by the real contribution registry owner.
     const registry = { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry;
@@ -218,7 +228,7 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
         ...(observeRecordedApprovalExecution ? { observeRecordedApprovalExecution } : {}),
         ...(executeEnvironmentSetup ? { executeEnvironmentSetup } : {}),
         ...(observeActionExecution ? { observeActionExecution } : {}),
-        ...(cancelAndWaitForActionOperation ? { cancelAndWaitForActionOperation } : {}),
+        ...(waitForActionOperationCompletion ? { waitForActionOperationCompletion } : {}),
         installationIdentity: { installationId, privateKey },
         ...(withAuthority ? { managedProviderOperationAuthority: authority } : {}),
         resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
@@ -229,7 +239,7 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
 }
 
 describe('daemon managed Machine Action factory', () => {
-    it.each(['ready', 'inspected', 'cancelled', 'replaced', 'retired'] as const)('prepares a private preset beneath its original public Action (%s)', async outcome => {
+    it.each(['ready', 'inspected', 'cancelled', 'replaced', 'interrupted-adopt', 'interrupted-replace', 'interrupted-reconnected', 'trust-approved', 'trust-declined', 'native-failed'] as const)('prepares a private preset beneath its original public Action (%s)', async outcome => {
         const actionId = MACHINE_PRESET_PREPARE_ACTION_ID_V1;
         const payload = await createCliPayloadFixture();
         onTestFinished(() => payload.cleanup());
@@ -244,8 +254,18 @@ describe('daemon managed Machine Action factory', () => {
         const accountCredentials = { token, encryption: null };
         const signing = nacl.sign.keyPair();
         const settings = AccountSettingsSchema.parse({});
-        const input = { homeId: 'srv_home', id: 'prepare-preset', expectedRevision: 1, machineId: 'controller' };
-        const authored = normalizePluginManifestV2(createMachineProvisionerSpecializedPreparationAuthorFixture().manifest);
+        const input = { homeId: 'srv_home', id: `prepare-preset-${outcome}-${randomUUID()}`, expectedRevision: 1, machineId: 'controller' };
+        const reconnected = outcome === 'interrupted-reconnected';
+        const account = { service: { pluginId: 'acme.accounts', localId: 'cloud' }, accountId: 'same-native-account' };
+        const authorFixture = normalizePluginManifestV2(createMachineProvisionerSpecializedPreparationAuthorFixture().manifest);
+        const authored = !reconnected ? authorFixture : normalizePluginManifestV2({ ...authorFixture,
+            hostAccess: { ...authorFixture.hostAccess, required: [{ id: 'native-connection', capability: 'connectedAccounts',
+                reason: 'Use the selected native Account', scope: { serviceRefs: [account.service],
+                    operations: ['use'], materializationKinds: ['environment'] } }] },
+            contributes: { ...authorFixture.contributes, actions: authorFixture.contributes.actions.map(action => ({
+                ...action, hostAccess: ['native-connection'],
+            })) },
+        });
         const originalProvisioner = authored.contributes.machineProvisioners[0]!;
         const manifest = outcome !== 'replaced' ? authored : normalizePluginManifestV2({ ...authored, contributes: { ...authored.contributes,
             machineProvisioners: [...authored.contributes.machineProvisioners, { ...originalProvisioner, id: 'replacement',
@@ -255,7 +275,8 @@ describe('daemon managed Machine Action factory', () => {
                 .map(action => ({ ...action, id: `${action.id}-replacement` }))],
         } });
         const provider = { pluginId: manifest.id, localId: manifest.contributes.machineProvisioners[0]!.id };
-        const launch = { provider, schemaVersion: 1, name: 'Prepared guest', choices: { name: 'base' } };
+        const launch = { provider, schemaVersion: 1, name: 'Prepared guest', choices: { name: 'base' },
+            ...(reconnected ? { credentials: [{ purpose: { consumer: provider, purpose: 'native-connection' }, account }] } : {}) };
         let preset = ManagedMachinePresetV1Schema.parse({ id: input.id, homeId: input.homeId, revision: 1,
             owner: { kind: 'account', accountId: 'account' }, controller: { machineId: 'controller', installationId: 'installation' },
             contentEncryptionMode: 'plain', content: { t: 'plain', v: { v: 1, name: launch.name, launch,
@@ -265,40 +286,75 @@ describe('daemon managed Machine Action factory', () => {
         const nativeRoles: string[] = [];
         const artifact = { contributionRef: provider, schemaVersion: 1, value: { launch: { name: 'prepared' } } };
         const replacementArtifact = { ...artifact, contributionRef: { ...provider, localId: 'replacement' } };
+        const interrupted = outcome.startsWith('interrupted-');
+        if (interrupted) {
+            preset = ManagedMachinePresetV1Schema.parse({ ...preset, content: { t: 'plain', v: { v: 1,
+                name: launch.name, launch, preparation: { enabled: true },
+                prepared: { operationId: 'lost-original-operation', status: 'building', cliBinaryPath: '/opt/happier/cli/current/happier',
+                    binding: createManagedMachinePresetPreparationBindingV1({ content: { launch }, presetRevision: 1,
+                        credentialConfigurations: reconnected ? [{ account, revision: 'configuration-before-reconnect' }] : [],
+                        cliIdentity: 'home-payload:' + (outcome === 'interrupted-replace' ? 'b' : 'a').repeat(64) }) },
+            } } });
+            if (outcome === 'interrupted-adopt') {
+                // Genuine filesystem boundary: metadata can be read, but no
+                // archive traversal is available in this newly started host.
+                const readdir = fsPromises.readdir;
+                vi.spyOn(fsPromises, 'readdir').mockImplementation((...args: Parameters<typeof readdir>) => {
+                    if (String(args[0]).startsWith(payload.payloadRoot)) throw new Error('Retry must inspect before preparing archives');
+                    return readdir(...args);
+                });
+            }
+        }
         if (outcome === 'replaced') {
             preset = ManagedMachinePresetV1Schema.parse({ ...preset, content: { t: 'plain', v: { v: 1,
                 name: launch.name, launch: { ...launch, provider: replacementArtifact.contributionRef, choices: { name: 'replacement' } },
                 preparation: { enabled: true }, prepared: { operationId: 'original-preparation', status: 'ready', artifact,
                     cliBinaryPath: '/opt/happier/cli/current/happier', binding: createManagedMachinePresetPreparationBindingV1({
-                        content: { launch }, presetRevision: 1, cliIdentity: 'a'.repeat(64) }) },
+                        content: { launch }, presetRevision: 1, cliIdentity: 'a'.repeat(64), credentialConfigurations: [] }) },
             } } });
         }
         const nativeOperationRef = { contributionRef: provider, schemaVersion: 1, value: { claimId: 'prepare-operation' } };
-        let releaseOriginal = () => {};
-        const originalHeld = new Promise<void>(resolve => { releaseOriginal = resolve; });
-        let markStopping = () => {};
-        const stopping = new Promise<void>(resolve => { markStopping = resolve; });
+        const nativeCause = { localCause: 'native_command_failed' as const, command: 'run' as const,
+            exitCode: 17, stderr: 'setup failed' };
         let builds = 0;
+        let guestEffects = 0;
+        let nativeGuestAllocated = false;
         let admittedInput = input;
         let markBuildStarted = () => {};
         const buildStarted = new Promise<void>(resolve => { markBuildStarted = resolve; });
         const native = nativeFixture({ fixtureManifest: manifest, credentialPurposes: [],
-            actionHandlers: new Map(manifest.contributes.actions.map(action => [action.id, async body => {
+            createServices: createPluginInvocationServicesFactory({ loggerSink: { write() {} } }),
+            actionHandlers: new Map(manifest.contributes.actions.map(action => [action.id, async (body, pluginContext) => {
                 nativeRoles.push(action.id);
                 if (action.id === 'options') return { base: { launch: outcome === 'replaced' ? { name: 'replacement' } : launch.choices,
                     nativeFacts: { preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' } } },
                     dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
                 if (action.id === 'prepare-build') {
+                    if (outcome.startsWith('trust-')) {
+                        nativeGuestAllocated = true;
+                        await pluginContext.services.machineProvisioners.establishSshHostTrust({ kind: 'ssh',
+                            address: '192.168.64.7', user: 'vendor-default', port: 22 });
+                        guestEffects++;
+                    }
                     expect(openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared)
                         .toMatchObject({ status: 'building', operationId: builds === 0 ? 'prepare-operation' : 'replacement-operation' });
                     markBuildStarted();
                     builds++;
-                    if (outcome === 'retired' && builds === 1) await originalHeld;
-                    return outcome === 'ready' || outcome === 'retired' ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
+                    if (outcome === 'native-failed') return { kind: 'unknown', code: 'setup_failed', nativeCause, nativeOperationRef };
+                    return outcome === 'ready' || interrupted || outcome === 'trust-approved' ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
                 }
-                if (action.id === 'prepare-inspect') return outcome === 'inspected' || outcome === 'retired' ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
+                if (action.id === 'prepare-inspect') {
+                    if (outcome === 'trust-declined') {
+                        expect(body).toEqual({ operationId: 'prepare-operation', launch: launch.choices });
+                        expect(nativeGuestAllocated).toBe(true);
+                    }
+                    if (outcome === 'native-failed') return { kind: 'failed', code: 'preparation_interrupted', nativeOperationRef };
+                    if (interrupted) expect(body).toEqual({ operationId: 'lost-original-operation', launch: launch.choices });
+                    return outcome === 'inspected' || interrupted ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
+                }
                 if (action.id === 'prepare-destroy') {
-                    expect(body).toMatchObject(outcome === 'replaced' || outcome === 'retired' ? { artifact } : { nativeOperation: nativeOperationRef });
+                    expect(body).toMatchObject(outcome === 'replaced' || interrupted ? { artifact } : { nativeOperation: nativeOperationRef });
+                    nativeGuestAllocated = false;
                     return { kind: 'confirmed' };
                 }
                 if (action.id === 'prepare-build-replacement') {
@@ -309,6 +365,16 @@ describe('daemon managed Machine Action factory', () => {
             }])) });
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(String(url)).pathname;
+            if (reconnected && path === '/v4/connect/qualified/credential') return { status: 200,
+                data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref: account, authenticationModeId: 'token',
+                    revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+                    configurationRevision: 'configuration-after-reconnect', metadata: { scopes: [] },
+                    content: { t: 'plain', v: { v: 1, values: { token: 'fixture-not-for-build' } } } }) };
+            if (reconnected && path === '/v4/connect/qualified/configuration') return { status: 200,
+                data: QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({ target: { kind: 'account', ref: account },
+                    authenticationModeId: 'token', revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+                    configurationRevision: 'configuration-after-reconnect', configurationContent: { t: 'plain',
+                        v: { values: { endpoint: 'https://new-native-api.example' }, secretRefs: {}, secretValues: {} } } }) };
             if (path.endsWith('/connected-accounts/purposes')) return { status: 200, data: { status: 'present', revision: 1,
                 content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } };
             if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
@@ -345,11 +411,7 @@ describe('daemon managed Machine Action factory', () => {
         const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account',
             generateOperationId: () => operationSequence++ === 0 ? 'prepare-operation' : 'replacement-operation' });
         const managed = adapter(true, undefined, undefined, signing.secretKey, accountCredentials, undefined, undefined, undefined,
-            native.runtimeRegistry, 'installation', async (...args) => {
-                const result = operations.runner.cancelAndWait(...args);
-                markStopping();
-                return await result;
-            });
+            native.runtimeRegistry, 'installation');
         const deps = createCliActionDeps({ credentials: accountCredentials, token, sessionId: '', mode: 'plain', ctx: null,
             serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
             externalActionMachineRequestPrivateKey: signing.secretKey, externalActionMachineInstallationId: 'installation',
@@ -383,41 +445,64 @@ describe('daemon managed Machine Action factory', () => {
             return result;
         };
         const result = await start();
-        expect(result.ok ? null : result).toBeNull();
+        expect(result.ok ? null : { ...result, nativeRoles, writes,
+            prepared: openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared }).toBeNull();
         expect(result).toMatchObject({ ok: true, result: { status: 'accepted', operationId: 'prepare-operation' } });
-        if (outcome === 'retired') {
-            await buildStarted;
-            const replacement = start({ ...input, expectedRevision: preset.revision }, 'replacement-request');
-            try {
-                expect(await Promise.race([stopping.then(() => 'stopping'), replacement.then(() => 'premature')])).toBe('stopping');
-                expect(builds).toBe(1);
-                expect(nativeRoles).toEqual(['options', 'prepare-build']);
-            } finally {
-                releaseOriginal();
-            }
-            expect(await replacement).toMatchObject({ ok: true, result: { status: 'accepted', operationId: 'replacement-operation' } });
-            expect(await operations.handlers.getV2({ operationId: 'prepare-operation', waitForTerminal: true }))
-                .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+        if (outcome.startsWith('trust-')) {
+            const question = await operations.handlers.getV2({ operationId: 'prepare-operation', waitForTerminal: true, includeManagedPrompt: true });
+            expect(question).toMatchObject({ kind: 'found', operation: { state: 'running', domainRef: {
+                kind: 'systemTask', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt: {
+                    kind: 'ssh.trustHost', host: '192.168.64.7', fingerprint: expect.stringMatching(/^SHA256:/) },
+            } } });
+            expect(guestEffects).toBe(0);
+            if (question.kind !== 'found' || question.operation.domainRef?.kind !== 'systemTask') throw new Error('Missing trust question');
+            await getLiveSystemTasksRunnerAdapter().respond({ taskId: question.operation.domainRef.id,
+                expectedPromptKind: 'ssh.trustHost', answer: { trusted: outcome === 'trust-approved' } });
         }
         if (outcome === 'cancelled') {
             await buildStarted;
             expect(await operations.handlers.cancel({ operationId: 'prepare-operation' })).toMatchObject({ kind: 'requested' });
         }
-        const terminal = await operations.handlers.getV2({ operationId: outcome === 'retired' ? 'replacement-operation' : 'prepare-operation', waitForTerminal: true });
+        const terminal = await operations.handlers.getV2({ operationId: 'prepare-operation', waitForTerminal: true });
+        if (outcome === 'native-failed') {
+            expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'failed',
+                error: { errorCode: 'setup_failed', details: { kind: 'managedNative', nativeCause } } } });
+            expect(openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared)
+                .toMatchObject({ status: 'failed', code: 'setup_failed', nativeCause, nativeOperationRef });
+            expect(roots).toHaveLength(1);
+            return;
+        }
+        if (outcome === 'trust-declined') {
+            expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'failed' } });
+            expect(guestEffects).toBe(0);
+            expect(nativeRoles).toEqual(['options', 'prepare-build', 'prepare-inspect', 'prepare-destroy']);
+            expect(nativeGuestAllocated).toBe(false);
+            const prepared = openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared;
+            expect(prepared).toMatchObject({ status: 'cancelled' });
+            expect(prepared).not.toHaveProperty('artifact');
+            expect(prepared).not.toHaveProperty('nativeOperationRef');
+            expect(roots).toHaveLength(1);
+            return;
+        }
         expect(terminal.kind === 'found' && terminal.operation.state === 'failed' ? terminal.operation.error : undefined).toBeUndefined();
         expect(terminal).toMatchObject({ kind: 'found', operation: { state: outcome === 'cancelled' ? 'cancelled' : 'succeeded' } });
         const prepared = openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared;
-        expect(roots).toEqual(Array.from({ length: outcome === 'retired' ? 2 : 1 }, () => bindExternalActionExecutionAuthorizationHttpPathV1(actionId)));
-        if (outcome === 'retired') {
-            expect(prepared).toMatchObject({ status: 'ready', operationId: 'replacement-operation', artifact });
-            expect(builds).toBe(2);
-            expect(nativeRoles.indexOf('prepare-destroy')).toBeLessThan(nativeRoles.lastIndexOf('prepare-build'));
+        expect(roots).toEqual([bindExternalActionExecutionAuthorizationHttpPathV1(actionId)]);
+        if (interrupted) {
+            if (reconnected) expect(prepared?.binding.credentialConfigurations).toEqual([
+                { account, revision: 'configuration-after-reconnect' },
+            ]);
+            expect(prepared).toMatchObject({ status: 'ready', artifact,
+                operationId: outcome === 'interrupted-adopt' ? 'lost-original-operation' : 'prepare-operation' });
+            expect(builds).toBe(outcome === 'interrupted-adopt' ? 0 : 1);
+            expect(nativeRoles).toEqual(outcome === 'interrupted-adopt' ? ['options', 'prepare-inspect']
+                : ['options', 'prepare-inspect', 'prepare-destroy', 'prepare-build']);
             return;
         }
         if (outcome !== 'cancelled') {
             expect(prepared).toMatchObject({ status: 'ready', artifact: outcome === 'replaced' ? replacementArtifact : artifact });
-            expect(writes).toEqual(outcome === 'ready' ? [1, 2] : outcome === 'replaced' ? [1, 2, 3, 4] : [1, 2, 3]);
-            expect(nativeRoles).toEqual(outcome === 'ready' ? ['options', 'prepare-build'] : outcome === 'replaced'
+            expect(writes).toEqual(outcome === 'ready' || outcome === 'trust-approved' ? [1, 2] : outcome === 'replaced' ? [1, 2, 3, 4] : [1, 2, 3]);
+            expect(nativeRoles).toEqual(outcome === 'ready' || outcome === 'trust-approved' ? ['options', 'prepare-build'] : outcome === 'replaced'
                 ? ['prepare-destroy', 'options', 'prepare-build-replacement'] : ['options', 'prepare-build', 'prepare-inspect']);
         } else {
             expect(prepared).toMatchObject({ status: 'cancelled' });

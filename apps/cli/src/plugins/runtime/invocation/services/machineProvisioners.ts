@@ -69,6 +69,12 @@ export function createMachineProvisionersInvocationService(params: Readonly<{
         return materialization;
     };
     return Object.freeze({
+        async establishSshHostTrust(host: Parameters<MachineProvisionersService['establishSshHostTrust']>[0]): Promise<void> {
+            assertActive();
+            if (!seed.managedSshHostTrust) throw unavailable();
+            await seed.managedSshHostTrust(host);
+            assertActive();
+        },
         async waitForNativeObservation(): Promise<void> {
             await waitForNativeObservation();
         },

@@ -7,6 +7,7 @@ import { buildMachineProvisionerPinnedSshBootstrap } from '@happier-dev/plugin-s
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedBootstrapCarrierV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { computeSshHostKeyFingerprint } from '@happier-dev/protocol/ssh/hostTrust';
 import { resolveLumeBootstrap } from '../../../../../packages/plugins/machine-lume/src/machine/bootstrap';
 import { createLumeNativeClient } from '../../../../../packages/plugins/machine-lume/src/machine/nativeClient';
@@ -73,19 +74,12 @@ async function enroll(managedId: string, key: string, generated = false, retaine
         run: async (request: Parameters<ExecService['run']>[0]) => request.executable.id.localId === 'ssh-keyscan'
             ? completed(`192.168.64.7 ${key}\n`) : completed(),
     } as ExecService;
-    const preparedCarrier = generated ? buildMachineProvisionerPinnedSshBootstrap({
-        connection: { address: '192.168.64.7', user: 'happier-bootstrap', port: 22 }, guestHostPublicKey: retainedKey, credentialRef,
-    }) : await resolveLumeBootstrap({ native, exec, resource: resource.value, credentialRef, bootstrapPublicKey: 'ssh-ed25519 cHVibGlj',
-        credentials: { materializeBootstrapCredential: async () => ({ kind: 'file', path: '/fixture/login-key', dispose: async () => {} }) } });
-    // A changed scanner and changed evidence must not replace retained generated trust.
-    const carrier = generated ? { ...preparedCarrier, hostKeyEvidence: { hostKey: `192.168.64.7 ${key}`,
-        fingerprint: computeSshHostKeyFingerprint(key.split(' ')[1]!) } } : preparedCarrier;
     const prompts: string[] = [];
     let taskReady!: (taskId: string) => void;
     const taskId = new Promise<string>(resolve => { taskReady = resolve; });
     const owner = getLiveSystemTasksRunnerAdapter();
     const correlation = { homeId, managedId, controller, resource, requestId: `request-${managedId}`, expectedIntentRevision: 0 };
-    const input = { correlation, homeCorrelation: correlation, target, carrier, guestHostPublicKey: retainedKey,
+    const trustInput = { correlation, homeCorrelation: correlation, target, guestHostPublicKey: retainedKey,
         ...(trustOnly ? { operationId: 'session-operation' } : {}),
         onTask: task => { taskReady(task.taskId); }, onPrompt: prompt => {
             if (!prompt) return;
@@ -95,7 +89,23 @@ async function enroll(managedId: string, key: string, generated = false, retaine
                     purpose: { ...correlation, operationId: 'session-operation', taskId: id, expectedPromptKind: prompt.kind, phase: 'answer' } },
             } : {}) }));
         },
-    } satisfies Parameters<typeof runManagedMachineEnrollment>[0];
+    } satisfies Omit<Parameters<typeof runManagedMachineEnrollment>[0], 'carrier'>;
+    let preparedCarrier: ManagedBootstrapCarrierV1;
+    try {
+        preparedCarrier = generated ? buildMachineProvisionerPinnedSshBootstrap({
+            connection: { address: '192.168.64.7', user: 'happier-bootstrap', port: 22 }, guestHostPublicKey: retainedKey, credentialRef,
+        }) : await resolveLumeBootstrap({ native, exec, resource: resource.value, credentialRef, bootstrapPublicKey: 'ssh-ed25519 cHVibGlj',
+            credentials: {
+                establishSshHostTrust: carrier => runManagedSessionSshTrust({ ...trustInput, carrier }),
+                materializeBootstrapCredential: async () => ({ kind: 'file', path: '/fixture/login-key', dispose: async () => {} }),
+            } });
+    } catch (error) {
+        return { result: error instanceof Error && 'code' in error ? error.code : 'unknown_failure', prompts, commands: boundary.commands };
+    }
+    // A changed scanner and changed evidence must not replace retained generated trust.
+    const carrier = generated ? { ...preparedCarrier, hostKeyEvidence: { hostKey: `192.168.64.7 ${key}`,
+        fingerprint: computeSshHostKeyFingerprint(key.split(' ')[1]!) } } : preparedCarrier;
+    const input = { ...trustInput, carrier };
     const deps = { readCurrentManagedRow: async () => row,
         materializeBootstrapCredential: async () => ({ path: '/fixture/login-key', dispose: async () => {} }),
     };

@@ -1328,6 +1328,9 @@ export type HostReviewedChildInvocationServicesV1 = Readonly<{
   /** Exact retained descriptor returned by Home admission; never a child business operand. */
   managedMachine?: import('../../machines/managed/managedMachineV1.js').ManagedMachineV1;
   managedBootstrapCredential?: ManagedBootstrapCredentialInvocationBinding;
+  /** Original host operation owns the prompt and trust identity, never the native plugin. */
+  managedSshHostTrust?: (carrier: Readonly<Omit<Extract<import('../../machines/managed/providerFactsV1.js').ManagedBootstrapCarrierV1,
+    { kind: 'ssh' }>, 'credentialRef'>>) => Promise<void>;
   /** Retained Home creation identity, forwarded only to its existing authorization request. */
   managedContinuation?: import('../externalActionApi.js').ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
   machineConnectorSecrets?: Readonly<{

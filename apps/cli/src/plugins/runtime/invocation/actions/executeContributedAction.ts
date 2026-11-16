@@ -1002,6 +1002,9 @@ export async function executeContributedAction(params: Readonly<{
             isCurrent: isManagedCustodyCurrent,
           } }
         : {}),
+      ...((params.admittedManagedProviderOperation?.managedSshHostTrust ?? params.approvalContext?.invocationServices?.managedSshHostTrust)
+        ? { managedSshHostTrust: params.admittedManagedProviderOperation?.managedSshHostTrust
+            ?? params.approvalContext?.invocationServices?.managedSshHostTrust } : {}),
       ...(nativeCredentials
         ? { managedNativeCredentials: nativeCredentials }
         : {}),

@@ -248,6 +248,7 @@ export type InvokeTargetActionParams = Readonly<{
     execInvocationTimeoutMs?: number | null;
     /** Host-private exact admitted row material; never projected into SDK context. */
     managedBootstrapCredential?: ManagedBootstrapCredentialInvocationBinding;
+    managedSshHostTrust?: PluginInvocationServicesSeed['managedSshHostTrust'];
     managedNativeCredentials?: ManagedNativeCredentialInvocationBinding;
 }>;
 
@@ -718,6 +719,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(invocation.managedBootstrapCredential
                         ? { managedBootstrapCredential: invocation.managedBootstrapCredential }
                         : {}),
+                    ...(invocation.managedSshHostTrust ? { managedSshHostTrust: invocation.managedSshHostTrust } : {}),
                     ...(invocation.managedNativeCredentials
                         ? { managedNativeCredentials: invocation.managedNativeCredentials }
                         : {}),
