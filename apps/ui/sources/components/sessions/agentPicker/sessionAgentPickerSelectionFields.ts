@@ -1,5 +1,6 @@
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
@@ -43,7 +44,8 @@ export function resolveSessionAgentPickerSelectionFields(params: Readonly<{
     };
     return {
         modelSelection,
-        acpSessionModeId: selection.sessionModeId ?? null,
+        // The pane's blank mode means none chosen: the Agent supplies its own default, as in New Session.
+        acpSessionModeId: readNonBlankOpaqueIdentifier(selection.sessionModeId),
         sessionConfigOptionOverrides: Object.keys(overrides).length === 0 ? null : buildAcpConfigOptionOverridesV1({ updatedAt, overrides }),
     };
 }
