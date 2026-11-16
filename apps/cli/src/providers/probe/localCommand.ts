@@ -1,6 +1,8 @@
 import { ProviderCatalogCommandFallbackV1Schema } from '@happier-dev/protocol/providers/detection/descriptorV1';
 import { ProviderEndpointUrlSyntaxSchema } from '@happier-dev/protocol/providers/endpoint-url';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { ProviderCatalogCommandFallbackV1, ProviderCommandCatalogParserV1, ProviderModelDescriptorV1 } from '@happier-dev/protocol';
 
 import type { ProviderCatalogFormatParser } from './parsers';
@@ -52,7 +54,7 @@ export async function resolveDeclaredProviderInstallation(
 
 export type ProviderLocalCatalogFallbackResult =
   | Readonly<{ status: 'success'; models: readonly ProviderModelDescriptorV1[] }>
-  | Readonly<{ status: 'unavailable' }>;
+  | Readonly<{ status: 'unavailable'; error?: ProviderErrorV1 }>;
 
 function commandStdout(input: unknown): string {
   if (typeof input !== 'string') throw new TypeError('Provider command catalog output must be text');
@@ -89,8 +91,10 @@ function runCommandCatalogFormat(
   let rows: ReturnType<ProviderCatalogFormatParser>;
   try {
     rows = parse(commandStdout(stdout));
-  } catch {
-    return { status: 'unavailable' };
+  } catch (error) {
+    return { status: 'unavailable', error: createProviderErrorV1('provider_probe_response_invalid', {
+      failureCause: projectActionFailureCauseV1(error, 'providers.catalog.parse_command'),
+    }) };
   }
   if (!Array.isArray(rows.models)) return { status: 'unavailable' };
   const models: ProviderModelDescriptorV1[] = [];

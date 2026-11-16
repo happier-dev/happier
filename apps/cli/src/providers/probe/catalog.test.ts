@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import {
   createProviderErrorV1,
@@ -101,6 +102,36 @@ const managedSource = {
 } satisfies ProviderManagedCatalogSource;
 
 describe('provider catalog service', () => {
+  it.each([false, true])('retains the command parser cause after failed HTTP probes (managed: %s)', async managed => {
+    const failureCause = { phase: 'providers.catalog.decode', errorClass: 'Error' as const,
+      errorCode: 'provider_contribution_unavailable', httpStatus: null };
+    const failureResponse = { status: 503, headers: {}, body: Buffer.alloc(0) };
+    const runtimeStore = await store();
+    const service = createProviderCatalogService({
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['127.0.0.1'], transport: async () => failureResponse }),
+      authorization: authPort(), runtimeStore, createObservationId: () => 'command-failure',
+      managedCatalogRuntime: { launch: async () => ({ ok: true,
+        endpointUrl: () => 'http://127.0.0.1:45123/v1',
+        access: { request: async () => ({ ...failureResponse, body: new Response('').body }) },
+        isCurrent: () => true, close: async () => {},
+      }) },
+      localCatalogFallback: createProviderLocalCatalogFallbackRunner({ runner: {
+        runSystemTool: async () => ({ ok: true, exitCode: 0, stdout: '{}', stderr: '' }),
+      } }),
+    });
+    const endpointTemplateId = managed ? managedSource.endpointTemplateId : endpoints[0]!.endpointTemplateId;
+    const result = await service.refresh({ connectionId, machineId, endpoints: managed ? [] : endpoints,
+      ...(managed ? { managedSources: [managedSource] } : {}),
+      probes: [{ endpointTemplateId, path: '/models', parser: 'openai-models' }],
+      catalogFallback: { endpointTemplateId, lookupNames: ['catalog'], fixedArgs: ['models'], parser: 'fixture-command' },
+      contributedCatalogParsers: { pluginId: 'fixture-provider', parsersByFormat: { 'fixture-command': () => {
+        throw new PluginError({ code: 'plugin_service_unavailable', message: 'private-command-diagnostic', failureCause });
+      } } },
+    });
+    expect(result).toMatchObject({ status: 'error', error: { code: 'provider_probe_response_invalid', failureCause } });
+    expect(JSON.stringify(result)).not.toContain('private-command-diagnostic');
+  });
+
   it('does not resolve a credential when fresh dispatch DNS is unsafe', async () => {
     const resolveCredential = vi.fn(async () => ({
       ok: true as const,

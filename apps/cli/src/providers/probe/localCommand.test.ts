@@ -218,7 +218,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
     }));
     const fallback = createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool } });
     await expect(fallback.run({ contributedCatalogParsers: { 'ollama-list-table': parseOllamaListTable }, descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
-      .resolves.toEqual({ status: 'unavailable' });
+      .resolves.toMatchObject({ status: 'unavailable', error: { code: 'provider_probe_response_invalid' } });
     await expect(fallback.run({ contributedCatalogParsers: { 'ollama-list-table': parseOllamaListTable }, descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
       .resolves.toEqual({ status: 'unavailable' });
   });
@@ -279,6 +279,6 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
     });
 
     await expect(fallback.run({ contributedCatalogParsers: { 'ollama-list-table': parseOllamaListTable }, descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
-      .resolves.toEqual({ status: 'unavailable' });
+      .resolves.toMatchObject({ status: 'unavailable', error: { code: 'provider_probe_response_invalid' } });
   });
 });

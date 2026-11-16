@@ -26,6 +26,7 @@ import {
 import type { ProviderProbeManagedServiceRequest } from './client';
 import { providerProbeFailureHealthState, providerProbeSuccessHealthState } from './health';
 import { projectManagedProviderModelFacts } from './managedModelFacts';
+import type { ProviderLocalCatalogFallbackResult } from './localCommand';
 import {
   awaitWithinProviderOperation,
   observeProviderOperationPhase,
@@ -277,10 +278,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
       endpointUrl: string;
       contributedCatalogParsers?: ContributedProviderCatalogParsers;
       lifetime?: ProviderOperationLifetime;
-    }>): Promise<Readonly<{
-      status: 'success';
-      models: readonly ProviderModelDescriptorV1[];
-    }> | Readonly<{ status: 'unavailable' }>>;
+    }>): Promise<ProviderLocalCatalogFallbackResult>;
   }>;
 }>) {
   const now = dependencies.now ?? Date.now;
@@ -675,6 +673,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
               if (fallback.status === 'success') {
                 return await commitManagedCatalog(fallbackAuthorization, fallback.models, []);
               }
+              if (fallback.error) lastError = fallback.error;
             }
           }
           return {
@@ -1000,6 +999,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
             requestFingerprint: fallbackAuthorization.request.probeRequestFingerprint,
           };
         }
+        if (fallback.error) lastError = fallback.error;
       }
 
       const failedAt = now();
