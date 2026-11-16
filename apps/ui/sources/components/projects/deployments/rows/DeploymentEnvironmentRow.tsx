@@ -19,10 +19,13 @@ import { t } from '@/text';
 
 import type { deploymentRailState } from '../deploymentPresentation';
 
-/** An Environment's state while it needs the person or deploys (`deploymentRailState`); healthy has none. */
+/**
+ * An Environment's state while it needs the person or deploys (`deploymentRailState`); healthy has none. A table's
+ * State column also says a settled deploy's own word quietly (`quiet`: "Deployed", "Cancelled"), never pulsing.
+ */
 export type DeploymentEnvironmentState = NonNullable<
   ReturnType<typeof deploymentRailState>
->;
+> | Readonly<{ tone: 'quiet'; text: string }>;
 
 /**
  * The one Environment state mark (UI refinements ruling 2026-11-15 08:57Z): plugin-ui `Status` inline, its dot and word
@@ -38,7 +41,7 @@ export const DeploymentEnvironmentStateMark = React.memo(
   ) {
     return (
       <InlineStatus
-        tone={props.state.tone ?? 'neutral'}
+        tone={props.state.tone === 'quiet' ? 'secondary' : props.state.tone ?? 'neutral'}
         label={props.state.text}
         pulsing={props.state.tone === null}
         {...(props.testID === undefined ? {} : { testID: props.testID })}

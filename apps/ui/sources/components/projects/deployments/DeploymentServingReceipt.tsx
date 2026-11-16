@@ -14,6 +14,7 @@ import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { DeploymentStepStrip } from './DeploymentStepStrip';
 import {
   deploymentDurationMs,
+  deploymentReceiptAtMs,
   deploymentRevisionLabel,
   deploymentSourceLabel,
 } from './deploymentPresentation';
@@ -47,8 +48,7 @@ export const DeploymentServingReceipt = React.memo(
   ) {
     const { receipt } = props;
     const header = receipt.deployment;
-    const settledAt =
-      header.settledAtMs ?? header.startedAtMs ?? header.requestedAtMs;
+    const settledAt = deploymentReceiptAtMs(header);
     const facts = servingCells(receipt, props.byYou, settledAt);
     const steps: readonly DeploymentStepV1[] = props.still
       ? []

@@ -299,6 +299,13 @@ export function deploymentMachineHealthLabel(
 }
 
 /** How long it ran, from the receipt's own timestamps; null while it has not both started and settled. */
+/** When a deploy happened, as every surface says it: when it settled, else when it started, else when it was asked for. */
+export function deploymentReceiptAtMs(
+  receipt: Pick<DeploymentReceiptHeaderV1, 'requestedAtMs' | 'startedAtMs' | 'settledAtMs'>,
+): number {
+  return receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs;
+}
+
 export function deploymentDurationMs(
   receipt: DeploymentReceiptHeaderV1,
 ): number | null {

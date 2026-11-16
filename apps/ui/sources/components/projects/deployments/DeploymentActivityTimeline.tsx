@@ -23,6 +23,7 @@ import {
   deploymentActorIsViewer,
   deploymentActorLabel,
   deploymentDurationMs,
+  deploymentReceiptAtMs,
   deploymentHistoryLead,
   deploymentReceiptTitle,
   deploymentRevisionLabel,
@@ -39,8 +40,7 @@ export type DeploymentActivityReceipt = DeploymentReceiptHeaderV1 &
     actor?: ActionActorV1 | null;
   }>;
 
-const atOf = (receipt: DeploymentReceiptHeaderV1) =>
-  receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs;
+const atOf = deploymentReceiptAtMs;
 
 /**
  * Recent activity (lab `envOv`, owner 22:35Z): the Environment's receipts as the shared Timeline, by day. A sentence

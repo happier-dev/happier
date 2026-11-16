@@ -194,7 +194,7 @@ export function DeploymentEnvironmentRows(
               ) : null}
             </View>
           ) : (
-            row.detail
+            row.lastDeploy
           ),
       },
       // Where it answers (the collection's resolved live address), drawn as its host; the first column to give way.
@@ -230,7 +230,7 @@ export function DeploymentEnvironmentRows(
         priority: 5,
         align: 'end',
         listColumn: true,
-        render: (row) => <EnvironmentStateWord row={row} />,
+        render: (row) => row.stateWord ? <DeploymentEnvironmentStateMark state={row.stateWord} /> : null,
       },
     ];
     return {
@@ -316,7 +316,7 @@ function useAuthoredRows(parts: readonly RowParts[], presentations: readonly Dep
   }, [accountId, parts, presentations]);
 }
 
-type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'detail' | 'steps' | 'stepCaption'>;
+type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'lastDeploy' | 'steps' | 'stepCaption'>;
 
 /**
  * An Environment row's second line (lab envRow): what was deployed and who asked for it. Where the columns are not
@@ -328,7 +328,7 @@ export function deploymentEnvironmentRowLine(row: LineRow, author: string | null
   const facts = layout.columns
     ? [row.deploymentTitle, author]
     : [row.steps ? row.stepCaption : null, row.deploymentTitle, author, layout.hereMachine ? null : row.runsOn,
-        row.steps ? null : row.detail];
+        row.steps ? null : row.lastDeploy];
   const line = facts.filter(Boolean).join(' · ');
   return line === '' ? null : line;
 }

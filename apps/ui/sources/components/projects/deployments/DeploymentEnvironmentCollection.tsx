@@ -28,7 +28,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { DeploymentReadControllerV1 } from '@happier-dev/deployments';
 
-import { deploymentActionRefusalRemedy, deploymentRailState } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentRailState, deploymentReceiptAtMs, deploymentStateLabel } from './deploymentPresentation';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { deploymentStepCaption } from './DeploymentStepStrip';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -256,6 +256,8 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       deploymentTitle: [currentDeployment?.commitSubject, currentDeployment?.title, liveVersionTitle]
         .find((candidate): candidate is string => !!candidate && !isSameDeploymentName(candidate, title)) ?? null,
       state: latest,
+      // The State column: the state that speaks, else the latest deploy's own settled word, quiet; never deployed has none.
+      stateWord: latest ?? (currentDeployment ? { tone: 'quiet' as const, text: deploymentStateLabel(currentDeployment.state) } : null),
       steps,
       stepCaption: steps ? deploymentStepCaption(steps) : null,
       // The state word is the leading state mark's (`subtitleLeading`), so the line never repeats it: a running deploy's
@@ -274,6 +276,9 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
             ? [machine, formatDeploymentLiveAddress(liveAddress)].filter(Boolean).join(' · ') : where,
       leading: latest ? { state: latest, testID: `${testIDPrefix}.${environment.id}.state` } : null,
       detail: formatRelativeTimeShort(environment.updatedAtMs, nowMs),
+      // Last deploy (Services → Apps): when the latest deploy happened; an Environment never deployed has none, whatever
+      // its own edits (QA-WAVE-1115).
+      lastDeploy: currentDeployment ? formatRelativeTimeShort(deploymentReceiptAtMs(currentDeployment), nowMs) : null,
     };
   });
   type Fact = typeof incoming[number];

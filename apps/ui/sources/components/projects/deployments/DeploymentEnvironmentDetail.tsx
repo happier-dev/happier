@@ -77,6 +77,7 @@ import {
   deploymentActorIsViewer,
   deploymentDefinitionLabel,
   deploymentDurationMs,
+  deploymentReceiptAtMs,
   deploymentHistoryLead,
   deploymentReceiptTitle,
   deploymentRevisionLabel,
@@ -1601,9 +1602,7 @@ export function describeReceipt(
   const parts: string[] = [];
   if (who) parts.push(who);
   parts.push(
-    formatRelativeTime(
-      receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs,
-    ),
+    formatRelativeTime(deploymentReceiptAtMs(receipt)),
   );
   const duration = deploymentDurationMs(receipt);
   if (duration !== null)
@@ -1629,7 +1628,7 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
   const { receipt } = props;
   const duration = deploymentDurationMs(receipt);
   // The same calendar-day boundary as History's day groups, so a row never disagrees with its heading.
-  const age = formatDayGroupedAgeShort(receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs, Date.now());
+  const age = formatDayGroupedAgeShort(deploymentReceiptAtMs(receipt), Date.now());
   // A settled success says nothing; trouble and work in progress lead the facts line in their tone.
   const lead = receipt.title ? deploymentHistoryLead(receipt, receipt.failure) : null;
   const facts = props.byYou ? [t('projects.deployments.byYou')] : [];
@@ -1731,7 +1730,7 @@ function DeploymentHistoryPage(
   const receipts = history.result.items;
   // Newest first, by local day, through the one day-grouping owner the Session lists use.
   const days = React.useMemo(() => buildSessionListDateGroups({ items: receipts,
-    readMeaningfulActivityAt: receipt => receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs }), [receipts]);
+    readMeaningfulActivityAt: deploymentReceiptAtMs }), [receipts]);
   return (
     <>
       {/* The filter line stands on the list's column, the same inset as the day sections below it. */}

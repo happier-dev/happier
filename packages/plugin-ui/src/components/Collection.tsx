@@ -1163,6 +1163,9 @@ const ROW_ACCESSORY_GAP = 8;
 const lineStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: ROW_ACCESSORY_GAP, minWidth: 0 };
 /** A single-line list row: its one line centred on the row's planned height, the mark beside it. */
 const singleLineRowContentStyle: HappierPortableStyle = { paddingTop: 0, paddingBottom: 0, alignItems: 'center' };
+/** A page row whose second line is empty this time keeps the page row's padding and centres its name with its columns. */
+const oneLinePageRowContentStyle: HappierPortableStyle = { alignItems: 'center' };
+const isEmptySlot = (value: ReactNode): boolean => value === null || value === undefined || value === false || value === '';
 /**
  * The resting list (a phone, a narrow page) sits on the page's own edges (DESIGN.md: title, sections and sheets
  * share one edge): the Collection stands on the sheet edge, and its group heading, row marks and trailing facts
@@ -1561,6 +1564,11 @@ function ListCells<Item>(props: Readonly<{
   // A control under the title lies over the press target like the row's other controls.
   const layer = props.beneath === null ? rowLayerPointerEvents(anatomy) : ROW_LAYER_POINTER_EVENTS;
   const controls = anatomy.titleControls?.(item) ?? null;
+  // A page row with nothing to say under its name this time (an empty byline, no line end, controls or meta beneath)
+  // draws its name alone, on one centre line with its mark and columns, instead of an empty second line that lifts the
+  // name and pads the row's foot (Services → Apps, UI refinements 11-16).
+  const lineEmpty = page && !catalog && !singleLine && !described && isEmptySlot(where) && isEmptySlot(lineEnd)
+    && isEmptySlot(controls) && (metaPlacement !== 'beneath' || metaOnRow);
   // A row's controls end its byline, beside the row's press target (see `titleControls`).
   // An anatomy's own node (a Machine's state line) gets the line's shrinkable frame, so its text truncates on a narrow
   // row instead of running past the row's edge (a React Native View does not shrink by default).
@@ -1589,7 +1597,8 @@ function ListCells<Item>(props: Readonly<{
         ? ruledStyle
         : (props.ownsTrailingInset ? restingListTrailingStyle : restingListContentStyle)) : null,
       props.directory ? (props.ownsTrailingInset ? catalogDirectoryRowTrailingStyle : catalogDirectoryRowContentStyle) : null,
-      singleLine ? singleLineRowContentStyle : null]}>
+      singleLine ? singleLineRowContentStyle : null,
+      lineEmpty ? oneLinePageRowContentStyle : null]}>
       {leadingControl === null ? null : (
         <View pointerEvents={layer?.control} style={catalog ? (props.directory ? catalogDirectoryMarkStyle : catalogMarkStyle) : [glyphStyle, { justifyContent: 'flex-start' }, page || restingFlat ? pageRowGlyphStyle : null]}>
           {/* A control in the glyph's place wears the glyph's badge; a second leading column would push the title off its edge. */}
@@ -1665,7 +1674,7 @@ function ListCells<Item>(props: Readonly<{
         {catalog && where !== undefined && where !== null && where !== false && where !== '' ? (
           <View pointerEvents={layer?.content} style={lineStyle}>{facts(where)}</View>
         ) : null}
-        {catalog || singleLine ? null : <AnimatedView value={props.secondLine.value} tracks={props.secondLine.tracks} style={lineStyle} {...(layer === null ? {} : { pointerEvents: layer.content })}>
+        {catalog || singleLine || lineEmpty ? null : <AnimatedView value={props.secondLine.value} tracks={props.secondLine.tracks} style={lineStyle} {...(layer === null ? {} : { pointerEvents: layer.content })}>
           {described ? (
             <View pointerEvents={layer?.content} style={[flexCellStyle, lineStyle]}>{facts(factsLine)}</View>
           ) : (

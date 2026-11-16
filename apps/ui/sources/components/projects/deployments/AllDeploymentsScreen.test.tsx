@@ -324,6 +324,39 @@ describe('Projects → All deployments', () => {
     controller.retire();
   });
 
+  it('says Last deploy from the latest deploy itself, never from the Environment\'s own updates (QA-WAVE-1115)', async () => {
+    const { createDeploymentReceiptHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const now = Date.now();
+    const twoDaysAgo = now - 2 * 24 * 60 * 60 * 1000;
+    const threeHoursAgo = now - 3 * 60 * 60 * 1000;
+    const neverDeployed = {
+      environment: createDeploymentEnvironmentHeaderV1({ id: 'env-new', projectSourceId: 'source-new', updatedAtMs: twoDaysAgo }),
+      title: 'QA local fixture', projectSourceName: 'qa', currentDeployment: null,
+    };
+    const deployed = {
+      environment: createDeploymentEnvironmentHeaderV1({ id: 'env-shop', projectSourceId: 'source-shop', updatedAtMs: twoDaysAgo }),
+      title: 'Production', projectSourceName: 'storefront',
+      currentDeployment: createDeploymentReceiptHeaderV1({ id: 'receipt-1', environmentId: 'env-shop', state: 'succeeded',
+        requestedAtMs: threeHoursAgo - 60_000, startedAtMs: threeHoursAgo - 30_000, settledAtMs: threeHoursAgo }),
+    };
+    const { controller } = controllerFor(() => page([neverDeployed, deployed]));
+    const screen = await render(controller, 'all-deployments.row.env-new:column:lastDeploy');
+    const cell = (id: string) => screen.findByTestId(`all-deployments.row.${id}:column:lastDeploy`)!.findAll(() => true)
+      .map((node) => node.props.children).filter((child): child is string => typeof child === 'string').join(' ');
+    // Nothing was ever deployed: no age at all (the Environment's edits are not deploys).
+    expect(cell('env-new')).not.toMatch(/\d/);
+    // A deployed Environment says when its latest deploy settled, not when the Environment last changed.
+    expect(cell('env-shop')).toMatch(/3/);
+    expect(cell('env-shop')).not.toMatch(/2\s*d/);
+    // State says the latest deploy's own word for every deployed row (a settled one quietly); never deployed has none.
+    const { t } = await import('@/text');
+    const state = (id: string) => screen.findByTestId(`all-deployments.row.${id}:column:state`)!.findAll(() => true)
+      .map((node) => node.props.children).filter((child): child is string => typeof child === 'string').join(' ');
+    expect(state('env-shop')).toContain(t('projects.deployments.stateSucceeded'));
+    expect(state('env-new')).not.toContain(t('projects.deployments.stateSucceeded'));
+    controller.retire();
+  });
+
   it('says a row’s status in one short line on a phone, leaving its Machine to the Environment', async () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
