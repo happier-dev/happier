@@ -62,10 +62,19 @@ export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType
     });
 }
 
+/** Dated display facts, not executable billing rules or live price quotes. */
+export const DeploymentTargetPlanV1Schema = lazyZodSchema(() => z.strictObject({
+    id: local(), title: z.string(),
+    facts: z.array(z.strictObject({ label: z.string(), value: z.string() })),
+    included: z.optional(z.array(z.string())),
+    source: z.strictObject({ url: z.url(), checkedAt: z.iso.date() }),
+}));
+
 const descriptorFields = () => ({
     ...deploymentTargetFitFieldsV1(),
     id: local(), title: PluginLocalizedStringV2Schema, description: z.optional(PluginLocalizedStringV2Schema),
     icon: PluginActionIconV2Schema, targetKind: local(),
+    plans: z.optional(z.array(DeploymentTargetPlanV1Schema)),
     targetSchema: closedSchema, linkSchema: closedSchema,
 });
 

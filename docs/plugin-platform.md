@@ -13112,6 +13112,20 @@ Root `AGENTS.md` "Runtime core, plugin platform, and SDK seam" points here.
 - Runtime events converge on one canonical strict-schema union. Stable events use bounded strict schemas and reject unknown top-level fields; provider-native bags and generic `{ kind, data }` streams are not public ABI. Any compatibility period with two unions names the active producer/consumer directions and the contraction condition. `@happier/runtime/*`, `@happier/lifecycle/*`, and `@happier/session/*` are host-emit-only namespaces.
 - Each contribution family has one catalog/normalizer/projection owner, generated projections are authoritative, and feature/availability/confirmation decisions use the shared policy owner. Do not add a second registry, catalog, loader, or decision engine for a concept the platform already centralizes.
 
+### Deployment target plan facts (unreleased 0.3)
+
+A `deploymentTargets` descriptor may declare `plans`, an ordered array of
+`{ id, title, facts: [{ label, value }], included?, source: { url, checkedAt } }`.
+`included` is an optional string array; `checkedAt` is an ISO calendar date.
+The Protocol descriptor owner validates each closed object; SDK authoring and
+normalized deployment targets preserve the same facts and provenance.
+These are dated display facts, not executable billing rules or live quotes.
+Plugins own their public sources and updates; consumers render the declaration
+without introducing a price calculator or provider-specific catalog.
+Existing declarations can omit plans. Matching development hosts and plugins
+reload together; older strict 0.3 parsers reject the field. This changes no
+persisted record, migration, or released protocol epoch.
+
 ## Runtime core, plugin platform, and SDK seam
 
 Read [runtime ownership](runtime-core.md) before changing runtime core, the plugin platform, or the SDK. These tracked pages own standing architecture guidance. When executing an approved plan, also read that plan and its assigned specialist as the execution contract; plan history, status and evidence do not become standing implementation rules. The older plugin-platform and SDK convergence corpora remain historical/extraction evidence only and cannot supply current status, restart authority, gates, or implementation authority.
