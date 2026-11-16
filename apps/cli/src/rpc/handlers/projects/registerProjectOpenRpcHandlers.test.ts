@@ -862,6 +862,7 @@ describe('Project Open RPC', () => {
 
   it.skipIf(process.platform !== 'linux').each([
     { mode: 'plain', action: 'attach', fault: 'none' }, { mode: 'e2ee', action: 'attach', fault: 'none' },
+    { mode: 'plain', action: 'attach', fault: 'folder_attach' },
     { mode: 'plain', action: 'copy_once', fault: 'none' }, { mode: 'plain', action: 'create_relationship', fault: 'none' },
     { mode: 'plain', action: 'create_relationship', fault: 'endpoint_write_failure' },
     { mode: 'plain', action: 'create_relationship', fault: 'enabled_graph_ack' },
@@ -933,7 +934,7 @@ describe('Project Open RPC', () => {
     const key = { kind: 'workspace-ref' as const, serverId: homeId, id: 'bob-checkout' };
     const workspace = { id: key.id, serverId: homeId,
       machineId: fault === 'remote_source_ack' ? 'remote-source' : 'machine', rootPath: root, createdAtMs: 1 };
-    const rows: ProjectAccountRowV1[] = [{ key, revision: 0, content: cipher.seal({ key, value: workspace }) }];
+    const rows: ProjectAccountRowV1[] = fault === 'folder_attach' ? [] : [{ key, revision: 0, content: cipher.seal({ key, value: workspace }) }];
     const source = { id: 'bob-source', revision: 1, name: 'Bob Source', createdByAccountId: 'bob', audience: [],
       repository: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://forge.example' },
         repository: { nameWithOwner: 'group/repo' }, protocol: 'https' } } satisfies ProjectSourceV1;
@@ -1080,7 +1081,7 @@ describe('Project Open RPC', () => {
     const productionSync = syncing ? await createProductionDaemonWorkspaceSyncRuntime(productionSyncInput, nativeSyncBoundary.factories) : null;
     let recoveredSync: Awaited<ReturnType<typeof createProductionDaemonWorkspaceSyncRuntime>> | undefined;
     if (productionSync) { runtime = { ...runtime, workspaceSyncAdapter: productionSync.handoffAdapter }; onTestFinished(() => productionSync.stop()); }
-    const input = { serverId: homeId, machineId: 'machine', source: { kind: 'source', id: source.id, revision: 1, selector: source.repository,
+    const input = { serverId: homeId, machineId: 'machine', source: fault === 'folder_attach' ? { kind: 'folder' as const, path: root } : { kind: 'source' as const, id: source.id, revision: 1, selector: source.repository,
       checkout: { serverId: homeId, workspaceId: key.id, machineId: workspace.machineId, rootPath: root } }, materialization: action === 'attach'
       ? { kind: 'attach' as const }
       : { kind: 'sync' as const, targetPath: targetRoot, workspaceAction: action === 'copy_once'
@@ -1253,6 +1254,13 @@ describe('Project Open RPC', () => {
           nativeBoundary.phases.length = 0;
         }
       }
+      if (fault === 'folder_attach') {
+        const outside = { ...input, source: { kind: 'folder', path: `${member.workspaceRoot}-outside/bob-checkout` } };
+        expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(outside, context))
+          .toMatchObject({ kind: 'refused', code: 'workspace_private_checkout_required' });
+        expect(rows).toEqual([]);
+        expect(nativeBoundary.runAsUsers).toEqual([]);
+      }
       if (fault === 'nonempty_target') {
         // Replacing a non-empty folder needs Manage; Can use Open has no replacement approval.
         await mkdir(targetRoot, { recursive: true });
@@ -1318,7 +1326,8 @@ describe('Project Open RPC', () => {
         requestPaths: post.mock.calls.map(([url]) => new URL(url).pathname),
         settlement: admissionDiagnostics?.mock.calls.filter(([message]) => message === '[Project Open] Settlement failed').map(([, details]) => details),
         nativePhases: nativeBoundary.phases, workerFrames: workerFrames.slice(-4) })).toMatchObject({ kind: 'opened', directory: targetRoot, setup: 'approvalRequired',
-        workspace: { serverId: homeId, machineId: 'machine', rootPath: targetRoot }, facts: { source: { sourceId: source.id, revision: 1 } } });
+        workspace: { serverId: homeId, machineId: 'machine', rootPath: targetRoot },
+        ...(fault === 'folder_attach' ? {} : { facts: { source: { sourceId: source.id, revision: 1 } } }) });
       if (syncing) expect(machineReads() - initialMachineReads).toBe(0);
       expect(nativeBoundary.childFailure).toBeUndefined();
       expect(nativeBoundary.runAsUsers[0]).toBe(member.username);

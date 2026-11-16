@@ -228,6 +228,8 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           ...(source.ref.source ? { source: source.ref.source } : {}) };
       } else if (input.source.kind === 'folder') {
         sourceDirectory = sourceRootPath = input.source.path;
+        if (input.materialization.kind === 'attach') sourceWorkspaceRefId = resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs,
+          { serverId: runtime.serverId, machineId: runtime.machineId, rootPath: sourceRootPath })?.id;
       }
       if (sourceProvenance) facts = { ...facts, source: sourceProvenance };
       if (!usesOwnerRoot) {
@@ -237,7 +239,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         const materializationKey = context.localActionContext?.actionRequestId ?? context.transportRequestId
           ?? context.callerInputAuthorization?.binding.requestId;
         if (!materializationKey || input.materialization.kind !== 'clone'
-          && !(input.materialization.kind === 'attach' && sourceWorkspaceRefId)
+          && !(input.materialization.kind === 'attach' && (sourceWorkspaceRefId || input.source.kind === 'folder'))
           && !(input.materialization.kind === 'sync' && sourceWorkspaceRefId && runtime.workspaceSyncAdapter?.preparePrivateExecution))
           return refused('workspace_private_checkout_required');
         const requesterAccount = readRequesterAccountActionContext(context.callerInputAuthorization

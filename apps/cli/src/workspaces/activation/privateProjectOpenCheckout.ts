@@ -89,12 +89,14 @@ export async function preparePrivateProjectOpenCheckout(input: Readonly<{
   const memberRoot = await readAgentIsolationMemberWorkspaceRoot(snapshot.memberIdentity, undefined,
     { signal, daemonObservation: snapshot.daemonObservation });
   const materialization = input.request.materialization;
-  const attach = materialization.kind === 'attach' && input.request.source.kind === 'workspace' && !!input.existingWorkspaceRefId;
-  const existing = attach || sync && !!input.existingWorkspaceRefId;
+  const attach = materialization.kind === 'attach' && (input.request.source.kind === 'workspace' && !!input.existingWorkspaceRefId
+    || input.request.source.kind === 'folder');
+  const existing = (attach || sync) && !!input.existingWorkspaceRefId;
   const prepared = preparePrivateProjectCheckout({ requesterIdentity: selected, memberRoot,
     workspaceRefs: input.workspaceRefs, ...(existing ? { workspaceRefId: input.existingWorkspaceRefId } : {}),
     createId: () => materialization.kind === 'clone' ? materialization.destinationDirectoryName
-      : materialization.kind === 'sync' ? basename(materialization.targetPath) : refuse() });
+      : materialization.kind === 'sync' ? basename(materialization.targetPath)
+        : attach && input.request.source.kind === 'folder' ? basename(input.request.source.path) : refuse() });
   if (!attach) admitPrivateProjectCheckoutDestination({ prepared, materialization,
     reviewIdentity: { accountId: selected.requester.accountId, serverId: snapshot.memberIdentity.homeServerIdentityId!,
       machineId: selected.requester.machineId } });
@@ -150,7 +152,9 @@ export async function preparePrivateProjectOpenCheckout(input: Readonly<{
         if (!nativeSync) return refuse();
         return nativeSync.inspectCheckout(input.request.subdir);
       }
-      const child = await prepareWorkspaceCheckoutEffect({ request: input.request, workspaceRefId: prepared.workspaceRefId,
+      const child = await prepareWorkspaceCheckoutEffect({ request: attach
+        ? { ...input.request, source: { kind: 'workspace', workspaceId: prepared.workspaceRefId } } : input.request,
+        workspaceRefId: prepared.workspaceRefId,
         workspaceRoot: memberRoot.workspaceRoot, ...(attach ? { existingRootPath: prepared.rootPath } : {}), registry: lease.registry });
       assertPluginCurrent = child.assertCurrent;
       return materializePrivateProjectCheckoutProcess({ prepared, memberRoot, effect: child.effect,
