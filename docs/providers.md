@@ -40,6 +40,12 @@ The result distinguishes `ok`, `needsReauth`, `networkUnavailable` and
 characterized no-usage probe returns `unsupported`. ProviderConnection catalog
 tests and Channel transport tests retain their distinct resource owners.
 
+Connected Account identity probes classify failures in the service runtime.
+An ambiguous HTTP 403, rate limit, server error or network failure reports
+unavailability; it does not establish that the credential needs reconnection.
+HTTP 401 and explicit credential refusals retain their refusal behavior. Status
+and refresh consume that same service-owned classification.
+
 Testing saved credentials uses the same placement owner with a connection-test
 operation: a native-import requirement applies to acquiring a login, while an
 explicit browser reachability restriction still routes the test to a Machine.
