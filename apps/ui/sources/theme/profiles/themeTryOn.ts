@@ -40,11 +40,15 @@ export function createThemeTryOnOwner(deps: Readonly<{
         if (!current || current.snapshot.previewRef !== previewRef) {
             throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_preview_stale', error: 'theme_preview_stale' });
         }
-        const scope = current.scope;
+        return current;
+    };
+    const requireScopedCurrent = (previewRef: PreviewRef) => {
+        const preview = requireCurrent(previewRef);
+        const scope = preview.scope;
         if (!scope || !areAccountSettingsScopesEqual(scope, deps.captureScope())) {
             throw new Error('Artifact Account scope is unavailable');
         }
-        return { preview: current, scope };
+        return { preview, scope };
     };
     const begin = (input: ThemeTryOnInput): ThemeTryOnSnapshot => {
         const snapshot: ThemeTryOnSnapshot = { ...input, previewRef: randomUUID() };
@@ -54,11 +58,11 @@ export function createThemeTryOnOwner(deps: Readonly<{
     };
     return {
         begin,
-        replace(previewRef, input) { requireCurrent(previewRef); return begin(input); },
+        replace(previewRef, input) { requireScopedCurrent(previewRef); return begin(input); },
         read: () => current && areAccountSettingsScopesEqual(current.scope, deps.captureScope()) ? current.snapshot : null,
         revert(previewRef) { requireCurrent(previewRef); current = null; publish(); },
         async keep(previewRef) {
-            const { preview, scope } = requireCurrent(previewRef);
+            const { preview, scope } = requireScopedCurrent(previewRef);
             if (!preview.keeping) {
                 preview.keeping = Promise.resolve().then(() => {
                     const snapshot = preview.snapshot;

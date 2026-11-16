@@ -56,6 +56,29 @@ function setup() {
 }
 
 describe('one-document theme try-on', () => {
+    it.each([
+        { name: 'captured without an Account', captured: null, active: accountScope },
+        { name: 'after logout', captured: accountScope, active: null },
+        { name: 'after an Account switch', captured: accountScope, active: { ...accountScope, accountId: 'other-account' } },
+    ])('clears only the current local overlay $name without admitting effects', async ({ captured, active }) => {
+        const state = setup();
+        state.setScope(captured);
+        const preview = state.owner.begin({ document: document('local_cleanup'), mode: 'dark', origin: { kind: 'editor' } });
+        state.setScope(active);
+        expect(state.owner.read()).toBeNull();
+        await expect(state.owner.keep(preview.previewRef)).rejects.toThrow('Artifact Account scope is unavailable');
+        expect(() => state.owner.replace(preview.previewRef,
+            { document: document('replacement'), mode: 'light', origin: { kind: 'editor' } }))
+            .toThrow('Artifact Account scope is unavailable');
+        state.owner.revert(preview.previewRef);
+        state.setScope(accountScope);
+        expect(state.owner.read()).toBeNull();
+        expect(() => state.owner.revert(preview.previewRef)).toThrowError(expect.objectContaining({ code: 'theme_preview_stale' }));
+        expect(state.effectScopes).toEqual([]);
+        expect(state.writes()).toBe(0);
+        expect(state.selection).toEqual({ light: null, dark: null });
+    });
+
     it('refuses a previous Account preview before any library effect and hides its overlay', async () => {
         const state = setup();
         const preview = state.owner.begin({ document: document('old_account'), mode: 'dark', origin: { kind: 'agent' } });
