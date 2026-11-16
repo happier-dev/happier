@@ -47,7 +47,7 @@ export async function readPiNativeAccounting(request: AgentExternalSessionsReadA
       const modelId = readString(message?.model) ?? (message?.role === 'assistant' ? state.model : undefined) ?? null;
       return { state, observations: [{ nativeSessionId, inferenceId, observedAt,
         ...(state[`project:${nativeSessionId}`] ? { project: { rootPath: state[`project:${nativeSessionId}`]! } } : {}),
-        accounting: { inputIncludesCache: false, outputIncludesReasoning: false },
+        accounting: { inputIncludesCache: false, outputIncludesReasoning: true },
         ...(state.parentSessionId && nativeSessionId === state.sessionId ? { parentNativeSessionId: state.parentSessionId } : {}),
         observation: { provider: 'pi', source: PI_NATIVE_ACCOUNTING_SOURCE, scope: 'turn_delta', key: inferenceId, modelId,
           tokens: usage.tokens, cost: usage.cost, contextUsedTokens: null, contextWindowTokens: null } }],

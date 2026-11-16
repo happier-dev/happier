@@ -23,7 +23,9 @@ export function projectPiSessionStatsUsage(params: Readonly<{
   const stats = readRecord(params.stats);
   if (!stats) return null;
   const paidTokens = readRecord(stats.tokens);
-  const paid = normalizePiPaidUsage({ ...paidTokens, totalTokens: paidTokens?.total, cost: { total: stats.cost } });
+  // getSessionStats sums model-price costs without reporting a provider charge.
+  const paid = normalizePiPaidUsage({ ...paidTokens, totalTokens: paidTokens?.total,
+    cost: { total: stats.cost, totalFromProvider: false } });
   const usage = readRecord(stats.contextUsage);
   const usedTokens = readNonNegativeInteger(usage?.tokens);
   const windowTokens = readNonNegativeInteger(usage?.contextWindow);
@@ -46,7 +48,7 @@ export function projectPiSessionStatsUsage(params: Readonly<{
       accounting: {
         ...(nativeSessionId ? { nativeSessionId } : {}),
         inputIncludesCache: false,
-        outputIncludesReasoning: false,
+        outputIncludesReasoning: true,
         // Native stats include copied fork history but expose no parent/entry IDs.
         historyComplete: false,
       },

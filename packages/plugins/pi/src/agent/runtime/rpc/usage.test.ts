@@ -12,7 +12,7 @@ describe('projectPiSessionStatsUsage', () => {
     expect(observation).toMatchObject({ kind: 'usage-observed', scope: 'session_cumulative',
       tokens: { total: 19 }, cost: { estimatedUsd: 0.3, costSource: 'pricing_estimate' } });
     expect(observation?.accounting).toEqual({
-      nativeSessionId: 'native-pi-session', inputIncludesCache: false, outputIncludesReasoning: false,
+      nativeSessionId: 'native-pi-session', inputIncludesCache: false, outputIncludesReasoning: true,
       historyComplete: false,
     });
   });
@@ -30,7 +30,10 @@ describe('projectPiSessionStatsUsage', () => {
     })).toMatchObject({ tokens: { input: 12, output: 0, total: null, reasoning: null } });
     expect(projectPiSessionStatsUsage({ stats: { tokens: { total: 0 }, cost: 0 },
       sessionId: 'session-1', observationId: 'zero', observedAtMs: 10,
-    })).toMatchObject({ tokens: { total: 0 }, cost: { estimatedUsd: 0, reportedUsd: null } });
+    })).toMatchObject({ tokens: { total: 0 } });
+    expect(projectPiSessionStatsUsage({ stats: { tokens: { total: 3263 }, cost: 0 },
+      sessionId: 'session-1', observationId: 'unpriced', observedAtMs: 10,
+    })).not.toHaveProperty('cost');
     expect(projectPiSessionStatsUsage({ stats: { cost: 0.2 },
       sessionId: 'session-1', observationId: 'cost-only', observedAtMs: 10,
     })).toMatchObject({ tokens: { total: null }, cost: { estimatedUsd: 0.2 } });

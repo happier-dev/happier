@@ -431,7 +431,7 @@ describe('consented native accounting collector', () => {
             expect((await restarted.get(discovered.sourceId))[0].status).toBe('ready');
             const body = UsageEventIngestRequestSchema.parse(published[0]);
             expect(body).toMatchObject({ subject: { kind: 'native', machineId: 'machine' }, tokens: { total: 12 },
-                accounting: { inputIncludesCache: false, outputIncludesReasoning: false } });
+                accounting: { inputIncludesCache: false, outputIncludesReasoning: true } });
             expect(body.sessionId).toBeUndefined();
             expect(JSON.stringify(body)).not.toContain('private prompt');
             expect(JSON.stringify(body)).not.toContain(agentDir);

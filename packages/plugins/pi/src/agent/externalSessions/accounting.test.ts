@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createPiExternalSessionsContribution } from './contribution.js';
+import { buildUsageEventIngestRequest } from '@/usage/buildUsageEventIngestRequest';
+import { priceUsageObservation, resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCost';
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
+import { resolveUsageTokenCategories } from '@happier-dev/protocol/usage/usageTokenCategories';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -26,6 +30,42 @@ async function setup() {
   return { file, contribution, request };
 }
 describe('Pi source accounting through the external-session contribution', () => {
+  it('retains each native model and measured categories through ingestion and catalog pricing', async () => {
+    const { file, contribution, request } = await setup();
+    // Captured Pi gateway turn: provider estimate zero, not a reported free charge.
+    const usage = { input: 3259, output: 4, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 3263,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, totalFromProvider: false } };
+    for (const [id, model, reasoning, totalFromProvider] of [
+      ['catalog-turn', 'openai/gpt-4.1-mini', 0, false],
+      ['reasoning-turn', 'openai/gpt-4.1-mini', 2, false],
+      ['unknown-model-turn', 'unknown-model', 0, false],
+      ['reported-free-turn', 'openai/gpt-4.1-mini', 0, true],
+    ] as const) {
+      const entry = message(id, null, 0);
+      await appendFile(file, line({ ...entry, message: { ...entry.message, model, provider: 'happier-provider',
+        usage: { ...usage, reasoning, cost: { ...usage.cost, totalFromProvider } } } }));
+    }
+    const result = await contribution.readAccounting?.(request);
+    if (!result?.ok || result.value.outcome !== 'advanced') throw new Error('Accounting capture failed');
+    const costs = new Map<string, ReturnType<typeof resolveUsageCostBasis>>();
+    for (const row of result.value.observations.filter(row => row.inferenceId?.endsWith('turn'))) {
+      const ingest = buildUsageEventIngestRequest({ sessionId: 'fixture-session', observedAt: row.observedAt,
+        observation: row.observation, externalKey: row.inferenceId });
+      expect(ingest).not.toBeNull();
+      if (!ingest) throw new Error('Usage ingestion failed');
+      const categories = resolveUsageTokenCategories(ingest.tokens, row.accounting);
+      expect(categories).not.toBeNull();
+      const priced = priceUsageObservation(ingest.cost, ingest.modelId, categories, bundledUsageModelPriceCatalog, {}, 'auto');
+      costs.set(row.inferenceId!, resolveUsageCostBasis(priced.cost, 'auto'));
+      if (row.inferenceId === 'catalog-turn') expect(ingest).toMatchObject({ modelId: 'openai/gpt-4.1-mini',
+        tokens: { input: 3259, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 3263 },
+        cost: { reportedUsd: null, estimatedUsd: null } });
+    }
+    expect(costs.get('catalog-turn')).toMatchObject({ kind: 'api_equivalent', amountUsd: 0.00131 });
+    expect(costs.get('reasoning-turn')).toMatchObject({ kind: 'api_equivalent', amountUsd: 0.00131 });
+    expect(costs.get('unknown-model-turn')).toBeNull();
+    expect(costs.get('reported-free-turn')).toMatchObject({ kind: 'reported', amountUsd: 0 });
+  });
   it('keeps failed-request zero placeholders unknown while preserving successful zero and partial paid failures', async () => {
     const { file, contribution, request } = await setup();
     const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { total: 0 } };
@@ -84,7 +124,7 @@ describe('Pi source accounting through the external-session contribution', () =>
     expect(await contribution.readAccounting?.(request)).toMatchObject({ ok: true, value: { outcome: 'advanced',
       observations: expect.arrayContaining([{ nativeSessionId: 'session-one', inferenceId: 'paid-tool', observedAt: 1767225601000,
         project: { rootPath: '/native/pi-project' },
-        accounting: { inputIncludesCache: false, outputIncludesReasoning: false },
+        accounting: { inputIncludesCache: false, outputIncludesReasoning: true },
         observation: expect.objectContaining({ tokens: expect.objectContaining({ total: 14 }) }) }]) } });
   });
   it('rejects a same-size native rewrite rather than accepting the stale frontier', async () => {
