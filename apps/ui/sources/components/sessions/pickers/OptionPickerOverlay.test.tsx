@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen, withPopoverWebGlobals } from '@/dev/testkit';
+import { flattenTestStyle, renderScreen, withPopoverWebGlobals } from '@/dev/testkit';
 import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { View } from 'react-native';
@@ -47,6 +47,22 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
 });
 
 describe('OptionPickerOverlay', () => {
+  it('keeps auxiliary list choices full bleed while card choices retain their card shape', async () => {
+    const { OptionPickerPaneRow } = await import('./OptionPickerPaneRow');
+    const { OptionPickerSelectedControlsContext } = await import('./optionPickerSelectedControlsState');
+    for (const multiColumn of [false, true]) {
+      const screen = await renderScreen(
+        <OptionPickerSelectedControlsContext.Provider value={{ multiColumn }}>
+          <OptionPickerPaneRow testID="auxiliary-choice" accessibilityLabel="Custom model" title="Custom model" onPress={() => {}} />
+        </OptionPickerSelectedControlsContext.Provider>,
+      );
+      const row = screen.findAll(node => node.props.testID === 'auxiliary-choice' && typeof node.props.style === 'function')[0]!;
+      const style = flattenTestStyle(row.props.style({ pressed: false, hovered: true }));
+      expect(style.borderRadius).toBe(multiColumn ? 12 : 0);
+      if (!multiColumn) expect(style.marginHorizontal).toBe(0);
+    }
+  });
+
   it('keeps resource recovery rows distinct from Automatic without selecting a model', async () => {
     const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
     const recovered: string[] = [];

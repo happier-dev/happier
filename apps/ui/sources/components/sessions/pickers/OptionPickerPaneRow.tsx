@@ -3,10 +3,11 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { MENU_ROW_SHAPE } from '@/components/ui/lists/itemDensityMetrics';
 import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionList/_constants';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { OPTION_PICKER_LIST_TEXT_INSET_PX, OptionPickerSelectedControlsContext } from './optionPickerSelectedControlsState';
+import { OptionPickerSelectedControlsContext } from './optionPickerSelectedControlsState';
 
 type WebHoverablePressableState = Readonly<{ pressed: boolean; hovered?: boolean }>;
 
@@ -65,7 +66,7 @@ export const optionPickerPaneRowStyles = StyleSheet.create((theme) => ({
         paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX,
         paddingVertical: SELECTION_LIST_CARD_CONTENT_INSET_PX,
     },
-    rowInList: { paddingHorizontal: OPTION_PICKER_LIST_TEXT_INSET_PX },
+    rowInList: { ...MENU_ROW_SHAPE },
     selected: { backgroundColor: theme.colors.surface.selected },
 }));
 

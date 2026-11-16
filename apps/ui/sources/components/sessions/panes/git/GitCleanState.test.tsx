@@ -9,7 +9,7 @@ vi.mock('react-native', async () => {
 });
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+    return createTextModuleMock();
 });
 const { GitCleanState } = await import('./GitCleanState');
 
@@ -31,9 +31,9 @@ describe('GitCleanState', () => {
         const commit = { sha: 'a'.repeat(40), shortSha: 'aaaaaaa', subject: 'Keep the draft', authorName: 'Ana', authorEmail: 'ana@example.com', timestamp: Date.now() - 12 * 60_000, body: '' };
         const screen = await renderScreen(<GitCleanState branch="v0.3" upstream="origin/v0.3" ahead={0} behind={0} lastCommitAt={commit.timestamp} lastCommit={commit} onOpenCommit={onOpenCommit} justCompleted onCreatePullRequest={onCreatePullRequest} onOpenPullRequest={null} pullRequestNumber={null} />);
         expect(screen.getTextContent()).toContain('Keep the draft');
-        expect(screen.getTextContent()).toContain('12m');
+        expect(screen.getTextContent()).toContain('time.compactAge.minutes(count=12)');
         await act(async () => { vi.advanceTimersByTime(60_000); });
-        expect(screen.getTextContent()).toContain('13m');
+        expect(screen.getTextContent()).toContain('time.compactAge.minutes(count=13)');
         expect(screen.getTextContent()).toContain('sessionGitPane.fidelity.suggestedNext');
         await screen.pressByTestIdAsync(`scm-commit-entry-${commit.sha}`);
         expect(onOpenCommit).toHaveBeenCalledWith(commit.sha);
