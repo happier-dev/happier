@@ -3308,6 +3308,15 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       ? createActionConfirmationPresenter(accountContext, { presentUserActionConfirmation: opts?.presentUserActionConfirmation, accountRoleAction })
       : undefined,
 
+    // Refuse before consent is recorded when the daemon replay below needs the
+    // person and this sign-in cannot be one (a terminal credential), so the Ask
+    // stays open for a reviewer. The CLI host supplies the same refusal.
+    ...(accountContext && accountContext.credentialAuthorityKind !== 'account' ? {
+      approvalRequestApproveRefusal: ({ request }) => resolveApprovalExecutor(request).kind === 'daemon'
+        && !(request.actionId === 'plugins.install' && readPluginInstallApprovalPendingReview(request.preview))
+        ? { ok: false, errorCode: 'present_user_required', error: 'present_user_required', effectAttempted: false } : null,
+    } satisfies Pick<ActionExecutorDeps, 'approvalRequestApproveRefusal'> : {}),
+
     approvalRequestApprovedReplay: async ({ artifactId, request, decision, context, requestId, signal, onReplayDispatched }) => {
       try {
       const requesterDecision = readApprovalRequesterDecisionV1(request, decision);
@@ -3394,8 +3403,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (accountContext && request.v === 2 && !context.externalActionCredential
         && !context.externalActionExecutionAuthorization && !context.rpcSessionAuthorization
         && (!context.actionCaller || context.actionCaller.kind === 'host')) {
+        // Only the person can carry this decision to the origin daemon; nothing about the request changed.
         if (!requestId || (context.surface !== 'ui' && context.surface !== 'voice') || context.authority !== 'present_user') {
-          return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
+          return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
         }
         const execution = await executeOriginalAccountMachineAction({ account: accountContext,
           actionId: 'approval.request.decide', requestId, machineId,
