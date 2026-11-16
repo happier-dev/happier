@@ -6,6 +6,7 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -65,6 +66,7 @@ async function createSuggestionFixture(input: Readonly<{
         return null;
     };
     const owner = await createSessionFilesViewFixture({ rpc: call => {
+        if (call.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
         // The Action executor composes observation after the native Home start;
         // it deliberately does not trust a start receipt as a waiter result.
         if (call.method === SESSION_RPC_METHODS.EXECUTION_RUN_WAIT) {
@@ -87,14 +89,10 @@ describe('shared commit suggestion Run custody', () => {
             runClass: 'bounded', ioMode: 'request_response', status: 'succeeded', startedAtMs: 1, finishedAtMs: 2 },
             latestToolResult: { message: runId === 'old' ? 'private old Account message' : 'new Account message' } });
         fixture = await createSuggestionFixture({ start: () => pendingStart(++starts === 1 ? 'old' : 'new'), rpc: request => {
-            if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
-                'tool.executionRuns': { ok: true, checkedAt: Date.now(), data: { protocolVersion: 2,
-                    features: { detachedScope: true, startAndWait: true } } },
-            } };
             if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) return (request.payload as { runId: string }).runId === 'old' ? held.promise : output('new');
             return undefined;
         } });
-        const settings = { scmCommitMessageGeneratorEnabled: true, scmCommitMessageGeneratorBackendId: 'claude' };
+        const settings = { scmCommitMessageGeneratorEnabled: true, scmCommitMessageGeneratorRunnerV1: { v: 1 as const, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } } };
         fixture.storage.getState().applySettingsLocal(settings);
         const { useScmCommitMessageSuggestion } = await import('./useScmCommitMessageSuggestion');
         let suggestion: ReturnType<typeof useScmCommitMessageSuggestion> | null = null;
@@ -140,10 +138,6 @@ describe('shared commit suggestion Run custody', () => {
     it('observes and cancels the admitted native Run rather than starting another suggestion', async () => {
         let terminal = false;
         fixture = await createSuggestionFixture({ start: () => pendingStart('retained'), rpc: request => {
-            if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
-                'tool.executionRuns': { ok: true, checkedAt: Date.now(), data: { protocolVersion: 2,
-                    features: { detachedScope: true, startAndWait: true } } },
-            } };
             if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP) return { ok: true };
             if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) return { run: {
                 runId: 'retained', callId: 'call', sidechainId: 'sidechain', intent: 'scm_commit_message',
@@ -153,7 +147,7 @@ describe('shared commit suggestion Run custody', () => {
             }, ...(terminal ? { latestToolResult: { message: 'feat: retained suggestion' } } : {}) };
             return undefined;
         } });
-        fixture.storage.getState().applySettingsLocal({ scmCommitMessageGeneratorEnabled: true, scmCommitMessageGeneratorBackendId: 'claude' });
+        fixture.storage.getState().applySettingsLocal({ scmCommitMessageGeneratorEnabled: true, scmCommitMessageGeneratorRunnerV1: { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } } });
         const { useScmCommitMessageSuggestion } = await import('./useScmCommitMessageSuggestion');
         let suggestion: ReturnType<typeof useScmCommitMessageSuggestion> | null = null;
         function Host() {

@@ -1,7 +1,7 @@
 import * as React from 'react';
 
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { useSetting } from '@/sync/domains/state/storage';
+import { useSessionAgentTargetKey, useSessionMachineId } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import {
@@ -22,10 +22,14 @@ function hostKey(host: CommitMessageHostV1 | null): string {
 export function useScmCommitMessageSuggestion(host: CommitMessageHostV1 | null, scopePaths: readonly string[], comparisonKey?: string) {
     const home = host?.kind === 'workspace' ? host.workspace.serverId : host?.serverId;
     const binding = useServerCredentialAccountScopeBinding(home).binding;
+    // Auto resolves the runner on the machine that runs the commit message.
+    const sessionMachineId = useSessionMachineId(host?.kind === 'session' ? host.sessionId : '');
+    const sessionAgentTargetKey = useSessionAgentTargetKey(host?.kind === 'session' ? host.sessionId : '');
     const resolvedHost = React.useMemo(() => host?.kind === 'session' && binding
-        ? { ...host, serverId: binding.scope.serverId } : host, [host, binding?.scope.serverId]);
+        ? { ...host, serverId: binding.scope.serverId, machineId: sessionMachineId, agentTargetKey: sessionAgentTargetKey } : host,
+        [host, binding?.scope.serverId, sessionMachineId, sessionAgentTargetKey]);
     const enabledSetting = useSetting('scmCommitMessageGeneratorEnabled');
-    const backendSetting = useSetting('scmCommitMessageGeneratorBackendId');
+    const runnerChoice = useSetting('scmCommitMessageGeneratorRunnerV1');
     const instructions = useSetting('scmCommitMessageGeneratorInstructions');
     const pendingRef = React.useRef<Readonly<{ host: CommitMessageHostV1; key: string; runId: string }> | null>(null);
     const key = JSON.stringify([hostKey(resolvedHost), binding?.scope.serverId ?? null, binding?.scope.accountId ?? null, scopePaths, comparisonKey]);
@@ -39,7 +43,7 @@ export function useScmCommitMessageSuggestion(host: CommitMessageHostV1 | null, 
             ? await readScmCommitMessageSuggestion({ host: pending.host, runId: pending.runId })
             : await generateScmCommitMessage({
                 host: resolvedHost,
-                backendId: typeof backendSetting === 'string' && backendSetting.trim() ? backendSetting.trim() : DEFAULT_AGENT_ID,
+                choice: runnerChoice ?? null,
                 instructions: typeof instructions === 'string' ? instructions : undefined,
                 scopePaths,
             });
@@ -56,7 +60,7 @@ export function useScmCommitMessageSuggestion(host: CommitMessageHostV1 | null, 
         return !result.ok && result.outcome === 'pending'
             ? { ...result, error: t('common.running') }
             : result;
-    }, [binding, backendSetting, enabledSetting, resolvedHost, instructions, key, scopePaths]);
+    }, [binding, runnerChoice, enabledSetting, resolvedHost, instructions, key, scopePaths]);
     const cancel = React.useCallback(async () => {
         const pending = pendingRef.current;
         if (!binding?.isCurrent() || !pending || pending.key !== key) return;
