@@ -29,9 +29,9 @@ it('retains service forward acquisition failures and their cause', () => {
     expect(normalizeActionExecutorThrownError(error)).toMatchObject({ errorCode: 'private_service_destination_unreachable' });
 });
 
-it('retains source acquisition translation and its cause', () => {
+it.each(['git_selection_unavailable', 'not_found'])('retains source acquisition translation and its cause for %s', code => {
     let caught: unknown;
-    try { rethrowDeploymentSourceAcquisitionFailure(Object.assign(new Error('selection unavailable'), { code: 'git_selection_unavailable' })); }
+    try { rethrowDeploymentSourceAcquisitionFailure(Object.assign(new Error('selection unavailable'), { code })); }
     catch (error) { caught = error; }
     expect(caught).toHaveProperty('cause');
     expect(normalizeActionExecutorThrownError(caught)).toMatchObject({ errorCode: 'deployment_source_unavailable', error: 'Deployment source is unavailable' });

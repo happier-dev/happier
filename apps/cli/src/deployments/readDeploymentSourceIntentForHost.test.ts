@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1,
@@ -18,13 +18,68 @@ import { createPlainProjectAccountRefRow } from '@/workspaces/projectAccountRows
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createDeploymentSourceMaterializationPort } from './targets/ownServer/exactCommitRelease';
 import { createDeploymentGitRegistry } from './targets/ownServer/exactCommitRelease.testkit';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 afterEach(() => { withdrawActiveProjectAccountRowsSnapshot(); vi.restoreAllMocks(); });
+
+it.each(['remote preview', 'local-only'] as const)('pins and acquires the selected %s branch without moving the checkout', async kind => {
+    const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+        runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+    onTestFinished(() => runtime.dispose());
+    await withTempDir('deployment-remote-preview-', async directory => {
+        const remote = join(directory, 'remote');
+        const checkout = join(directory, 'checkout');
+        const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+        await mkdir(remote);
+        git(remote, ['init', '--quiet', '--initial-branch=main']);
+        git(remote, ['config', 'user.name', 'Source Fixture']);
+        git(remote, ['config', 'user.email', 'source@example.test']);
+        await writeFile(join(remote, 'index.html'), 'main');
+        git(remote, ['add', '.']); git(remote, ['commit', '--quiet', '-m', 'Main source']);
+        git(directory, ['clone', '--quiet', '--single-branch', '--branch', 'main', remote, checkout]);
+        git(remote, ['switch', '--quiet', '-c', 'fixture-specimens-1112-20261112-review-native']);
+        await writeFile(join(remote, 'index.html'), 'reviewed preview');
+        git(remote, ['add', '.']); git(remote, ['commit', '--quiet', '-m', 'Preview source']);
+        const sha = git(remote, ['rev-parse', 'HEAD']);
+        if (kind === 'local-only') git(checkout, ['branch', 'fixture-specimens-1112-20261112-review-native']);
+        const expectedSha = kind === 'local-only' ? git(checkout, ['rev-parse', 'HEAD']) : sha;
+        const cloneUrl = 'https://github.com/happier-dev/triage-qa-sandbox.git';
+        git(checkout, ['remote', 'set-url', 'origin', cloneUrl]);
+        // The Git transport is a real local fixture; no network or hosting credentials are used.
+        git(checkout, ['config', `url.${pathToFileURL(remote).href}.insteadOf`, cloneUrl]);
+        const environment = createDeploymentEnvironmentDetailV1();
+        environment.content.definition = { kind: 'repository', ref: 'fixture-specimens-1112-20261112-review-native' };
+        const sourceId = environment.environment.projectSourceId;
+        mockProjectAccountRowsHttpBoundary([createPlainProjectAccountRefRow({ id: 'workspace', serverId: 'home',
+            machineId: 'controller', rootPath: checkout, createdAtMs: 1, source: { sourceId, revision: 1 } })]);
+        vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: ProjectSourcesReadOutputV1Schema.parse({ ok: true,
+            canManage: true, source: { id: sourceId, revision: 1, name: 'App', audience: [], createdByAccountId: 'owner',
+                repository: { protocol: 'https', provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                    repository: { nameWithOwner: 'happier-dev/triage-qa-sandbox', cloneUrl } } } }) });
+        const selected = await readDeploymentSourceIntentForHost({ request: { environment, context: {}, requireWorkspace: true },
+            host: { credentials: { token: 'fixture', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+                machineId: 'controller', async assertAuthority() {}, async resolveRequesterIdentity() {
+                    return { kind: 'owner_person' as const, requester: { serverId: 'home', accountId: 'owner',
+                        machineId: 'controller', installationId: 'installation' } };
+                },
+                async resolveRepositoryRef(_repository, ref) {
+                    if (kind === 'local-only') throw new Error('Local refs must not acquire hosting credentials');
+                    expect(ref).toBe('fixture-specimens-1112-20261112-review-native');
+                    return sha;
+                } } });
+        expect(selected.sourceIntent).toMatchObject({ kind: 'repository', sha: expectedSha });
+        expect(git(checkout, ['show', `${expectedSha}:index.html`])).toBe(kind === 'local-only' ? 'main' : 'reviewed preview');
+        expect(git(checkout, ['symbolic-ref', '--short', 'HEAD'])).toBe('main');
+        expect(git(checkout, ['for-each-ref', '--format=%(refname)', 'refs/happier/source-fetch'])).toBe('');
+    });
+});
 
 it('retains the Home Source purpose refusal and recovery through the deployment and public CLI result', async () => {
     const environment = createDeploymentEnvironmentDetailV1();

@@ -5,6 +5,7 @@ import { readHostAdmittedReviewedChildV1, readHostReviewedChildOriginalAuthoriza
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1, type DeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
 import type { DeploymentEnvironmentDetailV1, DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentSourceAdmissionFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -16,7 +17,7 @@ import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/re
 import type { StoredCredentials } from '@/persistence';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { readProjectAccountRowsObservation } from '@/workspaces/projectAccountRows';
-import { resolveWorkspaceCommitRef } from '@/scm/workspace/workspaceCommitExport';
+import { fetchWorkspaceCommitRef, resolveWorkspaceCommitRef } from '@/scm/workspace/workspaceCommitExport';
 import { admitDeploymentSourceIntent } from './deploymentSourceAdmission';
 import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
@@ -139,8 +140,21 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
             if (sourceRevision === undefined) return refuse('deployment_source_unavailable');
             let sha = request.sha;
             if (!sha) {
-                if (workspace) sha = await resolveWorkspaceCommitRef({ sourcePath: workspace.rootPath, ref: definition.ref, signal })
-                    .catch(rethrowDeploymentSourceAcquisitionFailure);
+                if (workspace) {
+                    try {
+                        sha = await resolveWorkspaceCommitRef({ sourcePath: workspace.rootPath, ref: definition.ref, signal });
+                    } catch (error) {
+                        if (!(error instanceof Error && 'code' in error && error.code === SCM_OPERATION_ERROR_CODES.NOT_FOUND)
+                            || !sourceRepository || !host.resolveRepositoryRef) return rethrowDeploymentSourceAcquisitionFailure(error);
+                        sha = await host.resolveRepositoryRef(sourceRepository, definition.ref, request.context);
+                        const cloneUrl = sourceRepository.protocol === 'ssh'
+                            ? sourceRepository.repository.sshUrl : sourceRepository.repository.cloneUrl;
+                        if (!cloneUrl) return refuse('deployment_source_unavailable');
+                        await fetchWorkspaceCommitRef({ sourcePath: workspace.rootPath, cloneUrl,
+                            ref: definition.ref.startsWith('refs/') ? definition.ref : `refs/heads/${definition.ref}`,
+                            expectedCommitSha: sha, signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
+                    }
+                }
                 else if (sourceRepository && host.resolveRepositoryRef) {
                     sha = await host.resolveRepositoryRef(sourceRepository, definition.ref, request.context);
                 } else return refuse('deployment_source_unavailable');

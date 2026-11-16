@@ -2,6 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path';
 import { TextDecoder } from 'node:util';
 import type { WorkspaceIntegrationHandlers } from '@happier-dev/plugin-sdk/scm/backend';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { getScmCommandIndeterminateErrorCode, runScmCommand } from '../runtime.js';
 import { gitFileAtRevision } from './fileAtRevision.js';
@@ -30,11 +31,23 @@ export const resolveGitCommitRef: NonNullable<WorkspaceIntegrationHandlers['reso
     const cwd = input.context.detection.rootPath ?? input.context.cwd;
     input.context.assertFilesystemPathAuthorized?.(cwd);
     const result = await runScmCommand({ bin: 'git', cwd,
-        args: ['rev-parse', '--verify', '--end-of-options', `${input.ref}^{commit}`], signal: input.signal });
+        args: ['rev-parse', '--verify', '--quiet', '--end-of-options', `${input.ref}^{commit}`], signal: input.signal });
     input.signal?.throwIfAborted();
     const sha = result.stdout.trim();
     if (!result.success || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(sha)) {
-        throw refuse(getScmCommandIndeterminateErrorCode(result) ?? 'git_selection_unavailable');
+        const indeterminate = getScmCommandIndeterminateErrorCode(result);
+        // Peeling also fails for an existing ref whose object is missing. Only a
+        // missing unpeeled name permits fallback; corruption keeps the local refusal.
+        if (!indeterminate && !result.success && result.exitCode === 1 && !sha && !result.stderr.trim()) {
+            const unpeeled = await runScmCommand({ bin: 'git', cwd,
+                args: ['rev-parse', '--verify', '--quiet', '--end-of-options', input.ref], signal: input.signal });
+            input.signal?.throwIfAborted();
+            const unpeeledIndeterminate = getScmCommandIndeterminateErrorCode(unpeeled);
+            if (!unpeeledIndeterminate && !unpeeled.success && unpeeled.exitCode === 1
+                && !unpeeled.stdout.trim() && !unpeeled.stderr.trim()) throw refuse(SCM_OPERATION_ERROR_CODES.NOT_FOUND);
+            throw refuse(unpeeledIndeterminate ?? 'git_selection_unavailable');
+        }
+        throw refuse(indeterminate ?? 'git_selection_unavailable');
     }
     return sha;
 };

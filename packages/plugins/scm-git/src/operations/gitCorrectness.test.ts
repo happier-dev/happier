@@ -13,6 +13,7 @@ import * as commitOperations from './commitOperations.js';
 import { gitStashApply, gitStashCreate, gitStashDrop, gitStashPop } from './stashOperations.js';
 import * as integration from './branchIntegrationOperations.js';
 import { getGitSnapshot } from '../repository.js';
+import { resolveGitCommitRef } from './exportCommit.js';
 
 function git(cwd: string, ...args: string[]) {
     return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
@@ -37,6 +38,41 @@ function conflict(cwd: string, kind: 'merge' | 'rebase' | 'revert' | 'cherry-pic
 }
 
 describe('Git correctness and recovery', () => {
+    it('distinguishes an absent commit ref from local-only committed refs', async () => {
+        const { cwd, context, cleanup } = workspace();
+        try {
+            const sha = git(cwd, 'rev-parse', 'HEAD');
+            git(cwd, 'branch', 'local-only');
+            expect(await runWithRealGitScmRuntime(() => resolveGitCommitRef({ context, ref: 'local-only' }))).toBe(sha);
+            await expect(runWithRealGitScmRuntime(() => resolveGitCommitRef({ context, ref: 'absent-preview' })))
+                .rejects.toMatchObject({ code: 'not_found' });
+            expect(git(cwd, 'rev-parse', 'HEAD')).toBe(sha);
+        } finally { cleanup(); }
+    });
+
+    it('does not report an existing ref with a missing object as absent', async () => {
+        const { cwd, context, cleanup } = workspace();
+        try {
+            writeFileSync(join(cwd, '.git', 'refs', 'heads', 'broken-preview'), `${'1'.repeat(40)}\n`);
+            await expect(runWithRealGitScmRuntime(() => resolveGitCommitRef({ context, ref: 'broken-preview' })))
+                .rejects.toMatchObject({ code: 'git_selection_unavailable' });
+        } finally { cleanup(); }
+    });
+
+    it.each([
+        { exitCode: 1, stderr: 'Permission denied', code: 'git_selection_unavailable' },
+        { exitCode: 128, stderr: '', code: 'git_selection_unavailable' },
+        { exitCode: -1, stderr: '', code: 'COMMAND_OUTCOME_UNKNOWN' },
+        { exitCode: 1, stderr: '', timedOut: true, code: 'COMMAND_TIMEOUT' },
+        { exitCode: 1, stderr: '', outputLimitExceeded: true, code: 'COMMAND_OUTPUT_LIMIT_EXCEEDED' },
+    ])('does not report a failed ref process as absence: %j', async ({ code, ...failure }) => {
+        const { context, cleanup } = workspace();
+        try {
+            await expect(runWithGitScmCommandRunner(async () => ({ success: false, stdout: '', ...failure }),
+                () => resolveGitCommitRef({ context, ref: 'preview' }))).rejects.toMatchObject({ code });
+        } finally { cleanup(); }
+    });
+
     it('undoes only the observed unpushed HEAD and preserves staged and unstaged work', async () => {
         const { cwd, context, cleanup } = workspace();
         try {

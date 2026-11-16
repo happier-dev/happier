@@ -1,6 +1,7 @@
 import { createActionExecuteFailureError, ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { withActionFailureDiagnostic, type ActionFailureDiagnosticInput } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
 import { logger } from '@/ui/logger';
 import { readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import { readDeploymentSystemToolFailure } from './deploymentSystemToolFailure';
@@ -36,7 +37,7 @@ export function privateServiceForwardAcquisitionError(error: unknown): Error & {
 
 /** Source acquisition translates SCM selection failures once; capability and stale-approval refusals keep their codes. */
 export function rethrowDeploymentSourceAcquisitionFailure(error: unknown): never {
-    if (error instanceof Error && 'code' in error && error.code === 'git_selection_unavailable') {
+    if (error instanceof Error && 'code' in error && (error.code === 'git_selection_unavailable' || error.code === SCM_OPERATION_ERROR_CODES.NOT_FOUND)) {
         throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Deployment source is unavailable' }), { cause: projectDeploymentFailure('deployment_source_unavailable', error, 'deployment.source.acquire') });
     }
     throw error;
