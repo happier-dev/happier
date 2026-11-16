@@ -5,11 +5,16 @@ import { tmpdir } from 'node:os';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createDevcontainerProvider } from './provider.js';
 import { readDevcontainerEffectReview } from './effectReview.js';
-import { DevcontainerLaunchSchema, DevcontainerReviewQuerySchema, type DevcontainerLaunch, type DevcontainerResource } from './schemas.js';
+import { DevcontainerLaunchSchema, DevcontainerReviewQuerySchema, DevcontainerResourceSchema, type DevcontainerLaunch, type DevcontainerResource } from './schemas.js';
 import { DEVCONTAINER_PLUGIN, DEVCONTAINER_RECONCILIATION_SCHEMAS } from '../manifest.js';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { prepareManagedMachinePresetAuthoringV1, readManagedOpaquePresetAcquireEffectDigestV1 } from '../../../../cli-common/src/machines/managed/index.js';
+import { prepareManagedMachinePresetAuthoringV1, readManagedOpaquePresetAcquireEffectDigestV1, reconcileManagedMachine,
+  type ManagedMachineReconciliation } from '../../../../cli-common/src/machines/managed/index.js';
+import { ManagedMachineFullV1Schema } from '../../../../protocol/src/machines/managed/managedMachineV1.js';
+import { projectManagedEnrollmentCorrelationV1 } from '../../../../protocol/src/machines/managed/actionsV1.js';
+import { projectNativeJsonValueForTransport } from '../../../../protocol/src/json/strictJsonValue.js';
+import { isRecord } from '../../../../protocol/src/common/records.js';
 import { MachinePresetActionInputSchemasV1 } from '../../../../protocol/src/machines/managed/machinePresetActionsV1.js';
 import { openManagedMachinePresetRecipientProjectionV1, openManagedMachinePresetContentV1, sealManagedMachinePresetContentV1, replaceManagedMachinePresetLaunchNameV1 } from '../../../../protocol/src/machines/managed/managedMachinePresetContentV1.js';
 
@@ -167,7 +172,7 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId
 }
 
 describe('Devcontainer native roles', () => {
-  it.each([false, true])('creates a delegated Team devcontainer.json from the author Save receipt (Prepare=%s)', async enabled => {
+  it.each([['cold', false], ['cold', true], ['prepared', true]] as const)('creates a delegated Team devcontainer.json from the author Save receipt (%s, Prepare=%s)', async (mode, enabled) => {
     const authorNative = native();
     const { reviewedEffectDigest: _digest, ...choices } = launch;
     const contribution = { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: 'devcontainer' };
@@ -200,13 +205,63 @@ describe('Devcontainer native roles', () => {
     const memberContent = replaceManagedMachinePresetLaunchNameV1({ presetId: 'team-preset', mode: 'plain',
       content: reviewed.content, launchName: 'Member name' });
     if (!memberContent) throw new Error('Expected member name override');
-    const member = openManagedMachinePresetContentV1({ presetId: 'team-preset', mode: 'plain', content: memberContent });
+    let member = openManagedMachinePresetContentV1({ presetId: 'team-preset', mode: 'plain', content: memberContent });
     if (!member?.launch) throw new Error('Expected saved Team launch');
-    const memberNative = native();
-    const acquired = await memberNative.provider.acquire({ ...DevcontainerReviewQuerySchema.parse(member.launch.choices),
-      reviewedEffectDigest: readManagedOpaquePresetAcquireEffectDigestV1(member) }, 'managed-a');
-    expect(acquired.kind).toBe('bound');
+    if (mode === 'prepared') {
+      const physicalLaunch = { ...member.launch, choices: { runtime: 'docker', configuration: { kind: 'image', image: 'prepared:owned' } } };
+      const physical = replaceManagedMachinePresetLaunchNameV1({ presetId: 'team-preset', mode: 'plain', content: memberContent,
+        launchName: member.launch.name, preparationExecution: { launch: physicalLaunch, binaryPath: '/prepared/happier' },
+        reviewedFacts: { launch: physicalLaunch, optionStatus: 'unavailable', prerequisites: [], billing: descriptor.billing,
+          retentionCapabilities: descriptor.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+      member = openManagedMachinePresetContentV1({ presetId: 'team-preset', mode: 'plain', content: physical });
+      if (!member?.launch) throw new Error('Expected retained prepared execution');
+    }
+    const memberNative = mode === 'prepared' ? imageNative() : native();
+    let row = ManagedMachineFullV1Schema.parse({ id: 'managed-a', homeId: 'home', custodianAccountId: 'member',
+      controller: { machineId: 'member-controller', installationId: 'member-installation' },
+      preset: { id: 'team-preset', revision: 1, contentEncryptionMode: 'plain' },
+      launch: member.preparationExecution?.launch ?? member.launch,
+      ...(member.reviewedFacts ? { reviewedFacts: member.reviewedFacts } : {}),
+      allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+    let memberOptions = 0;
+    const retain: ManagedMachineReconciliation['home']['reportIssuedAcquireFact'] = async (current, result) => {
+      if (result.kind !== 'bound') throw new Error('Expected native allocation');
+      return row = ManagedMachineFullV1Schema.parse({ ...current, allocation: 'bound', resource: result.resource });
+    };
+    const acquired = await reconcileManagedMachine({ machine: row, requestId: 'member-acquire', action: 'machines.managed.acquire',
+      acquisitionMode: 'resource-bound', provisioner: descriptor,
+      home: { correlation: current => ({ homeId: current.homeId, managedId: current.id, expectedIntentRevision: current.intentRevision,
+          requestId: 'member-acquire', controller: current.controller }), projectEnrollmentCorrelation: projectManagedEnrollmentCorrelationV1,
+        submit: async current => ({ submitted: true, machine: row = { ...current, allocation: 'may-exist' } }),
+        reportIssuedAcquireFact: retain, preparePendingAcquireBoundReport: async () => result => retain(row, result),
+        row: async () => { throw new Error('Unexpected Home report'); } },
+      createNative: () => ({ optionsInputSchema: descriptor.launchSchema,
+        readReviewedEffectDigest: () => readManagedOpaquePresetAcquireEffectDigestV1(member!), prepareRoles: async () => {},
+        invoke: async (role, input) => {
+          if (role === 'check') return { available: true };
+          if (role === 'options') {
+            memberOptions += 1;
+            const review = await readDevcontainerEffectReview(memberNative.tools, DevcontainerReviewQuerySchema.parse(input));
+            return projectNativeJsonValueForTransport({ base: { launch: input, effectReview: review.effectReview },
+              dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
+          }
+          if (!isRecord(input)) throw new Error('Expected native input');
+          if (role === 'acquire') return projectNativeJsonValueForTransport(await memberNative.provider.acquire({
+            ...DevcontainerReviewQuerySchema.parse(input.launch),
+            ...(typeof input.reviewedEffectDigest === 'string' ? { reviewedEffectDigest: input.reviewedEffectDigest } : {}) }, 'managed-a'));
+          if (role === 'bootstrap') return projectNativeJsonValueForTransport(await memberNative.provider.bootstrap(DevcontainerResourceSchema.parse(input.resource)));
+          throw new Error(`Unexpected native role ${role}`);
+        } }),
+      bootstrap: { preflight: async () => {}, prepareCredential: async machine => ({ machine }), readCredential: async () => ({}),
+        enroll: async ({ machine }) => machine }, waitForObservation: async () => { throw new Error('Unexpected observation wait'); },
+    });
+    expect(acquired.allocation).toBe('bound');
     expect(authorOptions).toBe(1);
+    expect(memberOptions).toBe(0);
+    const sourceChecks = memberNative.requests.filter(request => request.args?.[0] === 'read-configuration');
+    if (mode === 'prepared') expect(sourceChecks).toHaveLength(0);
+    else expect(sourceChecks.length).toBeGreaterThan(0); // Native acquire and namespace IO retain effect-time drift validation.
     expect(member.authorEffectReview?.reviewedEffectDigest).toBe(launch.reviewedEffectDigest);
   });
   it.each(['docker', 'podman'] as const)('uses the host branch only for confirmed Lima bridge DNS failure (%s)', async runtime => {

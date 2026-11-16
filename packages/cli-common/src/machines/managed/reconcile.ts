@@ -125,12 +125,17 @@ function acquisitionFailure(result: Exclude<AcquireResultV1, { kind: 'bound' }>)
 export async function captureManagedAcquireConfiguration(machine: ManagedMachineFullV1, provisioner: MachineProvisionerContributionV1 | undefined,
     native: ManagedReconciliationNative) {
     if (!provisioner) return undefined;
+    // Opaque instance reviews are already sealed by the admitted execution owner,
+    // including the physical launch selected from a prepared artifact.
+    if (native.readReviewedEffectDigest && machine.reviewedFacts) return { facts: machine.reviewedFacts, optionProjection: undefined };
+    // Source options were captured at author Save; native acquire still checks drift at effect time.
+    const sourceReviewAdmitted = native.readReviewedEffectDigest?.() !== undefined;
     let check: ReturnType<typeof MachineProvisionerCheckResultV1Schema.parse> | undefined;
     let options: MachineProvisionerOptionsResultV1 | undefined;
     let optionProjection: Parameters<typeof buildManagedConfigurationFactsV1>[0]['optionProjection'];
     try { check = MachineProvisionerCheckResultV1Schema.parse(await native.invoke('check', {})); }
     catch { /* Optional metadata stays unavailable; never lose an issued native identity. */ }
-    if (provisioner.actions.options && native.optionsInputSchema) {
+    if (!sourceReviewAdmitted && provisioner.actions.options && native.optionsInputSchema) {
         try {
             const selectors = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(native.optionsInputSchema)).parse(machine.launch.choices);
             options = MachineProvisionerOptionsResultV1Schema.parse(await native.invoke('options', selectors));

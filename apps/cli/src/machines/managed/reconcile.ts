@@ -637,21 +637,22 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
             if (content.preparation?.enabled) {
                 const projection = configuration.optionProjection;
                 const guest = projection?.kind === 'ready' ? projection.nativeFacts?.preparationGuest : undefined;
-                if (!guest) throw new ManagedMachineControllerError('provider_unavailable');
-                const cli = await resolveManagedGuestCliBuildIdentity({ homeUrl: params.input.serverUrl, target: guest.target,
-                    readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata, signal: params.options.signal,
-                    ...(params.input.guestCliFetch ? { fetchImpl: params.input.guestCliFetch } : {}) });
-                // Unsubmitted preparation captures this same basis before constructing native invocations.
-                const decision = readManagedMachinePresetPreparationV1({ content, presetRevision: machine.preset.revision,
-                    cliIdentity: cli.identity, credentialConfigurations: credentialConfigurations! });
-                if (decision.kind === 'warm') {
-                    const preparedLaunch = readMachineProvisionerPreparedLaunchV1({ provisioner: retainedProvisioner.identity,
-                        descriptor: retainedProvisioner.definition, artifact: decision.artifact });
-                    if (!preparedLaunch.success) throw new ManagedMachineControllerError('provider_unavailable');
-                    // Retained launch wire values use the canonical mutable JSON vocabulary.
-                    launch = { ...launch, choices: PluginJsonValueV2Schema.parse(preparedLaunch.data) };
-                    preparationExecution = { launch, binaryPath: decision.binaryPath,
-                        ...(decision.deferredSetup === undefined ? {} : { deferredSetup: decision.deferredSetup }) };
+                if (guest) {
+                    const cli = await resolveManagedGuestCliBuildIdentity({ homeUrl: params.input.serverUrl, target: guest.target,
+                        readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata, signal: params.options.signal,
+                        ...(params.input.guestCliFetch ? { fetchImpl: params.input.guestCliFetch } : {}) });
+                    // Unsubmitted preparation captures this same basis before constructing native invocations.
+                    const decision = readManagedMachinePresetPreparationV1({ content, presetRevision: machine.preset.revision,
+                        cliIdentity: cli.identity, credentialConfigurations: credentialConfigurations! });
+                    if (decision.kind === 'warm') {
+                        const preparedLaunch = readMachineProvisionerPreparedLaunchV1({ provisioner: retainedProvisioner.identity,
+                            descriptor: retainedProvisioner.definition, artifact: decision.artifact });
+                        if (!preparedLaunch.success) throw new ManagedMachineControllerError('provider_unavailable');
+                        // Retained launch wire values use the canonical mutable JSON vocabulary.
+                        launch = { ...launch, choices: PluginJsonValueV2Schema.parse(preparedLaunch.data) };
+                        preparationExecution = { launch, binaryPath: decision.binaryPath,
+                            ...(decision.deferredSetup === undefined ? {} : { deferredSetup: decision.deferredSetup }) };
+                    }
                 }
             }
             const facts = preparationExecution === undefined ? configuration.facts : buildManagedConfigurationFactsV1({

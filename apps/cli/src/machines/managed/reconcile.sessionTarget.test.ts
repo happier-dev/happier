@@ -10,8 +10,9 @@ import { createManagedProviderOperationAuthority } from '@/daemon/connectedServi
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import type { ManagedMachineAcquisitionDriverInput } from './acquire';
 import type { ManagedMachinePolicyInvalidation } from '@/api/apiMachine';
-import { createManagedNativeInvocation } from './reconcile';
-import { createManagedMachineAcquisitionDriver } from './acquire';
+import { createManagedNativeInvocation, reconcileManagedMachine } from './reconcile';
+import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient } from './acquire';
+import { createManagedPresetHydrator } from './presetHydration';
 import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, chmod, rm, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -97,6 +98,39 @@ function harness(options: Readonly<{ streamRole?: boolean; holdStream?: boolean;
 }
 
 describe('Session-target authority for managed provider channel roles', () => {
+    it.each([false, true])('uses the author digest for a cold source without preparation guest metadata (Prepare %s)', async enabled => {
+        const acquired: unknown[] = [];
+        const h = harness({ onNativeRole: async (role, body) => {
+            if (role === 'acquire') { acquired.push(body); throw new Error('Fixture stops before allocation'); }
+        } });
+        let row = ManagedOpaquePresetMachineV1Schema.parse({ id: machine.id, homeId, custodianAccountId: 'owner',
+            controller: machine.controller, preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' },
+            acquisitionMode: 'resource-bound', allocation: 'unsubmitted', creationState: 'active',
+            desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const digest = 'a'.repeat(64);
+        const content = { t: 'plain' as const, v: ManagedMachinePresetContentV1Schema.parse({ v: 1, name: 'Reviewed source',
+            preparation: { enabled }, launch: machine.launch,
+            authorEffectReview: { kind: 'devcontainer', reviewedEffectDigest: digest, effects: [] } }) };
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const input = { ...h.input, token, credentials: { token, encryption: null } };
+        const hydrator = createManagedPresetHydrator(input);
+        const opened = await hydrator.open(row, { content, recipients: [] });
+        const options = { requestId: 'cold-source', acquisitionMode: 'resource-bound' as const,
+            context: { operationOwnerUpdate: { update() {} } } };
+        const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
+            if (String(url).endsWith('/submit')) {
+                row = ManagedOpaquePresetMachineV1Schema.parse({ ...row, allocation: 'may-exist' });
+                return { status: 200, data: { submitted: true, machine: row } };
+            }
+            return { status: 200, data: { machine: row } };
+        });
+        onTestFinished(() => post.mockRestore());
+        await expect(reconcileManagedMachine({ input, options, hydrator, machine: opened,
+            action: 'machines.managed.acquire', client: createManagedMachineControllerClient(input, options, 'machines.managed.acquire', hydrator) })).rejects.toThrow();
+        expect(acquired).toEqual([{ managedId: machine.id, launch: machine.launch!.choices, reviewedEffectDigest: digest }]);
+    });
+
     it('admits transport preparation and channel roles for the Session\'s own target while the Session is current', async () => {
         const h = harness();
         const session = new AbortController();
