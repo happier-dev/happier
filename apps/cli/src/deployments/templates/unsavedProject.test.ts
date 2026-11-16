@@ -1,6 +1,5 @@
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createPrepareDeploymentBindingsForHost } from '../secrets/prepareDeploymentBindingsForHost';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import axios from 'axios';
@@ -19,7 +18,7 @@ import { createDeploymentTemplateInstantiationForHost } from './instantiate';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createDaemonDeploymentActionDeps } from '../createDaemonDeploymentActionDeps';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentEnvironmentCreateInputV1Schema } from '@happier-dev/protocol';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -225,8 +224,8 @@ it.each(['runtime', 'build'] as const)('prepares unlinked %s Saved Secret refere
     delete detail.environment.runtimeTargetLinkId;
     delete detail.environment.buildMachineId;
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
-    const binding = { purpose: 'variable' as const, phase, name: 'PASSWORD',
-        source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('credential'), resourceRevision: 1 } };
+    const binding = createDeploymentSecretVariableBindingV1({ phase, name: 'PASSWORD',
+        resourceId: 'credential', resourceRevision: 1 });
     const candidate = { ...detail.content, bindings: [binding] };
     const artifact = (id: string, content: unknown) => ({ id, ownerAccountId: 'owner', access: 'owner',
         publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,

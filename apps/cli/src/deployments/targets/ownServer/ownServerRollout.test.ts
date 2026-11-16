@@ -5,8 +5,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
-import { DeploymentOwnServerContentV1Schema, EnvironmentVariableBindingV1Schema, OwnServerEnvironmentConfigurationV1Schema, OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentOwnServerContentV1Schema, OwnServerEnvironmentConfigurationV1Schema, OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { configuration } from '@/configuration';
 import { projectDeploymentTransitionOutcomeUnknownForHost } from '@/deployments/deploymentTransitionResult';
 import * as persistence from '@/persistence';
@@ -509,7 +509,7 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
                         // An independent manager edits the Environment after
                         // A has cut over and B has failed. Compensation still
                         // has to reach the real receiving member and restore U.
-                        environment.content.bindings = [EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable',
+                        environment.content.bindings = [createDeploymentVariableBindingV1({
                             name: 'UNRELATED_EDIT', phase: 'runtime', source: { kind: 'value', value: 'changed' } })];
                         environment.environment.revision++;
                     }
@@ -683,7 +683,8 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
             expect(await onMachine('machine-a', () => targets.get('machine-a')!.execute(edited.request)))
                 .toMatchObject({ ok: false, errorCode: 'native_failed', details: { deploymentId: edited.receipt.deployment.id,
                     failure: { code: 'native_failed', phase: 'activate' } } });
-            expect(environment.content.bindings).toContainEqual(expect.objectContaining({ name: 'UNRELATED_EDIT' }));
+            expect(environment.content.bindings, JSON.stringify({ dispatchErrors, stages }))
+                .toContainEqual(expect.objectContaining({ name: 'UNRELATED_EDIT' }));
             expect(link.activeDeploymentId).toBe('v1');
             for (const machineId of machineIds) {
                 expect(await tools.get(machineId)!.readRunningImageConfig('app'), JSON.stringify(dispatchErrors))
