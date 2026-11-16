@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsagePricingPopulationSchema, type UsageAnalyticsContribution, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
+import { UsageAnalyticsBreakdownDimensionSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsagePricingPopulationSchema, type UsageAnalyticsContribution, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import * as usageCost from './usageCost.js';
 import { projectUsageAgentAccountingCalendar, projectUsageAgentCalendar, UsageAgentCalendarSchema } from './usageAgentCalendar.js';
 import { buildUsageLeaderList } from './usageLeaderProjection.js';
@@ -37,6 +37,29 @@ function response(rows: UsageAnalyticsContribution[]): UsageAnalyticsQueryRespon
         coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [], range: { startMs: 0, endMs: 86_400_000, complete: true },
             sources: [{ source: 'runtime', path: 'runtime', machineId: 'machine', status: 'available', eventCount: rows.length, historyComplete: true }] } });
 }
+
+it.each(UsageAnalyticsBreakdownDimensionSchema.options)('conserves admitted report money across %s groups through compact JSON repricing', dimension => {
+    const covered = contribution(1, { cost: { ...cost, reportedTotalId: 'report' } });
+    const report = contribution(2, { id: 'report', agentId: 'other', modelId: null, sessionId: 'other',
+        projectKey: null, workspaceId: 'other', backendMode: 'other', machineId: null, source: 'imported',
+        tokens: createEmptyUsageTokens(), tokenCategories: createEmptyUsageTokens(),
+        cost: { reportedUsd: 0.57756992, estimatedUsd: 0, currency: 'USD', costSource: 'provider_reported',
+            reportedTotalContributionIds: [covered.id] } });
+    const rows = [covered, report];
+    const request = UsageAnalyticsQueryRequestSchema.parse({ breakdowns: [dimension], topLimit: Number.MAX_SAFE_INTEGER });
+    const raw = { ...response(rows), breakdowns: {
+        [dimension]: buildUsageLeaderList(rows.map(row => ({ ...row, eventCount: row.eventCount! })), dimension, Number.MAX_SAFE_INTEGER, 'auto') ?? [],
+    } };
+    expect(raw.breakdowns[dimension]!.reduce((sum, entry) => sum + (entry.cost.effectiveUsd ?? 0), 0)).toBeCloseTo(0.57756992, 12);
+    const rich = usageCost.repriceUsageAnalyticsResponse(raw, catalog, {}, 'auto', request);
+    const compacts = [rich, UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(rich)))].map(value =>
+        UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(usageCost.projectUsageAnalyticsSummary(value, request)))));
+    for (const value of [usageCost.projectUsagePageCost(raw, 'auto').accounting, rich, ...compacts.map(value => usageCost.repriceUsageAnalyticsResponse(value, catalog))]) {
+        expect(value.totals.cost.effectiveUsd).toBe(0.57756992);
+        expect(value.breakdowns![dimension]!.reduce((sum, entry) => sum + (entry.cost.effectiveUsd ?? 0), 0)).toBeCloseTo(value.totals.cost.effectiveUsd!, 12);
+        expect(value.breakdowns![dimension]!.reduce((sum, entry) => sum + entry.eventCount, 0)).toBe(2);
+    }
+});
 
 it('shares one tariff evaluator per pricing inputs across periods and repeated publications', () => {
     const firstQuery = normalizeUsageQuery({ period: { startMs: 0, endMs: 86_400_000 }, includeContributions: true,

@@ -184,13 +184,13 @@ export function* repriceUsageAnalyticsResponseSteps(value: UsageAnalyticsQueryRe
   const totalPartition = yield* buildPartition(contributions, states);
   const totalPopulation = totalPartition.population;
   const partitions: UsageAnalyticsPricingPartitions = { totals: totalPopulation, series: new Map(), ranked: new Map(), timelines: new Map() };
-  const pricePartition = function* (rows: readonly UsageAnalyticsContribution[], queryScoped: boolean) {
+  const pricePartition = function* (rows: readonly UsageAnalyticsContribution[]) {
     return rows.length === contributions.length ? totalPartition
-      : yield* buildPartition(rows, queryScoped ? states : undefined);
+      : yield* buildPartition(rows, states);
   };
   const totalCost = totalPartition.cost;
   const projectCost = function* (raw: UsageObservationCost, rows: readonly UsageAnalyticsContribution[], range?: { bucketStartMs: number; bucketEndMs: number }): Generator<void, UsageObservationCost, void> {
-    const part = yield* pricePartition(rows, range !== undefined);
+    const part = yield* pricePartition(rows);
     if (range) partitions.series.set(usageTimelinePartitionKey('series', range), part.population);
     if (rows.length === 0) return part.cost;
     const { apiEquivalentUsd: _old, pricingSource: _source, effectiveUsd: _effective, selectedBasis: _selected, ...observed } = raw;

@@ -120,7 +120,7 @@ function* buildSummaryPricing(value: UsageAnalyticsQueryResponse, rows: readonly
             entries: entries.filter((entry): entry is UsageAnalyticsBreakdownEntry => entry.tokens !== undefined && entry.cost !== undefined) });
     }
     for (const [dimension, outputs] of demands) {
-        Object.assign(rankedPricing, buildRankedPricing(rows, dimension, outputs, false, undefined, pricing.totals, admitted?.ranked.get(dimension)));
+        Object.assign(rankedPricing, buildRankedPricing(rows, dimension, outputs, false, shared, pricing.totals, admitted?.ranked.get(dimension)));
         yield;
     }
     for (const family of ['modelTimeline', 'engineTimeline'] as const) for (const [index, bucket] of (value[family] ?? []).entries()) {

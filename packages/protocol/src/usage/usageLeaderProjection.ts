@@ -161,16 +161,21 @@ export function* buildUsageLeaderListSteps<T extends UsageLeaderContribution>(ro
         pricing!.admit({ totalEntries, candidates: admitted });
         return selectUsageRankedLeaders(admitted.map(candidate => candidate.value), topLimit, mode);
     }
+    // A report can cover rows in another candidate. Decide that membership
+    // over the admitted ranking population, before selecting any subset.
+    const resolved = candidates.some(group => group.rows.some(row => row.cost.reportedTotalId !== undefined || row.cost.reportedTotalContributionIds !== undefined))
+        ? resolveUsageContributionCosts(rows, mode) : undefined;
+    const costs = resolved && new Map(rows.map((row, index) => [row, resolved[index]!]));
     const amounts: UsageRankedLeader[] = [];
     for (const group of candidates) amounts.push({ ...group.value,
-        cost: yield* aggregateUsageCostPartitionsSteps(resolveUsageContributionCosts(group.rows, mode), mode) });
+        cost: yield* aggregateUsageCostPartitionsSteps(group.rows.map(row => costs?.get(row) ?? row.cost), mode) });
     const ranked = selectUsageRankedLeaders(amounts, topLimit, mode);
     const answer: UsageRankedLeader[] = [];
     for (const leader of ranked) {
         const sources: UsageAnalyticsTimelineSource[] | undefined = includeSources ? [] : undefined;
         if (sources) for (const part of groupUsageLeaderSources(sourceRows!.get(leader.key)!)
             .sort((left, right) => left.key.localeCompare(right.key))) {
-            const cost = yield* aggregateUsageCostPartitionsSteps(resolveUsageContributionCosts(part.rows, mode), mode);
+            const cost = yield* aggregateUsageCostPartitionsSteps(part.rows.map(row => costs?.get(row) ?? row.cost), mode);
             sources.push({ ...part.value, cost: withEffectiveUsageCost(cost, mode) });
         }
         answer.push({ ...leader, cost: withEffectiveUsageCost(leader.cost, mode), ...(sources ? { sources } : {}) });
@@ -259,11 +264,11 @@ export function reprojectUsageLeaders(value: UsageAnalyticsQueryResponse, contri
     projectCost: (raw: UsageLeaderContribution['cost'], rows: readonly UsageAnalyticsContribution[], range?: UsageTimelineRange) => UsageLeaderContribution['cost'],
     rankingDemand?: Pick<UsageAnalyticsQueryRequest, 'breakdowns' | 'includeLeaders' | 'topLimit'>,
     pricing?: { partitions: UsageAnalyticsPricingPartitions;
-        price: (rows: readonly UsageAnalyticsContribution[], queryScoped: boolean) => UsagePricedRows }):
+        price: (rows: readonly UsageAnalyticsContribution[]) => UsagePricedRows }):
     Pick<UsageAnalyticsQueryResponse, 'series' | 'breakdowns' | 'leaders' | 'modelTimeline' | 'engineTimeline' | 'coverage'> {
     const steps = reprojectUsageLeadersSteps(value, contributions, mode,
         function* (raw, rows, range) { return projectCost(raw, rows, range); }, rankingDemand, pricing && {
-            partitions: pricing.partitions, price: function* (rows, scoped) { return pricing.price(rows, scoped); },
+            partitions: pricing.partitions, price: function* (rows) { return pricing.price(rows); },
         });
     let next = steps.next();
     while (!next.done) next = steps.next();
@@ -274,13 +279,13 @@ export function* reprojectUsageLeadersSteps(value: UsageAnalyticsQueryResponse, 
     projectCost: (raw: UsageLeaderContribution['cost'], rows: readonly UsageAnalyticsContribution[], range?: UsageTimelineRange) => Generator<void, UsageLeaderContribution['cost'], void>,
     rankingDemand?: Pick<UsageAnalyticsQueryRequest, 'breakdowns' | 'includeLeaders' | 'topLimit'>,
     pricing?: { partitions: UsageAnalyticsPricingPartitions;
-        price: (rows: readonly UsageAnalyticsContribution[], queryScoped: boolean) => Generator<void, UsagePricedRows, void> }):
+        price: (rows: readonly UsageAnalyticsContribution[]) => Generator<void, UsagePricedRows, void> }):
     Generator<void, Pick<UsageAnalyticsQueryResponse, 'series' | 'breakdowns' | 'leaders' | 'modelTimeline' | 'engineTimeline' | 'coverage'>, void> {
     let incomplete = false;
     const rank = function* (rows: readonly (UsageAnalyticsContribution & { eventCount: number })[], dimension: UsageLeaderDimension,
         limit: number, labels: ReadonlyMap<string, string | undefined> = new Map(), includeSources = false, range?: UsageTimelineRange) {
         return yield* buildUsageLeaderListSteps(rows, dimension, limit, mode, labels, includeSources, pricing && {
-            price: selected => pricing.price(selected, range !== undefined),
+            price: selected => pricing.price(selected),
             admit: admitted => { if (range) pricing.partitions.timelines.set(usageTimelinePartitionKey(dimension, range), admitted);
                 else pricing.partitions.ranked.set(dimension, admitted); },
         });
