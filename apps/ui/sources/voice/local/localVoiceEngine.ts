@@ -42,6 +42,8 @@ export { getLocalVoiceState, useLocalVoiceStatus, subscribeLocalVoiceState } fro
 
 let recorder: InstanceType<typeof AudioModule.AudioRecorder> | null = null;
 let inFlight: Promise<void> | null = null;
+// Input startup can be awaiting native permission/preparation before status becomes recording.
+let inputStartup: Promise<void> | null = null;
 let activeTurnAbortController: AbortController | null = null;
 let activeTurnAbortSessionId: string | null = null;
 
@@ -203,9 +205,14 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
 
 async function startLocalVoiceInput(sessionId: string, provider: ReturnType<typeof resolveLocalSttProvider>): Promise<void> {
   stopReadAloud();
-  if (provider === 'device') await deviceSttController.start(sessionId);
-  else if (provider === 'local_neural') await sherpaSttController.start(sessionId);
-  else await startRecording(sessionId);
+  const starting = provider === 'device' ? deviceSttController.start(sessionId)
+    : provider === 'local_neural' ? sherpaSttController.start(sessionId) : startRecording(sessionId);
+  inputStartup = starting;
+  try {
+    await starting;
+  } finally {
+    if (inputStartup === starting) inputStartup = null;
+  }
 }
 
 async function stopLocalVoiceInput(sessionId: string): Promise<void> {
@@ -365,30 +372,37 @@ async function runAbortableVoiceTurn(sessionId: string, runner: (signal: AbortSi
   }
 }
 
-/** Discards active microphone input without submitting it or ending the live voice session. */
-export async function cancelLocalVoiceRecording(): Promise<void> {
-  const current = getLocalVoiceState();
-  const sessionId = current.sessionId;
-  if (!sessionId) return;
-  if (current.status === 'recording') {
-    if (inFlight) await inFlight;
-    const recording = getLocalVoiceState();
-    if (recording.status === 'recording' && recording.sessionId === sessionId) {
-      const stopping = stopLocalVoiceInput(sessionId);
-      inFlight = stopping;
-      try {
-        await stopping;
-      } catch (error) {
-        patchLocalVoiceState(resolveLocalVoiceError(error, 'recording_stop_failed'));
-        throw error;
-      } finally {
-        if (inFlight === stopping) inFlight = null;
+/** Discards active or starting input without sending it or ending live voice; null means no input. */
+export function cancelLocalVoiceRecording(): Promise<void> | null {
+  const starting = inputStartup;
+  if (!starting && getLocalVoiceState().status !== 'recording') return null;
+  return cancelRecording();
+
+  async function cancelRecording(): Promise<void> {
+    if (starting) await starting;
+    const current = getLocalVoiceState();
+    const sessionId = current.sessionId;
+    if (!sessionId) return;
+    if (current.status === 'recording') {
+      while (inFlight) await inFlight;
+      const recording = getLocalVoiceState();
+      if (recording.status === 'recording' && recording.sessionId === sessionId) {
+        const stopping = stopLocalVoiceInput(sessionId);
+        inFlight = stopping;
+        try {
+          await stopping;
+        } catch (error) {
+          patchLocalVoiceState(resolveLocalVoiceError(error, 'recording_stop_failed'));
+          throw error;
+        } finally {
+          if (inFlight === stopping) inFlight = null;
+        }
       }
     }
-  }
 
-  if (getLocalVoiceState().status === 'recording' && getLocalVoiceState().sessionId === sessionId) {
-    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+    if (getLocalVoiceState().status === 'recording' && getLocalVoiceState().sessionId === sessionId) {
+      patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+    }
   }
 }
 

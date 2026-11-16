@@ -16,6 +16,7 @@ import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePriva
 import { useAllSessions, useSessionMetadata } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
+import type { VoiceActivityEvent } from '@/voice/activity/voiceActivityEvents';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { toggleLocalVoiceTurn } from '@/voice/local/localVoiceEngine';
@@ -39,12 +40,14 @@ import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoice
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { Icon } from '@/components/ui/icons/Icon';
 import { stopReadAloud, useIsReadAloudActive } from '@/voice/local/readAloudState';
+import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import type { VoiceSessionStatus } from '@/voice/session/types';
 
 
 export type VoiceSurfaceVariant = 'sidebar' | 'session' | 'global';
 type VoiceSurfaceProps = Readonly<{ variant: VoiceSurfaceVariant; sessionId?: string | null; style?: StyleProp<ViewStyle> }>;
 
-const EMPTY_EVENTS: ReadonlyArray<any> = [];
+const EMPTY_EVENTS: ReadonlyArray<VoiceActivityEvent> = [];
 
 function resolveSessionIdFromPathname(pathname: string | null | undefined): string | null {
   const normalized = String(pathname ?? '').trim();
@@ -55,18 +58,45 @@ function resolveSessionIdFromPathname(pathname: string | null | undefined): stri
 
 export function VoiceSurface(props: VoiceSurfaceProps) {
   const readingAloud = useIsReadAloudActive();
-  // Standalone playback uses the app shell placement; live voice keeps its configured placement.
-  if (props.variant === 'global' ? !readingAloud : readingAloud) return null;
-  return <VoiceSurfaceContent {...props} readingAloud={readingAloud} />;
+  if (props.variant === 'global' && !readingAloud) return null;
+  return <VoiceSurfacePlacement {...props} readingAloud={readingAloud} />;
 }
 
-function VoiceSurfaceContent(props: VoiceSurfaceProps & Readonly<{ readingAloud: boolean }>) {
+function VoiceSurfacePlacement(props: VoiceSurfaceProps & Readonly<{ readingAloud: boolean }>) {
+  const voice = useSetting('voice');
+  const scopeDefault = voice?.ui?.scopeDefault === 'session' ? 'session' : 'global';
+  const [expanded, setExpanded] = React.useState(false);
+  const hydratedVoiceAgentEpochRef = React.useRef<number | null>(null);
+  const transcript = voice?.adapters?.local_conversation?.agent?.transcript;
+  const transcriptEpochRaw = Number(transcript?.epoch ?? 0);
+  const transcriptEpoch = Number.isFinite(transcriptEpochRaw) && transcriptEpochRaw >= 0 ? Math.floor(transcriptEpochRaw) : 0;
+  const hydrateTranscript = props.variant === 'sidebar' && voice?.ui?.activityFeedEnabled === true
+    && voice?.providerId === 'local_conversation'
+    && voice.adapters.local_conversation.conversationMode === 'agent' && transcript?.persistenceMode === 'persistent';
+  React.useEffect(() => {
+    if (!hydrateTranscript) hydratedVoiceAgentEpochRef.current = null;
+  }, [hydrateTranscript]);
+  React.useEffect(() => {
+    if (props.variant === 'global') return;
+    useVoiceTargetStore.getState().setScope(scopeDefault);
+  }, [props.variant, scopeDefault]);
+  // Standalone playback uses the app shell placement; live voice keeps its configured placement.
+  if (props.variant !== 'global' && props.readingAloud) return null;
+  return <VoiceSurfaceContent {...props} voice={voice} expanded={expanded} setExpanded={setExpanded}
+    hydratedVoiceAgentEpochRef={hydratedVoiceAgentEpochRef} hydrateTranscript={hydrateTranscript} transcriptEpoch={transcriptEpoch} />;
+}
+
+function VoiceSurfaceContent(props: VoiceSurfaceProps & Readonly<{
+  voice: VoiceSettings; readingAloud: boolean; expanded: boolean; setExpanded: React.Dispatch<React.SetStateAction<boolean>>;
+  hydratedVoiceAgentEpochRef: React.RefObject<number | null>;
+  hydrateTranscript: boolean; transcriptEpoch: number;
+}>) {
   const navigateToSession = useNavigateToSession();
   const pathname = usePathname();
   const { theme } = useUnistyles();
   const styles = stylesheet;
   const snap = useVoiceSessionSnapshot();
-  const voice: any = useSetting('voice');
+  const voice = props.voice;
   const voicePrivacy = readVoicePrivacySettings({ voice });
   const providerId = voice?.providerId ?? 'off';
   const ui = voice?.ui ?? {};
@@ -81,7 +111,6 @@ function VoiceSurfaceContent(props: VoiceSurfaceProps & Readonly<{ readingAloud:
   // field a send touches.
   const currentSessionMetadata = useSessionMetadata(sessionSurfaceSessionId);
 
-  const feedSessionId = props.variant === 'session' && typeof props.sessionId === 'string' ? props.sessionId : null;
   const lastFocusedSessionId = useVoiceTargetStore((s) => s.lastFocusedSessionId);
   const primaryActionSessionId = useVoiceTargetStore((s) => s.primaryActionSessionId);
   const primaryActionSessionKey = typeof primaryActionSessionId === 'string' ? primaryActionSessionId.trim() : '';
@@ -109,72 +138,6 @@ function VoiceSurfaceContent(props: VoiceSurfaceProps & Readonly<{ readingAloud:
     props.variant === 'session'
     && getVoiceAgentSessionTeleportAvailability({ voice, sessionId: props.sessionId ?? null }).ok;
 
-  const voiceAgentTranscriptCfg = voice?.adapters?.local_conversation?.agent?.transcript ?? null;
-  const voiceAgentTranscriptPersistenceMode =
-    voiceAgentTranscriptCfg && (voiceAgentTranscriptCfg as any).persistenceMode === 'persistent' ? 'persistent' : 'ephemeral';
-  const voiceAgentTranscriptEpochRaw = voiceAgentTranscriptCfg ? Number((voiceAgentTranscriptCfg as any).epoch ?? 0) : 0;
-  const voiceAgentTranscriptEpoch =
-    Number.isFinite(voiceAgentTranscriptEpochRaw) && voiceAgentTranscriptEpochRaw >= 0 ? Math.floor(voiceAgentTranscriptEpochRaw) : 0;
-
-  // Avoid selectors that allocate new arrays on every getSnapshot call (can infinite-loop in React 18).
-  const eventsBySessionId = useVoiceActivityStore((s) => s.eventsBySessionId);
-  const events = React.useMemo(() => {
-    if (props.variant === 'session') {
-      return feedSessionId ? (eventsBySessionId[feedSessionId] ?? EMPTY_EVENTS) : EMPTY_EVENTS;
-    }
-
-    const all: any[] = [];
-    for (const v of Object.values(eventsBySessionId ?? {})) {
-      if (Array.isArray(v)) all.push(...v);
-    }
-    return all.length === 0 ? EMPTY_EVENTS : all;
-  }, [eventsBySessionId, feedSessionId, props.variant]);
-
-  const [expanded, setExpanded] = React.useState(false);
-
-  React.useEffect(() => {
-    if (props.readingAloud) return;
-    // Keep store scope in sync with the user's default voice scope.
-    useVoiceTargetStore.getState().setScope(scopeDefault);
-  }, [props.readingAloud, scopeDefault]);
-
-  const hydratedVoiceAgentEpochRef = React.useRef<number | null>(null);
-  React.useEffect(() => {
-    const shouldHydrateVoiceAgentTranscript =
-      props.variant === 'sidebar' &&
-      activityFeedEnabled &&
-      providerId === 'local_conversation' &&
-      localConversationMode === 'agent' &&
-      voiceAgentTranscriptPersistenceMode === 'persistent';
-
-    if (!shouldHydrateVoiceAgentTranscript) {
-      hydratedVoiceAgentEpochRef.current = null;
-      return;
-    }
-      if (hydratedVoiceAgentEpochRef.current === voiceAgentTranscriptEpoch) return;
-
-      hydratedVoiceAgentEpochRef.current = voiceAgentTranscriptEpoch;
-      fireAndForget(hydrateVoiceAgentActivityFromCarrierSession(), { tag: 'VoiceSurface.hydrateVoiceAgentActivityFromCarrierSession' });
-    }, [activityFeedEnabled, localConversationMode, voiceAgentTranscriptEpoch, voiceAgentTranscriptPersistenceMode, props.variant, providerId]);
-
-  const lastStatusRef = React.useRef(snap.status);
-  React.useEffect(() => {
-    const prev = lastStatusRef.current;
-    lastStatusRef.current = snap.status;
-    if (!activityFeedEnabled) return;
-    if (!activityFeedAutoExpandOnStart) return;
-    if (expanded) return;
-    if (prev === 'disconnected' && snap.status !== 'disconnected') {
-      setExpanded(true);
-    }
-  }, [activityFeedAutoExpandOnStart, activityFeedEnabled, expanded, snap.status]);
-
-  const visibleEvents = React.useMemo(() => {
-    if (!Array.isArray(events) || events.length === 0) return EMPTY_EVENTS;
-    const base = props.variant === 'sidebar' ? [...events].sort(sortVoiceActivityEventsByTsThenId) : events;
-    const tail = base.length > 50 ? base.slice(base.length - 50) : base;
-    return [...tail].reverse();
-  }, [events, props.variant]);
   const bindingsByConversationSessionId = React.useSyncExternalStore(
     voiceSessionBindingStore.subscribe,
     () => voiceSessionBindingStore.getState().bindingsByConversationSessionId,
@@ -285,17 +248,6 @@ function VoiceSurfaceContent(props: VoiceSurfaceProps & Readonly<{ readingAloud:
     const resolvedStartSessionId = allowsGlobalStart ? (startSessionId ?? '') : startSessionId;
     if (!resolvedStartSessionId && !allowsGlobalStart) return;
     fireAndForget(voiceSessionManager.toggle(resolvedStartSessionId ?? ''), { tag: 'VoiceSurface.toggle' });
-  };
-
-  const onClearPress = () => {
-    if (props.variant === 'session' && feedSessionId) {
-      voiceActivityController.clearSession(feedSessionId);
-      return;
-    }
-    const state = useVoiceActivityStore.getState();
-    for (const sid of Object.keys(state.eventsBySessionId ?? {})) {
-      voiceActivityController.clearSession(sid);
-    }
   };
 
   const containerStyle = [
@@ -455,7 +407,77 @@ function VoiceSurfaceContent(props: VoiceSurfaceProps & Readonly<{ readingAloud:
         </View>
       </View>
 
-      {activityFeedEnabled ? (
+      {activityFeedEnabled ? <VoiceSurfaceActivityFeed
+        variant={props.variant} sessionId={props.sessionId} expanded={props.expanded} setExpanded={props.setExpanded}
+        status={snap.status} autoExpandOnStart={activityFeedAutoExpandOnStart}
+        hydrateTranscript={props.hydrateTranscript} transcriptEpoch={props.transcriptEpoch}
+        hydratedVoiceAgentEpochRef={props.hydratedVoiceAgentEpochRef}
+      /> : null}
+    </View>
+  );
+}
+
+function VoiceSurfaceActivityFeed(props: Readonly<{
+  variant: VoiceSurfaceVariant; sessionId?: string | null; expanded: boolean;
+  setExpanded: React.Dispatch<React.SetStateAction<boolean>>; status: VoiceSessionStatus;
+  autoExpandOnStart: boolean; hydrateTranscript: boolean; transcriptEpoch: number;
+  hydratedVoiceAgentEpochRef: React.RefObject<number | null>;
+}>) {
+  const { theme } = useUnistyles();
+  const styles = stylesheet;
+  const { expanded, setExpanded } = props;
+  const feedSessionId = props.variant === 'session' && typeof props.sessionId === 'string' ? props.sessionId : null;
+  // Avoid selectors that allocate new arrays on every getSnapshot call (can infinite-loop in React 18).
+  const eventsBySessionId = useVoiceActivityStore((s) => s.eventsBySessionId);
+  const events = React.useMemo(() => {
+    if (props.variant === 'session') {
+      return feedSessionId ? (eventsBySessionId[feedSessionId] ?? EMPTY_EVENTS) : EMPTY_EVENTS;
+    }
+
+    const all: VoiceActivityEvent[] = [];
+    for (const v of Object.values(eventsBySessionId ?? {})) {
+      if (Array.isArray(v)) all.push(...v);
+    }
+    return all.length === 0 ? EMPTY_EVENTS : all;
+  }, [eventsBySessionId, feedSessionId, props.variant]);
+
+  const hydratedVoiceAgentEpochRef = props.hydratedVoiceAgentEpochRef;
+  React.useEffect(() => {
+    if (!props.hydrateTranscript || hydratedVoiceAgentEpochRef.current === props.transcriptEpoch) return;
+
+    hydratedVoiceAgentEpochRef.current = props.transcriptEpoch;
+    fireAndForget(hydrateVoiceAgentActivityFromCarrierSession(), { tag: 'VoiceSurface.hydrateVoiceAgentActivityFromCarrierSession' });
+  }, [props.hydrateTranscript, props.transcriptEpoch, hydratedVoiceAgentEpochRef]);
+
+  const lastStatusRef = React.useRef(props.status);
+  React.useEffect(() => {
+    const prev = lastStatusRef.current;
+    lastStatusRef.current = props.status;
+    if (!props.autoExpandOnStart) return;
+    if (expanded) return;
+    if (prev === 'disconnected' && props.status !== 'disconnected') {
+      setExpanded(true);
+    }
+  }, [props.autoExpandOnStart, expanded, props.status, setExpanded]);
+
+  const visibleEvents = React.useMemo(() => {
+    if (!Array.isArray(events) || events.length === 0) return EMPTY_EVENTS;
+    const base = props.variant === 'sidebar' ? [...events].sort(sortVoiceActivityEventsByTsThenId) : events;
+    const tail = base.length > 50 ? base.slice(base.length - 50) : base;
+    return [...tail].reverse();
+  }, [events, props.variant]);
+  const onClearPress = () => {
+    if (props.variant === 'session' && feedSessionId) {
+      voiceActivityController.clearSession(feedSessionId);
+      return;
+    }
+    const state = useVoiceActivityStore.getState();
+    for (const sid of Object.keys(state.eventsBySessionId ?? {})) {
+      voiceActivityController.clearSession(sid);
+    }
+  };
+
+  return (
         <View style={styles.feedContainer}>
           <View style={styles.feedHeader}>
               <Pressable
@@ -495,8 +517,6 @@ function VoiceSurfaceContent(props: VoiceSurfaceProps & Readonly<{ readingAloud:
             <VoiceSurfaceActivityEventsList events={events} visibleEvents={visibleEvents} />
           ) : null}
         </View>
-      ) : null}
-    </View>
   );
 }
 

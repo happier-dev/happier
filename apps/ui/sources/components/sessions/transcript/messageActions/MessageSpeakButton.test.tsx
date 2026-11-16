@@ -11,6 +11,11 @@ import { stopReadAloud } from '@/voice/local/readAloudState';
 import { setVoiceSessionSnapshot, useVoiceSessionStore } from '@/voice/session/voiceSessionStore';
 import { NavigationContext } from '@react-navigation/native';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { voiceActivityController } from '@/voice/activity/voiceActivityController';
+import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
+import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -75,6 +80,7 @@ describe('MessageSpeakButton', () => {
         storage.setState(initialStorageState, true);
         setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
         useVoiceTargetStore.setState(initialVoiceTargetState, true);
+        useVoiceActivityStore.setState({ eventsBySessionId: {} });
         utterances = [];
         expoSpeech.speak.mockReset();
         expoSpeech.stop.mockReset();
@@ -203,12 +209,12 @@ describe('MessageSpeakButton', () => {
                 {renderAppStackScreenWithVoiceSurface({ options: {}, children })}
             </NavigationContext.Provider>;
         };
-        const screen = await renderScreen(shell(<><MessageSpeakButton messageKey="m1" text="hello" testID="speak" />{surfaces}</>));
+        const screen = await renderScreen(<>{shell(<></>, false, 'previous')}{shell(<><MessageSpeakButton messageKey="m1" text="hello" testID="speak" />{surfaces}</>)}</>);
         await act(async () => { screen.pressByTestId('speak'); });
         if (phase === 'preparing') await vi.waitFor(() => expect(synthesis.signal).not.toBeNull());
         await act(async () => {
             useVoiceTargetStore.getState().setScope('global');
-            screen.tree.update(<>{shell(<></>, false, 'previous')}{shell(surfaces)}</>);
+            screen.tree.update(<>{shell(<></>, false, 'previous')}{shell(<>{null}{surfaces}</>)}</>);
         });
 
         expect(expoSpeech.stop).not.toHaveBeenCalled();
@@ -221,7 +227,84 @@ describe('MessageSpeakButton', () => {
         if (phase === 'speaking') expect(expoSpeech.stop).toHaveBeenCalledTimes(1);
         else expect(synthesis.signal?.aborted).toBe(true);
         expect(useVoiceSessionStore.getState()).toMatchObject({ status: 'connected', sessionId: 's1', mode: 'idle' });
+        expect(useVoiceTargetStore.getState().scope).toBe('global');
         expect(controls('message.stopReadAloudA11y')).toHaveLength(0);
         expect(controls('voiceAssistant.tapToEnd')).toHaveLength(1);
+        await act(async () => {
+            setVoice(voiceSettingsParse({ ...storage.getState().settings.voice,
+                ui: { ...storage.getState().settings.voice.ui, scopeDefault: 'global' } }));
+        });
+        await act(async () => {
+            setVoice(voiceSettingsParse({ ...storage.getState().settings.voice,
+                ui: { ...storage.getState().settings.voice.ui, scopeDefault: 'session' } }));
+        });
+        expect(useVoiceTargetStore.getState().scope).toBe('session');
+    });
+
+    it('preserves an expanded live feed and avoids activity work in standalone playback', async () => {
+        const { MessageSpeakButton } = await import('./MessageSpeakButton');
+        const { VoiceSurface } = await import('@/components/voice/surface/VoiceSurface');
+        setup();
+        setVoice(voiceSettingsParse({ ...localVoice, ui: { surfaceLocation: 'session', scopeDefault: 'session', activityFeedEnabled: true } }));
+        voiceActivityController.appendUserText('s1', 'local_conversation', 'keep this activity visible');
+        let playbackCommits = 0;
+        const screen = await renderScreen(<>
+            <MessageSpeakButton messageKey="feed-message" text="hello" testID="speak" />
+            <VoiceSurface variant="session" sessionId="s1" />
+            <React.Profiler id="playback" onRender={() => { playbackCommits += 1; }}><VoiceSurface variant="global" /></React.Profiler>
+        </>);
+        const control = (label: string) => screen.findAllByType('Pressable').find(button => button.props.accessibilityLabel === label)!;
+        await act(async () => { control('voiceSurface.a11y.toggleActivity').props.onPress(); });
+        expect(screen.findAllByType('ScrollView')).toHaveLength(1);
+        await act(async () => { screen.pressByTestId('speak'); });
+        const before = playbackCommits;
+        await act(async () => { voiceActivityController.appendUserText('other', 'local_conversation', 'unrelated activity'); });
+        expect(playbackCommits).toBe(before);
+        await act(async () => { control('message.stopReadAloudA11y').props.onPress(); });
+        expect(screen.findAllByType('ScrollView')).toHaveLength(1);
+    });
+
+    it('preserves newer live activity instead of rehydrating an unchanged carrier epoch after playback', async () => {
+        const { MessageSpeakButton } = await import('./MessageSpeakButton');
+        const { VoiceSurface } = await import('@/components/voice/surface/VoiceSurface');
+        setup();
+        setVoice(voiceSettingsParse({ ...localVoice, ui: { surfaceLocation: 'sidebar', activityFeedEnabled: true },
+            adapters: { local_conversation: { tts: { provider: 'device' }, conversationMode: 'agent',
+                agent: { transcript: { persistenceMode: 'persistent', epoch: 3 } } } } }));
+        storage.setState({ sessions: { sys_voice: createSessionFixture({ id: 'sys_voice',
+            metadata: { path: '/voice', host: 'test.local',
+                systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } } }) },
+            sessionMessages: { sys_voice: createSessionMessagesFixture({ isLoaded: true }) } });
+        const screen = await renderScreen(<>
+            <MessageSpeakButton messageKey="carrier-message" text="hello" testID="speak" />
+            <VoiceSurface variant="sidebar" />
+            <VoiceSurface variant="global" />
+        </>);
+        await act(async () => {
+            voiceActivityController.appendUserText(VOICE_AGENT_GLOBAL_SESSION_ID, 'local_conversation', 'new live activity');
+            screen.pressByTestId('speak');
+        });
+        const stop = screen.findAllByType('Pressable').find(button => button.props.accessibilityLabel === 'message.stopReadAloudA11y')!;
+        await act(async () => { stop.props.onPress(); });
+        expect(useVoiceActivityStore.getState().eventsBySessionId[VOICE_AGENT_GLOBAL_SESSION_ID])
+            .toEqual([expect.objectContaining({ text: 'new live activity' })]);
+        await act(async () => {
+            setVoice(voiceSettingsParse({ ...storage.getState().settings.voice,
+                ui: { ...storage.getState().settings.voice.ui, activityFeedEnabled: false } }));
+        });
+        storage.setState({ sessionMessages: { sys_voice: createSessionMessagesFixture({ isLoaded: true,
+            messageIdsOldestFirst: ['persisted-message'], messagesById: { 'persisted-message': {
+                kind: 'user-text', id: 'persisted-message', localId: null, seq: 1, createdAt: 1, text: 'new persisted history',
+                meta: { happier: { kind: 'voice_agent_turn.v1', payload: {
+                    v: 1, epoch: 3, role: 'user', voiceAgentId: 'agent-1', ts: 1,
+                } } },
+            } },
+        }) } });
+        await act(async () => {
+            setVoice(voiceSettingsParse({ ...storage.getState().settings.voice,
+                ui: { ...storage.getState().settings.voice.ui, activityFeedEnabled: true } }));
+        });
+        expect(useVoiceActivityStore.getState().eventsBySessionId[VOICE_AGENT_GLOBAL_SESSION_ID])
+            .toEqual([expect.objectContaining({ text: 'new persisted history' })]);
     });
 });

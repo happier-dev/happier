@@ -6,7 +6,7 @@ import { getCachedServerFeaturesSnapshot, subscribeServerFeaturesSnapshot } from
 import { subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import type { FeatureLocalPolicySettings } from '@/sync/domains/features/featureLocalPolicy';
-import { cancelLocalVoiceRecording, getLocalVoiceState } from './localVoiceEngine';
+import { cancelLocalVoiceRecording } from './localVoiceEngine';
 
 import { isReadAloudAvailable, resolveLocalVoiceAdapterSettings, type LocalVoiceSettingsInput } from './localVoiceSettings';
 import {
@@ -69,17 +69,19 @@ export async function toggleReadAloud(params: Readonly<{
   };
   const unregisterRun = localVoicePlaybackController.registerStopper(stopRun);
   const untrackRun = trackReadAloudStopper(stopRun);
-  const { config } = resolveLocalVoiceAdapterSettings(params.settings);
   try {
-    const localVoice = getLocalVoiceState();
-    if (localVoice.status === 'recording' && localVoice.sessionId) {
-      await cancelLocalVoiceRecording();
+    let settings = params.settings;
+    const cancellingInput = cancelLocalVoiceRecording();
+    if (cancellingInput) {
+      await cancellingInput;
       if (!isReadAloudRunCurrent(run)) return true;
-      if (!canReadAloud(storage.getState().settings)) return true;
+      settings = storage.getState().settings;
+      if (!canReadAloud(settings)) return true;
     }
+    const { config } = resolveLocalVoiceAdapterSettings(settings);
     return await speakAssistantText({
       text: params.text,
-      settings: params.settings,
+      settings,
       networkTimeoutMs: resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000),
       // Registered with the shared controller (a live barge-in stops read-aloud) and tracked here
       // (a live reply can stop read-aloud without counting as a barge-in).

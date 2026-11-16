@@ -16,7 +16,7 @@ import { toggleReadAloud } from './readAloud';
 import { getReadAloudActiveKey } from './readAloudState';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
-const nativeAudio = vi.hoisted(() => ({ record: vi.fn(), stop: vi.fn() }));
+const nativeAudio = vi.hoisted(() => ({ prepare: vi.fn(), record: vi.fn(), stop: vi.fn() }));
 const expoSpeechSpeak = vi.hoisted(() => vi.fn<(text: string, options?: { onDone?: () => void }) => void>());
 const expoSpeechStop = vi.hoisted(() => vi.fn(async () => {}));
 const recognition = vi.hoisted(() => {
@@ -49,7 +49,7 @@ vi.mock('expo-audio', () => ({
         setAudioModeAsync: async () => {},
         AudioRecorder: class {
             uri: string | null = null;
-            async prepareToRecordAsync() {}
+            async prepareToRecordAsync() { await nativeAudio.prepare(); }
             record() { nativeAudio.record(); }
             async stop() {
                 await nativeAudio.stop();
@@ -173,6 +173,7 @@ describe('local voice engine turn lifecycle (direct session)', () => {
         });
         submitMessage = vi.spyOn(sync, 'submitMessage');
         nativeAudio.record.mockClear();
+        nativeAudio.prepare.mockReset();
         nativeAudio.stop.mockClear();
         recognition.start.mockClear();
         recognition.stop.mockClear();
@@ -246,6 +247,50 @@ describe('local voice engine turn lifecycle (direct session)', () => {
         await reading;
         expect(expoSpeechSpeak).not.toHaveBeenCalled();
         expect(transcriptionRequests).toBe(0);
+        expect(submitMessage).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])('finishes and discards pending microphone preparation before starting read-aloud (replace: %s)', async (replace) => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true } } }));
+        await getServerFeaturesSnapshot({ force: true });
+        let finishPrepare: (() => void) | undefined;
+        nativeAudio.prepare.mockImplementationOnce(() => new Promise<void>(resolve => { finishPrepare = resolve; }));
+        const starting = localVoiceEngine.toggleLocalVoiceTurn('s1');
+        await vi.waitFor(() => expect(nativeAudio.prepare).toHaveBeenCalledTimes(1));
+        const reading = toggleReadAloud({ key: 'pending-start', text: 'Read this message', settings: storage.getState().settings });
+        const replacement = replace ? toggleReadAloud({ key: 'replacement', text: 'Read the replacement', settings: storage.getState().settings }) : null;
+        const spokeDuringPreparation = expoSpeechSpeak.mock.calls.length > 0;
+        finishPrepare?.();
+        await starting;
+        await reading;
+        if (replacement) await replacement;
+        expect(spokeDuringPreparation).toBe(false);
+        expect(nativeAudio.stop).toHaveBeenCalledTimes(1);
+        expect(expoSpeechSpeak).toHaveBeenCalledTimes(1);
+        expect(expoSpeechSpeak).toHaveBeenCalledWith(replace ? 'Read the replacement' : 'Read this message', expect.any(Object));
+        expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: 's1' });
+        expect(transcriptionRequests).toBe(0);
+        expect(submitMessage).not.toHaveBeenCalled();
+    });
+
+    it('uses the current TTS configuration after waiting for microphone cancellation', async () => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true },
+            voice: voiceSettingsParse({ providerId: 'local_direct', adapters: { local_direct: {
+                stt: { provider: 'openai_compat', openaiCompat: { baseUrl: 'https://stt.example.test' } },
+                tts: { provider: 'openai_compat', openaiCompat: { baseUrl: 'https://old-tts.example.test' } },
+            } } }),
+        } }));
+        await getServerFeaturesSnapshot({ force: true });
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        let finishStop: (() => void) | undefined;
+        nativeAudio.stop.mockImplementationOnce(() => new Promise<void>(resolve => { finishStop = resolve; }));
+        const reading = toggleReadAloud({ key: 'configuration-switch', text: 'Read privately', settings: storage.getState().settings });
+        configureDirectVoice({ autoSpeakReplies: true });
+        finishStop?.();
+        await expect(reading).resolves.toBe(true);
+        expect(expoSpeechSpeak).toHaveBeenCalledWith('Read privately', expect.any(Object));
         expect(submitMessage).not.toHaveBeenCalled();
     });
 
