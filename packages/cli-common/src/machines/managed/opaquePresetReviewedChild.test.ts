@@ -71,10 +71,7 @@ describe('opaque preset reviewed child issuer', () => {
       childId, { choice: 'x' })).toBe(true);
   });
 
-  it.each([
-    // An unlisted child of an approved parent inherits too (owner ruling 2026-11-15; covered below).
-    ['consumes the approved parent policy for a listed child once', 'power', true],
-  ] as const)('%s', async (_caseName, listedRole, admitted) => {
+  it('consumes the approved parent policy for a listed child once', async () => {
     const childAction = { pluginId: 'fixture.compute', localId: 'power' };
     const childId = formatQualifiedPluginActionId(childAction);
     // The person approved this parent with the child's explicit Require; a
@@ -83,8 +80,8 @@ describe('opaque preset reviewed child issuer', () => {
       actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { [childId]: { approvalRequiredSurfaces: ['cli'] } } }) };
     const parentInput = { homeId: 'home', managedId: 'managed', power: 'stop' };
     const parentPort = createHostReviewedChildPortV1({ actionId: 'machines.managed.power.set', input: parentInput, context,
-      reviewAdmitted: true, plan: { children: [{ action: { ...childAction, localId: listedRole }, role: listedRole }] },
-      policies: [{ action: { ...childAction, localId: listedRole }, role: listedRole, surface: 'cli', requiredActionIds: [childId] }],
+      reviewAdmitted: true, plan: { children: [{ action: childAction, role: 'power' }] },
+      policies: [{ action: childAction, role: 'power', surface: 'cli', requiredActionIds: [childId] }],
       execute: async () => ({ ok: true, result: {} }) });
     const runs: ActionExecutorContext[] = [];
     const port = createManagedOpaquePresetReviewedChildPortV1({
@@ -98,11 +95,6 @@ describe('opaque preset reviewed child issuer', () => {
     });
 
     const result = await port!.invoke({ action: childAction, role: 'power', input: { power: 'stop' } });
-    if (!admitted) {
-      expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
-      expect(runs).toHaveLength(0);
-      return;
-    }
     expect(result).toEqual({ ok: true, result: { stopped: true } });
     expect(runs).toHaveLength(1);
     expect(isHostAdmittedReviewedChildPolicyV1(readHostReviewedChildOperationV1(runs[0], childId, { power: 'stop' }),

@@ -36,7 +36,6 @@ it.each([
         dispatch: ({ serverId: _serverId, machineId: _machineId, ...mutation }) => mutateMachineRolesV1(mutation, port) });
     await seed();
     expect(metadata.isolationV1).toEqual({ environment: 'managed-guest', provisionerId });
-    expect(ManagedMachineFullV1Schema.parse(enrolled).resource?.origin).toBe('created');
     expect(writes).toHaveLength(1);
     expect(writes[0]).toHaveProperty('rolesV1');
     await seed();

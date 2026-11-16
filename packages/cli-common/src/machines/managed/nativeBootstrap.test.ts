@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { JsonValue } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
-import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ManagedEnrollmentFullCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createManagedNativeBootstrapIO, ensureManagedGuestSessionHolder } from './nativeBootstrap.js';
 import { openManagedNativeChannel } from './nativeChannel.js';
@@ -29,7 +29,6 @@ describe('portable native enrollment IO', () => {
         });
         await io.putFile({ path: '/payload', bytes: bytes.subarray(1, 4) });
         expect(await io.exec({ command: 'read-private', input: '秘密\n' })).toEqual({ status: 0, stdout: '\uFEFFhéllo', stderr: '' });
-        expect(decodeBase64(encodeBase64(bytes.subarray(1, 4)))).toEqual(bytes.subarray(1, 4));
     });
     it('never decodes incomplete native output as command success', async () => {
         const io = createManagedNativeBootstrapIO(correlation, async () => ({ stdoutBase64: 'c2VjcmV0', stderrBase64: '',

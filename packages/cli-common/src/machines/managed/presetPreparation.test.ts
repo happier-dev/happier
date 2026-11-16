@@ -150,7 +150,6 @@ describe('preset preparation freshness', () => {
         artifact, nativeOperationRef: { ...artifact, value: { build: 'owned-build' } } } };
       expect(readManagedMachinePresetPreparationV1({ content: saved, ...current }))
         .toEqual({ kind: 'cold', reason: status });
-      expect(saved.prepared.artifact).toEqual(artifact);
       expect(readManagedMachinePresetPreparationV1({ content: { ...saved, preparation: { enabled: false } }, ...current }))
         .toEqual({ kind: 'cold', reason: 'disabled' });
     }

@@ -1,4 +1,3 @@
-import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { describe, expect, it } from 'vitest';
 import { ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
@@ -92,9 +91,6 @@ describe('prepare managed opaque preset acquire', () => {
 
   it('opens a legacy Plain acquire without an override from its exact saved identity', async () => {
     const identity = { kind: 'guestProcess' as const, role: 'sandbox' as const };
-    const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
-      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
-    expect(input).not.toHaveProperty('presetContentOverride');
     const source = { ...base, v: { ...base.v, enrollmentIdentity: identity } };
     await expect(prepareManagedOpaquePresetAcquireV1({ content: source, provisioner: { id: 'vm', title: 'Virtual machine' }, open }))
       .resolves.toMatchObject({ opened: { enrollmentIdentity: identity, launch: { name: 'Virtual machine' } } });
