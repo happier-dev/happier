@@ -59,7 +59,7 @@ type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unkn
   | 'listWidthPx' | 'onListWidthChange' | 'onListWidthCommit' | 'onListWidthReset' | 'resizeKey'
 >>;
 type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAnatomy<unknown>,
-  | 'card' | 'rowRole' | 'kindLabel' | 'destination' | 'wrapItem' | 'glyph' | 'loadingGlyph' | 'glyphBadge' | 'title' | 'titleIdentifier' | 'titleSuffix' | 'titleControls' | 'leadingControl' | 'needsYou' | 'where' | 'byline'
+  | 'card' | 'rowRole' | 'kindLabel' | 'destination' | 'wrapItem' | 'glyph' | 'loadingGlyph' | 'glyphBadge' | 'title' | 'titleIdentifier' | 'titleSuffix' | 'titleControls' | 'leadingControl' | 'needsYou' | 'where' | 'byline' | 'bylineLead'
   | 'reason' | 'listFact' | 'signal'
   | 'agent' | 'age' | 'titleMeta' | 'titleMetaAlign'
   | 'fields' | 'peek' | 'preview' | 'description' | 'action' | 'accessibilityLabel' | 'accessibilityHint'

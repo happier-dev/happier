@@ -657,9 +657,9 @@ function groupBandFrame(heightPx: number, textInsetPx: number) {
 }
 
 /** A group's band on a page list's shared sheet: the table's band, growing with a phone's stacked heading. */
-function sheetGroupBandStyle(heightPx: number, fill: string) {
+function sheetGroupBandStyle(heightPx: number, fill: string | undefined) {
   const { height, ...frame } = groupBandFrame(heightPx, HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx);
-  return { ...frame, minHeight: height, justifyContent: 'center', backgroundColor: fill } as const;
+  return { ...frame, minHeight: height, justifyContent: 'center' as const, ...(fill === undefined ? {} : { backgroundColor: fill }) };
 }
 
 /**
