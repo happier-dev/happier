@@ -1,7 +1,5 @@
 import * as React from 'react';
-import type { MachinePresetItemV1, MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import type { MachineSetupCombinedPlanResultV1, MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { DOCKER_ENGINE_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
+import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { prepareMachineSetupSoftwareApplyInput, readMachineSetupSoftwareCurrentPlan } from '@/components/settings/machines/managed/machineSetupSoftware';
 import { readMachineSetupRecipeInputState } from '@/components/settings/machines/managed/machineSetupRecipeInputsModel';
 import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
@@ -10,47 +8,9 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
-/**
- * The Docker host software a Machine needs before it runs a Compose Environment: the bundled recipe's own
- * selection (the protocol's `DOCKER_ENGINE_RECIPE_REF_V1`, which the recipes plugin declares), planned by the existing Machine setup Plan.
- */
-export const DEPLOY_HOST_DOCKER_ITEM = { kind: 'softwareRecipe', selection: {
-  ref: DOCKER_ENGINE_RECIPE_REF_V1, inputs: {},
-} } as const satisfies MachinePresetItemV1;
-
-export type DeployHostReadiness = 'ready' | 'needsSetup' | 'unknown';
-
-/**
- * What the Plan says about this Machine's Docker recipe: `satisfied` passes its checks, `drifted` needs setup.
- * Anything else (unchecked, unsupported, a failed Plan) stays unknown, never ready.
- */
-type HostPlan = MachineSetupPreparedApply | MachineSetupCombinedPlanResultV1;
-
-function readDeployHostRecipe(result: HostPlan, machineId: string) {
-  let plan: Pick<MachineSetupPlanResultV1, 'sources' | 'support'> | undefined;
-  if ('ok' in result) {
-    if (!result.ok) return undefined;
-    const target = ('targets' in result.input ? result.input.targets : [result.input]).find(entry => entry.machineId === machineId);
-    const facts = result.facts.find(entry => entry.machineId === machineId);
-    if (target && facts) plan = { sources: target.sources, support: facts.support };
-  } else {
-    const target = result.targets.find(entry => entry.machineId === machineId);
-    if (target && 'plan' in target) plan = target.plan;
-  }
-  if (!plan) return undefined;
-  const { sources, support } = plan;
-  return support.flatMap(row => {
-    const source = sources[row.sourceIndex];
-    const item = source && source.kind !== 'accountPresetOpaque' ? source.setup.items?.[row.itemIndex] : undefined;
-    return item && item.kind !== 'app' && item.selection.ref.pluginId === DEPLOY_HOST_DOCKER_ITEM.selection.ref.pluginId
-      && item.selection.ref.recipeId === DEPLOY_HOST_DOCKER_ITEM.selection.ref.recipeId ? [{ item, status: row.status }] : [];
-  })[0];
-}
-
-export function readDeployHostReadiness(result: HostPlan, machineId: string): DeployHostReadiness {
-  const status = readDeployHostRecipe(result, machineId)?.status;
-  return status === 'satisfied' ? 'ready' : status === 'drifted' ? 'needsSetup' : 'unknown';
-}
+import { DEPLOY_HOST_DOCKER_ITEM, readDeployHostRecipe, readDeployHostReadiness } from '@happier-dev/protocol/deployments/deployHostReadiness';
+export { DEPLOY_HOST_DOCKER_ITEM, readDeployHostReadiness } from '@happier-dev/protocol/deployments/deployHostReadiness';
+export type { DeployHostReadiness } from '@happier-dev/protocol/deployments/deployHostReadiness';
 
 const frontDoor = createFrontDoorActionExecute();
 const HOST_RECIPE_SECTIONS = Object.freeze(['familiesById.machineRecipes']);

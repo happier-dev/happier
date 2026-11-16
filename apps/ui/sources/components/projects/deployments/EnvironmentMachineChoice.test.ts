@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { DEPLOY_HOST_DOCKER_ITEM, readDeployHostReadiness } from './EnvironmentMachineChoice';
 
@@ -19,6 +20,7 @@ describe('deploy host readiness from the Machine setup Plan', () => {
 
   it('keeps an unchecked or failed Plan unknown, never ready', () => {
     expect(readDeployHostReadiness(prepared('unverifiable'), 'vps-3')).toBe('unknown');
-    expect(readDeployHostReadiness({ ok: false, errorCode: 'machine_offline', error: 'machine_offline' }, 'vps-3')).toBe('unknown');
+    const failed = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'machine_offline', error: 'machine_offline' });
+    expect(readDeployHostReadiness(failed, 'vps-3')).toBe('unknown');
   });
 });
