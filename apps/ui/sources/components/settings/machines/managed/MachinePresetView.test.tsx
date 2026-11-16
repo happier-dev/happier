@@ -55,6 +55,7 @@ import type { MachinePresetDetailModel } from './MachinePresetDetail';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetUpdateInputV1Schema, ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { openManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
@@ -388,7 +389,7 @@ async function seedAccountProvisioner(serverId: string, input: unknown) {
   const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
   const manifest = PluginPortableReleaseManifestV1Schema.parse(input);
   onTestFinished(installBundledPluginUiDeclarationsForTests([{ pluginId: manifest.id, pluginVersion: manifest.version,
-    packageName: manifest.id, displayName: manifest.displayName, hasMachineProvisioners: true, entriesById: {}, normalizedManifest: manifest }]));
+    packageName: manifest.id, displayName: resolvePluginLocalizedStringV2Text(manifest.displayName), hasMachineProvisioners: true, entriesById: {}, normalizedManifest: manifest }]));
   onTestFinished(clearPluginAccountAvailabilityProjection);
   const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
   replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
@@ -541,7 +542,7 @@ describe('reachable preset detail', () => {
       await hook.rerender();
       expect(onChanged).not.toHaveBeenCalled();
       await act(async () => actionOperationStore.mergeSnapshots({ serverId: scopeId,
-        snapshots: [{ ...snapshot, revision: 2, state: 'succeeded', finishedAt: 3 }] }));
+        snapshots: [{ ...snapshot, revision: 2, state: 'succeeded', settledAt: 3 }] }));
       expect(onChanged).toHaveBeenCalledTimes(1);
       expect(hook.getCurrent().canCancel).toBe(false);
       await hook.rerender();
