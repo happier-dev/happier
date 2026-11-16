@@ -72,3 +72,61 @@ it('keeps physical main arrangement, search and visibility when presented detail
         await screen.unmount();
     }
 });
+
+// Switching Sessions remounts the pane scope and its detail page under the one long-lived chrome provider.
+// The new controls render while the previous page's model is still the chrome value; nothing they keep may
+// hold that model, or each page's main-column controls pin the previous page (and its whole view) in a chain.
+it('releases previous detail pages across remounts under one chrome provider', async () => {
+    const { setFlagsFromString } = await import('node:v8');
+    const { runInNewContext } = await import('node:vm');
+    setFlagsFromString('--expose-gc');
+    const collectGarbage = runInNewContext('gc') as () => void;
+    const { usePaneMainColumn } = await import('./mainColumn/usePaneMainColumn');
+    const scope = { serverId: 'home', accountId: 'alice' };
+    const items = resolveDetailNavigationItems({ scope: 'environment' });
+    const pages: WeakRef<object>[] = [];
+    function Detail(props: Readonly<{ page: object }>) {
+        const mainControls = React.useRef(usePaneMainColumn());
+        mainControls.current = usePaneMainColumn();
+        usePresentedDetailNavigation({ pageKind: 'environment', identity: 'staging', scope, items, activeId: 'overview',
+            phone: false, presented: true, mainControls, selectPage: () => { void props.page; } });
+        return null;
+    }
+    function Page(props: Readonly<{ index: number }>) {
+        const [page] = React.useState(() => { const value = { index: props.index }; pages.push(new WeakRef(value)); return value; });
+        const layout: AppPaneScopeLayoutState = { arrangement: 'session', mainHidden: false, mainDrawerOpen: true,
+            effectiveDetailsOpen: false, detailsAvailable: false, containerWidthPx: 1200, containerHeightPx: 900,
+            mainRegionWidthPx: 800, mainRegionHeightPx: 900, multiPaneEnabled: true, deviceType: 'tablet',
+            layout: { kind: 'twoPane', main: 'docked', right: 'docked', details: 'hidden' }, bottomPresentation: 'hidden' };
+        return <AppPaneScopeLayoutProvider value={layout}><AppPaneScopeControls scopeId={`session-${props.index}`}
+            descriptor={{ hideLabel: 'Hide', showLabel: 'Show', identity: { name: 'Session' } }}
+            rightOpen detailsOpen={false} sideAvailable arrangementHonoured setHidden={() => {}}
+            setSideVisible={() => {}} sideActions={{ current: null }}><Detail page={page} /></AppPaneScopeControls></AppPaneScopeLayoutProvider>;
+    }
+    let show = (_index: number) => {};
+    let rerender = () => {};
+    function Fixture() {
+        const [index, setIndex] = React.useState(0);
+        const [, setTick] = React.useState(0);
+        show = setIndex;
+        rerender = () => setTick((tick) => tick + 1);
+        return <Page key={index} index={index} />;
+    }
+    const screen = await renderScreen(<PresentedDetailNavigationProvider><Fixture /></PresentedDetailNavigationProvider>);
+    try {
+        const switches = 6;
+        for (let index = 1; index <= switches; index += 1) await act(async () => show(index));
+        // The last removed page stays referenced until the next commit (observed); a later render releases it.
+        await act(async () => rerender());
+        for (let pass = 0; pass < 3; pass += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            collectGarbage();
+        }
+        expect(pages).toHaveLength(switches + 1);
+        // Only the mounted page stays reachable.
+        expect(pages.slice(0, -1).filter((page) => page.deref() !== undefined)).toHaveLength(0);
+        expect(pages.at(-1)?.deref()).toBeDefined();
+    } finally {
+        await screen.unmount();
+    }
+});

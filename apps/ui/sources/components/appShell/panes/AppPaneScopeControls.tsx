@@ -93,6 +93,10 @@ export function AppPaneScopeControls(props: Readonly<{
         if (layout?.deviceType === 'phone') return;
         return followSignal(focus, (focused) => {
             if (!focused) return;
+            // Read through the ref: no closure here may capture a render's `detailNavigation`. On a remount
+            // the first render still sees the previous page's model, and the stable callbacks above share
+            // this render's closure scope, so capturing it would pin every earlier page in a chain.
+            const { detailNavigation } = current.current;
             const unregisterMain = detailNavigation ? detailNavigation.bindMainColumn(readPhysicalMain)
                 : registerShellColumnActionOwner('main', readMain);
             const unregisterSide = !detailNavigation || detailNavigation.registerSide === false
