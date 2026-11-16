@@ -1,4 +1,4 @@
-import { projectsDeclarationIdentities, releaseLessDeclarationIdentitySql } from './declarationReadRows';
+import { releaseLessDeclarationIdentitySql } from './declarationReadRows';
 import type { Tx } from '@/storage/inTx';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
 import type { CurrentPluginDeclarationV1 } from './currentDeclaration';
@@ -31,17 +31,21 @@ export async function readIntentRows(tx: Tx, input: Readonly<{
     take?: number;
     /** Read declaration identities only (the body-free storage summary), never bodies. */
     list?: boolean;
+    /** Also read the declarations a disabled intent holds (a writer claim rejoins them). */
+    includeDisabled?: boolean;
     omitDeclarations?: boolean;
 }>): Promise<readonly IntentReadRow[]> {
     const prisma = getActivePrismaRuntime();
     const provider = getDbProviderFromEnv(process.env, 'postgres');
     const mysql = provider === 'mysql';
-    const summarize = projectsDeclarationIdentities() && input.list === true && !input.omitDeclarations;
+    const summarize = input.list === true && !input.omitDeclarations;
     const quote = mysql ? '`' : '"';
     const identifier = (name: string) => prisma.raw(`${quote}${name}${quote}`);
     const column = (alias: 'a' | 'i', name: string) => prisma.sql`${prisma.raw(alias)}.${identifier(name)}`;
     const text = (name: string) => prisma.sql`CAST(${column('i', name)} AS ${prisma.raw(mysql ? 'CHAR' : 'TEXT')})`;
     const declarationSummary = summarize ? releaseLessDeclarationIdentitySql() : prisma.empty;
+    const holdsDeclaration = input.includeDisabled ? prisma.sql`${column('i', 'desiredVersion')} IS NULL`
+        : prisma.sql`${column('i', 'enabled')} AND ${column('i', 'desiredVersion')} IS NULL`;
     return tx.$queryRaw<IntentReadRow[]>(prisma.sql`
         SELECT ${column('a', 'seq')} AS ${identifier('availabilityCursor')},
             ${column('i', 'pluginId')} AS ${identifier('pluginId')},
@@ -50,10 +54,11 @@ export async function readIntentRows(tx: Tx, input: Readonly<{
             ${column('i', 'offlineUiHosting')} AS ${identifier('offlineUiHosting')},
             ${text('writableCollections')} AS ${identifier('writableCollectionsText')},
             ${input.omitDeclarations || summarize ? prisma.sql`NULL`
-                : prisma.sql`CASE WHEN ${column('i', 'enabled')} AND ${column('i', 'desiredVersion')} IS NULL
+                : prisma.sql`CASE WHEN ${holdsDeclaration}
                     THEN ${text('releaseLessDeclaration')} ELSE NULL END`} AS ${identifier('releaseLessDeclarationText')},
-            ${summarize ? prisma.sql`CASE WHEN ${column('i', 'enabled')} AND ${column('i', 'desiredVersion')} IS NULL
-                THEN CAST((${declarationSummary}) AS TEXT) ELSE NULL END AS "releaseLessDeclarationSummaryText",` : prisma.empty}
+            ${summarize ? prisma.sql`CASE WHEN ${holdsDeclaration}
+                THEN CAST((${declarationSummary}) AS ${prisma.raw(mysql ? 'CHAR' : 'TEXT')}) ELSE NULL END
+                AS ${identifier('releaseLessDeclarationSummaryText')},` : prisma.empty}
             ${column('i', 'revision')} AS ${identifier('revision')}
         FROM ${identifier('Account')} a LEFT JOIN ${identifier('AccountPluginIntent')} i
             ON ${column('i', 'accountId')} = ${column('a', 'id')}

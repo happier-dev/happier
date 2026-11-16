@@ -110,6 +110,43 @@ describe("Availability intent reads on SQLite", () => {
         expect(replaced.size).toBe(0);
     });
 
+    it("rejoins digest claims without transferring stored manifest bodies, and a new Machine's digest claim stores the full body", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const pluginId = "com.acme.sqlite-digest-claim";
+        const marker = "sqlite-digest-claim-body";
+        const declaration = wideDeclaration(pluginId, marker);
+        const machineA = { machineId: "digest-machine-a", installationId: "digest-installation-a" };
+        const machineB = { machineId: "digest-machine-b", installationId: "digest-installation-b" };
+        const identity = { pluginId, manifestDigestSha256: declaration.manifestDigestSha256 };
+        const admitted = await operations.claimCollectionWriters({ accountId: account.id,
+            input: { manifest: declaration.manifest }, publisher: machineA });
+
+        // A daemon restart claims every bundled plugin by digest; an unchanged rejoin needs no body.
+        const rejoin = await observeBodyCopies(marker, () => operations.claimCollectionWriters({ accountId: account.id,
+            input: identity, publisher: machineA }));
+        expect(rejoin.result.intent.revision).toBe(admitted.intent.revision);
+        expect(rejoin.copies).toBe(0);
+
+        // A disabled intent still holds its declaration: the rejoin finds it without a body upload.
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId } }, data: { enabled: false } });
+        const disabled = await observeBodyCopies(marker, () => operations.claimCollectionWriters({ accountId: account.id,
+            input: identity, publisher: machineA }));
+        expect(disabled.result.intent).toMatchObject({ enabled: false, revision: admitted.intent.revision });
+        expect(disabled.copies).toBe(0);
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId } }, data: { enabled: true } });
+
+        // A second Machine adopting the held digest writes its entry; the stored body stays complete.
+        await operations.claimCollectionWriters({ accountId: account.id, input: identity, publisher: machineB });
+        const stored = await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId: account.id, pluginId } } });
+        const machines = readCurrentMachinePluginDeclarationsV1(stored, pluginId);
+        expect(machines.map(entry => entry.machineId)).toEqual([machineA.machineId, machineB.machineId]);
+        for (const entry of machines) expect(entry.declaration.manifest).toEqual(declaration.manifest);
+
+        const missing = await operations.claimCollectionWriters({ accountId: account.id,
+            input: { pluginId, manifestDigestSha256: `sha256:${"0".repeat(64)}` }, publisher: machineA }).then(() => null, (error: unknown) => error);
+        expect(missing).toMatchObject({ code: "plugin_declaration_not_found" });
+    });
+
     it("projects the same declarations as the domain owner reading the full stored body, for malformed and legacy envelopes", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const pluginId = "com.acme.sqlite-envelope-projection";

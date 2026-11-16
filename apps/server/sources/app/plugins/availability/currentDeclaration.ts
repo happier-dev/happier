@@ -4,7 +4,7 @@ import type { PluginAccountAvailabilityIntentReadResponseV1 } from '@happier-dev
 import { PluginUiArtifactDigestV1Schema, type PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 
 import type { Tx } from "@/storage/inTx";
-import { projectsDeclarationIdentities, readDeclarationIntentIdentitiesTx, readSelectedDeclarationManifestsTx } from './declarationReadRows';
+import { readDeclarationIntentIdentitiesTx, readSelectedDeclarationManifestsTx } from './declarationReadRows';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 /**
@@ -199,14 +199,31 @@ type ReleaseLessDeclarationListSummary = Readonly<{
     machineDeclarations: NonNullable<PluginAccountAvailabilityIntentReadResponseV1['machineDeclarations']>;
 }>;
 
+function declarationManifestPath(location: number | 'legacy' | 'root'): readonly string[] {
+    return typeof location === 'number' ? ['machines', String(location), 'declaration', 'manifest']
+        : location === 'legacy' ? ['legacyDeclaration', 'manifest'] : ['manifest'];
+}
+
+/**
+ * The held declaration with this digest and its storage path, through the same
+ * envelope parser. Over body-free identities its manifest carries no contributions.
+ */
+export function findReleaseLessDeclarationByDigest(stored: unknown, pluginId: string, digest: string):
+    Readonly<{ declaration: ReleaseLessDeclarationV1; manifestPath: readonly string[] }> | null {
+    const store = readReleaseLessDeclarations(stored, pluginId, (entry, id, location) => {
+        const declaration = readReleaseLessDeclarationV1(entry, id);
+        return declaration ? { declaration, manifestPath: declarationManifestPath(location) } : null;
+    });
+    return [...store.machines.map(entry => entry.declaration), store.legacyDeclaration]
+        .find(held => held?.declaration.manifestDigestSha256 === digest) ?? null;
+}
+
 /** Select from body-free storage identities through the same parser and currentness owner. */
 export function readReleaseLessDeclarationListSummary(stored: unknown, pluginId: string, machine?: PluginDeclarationMachineV1): ReleaseLessDeclarationListSummary {
     const store = readReleaseLessDeclarations(stored, pluginId, (entry, id, location) => {
         const envelope = readReleaseLessDeclarationEnvelope(entry, id);
         if (!envelope) return null;
-        const manifestPath = typeof location === 'number' ? ['machines', String(location), 'declaration', 'manifest']
-            : location === 'legacy' ? ['legacyDeclaration', 'manifest'] : ['manifest'];
-        return { manifestDigestSha256: envelope.manifestDigestSha256, manifestPath,
+        return { manifestDigestSha256: envelope.manifestDigestSha256, manifestPath: declarationManifestPath(location),
             manifestVersion: (envelope.manifest as ParsedPluginManifestV2).version };
     });
     return {
@@ -343,10 +360,9 @@ export async function resolveCurrentPluginDeclarationsTx(params: Readonly<{
         declarationRefKey(release.pluginId, release.version),
         release,
     ] as const));
-    const projected = projectsDeclarationIdentities();
     const selected = new Map(params.refs.flatMap(ref => {
         const intent = intentsByPluginId.get(ref.pluginId);
-        if (ref.admittedDeclaration || !projected || !intent?.enabled || intent.desiredVersion !== null) return [];
+        if (ref.admittedDeclaration || !intent?.enabled || intent.desiredVersion !== null) return [];
         const current = readReleaseLessDeclarationListSummary(intent.releaseLessDeclaration, ref.pluginId,
             ref.machineId === undefined ? undefined : { machineId: ref.machineId,
                 ...(ref.machineInstallationId === undefined ? {} : { machineInstallationId: ref.machineInstallationId }) }).currentDeclaration;
@@ -363,7 +379,7 @@ export async function resolveCurrentPluginDeclarationsTx(params: Readonly<{
         const manifest = chosen ? readStoredPluginManifestV2(manifests.get(key), ref.pluginId) : null;
         const admitted = ref.admittedDeclaration;
         const release = releasesByRef.get(declarationRefKey(ref.pluginId, ref.version));
-        const declaration = !admitted && projected && intent?.desiredVersion === null
+        const declaration = !admitted && intent?.desiredVersion === null
             ? chosen && manifest ? { manifest, declarationDigestSha256: chosen.declarationDigestSha256 } : null
             : readCurrentPluginDeclarationV1({ ...ref, intent,
                 release: release && { ...release, normalizedManifest: admitted?.manifest ?? release.normalizedManifest } });

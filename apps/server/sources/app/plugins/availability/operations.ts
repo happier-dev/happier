@@ -1,5 +1,5 @@
 import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
-import { readDeclarationIntentIdentitiesTx } from './declarationReadRows';
+import { readDeclarationIntentIdentitiesTx, readSelectedDeclarationManifestsTx } from './declarationReadRows';
 import { readIntentRows, decodeIntentReadRow, readIntentListDeclarations } from './intentReadRows';
 import { updateIntentRow } from './intentWriteRows';
 import type { Prisma } from "@prisma/client";
@@ -66,6 +66,7 @@ import {
 import {
     createReleaseLessDeclarationV1,
     compactReleaseLessDeclarations,
+    findReleaseLessDeclarationByDigest,
     readCurrentReleaseLessDeclarationV1,
     readCurrentPluginDeclarationV1,
     readCurrentMachinePluginDeclarationsV1,
@@ -2379,26 +2380,47 @@ export function createPluginAvailabilityOperations(options: Readonly<{
         const pluginId = 'manifest' in input ? input.manifest.id : input.pluginId;
         try {
             return await inTx(async (tx) => {
+                // Reuse the list reader's body-free identities for rejoins. The
+                // canonical merge decides equality; its projected store is never
+                // written. Only a changed claim needs the complete Machine store.
+                const [row] = await readIntentRows(tx, { accountId: params.accountId, pluginId, list: true, includeDisabled: true });
+                let current: StoredIntentRow | null = row?.pluginId ? {
+                    ...decodeIntentReadRow(row),
+                    ...(row.releaseLessDeclarationSummaryText !== undefined ? {
+                        releaseLessDeclaration: row.releaseLessDeclarationSummaryText === null ? null
+                            : JSON.parse(row.releaseLessDeclarationSummaryText) as unknown,
+                    } : {}),
+                } : null;
                 // A digest names only a previously admitted body in this Account.
                 // Reuse the same declaration/Collection admission below; it is not
                 // an authorization grant and never reads another Account's row.
-                const stored = 'manifest' in input ? null : await tx.accountPluginIntent.findUnique({
-                    where: { accountId_pluginId: { accountId: params.accountId, pluginId } },
-                    select: { releaseLessDeclaration: true },
-                });
-                const declarations = 'manifest' in input ? null
-                    : readReleaseLessDeclarationsV2(stored?.releaseLessDeclaration, pluginId);
-                const claimedDeclaration = 'manifest' in input ? createReleaseLessDeclarationV1(input.manifest)
-                    : [...(declarations?.machines.map(entry => entry.declaration) ?? []), declarations?.legacyDeclaration]
-                        .find(declaration => declaration?.manifestDigestSha256 === input.manifestDigestSha256);
-                if (!claimedDeclaration) throw new PluginAvailabilityOperationError('plugin_declaration_not_found');
-                const { manifest } = claimedDeclaration;
+                // Its identity and accountCollections are read without the body.
+                const held = 'manifest' in input ? null
+                    : findReleaseLessDeclarationByDigest(current?.releaseLessDeclaration, pluginId, input.manifestDigestSha256);
+                if (!('manifest' in input) && !held) throw new PluginAvailabilityOperationError('plugin_declaration_not_found');
+                let claimedDeclaration = 'manifest' in input ? createReleaseLessDeclarationV1(input.manifest) : held!.declaration;
+                const claimedDigest = claimedDeclaration.manifestDigestSha256;
+                /** The complete held body, read with the complete store a changed claim writes. */
+                const readClaimedBody = (stored: StoredIntentRow | null) => {
+                    if ('manifest' in input) return claimedDeclaration;
+                    const body = findReleaseLessDeclarationByDigest(stored?.releaseLessDeclaration, pluginId, claimedDigest);
+                    if (!body) throw new PluginAvailabilityOperationError('plugin_declaration_not_found');
+                    return body.declaration;
+                };
+                let accountCollections = claimedDeclaration.manifest.contributes.accountCollections;
+                if (held) {
+                    const selected = await readSelectedDeclarationManifestsTx(tx, params.accountId, [{ key: 'claimed', pluginId,
+                        path: held.manifestPath, declarationDigestSha256: claimedDigest }], ['contributes', 'accountCollections']);
+                    if (!selected.has('claimed')) throw new PluginAvailabilityOperationError('plugin_declaration_not_found');
+                    // The server-normalized body of the validated producer (see readStoredPluginManifestV2).
+                    accountCollections = (selected.get('claimed') ?? undefined) as typeof accountCollections;
+                }
                 let claimed: readonly PluginCollectionContractRefV1[];
                 try {
                     claimed = await materializePluginCollectionContractsTx({
                         tx,
                         pluginId,
-                        contributions: manifest.contributes.accountCollections,
+                        contributions: accountCollections,
                     });
                 } catch (error) {
                     if (
@@ -2464,17 +2486,6 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                             && merged.unchanged,
                     };
                 };
-                // Reuse the list reader's body-free identities for rejoins. The
-                // canonical merge decides equality; its projected store is never
-                // written. Only a changed claim needs the complete Machine store.
-                const [row] = await readIntentRows(tx, { accountId: params.accountId, pluginId, list: true });
-                let current: StoredIntentRow | null = row?.pluginId ? {
-                    ...decodeIntentReadRow(row),
-                    ...(row.releaseLessDeclarationSummaryText !== undefined ? {
-                        releaseLessDeclaration: row.releaseLessDeclarationSummaryText === null ? null
-                            : JSON.parse(row.releaseLessDeclarationSummaryText) as unknown,
-                    } : {}),
-                } : null;
                 let resolved = await resolveClaim(current);
                 // Identical declaration and writer rejoins linearize at this read.
                 // They perform no quota, promotion or Account mutation. Changed
@@ -2482,11 +2493,13 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 if (resolved.unchanged && resolved.currentIntent) {
                     return { intent: resolved.currentIntent, ...(prepare ? { preparation: [] } : {}) };
                 }
-                if (!prepare) {
+                if (!prepare || held) {
                     current = await readCurrent();
+                    claimedDeclaration = readClaimedBody(current);
                     resolved = await resolveClaim(current);
-                    if (resolved.unchanged && resolved.currentIntent) return { intent: resolved.currentIntent };
+                    if (!prepare && resolved.unchanged && resolved.currentIntent) return { intent: resolved.currentIntent };
                 }
+                const { manifest } = claimedDeclaration;
                 const storedReleaseLessDeclarationText = prepare ? undefined : JSON.stringify(resolved.storedReleaseLessDeclaration);
                 // Immutable contracts are global, not Account state. Prepare
                 // them before occupying this Account's publication fence, in

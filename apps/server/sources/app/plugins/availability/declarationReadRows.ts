@@ -3,12 +3,35 @@ import { getActivePrismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 /**
- * Providers whose SQL projects body-free declaration identities and selected
- * bodies. MySQL has no projection here and still reads stored bodies.
+ * MySQL form of the same storage projection (binary JSON column). A machine's
+ * position is kept by aggregating in JSON_TABLE ordinality order.
  */
-export function projectsDeclarationIdentities(): boolean {
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
-    return provider === 'postgres' || provider === 'sqlite';
+function mysqlReleaseLessDeclarationIdentitySql() {
+    const prisma = getActivePrismaRuntime();
+    const doc = "(CASE WHEN JSON_TYPE(i.`releaseLessDeclaration`) = 'OBJECT' THEN i.`releaseLessDeclaration` ELSE JSON_OBJECT() END)";
+    // JSON_OBJECT keeps null members, like PostgreSQL's jsonb_build_object.
+    const identityMembers = (value: string, path: string) => `
+        'manifestDigestSha256', JSON_EXTRACT(${value}, '${path}.manifestDigestSha256'),
+        'manifest', JSON_OBJECT(
+            'schemaVersion', JSON_EXTRACT(${value}, '${path}.manifest.schemaVersion'),
+            'id', JSON_EXTRACT(${value}, '${path}.manifest.id'),
+            'version', JSON_EXTRACT(${value}, '${path}.manifest.version'),
+            'contributes', CASE WHEN JSON_TYPE(JSON_EXTRACT(${value}, '${path}.manifest.contributes')) = 'OBJECT'
+                THEN JSON_OBJECT() ELSE NULL END)`;
+    const identity = (value: string, path: string) => `JSON_OBJECT(${identityMembers(value, path)})`;
+    return prisma.sql`JSON_OBJECT(${prisma.raw(identityMembers(doc, '$'))},
+        'schemaVersion', CASE WHEN JSON_EXTRACT(${prisma.raw(doc)}, '$.schemaVersion') = CAST(3 AS JSON)
+            THEN CAST(2 AS JSON) ELSE JSON_EXTRACT(${prisma.raw(doc)}, '$.schemaVersion') END,
+        'legacyDeclaration', ${prisma.raw(identity(doc, '$.legacyDeclaration'))},
+        'machines', CASE WHEN JSON_TYPE(JSON_EXTRACT(${prisma.raw(doc)}, '$.machines')) = 'ARRAY'
+            THEN COALESCE((SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                    'machineId', JSON_EXTRACT(e.value, '$.machineId'),
+                    'machineInstallationId', JSON_EXTRACT(e.value, '$.machineInstallationId'),
+                    'declaration', ${prisma.raw(identity('e.value', '$.declaration'))}))
+                    OVER (ORDER BY e.ordinal ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+                FROM JSON_TABLE(JSON_EXTRACT(${prisma.raw(doc)}, '$.machines'), '$[*]'
+                    COLUMNS (ordinal FOR ORDINALITY, value JSON PATH '$')) e LIMIT 1), JSON_ARRAY())
+            ELSE NULL END)`;
 }
 
 /**
@@ -46,7 +69,9 @@ function sqliteReleaseLessDeclarationIdentitySql() {
 /** Storage-only identity projection. Currentness remains owned by currentDeclaration. */
 export function releaseLessDeclarationIdentitySql() {
     const prisma = getActivePrismaRuntime();
-    if (getDbProviderFromEnv(process.env, 'postgres') === 'sqlite') return sqliteReleaseLessDeclarationIdentitySql();
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    if (provider === 'sqlite') return sqliteReleaseLessDeclarationIdentitySql();
+    if (provider === 'mysql') return mysqlReleaseLessDeclarationIdentitySql();
     // This is a storage projection, not a declaration decision: preserve every
     // identity field and whether contributes is an object. The domain owner
     // applies the same envelope validation and consensus selection to it.
@@ -90,18 +115,17 @@ type DeclarationIntentIdentity = Readonly<{
 export async function readDeclarationIntentIdentitiesTx(tx: Tx, accountId: string, pluginIds: readonly string[]) {
     const rows: DeclarationIntentIdentity[] = [];
     const prisma = getActivePrismaRuntime();
+    const mysql = getDbProviderFromEnv(process.env, 'postgres') === 'mysql';
+    const identifier = (name: string) => prisma.raw(mysql ? `\`${name}\`` : `"${name}"`);
     for (const ids of portableQueryChunks({ values: pluginIds, bindingsPerValue: 1, fixedBindings: 2 })) {
-        if (!projectsDeclarationIdentities()) {
-            rows.push(...await tx.accountPluginIntent.findMany({ where: { accountId, pluginId: { in: [...ids] } },
-                select: { pluginId: true, enabled: true, desiredVersion: true, releaseLessDeclaration: true } }));
-            continue;
-        }
         const projected = await tx.$queryRaw<Array<Readonly<{ pluginId: string; enabled: boolean | number;
             desiredVersion: string | null; releaseLessDeclaration: unknown }>>>(prisma.sql`
-                SELECT i."pluginId", i.enabled, i."desiredVersion",
-                    CASE WHEN i."desiredVersion" IS NULL THEN ${releaseLessDeclarationIdentitySql()}
-                        ELSE NULL END AS "releaseLessDeclaration"
-                FROM "AccountPluginIntent" i WHERE i."accountId" = ${accountId} AND i."pluginId" IN (${prisma.join([...ids])})
+                SELECT i.${identifier('pluginId')} AS ${identifier('pluginId')}, i.enabled AS enabled,
+                    i.${identifier('desiredVersion')} AS ${identifier('desiredVersion')},
+                    CASE WHEN i.${identifier('desiredVersion')} IS NULL THEN ${releaseLessDeclarationIdentitySql()}
+                        ELSE NULL END AS ${identifier('releaseLessDeclaration')}
+                FROM ${identifier('AccountPluginIntent')} i
+                WHERE i.${identifier('accountId')} = ${accountId} AND i.${identifier('pluginId')} IN (${prisma.join([...ids])})
             `);
         // SQLite returns the projection as JSON text and booleans as integers.
         rows.push(...projected.map(row => ({ pluginId: row.pluginId, enabled: row.enabled === true || row.enabled === 1,
@@ -111,21 +135,44 @@ export async function readDeclarationIntentIdentitiesTx(tx: Tx, accountId: strin
     return rows;
 }
 
-/** Read only the manifests selected by the domain owner, in the caller's snapshot. */
+/**
+ * Read only the manifests selected by the domain owner, in the caller's snapshot.
+ * `member` projects one path inside each selected manifest (absent members read as null).
+ */
 export async function readSelectedDeclarationManifestsTx(tx: Tx, accountId: string,
-    selected: readonly Readonly<{ key: string; pluginId: string; path: readonly string[]; declarationDigestSha256: string }>[]) {
+    selected: readonly Readonly<{ key: string; pluginId: string; path: readonly string[]; declarationDigestSha256: string }>[],
+    member: readonly string[] = []) {
     if (selected.length === 0) return new Map<string, unknown>();
     const prisma = getActivePrismaRuntime();
-    if (getDbProviderFromEnv(process.env, 'postgres') === 'sqlite') {
-        const jsonPath = (segments: readonly string[]) => `$${segments.map((segment) => {
-            if (/^\d+$/.test(segment)) return `[${segment}]`;
-            if (segment.includes('"')) throw new Error('Unsupported declaration path segment');
-            return `."${segment}"`;
-        }).join('')}`;
-        const requests = JSON.stringify(selected.map((entry, index) => ({ key: String(index), pluginId: entry.pluginId,
-            digest: entry.declarationDigestSha256, bodyPath: jsonPath(entry.path),
-            manifestsPath: jsonPath(['manifests', entry.declarationDigestSha256]),
-            digestPath: jsonPath([...entry.path.slice(0, -1), 'manifestDigestSha256']) })));
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    // SQLite and MySQL share the JSON path syntax.
+    const jsonPath = (segments: readonly string[]) => `$${segments.map((segment) => {
+        if (/^\d+$/.test(segment)) return `[${segment}]`;
+        if (segment.includes('"')) throw new Error('Unsupported declaration path segment');
+        return `."${segment}"`;
+    }).join('')}`;
+    const pathRequests = () => JSON.stringify(selected.map((entry, index) => ({ key: String(index), pluginId: entry.pluginId,
+        digest: entry.declarationDigestSha256, bodyPath: jsonPath([...entry.path, ...member]),
+        manifestsPath: jsonPath(['manifests', entry.declarationDigestSha256, ...member]),
+        digestPath: jsonPath([...entry.path.slice(0, -1), 'manifestDigestSha256']) })));
+    if (provider === 'mysql') {
+        const rows = await tx.$queryRaw<Readonly<{ key: string; manifest: string | null }>[]>(prisma.sql`
+            SELECT r.requestKey AS \`key\`, CAST(CASE WHEN JSON_EXTRACT(i.\`releaseLessDeclaration\`, '$.schemaVersion') = CAST(3 AS JSON)
+                    THEN JSON_EXTRACT(i.\`releaseLessDeclaration\`, r.manifestsPath)
+                    ELSE JSON_EXTRACT(i.\`releaseLessDeclaration\`, r.bodyPath) END AS CHAR) AS manifest
+            FROM JSON_TABLE(CAST(${pathRequests()} AS JSON), '$[*]' COLUMNS (
+                requestKey VARCHAR(16) PATH '$.key', pluginId VARCHAR(255) PATH '$.pluginId', digest VARCHAR(255) PATH '$.digest',
+                bodyPath TEXT PATH '$.bodyPath', manifestsPath TEXT PATH '$.manifestsPath', digestPath TEXT PATH '$.digestPath')) r
+            JOIN \`AccountPluginIntent\` i ON i.\`accountId\` = ${accountId} AND i.\`pluginId\` = r.pluginId
+            -- ReadCommitted callers can observe a replacement between the identity and body reads.
+            -- Never pair a replacement body with the previously selected declaration digest.
+            WHERE JSON_UNQUOTE(JSON_EXTRACT(i.\`releaseLessDeclaration\`, r.digestPath)) = r.digest
+        `);
+        return new Map(rows.map(row => [selected[Number(row.key)]!.key,
+            row.manifest === null ? null : JSON.parse(row.manifest) as unknown]));
+    }
+    if (provider === 'sqlite') {
+        const requests = pathRequests();
         const rows = await tx.$queryRaw<Readonly<{ key: string; manifest: string | null }>[]>(prisma.sql`
             SELECT q.request ->> '$.key' AS key,
                 CASE WHEN CAST(q.v -> '$.schemaVersion' AS TEXT) = '3' THEN q.v -> (q.request ->> '$.manifestsPath')
@@ -142,9 +189,9 @@ export async function readSelectedDeclarationManifestsTx(tx: Tx, accountId: stri
             row.manifest === null ? null : JSON.parse(row.manifest) as unknown]));
     }
     const rows = await tx.$queryRaw<Readonly<{ key: string; manifest: unknown }>[]>(prisma.sql`
-        SELECT r.key, ${selectedDeclarationBodySql(
+        SELECT r.key, (${selectedDeclarationBodySql(
             'i."releaseLessDeclaration" #> ARRAY(SELECT jsonb_array_elements_text(r.path))',
-            'r."declarationDigestSha256"')} AS manifest
+            'r."declarationDigestSha256"')}) #> ARRAY(SELECT jsonb_array_elements_text(CAST(${JSON.stringify(member)} AS jsonb))) AS manifest
         FROM jsonb_to_recordset(CAST(${JSON.stringify(selected.map((entry, index) => ({ ...entry, key: String(index), digestPath: [...entry.path.slice(0, -1), "manifestDigestSha256"] })))} AS jsonb)) AS r(key text, "pluginId" text, path jsonb, "digestPath" jsonb, "declarationDigestSha256" text)
         JOIN "AccountPluginIntent" i ON i."accountId" = ${accountId} AND i."pluginId" = r."pluginId"
         -- ReadCommitted callers can observe a replacement between the identity and body reads.
