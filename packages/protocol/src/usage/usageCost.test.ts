@@ -3,7 +3,8 @@ import { expect, it } from 'vitest';
 import { admitUsageAnalyticsServerPrices, projectUsageAnalyticsSummary, projectUsagePageCost, repriceUsageAnalyticsResponse, repriceUsageAnalyticsResponseSteps, repriceUsageObservationCost, resolveUsageCostFacts, resolveUsageCostBasis, resolveEffectiveUsageCostUsd } from './usageCost.js';
 import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
-import { addUsageCostForMode, aggregateUsageContributionCosts, createEmptyUsageCost, createEmptyUsageTokens } from './usageAggregation.js';
+import { addUsageCostForMode, aggregateUsageContributionCosts, aggregateUsageCostPartitions, createEmptyUsageCost, createEmptyUsageTokens } from './usageAggregation.js';
+import { projectUsageAgentAccountingCalendar } from './usageAgentCalendar.js';
 import { mergeUsageActivityProjectionFacts, projectUsageActivityProjectionDayFacts, projectUsageActivitySubjectProjectionFacts, projectUsageContributionTotals } from './usageActivityProjectionFacts.js';
 import { buildUsagePricingPopulation, createUsagePricedPartitionBuilder, priceUsagePricingPopulation } from './usagePricingPopulation.js';
 
@@ -100,6 +101,38 @@ it('keeps unknown token categories unpriced in detailed and compact projections 
   expect(compact.selected?.amountUsd).toBe(known);
   expect(compact.facts).toContainEqual(expect.objectContaining({ kind: 'unpriced', tokens: unknown }));
   expect(resolveUsageCostBasis(repriceUsageObservationCost(cost, 'gpt-4o', unknown), 'auto')).toBeNull();
+});
+
+it('never turns unpriced usage into a free request through a no_tokens fact', () => {
+  // PRICED-TURN r174 reset facts: 94,631 unpriced tokens and a separate empty event.
+  const measured = { input: 94614, output: 17, reasoning: 7, cacheRead: 113, cacheWrite: 0, total: 94631 };
+  const zero = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+  const cost = { reportedUsd: null, estimatedUsd: null, invoiceUsd: null, currency: 'USD', costSource: 'none' as const };
+  const rows = [measured, zero].map((tokens, index) => ({ id: `reset-${index}`, observedAtMs: index,
+    eventCount: 1, sessionId: null, turnId: null, agentId: 'codex', modelId: null, machineId: null,
+    projectKey: null, workspaceId: null, source: 'runtime', tokens, tokenCategories: tokens, cost }));
+  for (const mode of ['auto', 'api_equivalent'] as const) {
+    for (const contributions of [rows, [...rows].reverse()]) {
+      const rich = repriceUsageAnalyticsResponse({ v: 1, totals: { eventCount: 2, tokens: measured, cost }, contributions },
+        bundledUsageModelPriceCatalog, {}, mode);
+      const compact = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(projectUsageAnalyticsSummary(rich,
+        UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 10 }, costMode: mode })))));
+      for (const value of [rich, compact, repriceUsageAnalyticsResponse(compact, bundledUsageModelPriceCatalog, {}, mode)]) {
+        expect.soft(projectUsagePageCost(value, mode).amountUsd, mode).toBeNull();
+        expect.soft(resolveUsageCostBasis(value.totals.cost, mode), mode).toBeNull();
+        expect(projectUsageAgentAccountingCalendar({ accounting: value, period: { startMs: 0, endMs: 10 },
+          timeZoneOffsetMinutes: 0, costMode: mode }).projection.periodSummary.totals.cost).toBeNull();
+        expect(value.costFacts).toContainEqual(expect.objectContaining({ kind: 'unpriced', amountUsd: null,
+          source: 'model_price_unknown', tokens: measured }));
+        expect(value.costFacts).toContainEqual(expect.objectContaining({ kind: 'api_equivalent', amountUsd: 0, source: 'no_tokens' }));
+      }
+    }
+    const empty = repriceUsageAnalyticsResponse({ v: 1, totals: { eventCount: 1, tokens: zero, cost }, contributions: [rows[1]!] },
+      bundledUsageModelPriceCatalog, {}, mode);
+    expect(projectUsagePageCost(empty, mode).amountUsd).toBe(0);
+    expect(resolveEffectiveUsageCostUsd(aggregateUsageCostPartitions([
+      aggregateUsageContributionCosts([], mode), empty.totals.cost], mode), mode)).toBe(0);
+  }
 });
 
 it('suspends pricing only when its host checkpoint is due', () => {

@@ -3,7 +3,7 @@ import { reprojectUsageLeaders } from './usageLeaderProjection.js';
 import { aggregateUsageContributionCosts, resolveUsageContributionCosts, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
 import { canonicalUsageModelPriceId } from './usageModelPriceSchemas.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
-import { addUsageMoney, readUsageMoney, transferUsageMoney, usageMoneyFromNumber, usageMoneyToNumber, withUsageMoney } from './usageMoney.js';
+import { readUsageMoney, transferUsageMoney, withUsageMoney } from './usageMoney.js';
 
 export type UsageCostMode = NonNullable<UsageAnalyticsQueryRequest['costMode']> | 'auto';
 export interface UsageCostBasis {
@@ -170,28 +170,15 @@ export function projectUsagePageCost(response: UsageAnalyticsQueryResponse, mode
     && fact.amountUsd !== null && (mode === 'auto' || fact.kind === mode)) : undefined;
   const selection = selected === undefined ? resolveUsagePageCostSelection(costs, mode)
     ?? (availableFact ? { kind: mode === 'auto' ? 'mixed' as const : mode, currency: availableFact.currency, mode } : null) : selected;
-  const amounts = costs.flatMap(cost => { const amount = readUsageCostBasisForSelection(cost, selection); return amount ? [amount] : []; });
-  const amountUsd = selection && amounts.length > 0 && amounts.every(amount => amount.currency === selection.currency)
-    ? usageMoneyToNumber(amounts.reduce((sum, amount) => addUsageMoney(sum,
-      readUsageMoney(amount!, 'amountUsd', amount!.amountUsd)), usageMoneyFromNumber(0)))
-    : resolveUsageCostBasis(response.totals.cost, mode) === null && resolveEffectiveUsageCostUsd(response.totals.cost, mode) === 0 ? 0 : null;
+  const selectedMode = selection ? selectionMode(selection) : mode;
+  const total = rows ? aggregateUsageContributionCosts(rows, selectedMode) : response.totals.cost;
+  const amountUsd = resolveUsageCostForSelection(total, selection)
+    ?? (resolveUsageCostBasis(total, selectedMode) === null && resolveEffectiveUsageCostUsd(total, selectedMode) === 0 ? 0 : null);
   if (!rows?.length || !selection) return retain({ selection, amountUsd, accounting: response });
-  const selectedMode = selectionMode(selection);
-  const projectCost = (raw: UsageObservationCost, contributions: readonly UsageAnalyticsContribution[]): UsageObservationCost => {
-    const selectedCosts = resolveUsageContributionCosts(contributions, selectedMode)
-      .filter(cost => !(cost as AggregatedUsageCost)[usageCostAggregationBasis]?.covered);
-    const amounts = selectedCosts.map(cost => resolveUsageCostForSelection(cost, selection));
-    const { effectiveUsd: _old, selectedBasis: _selectedBasis, ...original } = raw;
-    if (selectedCosts.length === 0 || amounts.every(amount => amount === null)) {
-      const unavailable: AggregatedUsageCost = { ...original, costSource: 'none',
-        [usageCostAggregationBasis]: { mode: selectedMode, available: false } };
-      return unavailable;
-    }
-    return aggregateUsageContributionCosts(contributions, selectedMode);
-  };
-  const ranking = reprojectUsageLeaders(response, rows, selectedMode, projectCost);
+  const ranking = reprojectUsageLeaders(response, rows, selectedMode,
+    (_raw, contributions) => aggregateUsageContributionCosts(contributions, selectedMode));
   const projection = { selection, amountUsd, accounting: { ...response, ...ranking,
-    totals: { ...response.totals, cost: projectCost(response.totals.cost, rows) },
+    totals: { ...response.totals, cost: total },
   } };
   return retain(projection);
 }
