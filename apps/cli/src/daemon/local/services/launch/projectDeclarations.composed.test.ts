@@ -802,10 +802,18 @@ describe('accepted Project Service declaration starter', () => {
             config: { bufferMaxBytes: 1_000_000, bufferMaxEvents: 1000,
                 urlParseBufferLimit: 32_768, maxWriteChunkBytes: 16_384, defaultCols: 80, defaultRows: 24 }, env: {}, platform: 'linux' });
         const operationSnapshots: ActionOperationSnapshotV1[] = [];
+        // Publication is the operation runtime's real change signal; tests await it instead of polling the store.
+        const snapshotWaiters = new Set<(snapshot: ActionOperationSnapshotV1) => void>();
+        const operationPublished = (matches: (snapshot: ActionOperationSnapshotV1) => boolean) => new Promise<ActionOperationSnapshotV1>(resolve => {
+            const earlier = operationSnapshots.find(matches);
+            if (earlier) return resolve(earlier);
+            const waiter = (snapshot: ActionOperationSnapshotV1) => { if (matches(snapshot)) { snapshotWaiters.delete(waiter); resolve(snapshot); } };
+            snapshotWaiters.add(waiter);
+        });
         let operationIndex = 0;
         const operationRuntime = createHostActionOperationRuntime({ machineId: targetWorkspace.machineId,
             custodyBinding: { serverId: homeId, installationId: 'installation' }, resolveAccountId: async () => 'owner',
-            publishSnapshot: snapshot => { operationSnapshots.push(snapshot); },
+            publishSnapshot: snapshot => { operationSnapshots.push(snapshot); snapshotWaiters.forEach(waiter => waiter(snapshot)); },
             ...(workerExecution ? { generateOperationId: () => ++operationIndex === 1 ? 'service-start-operation' : `setup-operation${operationIndex === 2 ? '' : `-${operationIndex}`}` } : {}) });
         const owner = createManagedServicesOwner({ processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon',
             ...(supervisorPlatform ? { platform: supervisorPlatform } : {}) }),
@@ -888,7 +896,7 @@ describe('accepted Project Service declaration starter', () => {
                 states: ['accepted', 'running'] }).items,
             runTargets: () => discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [targetWorkspace] }) });
         const routes = createLocalServiceLauncherRoutes({ feed, history, ...starter });
-        return { root, workspace, targetRoot, targetWorkspace, serverIdentityId, machineInstallationKeys, projectDefinitionActionFor, manifest, starter, routes, history, request, ingress, context, owner, post, setupProcesses, setupStarted, operationRuntime, operationSnapshots, runtime, admissionDrain, prepareBetween,
+        return { root, workspace, targetRoot, targetWorkspace, serverIdentityId, machineInstallationKeys, projectDefinitionActionFor, manifest, starter, routes, history, request, ingress, context, owner, post, setupProcesses, setupStarted, operationRuntime, operationSnapshots, operationPublished, runtime, admissionDrain, prepareBetween,
             async selectStart(selectedIngress: Parameters<typeof starter.resolveStartTarget>[1] = ingress) {
                 const selected = await starter.resolveStartTarget(request, selectedIngress, context);
                 if (!selected.ok) throw new Error(selected.reasonCode);
@@ -2760,7 +2768,9 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                 role: 'service.localServices.launcher.start', input: JSON.parse(JSON.stringify(h.request)) },
             admittedReview: { action: 'localServices.launcher.start', role: 'service.localServices.launcher.start', surface: 'agent' },
             execute: async (_request, context) => h.routes.startTarget!(h.request, h.ingress, context) });
-        await vi.waitFor(() => expect(h.setupProcesses).toHaveLength(1));
+        // Wait on the admitted setup PTY's exit subscription, not a wall-clock poll.
+        await Promise.race([h.setupStarted, completion]);
+        expect(h.setupProcesses).toHaveLength(1);
         expect(h.copies()).toBe(1);
         expect(h.setupProcesses[0]?.params).toMatchObject({ options: { cwd: h.targetRoot } });
         h.setupProcesses[0]!.pty.exit(0);
@@ -2777,7 +2787,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const request = { ...h.request, expectedEffectDigest: reviewed.reviewedEffectDigest };
         const completion = h.routes.startTarget!(request, h.ingress, h.context);
         const scope = { accountId: 'owner', machineId: h.targetWorkspace.machineId };
-        await expect.poll(() => h.operationRuntime.store.get(scope, 'setup-operation')?.setupReview?.code).toBe('project_setup_consent_required');
+        await Promise.race([h.operationPublished(snapshot => snapshot.operationId === 'setup-operation'
+            && snapshot.setupReview?.code === 'project_setup_consent_required'), completion]);
         const pending = h.operationRuntime.store.get(scope, 'setup-operation')!;
         expect(h.operationRuntime.store.list(scope).items.find(item => item.actionId === 'localServices.launcher.start'))
             .toMatchObject({ state: 'running', progress: { phase: 'preparing' } });
@@ -2790,7 +2801,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         await h.operationRuntime.observeExecution({ actionId: 'projects.prepare',
             input: { workspace: h.request.workspace, phase: 'setup' }, rpcContext: h.ingress,
             actionRequestId: h.context.actionRequestId, execute: async () => { throw new Error('Replay must keep the original setup closure'); } });
-        await expect.poll(() => h.setupProcesses.length).toBe(1);
+        await Promise.race([h.setupStarted, completion]);
+        expect(h.setupProcesses).toHaveLength(1);
         expect(h.setupProcesses[0]?.params).toMatchObject({ options: { cwd: h.targetRoot } });
         h.setupProcesses[0]!.pty.exit(0);
         expect(await completion).toMatchObject({ status: 'succeeded' });
@@ -3045,7 +3057,10 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         if (!resolved.ok) throw new Error(resolved.reasonCode);
         let finished = false;
         const completion = h.starter.startManagedDeclaration(resolved.declaration, request, h.ingress, h.context).then(result => { finished = true; return result; });
-        await expect.poll(() => h.setupProcesses.length).toBe(1);
+        // The exit subscription is the admitted setup's real signal: a poll can
+        // time out under load or exit the PTY before the waiter subscribes.
+        await Promise.race([h.setupStarted, completion]);
+        expect(h.setupProcesses).toHaveLength(1);
         expect(h.owner.listProjectServices()).toEqual([]);
         expect(finished).toBe(false);
         expect(h.setupProcesses[0]?.params).toMatchObject({ args: ['-c', 'echo setup'], options: { cwd: h.root } });
