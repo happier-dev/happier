@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RpcError } from '../rpc/errors.js';
 import { createActionExecutorBoundaryFixture } from '../../../tests/src/testkit/actionExecutorBoundary.js';
 import { executeConnectedServiceConfigurationActionV1, type ConnectedServiceConfigurationActionHostV1 } from './executeConfigurationActionV1.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1, CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1, reorderConnectedServicePoolMembersV1 } from './configurationActionsV1.js';
@@ -1069,11 +1070,11 @@ describe('connected-service configuration Action owner', () => {
         expect(accountSettings.other).toBe('retained');
     });
     it('preserves transport dispositions through the canonical Action executor', async () => {
-        let code = 'outcome_unknown';
+        let failure: Error = new RpcError('transport disposition', 'outcome_unknown');
         // HTTP is the boundary; connected-service parsing and executor settlement remain real.
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {},
-            async request() { throw Object.assign(new Error('transport disposition'), { code }); },
+            async request() { throw failure; },
             async mutatePurposeBindings() { throw new Error('unexpected_purpose_mutation'); },
             async resolveAgent() { throw new Error('unexpected_catalog'); },
             async resetQuota() { throw new Error('unexpected_reset'); },
@@ -1082,13 +1083,14 @@ describe('connected-service configuration Action owner', () => {
             executeConnectedServiceConfigurationActionV1(host, actionId, input);
         const executor = createActionExecutor({ connectedServiceAction } as unknown as ActionExecutorDeps);
         const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
-        for (const [transportCode, errorCode] of [
-            ['outcome_unknown', 'outcome_unknown'],
-            ['cancelled', 'cancelled'],
-            ['ECONNREFUSED', 'server_unreachable'],
-            ['unknown_transport_code', 'unknown_transport_code'],
+        for (const [transportFailure, errorCode] of [
+            [new RpcError('transport disposition', 'outcome_unknown'), 'outcome_unknown'],
+            [new RpcError('transport disposition', 'cancelled'), 'cancelled'],
+            [Object.assign(new Error('transport disposition'), { code: 'ECONNREFUSED' }), 'server_unreachable'],
+            [new RpcError('transport disposition', 'unknown_transport_code'), 'unknown_transport_code'],
+            [Object.assign(new Error('transport disposition'), { code: 'unknown_transport_code' }), 'action_failed'],
         ] as const) {
-            code = transportCode;
+            failure = transportFailure;
             expect(await executor.execute('connectedServices.pools.create', { service, group: { groupId: 'work' } }, context))
                 .toMatchObject({ ok: false, errorCode });
         }

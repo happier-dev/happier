@@ -16,7 +16,7 @@ import { ActionOperationFailureV1Schema, ManagedAgentStartFailureDetailsV1Schema
 import { SessionListUnavailableQueryV1Schema } from '../../sessions/listing/query.js';
 import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
 import { ActionOperationAcceptedResultSchema, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionExecuteFailure, readActionFailureCauseV1,
-  projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1, type ActionExecuteFailure } from '../actionExecutionResult.js';
+  projectActionFailureCauseV1, readActionErrorCodeV1, readUnexpectedActionErrorDiagnosticV1, type ActionFailureCauseV1, type ActionExecuteFailure } from '../actionExecutionResult.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
@@ -230,7 +230,10 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
   const protocolCode = readActionErrorCodeV1(error);
   const normalizedCode = isActionOutcomeUnknownErrorCodeV1(protocolCode) ? 'outcome_unknown'
     : protocolCode && ['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT'].includes(protocolCode)
-      ? 'server_unreachable' : protocolCode;
+      ? 'server_unreachable'
+      // Ordinary exceptions can carry vendor codes; only the closed native
+      // classifier or a typed failure above can give them public authority.
+      : error instanceof Error && !isRpcError(error) ? readUnexpectedActionErrorDiagnosticV1(error).errorCode : protocolCode;
   const message =
     error instanceof Error
       ? error.message

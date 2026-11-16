@@ -8,9 +8,11 @@ import type { QualifiedAcknowledgementSubject, QualifiedConnectedEntityRef } fro
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from './qualifiedConnectedAccountsV4QueryCodec.js';
 import { buildQualifiedConnectedAccountGroupMutationRequestV4 } from './qualifiedConnectedAccountGroupRequestsV4.js';
 import { QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, sameQualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupRef } from './qualifiedConnectedAccountsV4.js';
-import { assertConnectedAccountOperationTransportV1, ConnectedAccountDaemonCommandSchema, ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonControlResponseSchema, ConnectedAccountRevokeResponseV1Schema, type ConnectedAccountDaemonCommand, type ConnectedAccountDaemonControlCommand } from './connectedAccountDaemonRpcV1.js';
+import { assertConnectedAccountOperationTransportV1, ConnectedAccountDaemonCommandSchema, ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonControlResponseSchema, ConnectedAccountRevokeResponseV1Schema, type ConnectedAccountDaemonCommand, type ConnectedAccountDaemonControlCommand, type ConnectedAccountDaemonControlResponse } from './connectedAccountDaemonRpcV1.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION } from './configurationActionIdsV1.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
+import { PluginDiagnosticDataV1Schema } from '../daemon/pluginContributionIntrospection.js';
+import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { AccountProfileSchema } from '../account/profile.js';
 import { deriveAccountHealth, worstAccountHealth } from './accountHealth.js';
 import {
@@ -132,6 +134,16 @@ async function cleanupDeletedSubject(host: ConnectedServiceConfigurationActionHo
   return pending ? { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } : { status: 'complete' };
 }
 
+/** Carry the host projector's diagnostic into the existing public Action envelope. */
+function connectedAccountControlActionFailure(
+  response: Extract<ConnectedAccountDaemonControlResponse, { status: 'unavailable' }>,
+): ActionExecuteFailure {
+  const diagnostic = PluginDiagnosticDataV1Schema.safeParse(response.diagnostic);
+  return { ok: false, errorCode: response.code,
+    error: diagnostic.success ? diagnostic.data.message ?? response.code : response.code,
+    ...(diagnostic.success ? { details: { diagnostic: diagnostic.data } } : {}) };
+}
+
 /** Capture the incumbent revision for approval; never invoke the revoke writer here. */
 export async function prepareConnectedServiceRevokeInputV1(
   host: ConnectedServiceConfigurationActionHostV1,
@@ -154,6 +166,7 @@ export async function prepareConnectedServiceRevokeInputV1(
     operation: 'describeService', service: args.account.service, requiredOperation: 'credential_delete',
   }));
   host.assertCurrent();
+  if (admission.status === 'unavailable') return connectedAccountControlActionFailure(admission);
   try {
     assertConnectedAccountOperationTransportV1(admission, args.account.service, { kind: 'v4' });
   } catch {
@@ -194,6 +207,7 @@ export async function executeConnectedServiceConfigurationActionV1(
       const response = ConnectedAccountDaemonControlResponseSchema.parse(await host.controlCommand(args.machineId,
         { operation: 'testConnection', account: args.account }));
       host.assertCurrent();
+      if (response.status === 'unavailable') return connectedAccountControlActionFailure(response);
       if (response.status === 'connectionTested') return outputs[actionId].parse(response.result);
       return { ok: false, errorCode: 'code' in response ? response.code : 'connected_account_control_unavailable',
         error: 'code' in response ? response.code : 'connected_account_control_unavailable' };
@@ -349,6 +363,7 @@ export async function executeConnectedServiceConfigurationActionV1(
               secretValues: replacement.secretValues }
           : { operation: 'readConfiguration', target: args.target };
         const response = ConnectedAccountDaemonControlResponseSchema.parse(await host.controlCommand('machineId' in args ? args.machineId : undefined, command));
+        if (response.status === 'unavailable') return connectedAccountControlActionFailure(response);
         if (response.status !== (actionId === 'connectedServices.configuration.get' ? 'configuration' : 'configurationCommitted')) {
           const code = 'code' in response ? response.code : 'connected_account_configuration_target_unavailable';
           return { ok: false, errorCode: code, error: code };
@@ -431,6 +446,7 @@ export async function executeConnectedServiceConfigurationActionV1(
         operation: 'describeService', service: args.account.service,
       }));
       host.assertCurrent();
+      if (admission.status === 'unavailable') return connectedAccountControlActionFailure(admission);
       if (admission.status !== 'described' || admission.service.pluginId !== args.account.service.pluginId
         || admission.service.localId !== args.account.service.localId || admission.descriptor.id !== args.account.service.localId
         || !admission.accounts.some(profile => sameQualifiedConnectedAccountRef(profile.ref, args.account)) || !admission.descriptor.billingUrl) {
@@ -690,6 +706,7 @@ export async function executeConnectedServiceConfigurationActionV1(
         operation: 'describeService', service: account.service, requiredOperation: 'quota_refresh',
       }));
       host.assertCurrent();
+      if (admission.status === 'unavailable') return connectedAccountControlActionFailure(admission);
       try {
         assertConnectedAccountOperationTransportV1(admission, account.service, { kind: 'v4' });
       } catch (error) {
