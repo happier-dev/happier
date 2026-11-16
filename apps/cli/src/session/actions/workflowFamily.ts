@@ -448,9 +448,10 @@ export function createCliWorkflowFamily(
               discussionAction, signal: context.signal }).catch(error => {
               context.signal?.throwIfAborted();
               const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
-              throw Object.assign(new Error(code === 'invalid_reference_scope' ? 'invalid_reference_scope' : 'content_unavailable'), {
-                code: code === 'invalid_reference_scope' ? 'invalid_reference_scope' : 'content_unavailable',
-              });
+              if (code === 'workflow_discussion_context_unavailable') {
+                throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
+              }
+              throw error;
             });
             if (requester && !await requester.isCurrent()) throw Object.assign(new Error('run_access_denied'), { code: 'run_access_denied' });
             return result;

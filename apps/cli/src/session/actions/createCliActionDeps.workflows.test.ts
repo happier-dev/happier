@@ -951,6 +951,73 @@ describe('createCliActionDeps workflow boundary', () => {
       originalCode: 'account_role_overrides_unavailable', httpStatus: null, operation: 'workflow.run.start', durationMs: expect.any(Number) }]);
   });
 
+  it.each([
+    { kind: 'authorization', status: 403, code: 'discussion_read_denied' },
+    { kind: 'storage', status: 503, code: 'database_transaction_timeout' },
+    { kind: 'malformed_content', status: 200, code: null },
+    { kind: 'missing_content', status: 200, code: 'not_found' },
+  ])('preserves the Discussion owner cause through Workflow origin preparation ($kind)', async ({ kind, status, code }) => {
+    const lease = await pluginReloadController.acquireRuntimeRegistry({
+      resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({ contributes: createResolvedContributionRegistry({}) }),
+    });
+    await lease.release();
+    const get = http.get.getMockImplementation()!;
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
+      if (url.includes('/v1/artifacts?')) return readEmptyPlainArtifactListFixture(url, 'account-1');
+      if (url.endsWith(PROMPT_LIBRARY_ROWS_ROUTE_V1)) return { status: 200, data: PromptLibraryRowsListResponseV1Schema.parse({
+        status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1,
+          content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })),
+      }) };
+      return get(url);
+    });
+    // Home HTTP is the boundary. Discussion decoding, committed-message reads,
+    // Workflow origin preparation and the public failure projector stay real.
+    http.request.mockImplementation(async (request: { url: string }) => {
+      if (status !== 200) return { status, data: code === 'database_transaction_timeout'
+        ? { error: code, statusCode: 503, transactionOutcome: 'rolled_back' } : { error: code } };
+      const message = { id: 'question-1', discussionId: 'discussion-1', localId: 'question-local', seq: 2,
+        authorAccountId: 'account-1', accountActor: { v: 1, accountId: 'account-1', profile: null },
+        producerV1: null, content: { t: 'plain', v: { v: 1, parts: [{ t: 'invalid-part' }] } },
+        mentionedAccountIds: [], createdAt: 1 };
+      if (new URL(request.url).pathname === '/v1/discussions/discussion-1') return { status: 200, data: { discussion: {
+        id: 'discussion-1', ownerAccountId: 'account-1', encryptionMode: 'plain', anchor: null,
+        access: 'owner', keyReadiness: true, dataEncryptionKey: null, creationLocalId: 'create-local',
+        titleContent: { t: 'plain', v: { v: 1, title: 'Review' } }, latestMessage: {
+          id: message.id, localId: message.localId, seq: message.seq, authorAccountId: message.authorAccountId,
+          accountActor: message.accountActor, producerV1: message.producerV1, createdAt: message.createdAt,
+        }, messageSeq: 2, lastReadSeq: 0, unreadCount: 1, unreadMentionCount: 0, recentAuthorAccountIds: ['account-1'],
+        archivedAt: null, capabilities: { postMessages: true, rename: true, archive: true, restore: false,
+          askAgent: true, sendToSession: true, manageAccess: true, leave: false },
+      } } };
+      if (new URL(request.url).pathname === '/v1/discussions/discussion-1/messages') return { status: 200,
+        data: { messages: kind === 'missing_content' ? [] : [message], hasMoreOlder: false, messageSeq: 2 } };
+      throw new Error('unexpected_discussion_http');
+    });
+    const features = { ...enabledFeatures, features: FeaturesResponseSchema.parse({ ...enabledFeatures.features,
+      features: { ...enabledFeatures.features.features, sessions: { enabled: true, conversations: { enabled: true } },
+        sharing: { enabled: true, session: { enabled: true } } },
+    }) };
+    const deps = createCliActionDeps({ token: workflowAccountPersonToken,
+      credentials: { token: workflowAccountPersonToken, encryption: null, credentialProvenance: 'stored_session' },
+      serverId: 'profile', serverIdentityId: 'srv_masked_home', serverHttpBaseUrl: 'https://workflow-cause.example.invalid',
+      resolveServerFeaturesSnapshot: () => features, sessionId: 'cli-global', mode: 'plain', ctx: null });
+    const result = await deps.workflowAction!({ actionId: 'workflow.run.start', input: {
+      runId: '77777777-7777-4777-8777-777777777779', source: { kind: 'inline', definition: { version: 1,
+        blocks: [{ kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } }] } },
+      origin: { kind: 'discussion', discussion: { serverId: 'srv_masked_home', discussionId: 'discussion-1' },
+        addressingMessageId: 'question-1' }, onComplete: { kind: 'originating_discussion' },
+    }, context: { serverId: 'profile', surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      callerPermissionMode: 'default', externalActionTarget: { kind: 'machine', machineId: 'machine-1',
+        project: { machineId: 'machine-1', directory: tmpdir() } } } });
+    if (code === null) expect(result).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    else expect(result).toMatchObject({ ok: false,
+      errorCode: status === 403 ? 'run_access_denied' : status === 200 ? 'content_unavailable' : 'storage_unavailable',
+      failureCause: { errorCode: code } });
+    expect(http.request).toHaveBeenCalled();
+    expect(http.post.mock.calls.some(([, body]) => body.operation === 'admit')).toBe(false);
+  });
+
   it('retains the original storage cause in one content-free daemon diagnostic', async () => {
     const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     http.post.mockRejectedValue(Object.assign(new Error('private SQL, token and prompt'), {

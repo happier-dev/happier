@@ -78,6 +78,20 @@ describe('Workflow production Discussion context', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
+  it.each([
+    { status: 403, code: 'discussion_read_denied' },
+    { status: 503, code: 'database_transaction_timeout' },
+  ])('retains the typed Discussion owner refusal while paging context ($code)', async ({ status, code }) => {
+    const state = await fixture('plain');
+    // The Home HTTP response is the boundary; the Discussion Action, paging
+    // reader and production Workflow adapter all remain real.
+    vi.mocked(axios.request).mockResolvedValue({ status, data: code === 'database_transaction_timeout'
+      ? { error: code, statusCode: 503, transactionOutcome: 'rolled_back' } : { error: code } });
+    await expect(createProductionWorkflowDiscussionContextReader({ credentials: state.credentials,
+      serverId: discussion.serverId, serverHttpBaseUrl, origin }).resolveDiscussionContext('addressing_message'))
+      .rejects.toMatchObject({ ok: false, errorCode: code });
+  });
+
   it.each(['plain', 'e2ee'] as const)('opens %s round context through the executing profile and its portable Home', async mode => {
     const state = await fixture(mode);
     const serverIdentityId = 'srv_workflow_home';
@@ -177,7 +191,7 @@ describe('Workflow production Discussion context', () => {
     expect(await resolveWorkflowDiscussionOrigin({ origin: { kind: 'discussion', discussion,
       addressingMessageId: 'question' }, context, discussionAction })).toEqual(origin);
     await expect(resolveWorkflowDiscussionOrigin({ origin: { kind: 'discussion', discussion,
-      addressingMessageId: 'local-1' }, context, discussionAction })).rejects.toMatchObject({ code: 'workflow_discussion_context_unavailable' });
+      addressingMessageId: 'local-1' }, context, discussionAction })).rejects.toMatchObject({ code: 'not_found' });
   });
 
   it.each(['revoked', 'locked'] as const)('refuses current %s access before returning any history', async failure => {
@@ -185,7 +199,7 @@ describe('Workflow production Discussion context', () => {
     if (failure === 'revoked') state.revoke(); else state.lock();
     await expect(createProductionWorkflowDiscussionContextReader({ credentials: state.credentials,
       serverId: discussion.serverId, serverHttpBaseUrl, origin }).resolveDiscussionContext('addressing_message'))
-      .rejects.toMatchObject({ code: 'workflow_discussion_context_unavailable' });
+      .rejects.toMatchObject({ code: failure === 'revoked' ? 'discussions_unavailable' : 'encryption_material_unavailable' });
     expect(state.reads).toEqual([]);
   });
 
@@ -204,7 +218,7 @@ describe('Workflow production Discussion context', () => {
     state.revokeAfterFirstPage();
     await expect(createProductionWorkflowDiscussionContextReader({ credentials: state.credentials,
       serverId: discussion.serverId, serverHttpBaseUrl, origin }).resolveDiscussionContext('addressing_message'))
-      .rejects.toMatchObject({ code: 'workflow_discussion_context_unavailable' });
+      .rejects.toMatchObject({ code: 'discussions_unavailable' });
     expect(state.reads).toHaveLength(1);
   });
 });

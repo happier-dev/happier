@@ -1,4 +1,5 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readCommittedDiscussionMessage } from '@happier-dev/protocol/actions/executor/docCollaborationActions';
 import { readWorkflowDiscussionContextV1 } from '@happier-dev/protocol/workflows';
 import type { DiscussionAddressV1 } from '@happier-dev/protocol/discussions/references';
@@ -60,7 +61,8 @@ export async function resolveWorkflowDiscussionOrigin(params: Readonly<{
     }
   }
   const read = await readCommittedDiscussionMessage(parent, context, params.discussionAction, undefined, sameHome);
-  if (!read.ok || !read.message.content
+  if (!read.ok) throw createActionExecuteFailureError(read);
+  if (!read.message.content
     || read.message.messageRef.discussion.discussionId !== origin.discussion.discussionId) {
     throw new WorkflowInputResolutionError('workflow_discussion_context_unavailable');
   }
@@ -89,21 +91,16 @@ export function createProductionWorkflowDiscussionContextReader(params: Readonly
     serverId: params.serverId, serverHttpBaseUrl: params.serverHttpBaseUrl,
     ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}) }).discussionAction!;
   return { resolveDiscussionContext: async scope => {
-    try {
-      params.signal?.throwIfAborted();
-      const origin = params.origin;
-      if (!origin) {
-        throw new WorkflowInputResolutionError('invalid_reference_scope');
-      }
-      const read = await readWorkflowDiscussionContextV1({ origin, scope, discussionAction,
-        context: { surface: 'api', authority: 'account_automation', serverId: params.serverId,
-          ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
-          ...(params.signal ? { signal: params.signal } : {}) } });
-      if (!read.ok) throw new WorkflowInputResolutionError(read.code);
-      return StrictJsonValueSchema.parse(read.context);
-    } catch (error) {
-      if (params.signal?.aborted || error instanceof WorkflowInputResolutionError) throw error;
-      throw new WorkflowInputResolutionError('workflow_discussion_context_unavailable');
+    params.signal?.throwIfAborted();
+    const origin = params.origin;
+    if (!origin) {
+      throw new WorkflowInputResolutionError('invalid_reference_scope');
     }
+    const read = await readWorkflowDiscussionContextV1({ origin, scope, discussionAction,
+      context: { surface: 'api', authority: 'account_automation', serverId: params.serverId,
+        ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
+        ...(params.signal ? { signal: params.signal } : {}) } });
+    if (!read.ok) throw new WorkflowInputResolutionError(read.code);
+    return StrictJsonValueSchema.parse(read.context);
   } };
 }

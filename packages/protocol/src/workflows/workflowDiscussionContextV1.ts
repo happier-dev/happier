@@ -2,6 +2,8 @@ import { DiscussionReadResultV1Schema, type DiscussionOpenedMessageV1 } from '..
 import type { DiscussionAddressV1 } from '../discussions/references.js';
 import { areServerProfileIdentifiersEquivalent } from '../features/payload/capabilities/serverIdentityCapabilities.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../actions/executor/types.js';
+import { createActionExecuteFailureError } from '../actions/actionExecutionResult.js';
+import { readActionFailureEnvelope } from '../actions/executor/actionFailureEnvelope.js';
 
 export type WorkflowDiscussionContextV1 = Readonly<{
   discussion: DiscussionAddressV1; messageId: string; throughSeq: number; messages: readonly DiscussionOpenedMessageV1[];
@@ -26,34 +28,32 @@ export async function readWorkflowDiscussionContextV1(params: Readonly<{
   const messages: DiscussionOpenedMessageV1[] = [];
   let throughSeq = params.scope === 'addressing_message' ? origin.throughSeq : undefined;
   let beforeSeq: number | undefined;
-  try {
-    for (;;) {
-      context.signal?.throwIfAborted();
-      const page = DiscussionReadResultV1Schema.safeParse(await params.discussionAction({ actionId: 'discussion.read',
-        input: { discussionId: origin.discussion.discussionId, ...(throughSeq === undefined ? {} : { throughSeq }),
-          ...(beforeSeq === undefined ? {} : { beforeSeq }), ...(params.afterSeq === undefined ? {} : { afterSeq: params.afterSeq }) },
-        context, ...(context.signal ? { signal: context.signal } : {}) }));
-      if (!page.success || page.data.incomplete || page.data.discussionId !== origin.discussion.discussionId
-        || !sameHome(page.data.serverId, origin.discussion.serverId)) return unavailable();
-      throughSeq ??= page.data.messageSeq;
-      if (page.data.messageSeq !== throughSeq || page.data.messages.some(message => !message.content
-        || message.seq > throughSeq! || beforeSeq !== undefined && message.seq >= beforeSeq
-        || params.afterSeq !== undefined && message.seq <= params.afterSeq
-        || message.discussionId !== origin.discussion.discussionId || message.messageRef.messageId !== message.id
-        || message.messageRef.discussion.discussionId !== origin.discussion.discussionId
-        || !sameHome(message.messageRef.discussion.serverId, origin.discussion.serverId))) return unavailable();
-      messages.push(...page.data.messages);
-      if (!page.data.hasMoreOlder) break;
-      const next = Math.min(...page.data.messages.map(message => message.seq));
-      if (!Number.isFinite(next) || beforeSeq !== undefined && next >= beforeSeq) return unavailable();
-      beforeSeq = next;
-    }
-    if (params.afterSeq === undefined && !messages.some(message => message.id === origin.messageId && message.seq === origin.throughSeq)) return unavailable();
+  for (;;) {
     context.signal?.throwIfAborted();
-    return { ok: true, context: { discussion: origin.discussion, messageId: origin.messageId, throughSeq: throughSeq!,
-      messages: messages.sort((left, right) => left.seq - right.seq) } };
-  } catch {
-    context.signal?.throwIfAborted();
-    return unavailable();
+    const result = await params.discussionAction({ actionId: 'discussion.read',
+      input: { discussionId: origin.discussion.discussionId, ...(throughSeq === undefined ? {} : { throughSeq }),
+        ...(beforeSeq === undefined ? {} : { beforeSeq }), ...(params.afterSeq === undefined ? {} : { afterSeq: params.afterSeq }) },
+      context, ...(context.signal ? { signal: context.signal } : {}) });
+    const failure = readActionFailureEnvelope(result);
+    if (failure) throw createActionExecuteFailureError(failure);
+    const page = DiscussionReadResultV1Schema.safeParse(result);
+    if (!page.success || page.data.incomplete || page.data.discussionId !== origin.discussion.discussionId
+      || !sameHome(page.data.serverId, origin.discussion.serverId)) return unavailable();
+    throughSeq ??= page.data.messageSeq;
+    if (page.data.messageSeq !== throughSeq || page.data.messages.some(message => !message.content
+      || message.seq > throughSeq! || beforeSeq !== undefined && message.seq >= beforeSeq
+      || params.afterSeq !== undefined && message.seq <= params.afterSeq
+      || message.discussionId !== origin.discussion.discussionId || message.messageRef.messageId !== message.id
+      || message.messageRef.discussion.discussionId !== origin.discussion.discussionId
+      || !sameHome(message.messageRef.discussion.serverId, origin.discussion.serverId))) return unavailable();
+    messages.push(...page.data.messages);
+    if (!page.data.hasMoreOlder) break;
+    const next = Math.min(...page.data.messages.map(message => message.seq));
+    if (!Number.isFinite(next) || beforeSeq !== undefined && next >= beforeSeq) return unavailable();
+    beforeSeq = next;
   }
+  if (params.afterSeq === undefined && !messages.some(message => message.id === origin.messageId && message.seq === origin.throughSeq)) return unavailable();
+  context.signal?.throwIfAborted();
+  return { ok: true, context: { discussion: origin.discussion, messageId: origin.messageId, throughSeq: throughSeq!,
+    messages: messages.sort((left, right) => left.seq - right.seq) } };
 }
