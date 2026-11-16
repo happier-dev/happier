@@ -1,1 +1,3 @@
-"Boolean(document.querySelector('input[type=\"password\"],[autocomplete~=\"one-time-code\" i]'))"
+{
+  "expression": "Boolean(document.querySelector('input[type=\"password\"],[autocomplete~=\"one-time-code\" i]'))"
+}

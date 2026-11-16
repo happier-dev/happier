@@ -1,8 +1,11 @@
 import type { BrowserContextLifecycleStateV1 } from './v1.js';
-import sensitiveFieldsExpression from './sensitiveFieldsExpression.json' with { type: 'json' };
+import sensitiveFieldsProbe from './sensitiveFieldsExpression.json' with { type: 'json' };
 
-/** Source-owned presence-only probe for the native WebView producer; CDP uses its snapshot census. */
-export const browserContextSensitiveFieldsExpression: string = sensitiveFieldsExpression;
+/**
+ * Source-owned presence-only probe for the native WebView producer; CDP uses its snapshot census.
+ * The JSON stays an object: Jiti (source-mode plugin graphs) cannot import a top-level primitive.
+ */
+export const browserContextSensitiveFieldsExpression: string = sensitiveFieldsProbe.expression;
 
 export type BrowserContextPrivacyState = Extract<
   BrowserContextLifecycleStateV1,

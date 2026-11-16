@@ -515,10 +515,15 @@ impl DesktopBrowserState {
         }
         // The source owns this probe, not the capture caller: caller-supplied JavaScript could
         // claim `false` and bypass admission. Annotation and recording share the same policy.
-        let privacy_script: String = serde_json::from_str(include_str!(
+        #[derive(serde::Deserialize)]
+        struct SensitiveFieldsProbe {
+            expression: String,
+        }
+        let privacy_script = serde_json::from_str::<SensitiveFieldsProbe>(include_str!(
             "../../../../../packages/protocol/src/browser/context/sensitiveFieldsExpression.json"
         ))
-        .map_err(|_| DesktopBrowserCaptureErrorCode::CaptureFailed)?;
+        .map_err(|_| DesktopBrowserCaptureErrorCode::CaptureFailed)?
+        .expression;
         let source = native_capture_source(&key)
             .map_err(|_| DesktopBrowserCaptureErrorCode::CaptureFailed)?;
         let (sender, receiver) = tokio::sync::oneshot::channel();

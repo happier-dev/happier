@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -69,6 +70,29 @@ describe('loadPluginModule', () => {
             const read = loaded.read;
             if (typeof read !== 'function') throw new Error('Fixture read export is missing');
             await expect(read()).resolves.toEqual({ defaultType: 'function', marker: 'mailbox', sameDefault: true, sameNamespace: true, parsed: { connected: true } });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('loads Protocol source modules with JSON imports through the TypeScript generation graph', async () => {
+        // Source-runtime daemons (Stack source trees) load first-party plugin
+        // leaves as source-ts, so their Protocol imports go through this graph.
+        const root = await mkdtemp(join(tmpdir(), 'happier-plugin-protocol-json-'));
+        const entryPath = join(root, 'plugin.ts');
+        const privacyModule = fileURLToPath(new URL(
+            '../../../../../packages/protocol/src/browser/context/privacy.ts', import.meta.url));
+        try {
+            await writeFile(entryPath, [
+                `import { browserContextSensitiveFieldsExpression } from ${JSON.stringify(privacyModule)};`,
+                'export const expressionType = typeof browserContextSensitiveFieldsExpression;',
+            ].join('\n'));
+            const loaded = await loadPluginModule({ source: {
+                kind: 'file_backed', entryPath, devEntryPath: entryPath,
+                useDevelopmentEntry: true, sourceAuthority: { kind: 'development', registeredRootId: 'protocol-json', canonicalRoot: root, observedRevision: 1 },
+                generationScope: createPluginTypeScriptGenerationScope(),
+            } });
+            expect(loaded.expressionType).toBe('string');
         } finally {
             await rm(root, { recursive: true, force: true });
         }
