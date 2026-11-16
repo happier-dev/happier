@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, getActionSpec, RPC_METHODS, RPC_ERROR_CODES, UiActionDispatchRequestV1Schema, ActionIdSchema } from '@happier-dev/protocol';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -180,8 +183,9 @@ describe('client Action reverse delivery', () => {
       result: { status: 'applied', settingsVersion: 2 } },
   ] as const)('routes $actionId from a background Agent through the Account answering client', async ({ actionId, input, result }) => {
     const methods: string[] = [];
-    const caller = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: () => false,
+    const caller = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.messages.pins": Object.keys(ActionSurfaceSchema.shape), "projects.sources.moveToTeam": Object.keys(ActionSurfaceSchema.shape), "links.openExternal": Object.keys(ActionSurfaceSchema.shape), "file.view.preference.set": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
+
       clientActionExecute: createClientActionReverseDispatcher(() => ({
         hasConnectedClientRpcHandler: () => true,
         callConnectedClientRpc: async (method, payload, options) => {

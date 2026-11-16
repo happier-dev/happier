@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -69,8 +68,7 @@ describe('daemon Session visual Account-policy admission', () => {
       createExecutor: () => {
         const executor = createActionExecutor({
           readAgentHtmlNetworkPolicy: async () => policy.getAccountSettings()?.agentHtmlNetworkPolicy,
-          isActionApprovalRequired: (id, context, input, uiConfirmation) => isApprovalRequiredByActionsSettings(
-            id, policy.getActionsSettings(), context, undefined, undefined, input, uiConfirmation),
+          readActionsSettings: () => policy.getActionsSettings(),
           approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: 'visual-approval' }; },
           sessionBoardAction: async () => { writes++; throw new Error('Unexpected direct Board write'); },
         });

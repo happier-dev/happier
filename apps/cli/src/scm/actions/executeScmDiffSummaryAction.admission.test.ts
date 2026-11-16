@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
@@ -594,7 +597,8 @@ describe('SCM generation through real host admission', () => {
                     if (parentAvailable) assertBeforeStart = assertRunRefusals;
                     const savedBefore = await scmDiffSummaryResultStore.list();
                     const generationOperations = createScmDiffSummaryOperations({ actionExecutor: createActionExecutor({
-                        ...createUnavailableActionTransportDeps(), isActionApprovalRequired: () => false,
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.diffSummary.capture": Object.keys(ActionSurfaceSchema.shape), "execution.run.start": Object.keys(ActionSurfaceSchema.shape), "execution.run.list": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
+                        ...createUnavailableActionTransportDeps(),
                         // Transport boundary: retain the receiving Machine's
                         // real registration, executor and Run dispatch below it.
                         scmActionExecute: async ({ actionId, input }) => {

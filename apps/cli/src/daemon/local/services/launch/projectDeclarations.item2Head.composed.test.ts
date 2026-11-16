@@ -55,7 +55,6 @@ import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyn
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -2777,7 +2776,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                 h.routes.prepareStartApproval!(input, h.ingress, context, executeCanonicalAction),
             runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({ featureGate, ingress: h.ingress,
                 routes: { launcherRoutes: h.routes, actionRoutes } }),
-            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+            readActionsSettings: () => settings,
             approvalsCreate: async ({ request }) => { artifact = ApprovalRequestV2Schema.parse(request);
                 approvals.push(request.actionId); return { artifactId: 'restart-review' }; },
             approvalsGet: async () => artifact ?? null,
@@ -2844,8 +2843,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                         serverId: 'home', serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain', ctx: null }),
                     runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({
                         featureGate: gate, ingress, routes: { actionRoutes } }),
-                    isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId,
-                        normalizeActionsSettingsV1(null), context),
+                    readActionsSettings: () => normalizeActionsSettingsV1(null),
                     approvalsCreate: async ({ request }) => { artifact = ApprovalRequestV2Schema.parse(request);
                         approvals.push(request.actionId); return { artifactId: 'stop-review' }; },
                     approvalsGet: async () => artifact ?? null,

@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readAuthoritativePluginSlotOccurrence } from '@/plugins/runtime/reload/runtimeLease';
 import { createHash } from 'node:crypto';
@@ -105,7 +108,7 @@ describe('external Action mounted plugin admission', () => {
       externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(45)).secretKey,
       executor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
         // Account approval policy and Artifact persistence are external boundaries.
-        isActionApprovalRequired: () => true,
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['plugins.list']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
         approvalsCreate: async () => ({ artifactId: 'inspector-list-review' }),
         approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject' as const, request }),
         approvalsUpdate: async () => ({ ok: true }),
@@ -177,8 +180,9 @@ describe('external Action mounted plugin admission', () => {
           && fixture.registry.isPluginOccurrenceCurrent?.(caller.pluginId, current) === true;
       },
     });
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-      automationConversationAction, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"automation.conversation.targets.list": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
+      automationConversationAction });
     const authentication = { kind: 'account' as const, tokenEpoch: 0 };
     const target = { kind: 'machine' as const, machineId: 'machine-1' };
     const run = (claim: DaemonPluginMountedInvocationV1 = invocation) => {
@@ -252,7 +256,7 @@ describe('external Action mounted plugin admission', () => {
     let stored: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
     // Artifact storage and Home authorization are genuine network/persistence boundaries.
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: () => true,
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['plugins.reload']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
       approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'reload-review' }; },
     });
     const result = await executeExternalAction({ actionId: 'plugins.reload', envelope,
@@ -293,8 +297,9 @@ describe('external Action mounted plugin admission', () => {
   });
   it('refuses an unverifiable plugin claim before a host-only Action executes', async () => {
     let effects = 0;
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-      hostExternalSessionAction: async () => { effects += 1; return { ok: true, result: { ok: true, candidates: [] } }; }, isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"sessions.external.candidates.list": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
+      hostExternalSessionAction: async () => { effects += 1; return { ok: true, result: { ok: true, candidates: [] } }; },
     });
     const { invocation } = await mountedFixture();
     const result = await executeExternalAction({ actionId: 'sessions.external.candidates.list',
@@ -317,7 +322,7 @@ describe('external Action mounted plugin admission', () => {
     const authentication = { kind: 'terminal' as const, tokenEpoch: 0 };
     const envelope = { v: 1 as const, requestId: 'terminal-claim', target,
       input: { pluginId: 'acme.mounted' }, pluginInvocation: invocation };
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), isActionApprovalRequired: () => true,
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['plugins.reload']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
       approvalsCreate: async () => { throw new Error('Terminal plugin claim must not create an approval'); } });
     expect(await executeExternalAction({ actionId: 'plugins.reload', envelope,
       principal: { accountId: 'account-1', authentication, authority: 'account_automation' },
@@ -342,8 +347,9 @@ describe('external Action mounted plugin admission', () => {
   it('uses admitted plugin policy and refuses a retired occurrence through the real registry', async () => {
     const { fixture, invocation } = await mountedFixture();
     let effects = 0;
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-      hostExternalSessionAction: async () => { effects += 1; return { ok: true, result: { ok: true, candidates: [] } }; }, isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"sessions.external.candidates.list": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
+      hostExternalSessionAction: async () => { effects += 1; return { ok: true, result: { ok: true, candidates: [] } }; },
     });
     const run = (claim: unknown = invocation, principal: Parameters<typeof executeExternalAction>[0]['principal'] = { authority: 'present_user' }) => executeExternalAction({ actionId: 'sessions.external.candidates.list',
       envelope: { v: 1, requestId: 'request-mounted', input: {

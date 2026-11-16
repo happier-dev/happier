@@ -105,7 +105,7 @@ function createUnrelatedActionExecutorDeps(): ActionExecutorDeps {
     daemonMemoryGetWindow: async () => ({ v: 1, snippets: [], citations: [] }),
     daemonMemoryEnsureUpToDate: empty,
     resetGlobalVoiceAgent: async () => {},
-    isActionApprovalRequired: () => false,
+
   } as unknown as ActionExecutorDeps;
 }
 

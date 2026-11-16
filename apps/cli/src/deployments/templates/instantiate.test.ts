@@ -1,3 +1,5 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import axios from 'axios';
 import { readFile } from 'node:fs/promises';
@@ -179,6 +181,7 @@ it.each([false, true])('persists independent generated credentials from a bundle
                 expect(fixture.writes).toHaveLength(0);
             }
             const prepared = await fixture.inHome(() => templates.prepare(input, { runtimeAccountId: 'account-cli-fixture' }));
+            if ('errorCode' in prepared) throw new Error(JSON.stringify(prepared));
             expect(prepared.input).toEqual(input);
             // The reviewed bindings child commits at the same Home persistence boundary through
             // the real bindings patch owner, which mints each new variable's grant reference.
@@ -203,7 +206,7 @@ it.each([false, true])('persists independent generated credentials from a bundle
                     database: ordinal === 1 ? 'DB_NAME' : 'DB_NAME_2', host: ordinal === 1 ? 'DB_HOST' : 'DB_HOST_2',
                     port: ordinal === 1 ? 'DB_PORT' : 'DB_PORT_2' },
                 backup: { adapter: 'postgres-v1', database: ordinal === 1 ? 'DB_NAME' : 'DB_NAME_2', username: ordinal === 1 ? 'DB_USER' : 'DB_USER_2' } })));
-        expect(stored.bindings.map(binding => binding.name)).toEqual(['DB_USER', 'DB_NAME', 'DB_PASSWORD', 'DB_HOST', 'DB_PORT',
+        expect(stored.bindings.filter(binding => binding.purpose === 'variable').map(binding => binding.name)).toEqual(['DB_USER', 'DB_NAME', 'DB_PASSWORD', 'DB_HOST', 'DB_PORT',
             'DB_USER_2', 'DB_NAME_2', 'DB_PASSWORD_2', 'DB_HOST_2', 'DB_PORT_2']);
         if (stored.definition.kind !== 'stored') throw new Error('Expected stored output');
         const composed = await parseNativeComposeSource(stored.definition.document);
@@ -558,9 +561,10 @@ it.each([false, true])('prepares a catalog upgrade and keeps local edits and bou
         target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: identity.installationId },
         destination: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest }, bindings: [] });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"registries.items.read": Object.keys(ActionSurfaceSchema.shape), "deployments.bindings.set": Object.keys(ActionSurfaceSchema.shape), "deployments.templates.instantiate": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
         resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('Metadata reader owns this query'); },
             async () => ({ ok: true, environment: { id: current.environment.id, projectSourceId: 'project', purpose: 'standard' } })),
-        isActionApprovalRequired: () => false,
+
         prepareDeploymentTemplateInstantiation: request => templates.prepare(request.input, request.context, request.executeCanonicalAction),
         deploymentTemplateInstantiate: (input, context) => templates.instantiate(input, context),
     });
@@ -715,7 +719,8 @@ it('applies admitted Project defaults and preserves Team content audience throug
     const bindingsChild = (actionRequestId: string): HostReviewedChildPortV1 => ({ invoke: async request => {
         const applied = await deps.deploymentAction!('deployments.bindings.set', request.input as DeploymentBindingsSetInputV1,
             { runtimeAccountId: 'owner', actionRequestId });
-        return 'errorCode' in applied ? applied : { ok: true, result: applied };
+        if ('errorCode' in applied) throw new Error(JSON.stringify(applied));
+        return { ok: true, result: applied };
     } });
     phase = 'template_preview';
     const credentialed = createCliActionExecutorFromCredentials({ credentials, ...deps,
@@ -726,7 +731,7 @@ it('applies admitted Project defaults and preserves Team content audience throug
         { surface: 'cli', runtimeAccountId: 'owner', actionCaller: { kind: 'host' } });
     expect(executedPreview).toMatchObject({ ok: true, result: { kind: 'preview' } });
     if (!executedPreview.ok) throw new Error(executedPreview.errorCode);
-    const preview = executedPreview.result;
+    const preview = DeploymentTemplateInstantiateResultV1Schema.parse(executedPreview.result);
     expect.soft(DeploymentTemplateInstantiateResultV1Schema.parse(preview)).toMatchObject({ kind: 'preview', review: { firstRunSetup: true, capacity: [
         { resource: 'memoryBytes', observedBytes: 1024, observedAt: 100, state: 'shortfall' },
         { resource: 'freeDiskBytes', observedBytes: null, observedAt: null, state: 'unknown' },
@@ -839,7 +844,7 @@ it('applies admitted Project defaults and preserves Team content audience throug
             // replay admits again; unchanged capacity still reaches the write.
             expect.soft(mutationRequests, JSON.stringify(result)).toBe(mutationsBefore + 1);
         } else {
-            expect.soft(path === 'prepared' ? result : stored?.execution).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+            expect.soft(stored?.execution).toMatchObject({ ok: false, errorCode: 'approval_stale' });
             expect.soft(mutationRequests).toBe(mutationsBefore);
         }
     }

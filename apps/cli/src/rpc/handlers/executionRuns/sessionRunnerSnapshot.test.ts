@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { Server as SocketServer } from 'socket.io';
@@ -661,8 +664,9 @@ it.each(['session_close', 'planned_refresh_then_stop', 'owner_action_starts', 'm
           getServerFeaturesSnapshot: () => serverFeatures },
         policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
           reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
-      const executor = createActionExecutor({ ...runActionDeps,
-        isActionApprovalRequired: () => false,
+      const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"subagents.delegate.start": Object.keys(ActionSurfaceSchema.shape), "execution.run.start": Object.keys(ActionSurfaceSchema.shape), "session.list": Object.keys(ActionSurfaceSchema.shape), "reviews.comments.edit": Object.keys(ActionSurfaceSchema.shape), "reviews.comments.create": Object.keys(ActionSurfaceSchema.shape), "review.walkthrough": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...runActionDeps,
+
         executionRunStart: async (targetSessionId, request) => {
           expect(targetSessionId).toBe(sessionId);
           return normalizeExecutionRunRpcPayload(await rpc.handleRequest({

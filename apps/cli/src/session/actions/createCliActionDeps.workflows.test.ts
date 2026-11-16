@@ -1,3 +1,5 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -919,10 +921,11 @@ describe('createCliActionDeps workflow boundary', () => {
     });
     const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
       resolveServerFeaturesSnapshot: () => enabledFeatures as never, sessionId: 'cli-global', mode: 'plain', ctx: null });
-    const actions = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const actions = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"wait": Object.keys(ActionSurfaceSchema.shape), "workflow.run.get": Object.keys(ActionSurfaceSchema.shape), "workflow.run.list": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
     const result = await actions.execute('workflow.run.start', {
       runId: '11111111-1111-4111-8111-111111111111', source: { kind: 'inline', definition: {
-        version: 1, defaults: consumed ? { engine: { role: 'scout' } } : {},
+        version: 1, defaults: consumed ? { roleId: 'scout' } : {},
         ...(consumed ? { roles: [{ roleId: 'scout', runsAs: { kind: 'session' },
           engine: { agentTargetKey: 'agent:happier.agent.codex/codex' } }] } : {}), blocks: [{ kind: 'wait', id: 'wait',
           document: { text: 'Continue', references: [], attachments: [] } }],
@@ -1193,7 +1196,8 @@ describe('createCliActionDeps workflow boundary', () => {
     });
     const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
       resolveServerFeaturesSnapshot: () => enabledFeatures as never, sessionId: 'cli-global', mode: 'plain', ctx: null });
-    const actions = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const actions = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.trigger.add": Object.keys(ActionSurfaceSchema.shape), "notifications.notify_me": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
     const context = { surface: 'cli' as const, authority: 'present_user' as const,
       externalActionTarget: { kind: 'machine' as const, machineId: project.machineId, project } };
     await expect(actions.execute('workflow.run.get', { runId }, context))
@@ -1244,7 +1248,8 @@ describe('createCliActionDeps workflow boundary', () => {
     });
     const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
       resolveServerFeaturesSnapshot: () => enabledFeatures, sessionId: 'cli-global', mode: 'plain', ctx: null });
-    const result = await createActionExecutor({ ...deps, isActionApprovalRequired: () => false }).execute('session.trigger.add', {
+    const result = await createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"workflow.run.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps }).execute('session.trigger.add', {
       sessionId, project, target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'notify',
         actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Ready' } } }] } },
       trigger: { kind: 'schedule', enabled: false,
@@ -1291,7 +1296,7 @@ describe('createCliActionDeps workflow boundary', () => {
     });
     const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
       resolveServerFeaturesSnapshot: () => enabledFeatures as never, sessionId: 'cli-global', mode: 'plain', ctx: null });
-    const actions = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const actions = createActionExecutor({ ...deps });
     const result = await actions.execute('workflow.trigger.add', {
       project: { machineId: 'machine-1', directory: '/repo' },
       target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
@@ -2068,7 +2073,7 @@ describe('createCliActionDeps workflow boundary', () => {
       errorCode: 'target_unavailable',
       error: 'target_unavailable',
     });
-    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({ ...deps });
     await expect(executor.execute('workflow.run.get', {
       runId: '33333333-3333-4333-8333-333333333333',
     }, {

@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
@@ -259,8 +262,8 @@ describe('native Goal canonical Session readback', () => {
           // Carry the real SDK→host→RPC→router refusal through Action execution
           // and the strict public consumer. The wrong source declaration above
           // deliberately breaks publication, rather than replacing an owner.
-          const executor = createActionExecutor({ sessionGoalSet: async () => first.result,
-            isActionApprovalRequired: () => false });
+          const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.goal.set": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), sessionGoalSet: async () => first.result });
           const action = await executor.execute('session.goal.set', {
             sessionId: session.sessionId, objective: 'SDK native readback',
           }, { surface: 'cli' });

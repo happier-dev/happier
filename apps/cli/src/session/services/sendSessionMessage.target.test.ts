@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import nacl from 'tweetnacl';
@@ -172,7 +175,7 @@ describe('target Session input authoring through HTTP', () => {
       localMachineId: 'machine-a', durableMutationDeliveryInitiallyActive: false,
       metadataAuthority: { kind: 'owner', credentials },
       transport: { serverId: 'fixture-home', serverUrl: 'http://fixture-home',
-        createAccountUpdatesSocket: () => createUserScopedSocket({ token: credentials.token, serverUrl: 'http://fixture-home' }),
+        createAccountUpdatesSocket: () => userSocket,
         createSessionSocketTransport: () => createSessionScopedSocketConnection({
           token: credentials.token, sessionId, machineId: 'machine-a', serverUrl: 'http://fixture-home',
         }),
@@ -209,7 +212,8 @@ describe('target Session input authoring through HTTP', () => {
           requestedAction: { v: 1, kind: 'enqueue' }, ...(permissionModeOverride ? { permissionModeOverride } : {}) } },
       principal: { authority: 'account_automation' }, currentMachineId: 'machine-a',
       resolveTarget: async () => ({ kind: 'session', sessionId }),
-      executor: createActionExecutor({ ...deps, isActionApprovalRequired: () => false }),
+      executor: createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps }),
     });
     try {
       if (!Reflect.get(session, 'sessionSyncPendingInputServerContractResult')) {
@@ -295,7 +299,8 @@ describe('target Session input authoring through HTTP', () => {
       externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation',
       serverIdentityId: 'home', machineAdmissionTransport: (request, options) => client.enqueueSessionPendingByMachine(request, options) });
     try {
-      const result = await createActionExecutor({ ...deps, isActionApprovalRequired: () => false }).execute('session.message.send', input,
+      const result = await createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps }).execute('session.message.send', input,
         { surface: 'cli', authority: 'present_user', externalActionTarget: target, externalActionExecutionAuthorization: authorization });
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'signed-cli-input' } });
       expect(admitted).toHaveLength(1);
@@ -336,7 +341,8 @@ describe('target Session input authoring through HTTP', () => {
         return { status: 'accepted', localId: admitted.localId };
       },
       externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation', serverIdentityId: 'home' });
-    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
     const result = await executor.execute('session.message.send', input, { surface: 'api', authority: 'account_automation',
       externalActionTarget: target, externalActionExecutionAuthorization: authorization,
       externalActionCredential: { accountId: 'requester', principalId: 'principal', credentialId: 'credential', grant } });
@@ -348,7 +354,8 @@ describe('target Session input authoring through HTTP', () => {
     ]);
     expect(http.post).not.toHaveBeenCalled();
     const writesBeforeMiswiring = http.post.mock.calls.length;
-    const miswiredDeps = { ...deps, isActionApprovalRequired: () => false };
+    const miswiredDeps = {
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps };
     Reflect.deleteProperty(miswiredDeps, 'sessionSendMessage');
     const miswiredResult = await createActionExecutor(miswiredDeps).execute('session.message.send', input, {
       surface: 'api', authority: 'account_automation', externalActionTarget: target,
@@ -412,7 +419,8 @@ describe('target Session input authoring through HTTP', () => {
       principal: { authority: 'present_user' },
       currentMachineId: 'machine-a',
       resolveTarget: async () => ({ kind: 'session', sessionId }),
-      executor: createActionExecutor({ ...deps, isActionApprovalRequired: () => false }),
+      executor: createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps }),
     });
     expect(result).toMatchObject({ kind: 'response', response: { execution: {
       ok: true, result: { status: didWrite ? 'accepted' : 'alreadyAccepted', localId: 'external-retry' },
@@ -523,7 +531,8 @@ describe('target Session input authoring through HTTP', () => {
     const senderCredentials = mode === 'plain' ? { token: credentials.token, encryption: null } : credentials;
     const deps = createCliActionDeps({ token: credentials.token, credentials: senderCredentials, sessionId,
       ...(mode === 'plain' ? { mode: 'plain' as const, ctx: null } : { mode: 'e2ee' as const, ctx }) });
-    const result = await createActionExecutor({ ...deps, isActionApprovalRequired: () => false }).execute('session.message.send', {
+    const result = await createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps }).execute('session.message.send', {
       sessionId, localId: input.localId, message: 'No tools. Reply SWITCH_OK.', wait: true, timeoutSeconds: 1,
     }, { surface: 'mcp', authority: 'present_user', defaultSessionId: null });
     expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: input.localId } });
@@ -616,7 +625,8 @@ describe('target Session input authoring through HTTP', () => {
     { kind: 'agent_team_broadcast' as const, teamId: 'team-a' },
   ])('refuses $kind through the real Action send owner before Pending or resume', async (nativeRecipient) => {
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null });
-    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
     const input = { sessionId, localId: 'native-input', message: 'Only the selected native recipient',
       recipient: nativeRecipient, wait: false };
     const result = await executor.execute('session.message.send', input, cliActionContext);
@@ -631,7 +641,8 @@ describe('target Session input authoring through HTTP', () => {
       messageMeta: withParticipantRecipientV1({}, nativeRecipient), wait: false, timeoutMs: 1_000 });
     expect(metadataOnly).toMatchObject({ ok: false, code: 'unsupported' });
     expect(http.post).not.toHaveBeenCalled();
-    const miswiredDeps = { ...deps, isActionApprovalRequired: () => false };
+    const miswiredDeps = {
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps };
     Reflect.deleteProperty(miswiredDeps, 'sessionSendMessage');
     const miswired = await createActionExecutor(miswiredDeps).execute('session.message.send', input, cliActionContext);
     expect(() => expect(miswired).toMatchObject({ ok: true,

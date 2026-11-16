@@ -1,3 +1,5 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
@@ -396,7 +398,7 @@ describe('target action invocation registry', () => {
                 sessions: workers.map(id => ({ id, active: false, presence: 'offline', updatedAt: 1, manager: { sessionId: 'parent' } })),
                 nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
             }),
-            isActionApprovalRequired: id => requireApproval && id === 'action.invoke',
+            readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['action.invoke']: { approvalRequiredSurfaces: (requireApproval) ? Object.keys(ActionSurfaceSchema.shape) : [] } } }),
             isApprovalExecutionOriginCurrent: async ({ reportStale }) => {
                 if (!originCurrent) reportStale?.('origin_not_current');
                 return originCurrent;

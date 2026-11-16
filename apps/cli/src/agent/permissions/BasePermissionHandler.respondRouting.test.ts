@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse, buildSessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol';
-import { ActionsSettingsV1Schema, createActionExecutor, isApprovalRequiredByActionsSettings, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { ActionsSettingsV1Schema, createActionExecutor,  type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 
 import { AgentStateRequestStore, AgentStateResponseTargetDispatcher, type PermissionResponseClaim } from './agentStateRequestStore';
 import { createSessionActionConfirmationAdapter } from '@/session/actions/approvals/sessionActionConfirmation';
@@ -238,11 +238,11 @@ describe('BasePermissionHandler permission-response routing (gap 28/29)', () => 
     // Only the Session RPC transport is replaced; admission, policy, codecs,
     // request currentness and offered-answer validation are the real owners.
     const deps = {
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      readActionsSettings: () => settings,
       sessionPermissionRespond: async ({ requestId: id, turnId: turn, decision: answer }) => rpc(
         buildSessionPermissionRespondRpcParamsV1({ id: id ?? '', turnId: turn ?? undefined, decision: answer }),
       ),
-    } satisfies Pick<ActionExecutorDeps, 'isActionApprovalRequired' | 'sessionPermissionRespond'>;
+    } satisfies Pick<ActionExecutorDeps, 'readActionsSettings' | 'sessionPermissionRespond'>;
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     const result = await executor.execute('session.permission.respond', { sessionId: session.sessionId, requestId, turnId, decision }, {
       surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' }, defaultSessionId: session.sessionId,
@@ -666,14 +666,14 @@ describe('native offered permission ingress', () => {
       // Replace the authenticated Session network boundary only. Admission,
       // Action dispatch, RPC codec, pending/claim owners and policy stay real.
       const deps = {
-        isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+        readActionsSettings: () => settings,
         sessionPermissionRespond: async ({ requestId, turnId, nativeChoice: choice }) => {
           const result = await rpc(buildSessionPermissionRespondRpcParamsV1({ id: requestId ?? '',
             ...(turnId == null ? {} : { turnId }), ...(choice ? { nativeChoice: choice } : {}),
           }));
           return result ?? { ok: true };
         },
-      } satisfies Pick<ActionExecutorDeps, 'isActionApprovalRequired' | 'sessionPermissionRespond'>;
+      } satisfies Pick<ActionExecutorDeps, 'readActionsSettings' | 'sessionPermissionRespond'>;
       const executor = createActionExecutor(deps as ActionExecutorDeps);
       const answer = (overrides = {}) => executor.execute('session.permission.respond', {
         sessionId: sample.sessionId, requestId: sample.requestId, nativeChoice, ...overrides,

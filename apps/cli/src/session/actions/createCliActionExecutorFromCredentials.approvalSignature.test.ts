@@ -1,3 +1,5 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import Fastify from 'fastify';
 import nacl from 'tweetnacl';
 import { expect, it } from 'vitest';
@@ -71,7 +73,7 @@ it.each(['same key', 'changed key'] as const)('replays a PAT Session-target appr
         // decision retain the real Artifact, provenance and signature owners.
         const producer = createActionExecutor({ ...createAccountServerActionDeps({ token: credentials.token, serverId,
           serverHttpBaseUrl: home, isCredentialCurrent: async () => true }),
-          approvalsCreate: store.approvalsCreate, isActionApprovalRequired: () => true });
+          approvalsCreate: store.approvalsCreate, readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['teams.members.remove']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }) });
         const created = await producer.execute('teams.members.remove', actionInput, {
           surface: 'api', authority: 'account_automation', serverId, serverIdentityId: homeId,
           defaultSessionMachineId: 'source-machine',

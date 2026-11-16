@@ -3,7 +3,7 @@ import { captureConsoleText, captureStdout } from '@/testkit/logger/captureOutpu
 import { handleAutomationCommand } from './automation';
 import { createActionExecutor, createWorkflowActionExecutor, createWorkflowDefinitionActions, createWorkflowTriggerActions } from '@happier-dev/protocol/actions';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { ActionsSettingsV1Schema, isApprovalRequiredByActionsSettings, isActionEnabledByActionsSettings } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema,  isActionEnabledByActionsSettings } from '@happier-dev/protocol';
 import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 
@@ -20,7 +20,7 @@ function runExecutor(runNow: NonNullable<Parameters<typeof createWorkflowTrigger
     sealContext: unavailable, resolveWorkflow: unavailable });
   const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'workflow.trigger.run_now': ['cli'] } });
   return createActionExecutor({ ...createUnavailableActionTransportDeps(),
-    isActionApprovalRequired: (id, ctx) => isApprovalRequiredByActionsSettings(id, settings, ctx),
+    readActionsSettings: () => settings,
     ...ports, workflowAction: createWorkflowActionExecutor({ definitions, triggers,
     isWorkflowFeatureEnabled: () => true, runs: { execute: unavailable } }) });
 }
@@ -195,7 +195,7 @@ describe('handleAutomationCommand', () => {
     const runNow = vi.fn();
     const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'workflow.trigger.run_now': { approvalRequiredSurfaces: ['cli'] } } });
     const executor = runExecutor(runNow, {
-      isActionApprovalRequired: (id, ctx) => isApprovalRequiredByActionsSettings(id, settings, ctx),
+      readActionsSettings: () => settings,
       approvalsCreate: async () => ({ artifactId: 'manual-approval' }),
     });
     const output = captureStdout();

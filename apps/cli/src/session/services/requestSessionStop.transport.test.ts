@@ -1,3 +1,5 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { Console } from 'node:console';
@@ -590,7 +592,8 @@ describe('requestSessionStop machine transport', () => {
   it.each(['explicit_stop', 'lifecycle_control'] as const)('classifies the session.stop front door before persisting its %s intent', async stopIntent => {
     boundary.mode = 'stopped';
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null });
-    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.stop": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
     const result = await executor.execute('session.stop', { sessionId, stopIntent },
       { surface: 'ui', authority: 'present_user' });
     expect(result).toMatchObject({ ok: true, result: { ok: true, stopped: true } });
@@ -635,7 +638,8 @@ describe('requestSessionStop machine transport', () => {
         })) } };
       });
       const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null });
-      const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+      const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.stop": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
       const result = caller === 'automatic' ? await requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId, actionContext })
         : await executor.execute('session.stop', { sessionId }, actionContext);
       expect(result, JSON.stringify(result)).toMatchObject(refused ? { ok: false } : caller === 'automatic'
@@ -700,7 +704,7 @@ describe('requestSessionStop machine transport', () => {
     boundary.mode = 'stopped';
     vi.mocked(axios.patch).mockRejectedValue(new axios.AxiosError('Fixture metadata transport failure', 'metadata_tuple_conflict'));
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null });
-    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({ ...deps });
     const result = await executor.execute('session.stop', { sessionId, stopIntent: 'explicit_stop' },
       { surface: 'cli', authority: 'present_user' });
     expect(result).toMatchObject({ ok: false, errorCode: 'metadata_tuple_conflict',

@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { execFileSync } from 'node:child_process';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -106,8 +109,9 @@ describe('plugin invocation SCM actions', () => {
                 resolveCurrentPluginMaterializationRef: scmMaterialization.resolveCurrentPluginMaterializationRef,
                 occurrenceId: 'occurrenceId-1', surface: 'plugin', approvalContext,
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true },
-            actionExecutor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
-                isActionApprovalRequired: () => false,
+            actionExecutor: createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.reviewWorkspace.materializePrepared": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
+
                 scmActionExecute: async ({ context }) => {
                     requester = selectHostRequesterExecutionIdentity({ actionContext: context as RpcActionExecutorContext,
                         hostHomeServerIdentityId: 'home-1', hostCustodianAccountId: 'reviewer',
@@ -142,13 +146,14 @@ describe('plugin invocation SCM actions', () => {
             hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(),
         })]);
         const actionExecutor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.reviewWorkspace.materializePrepared": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
             ...createUnavailableActionTransportDeps(),
             scmActionExecute: async ({ actionId, input, context }) => await executeScmActionOperation({
                 actionId, input, workingDirectory: fixture.nestedPath,
                 accessPolicy: { kind: 'restrictedRoots', roots: [selectedRoot] },
                 registry, ...(context.signal ? { signal: context.signal } : {}),
             }),
-            isActionApprovalRequired: () => false,
+
         });
         const service = createPluginInvocationActionsService({
             seed: {
@@ -317,9 +322,10 @@ describe('plugin invocation SCM actions', () => {
             error: 'test_stop_after_scm_dispatch',
         }));
         const actionExecutor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.diffSummary.generate": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
             ...createUnavailableActionTransportDeps(),
             scmActionExecute,
-            isActionApprovalRequired: () => false,
+
         });
         const service = createPluginInvocationActionsService({
             seed: {
@@ -387,6 +393,7 @@ describe('plugin invocation SCM actions', () => {
                 },
             } as unknown as ScmBackend]);
             const actionExecutor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.repository.init": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
                 ...createUnavailableActionTransportDeps(),
                 scmActionExecute: async ({ actionId, input, context }: Parameters<ScmActionExecute>[0]) => await executeScmActionOperation({
                     actionId,
@@ -396,7 +403,7 @@ describe('plugin invocation SCM actions', () => {
                     registry,
                     ...(context.signal ? { signal: context.signal } : {}),
                 }),
-                isActionApprovalRequired: () => false,
+
             });
             const service = createPluginInvocationActionsService({
                 seed: {

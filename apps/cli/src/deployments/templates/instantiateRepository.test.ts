@@ -1,3 +1,5 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import axios from 'axios';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -124,9 +126,10 @@ it.each(['pullRequest', 'bindings'] as const)('retains the repository owner and 
                 repository, baseCommit, baseBranch: git.branchName, branchName: 'add-postgresql', composePath: git.trackedPath, title: 'Add PostgreSQL' },
             bindings: [{ purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime', source: { kind: 'generated', key: 'DB_PASSWORD' } }] });
         const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"registries.items.read": Object.keys(ActionSurfaceSchema.shape), "deployments.bindings.set": Object.keys(ActionSurfaceSchema.shape), "deployments.templates.instantiate": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
             resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('Metadata reader owns this query'); },
                 async () => ({ ok: true, environment: { id: current.environment.id, projectSourceId: 'project', purpose: 'standard' } })),
-            isActionApprovalRequired: () => false,
+
             prepareDeploymentTemplateInstantiation: request => templates.prepare(request.input, request.context, request.executeCanonicalAction),
             deploymentTemplateInstantiate: (input, context) => templates.instantiate(input, context),
             // Observe the reviewed operand while the actual deployment adapter owns execution.

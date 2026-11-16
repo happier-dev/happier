@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { handleActionsCommand } from '@/cli/commands/actions';
@@ -78,8 +81,9 @@ describe('declared Action secret CLI input', () => {
 
   it.each(['invoke', 'friendly'] as const)('fills a built-in secret before full validation through %s', async surface => {
     const observed: unknown[] = [];
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"machines.managed.bootstrap.respond": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
+
       // The answering App RPC is the genuine external effect boundary.
       clientActionExecute: async ({ input }) => {
         observed.push(input);

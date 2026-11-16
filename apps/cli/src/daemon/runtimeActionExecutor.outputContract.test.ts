@@ -1,5 +1,4 @@
 import { expect, it } from 'vitest';
-import { setTimeout as delay } from 'node:timers/promises';
 import { ACTION_ID_FAMILIES_V1, FeaturesResponseSchema, LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol';
 import type { LocalServicePublicExposureV1, LocalServicePublicPreviewSnapshotV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
 import { RUNTIME_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -88,7 +87,7 @@ async function serviceCase(actionId: RuntimeActionIdV1): Promise<ContractCase> {
         verifyConfirmationNonce: request => request.confirmationNonce === createLocalServiceActionConfirmationNonceV1(request),
         terminateDetectedService: createTerminateDetectedService({
             // OS reports that the listener is already free: real idempotent termination settlement.
-            probeListener: async () => ({ status: 'free' }), terminateTree: createProcessTreeTerminator(), wait: delay,
+            probeListener: async () => ({ status: 'free' }), terminateTree: createProcessTreeTerminator(),
         }) });
     const owners = { localServices: { inventoryRoutes: createLocalServiceInventoryRoutes({ registry: inventory }),
         launcherRoutes, previewRoutes, actionRoutes } };
@@ -374,7 +373,7 @@ it('settles every reachable daemon route success and typed refusal against its d
             const runtimeActionExecute = withActionOutputContract(createDaemonRuntimeActionExecutor({ env: {},
                 resolveRouteOwners: () => owners, resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }) }));
             const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-                isActionApprovalRequired: () => false, runtimeActionExecute });
+                 runtimeActionExecute });
             const input = getActionSpec(actionId).inputSchema.parse(row.input);
             const success = await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user' });
             expect(success, `${actionId}: real success${success.ok ? '' : ` (${success.errorCode}: ${success.error})`}`)

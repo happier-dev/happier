@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -84,12 +87,13 @@ describe('confidential continuation Artifact custody', () => {
           documentId: 'document', navigationGeneration: 1, origin: 'https://example.test',
           field: { fieldId: '41', focusId: '41', locator: '#password' } };
         const rows = new Map<string, { header: Record<string, unknown>; body: string; access: string }>();
-        const ask = await createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
+        const ask = await createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"browser.automation.secret.fill": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
           return createApprovalRequestArtifact({ request, accountId: 'alice',
             newId: () => 'unused', read: async id => rows.get(id) ?? null,
             create: async (id, header, body) => { rows.set(id, { header, body, access: 'owner' }); },
           });
-        }, isActionApprovalRequired: () => false }).execute('browser.automation.secret.fill', reviewedRequest, {
+        } }).execute('browser.automation.secret.fill', reviewedRequest, {
           surface: registrationKind === 'daemon startup owner' ? 'ui' : 'agent',
           authority: registrationKind === 'daemon startup owner' ? 'present_user' : 'account_automation', serverId, serverIdentityId: 'srv_private_approval',
           defaultSessionId: sessionId, defaultSessionMachineId: 'machine', runtimeAccountId: 'alice',
@@ -230,9 +234,10 @@ describe('confidential continuation Artifact custody', () => {
   ] as const)('consumes the credential-backed private RPC through the installed trusted producer: $name', async scenario => {
     const { localHome, hostIdentity, identitySource, mode, code } = scenario;
     let created: ApprovalRequest | null = null;
-    await createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
+    await createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"browser.automation.secret.fill": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
       created = request; return { artifactId: 'approval' };
-    }, isActionApprovalRequired: () => false }).execute('browser.automation.secret.fill', request, {
+    } }).execute('browser.automation.secret.fill', request, {
       surface: 'agent', authority: 'account_automation', serverId: 'home',
       ...('unstampedOrigin' in scenario ? {} : { serverIdentityId: 'srv_verified_home' }),
       defaultSessionId: 'session', defaultSessionMachineId: 'machine', actionRequestId: 'request', actionCaller: { kind: 'host' },
@@ -338,7 +343,7 @@ describe('confidential continuation Artifact custody', () => {
     expect(await createActionExecutor({ ...createUnavailableActionTransportDeps(),
       listContributedActionDefinitions: () => [definition],
       approvalsCreate: async ({ request }) => { created = request; return { artifactId: 'approval' }; },
-      isActionApprovalRequired: () => false,
+
     }).execute('action.invoke', reviewed, { surface: 'ui', authority: 'present_user',
       serverId: 'srv_verified_home', ...(unstampedOrigin ? {} : { serverIdentityId: 'srv_verified_home' }), defaultSessionId: sessionId,
       defaultSessionMachineId: 'machine', actionRequestId: 'request', actionCaller: { kind: 'host' },
@@ -416,9 +421,10 @@ describe('confidential continuation Artifact custody', () => {
   });
   it('finishes the admitted private fill when the deciding human grant changes during preparation', async () => {
     let created: ApprovalRequest | null = null;
-    const creator = createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
+    const creator = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"browser.automation.secret.fill": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
       created = request; return { artifactId: 'approval' };
-    }, isActionApprovalRequired: () => false });
+    } });
     await creator.execute('browser.automation.secret.fill', request, { surface: 'agent', authority: 'account_automation',
       serverId: 'home', defaultSessionId: 'session', defaultSessionMachineId: 'machine', actionRequestId: 'request',
       actionCaller: { kind: 'host' } });
@@ -471,9 +477,10 @@ describe('confidential continuation Artifact custody', () => {
   });
   it('uses the real approval transition and HTTP revision CAS to issue only one concurrent effect', async () => {
     let created: ApprovalRequest | null = null;
-    const creator = createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
+    const creator = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"browser.automation.secret.fill": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
       created = request; return { artifactId: 'approval' };
-    }, isActionApprovalRequired: () => false });
+    } });
     await creator.execute('browser.automation.secret.fill', request, { surface: 'agent', authority: 'account_automation',
       serverId: 'home', defaultSessionId: 'session', defaultSessionMachineId: 'machine', actionRequestId: 'request',
       actionCaller: { kind: 'host' } });
@@ -515,9 +522,10 @@ describe('confidential continuation Artifact custody', () => {
   });
   it.each(['alice', undefined])('keeps the deciding actor independent of the stored requester for saved material: %s', async runtimeAccountId => {
     let created: ApprovalRequest | null = null;
-    await createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
+    await createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"browser.automation.secret.fill": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
       created = request; return { artifactId: 'approval' };
-    }, isActionApprovalRequired: () => false }).execute('browser.automation.secret.fill', request, {
+    } }).execute('browser.automation.secret.fill', request, {
       surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'alice',
       defaultSessionId: 'session', defaultSessionMachineId: 'machine', actionRequestId: 'request', actionCaller: { kind: 'host' },
     });

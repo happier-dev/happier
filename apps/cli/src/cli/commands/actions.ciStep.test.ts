@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import fastify from 'fastify';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAccountArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
@@ -54,9 +57,9 @@ function generationDeps(kind: 'repository' | 'stored' = 'repository', supported 
   const transport: NonNullable<ActionExecutorDeps['deploymentAction']> = async () => supported
     ? { ok: true, environment: detail.environment, targetLinks: [] }
     : { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-  const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-    deploymentAction: transport, resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport),
-    isActionApprovalRequired: () => false });
+  const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"deployments.deploy": Object.keys(ActionSurfaceSchema.shape), "deployments.environments.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
+    deploymentAction: transport, resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport) });
   return { createExecutorFn: () => ({ ...executor, resolveSessionTarget: async (): Promise<never> => { throw new Error('No Session'); } }) };
 }
 const StepSchema = z.array(z.strictObject({ name: z.string(), shell: z.literal('bash'),
@@ -208,7 +211,8 @@ describe('emitted deployment CI step through the Actions command', () => {
           };
           return { ok: true, environmentId, revision: 2, deploymentId: 'deployment', deploymentRevision: 1, state };
         };
-        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), deploymentAction: transport,
+        const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"deployments.deploy": Object.keys(ActionSurfaceSchema.shape), "deployments.environments.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), deploymentAction: transport,
           actionOperationAction: request => {
             operationInputs.push(request.input);
             return executeActionOperationActionV1({ ...request, transport: async read => {
@@ -221,7 +225,7 @@ describe('emitted deployment CI step through the Actions command', () => {
               return { kind: 'found', operation: store.get(scope, 'operation') };
             } });
           },
-          resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport), isActionApprovalRequired: () => false });
+          resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport) });
         output.logs.length = 0;
         await handleActionsCommand(argv.slice(1), { createExecutorFn: params => {
           // The emitted variable reaches the actual CLI credential reader;

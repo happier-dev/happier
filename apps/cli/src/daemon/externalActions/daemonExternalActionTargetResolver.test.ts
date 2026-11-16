@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import axios from 'axios';
@@ -9,7 +12,7 @@ import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/cre
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import nacl from 'tweetnacl';
 import type { PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
-import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalExecutionOriginV1Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -135,9 +138,10 @@ describe('createDaemonExternalActionTargetResolver', () => {
     let approval: ApprovalRequest | null = null;
     const readApproval = (): ApprovalRequest | null => approval;
     await createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"computer.secret.fill": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createUnavailableActionTransportDeps(),
       approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'approval' }; },
-      isActionApprovalRequired: () => false,
+
     }).execute('computer.secret.fill', {
       serverId: 'home', sessionId: currentSession.id, machineId: 'machine-local', purpose: 'Sign in',
       sourceId: 'source', target: { kind: 'window', displayId: 'display', pid: 1, windowId: 2 },
@@ -152,10 +156,10 @@ describe('createDaemonExternalActionTargetResolver', () => {
     expect(captured.executionOriginV1).toMatchObject({ actionId: 'computer.secret.fill', surface: 'agent' });
     expect(await resolveTarget({ actionId: 'computer.secret.fill', target: captured.executionOriginV1.target,
       currentMachineId: 'machine-local' })).not.toBeNull();
-    expect(await isCurrent({ origin: captured.executionOriginV1, request: captured }),
+    expect(await isCurrent({ origin: ApprovalExecutionOriginV1Schema.parse(captured.executionOriginV1), request: captured }),
       JSON.stringify(captured.executionOriginV1)).toBe(true);
     mocks.fetchSessionById.mockResolvedValue({ ...currentSession, metadata: JSON.stringify({ machineId: 'machine-elsewhere' }) });
-    expect(await isCurrent({ origin: captured.executionOriginV1, request: captured })).toBe(false);
+    expect(await isCurrent({ origin: ApprovalExecutionOriginV1Schema.parse(captured.executionOriginV1), request: captured })).toBe(false);
   });
 
   it.each(['automatic', 'explicit', 'unchanged'] as const)('keeps the reviewed shared Session memory target and revision through %s approval replay', async mode => {
@@ -251,7 +255,7 @@ describe('createDaemonExternalActionTargetResolver', () => {
     // This unsigned Agent proposal must not be reclassified as a UI host
     // proposal when a human later decides it (FX35 custody neighbor).
     expect(captured.executionOriginV1).toMatchObject({ surface: 'agent', caller: { kind: 'host' } });
-    expect(await isCurrent({ origin: captured.executionOriginV1, request: captured }),
+    expect(await isCurrent({ origin: ApprovalExecutionOriginV1Schema.parse(captured.executionOriginV1), request: captured }),
       JSON.stringify(captured.executionOriginV1)).toBe(true);
     expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
       surface: 'ui', authority: 'present_user', serverId: 'home', actionCaller: { kind: 'host' },

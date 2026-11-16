@@ -39,11 +39,12 @@ import { createWorkflowCoordinator } from '@/daemon/workflows/coordinator';
 import { createInMemoryWorkflowCoordinatorStore } from '@/daemon/workflows/workflowCoordinator.testkit';
 import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { ExecutionRunPermissionRespondInputSchema } from '@happier-dev/protocol/actions/specs/executionRuns';
 import type { ExecutionRunPermissionRequestStore, ExecutionRunPermissionRequestStoreProvider } from './executionRunPermissionResponseTarget';
 import { buildExecutionRunPermissionRequestEnvelope } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import { createMcpServerActionExecuteV1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { applyMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
-import type { McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { McpServerCatalogRowReadResponseV1Schema, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 
 const runtimeFactoryMock = vi.hoisted(() => ({
   createExecutionRunBridgeRuntime: vi.fn(),
@@ -358,11 +359,11 @@ describe('ExecutionRunHostBridge detached task scope', () => {
       await vi.waitFor(() => expect(finishTurn).toBeTypeOf('function'));
       let catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{ id: 'docs', name: 'docs', transport: 'stdio',
         stdio: { command: 'docs-mcp', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }] };
-      const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+      const executor = createActionExecutor({
         executionRunCheckProtocolV2: async () => ({ ok: true }), executionRunGet: async (_session, input) => ({ run: manager.getPublic(input.runId) }),
-        executionRunPermissionRespond: input => manager.completePermissionRequest(input.runId, input),
+        executionRunPermissionRespond: input => manager.completePermissionRequest(input.runId, ExecutionRunPermissionRespondInputSchema.parse(input)),
         mcpServerAction: createMcpServerActionExecuteV1({ readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
-          readRow: async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: catalog } }) }),
+          readRow: async () => McpServerCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1, content: { t: 'plain', v: catalog } }) }),
           mutate: async mutation => { trace.push('save'); catalog = applyMcpServerCatalogMutationV1(catalog, mutation);
             return { status: 'updated', revision: 2, cursor: 2 }; }, machine: async () => { throw new Error('No process'); } }),
       });

@@ -5,7 +5,6 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { assertActionOutputContract, withActionOutputContract } from '@/testkit/actionOutputContract';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import type { RpcHandler } from '@/api/rpc/types';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -272,7 +271,7 @@ describe('daemon local-services runtime action executor', () => {
             const settings = normalizeActionsSettingsV1({ v: 1,
                 approvalWaivedSurfaces: { 'localServices.preview.openOrCreate': ['agent'] } });
             const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), runtimeActionExecute: execute,
-                isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
+                readActionsSettings: () => settings });
             const bridge = createActionToolExecutorBridge({ executor, surface: 'agent', actionsSettings: settings,
                 defaultSessionMachineId: 'machine_1' });
             for (const selector of ['launchTargetId', 'managedServiceId']) {
@@ -334,7 +333,7 @@ describe('daemon local-services runtime action executor', () => {
         const settings = normalizeActionsSettingsV1({ v: 1,
             approvalWaivedSurfaces: { 'localServices.actions.openPreview': ['rpc'], 'localServices.preview.openOrCreate': ['agent'] } });
         const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), runtimeActionExecute: execute,
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
+            readActionsSettings: () => settings });
         // Registration is the RPC boundary; each registered handler validates its own request schema.
         const handlers = new Map<string, RpcHandler>();
         registerDaemonLocalServicesMachineRpcHandlers({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
@@ -852,7 +851,7 @@ describe('daemon local-services runtime action executor', () => {
         });
         let settings = normalizeActionsSettingsV1({ v: 1 });
         const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), runtimeActionExecute: execute,
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
+            readActionsSettings: () => settings });
         const request = {
                 machineId: 'machine_1',
                 sessionId: 'session_1',
@@ -886,7 +885,7 @@ describe('daemon local-services runtime action executor', () => {
         const settings = normalizeActionsSettingsV1({ v: 1,
             approvalWaivedSurfaces: { 'localServices.actions.terminateDetected': ['cli'] } });
         const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), runtimeActionExecute: execute,
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
+            readActionsSettings: () => settings });
         const result = await executor.execute('localServices.actions.terminateDetected', {
             requestId: 'waived-process-control', action: 'terminate_detected', force: false,
             target: { kind: 'inventory_entry', inventoryEntryId: 'entry_1', machineId: 'machine_1' },

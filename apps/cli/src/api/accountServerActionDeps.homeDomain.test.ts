@@ -1,3 +1,4 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import fastify from 'fastify';
@@ -420,7 +421,7 @@ describe('Home family CLI adapter', () => {
       ctx: null,
     }, {
       ...accountServerActionDeps,
-      isActionApprovalRequired: (actionId) => actionId === 'teams.invitations.accept',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['teams.invitations.accept']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
       approvalsCreate: async ({ request }) => {
         storedRequest = request;
         return { artifactId: 'approval-team-invitation' };

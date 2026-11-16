@@ -1,3 +1,4 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { resolveActionSessionTargets } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { createExternalActionRuntime } from './externalActionRuntime.testkit';
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
@@ -236,10 +237,11 @@ function createExternalActionExecutor(
   listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'],
 ) {
   return createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"action.invoke": Object.keys(ActionSurfaceSchema.shape), "deployments.deploy": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), "session.message.send": Object.keys(ActionSurfaceSchema.shape), "approval.request.get": Object.keys(ActionSurfaceSchema.shape), "workflow.run.invocations.get": Object.keys(ActionSurfaceSchema.shape), "workflow.run.invocations.list": Object.keys(ActionSurfaceSchema.shape), "workflow.run.resume": Object.keys(ActionSurfaceSchema.shape), "approval.request.list": Object.keys(ActionSurfaceSchema.shape), "action.spec.get": Object.keys(ActionSurfaceSchema.shape), "action.spec.search": Object.keys(ActionSurfaceSchema.shape), "workflow.run.start": Object.keys(ActionSurfaceSchema.shape), "wait": Object.keys(ActionSurfaceSchema.shape), "teams.archive": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
     invokeContributedAction,
     ...(listContributedActionDefinitions ? { listContributedActionDefinitions,
       readContributedActionSchemas: createCommittedContributedActionSchemaReader(listContributedActionDefinitions) } : {}),
-    isActionApprovalRequired: () => false,
+
   } as unknown as ActionExecutorDeps);
 }
 
@@ -772,8 +774,9 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     let approval: unknown;
     let effects = 0;
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: () => false,
+
       approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'signed-nested-preview' }; },
       sessionSendMessage: async () => { effects++; return { status: 'accepted', localId: 'effect' }; },
     });

@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { CoordinationMessageRefV1Schema } from '@happier-dev/protocol/discussions/messageRefs';
@@ -45,7 +48,8 @@ describe('external Memory author workflow through both SDK transports', () => {
     const created = await createMemoryDocInLibrary({ store, request: { title: 'Memory', text: 'Seed note' },
       randomId: () => `fact-${++sequence}`, nowMs: () => 10, sourceSessionRef: null });
     const ref = { kind: 'doc' as const, artifactId: created.artifactId, serverId: 'home' };
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"memory.decision.save": Object.keys(ActionSurfaceSchema.shape), "memory.read": Object.keys(ActionSurfaceSchema.shape), "memory.update": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
       memoryLibrary: { serverId: 'home', store, randomId: () => `fact-${++sequence}`, nowMs: () => 20,
         readExposure: async artifactId => ({ grants: { artifactId, ownerAccountId: 'owner', access: 'owner', grants: [] },
           publicShares: { publicShares: [] } }) } });

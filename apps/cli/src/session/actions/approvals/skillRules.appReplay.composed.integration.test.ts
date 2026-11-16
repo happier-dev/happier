@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import '../../../../../ui/sources/dev/vitestSetup';
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, vi } from 'vitest';
 import { Server } from 'socket.io';
@@ -197,7 +200,8 @@ describe('CLI capability approval replayed by the app', () => {
           return { status: response.status, body: await response.json() };
         } });
         if (family === 'skill') {
-        const seed = await createActionExecutor({ ...deps, isActionApprovalRequired: () => false }).execute('skills.create', {
+        const seed = await createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"skills.create": Object.keys(ActionSurfaceSchema.shape), "skills.rules.set": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), "prompts.invocation.create": Object.keys(ActionSurfaceSchema.shape), "prompts.invocation.update": Object.keys(ActionSurfaceSchema.shape), "prompts.invocation.delete": Object.keys(ActionSurfaceSchema.shape), "mcp.servers.list": Object.keys(ActionSurfaceSchema.shape), "mcp.servers.create": Object.keys(ActionSurfaceSchema.shape), "mcp.servers.tools.set": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps }).execute('skills.create', {
           name: 'approval-replay', files: [skillFileFromBytesV1('SKILL.md', new TextEncoder().encode('---\nname: approval-replay\n---\nA rule replay skill.'), 0o644)],
           where: { kind: 'replace', rules: [] },
         }, { surface: 'cli', authority: 'account_automation' });
@@ -314,7 +318,8 @@ describe('CLI capability approval replayed by the app', () => {
         if (!catalogRead.ok) throw new Error('MCP catalog seed read failed');
         const catalog = MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1['mcp.servers.list'].parse(catalogRead.result);
         if (catalog.status !== 'ready') throw new Error('MCP catalog seed is not ready');
-        await expect(createActionExecutor({ ...deps, isActionApprovalRequired: () => false }).execute('mcp.servers.create', {
+        await expect(createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"skills.create": Object.keys(ActionSurfaceSchema.shape), "skills.rules.set": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), "prompts.invocation.create": Object.keys(ActionSurfaceSchema.shape), "prompts.invocation.update": Object.keys(ActionSurfaceSchema.shape), "prompts.invocation.delete": Object.keys(ActionSurfaceSchema.shape), "mcp.servers.list": Object.keys(ActionSurfaceSchema.shape), "mcp.servers.create": Object.keys(ActionSurfaceSchema.shape), "mcp.servers.tools.set": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps }).execute('mcp.servers.create', {
           expectedRevision: catalog.revision, entry: { id: mcpId, name: `review_${miswired}`, title: 'Issue tracker', transport: 'stdio',
             stdio: { command: 'issue-mcp', args: ['--workspace', 'team'] }, env: {}, createdAt: 1, updatedAt: 1 },
           where: { kind: 'replace', rules: [] },

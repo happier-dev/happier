@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
@@ -81,7 +84,8 @@ describe('executeScmDiffSummaryAction', () => {
                 receipts: [...before.receipts, ...after.receipts],
             },
         } });
-        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), isActionApprovalRequired: () => false,
+        const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.diffSummary.capture": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
             scmActionExecute: async ({ actionId, input }) => executeScmActionOperation({ actionId, input,
                 workingDirectory: fixture.rootPath, authorizeSession: async id => id === sessionId }),
         });
@@ -262,7 +266,8 @@ describe('executeScmDiffSummaryAction', () => {
                 return { ok: true, result: { runId: 'pr-draft-run', callId: 'call', sidechainId: 'sidechain' } };
             },
         });
-        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), isActionApprovalRequired: () => false,
+        const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.pullRequest.openCompose": Object.keys(ActionSurfaceSchema.shape), "scm.diffSummary.draftPullRequest": Object.keys(ActionSurfaceSchema.shape), "execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
             scmActionExecute: async ({ actionId, input }) => executeScmActionOperation({ actionId, input,
                 workingDirectory: fixture.rootPath, sessionId, authorizeSession: async id => id === sessionId,
                 executeDiffSummary: async ({ request }) => executeGeneration(request as ScmDiffSummaryGenerateInput) }),
@@ -278,7 +283,8 @@ describe('executeScmDiffSummaryAction', () => {
     it('returns a typed captured failure through strict draft Action validation when template evidence cannot be read', async () => {
         const fixture = await changedRepository();
         const sessionId = 'draft-failure-session';
-        const executor: ReturnType<typeof createActionExecutor> = createActionExecutor({ ...createUnavailableActionTransportDeps(), isActionApprovalRequired: () => false,
+        const executor: ReturnType<typeof createActionExecutor> = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.diffSummary.draftPullRequest": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
             scmActionExecute: async ({ actionId, input }) => executeScmActionOperation({ actionId, input,
                 workingDirectory: fixture.rootPath, sessionId, authorizeSession: async id => id === sessionId,
                 executeDiffSummary: async ({ request }) => executeScmDiffSummaryAction({
@@ -452,7 +458,8 @@ describe('executeScmDiffSummaryAction', () => {
         let startEntered!: () => void;
         const entered = new Promise<void>(resolve => { startEntered = resolve; });
         const rpc = new RpcHandlerManager({ scopePrefix: 'generation-machine', encryptionMode: 'plain', logger: () => {} });
-        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), isActionApprovalRequired: () => false,
+        const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.diffSummary.generate": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
             scmActionExecute: async ({ actionId, input }) => executeScmActionOperation({ actionId, input,
                 workingDirectory: fixture.rootPath, authorizeSession: async id => id === sessionId,
                 executeDiffSummary: ({ request }) => executeScmDiffSummaryAction({ request: ScmDiffSummaryGenerateInputSchema.parse(request), backendTarget: BACKEND_TARGET,
@@ -578,12 +585,13 @@ describe('executeScmDiffSummaryAction', () => {
             ? { ok: false, code: 'execution_run_parent_selection_unavailable', message: 'Parent unavailable',
                 details: withExecutionRunStartFailureDetails(undefined, runCreation) }
             : { runId: 'configured-default-run', callId: 'call', sidechainId: 'sidechain' });
-        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-            isActionApprovalRequired: () => false,
+        const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.diffSummary.generate": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
+
             executionRunCheckProtocolV2: async () => ({ ok: true }), executionRunStart: start,
             scmActionExecute: async ({ input, executeCanonicalAction }) => executeScmDiffSummaryAction({
                 request: ScmDiffSummaryGenerateInputSchema.parse(input), sessionId,
-                backendTarget: BACKEND_TARGET, executeCanonicalAction }),
+                backendTarget: READY_SESSION_TARGET, executeCanonicalAction }),
         });
         const response = await executor.execute('scm.diffSummary.generate', { cwd: fixture.rootPath,
             source: { kind: 'workingTree' }, outputs: ['walkthrough'] }, { surface: 'cli', defaultSessionId: sessionId });
@@ -754,9 +762,12 @@ describe('executeScmDiffSummaryAction', () => {
             details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') }));
         const observation = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
         const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-            isActionApprovalRequired: id => {
+            readApprovalOwner: id => {
                 if (outcome === 'preparation exception' && id === 'execution.run.start') throw new TypeError('Private preparation content');
-                return outcome === 'deferred approval' && id === 'execution.run.start';
+                return 'local';
+            },
+            readActionsSettings: () => {
+                return ActionsSettingsV1Schema.parse({ v: 1, actions: { 'execution.run.start': { approvalRequiredSurfaces: outcome === 'deferred approval' ? Object.keys(ActionSurfaceSchema.shape) : [] } } });
             },
             approvalsCreate: async () => ({ artifactId: 'nested-start-approval' }),
             executionRunCheckProtocolV2: async () => {
@@ -808,8 +819,9 @@ describe('executeScmDiffSummaryAction', () => {
                 if (outcome === 'lost transport reply') throw new Error('Private transport content');
                 return outcome === 'success' ? { runId: 'admitted-run', callId: 'call', sidechainId: 'sidechain' } : {};
             });
-            const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-                isActionApprovalRequired: () => false,
+            const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.diffSummary.generate": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
+
                 executionRunCheckProtocolV2: async () => ({ ok: true }), executionRunStart: start,
                 scmActionExecute: async ({ input, executeCanonicalAction, context }) => executeScmDiffSummaryAction({
                     request: input as ScmDiffSummaryGenerateInput, sessionId, backendTarget: BACKEND_TARGET,

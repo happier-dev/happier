@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import {
   AutomationEventActionHttpRequestSchemasV1,
   AutomationSourceSelectorIdV1Schema,
@@ -116,6 +119,7 @@ function readLoadedExternalPlugin(manifest: unknown): LoadedPlugin {
 function createUnrelatedActionExecutorDeps(): ActionExecutorDeps {
   const empty = async () => ({});
   return {
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"automation.event.admit": Object.keys(ActionSurfaceSchema.shape), "automation.event.source.status.report": Object.keys(ActionSurfaceSchema.shape), "automation.event.sources.list": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
     executionRunStart: empty,
     executionRunList: empty,
     executionRunGet: empty,
@@ -153,7 +157,7 @@ function createUnrelatedActionExecutorDeps(): ActionExecutorDeps {
     daemonMemoryGetWindow: async () => ({ v: 1, snippets: [], citations: [] }),
     daemonMemoryEnsureUpToDate: empty,
     resetGlobalVoiceAgent: async () => {},
-    isActionApprovalRequired: () => false,
+
   } satisfies ActionExecutorDeps;
 }
 

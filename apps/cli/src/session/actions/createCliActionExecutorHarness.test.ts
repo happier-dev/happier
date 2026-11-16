@@ -1,3 +1,6 @@
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createInMemoryWorkflowCoordinatorStore, createTestWorkflowCoordinator } from '@/daemon/workflows/workflowCoordinator.testkit';
 import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
@@ -604,9 +607,15 @@ describe('createCliActionExecutorHarness', () => {
     const context = { surface: 'ui', authority: 'present_user' } as const;
     const input = { ref: { surface: { serverId: 'home', accountId: 'account', owner: { kind: 'home' } }, instanceId: 'movable' },
       to: { surface: { serverId: 'home', accountId: 'account', owner: { kind: 'corePage', pageId: 'usage', area: 'main' } }, index: 0 } };
-    const requiresApproval = () => harness.deps.isActionApprovalRequired!(actionId, context, input, true);
+    const requiresApproval = (actionInput: unknown = input) => {
+      const decision = resolveActionApprovalRouting({ actionId,
+      spec: getActionSpec(actionId), context, input: actionInput,
+      settings: harness.deps.readActionsSettings!(context), defaultUiConfirmation: true,
+      });
+      return decision.required || decision.uiConfirmationRequired === true;
+    };
     expect(requiresApproval()).toBe(true);
-    expect(harness.deps.isActionApprovalRequired!(actionId, context, { ...input,
+    expect(requiresApproval({ ...input,
       to: { surface: { serverId: 'home', accountId: 'account', owner: { kind: 'sessionBoard', sessionId: 'another-audience' } }, index: 0 },
     })).toBe(true);
     settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } });
@@ -952,7 +961,7 @@ describe('createCliActionExecutorHarness', () => {
       {
         approvalsCreate,
         sessionStateFieldSet,
-        isActionApprovalRequired: (id, ctx) => id === 'session.title.set' && ctx.surface === 'agent',
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.title.set']: { approvalRequiredSurfaces: ['agent'] } } }),
       },
     );
 

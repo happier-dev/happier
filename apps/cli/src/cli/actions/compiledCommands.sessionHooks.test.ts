@@ -1,7 +1,6 @@
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { findCompiledActionCliCommand } from './compiledCommands';
 import { composeActionCliInput, parseActionCliCommandInput } from './parseCommandInput';
@@ -31,8 +30,7 @@ describe('Session hook CLI Action parity', () => {
     // This is the outward daemon/OS hook boundary. Routing, schemas and approval stay real.
     const requests: unknown[] = [];
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: (id, context, actionInput) => isApprovalRequiredByActionsSettings(id,
-        context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }), context, undefined, undefined, actionInput),
+      readActionsSettings: (context) => context.actionsSettings ?? normalizeActionsSettingsV1({ v: 1 }),
       pluginSessionHookManagementAction: async request => {
         requests.push(request);
         return { ok: false, errorCode: 'hook_fixture_refusal', error: 'hook_fixture_refusal' };

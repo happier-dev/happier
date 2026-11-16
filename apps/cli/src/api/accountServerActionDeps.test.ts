@@ -1,3 +1,5 @@
+import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import fastify from 'fastify';
@@ -44,7 +46,6 @@ import * as machineRpcTransport from '@/session/transport/rpc/machineRpc';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -92,8 +93,7 @@ function createWorkerPreferenceCustodyExecutor(input: Parameters<typeof createAc
     approvalWaivedSurfaces: { 'projects.worker.preferences.set': ['cli'] } });
   return createActionExecutor({
     ...createAccountProjectWorkerActionDeps(input),
-    isActionApprovalRequired: (actionId, context, actionInput) =>
-      isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, actionInput),
+    readActionsSettings: () => settings,
   });
 }
 
@@ -375,11 +375,13 @@ describe('Account API token HTTP adapter', () => {
   it('executes token access updates through the declared Home owner', async () => {
     const requests: unknown[] = [];
     const tokenId = '12345678-1234-4234-8234-123456789abc';
+    const label = sealPrivateLabelV1({ mode: 'plain', binding: { entity: 'account_api_token', field: 'label', id: tokenId }, value: 'Edited' });
+    const readLabel = projectPrivateLabelForRecipientV1({ stored: label, recipientAccountId: 'account-1' });
     const grant = { ...API_TOKEN_FULL_GRANT_V1, approve: true };
     app.post('/v1/auth/api-tokens/update', async (request) => {
       requests.push(request.body);
       return { apiToken: {
-        tokenId, label: 'Edited', displayPrefix: 'hap_v1_12345678', createdAt: '2026-09-30T00:00:00Z',
+        tokenId, label: readLabel, displayPrefix: 'hap_v1_12345678', createdAt: '2026-09-30T00:00:00Z',
         lastUsedAt: null, expiresAt: null, hasEncryptionAccess: false, hasUnattendedTeamAccess: false,
         grant, parentTokenId: null, activeChildCount: 0, embedConfig: null,
       } };
@@ -387,16 +389,16 @@ describe('Account API token HTTP adapter', () => {
     const deps = createAccountServerActionDeps({ token: 'interactive', serverId: 'home', serverHttpBaseUrl: 'http://account.test' });
     const executor = createActionExecutor(deps as Parameters<typeof createActionExecutor>[0]);
     const automationContext = { surface: 'cli' as const, authority: 'account_automation' as const };
-    expect(await executor.execute('account.apiTokens.update', { tokenId, label: 'Edited', grant }, automationContext))
+    expect(await executor.execute('account.apiTokens.update', { tokenId, label, grant }, automationContext))
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(requests).toEqual([]);
     const context = { surface: 'cli' as const, authority: 'present_user' as const };
-    expect(await executor.execute('account.apiTokens.update', { tokenId, label: 'Edited', grant }, {
+    expect(await executor.execute('account.apiTokens.update', { tokenId, label, grant }, {
       ...context,
       presentUserConfirmation: { actionId: 'account.apiTokens.update' },
     }))
-      .toMatchObject({ ok: true, result: { apiToken: { tokenId, label: 'Edited', grant } } });
-    expect(requests).toEqual([{ tokenId, label: 'Edited', grant }]);
+      .toMatchObject({ ok: true, result: { apiToken: { tokenId, label: readLabel, grant } } });
+    expect(requests).toEqual([{ tokenId, label, grant }]);
   });
 
   it('rejects a fixed Home endpoint without its matching Home identity', () => {
@@ -858,7 +860,8 @@ describe('Account API token HTTP adapter', () => {
       error: 'server_target_mismatch',
     });
     await expect(deps.accountApiTokensUpdateAction!({
-      input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: 'Edited' },
+      input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: sealPrivateLabelV1({ mode: 'plain',
+        binding: { entity: 'account_api_token', field: 'label', id: '12345678-1234-4234-8234-123456789abc' }, value: 'Edited' }) },
       context: { surface: 'cli', serverId: 'home-b' },
     })).resolves.toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
     expect(requests).toBe(0);
@@ -879,7 +882,8 @@ describe('Account API token HTTP adapter', () => {
     });
 
     await expect(deps.accountApiTokensCreateAction!({
-      input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: 'cancelled' },
+      input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: sealPrivateLabelV1({ mode: 'plain',
+        binding: { entity: 'account_api_token', field: 'label', id: '12345678-1234-4234-8234-123456789abc' }, value: 'cancelled' }) },
       context: { surface: 'cli', serverId: 'home-a' },
       signal: controller.signal,
     })).resolves.toEqual({
@@ -904,11 +908,13 @@ describe('Account API token HTTP adapter', () => {
     const context = { surface: 'cli' as const, serverId: 'home-a' };
 
     await expect(deps.accountApiTokensCreateAction!({
-      input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: 'malformed' },
+      input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: sealPrivateLabelV1({ mode: 'plain',
+        binding: { entity: 'account_api_token', field: 'label', id: '12345678-1234-4234-8234-123456789abc' }, value: 'malformed' }) },
       context,
     })).resolves.toEqual({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown', details: { category: 'acknowledgement_schema' } });
     await expect(deps.accountApiTokensUpdateAction!({
-      input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: 'malformed' },
+      input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: sealPrivateLabelV1({ mode: 'plain',
+        binding: { entity: 'account_api_token', field: 'label', id: '12345678-1234-4234-8234-123456789abc' }, value: 'malformed' }) },
       context,
     })).resolves.toEqual({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown', details: { category: 'acknowledgement_schema' } });
     await expect(deps.accountApiTokensRevokeAction!({
@@ -942,7 +948,8 @@ describe('Account API token HTTP adapter', () => {
 
     try {
       await expect(deps.accountApiTokensCreateAction!({
-        input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: 'lost response' },
+        input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: sealPrivateLabelV1({ mode: 'plain',
+        binding: { entity: 'account_api_token', field: 'label', id: '12345678-1234-4234-8234-123456789abc' }, value: 'lost response' }) },
         context: { surface: 'cli', serverId: 'home-a' },
       })).resolves.toEqual({
         ok: false,
@@ -958,7 +965,8 @@ describe('Account API token HTTP adapter', () => {
         });
       };
       await expect(deps.accountApiTokensCreateAction!({
-        input: { tokenId: '22345678-1234-4234-8234-123456789abc', label: 'refused request' },
+        input: { tokenId: '22345678-1234-4234-8234-123456789abc', label: sealPrivateLabelV1({ mode: 'plain',
+        binding: { entity: 'account_api_token', field: 'label', id: '22345678-1234-4234-8234-123456789abc' }, value: 'refused request' }) },
         context: { surface: 'cli', serverId: 'home-a' },
       })).resolves.toEqual({
         ok: false,
@@ -996,12 +1004,17 @@ describe('Account API token HTTP adapter', () => {
   });
 
   it('carries all six Machine Pool intents through the bound Home with natural typed results', async () => {
+    app.get('/v1/account/encryption/currentness', async () => AccountEncryptionCurrentnessResponseSchema.parse({
+      mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+    }));
     const poolId = '99d55938-f860-4af8-8023-01fecec86f35';
+    const name = sealPrivateLabelV1({ mode: 'plain', binding: { entity: 'machine_pool', field: 'name', id: poolId }, value: 'Fast pool' });
+    const description = sealPrivateLabelV1({ mode: 'plain', binding: { entity: 'machine_pool', field: 'description', id: poolId }, value: 'Home-readable administration' });
     const pool = {
       pool: {
         id: poolId,
-        name: 'Fast pool',
-        description: 'Home-readable administration',
+        name: { kind: 'available', label: projectPrivateLabelForRecipientV1({ stored: name, recipientAccountId: 'account-1' }) },
+        description: { kind: 'available', label: projectPrivateLabelForRecipientV1({ stored: description, recipientAccountId: 'account-1' }) },
         revision: 4,
         createdAt: 1,
         updatedAt: 2,
@@ -1025,15 +1038,15 @@ describe('Account API token HTTP adapter', () => {
       'machines.pools.get': { poolId },
       'machines.pools.create': {
         poolId,
-        name: 'Fast pool',
-        description: 'Home-readable administration',
+        name,
+        description,
         members: [{ machineId: 'machine-1', priorityTier: 0, enabled: true }],
       },
       'machines.pools.update': {
         poolId,
         expectedRevision: 4,
-        name: 'Fast pool',
-        description: 'Home-readable administration',
+        name,
+        description,
         members: [{ machineId: 'machine-1', priorityTier: 0, enabled: true }],
       },
       'machines.pools.delete': { poolId, expectedRevision: 4 },
@@ -1079,7 +1092,10 @@ describe('Account API token HTTP adapter', () => {
       return reply.code(409).send({
         code: 'pool_changed',
         current: {
-          pool: { id: poolId, name: 'Current', description: null, revision: 2, createdAt: 1, updatedAt: 2, members: [] },
+          pool: { id: poolId, name: { kind: 'available', label: projectPrivateLabelForRecipientV1({
+            stored: sealPrivateLabelV1({ mode: 'plain', binding: { entity: 'machine_pool', field: 'name', id: poolId }, value: 'Current' }),
+            recipientAccountId: 'account-1',
+          }) }, description: null, revision: 2, createdAt: 1, updatedAt: 2, members: [] },
           availability: { state: 'known', connectedCount: 0, enabledCount: 0 },
         },
       });
@@ -1089,7 +1105,8 @@ describe('Account API token HTTP adapter', () => {
     const deps = createAccountServerActionDeps({ token: 'interactive', serverId: 'home', serverHttpBaseUrl: 'http://account.test' });
     await expect(deps.machinePoolAction!({
       actionId: 'machines.pools.update',
-      input: { poolId, expectedRevision: 1, name: 'Pool', members: [] },
+      input: { poolId, expectedRevision: 1, name: sealPrivateLabelV1({ mode: 'plain',
+        binding: { entity: 'machine_pool', field: 'name', id: poolId }, value: 'Pool' }), members: [] },
       context: { surface: 'cli' },
     })).resolves.toEqual({
       ok: false,
@@ -1151,7 +1168,8 @@ describe('Account API token HTTP adapter', () => {
       for (const action of [
         {
           actionId: 'machines.pools.create' as const,
-          input: { poolId, name: 'Development', members: [] },
+          input: { poolId, name: sealPrivateLabelV1({ mode: 'plain',
+        binding: { entity: 'machine_pool', field: 'name', id: poolId }, value: 'Development' }), members: [] },
         },
         {
           actionId: 'machines.pools.delete' as const,
@@ -1245,7 +1263,8 @@ describe('Account API token HTTP adapter', () => {
 
     await expect(deps.machinePoolAction!({
       actionId: 'machines.pools.create',
-      input: { poolId, name: 'Development', members: [] },
+      input: { poolId, name: sealPrivateLabelV1({ mode: 'plain',
+        binding: { entity: 'machine_pool', field: 'name', id: poolId }, value: 'Development' }), members: [] },
       context: { surface: 'cli', serverId: 'home' },
     })).resolves.toEqual({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown', details: { category: 'acknowledgement_schema' } });
     await expect(deps.machinePoolAction!({

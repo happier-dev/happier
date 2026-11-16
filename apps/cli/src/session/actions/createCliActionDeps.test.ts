@@ -1,3 +1,5 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import axios from 'axios';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -210,8 +212,9 @@ describe('workspace sync read Action transport', () => {
     };
     callMachineRpc.mockResolvedValueOnce(relationshipsResult).mockResolvedValueOnce(conflictPage).mockResolvedValueOnce(inspectResult);
     const deps = createCliActionDeps({
-      token: 'token', credentials, serverId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
+      token: 'token', credentials, serverId: 'server-a', serverIdentityId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
       sessionId: 'session-c', mode: 'plain', ctx: null,
+      rawSession: { machineId: 'machine-a', path: '/c', metadata: {} },
     });
     const signal = new AbortController().signal;
     await expect(deps.workspaceSyncRelationshipsList?.({ input: { workspaceRefId: 'workspace-c' }, signal })).resolves.toEqual(relationshipsResult);
@@ -230,8 +233,9 @@ describe('workspace sync read Action transport', () => {
     // authenticated Machine route; the direct dependency is not a dead stub.
     callMachineRpc.mockResolvedValueOnce(inspectResult);
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"workspace.sync.conflict.inspect": Object.keys(ActionSurfaceSchema.shape), "workspace.sync.conflicts.list": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...deps,
-      isActionApprovalRequired: () => false,
+
       isApprovalExecutionOriginCurrent: async () => true,
     } as ActionExecutorDeps);
     const bridge = createActionToolExecutorBridge({ surface: 'agent', executor });
@@ -266,6 +270,9 @@ describe('workspace sync read Action transport', () => {
 });
 
 describe('workspace sync resolution Action transport', () => {
+  const accountSettings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1, actions: {
+    'workspace.sync.conflict.resolve': { approvalRequiredSurfaces: ['agent'] },
+  } } });
   beforeEach(() => {
     callMachineRpc.mockReset();
   });
@@ -382,10 +389,12 @@ describe('workspace sync resolution Action transport', () => {
       for (const definition of definitions) await controller.ensure(definition);
       const { executor } = createCliActionExecutorHarness({
         token: 'token', credentials: { token: 'token', encryption: null },
-        serverId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
+        serverId: 'server-a', serverIdentityId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
         sessionId: 'session-c', mode: 'plain', ctx: null,
+        rawSession: { machineId: 'machine-a', path: '/c', metadata: {} },
+        actionsSettingsProvider: createActionSettingsProvider({ accountSettings }),
       }, {
-        isActionApprovalRequired: () => false,
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"workspace.sync.relationships.list": Object.keys(ActionSurfaceSchema.shape), "workspace.sync.conflicts.list": Object.keys(ActionSurfaceSchema.shape), "workspace.sync.conflict.inspect": Object.keys(ActionSurfaceSchema.shape), "workspace.sync.conflict.resolve": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
         approvalsCreate: async ({ request }) => {
           approvals.set('approval-controller', request as unknown as Record<string, unknown>);
           return { artifactId: 'approval-controller' };
@@ -465,8 +474,10 @@ describe('workspace sync resolution Action transport', () => {
     callMachineRpc.mockResolvedValueOnce(result);
     const deps = createCliActionDeps({
       token: 'token', credentials: { token: 'token', encryption: null },
-      serverId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
+      serverId: 'server-a', serverIdentityId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
       sessionId: 'session-c', mode: 'plain', ctx: null,
+      rawSession: { machineId: 'machine-a', path: '/c', metadata: {} },
+      actionsSettingsProvider: createActionSettingsProvider({ accountSettings }),
     });
     const input = {
       controllerMachineId: 'machine-a', hubWorkspaceRefId: 'workspace-a', path: 'src/index.ts',
@@ -490,8 +501,10 @@ describe('workspace sync resolution Action transport', () => {
     callMachineRpc.mockRejectedValueOnce(missingMethod);
     const deps = createCliActionDeps({
       token: 'token', credentials: { token: 'token', encryption: null },
-      serverId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
+      serverId: 'server-a', serverIdentityId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
       sessionId: 'session-c', mode: 'plain', ctx: null,
+      rawSession: { machineId: 'machine-a', path: '/c', metadata: {} },
+      actionsSettingsProvider: createActionSettingsProvider({ accountSettings }),
     });
     await expect(deps.workspaceSyncConflictResolve?.({
       actionReceiptId: 'approval-1',
@@ -506,10 +519,12 @@ describe('workspace sync resolution Action transport', () => {
     const approvals = new Map<string, Record<string, unknown>>();
     const { executor } = createCliActionExecutorHarness({
       token: 'token', credentials: { token: 'token', encryption: null },
-      serverId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
+      serverId: 'server-a', serverIdentityId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
       sessionId: 'session-c', mode: 'plain', ctx: null,
+      rawSession: { machineId: 'machine-a', path: '/c', metadata: {} },
+      actionsSettingsProvider: createActionSettingsProvider({ accountSettings }),
     }, {
-      isActionApprovalRequired: () => false,
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"workspace.sync.conflict.resolve": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       approvalsCreate: async ({ request }) => {
         approvals.set('approval-old-controller', request as unknown as Record<string, unknown>);
         return { artifactId: 'approval-old-controller' };
@@ -558,10 +573,12 @@ describe('workspace sync resolution Action transport', () => {
     callMachineRpc.mockResolvedValueOnce(partial);
     const { executor } = createCliActionExecutorHarness({
       token: 'token', credentials: { token: 'token', encryption: null },
-      serverId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
+      serverId: 'server-a', serverIdentityId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
       sessionId: 'session-c', mode: 'plain', ctx: null,
+      rawSession: { machineId: 'machine-a', path: '/c', metadata: {} },
+      actionsSettingsProvider: createActionSettingsProvider({ accountSettings }),
     }, {
-      isActionApprovalRequired: () => false,
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"workspace.sync.conflict.resolve": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       approvalsCreate: async ({ request }) => {
         approvals.set('approval-spoke', request as unknown as Record<string, unknown>);
         return { artifactId: 'approval-spoke' };
@@ -849,7 +866,8 @@ describe('createCliActionDeps hook dispatch', () => {
       sessionId: 'cli-global', mode: 'plain', ctx: null,
       serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
     });
-    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.permission.respond": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
     const signal = new AbortController().signal;
     const request = { runId: 'run-1', requestId: 'request-1', approved: false };
     callExactMachineRpc.mockResolvedValue({ ok: false, errorCode: 'permission_request_not_found', error: 'Not found' });
@@ -867,7 +885,8 @@ describe('createCliActionDeps hook dispatch', () => {
       sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: 'home-a',
       serverHttpBaseUrl: 'https://home-a.example.test',
     });
-    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.permission.respond": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
     callExactMachineRpc.mockResolvedValue({ ok: true });
 
     expect(await executor.execute('execution.run.permission.respond', {

@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -181,7 +184,8 @@ describe('execution.run.start correlation freedom', () => {
         const result = await nativeExecutor.execute(actionId, input, context);
         return result.ok ? result.result : result;
       } } });
-    const executor = createActionExecutor({ ...deps, isActionEnabled: () => true, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), "execution.run.stop": Object.keys(ActionSurfaceSchema.shape), "execution.run.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps, isActionEnabled: () => true });
     const workflowContext = { surface: 'rpc' as const, authority: 'account_automation' as const,
       actionRequestId, executionRunTargetMachineId: 'machine-1',
       actionCaller: { kind: 'workflowRun' as const, runId: 'workflow-1', authorization: {

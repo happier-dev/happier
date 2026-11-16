@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { describe, expect, it } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
@@ -53,7 +56,8 @@ describe('worker link requester admission', () => {
         // Production registration stays real. No workspace runtime is installed:
         // denial must settle before its typed runtime-unavailable handler can run.
         registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: rpc });
-        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), isActionApprovalRequired: () => false,
+        const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"workspace.sync.relationship.create": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
             sessionHandoffTargetReplacementApprovalPreflight: async () => ({ type: 'not_required' }),
             workspaceSyncRelationshipCreate: async () => readMachineActionRpcResult(await (ingress === 'socket' ? rpc.handleRequest(request)
                 : rpc.invokeLocal(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE, request.params,

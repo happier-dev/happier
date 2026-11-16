@@ -24,7 +24,6 @@ import type { ProviderConnectionServiceDeps } from '@/providers/connections/serv
 import type { ProviderModelLoadResult } from '@/providers/modelManagement/load';
 import { executeProvidersCommand, ProviderCliError, type ProviderCliDependencies } from './index';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { routeProviderCliActions } from './actionDependencies';
 import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
@@ -223,7 +222,7 @@ describe('happier providers command domain', () => {
     } });
     const executor = createActionExecutor({
       ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id, actionsSettings, context, undefined, undefined, input),
+      readActionsSettings: () => actionsSettings,
       providerActionExecute: createProviderActionExecuteV1({
         assertCurrent() {},
         setDefault: async () => { throw new Error('Unexpected default mutation'); },
@@ -287,7 +286,7 @@ describe('happier providers command domain', () => {
       } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsWaitForDecision' | 'approvalsUpdate'>;
       const executor = createActionExecutor({
         ...createUnavailableActionTransportDeps(),
-        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({}), context),
+        readActionsSettings: () => normalizeActionsSettingsV1({}),
         hostActionApprovalLifetime: { actionId, signal },
         // Captured credentials are a genuine host boundary; the Action owner validates their stored origin.
         isApprovalExecutionOriginCurrent: async ({ origin }) => decision !== 'retired' && origin.serverId === 'home'
@@ -355,7 +354,7 @@ describe('happier providers command domain', () => {
     const before = structuredClone(h.getRaw());
     const executor = createActionExecutor({
       ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({}), context),
+      readActionsSettings: () => normalizeActionsSettingsV1({}),
       providerActionExecute: createProviderActionExecuteV1({
         assertCurrent() {},
         setDefault: async () => { throw new Error('Unexpected default mutation'); },
@@ -383,7 +382,7 @@ describe('happier providers command domain', () => {
     const before = structuredClone(h.getRaw());
     const executor = createActionExecutor({
       ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({}), context),
+      readActionsSettings: () => normalizeActionsSettingsV1({}),
       approvalsCreate: async () => ({ artifactId: 'approval-reference' }),
       approvalsWaitForDecision: async () => { throw new Error('Reference-only CLI must not retain a blocking invocation'); },
       approvalsUpdate: async () => ({ ok: true }),
@@ -1200,7 +1199,7 @@ describe('happier providers command domain', () => {
     } });
     const executor = createActionExecutor({
       ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id, actionsSettings, context, undefined, undefined, input),
+      readActionsSettings: () => actionsSettings,
       providerActionExecute: createProviderActionExecuteV1({
         assertCurrent() {},
         setDefault: async () => { throw new Error('Unexpected default mutation'); },

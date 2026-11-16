@@ -2,7 +2,6 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type { StoredCredentials } from '@/persistence';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createCliConnectedServiceAction } from '@/session/actions/connectedServiceActionDeps';
@@ -36,7 +35,7 @@ describe('createConnectedAccountDaemonClient', () => {
     const client = createConnectedAccountDaemonClient({ serverId: 'home', serverHttpBaseUrl: 'http://home.test', credentials, machineId: 'machine-1', callMachineRpc,
       actionExecutor: createActionExecutor({
         ...createUnavailableActionTransportDeps(),
-        isActionApprovalRequired: () => false,
+
         connectedServiceAction: createCliConnectedServiceAction({ serverId: 'home', credentials,
           resolveHeaders: () => ({ Authorization: `Bearer ${credentials.token}` }),
           callMachineAction: async () => callMachineRpc(),
@@ -54,7 +53,7 @@ describe('createConnectedAccountDaemonClient', () => {
     const callMachineRpc = vi.fn(async () => { throw new Error('Account admission must not call a Machine'); });
     const actionExecutor = createActionExecutor({
       ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({}), context),
+      readActionsSettings: () => normalizeActionsSettingsV1({}),
       connectedServiceAction: createCliConnectedServiceAction({ serverId: 'home', credentials,
         resolveHeaders: () => ({ Authorization: `Bearer ${credentials.token}` }),
         callMachineAction: callMachineRpc,
@@ -72,7 +71,7 @@ describe('createConnectedAccountDaemonClient', () => {
       account: { service, accountId: 'account-1' } }));
     const actionExecutor = createActionExecutor({
       ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({}), context),
+      readActionsSettings: () => normalizeActionsSettingsV1({}),
       connectedServiceAction: createCliConnectedServiceAction({ serverId: 'home', credentials,
         resolveHeaders: () => ({ Authorization: `Bearer ${credentials.token}` }),
         callMachineAction: callMachineRpc,
@@ -142,9 +141,8 @@ describe('createConnectedAccountDaemonClient', () => {
       callMachineRpc,
       actionExecutor: createActionExecutor({
         ...createUnavailableActionTransportDeps(),
-        isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
-          normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'connectedServices.authentication.beginConnect': ['cli'],
-            'connectedServices.accounts.revoke': ['cli'] } }), context),
+        readActionsSettings: () => normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'connectedServices.authentication.beginConnect': ['cli'],
+            'connectedServices.accounts.revoke': ['cli'] } }),
         connectedServiceAction: createCliConnectedServiceAction({ serverId: 'home', credentials,
           resolveHeaders: () => ({ Authorization: `Bearer ${credentials.token}` }),
           callMachineAction: async ({ machineId, method, request, signal }) => callMachineRpc({ credentials,

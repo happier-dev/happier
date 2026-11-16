@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import axios from 'axios';
 import Fastify from 'fastify';
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
@@ -9,6 +12,7 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { join } from 'node:path';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { ActionOperationDeclarationV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import nacl from 'tweetnacl';
 import { configuration } from '@/configuration';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
@@ -127,9 +131,9 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
     let sourceEntered = false;
     const source = definePlugin({ id: 'example.review-source', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
       actions: { prepare: { title: 'Prepare review workspace', surfaces: ['ui'], dangerLevel: 'writesLocal',
-        ...(approvalShape ? { operation: GITHUB_MANIFEST.contributes.actions.find(
+        ...(approvalShape ? { operation: ActionOperationDeclarationV1Schema.parse(GITHUB_MANIFEST.contributes.actions?.find(
           action => action.id === (shape === 'approval-verify' ? GITHUB_TRIAGE_ACTION_IDS_V1.verifyReviewWorkspace
-            : GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace))?.operation } : {}),
+            : GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace))?.operation) } : {}),
         confirmation: { title: 'Prepare workspace', confirmLabel: 'Prepare' }, confirmationWhen: { presentUserUi: false },
         inputSchema: { type: 'object', additionalProperties: approvalShape },
         run: async (_input, context) => {
@@ -219,9 +223,10 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
             }),
             externalActionTarget: { kind: 'machine', machineId: shape === 'owner-retarget' ? 'other-machine' : machineId },
           } satisfies RpcActionExecutorContext },
-        actionExecutor: createActionExecutor({ ...createCliActionDeps({ token: credentials.token, credentials,
+        actionExecutor: createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.reviewWorkspace.materializePrepared": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createCliActionDeps({ token: credentials.token, credentials,
           serverId, serverIdentityId: 'srv_review_home', externalActionMachineInstallationId: 'review-installation',
-          serverHttpBaseUrl: 'https://review-home.test', sessionId: '', mode: 'plain', ctx: null }), isActionApprovalRequired: () => false }),
+          serverHttpBaseUrl: 'https://review-home.test', sessionId: '', mode: 'plain', ctx: null }) }),
         invokeContributedAction: async () => ({ status: 'unavailable', code: 'not_used', message: 'not_used' }),
       });
       const denial = shape === 'owner-foreign-use' || shape === 'owner-unadmitted' ? 'filesystem_identity_custody_unavailable'

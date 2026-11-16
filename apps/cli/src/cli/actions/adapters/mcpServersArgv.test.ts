@@ -9,7 +9,6 @@ import { MCP_SERVER_ACTION_INPUT_SCHEMAS_V1, MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1
 import { commitMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { McpServerCatalogRowReadResponseV1Schema, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { executeConnectedServiceConfigurationActionV1, prepareConnectedServiceRevokeInputV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
-import {  } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 as service } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { MCP_SIGN_IN_CONNECTED_ACCOUNT_DESCRIPTOR } from '@/mcp/oauth/mcpSignInRuntime';
 import { tryHandleMcpServerCliCommand } from './mcpServersArgv';

@@ -329,7 +329,7 @@ describe('production invocation service owners', () => {
             loggerSink: { write: () => {} },
             actionExecutor: createActionExecutor({
                 ...createUnavailableActionTransportDeps(),
-                isActionApprovalRequired: () => false,
+
                 invokeContributedAction: createHostContributedActionInvoker({
                     invokeContributedAction,
                     revalidatePluginActionCallerOccurrence: async () => true,
@@ -422,7 +422,7 @@ describe('production invocation service owners', () => {
             loggerSink: { write: () => {} },
             actionExecutor: createActionExecutor({
                 ...createUnavailableActionTransportDeps(),
-                isActionApprovalRequired: () => false,
+
                 invokeContributedAction: createHostContributedActionInvoker({
                     invokeContributedAction,
                     revalidatePluginActionCallerOccurrence: async () => current,

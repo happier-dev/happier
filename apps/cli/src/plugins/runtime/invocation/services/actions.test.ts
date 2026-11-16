@@ -1,3 +1,5 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { describe, expect, it, vi } from 'vitest';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { logger } from '@/ui/logger';
@@ -14,7 +16,6 @@ import {
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { PluginError, readPluginErrorRequestIdV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { resolveActionSessionTargets } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -62,12 +63,13 @@ type TestActionExecutorOverrides = Partial<Pick<
     | 'sessionSendMessage'
     | 'resolveSessionReference'
     | 'invokeContributedAction'
-    | 'isActionApprovalRequired'
+    | 'readActionsSettings'
     | 'listContributedActionDefinitions'
 >>;
 
 function createActionExecutorForTest(overrides: TestActionExecutorOverrides = {}) {
     const deps: ActionExecutorDeps = {
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"agents.backends.list": Object.keys(ActionSurfaceSchema.shape), "execution.run.permission.respond": Object.keys(ActionSurfaceSchema.shape), "session.message.send": Object.keys(ActionSurfaceSchema.shape), "session.list": Object.keys(ActionSurfaceSchema.shape), "action.invoke": Object.keys(ActionSurfaceSchema.shape), "workflow.run.start": Object.keys(ActionSurfaceSchema.shape), "wait": Object.keys(ActionSurfaceSchema.shape), "teams.archive": Object.keys(ActionSurfaceSchema.shape), "teams.identity.connections.test.start": Object.keys(ActionSurfaceSchema.shape), "identity.providers.test.start": Object.keys(ActionSurfaceSchema.shape), "identity.providers.test.consume": Object.keys(ActionSurfaceSchema.shape), "teams.identity.connections.test.consume": Object.keys(ActionSurfaceSchema.shape), "teams.identity.workos.adminPortalLink.create": Object.keys(ActionSurfaceSchema.shape), "teams.directory.sources.remove.preview": Object.keys(ActionSurfaceSchema.shape), "identity.githubApps.list": Object.keys(ActionSurfaceSchema.shape), "teams.credentials.list": Object.keys(ActionSurfaceSchema.shape), "teams.credentials.sources.list": Object.keys(ActionSurfaceSchema.shape), "teams.credentials.entitled.list": Object.keys(ActionSurfaceSchema.shape), "teams.credentials.externalKeys.list": Object.keys(ActionSurfaceSchema.shape), "secrets.shared.list": Object.keys(ActionSurfaceSchema.shape), "secrets.shared.update": Object.keys(ActionSurfaceSchema.shape), "execution.run.start": Object.keys(ActionSurfaceSchema.shape), "memory.search": Object.keys(ActionSurfaceSchema.shape), "session.user_action.answer": Object.keys(ActionSurfaceSchema.shape), "plugin.webhook.endpoint.read": Object.keys(ActionSurfaceSchema.shape), "plugin.webhook.endpoint.retarget": Object.keys(ActionSurfaceSchema.shape), "plugin.webhook.endpoint.checkCorrespondence": Object.keys(ActionSurfaceSchema.shape), "plugin.webhook.endpoint.convergeTarget": Object.keys(ActionSurfaceSchema.shape), "browser.navigate": Object.keys(ActionSurfaceSchema.shape), "session.permission.respond": Object.keys(ActionSurfaceSchema.shape), "session.transcript.get": Object.keys(ActionSurfaceSchema.shape), "plugins.permissions.grants.request": Object.keys(ActionSurfaceSchema.shape), "plugins.permissions.grants.revoke": Object.keys(ActionSurfaceSchema.shape), "plugins.permissions.grants.grant": Object.keys(ActionSurfaceSchema.shape), "sessions.external.takeover.start": Object.keys(ActionSurfaceSchema.shape), "sessions.subagents.list": Object.keys(ActionSurfaceSchema.shape), "sessions.subagents.get": Object.keys(ActionSurfaceSchema.shape), "sessions.subagents.watch": Object.keys(ActionSurfaceSchema.shape), "sessions.subagents.upsert": Object.keys(ActionSurfaceSchema.shape), "sessions.subagents.updateStatus": Object.keys(ActionSurfaceSchema.shape), "sessions.subagents.complete": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
         executionRunStart: async () => ({}),
         executionRunList: async () => ({}),
         executionRunGet: async () => ({}),
@@ -103,7 +105,7 @@ function createActionExecutorForTest(overrides: TestActionExecutorOverrides = {}
         daemonMemoryGetWindow: async () => ({ v: 1, snippets: [], citations: [] }),
         daemonMemoryEnsureUpToDate: async () => ({}),
         resetGlobalVoiceAgent: async () => {},
-        isActionApprovalRequired: () => false,
+
         ...overrides,
     };
     return createActionExecutor(deps);
@@ -1395,7 +1397,7 @@ describe('plugin invocation ActionsService', () => {
             actionExecutor: createActionExecutorForTest({
                 sessionUserActionAnswer,
                 approvalsCreate,
-                isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+                readActionsSettings: () => settings,
             }),
             invokeContributedAction: vi.fn(),
         });
@@ -1455,7 +1457,7 @@ describe('plugin invocation ActionsService', () => {
                 isOccurrenceCurrent: () => true,
             },
             actionExecutor: createActionExecutorForTest({ pluginWebhookAction, approvalsCreate,
-                isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context) }),
+                readActionsSettings: () => settings }),
             invokeContributedAction: vi.fn(),
         });
 
@@ -1782,7 +1784,7 @@ describe('plugin invocation ActionsService', () => {
         const delivered: Array<string | undefined> = [];
         const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.permission.respond': ['agent'] } });
         const executor = createActionExecutorForTest({
-            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+            readActionsSettings: () => settings,
             sessionPermissionRespond: async ({ decision }) => { delivered.push(decision); return { ok: true }; },
         });
         let native = true;
@@ -2191,7 +2193,7 @@ describe('plugin invocation ActionsService', () => {
                 isOccurrenceCurrent: () => true,
             },
             actionExecutor: createActionExecutorForTest({ pluginPermissionGrantAction, approvalsCreate,
-                isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context) }),
+                readActionsSettings: () => settings }),
             invokeContributedAction: vi.fn(),
         });
 

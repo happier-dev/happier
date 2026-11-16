@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { accountSettingsParse, BUILT_IN_ROLES_V1, readSessionRoleIdV1, createActionExecutor, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, readAccountRoleOverridesFromSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -66,7 +69,8 @@ describe('role Action effects', () => {
         metadata = applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation);
       },
     });
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.role.set": Object.keys(ActionSurfaceSchema.shape), "session.notes.set": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), roleActionExecute });
     const backendTarget = { kind: 'backend', backendId: 'codex' } as const;
     const agentStartContext = resolveCliAgentStartContextV1({ sessionId: 'session-1', metadata,
       machineId: 'machine', directory: '/repo', backendTarget, starterDepth: 0, turnDepth: 0,
@@ -114,7 +118,8 @@ describe('role Action effects', () => {
       prepareWorkspaceWritesPolicy: async () => ({ ok: true }),
       stageSessionStateMutation: async mutation => { queued.push(mutation); },
     });
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.role.set": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), roleActionExecute });
     const context = { authority: 'present_user' as const, surface: 'ui' as const };
     expect(await executor.execute('session.role.set', { sessionId: 'session-1', answersWorkerQuestions: false }, context))
       .toEqual({ ok: true, result: { updated: true } });
@@ -273,8 +278,8 @@ describe('role Action effects', () => {
       metadata: null, starterDepth: 0, turnDepth: 0, callerPermissionMode: 'default', settings: null, roles: {},
       runCaller: { runId: 'workflow-run', runDepth: 4, runOriginSessionId: 'origin' } });
     if (!startContext || 'ok' in startContext) throw new Error('Expected host-produced Run caller');
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute,
-      isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.role.set": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), roleActionExecute });
     const context = { surface: 'agent' as const, authority: 'account_automation' as const,
       callerPermissionMode: 'default', workspaceWrites: 'allow' as const, agentStartContext: startContext };
     const role = await executor.execute('session.role.set', { sessionId: 'origin', roleId: 'builder' }, context);
@@ -301,7 +306,7 @@ describe('role Action effects', () => {
       readRawAccountSettings: () => settings,
       readSessionMetadata: () => createTestMetadata(), stageSessionStateMutation: async () => {},
     });
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute });
     let result: Awaited<ReturnType<typeof executor.execute>> | undefined;
     const pending = executor.execute('session.role.set', { sessionId: 'session-1', roleId: 'orchestrator' },
       { authority: 'present_user', surface: 'ui' }).then(value => { result = value; });
@@ -436,7 +441,7 @@ describe('role Action effects', () => {
       prepareWorkspaceWritesPolicy: async () => ({ ok: false, errorCode }),
     });
     // Other Action families are outside this test; Role resolution and failure mapping stay real.
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute });
     expect(await executor.execute('session.role.set', { sessionId: 'session-1', roleId: 'orchestrator' },
       { authority: 'present_user', surface: 'ui' })).toMatchObject({ ok: false, errorCode });
     expect(queued).toEqual([]);
@@ -456,14 +461,14 @@ describe('role Action effects', () => {
       if (kind === 'thrown') throw createRpcCallError({ error: 'RPC method not available', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
       return { ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, error: 'RPC method not available' };
     } });
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute });
     expect(await executor.execute('session.role.set', { sessionId: 'child', roleId: 'orchestrator' },
       { authority: 'present_user', surface: kind === 'thrown' ? 'ui' : 'cli' })).toMatchObject({ ok: false, errorCode: 'session_role_runtime_unavailable' });
   });
   it('does not reinterpret a timed-out live Role write as an absent runtime', async () => {
     const failure = { ok: false, errorCode: 'session_rpc_failed', error: 'RPC call timeout' } as const;
     const roleActionExecute = createRoleActionExecutor({ sessionId: 'lead', forwardSessionRoleAction: async () => failure });
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute });
     expect(await executor.execute('session.role.set', { sessionId: 'child', roleId: 'orchestrator' },
       { authority: 'present_user', surface: 'cli' })).toEqual(failure);
   });

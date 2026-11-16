@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import nacl from 'tweetnacl';
@@ -243,8 +246,9 @@ describe('trusted Machine key envelope continuation', () => {
         deliveredKey = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(input.recipientKeyEnvelopes[0]!.encryptedDataKey), recipientSecretKeyOrSeed: recipient.secretKey });
         return { status: 200, data: { appliedRecipientAccountIds: ['team-member'], skippedRecipientAccountIds: [] } };
       });
-      const executor = createActionExecutor({ ...createAccountServerActionDeps({ token, credentials,
-        serverId: 'home', serverHttpBaseUrl: params.serverHttpBaseUrl }), isActionApprovalRequired: () => false,
+      const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"machines.access.grant.set": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createAccountServerActionDeps({ token, credentials,
+        serverId: 'home', serverHttpBaseUrl: params.serverHttpBaseUrl }),
       } as unknown as ActionExecutorDeps);
       expect(await executor.execute('machines.access.grant.set', { serverId: 'home', machineId: 'machine', principal, level: 'view' },
         { surface: 'cli', authority: 'present_user', serverId: 'home' })).toMatchObject({ ok: true, result: { kind: 'saved', readiness: 'refused', canPrepareKeys: true } });

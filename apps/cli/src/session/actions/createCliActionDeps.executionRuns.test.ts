@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { accountSettingsParse, buildBackendTargetKeyV2, createActionExecutor, readBackendTargetRefV2, ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema, ScmDiffSummaryGenerateInputSchema, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
@@ -396,9 +399,10 @@ function createExecutionRunActionsService(detachedTransport?: 'installed' | 'pub
     } : {}),
   });
   const actionExecutor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.list": Object.keys(ActionSurfaceSchema.shape), "execution.run.get": Object.keys(ActionSurfaceSchema.shape), "execution.run.send": Object.keys(ActionSurfaceSchema.shape), "execution.run.stop": Object.keys(ActionSurfaceSchema.shape), "execution.run.action": Object.keys(ActionSurfaceSchema.shape), "execution.run.start": Object.keys(ActionSurfaceSchema.shape), "execution.run.ensure": Object.keys(ActionSurfaceSchema.shape), "execution.run.ensure_or_start": Object.keys(ActionSurfaceSchema.shape), "execution.run.stream.start": Object.keys(ActionSurfaceSchema.shape), "execution.run.stream.read": Object.keys(ActionSurfaceSchema.shape), "execution.run.stream.cancel": Object.keys(ActionSurfaceSchema.shape), "scm.diffSummary.generate": Object.keys(ActionSurfaceSchema.shape), "scm.diffSummary.draftPullRequest": Object.keys(ActionSurfaceSchema.shape), "scm.diffSummary.capture": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
     ...deps,
     isActionEnabled: () => true,
-    isActionApprovalRequired: () => false,
+
   });
   const retirement = new AbortController();
   const service = createPluginInvocationActionsService({
@@ -602,7 +606,8 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke },
     });
-    const executor = createActionExecutor({ ...deps, isActionEnabled: () => true, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps, isActionEnabled: () => true });
 
     await expect(executor.execute('execution.run.start', {
       sessionId: null,
@@ -1253,9 +1258,10 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
         isOccurrenceCurrent: () => true,
       },
       actionExecutor: createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.ensure": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
         ...deps,
         isActionEnabled: () => true,
-        isActionApprovalRequired: () => false,
+
       }),
       invokeContributedAction: vi.fn(),
     });
@@ -1291,10 +1297,11 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       sidechainId: 'call-1',
     }));
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...deps,
       executionRunStart,
       isActionEnabled: () => true,
-      isActionApprovalRequired: () => false,
+
     });
 
     await expect(executor.execute('execution.run.start', {
@@ -1362,9 +1369,10 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ctx: null,
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...deps,
       isActionEnabled: () => true,
-      isActionApprovalRequired: () => false,
+
     });
     const agentTargetKey = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
     const teamCredentialModel = {
@@ -1419,8 +1427,9 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       return runProtocolDescribeResponse({ version: 2, features: { detachedScope: true, startAndWait: true, secretReferenceOverlay: true } });
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null }),
-      isActionEnabled: () => true, isActionApprovalRequired: () => false,
+      isActionEnabled: () => true,
     });
     const result = await executor.execute('execution.run.start', {
       sessionId: 'session-1', intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
@@ -1493,9 +1502,10 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ctx: null,
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...deps,
       isActionEnabled: () => true,
-      isActionApprovalRequired: () => false,
+
     });
 
     await expect(executor.execute('execution.run.start', {
@@ -1542,9 +1552,10 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ctx: null,
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...deps,
       isActionEnabled: () => true,
-      isActionApprovalRequired: () => false,
+
     });
 
     await expect(executor.execute('execution.run.start', {
@@ -1585,9 +1596,10 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ctx: null,
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...deps,
       isActionEnabled: () => true,
-      isActionApprovalRequired: () => false,
+
     });
 
     await expect(executor.execute('execution.run.start', {
@@ -1625,9 +1637,10 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ctx: null,
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...deps,
       isActionEnabled: () => true,
-      isActionApprovalRequired: () => false,
+
     });
 
     await expect(executor.execute('execution.run.start', {
@@ -1723,9 +1736,10 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ctx: null,
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...deps,
       isActionEnabled: () => true,
-      isActionApprovalRequired: () => false,
+
     });
 
     await expect(executor.execute('execution.run.start', {
@@ -1784,9 +1798,10 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ctx: null,
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...deps,
       isActionEnabled: () => true,
-      isActionApprovalRequired: () => false,
+
     });
 
     await expect(executor.execute('execution.run.start', {
@@ -1838,9 +1853,10 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ctx: null,
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...deps,
       isActionEnabled: () => true,
-      isActionApprovalRequired: () => false,
+
     });
 
     await expect(executor.execute('execution.run.start', {
@@ -1890,7 +1906,8 @@ describe('background memory hint Runs', () => {
       });
       const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
       const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
-      const executor = createActionExecutor({ ...deps, isActionEnabled: () => true, isActionApprovalRequired: () => false });
+      const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps, isActionEnabled: () => true });
       const { runMemoryHintsExecutionRun } = await import('@/daemon/memory/hints/runMemoryHintsExecutionRun');
       const { runLlmTaskTextPrompt } = await import('@/agent/executionRuns/tasks/textPromptWithRunnerConfig');
 

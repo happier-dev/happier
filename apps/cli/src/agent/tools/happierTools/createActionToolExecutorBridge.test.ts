@@ -1,3 +1,5 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 const { activeRuntimeRegistryState } = vi.hoisted(() => ({
   activeRuntimeRegistryState: {
     registry: null as import('@/plugins/projection/registry/types').ResolvedContributionRegistry | null,
@@ -272,9 +274,10 @@ describe('createActionToolExecutorBridge', () => {
       attentionNextCursor: null, attentionHasNext: false,
     }));
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.list": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createCliActionDeps({ token: 'test-token', sessionId: 'lead', mode: 'plain', ctx: null }),
       sessionList,
-      isActionApprovalRequired: () => false,
+
     });
     let enabled = true;
     const bridge = createActionToolExecutorBridge({
@@ -305,9 +308,10 @@ describe('createActionToolExecutorBridge', () => {
       attentionNextCursor: null, attentionHasNext: false,
     }));
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.list": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createCliActionDeps({ token: 'test-token', sessionId: 'lead', mode: 'plain', ctx: null }),
       sessionList,
-      isActionApprovalRequired: () => false,
+
     });
     const bridge = createActionToolExecutorBridge({ surface: 'agent', executor });
     const result = await bridge.executeActionByToolName('action_execute', { actionId: 'session.list', input: {} }, 'lead');
@@ -329,9 +333,10 @@ describe('createActionToolExecutorBridge', () => {
       attentionNextCursor: null, attentionHasNext: false,
     }));
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.list": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createCliActionDeps({ token: 'test-token', sessionId: 'lead', mode: 'plain', ctx: null }),
       sessionList,
-      isActionApprovalRequired: () => false,
+
     });
     const caller = { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 } as const;
     const bridge = createActionToolExecutorBridge({
@@ -370,9 +375,10 @@ describe('createActionToolExecutorBridge', () => {
       };
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.board.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createCliActionDeps({ token: 'test-token', sessionId: 'session-1', mode: 'plain', ctx: null }),
       sessionBoardAction,
-      isActionApprovalRequired: () => false,
+
     });
     const bridge = createActionToolExecutorBridge({
       surface: 'agent',

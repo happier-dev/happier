@@ -19,7 +19,6 @@ import { createLocalServiceLauncherFeed } from '@/daemon/local/services/launch/f
 import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inventory/registry';
 import { createLocalServicePreviewRegistry } from '@/daemon/local/services/preview/registry';
 import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { ExternalActionIngressOwner } from './externalAction';
 import type { RpcActionExecutorContext } from './_actionDispatchAdapter';
@@ -145,7 +144,7 @@ async function setup(useDefaultApiOwner = false, withCeilingOwner = false,
     runtimeActionExecute: browser,
     // Real user policy, not a second approval decision maker.
     isActionEnabled: (id, ctx) => isActionEnabledByActionsSettings(id, settings, ctx),
-    isActionApprovalRequired: (id, ctx) => isApprovalRequiredByActionsSettings(id, settings, ctx),
+    readActionsSettings: () => settings,
   });
   let routes: DaemonMachineGuardRoutes = { target: () => currentTarget, guard, activity, nowMs: () => activityNow,
     keepRunning: async input => ({ status: await runtime.keepRunning(input.sessionId ?? '') }),

@@ -1,3 +1,5 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { describe, expect, it } from 'vitest';
 import {
   createActionExecutor,
@@ -64,10 +66,11 @@ describe('admitted client Action Session children', () => {
     const refusals: UiActionDispatchResultV1[] = [];
     const socketFailures: string[] = [];
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"workflow.definition.delete": Object.keys(ActionSurfaceSchema.shape), "workflow.authoring.draft.save": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createUnavailableActionTransportDeps(),
       // The child's own policy is evaluated (cli-green-4.log: approvals_not_supported
       // without this, so the parent's bypass is not inherited); here it admits.
-      isActionApprovalRequired: () => false,
+
       workflowAction: async ({ actionId, input, context }) => {
         if (actionId !== 'workflow.definition.delete')
           throw new Error(`unexpected ${actionId}`);

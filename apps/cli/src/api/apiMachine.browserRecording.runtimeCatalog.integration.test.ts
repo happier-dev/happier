@@ -6,7 +6,6 @@ import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createLocalServicesDaemonRuntime } from '@/daemon/local/services/runtime';
@@ -80,8 +79,7 @@ describe('ApiMachineClient browser recording routes', () => {
         resolveLauncherActionExecutor: ({ ingress }) => {
           const executor = createActionExecutor({
             ...createUnavailableActionTransportDeps(),
-            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId,
-              normalizeActionsSettingsV1(null), { surface: context.surface ?? null, authority: context.authority }),
+            readActionsSettings: () => normalizeActionsSettingsV1(null),
             // Account Artifact persistence/decision is the boundary, not policy or launcher dispatch.
             approvalsCreate: async () => ({ artifactId: 'service-start-approval' }),
             approvalsUpdate: async () => ({ ok: true }),

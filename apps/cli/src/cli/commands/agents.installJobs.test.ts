@@ -3,7 +3,6 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
@@ -88,9 +87,9 @@ describe('Agent CLI compiled install jobs', () => {
     const executor = createActionExecutor({
       ...createUnavailableActionTransportDeps(),
       ...machineDeps,
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({ v: 1,
+      readActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
         approvalWaivedSurfaces: requireApproval ? {} : { 'machines.agents.install': ['cli'], 'machines.agents.uninstall': ['cli'], 'machines.agents.install.cancel': ['cli'] },
-      }), context),
+      }),
     });
     const deps: Partial<ActionCliExecutionDeps> = {
       readCredentialsFn: async () => credentials,

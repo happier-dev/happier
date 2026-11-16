@@ -12,7 +12,6 @@ import {
     type ScmDiffSummaryResultClearInput, type ScmDiffSummaryResultClearResponse,
 } from '@happier-dev/protocol';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { isActionEnabledByActionsSettings, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { removeTempDir } from '@/testkit/fs/tempDir';
@@ -129,7 +128,7 @@ describe('captured comparison, structured publication and personal marks', () =>
             const executor = createActionExecutor({ scmActionExecute,
                 isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, settings,
                     { surface: context.surface ?? 'cli', placement: context.placement ?? null }),
-                isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+                readActionsSettings: () => settings,
             } as ActionExecutorDeps);
             const ui = createScmDiffSummaryResultOperations({ machineId: 'journey-machine', shouldContinue: () => true, actionExecutor: executor });
             const scope = { cwd, resultId: generated.resultId };

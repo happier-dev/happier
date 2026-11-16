@@ -7,7 +7,6 @@ import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/accoun
 import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { normalizeUsageQuery, resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import axios, { type AxiosRequestConfig } from 'axios';
 import fastify from 'fastify';
@@ -131,8 +130,7 @@ export async function createNativePublicProfileRefreshFixture(options: {
   const executor = createActionExecutor({
     ...createUnavailableActionTransportDeps(), ...deps,
     isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, settings, context),
-    isActionApprovalRequired: (id, context, input) =>
-      isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, input),
+    readActionsSettings: () => settings,
   });
   const actions = createNativePublicProfileRefreshActions({ executor, serverId: 'home' });
   const releaseReads = () => { for (const release of releases) release(); };

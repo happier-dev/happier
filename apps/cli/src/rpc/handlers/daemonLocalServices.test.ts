@@ -36,7 +36,6 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/f
 import type { NormalizedLocalServiceInventorySnapshot } from '@/daemon/local/services/inventory/scanner';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
@@ -244,7 +243,7 @@ describe('daemon local services machine rpc handlers', () => {
     it('reads the runtime summary through RPC and Action without scanning or starting observation', async () => {
         const scan = vi.fn(async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }));
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine_1', startLoop: false,
-            inventoryEnabled: () => true, scan, processEnv: {} });
+            inventoryEnabled: () => true, scan, processEnv: { NODE_ENV: 'test' } });
         try {
             const { handlers, registrar } = createRegistrar();
             registerDaemonLocalServicesMachineRpcHandlers(registrar, { machineId: 'machine_1', localServicesInventory: runtime.inventoryRoutes });
@@ -273,7 +272,7 @@ describe('daemon local services machine rpc handlers', () => {
         let command = 'private-web';
         let retireDuringScan = false;
         const runtime = createLocalServicesDaemonRuntime({ machineId: workspace.machineId, startLoop: false,
-            processEnv: {}, now: () => now,
+            processEnv: { NODE_ENV: 'test' }, now: () => now,
             resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
                 features: { localServices: { enabled: true, inventory: { enabled: true } } }, capabilities: {},
             }) }),
@@ -611,8 +610,7 @@ describe('daemon local services machine rpc handlers', () => {
             resolveLauncherActionExecutor: ({ ingress }) => {
                 const executor = createActionExecutor({
                 ...createUnavailableActionTransportDeps(),
-                isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId,
-                    normalizeActionsSettingsV1(null), { surface: context.surface ?? null, authority: context.authority }),
+                readActionsSettings: () => normalizeActionsSettingsV1(null),
                 // Artifact persistence is the external Account boundary. Policy and dispatch remain real.
                 approvalsCreate: async ({ request }) => {
                     stored = ApprovalRequestV2Schema.parse(request);

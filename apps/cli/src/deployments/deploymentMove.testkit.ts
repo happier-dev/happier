@@ -1,3 +1,5 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { expect, vi } from 'vitest';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -89,7 +91,8 @@ export async function createDeploymentMoveFixture({ attach, create, existingChec
     createContent: async content => { const id = `candidate-${candidates.size}`; candidates.set(id, content);
       return { contentArtifactId: id, contentHeaderVersion: 1, contentBodyVersion: 1 }; },
   });
-  const executor = createActionExecutor({ deploymentMoveToRepository: move, deploymentAction: storage, isActionApprovalRequired: () => false,
+  const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"deployments.environments.update": Object.keys(ActionSurfaceSchema.shape), "deployments.environments.moveToRepository": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), deploymentMoveToRepository: move, deploymentAction: storage,
     prepareHostReviewedChildren: async ({ actionId, input }) => actionId === 'deployments.environments.moveToRepository'
       ? deploymentMoveToRepositoryReviewedChildrenV1(DeploymentMoveToRepositoryInputV1Schema.parse(input)) : null,
     resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('Use metadata boundary'); },
@@ -101,7 +104,8 @@ export async function createDeploymentMoveFixture({ attach, create, existingChec
     verifyMachineAdmissionCurrent: async () => true } satisfies RpcActionExecutorContext;
   const executeMove = (input: DeploymentMoveToRepositoryInputV1) => executor.execute('deployments.environments.moveToRepository', input,
     { ...context, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces:
-      Object.fromEntries(deploymentMoveToRepositoryReviewedChildrenV1(input).children.map(child => [child.action, ['cli']])) }) });
+      { 'deployments.environments.moveToRepository': ['cli'],
+        ...Object.fromEntries(deploymentMoveToRepositoryReviewedChildrenV1(input).children.map(child => [child.action, ['cli']])) } }) });
   const initial = detail.content.definition;
   if (initial.kind !== 'stored') throw new Error('Expected stored input');
   const input: DeploymentMoveToRepositoryInputV1 = { mode: 'preview', serverId: 'home', environmentId: 'environment',

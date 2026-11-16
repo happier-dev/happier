@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent,
@@ -98,8 +101,9 @@ function harness(options: { authorityAvailable?: boolean; currentPermissionMode?
     runs: { execute: async () => ({ ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' }) },
   });
   // This workflow-only harness never reaches the other Action transport dependencies.
-  const executor = createActionExecutor({ workflowAction: options.dropCallerContext
-    ? (args: Parameters<typeof workflowAction>[0]) => workflowAction({ ...args, context: {} }) : workflowAction, isActionApprovalRequired: () => false,
+  const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"workflow.starters.list": Object.keys(ActionSurfaceSchema.shape), "workflow.definition.get": Object.keys(ActionSurfaceSchema.shape), "workflow.definition.edit": Object.keys(ActionSurfaceSchema.shape), "workflow.definition.create": Object.keys(ActionSurfaceSchema.shape), "workflow.definition.update": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), workflowAction: options.dropCallerContext
+    ? (args: Parameters<typeof workflowAction>[0]) => workflowAction({ ...args, context: {} }) : workflowAction,
     resolveAgentStartContext: async () => options.authorityAvailable === false ? null : currentAuthority(options.currentPermissionMode ?? 'default'),
   } as unknown as ActionExecutorDeps);
   return { executor, workflowAction, definitions, saved: () => saved };
@@ -141,8 +145,8 @@ describe('workflow.definition.edit through the real Action and Artifact owners',
       getCurrentSessionWorkDepth: () => 0, getSessionRoleContext: () => roles,
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
     });
-    const executor = createActionExecutor({ workflowAction, resolveAgentStartContext: deps.resolveAgentStartContext,
-      isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"workflow.definition.get": Object.keys(ActionSurfaceSchema.shape), "workflow.definition.edit": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), workflowAction, resolveAgentStartContext: deps.resolveAgentStartContext } as unknown as ActionExecutorDeps);
     const context = { ...agent, defaultSessionId: 'origin', actionCaller: {
       kind: 'session' as const, sessionId: 'origin', starterDepth: 0, turnDepth: 0,
     } };

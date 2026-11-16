@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -72,7 +75,8 @@ afterEach(async () => {
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const definitionId = '22222222-2222-4222-8222-222222222222';
-const waitDefinition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'continue',
+const waitDefinition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"action.spec.get": Object.keys(ActionSurfaceSchema.shape), "workflow.run.start": Object.keys(ActionSurfaceSchema.shape), "machines.setup.apply": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),}, blocks: [{ kind: 'wait', id: 'continue',
     document: { text: 'Continue when ready', references: [], attachments: [] } }] };
 const semanticInput = {
     runId,
@@ -445,7 +449,7 @@ describe('UI Workflow targeted Action RPC boundary', () => {
             } } };
             return await readHttp(...args);
         });
-        const nativeCatalog = createActionExecutor({ isActionApprovalRequired: () => false });
+        const nativeCatalog = createActionExecutor({  });
         const writeHttp = http.post.getMockImplementation()!;
         const catalogTargets: unknown[] = [];
         http.post.mockImplementation(async (...args: Parameters<typeof writeHttp>) => {

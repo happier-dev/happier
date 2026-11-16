@@ -1,3 +1,5 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { DeploymentBindingSavedSecretRevisionsV1Schema } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import axios from 'axios';
 import { readFile } from 'node:fs/promises';
@@ -145,7 +147,8 @@ it.each((['create', 'existing'] as const).flatMap(kind => [true, false].map(refu
         const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl: fixture.origin, machineId: 'target',
             savedSecretOperationContext: operation, resolveRequesterIdentity: async () => requester,
             runtime: { acquire, acquireCandidate: acquire } });
-        const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false,
+        const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"registries.items.read": Object.keys(ActionSurfaceSchema.shape), "deployments.bindings.set": Object.keys(ActionSurfaceSchema.shape), "deployments.templates.instantiate": Object.keys(ActionSurfaceSchema.shape), "deployments.deploy": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps,
             resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('Metadata reader owns this query'); },
                 async () => ({ ok: true, environment: { id: current.environment.id, projectSourceId: 'project', purpose: 'standard' } })) });
         const context = { serverId: 'home', runtimeAccountId: 'account-cli-fixture', surface: 'cli' as const,

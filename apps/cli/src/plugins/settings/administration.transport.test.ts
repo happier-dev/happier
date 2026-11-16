@@ -1,3 +1,5 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -579,7 +581,7 @@ describe('Plugin Settings Account administration explicit binding', () => {
       const observations: unknown[] = [];
       const secretValue = 'synthetic-private-credential';
       const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), pluginSettingsAdministrationAction: actionPort(),
-        isActionApprovalRequired: id => id === 'plugins.settings.set',
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['plugins.settings.set']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
         approvalsCreate: async ({ request }) => { artifacts.push(request); return { artifactId: 'settings-approval' }; },
         interceptActionExecution: async ({ input: operand }) => {
           intercepted.push(operand);
@@ -603,7 +605,7 @@ describe('Plugin Settings Account administration explicit binding', () => {
   it.each([false, true])('retains an ordinary declared write for deferred approval and approved replay (signed CLI=%s)', async signed => {
     let request: ApprovalRequest | null = null;
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), pluginSettingsAdministrationAction: actionPort(),
-      isActionApprovalRequired: id => id === 'plugins.settings.set',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['plugins.settings.set']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
       approvalsCreate: async args => { request = args.request; return { artifactId: 'settings-approval' }; },
       approvalsGet: async () => request,
       approvalsUpdate: async args => { request = args.request; return { ok: true }; },

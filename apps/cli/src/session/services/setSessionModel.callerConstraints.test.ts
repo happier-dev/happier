@@ -6,7 +6,7 @@ import {
   SessionMetadataInactiveModelIntentOwnerPatchV1Schema,
   type V2SessionRecord,
   ActionsSettingsV1Schema,
-  isApprovalRequiredByActionsSettings,
+
   getActionSpec,
 } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -89,8 +89,7 @@ describe('setSessionModel caller constraints at the effective selection boundary
       const deps = createCliActionDeps({ credentials, token: credentials.token,
         serverId: 'home', serverHttpBaseUrl: 'https://home.example.test', sessionId, mode: 'plain', ctx: null });
       const executor = createActionExecutor({ ...deps,
-        isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(actionId, actionsSettings, context,
-          undefined, undefined, input) });
+        readActionsSettings: () => actionsSettings });
       const context = { surface: 'cli', authority: 'present_user', serverId: 'home', actionCaller: { kind: 'host' }, actionsSettings } as const;
       const applied = await executor.execute('session.model.set', { sessionId, modelId: nextModelId, providerConnectionId: null, captureBefore: true }, context);
       expect(applied.ok).toBe(true);

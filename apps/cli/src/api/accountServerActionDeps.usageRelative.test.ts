@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { afterEach, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
@@ -80,9 +83,10 @@ it.each(['cli', 'mcp'] as const)('uses Account night hours for the %s recorded a
   app.get('/v1/account/profile', async () => ({ id: 'account', connectedAccountsV4: [], connectedAccountGroupsV4: [] }));
   cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-night.test' });
   const credentials = { token: 'owner-token', encryption: null };
-  const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+  const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"usage.query": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
     token: credentials.token, credentials, serverId: 'home', serverHttpBaseUrl: 'http://usage-night.test',
-  }), isActionApprovalRequired: () => false });
+  }) });
   const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 86_400_000 }, timeZoneOffsetMinutes: 120,
     includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
   const readNight = async () => {
@@ -145,8 +149,9 @@ it.each([true, false])('uses one relative read range through the CLI HTTP bounda
   app.post('/v2/pending/reset-starts/read', async () => ({ entries: [] }));
   cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-relative.test' });
   const credentials = { token: 'owner-token', encryption: null };
-  const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({ token: credentials.token, credentials,
-    serverId: 'home', serverHttpBaseUrl: 'http://usage-relative.test' }), isActionApprovalRequired: () => false });
+  const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"usage.query": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({ token: credentials.token, credentials,
+    serverId: 'home', serverHttpBaseUrl: 'http://usage-relative.test' }) });
   const result = await executor.execute('usage.query', { queries: [query] }, { surface: 'cli', serverId: 'home' });
   expect(result.ok, JSON.stringify(result)).toBe(true);
   const slice = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;

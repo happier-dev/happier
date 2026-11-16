@@ -6,7 +6,6 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createDaemonApprovalExecutionOriginCurrentness } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { createGuardLeftBehindActionExecutor } from './actions';
 
@@ -43,7 +42,7 @@ function fixture() {
     },
     machineProcessesAction: async request => { effects.push(request); onEffect?.(); return { ended: [{ ref: 'exact-ref', freedBytes: 100 }], skipped: [] }; },
     isActionEnabled: (id, ctx) => isActionEnabledByActionsSettings(id, settings, ctx),
-    isActionApprovalRequired: (id, ctx) => isApprovalRequiredByActionsSettings(id, settings, ctx),
+    readActionsSettings: () => settings,
   });
   const execute = createGuardLeftBehindActionExecutor({ readContext: async () => context, getExecutor,
     observeExecution: request => operations.observeExecution(request) });

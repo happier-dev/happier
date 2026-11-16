@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { afterEach, describe, expect, it } from 'vitest';
 import fastify from 'fastify';
@@ -29,8 +32,9 @@ describe('CLI and MCP model prices through captured Account Actions', () => {
       return { ...catalog, provenance: { ...catalog.provenance, revision: 'refreshed' } };
     });
     cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage.test' });
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({ token: 'owner-token', serverId: 'home',
-      serverHttpBaseUrl: 'http://usage.test', isCredentialCurrent: () => current }), isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"usage.prices.get": Object.keys(ActionSurfaceSchema.shape), "usage.prices.refresh": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({ token: 'owner-token', serverId: 'home',
+      serverHttpBaseUrl: 'http://usage.test', isCredentialCurrent: () => current }) });
     const initial = await executor.execute('usage.prices.get', {}, { surface: 'mcp', serverId: 'home' });
     expect(initial, JSON.stringify(initial))
       .toMatchObject({ ok: true, result: { provenance: catalog.provenance } });
@@ -69,10 +73,11 @@ describe('CLI and MCP model prices through captured Account Actions', () => {
     });
     cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage.test' });
     const credentials = { token: 'owner-token', encryption: null };
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({ token: credentials.token, credentials,
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"usage.query": Object.keys(ActionSurfaceSchema.shape), "settings.set": Object.keys(ActionSurfaceSchema.shape), "settings.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({ token: credentials.token, credentials,
       serverId: 'home', serverHttpBaseUrl: 'http://usage.test', isCredentialCurrent: () => current }),
       settingsDeclarationAction: createCliSettingsDeclarationAction({ credentials, serverHttpBaseUrl: 'http://usage.test' }),
-      isActionApprovalRequired: () => false,
+
     });
     const query = { queries: [normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } })] };
     const read = async () => {

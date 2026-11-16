@@ -1,7 +1,6 @@
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createPromptBundleInLibrary, type PromptLibraryArtifactStore, type PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { createSkillActionExecuteV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionOperations';
 import type { SkillRulesActionPortV1 } from '@happier-dev/protocol/prompts/library/skillRulesActionsV1';
@@ -82,11 +81,10 @@ async function fixture(options: Readonly<{ names?: readonly string[]; unavailabl
         ? { receipts: [{ root: '/skills', path: '/skills/review', digest: 'sha256:review' }] }
         : { removed: ['/skills/review'] };
     },
-    isActionApprovalRequired: (actionId: Parameters<typeof isApprovalRequiredByActionsSettings>[0], context: ActionExecutorContext) =>
-      isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
+    readActionsSettings: () => normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
         'skills.machine.install': ['cli'], 'skills.machine.uninstall': ['cli'],
         'skills.found.adopt': ['cli'],
-      } }), context),
+      } }),
   } satisfies Partial<ActionExecutorDeps>;
   const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...ports });
   const captured: Array<Parameters<ActionCliExecutionDeps['createExecutorFn']>[0]> = [];

@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { describe, expect, it, vi } from 'vitest';
 import {
     createActionExecutor,
@@ -86,8 +89,9 @@ function createManagementVertical() {
         return execution.ok ? execution.result : execution;
     };
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"plugins.sessionHooks.status.get": Object.keys(ActionSurfaceSchema.shape), "plugins.sessionHooks.install": Object.keys(ActionSurfaceSchema.shape), "plugins.sessionHooks.disable": Object.keys(ActionSurfaceSchema.shape), "plugins.sessionHooks.enable": Object.keys(ActionSurfaceSchema.shape), "plugins.sessionHooks.uninstall": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
         pluginSessionHookManagementAction,
-        isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
     return { executor, calls };
 }

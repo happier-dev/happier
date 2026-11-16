@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import fastify from 'fastify';
 import axios from 'axios';
 import { accountSettingsParse, createActionExecutor, decodePlainArtifactStoredContent, getActionSpec, StoredApprovalRequestSchema } from '@happier-dev/protocol';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { callSocketRpc } from '@happier-dev/sync-client';
 import { buildWorkspaceFileRestoreOperation } from '@happier-dev/protocol/machines/workspaceFilesReplace';
@@ -187,7 +186,7 @@ describe('registered workspace replace transport', () => {
       approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'preview-approval' }; },
       approvalsUpdate: async () => ({ ok: true }),
       approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request }),
-      isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, input),
+      readActionsSettings: () => settings,
     });
     // As in production, the receiving credential factory binds the Home; Action input does not.
     const receivingExecutor: RpcActionExecutor = {
@@ -253,8 +252,7 @@ describe('registered workspace replace transport', () => {
       approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'replace-approval' }; },
       approvalsUpdate: async () => ({ ok: true }),
       approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request }),
-      isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id,
-        context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context, undefined, undefined, input),
+      readActionsSettings: (context) => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
     });
     const operation = kind === 'replace'
       ? { kind, matcher, files: [{ path: 'a.txt', expectedHash: hash(Buffer.from('old')) }] }

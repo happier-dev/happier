@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -549,7 +552,8 @@ describe('CLI Session target composition', () => {
         resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
         surface: 'background', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
         approvalContext: { serverId: context.serverId, runtimeAccountId: 'account-1' } },
-      actionExecutor: createActionExecutor({ ...deps, isActionApprovalRequired: () => false,
+      actionExecutor: createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps,
         // Only the actual input writer is substituted. Home HTTP and canonical
         // CLI reference/prefix resolution remain real above this boundary.
         sessionSendMessage: async request => { sent.push(request.sessionId); return { status: 'accepted', localId: 'exact-send' }; },
@@ -597,7 +601,7 @@ describe('CLI Session target composition', () => {
     let requireApproval = false;
     let approval: ApprovalRequest | null = null;
     const executor = createActionExecutor({ ...deps,
-      isActionApprovalRequired: actionId => requireApproval && actionId === 'session.message.send',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.message.send']: { approvalRequiredSurfaces: (requireApproval) ? Object.keys(ActionSurfaceSchema.shape) : [] } } }),
       // Artifact persistence and host origin-currentness are genuine boundaries;
       // canonical capture, lifecycle transition and replay stay real.
       isApprovalExecutionOriginCurrent: async () => true,

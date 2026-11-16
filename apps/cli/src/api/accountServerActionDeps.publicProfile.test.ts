@@ -6,7 +6,6 @@ import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, PublicProfilePolicyV1Schema } from '@
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
@@ -54,7 +53,7 @@ describe('public-profile CLI captured Account binding', () => {
     let actionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
     const executor = createActionExecutor({ ...createAccountServerActionDeps({ token: 'captured', serverId: 'home',
       serverHttpBaseUrl: 'http://profile-home.test', isCredentialCurrent: async () => true }),
-      isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id, actionsSettings, context, undefined, undefined, input),
+      readActionsSettings: () => actionsSettings,
     } as ActionExecutorDeps);
     const candidate = { policy, metadataSelection: {}, query: normalizeUsageQuery({ period: { startMs, endMs },
       includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, includeQuotaHistory: false }),
@@ -88,8 +87,7 @@ describe('public-profile CLI captured Account binding', () => {
     });
     const deps = createAccountServerActionDeps({ token: 'captured', serverId: 'home', serverHttpBaseUrl: 'http://profile-home.test',
       isCredentialCurrent: async () => true });
-    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: (id, context, input) =>
-      isApprovalRequiredByActionsSettings(id, context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), context, undefined, undefined, input),
+    const executor = createActionExecutor({ ...deps, readActionsSettings: (context) => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
     } as ActionExecutorDeps);
     const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId: 'home' };
     const input = { accountId: 'account/target', reason: '  Reviewed operator reason  ' };
@@ -128,8 +126,7 @@ describe('public-profile CLI captured Account binding', () => {
       isCredentialCurrent: async () => true });
     const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1,
       approvalWaivedSurfaces: { 'account.public_profile.update': ['cli'], 'account.public_profile.refresh': ['cli'] } });
-    const executor = createActionExecutor({ ...deps, isActionApprovalRequired: (id, context, input) =>
-      isApprovalRequiredByActionsSettings(id, actionsSettings, context, undefined, undefined, input),
+    const executor = createActionExecutor({ ...deps, readActionsSettings: () => actionsSettings,
     } as ActionExecutorDeps);
     await expect(executor.execute('account.public_profile.update', { layout }, {
       surface: 'cli', authority: 'present_user', serverId: 'home',

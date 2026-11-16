@@ -1,3 +1,5 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
 import nacl from 'tweetnacl';
@@ -235,8 +237,9 @@ describe('Machine access headless Action transport', () => {
     await app.ready();
     restore = installAxiosFastifyAdapter({ app, origin: 'http://access.test' });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"machines.access.grants.list": Object.keys(ActionSurfaceSchema.shape), "machines.access.grant.set": Object.keys(ActionSurfaceSchema.shape), "machines.access.grant.remove": Object.keys(ActionSurfaceSchema.shape), "machines.access.leave": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createAccountServerActionDeps({ token: 'test-token', serverId: 'home', serverHttpBaseUrl: 'http://access.test' }),
-      isActionApprovalRequired: () => false,
+
     } as unknown as ActionExecutorDeps);
     const context = { surface: 'cli', authority: 'present_user', serverId: 'home' } as const;
     const target = { serverId: 'home', machineId: 'machine' };
@@ -300,9 +303,10 @@ describe('Machine access headless Action transport', () => {
     app.get('/v1/machines/machine/access', async () => ({ malformed: true }));
     await app.ready();
     restore = installAxiosFastifyAdapter({ app, origin: 'http://access.test' });
-    const executor = createActionExecutor({ ...createAccountServerActionDeps({ token,
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"machines.access.prepareKeys": Object.keys(ActionSurfaceSchema.shape), "machines.access.grant.set": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createAccountServerActionDeps({ token,
       credentials: { token, encryption: { type: 'dataKey', publicKey: manager.publicKey, machineKey: manager.secretKey } },
-      serverId: 'home', serverHttpBaseUrl: 'http://access.test' }), isActionApprovalRequired: () => false,
+      serverId: 'home', serverHttpBaseUrl: 'http://access.test' }),
     } as unknown as ActionExecutorDeps);
     const target = { serverId: 'home', machineId: 'machine' };
     const context = { surface: 'cli', authority: 'present_user', serverId: 'home' } as const;

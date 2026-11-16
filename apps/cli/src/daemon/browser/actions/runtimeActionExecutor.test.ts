@@ -1,3 +1,5 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { snapshotReadBoundaryFixture } from '../context/cdp/snapshotMasking.testkit';
 import type {
   BrowserCommandV1,
@@ -168,7 +170,7 @@ it.each([
       runtimeActionExecute: createBrowserDaemonRuntimeActionExecutor({ featureGate: allowAllBrowserGate(),
         automation: createBrowserAutomationRoutes({ service: path.service }),
         control: createBrowserDaemonControlRoutes({ broker, automation: () => path.service }) }),
-      isActionApprovalRequired: actionId => actionId === (actionKind === 'type' ? 'browser.automation.type' : 'browser.automation.click'),
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionKind === 'type' ? 'browser.automation.type' : 'browser.automation.click']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async ({ request }) => { records.set('approval', request); return { artifactId: 'approval' }; },
       approvalsGet: async ({ artifactId }) => records.get(artifactId) ?? null,
@@ -715,7 +717,7 @@ describe('daemon browser runtime action executor', () => {
     const realMod = await import('./runtimeActionExecutor');
     const dispatchCommand = vi.fn<BrowserDaemonControlRoutes['dispatchCommand']>();
     const execute = realMod.createBrowserDaemonRuntimeActionExecutor({
-      control: { dispatchCommand, listViews: () => [] },
+      control: createBrowserDaemonControlRoutes({ broker: { dispatchCommand, listViews: () => [] } }),
       featureGate: gateWith({ 'browser.sidecar': false, 'browser.automation': true }),
     });
 
@@ -788,7 +790,7 @@ describe('daemon browser runtime action executor', () => {
     const automationDispatch = vi.fn<BrowserAutomationRoutes['dispatch']>();
     const recordingAttach = vi.fn(async () => ({ ok: true as const, attachmentId: 'attachment_x' }));
     const execute = realMod.createBrowserDaemonRuntimeActionExecutor({
-      control: { dispatchCommand, listViews: () => [] },
+      control: createBrowserDaemonControlRoutes({ broker: { dispatchCommand, listViews: () => [] } }),
       context: { dispatch: contextDispatch },
       automation: { dispatch: automationDispatch, prepareConfidentialFill: async () => { throw new Error('Unexpected confidential fill'); } },
       recordingAttach,

@@ -1,3 +1,5 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -8,7 +10,6 @@ import { buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1, HomeHubLayoutV1Sch
 import { BUILTIN_WIDGET_DESCRIPTORS_V1, buildWidgetDefinitionArtifactHeaderV1, WidgetInstanceActionOutputSchemasV1, type WidgetDefinitionV1 } from '@happier-dev/protocol/widgets';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { BotTemplateArtifactV1Schema, projectBotTemplateArtifactHeaderV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import * as persistence from '@/persistence';
 import { configuration } from '@/configuration';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
@@ -89,8 +90,7 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       'artifact.create': ['agent'], 'artifact.update': ['agent'], 'artifact.publish_from_file': ['agent'],
     } });
     return createActionExecutor({ ...host,
-      isActionApprovalRequired: (actionId, context, input) =>
-        isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input),
+      readActionsSettings: () => settings,
     });
   }
   it('projects native Artifact metadata onto the strict get document while preserving content and missing reads', async () => {
@@ -1055,7 +1055,8 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       body: encodePlainArtifactStoredContent({ body: 'note' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
       ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } }));
     http.post.mockResolvedValue({ status: 200, data: { publicShare, viewerOrigin: 'https://public.example.test' } });
-    const executor = createActionExecutor({ ...deps(link => { issued.push(link); }), isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"artifact.public_link.create": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps(link => { issued.push(link); }) });
     const result = await executor.execute('artifact.public_link.create', { artifactId },
       { surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'artifact.public_link.create' } });
     expect(result).toEqual({ ok: true, result: { publicShare: { ...publicShare, networkOff: false }, url: issued[0]?.url } });
@@ -1074,7 +1075,8 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
       return { status: 200, data: { id: value.id, headerVersion: 1, bodyVersion: 1 } };
     });
-    const executor = createActionExecutor({ ...deps(), isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"artifact.create": Object.keys(ActionSurfaceSchema.shape), "artifact.get": Object.keys(ActionSurfaceSchema.shape), "artifact.list": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps() });
     await expect(executor.execute('artifact.create', { artifactId, header: { title: 'Note', kind: 'published.v1' }, body: 'note' },
       { surface: 'cli', presentUserConfirmation: { actionId: 'artifact.create' } })).resolves.toMatchObject({ ok: true,
         result: { artifactId, revision: { headerVersion: 1, bodyVersion: 1 } } });
@@ -1087,7 +1089,8 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
   it('preserves quota details through the public Action failure envelope', async () => {
     http.get.mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
     http.post.mockResolvedValue({ status: 413, data: { error: 'quota_exceeded', budget: 'account', limitBytes: 10, usedBytes: 20 } });
-    const executor = createActionExecutor({ ...deps(), isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"artifact.create": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps() });
     await expect(executor.execute('artifact.create', { artifactId, header: {}, body: 'note' },
       { surface: 'cli', presentUserConfirmation: { actionId: 'artifact.create' } })).resolves.toMatchObject({
         ok: false, errorCode: 'quota_exceeded', details: { budget: 'account', limitBytes: 10, usedBytes: 20 },

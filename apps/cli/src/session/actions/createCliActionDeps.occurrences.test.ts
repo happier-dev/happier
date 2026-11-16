@@ -1,9 +1,7 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
-import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { AUTOMATION_OCCURRENCE_ACTION_IDS } from '@happier-dev/protocol/actions';
 import { AutomationV3RunMutationResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { createCliActionDeps } from './createCliActionDeps';
@@ -44,8 +42,7 @@ describe('CLI occurrence Action composition', () => {
                 serverId: 'home-a', serverHttpBaseUrl: address, isCredentialCurrent: async () => current });
             const executor = createActionExecutor({ ...deps,
                 isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, policy, context),
-                isActionApprovalRequired: (actionId, context, input) => resolveActionApprovalRouting({ actionId,
-                    spec: getActionSpec(actionId), context, input, settings: policy }).required,
+                readActionsSettings: () => policy,
             });
             const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId: 'home-a', runtimeAccountId: 'account-a' };
             const bridge = createActionToolExecutorBridge({ executor, surface: surface === 'cli' ? 'agent' : surface });

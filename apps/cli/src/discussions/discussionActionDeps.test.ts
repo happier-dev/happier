@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { decodeDiscussionUploadMetadataV1, readBinaryUploadFrameV1, DISCUSSION_UPLOAD_PATH_V1,
@@ -728,9 +731,10 @@ describe('Home Discussion resource transport', () => {
           answerPolicy: 'when_addressed', createdAt: 1 }] } };
     });
     const received: string[] = [];
-    const executor = discussionExecutor({ discussionAction: action(),
+    const executor = discussionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), discussionAction: action(),
       sessionSendMessage: async ({ sessionId }) => { received.push(sessionId); return { status: 'accepted', localId: 'input-1' }; },
-      isActionApprovalRequired: () => false,
+
     });
     const sent = await executor.execute('session.message.send', { sessionId: { selector: 'discussion', discussionId: 'discussion-1' },
       message: 'Question' }, { ...context, defaultSessionId: 'origin-session' });

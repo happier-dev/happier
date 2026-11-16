@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import axios from 'axios';
 import { managedAcpInstallId } from '@happier-dev/cli-common/agents';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createRegistryHostV1, BUILT_IN_REGISTRY_SOURCES_V1 } from '@happier-dev/protocol/registries';
 import { ACP_REGISTRY_V1_FIXTURE } from '../../../../../../packages/protocol/src/registries/formats/fixtures/acpRegistryV1Fixture';
 import { AcpCatalogSettingsV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
@@ -66,9 +65,9 @@ describe('registry Agent CLI through the real registry and Action owners', () =>
         } } })] as const;
     }));
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({ v: 1,
+      readActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
         approvalWaivedSurfaces: approval ? {} : { 'agents.acp.backends.installFromRegistry': ['cli'], 'machines.agents.uninstall': ['cli'] },
-      }), context),
+      }),
       registryActionExecute: ({ actionId, input }) => registry.execute(actionId, input),
       updateAccountAcpCatalogSettings: async ({ mutate }) => {
         catalog = AcpCatalogSettingsV1Schema.parse(mutate(catalog));

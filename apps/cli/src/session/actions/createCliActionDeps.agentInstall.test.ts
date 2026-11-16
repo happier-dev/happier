@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -13,8 +16,9 @@ describe('CLI install job Actions', () => {
   it('starts jobs with explicit consent and reads/cancels that job through the machine transport', async () => {
     const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"machines.agents.install": Object.keys(ActionSurfaceSchema.shape), "machines.agents.install.status": Object.keys(ActionSurfaceSchema.shape), "machines.agents.install.cancel": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createCliActionDeps({ token: credentials.token, credentials, sessionId: 'session', mode: 'plain', ctx: null }),
-      isActionApprovalRequired: () => false,
+
     });
     const context = { surface: 'cli' as const, authority: 'present_user' as const };
     callMachineRpc.mockResolvedValueOnce({ ok: true, jobId: 'job' });
@@ -29,10 +33,11 @@ describe('CLI install job Actions', () => {
   it('uses an exact direct machine transport without widening it to another unauthenticated machine', async () => {
     const invoke = vi.fn(async () => ({ ok: true, jobId: 'direct-job' }));
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"machines.agents.install": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createCliActionDeps({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null, serverId: 'home-1', serverHttpBaseUrl: 'https://home-1.test',
         machineActionDirectTargetTransport: { machineId: 'exact-machine', invoke },
       }),
-      isActionApprovalRequired: () => false,
+
     });
     const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId: 'home-1' };
     expect(await executor.execute('machines.agents.install', { machineId: 'exact-machine', agentId: 'plugin/agent', intent: 'install' }, context)).toMatchObject({ ok: true, result: { jobId: 'direct-job' } });
@@ -53,13 +58,14 @@ describe('CLI install job Actions', () => {
       return { ok: true };
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"machines.agents.install": Object.keys(ActionSurfaceSchema.shape), "machines.agents.install.status": Object.keys(ActionSurfaceSchema.shape), "machines.agents.install.cancel": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createCliActionDeps({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
         serverId: 'home-1', serverHttpBaseUrl: 'https://home-1.test',
         ...(actionId === 'machines.agents.install'
           ? { credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } } }
           : { machineActionDirectTargetTransport: { machineId: 'machine', invoke } }),
       }),
-      isActionApprovalRequired: () => false,
+
     });
     callMachineRpc.mockResolvedValueOnce({ ok: true, jobId: 'job' });
     const result = await executor.execute(actionId, { machineId: 'machine', ...input }, {

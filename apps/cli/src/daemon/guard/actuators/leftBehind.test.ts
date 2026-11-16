@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ApprovalRequestSchema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { MachineProcessesCleanUpInputV1Schema, MachineProcessesStartAgainInputV1Schema } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
@@ -47,7 +46,7 @@ async function actionFixture(requireApproval = false) {
     custodyBinding: { serverId: 'home', installationId: 'install' }, resolveAccountId: async () => 'owner' });
   // The Machine RPC and Account Artifact boundaries are substituted; both real Action and cleanup owners run underneath.
   const deps: Partial<ActionExecutorDeps> = {
-    isActionApprovalRequired: (id, context, args) => isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, args),
+    readActionsSettings: () => settings,
     machineProcessesAction: async request => {
       if (request.actionId === 'machines.processes.startAgain') return nativeActions.startAgain(
         MachineProcessesStartAgainInputV1Schema.parse(request.input), { accountId: 'owner', isCustodian: true },

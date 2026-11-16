@@ -177,7 +177,7 @@ describe('exact-machine SCM Action targeting', () => {
           'scm.diffSummary.result.delete': ['cli' as const, 'ui' as const],
         } };
         const executor = createActionExecutor({ ...deps,
-          isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
+          readActionsSettings: () => settings });
         const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31));
         const target = { kind: 'machine' as const, machineId: 'machine' };
         const invoke = async (actionId: 'scm.diffSummary.result.list' | 'scm.diffSummary.result.read' | 'scm.diffSummary.result.delete',

@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
@@ -676,14 +679,15 @@ describe('CLI and MCP personal usage Account transport', () => {
     app.post('/v2/pending/reset-starts/read', async () => ({ entries: [] }));
     cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage.test' });
     const credentials = { token: 'owner-token', encryption: null };
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({ token: credentials.token, credentials,
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"usage.query": Object.keys(ActionSurfaceSchema.shape), "connectedServices.quota.get": Object.keys(ActionSurfaceSchema.shape), "usage.coach.dismiss": Object.keys(ActionSurfaceSchema.shape), "settings.get": Object.keys(ActionSurfaceSchema.shape), "settings.set": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({ token: credentials.token, credentials,
       serverId: 'home', serverHttpBaseUrl: 'http://usage.test' }),
       settingsDeclarationAction: createCliSettingsDeclarationAction({ credentials, serverHttpBaseUrl: 'http://usage.test' }),
       connectedServiceAction: createCliConnectedServiceAction({ credentials, serverId: 'home', serverHttpBaseUrl: 'http://usage.test',
         resolveHeaders: () => ({ Authorization: 'Bearer owner-token' }),
         callMachineAction: async () => { throw new Error('Quota reads have no Machine effect'); },
       }),
-      isActionApprovalRequired: () => false,
+
     });
     const read = async (selected = query) => {
       const result = await executor.execute('usage.query', { queries: [selected] }, { surface: 'cli', serverId: 'home' });

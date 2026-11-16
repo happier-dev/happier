@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fastify from 'fastify';
 import nacl from 'tweetnacl';
 import { connect } from '@happier-dev/sdk';
-import { createActionExecutor, ExternalActionRequestEnvelopeV1Schema, isApprovalRequiredByActionsSettings, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { createActionExecutor, ExternalActionRequestEnvelopeV1Schema,  type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
@@ -83,8 +83,7 @@ describe('advertised SDK key preparation on a distinct trusted key holder', () =
       const executor = createActionExecutor({ ...createAccountServerActionDeps({ token,
         credentials: { token, encryption: { type: 'dataKey', publicKey: manager.publicKey, machineKey: manager.secretKey } },
         serverId: resource.serverId, serverHttpBaseUrl: origin }),
-        isActionApprovalRequired: ((id, context) => isApprovalRequiredByActionsSettings(id,
-          { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.access.prepareKeys': ['api'] } }, context)) satisfies NonNullable<ActionExecutorDeps['isActionApprovalRequired']>,
+        readActionsSettings: () => ({ v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.access.prepareKeys': ['api'] } }),
       } as unknown as ActionExecutorDeps);
       const execution = await executor.execute('machines.access.prepareKeys', envelope.input,
         { surface: 'api', serverId: resource.serverId, runtimeAccountId: 'bob' });

@@ -9,7 +9,6 @@ import type { PromptLibraryArtifactStore, PromptLibraryStoredArtifact } from '@h
 import { readSkillLockV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
@@ -86,7 +85,7 @@ describe('reviewed skill installation through the Add and Git owners', () => {
       const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'skills.install': ['cli', 'agent'] } });
       const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
         skillActionExecute: ({ actionId, input, context }) => action(actionId, input, { surface: context.surface ?? null }),
-        isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+        readActionsSettings: () => settings,
       });
       const execute: MountedAuthoringActionExecute = async (actionId, input) => {
         if (actionId !== 'skills.install') throw new Error(`Unexpected Add Action: ${actionId}`);

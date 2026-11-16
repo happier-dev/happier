@@ -16,7 +16,6 @@ import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines
 import { MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
   ConnectedAccountAuthenticationCommandRequestSchema, ConnectedAccountControlCommandRequestSchema,
   ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonControlResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
@@ -210,8 +209,7 @@ describe('MCP Machine Action transport disposition', () => {
             },
             approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
             isApprovalExecutionOriginCurrent: async () => true,
-            isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id,
-              normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'mcp.servers.signIn.start': approvalRequired ? [] : ['cli'] } }), context) });
+            readActionsSettings: () => normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'mcp.servers.signIn.start': approvalRequired ? [] : ['cli'] } }) });
           origin = executor;
           return { ...executor, execute: (id, input, context) => executor.execute(id, input, {
             ...context, serverId: 'home', actionRequestId: 'oauth-start', defaultSessionMachineId: 'selected-machine',

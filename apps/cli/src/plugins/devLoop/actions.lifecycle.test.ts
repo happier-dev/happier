@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -49,7 +52,8 @@ describe('plugin lifecycle Actions', () => {
         readRecord: value => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {},
         resolveCurrentSessionValue: async () => null,
       });
-      const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), isActionApprovalRequired: () => false,
+      const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"plugins.disable": Object.keys(ActionSurfaceSchema.shape), "plugins.enable": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
         pluginsDevLoopAction: administration.pluginsDevLoopAction });
       for (const actionId of ['plugins.disable', 'plugins.enable'] as const) {
         const result = await executor.execute(actionId, { pluginId, scope: 'account' }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
@@ -84,10 +88,16 @@ describe('plugin lifecycle Actions', () => {
       ...(kind === 'setUpdatePolicy' ? { policy: 'pinned' } : {}) };
     const executor = createActionExecutor({
       ...createUnavailableActionTransportDeps(),
-      isActionApprovalRequired: () => false,
+
       pluginsDevLoopAction: executePluginDevLoopAction,
     });
-    const outcome = await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+    let outcome = await executor.execute(actionId, input, context);
+    if (kind === 'forgetTrust' || kind === 'uninstall') {
+      expect(outcome).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+      expect(daemon.request).not.toHaveBeenCalled();
+      outcome = await executor.execute(actionId, input, { ...context, presentUserConfirmation: { actionId } });
+    }
     expect(outcome).toMatchObject({ ok: true, result: { ok: true, pluginId: 'acme.plugin', change: { kind: 'committed' } } });
     expect(daemon.request).toHaveBeenCalledWith(expect.objectContaining({ kind, pluginId: 'acme.plugin' }));
     const outputSchema = getActionSpec(actionId).outputSchema;
@@ -95,18 +105,18 @@ describe('plugin lifecycle Actions', () => {
     expect(outputSchema.safeParse(outcome.ok ? outcome.result : undefined).success).toBe(true);
   });
 
-  it('does not reach the daemon when lifecycle Actions are Off or awaiting Ask-first approval', async () => {
+  it('keeps lifecycle Actions Off or awaiting in-place UI confirmation', async () => {
     const disabled = createActionExecutor({ ...createUnavailableActionTransportDeps(), isActionEnabled: () => false, pluginsDevLoopAction: executePluginDevLoopAction });
     expect(await disabled.execute('plugins.disable', { pluginId: 'acme.plugin' }, { surface: 'ui' }))
       .toMatchObject({ ok: false });
     let request: unknown;
-    const ask = createActionExecutor({ ...createUnavailableActionTransportDeps(), isActionApprovalRequired: () => true, pluginsDevLoopAction: executePluginDevLoopAction,
+    const ask = createActionExecutor({ ...createUnavailableActionTransportDeps(), readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['plugins.disable']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }), pluginsDevLoopAction: executePluginDevLoopAction,
       approvalsCreate: async (args) => { request = args.request; return { artifactId: 'approval-plugin' }; },
     });
     expect(await ask.execute('plugins.disable', { machineId: 'machine-1', pluginId: 'acme.plugin' }, {
       surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', actionRequestId: 'disable-1',
-    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    expect(request).toMatchObject({ actionId: 'plugins.disable', actionArgs: { machineId: 'machine-1', pluginId: 'acme.plugin' } });
+    })).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+    expect(request).toBeUndefined();
     expect(daemon.request).not.toHaveBeenCalled();
   });
 });

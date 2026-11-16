@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import type { BrowserAutomationActionRequestV1, BrowserCommandV1 } from '@happier-dev/protocol';
 import type { BrowserAutomationSecretFillRequestV1 } from '@happier-dev/protocol/browser/automation/v1';
 import { BrowserAutomationActionResultV1Schema, BrowserAutomationJavaScriptDialogSummaryV1Schema, BrowserAutomationSecretFillRequestV1Schema } from '@happier-dev/protocol/browser/automation/v1';
@@ -520,8 +523,9 @@ describe('control adapter automation transport bridge', () => {
     const runtimeActionExecute = createBrowserDaemonRuntimeActionExecutor({
       featureGate: { isEnabled: () => true, refresh: async () => {} }, automation: routes,
     });
-    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute,
-      isActionApprovalRequired: () => false,
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"browser.automation.queryElements": Object.keys(ActionSurfaceSchema.shape), "browser.automation.secret.fill": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), runtimeActionExecute,
+
       // Host currentness is an external Account/Session observation port; private admission stays real.
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async ({ request }) => { records.set('approval', request); return { artifactId: 'approval' }; },

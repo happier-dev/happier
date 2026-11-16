@@ -1,3 +1,7 @@
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { createDeferred } from '@/testkit/async/deferred';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -82,7 +86,7 @@ describe('public Action failure evidence', () => {
     { cooperation: 'noncooperative', prepared: false },
     { cooperation: 'noncooperative', prepared: true },
   ] as const)('returns control with a Request ID when a $cooperation Action is cancelled (prepared=$prepared)', async ({ cooperation, prepared }) => {
-    const closed = Promise.withResolvers<void>();
+    const closed = createDeferred<void>();
     let requestOpened = false;
     let providerClosed = false;
     const provider = createServer((_request, response) => {
@@ -261,8 +265,9 @@ function finiteDeploymentTransport(submit: NonNullable<ActionExecutorDeps['deplo
 
 function finiteDeploymentExecutor(submit: NonNullable<ActionExecutorDeps['deploymentAction']>) {
   const transport = finiteDeploymentTransport(submit);
-  return createActionExecutor({ ...createUnavailableActionTransportDeps(), deploymentAction: transport,
-    resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport), isActionApprovalRequired: () => false });
+  return createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"teams.invitations.accept": Object.keys(ActionSurfaceSchema.shape), "deployments.rollback": Object.keys(ActionSurfaceSchema.shape), "deployments.teardown": Object.keys(ActionSurfaceSchema.shape), "action.invoke": Object.keys(ActionSurfaceSchema.shape), "machines.agentIsolation.set": Object.keys(ActionSurfaceSchema.shape), "connectedServices.quota.get": Object.keys(ActionSurfaceSchema.shape), "machines.agents.list": Object.keys(ActionSurfaceSchema.shape), "session.open": Object.keys(ActionSurfaceSchema.shape), "deployments.environments.get": Object.keys(ActionSurfaceSchema.shape), "browser.diagnostics.snapshot": Object.keys(ActionSurfaceSchema.shape), "projects.open": Object.keys(ActionSurfaceSchema.shape), "projects.script.run": Object.keys(ActionSurfaceSchema.shape), "deployments.deploy": Object.keys(ActionSurfaceSchema.shape), "action.operations.get": Object.keys(ActionSurfaceSchema.shape), "session.goal.get": Object.keys(ActionSurfaceSchema.shape), "account.apiTokens.list": Object.keys(ActionSurfaceSchema.shape), "account.apiTokens.revoke": Object.keys(ActionSurfaceSchema.shape), "account.apiTokens.revokeAll": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), "account.apiTokens.create": Object.keys(ActionSurfaceSchema.shape), "daemon.filesystem.upload": Object.keys(ActionSurfaceSchema.shape), "memory.search": Object.keys(ActionSurfaceSchema.shape), "workflow.run.start": Object.keys(ActionSurfaceSchema.shape), "deployments.domains.add": Object.keys(ActionSurfaceSchema.shape), "session.list": Object.keys(ActionSurfaceSchema.shape), "home.public_profiles.restrict": Object.keys(ActionSurfaceSchema.shape), "machines.list": Object.keys(ActionSurfaceSchema.shape), "action.spec.search": Object.keys(ActionSurfaceSchema.shape), "action.spec.get": Object.keys(ActionSurfaceSchema.shape), "teams.identity.connections.list": Object.keys(ActionSurfaceSchema.shape), "identity.providers.list": Object.keys(ActionSurfaceSchema.shape), "session.status.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), deploymentAction: transport,
+    resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport) });
 }
 
 function contributedActionDefinition() {
@@ -362,8 +367,9 @@ describe('actions root command', () => {
     });
     await seedTestServerProfile({ id: 'home', homeId: 'srv_wait_home', serverUrl: 'https://wait-home.example' });
     const result = { kind: 'ambiguous' as const, candidates: [] };
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-      projectsOpen: async () => result, isActionApprovalRequired: () => false });
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"projects.open": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
+      projectsOpen: async () => result });
     await handleActionsCommand(['invoke', 'projects.open', '--server-id', 'home', '--input-json', JSON.stringify({
       serverId: 'srv_wait_home', machineId: 'machine', source: { kind: 'folder', path: '/repo' },
       materialization: { kind: 'attach' },
@@ -403,11 +409,12 @@ describe('actions root command', () => {
       return { kind: 'found' as const, operation: outcome === 'mismatched' ? { ...operation, operationId: 'another-operation' } : operation };
     });
     const operationInputs: unknown[] = [];
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"projects.script.run": Object.keys(ActionSurfaceSchema.shape), "deployments.deploy": Object.keys(ActionSurfaceSchema.shape), "action.operations.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
       actionOperationAction: args => {
         operationInputs.push(args.input);
         return executeActionOperationActionV1({ ...args, transport: async request => rpc(request) });
-      }, isActionApprovalRequired: () => false });
+      } });
     await handleActionsCommand(['invoke', 'action.operations.get', '--input-json', JSON.stringify({
       serverId: 'home', machineId: 'controller', operationId: 'operation',
     }), '--wait', '--json'], {
@@ -455,13 +462,13 @@ describe('actions root command', () => {
       else store.succeed('operation', receipt);
       return { kind: 'found', operation: store.get(scope, 'operation') };
     });
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+    const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"deployments.deploy": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
       // Current Environment metadata names a different controller. Only the
       // original returned operation address may select the observation host.
       deploymentAction: deployment,
       resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(deployment),
-      actionOperationAction: args => executeActionOperationActionV1({ ...args, transport: rpc }),
-      isActionApprovalRequired: () => false });
+      actionOperationAction: args => executeActionOperationActionV1({ ...args, transport: rpc }) });
     await handleActionsCommand(['invoke', 'deployments.deploy', '--input-json', JSON.stringify({
       serverId: 'home', environmentId: 'staging', expectedRevision: 1, targetLinkId: 'target',
       expectedTargetLinkRevision: 1, contentArtifactId: 'content', contentHeaderVersion: 1,
@@ -594,10 +601,11 @@ describe('actions root command', () => {
     const goalControlFailure = SessionGoalControlFailureV1Schema.parse({ phase: 'native_effect' });
     // Session RPC is the system boundary; Action dispatch and both CLI adapters stay real.
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.goal.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createUnavailableActionTransportDeps(),
       sessionGoalGet: async () => ({ ok: false, errorCode: 'codex_goal_thread_unavailable',
         error: 'codex_goal_thread_unavailable', goalControlFailure }),
-      isActionApprovalRequired: () => false,
+
     });
     const deps = {
       readCredentialsFn: async () => credentials('stored_session'),
@@ -635,11 +643,12 @@ describe('actions root command', () => {
       return true;
     });
     const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.goal.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
       ...createUnavailableActionTransportDeps(),
       // The supported `code` failure spelling reaches the nested CLI normalizer
       // through a real Action success; native response data is a boundary.
       sessionGoalGet: async () => ({ ok: false, code: 'native_goal_refused', goalControlFailure: facet }),
-      isActionApprovalRequired: () => false,
+
     });
     const [command] = compileActionCliCommands([{ spec: getActionSpec('session.goal.get'),
       binding: { path: ['session', 'goal', 'get'], positionals: ['sessionId'], visibility: 'canonical' } }]);
@@ -672,7 +681,7 @@ describe('actions root command', () => {
     const { executor } = createCliActionExecutorHarness({ token: 'synthetic-account', sessionId: '', mode: 'plain', ctx: null }, {
       // Native Account HTTP and Artifact persistence are the system boundaries.
       accountApiTokensListAction: list, accountApiTokensRevokeAction: revoke, accountApiTokensRevokeAllAction: revokeAll,
-      isActionApprovalRequired: id => id === 'account.apiTokens.revoke' || id === 'account.apiTokens.revokeAll',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['account.apiTokens.revoke']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) }, ['account.apiTokens.revokeAll']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'cli-lifecycle-approval' }; },
       approvalsGet: async () => request,
@@ -710,8 +719,9 @@ describe('actions root command', () => {
       return true;
     });
     const tokenId = 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d';
+    const label = sealPrivateLabelV1({ mode: 'plain', binding: { entity: 'account_api_token', field: 'label', id: tokenId }, value: 'CLI trigger' });
     const result = { token: `hap_v1_${tokenId}_${'S'.repeat(43)}`, apiToken: {
-      tokenId, label: 'CLI trigger', displayPrefix: 'hap_v1_dd03e74b', createdAt: '2026-10-16T00:00:00.000Z',
+      tokenId, label: projectPrivateLabelForRecipientV1({ stored: label, recipientAccountId: 'account-1' }), displayPrefix: 'hap_v1_dd03e74b', createdAt: '2026-10-16T00:00:00.000Z',
       expiresAt: null, lastUsedAt: null, hasEncryptionAccess: false, hasUnattendedTeamAccess: false,
       grant: API_TOKEN_FULL_GRANT_V1, parentTokenId: null, activeChildCount: 0, embedConfig: null,
     } };
@@ -724,7 +734,7 @@ describe('actions root command', () => {
       onApprovalRequested: (artifactId, signal, decide) => onApprovalRequested?.(artifactId, signal, decide) }, {
       // Account HTTP/Artifact persistence and device credential provenance are boundaries.
       accountApiTokensCreateAction: effect,
-      isActionApprovalRequired: id => id === 'account.apiTokens.create',
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['account.apiTokens.create']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'cli-token-approval' }; },
       approvalsGet: async () => request,
@@ -732,7 +742,7 @@ describe('actions root command', () => {
       approvalsWaitForDecision: async args => ({ ...await coordinator.waitForDecision(args), request: request! }),
       approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
     });
-    const invoke = handleActionsCommand(['invoke', 'account.apiTokens.create', '--input-json', JSON.stringify({ tokenId, label: 'CLI trigger' }), '--json'], {
+    const invoke = handleActionsCommand(['invoke', 'account.apiTokens.create', '--input-json', JSON.stringify({ tokenId, label }), '--json'], {
       readCredentialsFn: async () => credentials('stored_session'),
       createExecutorFn: params => { onApprovalRequested = params.onApprovalRequested; return ({
         execute: (...[id, input, context]: Parameters<typeof executor.execute>) => executor.execute(id, input, {
@@ -746,7 +756,7 @@ describe('actions root command', () => {
       // ACT-ADMIT-ONCE-2: CLI result custody returns a deferred receipt and the
       // ordinary terminal confirmation decides it, without a blocking waiter.
       await invoke;
-      expect(JSON.parse(output)).toMatchObject({ ok: true, data: result });
+      expect(JSON.parse(output), output).toMatchObject({ ok: true, data: result });
       expect(effect).toHaveBeenCalledOnce();
       expect(JSON.stringify(request)).not.toContain(result.token);
     } finally { cancellation.abort(); coordinator.dispose(); await invoke; }
@@ -1272,10 +1282,10 @@ describe('actions root command', () => {
 
   it.each([['--help', '--json'], ['--input-json', '{}', '--json']])('rejects retired combined Publish through the unknown Action boundary with %j', async (...args) => {
     let output = '';
-    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, encodingOrCallback, callback) => {
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
       output += String(chunk);
-      if (typeof encodingOrCallback === 'function') encodingOrCallback();
-      callback?.();
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
       return true;
     });
     vi.spyOn(console, 'error').mockImplementation(() => undefined);

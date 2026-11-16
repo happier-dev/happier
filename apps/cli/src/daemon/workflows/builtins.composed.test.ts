@@ -4,7 +4,7 @@ import {
   ActionIdSchema, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, buildBackendTargetKeyV2,
   createActionExecutor, type ActionExecutorDeps,
   type ActionExecutorContext, type JsonValue, StrictJsonValueSchema, ActionsSettingsV1Schema, type ActionsSettingsV1,
-  isApprovalRequiredByActionsSettings,
+
   ReviewCommentV1Schema, type ReviewCommentV1,
   ResolvedRoleV1Schema,
   REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1,
@@ -201,8 +201,7 @@ function harness(fixtures: Fixtures = {}) {
     ...(fixtures.discussionRead ? { discussionAction: fixtures.discussionRead } : {}),
     resolveSessionReference: async ({ sessionId }) => sessionId && (fixtures.reviewSessionAccess?.(++sessionAccessObservations) ?? true)
       ? { kind: 'unique', address: { serverId: 'home', sessionId } } : { kind: 'none' },
-    isActionApprovalRequired: (id, ctx) => isApprovalRequiredByActionsSettings(id,
-      fixtures.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }), ctx),
+    readActionsSettings: () => fixtures.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
     executionRunCheckProtocolV2: async () => ({ ok: true }),
     executionRunStart: async (sessionId, request) => {
       if (request.intent === 'review' && fixtures.reviewLaunchFailure && !reviewLaunchRejected) {

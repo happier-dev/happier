@@ -1,3 +1,5 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { API_TOKEN_FULL_GRANT_V1, getActionSpec, ProjectWorkerActionInputSchemasV1,
@@ -109,7 +111,7 @@ import * as persistence from '@/persistence';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createManagedGuestActivityTransport } from '@/machines/managed/managedActivityTransport';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachinePublicFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -275,7 +277,7 @@ describe('callMachineRpc', () => {
         approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request))); return { artifactId: 'cleanup-approval' }; },
         approvalsGet: async () => stored,
         approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request))); return { ok: true }; },
-        isActionApprovalRequired: () => true,
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['machines.storage.trash.move']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
         isApprovalExecutionOriginCurrent: async ({ origin, request }) => !!origin.target && verifyExternalActionApprovalInputV1({
           authorizationToken: origin.externalActionExecutionAuthorization?.token ?? '', actionId: request.actionId,
           target: origin.target, input: request.actionArgs, signature: origin.externalActionInputSignature ?? '', publicKey: keys.publicKey }),
@@ -932,7 +934,7 @@ describe('callMachineRpc', () => {
   it('carries after-idle guest read and reversible drain through the original signed controller authority', async () => {
     const controllerKeys = tweetnacl.sign.keyPair();
     const controller = { machineId: 'controller', installationId: 'controller-installation' };
-    const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'owner', controller,
+    const machine = ManagedMachinePublicFullV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'owner', controller,
       launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
       allocation: 'bound', creationState: 'active', resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
       enrolledMachineId: 'guest', desired: 'stop', desiredWhen: 'after-idle', intentRevision: 2,

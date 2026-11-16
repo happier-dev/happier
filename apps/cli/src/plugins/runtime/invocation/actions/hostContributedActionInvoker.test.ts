@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -26,6 +29,7 @@ function createExecutorForTest(
     invokeContributedAction: NonNullable<ActionExecutorDeps['invokeContributedAction']>,
 ) {
     const deps = {
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"teams.archive": Object.keys(ActionSurfaceSchema.shape), "action.invoke": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
         executionRunStart: unexpectedDependency,
         executionRunList: unexpectedDependency,
         executionRunGet: unexpectedDependency,
@@ -55,7 +59,7 @@ function createExecutorForTest(
         daemonMemoryGetWindow: unexpectedDependency,
         daemonMemoryEnsureUpToDate: unexpectedDependency,
         resetGlobalVoiceAgent: () => {},
-        isActionApprovalRequired: () => false,
+
         invokeContributedAction,
     } as unknown as ActionExecutorDeps;
     return createActionExecutor(deps);

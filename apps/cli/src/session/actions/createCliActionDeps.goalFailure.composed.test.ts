@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -71,7 +74,8 @@ describe('normal CLI early native Goal failure', () => {
           const handler = handlers.get(method);
           return handler ? await handler(request) : { ok: false, errorCode: 'RPC_METHOD_NOT_AVAILABLE', error: 'RPC method not available' };
         } } });
-      const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
+      const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.goal.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
       const action = await executor.execute('session.goal.get', { sessionId }, { surface: 'cli' });
       const external = ExternalActionExecutionResultV1Schema.parse(projectExternalActionExecutionResultV1(action));
       expect(external).toMatchObject({ ok: false, errorCode: 'codex_goal_thread_unavailable',

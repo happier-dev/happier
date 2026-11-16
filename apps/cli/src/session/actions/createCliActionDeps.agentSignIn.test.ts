@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol';
 const { callMachineRpc } = vi.hoisted(() => ({ callMachineRpc: vi.fn() }));
@@ -111,10 +114,11 @@ describe('machine Agent sign-in Actions', () => {
         ? { method: 'native', launch: { kind: 'agent_login', agentId: 'codex' } }
         : { status: 'signedIn', accountLabel: null, checkedAt: 1, nativeLogin: 'login_terminal', connectedServices: [] });
       const executor = createActionExecutor({
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"machines.agents.signIn.start": Object.keys(ActionSurfaceSchema.shape), "machines.agents.signIn.status": Object.keys(ActionSurfaceSchema.shape), "machines.agents.signIn.cancel": Object.keys(ActionSurfaceSchema.shape), "machines.agents.signIn.restart": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
         ...createCliActionDeps({ token: 'fixture', sessionId: 'session', mode: 'plain', ctx: null,
           serverId: 'home-1', serverHttpBaseUrl: 'https://home-1.test', machineActionDirectTargetTransport: { machineId: 'machine', invoke },
         }),
-        isActionApprovalRequired: () => false,
+
       });
       expect(await executor.execute(actionId, { machineId: 'machine', agentId: 'codex', ...(actionId.endsWith('cancel') || actionId.endsWith('restart') ? { terminalId: 'acquired' } : {}) }, {
         surface: 'cli', authority: 'present_user', serverId: 'home-2',

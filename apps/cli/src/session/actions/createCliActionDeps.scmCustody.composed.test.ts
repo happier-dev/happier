@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema, ScmDiffSummaryGenerateOutputSchema, createActionExecutor } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createDaemonControlApp } from '@/daemon/controlServer';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import * as control from '@/daemon/controlClient';
@@ -41,7 +40,7 @@ describe('original terminal saved-result custody', () => {
         const receiver = createActionExecutor({ ...createCliActionDeps({ token, credentials, sessionId: '', mode: 'plain', ctx: null,
           serverId: 'custody-home', serverHttpBaseUrl: serverUrl,
           scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [home] } }),
-          isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+          readActionsSettings: () => settings,
         });
         const target = { kind: 'machine' as const, machineId: 'machine' };
         const publicationFacts = { pid: process.pid, httpPort: 4321, controlToken: 'fixture-control', accountId: 'owner', machineId: 'machine' };

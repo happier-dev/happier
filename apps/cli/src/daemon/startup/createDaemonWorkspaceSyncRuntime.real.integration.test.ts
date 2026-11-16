@@ -1,3 +1,5 @@
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import {
   ActionApprovalRequestCreatedResultSchema,
   ApprovalRequestSchema,
@@ -385,7 +387,7 @@ describe('workspace sync conflict Action persistence fixture', () => {
       };
       const executor = createActionExecutor({
         workspaceSyncConflictResolve,
-        isActionApprovalRequired: () => true,
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['workspace.sync.conflict.resolve']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
         approvalsCreate: authority.approvalsCreate,
         approvalsGet: authority.approvalsGet,
         approvalsUpdate: authority.approvalsUpdate,
@@ -470,7 +472,7 @@ async function resolveConflictThroughApprovedAction(
       actionReceiptId,
       actionInput: input,
     }) as WorkspaceSyncConflictResolutionResultV1,
-    isActionApprovalRequired: () => true,
+    readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['workspace.sync.conflict.resolve']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
     approvalsCreate: approvalAuthority.approvalsCreate,
     approvalsGet: approvalAuthority.approvalsGet,
     approvalsUpdate: approvalAuthority.approvalsUpdate,

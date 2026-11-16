@@ -1,3 +1,7 @@
+import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -179,7 +183,7 @@ function createExecutor(
   return createActionExecutor({
     ...store,
     isApprovalExecutionOriginCurrent: async () => true,
-    isActionApprovalRequired: (id) => id === 'identity.providers.secret.replace' || id === 'secrets.shared.create',
+    readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['identity.providers.secret.replace']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) }, ['secrets.shared.create']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
     ...overrides,
   } as ActionExecutorDeps);
 }
@@ -310,7 +314,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
         return { status: 200, data: { success: true } };
       });
       const executor = createExecutor(store, {
-        isActionApprovalRequired: actionId => actionId === 'session.delete',
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.delete']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
         homeDomainAction: createAccountServerActionDeps({ token: 'synthetic-token', serverId: 'home-1',
           serverHttpBaseUrl: 'http://approval-settlement.invalid' }).homeDomainAction,
       });
@@ -394,7 +398,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
         actionRequestAttributionV1: attribution };
       let effects = 0;
       const executor = createExecutor(store, {
-        isActionApprovalRequired: id => id === 'session.message.send',
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.message.send']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
         // Session transport is the external effect boundary. Credential choice,
         // exact lease admission and receipt production all run their real owners.
         sessionSendMessage: async ({ context: admitted }) => {
@@ -518,7 +522,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
         return { status: 200, data: { success: true } };
       });
       const executor = createExecutor(store, {
-        isActionApprovalRequired: actionId => actionId === 'session.delete',
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.delete']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
         homeDomainAction: createAccountServerActionDeps({ token: 'synthetic-token', serverId: 'home-1',
           serverHttpBaseUrl: 'http://approval-settlement.invalid' }).homeDomainAction,
       });
@@ -611,7 +615,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
           verifyConfirmationNonce: request => request.confirmationNonce === createLocalServiceActionConfirmationNonceV1(request),
         });
         const executor = createExecutor(store, {
-          isActionApprovalRequired: id => id === 'localServices.actions.stopManaged',
+          readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['localServices.actions.stopManaged']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
           runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({ featureGate: gate, routes: { actionRoutes: routes } }),
           approvalsUpdate: async args => {
             const result = await store.approvalsUpdate(args);
@@ -801,7 +805,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
         resolveAccountId: async () => 'account-1', generateOperationId: () => 'fork-evidence-operation' });
       let nativeRequests = 0;
       const executor = createExecutor(store, {
-        isActionApprovalRequired: actionId => actionId === 'session.fork',
+        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.fork']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
         runActionOperation: operations.runActionOperation,
         // The native Session RPC answers with its producer's typed outcome.
         // Approval admission, Artifact CAS, operation storage and public reads stay real.
@@ -1015,7 +1019,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
     const store = createStore();
     let nativeDispatches = 0;
     const executor = createExecutor(store, {
-      isActionApprovalRequired: undefined,
+      readActionsSettings: undefined,
       clientActionExecute: createClientActionReverseDispatcher(() => ({
         hasConnectedClientRpcHandler: () => true,
         callConnectedClientRpc: async (_method, _request, options) => {
@@ -1083,7 +1087,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
       return await post(url, body);
     });
     const executor = createExecutor(store, {
-      isActionApprovalRequired: undefined,
+      readActionsSettings: undefined,
       artifactAction: createCliArtifactActions({ store: operands,
         beforeDelete: async () => { throw new Error('This update cannot delete an Artifact'); },
         resolvePublishCaller: async () => null,
@@ -1153,11 +1157,15 @@ describe('approval settlement through the real CLI Artifact store', () => {
     const store = createStore();
     const tokenId = 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d';
     const bearerSecret = 'S'.repeat(43);
+    const label = sealPrivateLabelV1({ mode: 'plain', binding: { entity: 'account_api_token', field: 'label', id: tokenId }, value: 'CI deploy' });
     const created = {
       token: `hap_v1_${tokenId}_${bearerSecret}`,
       apiToken: {
         tokenId,
-        label: 'CI deploy',
+        label: projectPrivateLabelForRecipientV1({
+          stored: label,
+          recipientAccountId: 'account-1',
+        }),
         displayPrefix: 'hap_v1_dd03e74b',
         createdAt: '2026-08-22T12:00:00.000Z',
         lastUsedAt: null,
@@ -1171,36 +1179,25 @@ describe('approval settlement through the real CLI Artifact store', () => {
       },
     };
     const effect = vi.fn(async () => created);
-    // The UI host composition: one process-local decision coordinator shared by
-    // the waiting invocation and the Approval Detail decision in that process.
-    const coordinator = createBlockingApprovalCoordinator();
-    let waitingArtifactId: string | null = null;
     const executor = createExecutor(store, {
       accountApiTokensCreateAction: effect,
-      isActionApprovalRequired: (id) => id === 'account.apiTokens.create',
-      approvalsWaitForDecision: async (args) => {
-        waitingArtifactId = args.artifactId;
-        return await coordinator.waitForDecision({
-          artifactId: args.artifactId,
-          request: args.request,
-          ...(args.signal ? { signal: args.signal } : {}),
-        }) as Awaited<ReturnType<NonNullable<ActionExecutorDeps['approvalsWaitForDecision']>>>;
-      },
-      approvalsResolveBlockingDecision: async (args) => await coordinator.resolveBlockingDecision(args),
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['account.apiTokens.create']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
     });
-
-    const invocation = executor.execute('account.apiTokens.create', { tokenId, label: 'CI deploy' }, uiContext);
-    await vi.waitFor(() => expect(waitingArtifactId).not.toBeNull());
-    const artifactId = waitingArtifactId!;
-    const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, uiContext);
-
-    expect(decided).toMatchObject({ ok: true });
-    await expect(invocation).resolves.toEqual({ ok: true, result: created });
+    const input = { tokenId, label };
+    const review = await executor.execute('account.apiTokens.create', input, uiContext);
+    expect(review).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+    if (review.ok || !review.details || typeof review.details !== 'object'
+      || !('reviewDigest' in review.details) || typeof review.details.reviewDigest !== 'string') throw new Error(JSON.stringify(review));
+    expect(effect).not.toHaveBeenCalled();
+    const confirmed = await executor.execute('account.apiTokens.create', input, { ...uiContext,
+      presentUserConfirmation: { actionId: 'account.apiTokens.create', accountId: uiContext.runtimeAccountId,
+        serverId: uiContext.serverIdentityId, requestId: uiContext.actionRequestId,
+        inputDigest: computeActionInputApprovalDigestV1('account.apiTokens.create', input),
+        reviewDigest: review.details.reviewDigest },
+    });
+    expect(confirmed).toEqual({ ok: true, result: created });
     expect(effect).toHaveBeenCalledOnce();
-    expect(await store.approvalsGet({ artifactId, serverId: null })).toMatchObject({
-      status: 'executed',
-      execution: { ok: true },
-    });
-    expect(storedBody(artifactId)).not.toContain(bearerSecret);
+    expect(rows.size).toBe(0);
+    expect(JSON.stringify([...rows.values()])).not.toContain(bearerSecret);
   });
 });
