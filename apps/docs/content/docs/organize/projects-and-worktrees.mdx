@@ -241,9 +241,10 @@ named as the program, sourced, or passed to an interpreter, such as `./setup.sh`
 `source scripts/env.sh`, `bash -e scripts/setup.sh` or
 `pwsh -File scripts/setup.ps1`, including after `env`, `sudo` or `cmd /c`. Editing,
 adding or relinking one of those files asks again. A program linked outside the
-checkout, such as `.venv/bin/python`, is reviewed by where it points. A folder, as in
-`node server`, is recorded but its contents are not. Happier does not follow inline
-`-c` code or what a script sources or reads. Commands such as
+checkout, such as `.venv/bin/python`, is reviewed by where it points. For a folder,
+as in `node server`, the review covers its `package.json` and the entry file that
+names (`main`, or `index.js`), not what that file imports. Happier does not follow
+inline `-c` code or what a script sources or reads. Commands such as
 `npm run setup` or `make setup` read their own definition files, so declare them
 with the native source kinds (`package_script`, `make` and so on) or list those
 files in `workspace.setupInputs` to make their changes ask again too:

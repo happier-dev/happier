@@ -15,10 +15,12 @@ type Family = Readonly<{
     subcommand?: string;
     /** PowerShell flags are case-insensitive. */
     caseInsensitive?: boolean;
+    /** A folder operand loads its package.json `main` (default index.js). */
+    packageEntry?: true;
 }>;
 
 const SHELL: Family = { inline: ['-c'], valued: ['-o', '+o', '-O', '+O'] };
-const NODE: Family = { inline: ['-e', '-p', '--eval', '--print'], valued: ['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--max-old-space-size', '--stack-size', '--inspect-port', '--title'] };
+const NODE: Family = { packageEntry: true, inline: ['-e', '-p', '--eval', '--print'], valued: ['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--max-old-space-size', '--stack-size', '--inspect-port', '--title'] };
 const FAMILIES: Readonly<Record<string, Family>> = {
     sh: SHELL, bash: SHELL, zsh: SHELL, dash: SHELL, ksh: SHELL, fish: SHELL,
     source: { inline: [] }, '.': { inline: [] },
@@ -51,7 +53,12 @@ function familyOf(program: string): Family | undefined {
  * outside the checkout are omitted; the command text already names them.
  */
 export function listLiteralCommandExecutedFiles(root: string, cwd: string, command: string): string[] {
+    return [...scanLiteralCommand(root, cwd, command).files];
+}
+
+function scanLiteralCommand(root: string, cwd: string, command: string) {
     const files = new Set<string>();
+    const packageOperands = new Set<string>();
     const within = (path: string) => {
         const local = relative(root, path);
         return local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local) ? local : undefined;
@@ -60,7 +67,10 @@ export function listLiteralCommandExecutedFiles(root: string, cwd: string, comma
     // Home (`~`) is outside the checkout.
     const add = (token: string) => {
         const local = token.startsWith('~') ? undefined : within(resolve(segmentCwd, token));
-        if (local) files.add(local.replaceAll('\\', '/'));
+        if (!local) return undefined;
+        const file = local.replaceAll('\\', '/');
+        files.add(file);
+        return file;
     };
     for (const segment of command.split(/&&|\|\||[;&|\n]/)) {
         const tokens = [...segment.matchAll(TOKEN)].map(match => match[1] ?? match[2] ?? match[3] ?? '');
@@ -101,11 +111,12 @@ export function listLiteralCommandExecutedFiles(root: string, cwd: string, comma
                 operand += family.valued?.includes(flag) ? 2 : 1;
                 continue;
             }
-            add(token);
+            const file = add(token);
+            if (file && family.packageEntry) packageOperands.add(file);
             break;
         }
     }
-    return [...files];
+    return { files, packageOperands };
 }
 
 export type LiteralCommandFileFactV1 = Readonly<{ file: string; digest: string } | { file: string; absent: true } | { file: string; directory: true } | { file: string; linkTarget: string }>;
@@ -118,23 +129,51 @@ export type LiteralCommandFileFactV1 = Readonly<{ file: string; digest: string }
  */
 export async function readLiteralCommandExecutedFiles(root: string, cwd: string, command: string)
     : Promise<Readonly<{ kind: 'read'; files: LiteralCommandFileFactV1[] }> | Readonly<{ kind: 'refused'; code: string }>> {
-    const files: LiteralCommandFileFactV1[] = [];
-    for (const file of listLiteralCommandExecutedFiles(root, cwd, command).sort()) {
-        const read = await readProjectDefinitionFileBytes(root, file);
-        if (read.kind === 'read') files.push({ file, digest: createHash('sha256').update(read.bytes).digest('hex') });
-        else if (read.kind === 'absent') files.push({ file, absent: true });
-        else {
-            try {
-                const target = await currentWorkspaceSource().realpath(resolve(root, file));
-                if (read.code === 'outside_root') files.push({ file, linkTarget: target });
-                else if ((await currentWorkspaceSource().stat(target)).isDirectory()) files.push({ file, directory: true });
-                else return { kind: 'refused', code: read.code };
-            } catch (error) {
-                const code = error instanceof Error && 'code' in error ? error.code : undefined;
-                if (code !== 'ENOENT' && code !== 'ENOTDIR') return { kind: 'refused', code: 'unreadable_definition' };
-                files.push({ file, absent: true });
-            }
+    const scan = scanLiteralCommand(root, cwd, command);
+    const facts = new Map<string, LiteralCommandFileFactV1>();
+    const read = async (file: string): Promise<LiteralCommandFileFactV1 | Readonly<{ refused: string }>> => {
+        const result = await readProjectDefinitionFileBytes(root, file);
+        if (result.kind === 'read') return { file, digest: createHash('sha256').update(result.bytes).digest('hex') };
+        if (result.kind === 'absent') return { file, absent: true };
+        try {
+            const target = await currentWorkspaceSource().realpath(resolve(root, file));
+            if (result.code === 'outside_root') return { file, linkTarget: target };
+            if ((await currentWorkspaceSource().stat(target)).isDirectory()) return { file, directory: true };
+            return { refused: result.code };
+        } catch (error) {
+            const code = error instanceof Error && 'code' in error ? error.code : undefined;
+            return code === 'ENOENT' || code === 'ENOTDIR' ? { file, absent: true } : { refused: 'unreadable_definition' };
         }
+    };
+    const record = async (file: string) => {
+        if (facts.has(file)) return null;
+        const fact = await read(file);
+        if ('refused' in fact) return fact.refused;
+        facts.set(file, fact);
+        return null;
+    };
+    for (const file of scan.files) {
+        const refused = await record(file);
+        if (refused) return { kind: 'refused', code: refused };
+        // Node loads a folder through its package.json `main`; deeper imports are setupInputs.
+        if (!scan.packageOperands.has(file) || !('directory' in facts.get(file)!)) continue;
+        const manifest = `${file}/package.json`;
+        let main = 'index.js';
+        const manifestBytes = await readProjectDefinitionFileBytes(root, manifest);
+        if (manifestBytes.kind === 'read') {
+            facts.set(manifest, { file: manifest, digest: createHash('sha256').update(manifestBytes.bytes).digest('hex') });
+            try {
+                const parsed: unknown = JSON.parse(manifestBytes.bytes.toString('utf8'));
+                if (parsed && typeof parsed === 'object' && 'main' in parsed && typeof parsed.main === 'string' && parsed.main.trim()) main = parsed.main;
+            } catch { /* An invalid manifest's bytes are already the reviewed fact; Node falls back to index.js. */ }
+        } else {
+            const manifestRefused = await record(manifest);
+            if (manifestRefused) return { kind: 'refused', code: manifestRefused };
+        }
+        const entry = relative(root, resolve(root, file, main));
+        if (entry === '' || entry === '..' || entry.startsWith(`..${sep}`) || isAbsolute(entry)) continue;
+        const entryRefused = await record(entry.replaceAll('\\', '/'));
+        if (entryRefused) return { kind: 'refused', code: entryRefused };
     }
-    return { kind: 'read', files };
+    return { kind: 'read', files: [...facts.values()].sort((a, b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0) };
 }
