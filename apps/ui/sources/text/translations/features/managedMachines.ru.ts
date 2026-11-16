@@ -358,6 +358,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             install: "Установить Happier",
             join: ({ home }: { home: string }) => `Присоединиться к ${home}`,
             creating: ({ name }: { name: string }) => `Создание ${name}`,
+            creatingShort: "Создаётся",
             installing: ({ name }: { name: string }) => `Установка Happier на ${name}`,
             joining: ({ name }: { name: string }) => `${name} присоединяется`,
             installFailedShort: "Ошибка установки",

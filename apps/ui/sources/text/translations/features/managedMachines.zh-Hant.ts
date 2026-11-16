@@ -358,6 +358,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             install: "安裝 Happier",
             join: ({ home }: { home: string }) => `加入 ${home}`,
             creating: ({ name }: { name: string }) => `正在建立 ${name}`,
+            creatingShort: "正在建立",
             installing: ({ name }: { name: string }) => `正在 ${name} 上安裝 Happier`,
             joining: ({ name }: { name: string }) => `${name} 正在加入`,
             installFailedShort: "安裝失敗",

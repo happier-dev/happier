@@ -364,6 +364,7 @@ export const managedMachinesEn = {
             setupFailedHelp: "Your message waits here. Retrying uses this same machine.",
             setupWaiting: ({ name }: { name: string }) => `Your message waits here until ${name} is set up.`,
             creating: ({ name }: { name: string }) => `Creating ${name}`,
+            creatingShort: "Creating",
             installing: ({ name }: { name: string }) => `Installing Happier on ${name}`,
             joining: ({ name }: { name: string }) => `${name} is joining`,
             installFailedShort: "Install failed",

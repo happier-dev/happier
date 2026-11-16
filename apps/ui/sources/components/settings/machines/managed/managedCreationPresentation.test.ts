@@ -241,6 +241,17 @@ describe('managed creation presentation', () => {
     expect(isManagedCreationStateRowVisible(stopped, managedCreationState(stopped), { offersStart: true })).toBe(true);
     expect(isManagedCreationStateRowVisible(stopped, managedCreationState(stopped), { offersStart: false })).toBe(false);
   });
+  // UI-FINAL-1116 (DESIGN-1114 #6, lab b-wake-S #2): with its controller offline, nothing else on the page said why Start
+  // and Start session were disabled; the asleep row carries that cause.
+  it('keeps the row of a joined asleep machine whose wake waits for its offline controller', () => {
+    const stopped = { ...machine, enrolledMachineId: 'guest', desired: 'stop' as const, wakeOnAcceptedMessage: true,
+      observation: ProviderObservationV1Schema.parse({ availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' }) };
+    const waiting = managedCreationState(stopped, { asleepWake: { kind: 'waitsForController', controller: 'devbox' } });
+    expect(waiting).toEqual({ kind: 'stoppedStorage', wake: { kind: 'waitsForController', controller: 'devbox' } });
+    expect(isManagedCreationStateRowVisible(stopped, waiting, { offersStart: false })).toBe(true);
+    const onSend = managedCreationState(stopped, { asleepWake: { kind: 'onSend' } });
+    expect(isManagedCreationStateRowVisible(stopped, onSend, { offersStart: false })).toBe(false);
+  });
   it.each(['stopped', 'suspended'] as const)('offers wake after native %s while enrolled presence still says online', power => {
     const parked = { ...machine, enrolledMachineId: 'guest', desired: power === 'stopped' ? 'stop' as const : 'suspend' as const,
       observation: ProviderObservationV1Schema.parse({ availability: 'present', observedAt: 2, power, storage: 'retained' }) };

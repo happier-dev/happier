@@ -367,6 +367,21 @@ describe('buildMachineCollection', () => {
         expect(waiting.other).toBe(presence(buildMachineCollection(input)).other);
         expect(presence(buildMachineCollection(input)).pending).not.toBe(t('approvals.waitingForYou'));
     });
+    // UI-FINAL-1116: the rail said "May exist" while the machine's own page said its creation was in progress.
+    it('says Creating on the row while its acquire runs, and May exist without one', () => {
+        const submitted = managed('creating', { allocation: 'may-exist', resource: undefined });
+        const acquiring = { serverId: 'a', observation: 'available' as const, isUnavailableProjection: false,
+            snapshot: { version: 1 as const, operationId: 'acquire', revision: 1, actionId: 'machines.managed.acquire' as const,
+                state: 'running' as const, scope: { accountId: 'owner', machineId: 'controller' }, title: 'Create machine',
+                createdAt: 10, startedAt: 10, cancellation: 'supported' as const, domainRef: { kind: 'managedMachine' as const, id: 'creating' } } };
+        const input = { groups: [group('a', [])], groupedByHome: false, managedByServerId: { a: [submitted] } };
+        const row = (collection: ReturnType<typeof buildMachineCollection>) => collection.sections.flatMap(section => section.rows)
+            .find(candidate => candidate.managedId === 'creating');
+        expect(row(buildMachineCollection({ ...input,
+            creationOperations: new Map([[managedMachineConsentKey('a', 'creating'), acquiring]]) })))
+            .toMatchObject({ presence: t('managedMachines.creation.creatingShort'), presenceWord: t('managedMachines.creation.creatingShort') });
+        expect(row(buildMachineCollection(input))).toMatchObject({ presenceWord: t('managedMachines.creation.mayExistShort') });
+    });
     // TH D3 (11-15) supersedes UIR5c's full line: a row's status cell is the state's one word on every width.
     it('gives an ended created machine one short word as its presence and rail word', () => {
         const collection = buildMachineCollection({ groups: [group('a', [])], groupedByHome: false,

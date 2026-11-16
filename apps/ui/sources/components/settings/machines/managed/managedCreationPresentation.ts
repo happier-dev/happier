@@ -162,7 +162,8 @@ export function managedMachineEnrolledDetailId(machine: ManagedMachineReadSnapsh
 export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineReadSnapshotV1, 'enrolledMachineId'>, state: ManagedLifecycleState,
     options?: Readonly<{ offersStart?: boolean }>): boolean {
     // The header says "Asleep" for a joined machine; the row earns its place only by carrying Start.
-    if (state.kind === 'stoppedStorage' && options?.offersStart === true) return true;
+    // So does one whose wake waits for its offline controller: nothing else on the page says why it can't start.
+    if (state.kind === 'stoppedStorage' && (options?.offersStart === true || state.wake?.kind === 'waitsForController')) return true;
     return !machine.enrolledMachineId || state.kind !== 'resourceReady' && state.kind !== 'stoppedStorage'
         && state.kind !== 'powerPending' && state.kind !== 'stopPending';
 }

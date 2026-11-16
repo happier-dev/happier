@@ -14,16 +14,16 @@ import { buildMachineCollection, reconcileMachineCollection, machineCollectionRo
 /** Structural inventory changes rebuild the collection; presence belongs to its visible leaves. */
 export function useMachineCollection(input: Omit<Parameters<typeof buildMachineCollection>[0], 'nowMs'>): MachineCollection {
     const language = usePreferredLanguage();
-    const { groups, groupedByHome, query, managedByServerId, managedFirstAnswerPending, presetsByServerId, teamNamesByServerId, awaitingConsent } = input;
+    const { groups, groupedByHome, query, managedByServerId, managedFirstAnswerPending, presetsByServerId, teamNamesByServerId, awaitingConsent, creationOperations } = input;
     const published = React.useRef<MachineCollection | null>(null);
     // The collection is rebuilt from its inputs; rows are reconciled by key against the one published last,
     // so every consumer (index, rail, popover) sees one new row for one changed Machine.
     return React.useMemo(() => {
         published.current = reconcileMachineCollection(published.current, buildMachineCollection({
-            groups, groupedByHome, query, managedByServerId, managedFirstAnswerPending, presetsByServerId, teamNamesByServerId, awaitingConsent, nowMs: Date.now(),
+            groups, groupedByHome, query, managedByServerId, managedFirstAnswerPending, presetsByServerId, teamNamesByServerId, awaitingConsent, creationOperations, nowMs: Date.now(),
         }));
         return published.current;
-    }, [language, groups, groupedByHome, query, managedByServerId, managedFirstAnswerPending, presetsByServerId, teamNamesByServerId, awaitingConsent]);
+    }, [language, groups, groupedByHome, query, managedByServerId, managedFirstAnswerPending, presetsByServerId, teamNamesByServerId, awaitingConsent, creationOperations]);
 }
 
 /** Row badges and aggregate badges share the same canonical presence projection. */

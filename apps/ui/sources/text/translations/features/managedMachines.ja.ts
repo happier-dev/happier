@@ -358,6 +358,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             install: "Happier をインストール",
             join: ({ home }: { home: string }) => `${home} に参加`,
             creating: ({ name }: { name: string }) => `${name} を作成しています`,
+            creatingShort: "作成中",
             installing: ({ name }: { name: string }) => `${name} に Happier をインストールしています`,
             joining: ({ name }: { name: string }) => `${name} が参加しています`,
             installFailedShort: "インストールに失敗しました",

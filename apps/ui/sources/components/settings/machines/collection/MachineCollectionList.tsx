@@ -352,8 +352,24 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         return prompt && reference?.kind === 'managedMachine' ? [managedMachineConsentKey(operation.serverId, reference.id)] : [];
     }).sort().join('\n');
     const awaitingConsent = React.useMemo(() => new Set(awaitingConsentKey ? awaitingConsentKey.split('\n') : []), [awaitingConsentKey]);
+    // A creation in flight reads on its row the way its page reads it ("Creating", not "May exist"): each created
+    // machine's latest active operation goes to the lifecycle owner, which decides what it means. Only the facts it
+    // classifies by key the map, so progress within one state leaves the collection alone.
+    const latestByMachine = new Map<string, (typeof activeOperations)[number]>();
+    for (const operation of activeOperations) {
+        const reference = operation.snapshot.domainRef;
+        if (reference?.kind !== 'managedMachine') continue;
+        const key = managedMachineConsentKey(operation.serverId, reference.id);
+        const previous = latestByMachine.get(key);
+        if (!previous || operation.snapshot.createdAt > previous.snapshot.createdAt) latestByMachine.set(key, operation);
+    }
+    const creationEntries = [...latestByMachine];
+    const creationOperationsKey = creationEntries.map(([key, operation]) => [key, operation.snapshot.operationId,
+        operation.snapshot.state, operation.observation, operation.isUnavailableProjection].join('\t')).sort().join('\n');
+    const creationOperations = React.useMemo(() => new Map(creationEntries), [creationOperationsKey]);
     const collection = useMachineCollection({
         awaitingConsent,
+        creationOperations,
         groups: viewModel.visibleMachineGroups,
         groupedByHome: viewModel.showMachinesGroupedByServer,
         managedFirstAnswerPending: viewModel.managedFirstAnswerPending,

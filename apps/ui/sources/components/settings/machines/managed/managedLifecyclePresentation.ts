@@ -140,11 +140,12 @@ export function describeManagedLifecycleState(
         [],
       );
     case 'creating':
-      return present(
+      // A row's status cell says the state in one word, the page its sentence (TH D3).
+      return { ...present(
         'pending',
         { detail: t('managedMachines.creation.creating', { name: state.name }) },
         [],
-      );
+      ), word: t('managedMachines.creation.creatingShort') };
     case 'controllerWaiting':
       return present(
         'neutral',

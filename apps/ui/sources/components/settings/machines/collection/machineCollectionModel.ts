@@ -12,6 +12,7 @@ import { compareMachineListOrder } from '@/sync/domains/machines/machineListOrde
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { describeManagedCreation, isManagedMachineListArchived, managedMachineEnrolledDetailId } from '../managed/managedCreationPresentation';
+import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import type { MachinesDoor } from '@/components/machines/page/machinesDoor';
 import { isMachineSubPageId } from '@/components/machines/page/machineSubPages';
 import { MACHINES_COLLECTION_ROOT, MACHINES_RAIL_ROOT, machinesIndexHref, machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -161,6 +162,11 @@ export function buildMachineCollection(input: Readonly<{
     teamNamesByServerId?: Readonly<Record<string, Readonly<Record<string, string>>>>;
     /** Managed creations whose installer is waiting on the user's consent, as `managedMachineConsentKey`. */
     awaitingConsent?: ReadonlySet<string>;
+    /**
+     * Observed creation operations by `managedMachineConsentKey`, so a row reads its creation the way the machine's
+     * page does (the lifecycle owner decides; without one, an unconfirmed resource stays "May exist").
+     */
+    creationOperations?: ReadonlyMap<string, ActionOperationProjection>;
 }>): MachineCollection {
     // An enrolled roster alone cannot decide "Your machines" versus "Created
     // by Happier" or their count. Every collection surface reserves that first
@@ -276,7 +282,8 @@ export function buildMachineCollection(input: Readonly<{
                     .filter(machine => isManagedMachineListArchived(machine) === (ownershipGroup.key === 'managedArchived'))
                     .map((machine): MachineCollectionRow => {
                         const awaitingConsent = input.awaitingConsent?.has(managedMachineConsentKey(group.serverId, machine.id)) === true;
-                        const creation = describeManagedCreation(machine);
+                        const creation = describeManagedCreation(machine, {
+                            operation: input.creationOperations?.get(managedMachineConsentKey(group.serverId, machine.id)) ?? null });
                         const enrolledMachineId = managedMachineEnrolledDetailId(machine, enrolledIds.has(machine.enrolledMachineId ?? ''));
                         const titleParts = names.get(machine.id)!;
                         return { kind: 'managed', managedId: machine.id,
