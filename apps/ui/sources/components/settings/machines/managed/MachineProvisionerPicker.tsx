@@ -119,7 +119,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
           await Promise.all(provisioners.map(async provisioner => {
             const id = buildQualifiedPluginContributionKey(provisioner.contribution);
             if (!isCurrentFor(id)) return;
-            const placement = readMachineProvisionerHostAvailability({ host: accountHost === 'browser' ? 'browser' : 'native',
+            const placement = readMachineProvisionerHostAvailability({ ...(accountHost && accountHost !== 'unavailable' ? accountHost : { host: 'native' as const }),
                 provisioner: provisioner.descriptor, acquireExecutionTarget: provisioner.acquireExecutionTarget, controller });
             if (!placement.available || placement.requiresController) return;
             const checkController = placement.controller;
@@ -170,11 +170,11 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         const id = buildQualifiedPluginContributionKey(provisioner.contribution);
         const outcome = checks[id];
         // The provisioner's own browser-reachability fact, read by the same owner that refuses its acquire.
-        const placement = readMachineProvisionerHostAvailability({ host: accountHost === 'browser' ? 'browser' : 'native',
+        const placement = readMachineProvisionerHostAvailability({ ...(accountHost && accountHost !== 'unavailable' ? accountHost : { host: 'native' as const }),
             provisioner: provisioner.descriptor, acquireExecutionTarget: provisioner.acquireExecutionTarget, controller });
         if (placement.requiresController && local) { waiting.push(titleOf(provisioner)); return []; }
         const hostPending = needsRuntimeHost(provisioner, controller) && (accountHost === null || accountHost === 'unavailable');
-        const needsApp = !hostPending && !placement.available;
+        const needsApp = !hostPending && !placement.available && !placement.requiresController;
         const readiness = describeManagedProvisionerReadiness({ check: outcome?.kind === 'succeeded' ? outcome.value : undefined,
             failure: outcome?.kind === 'failed' ? outcome.code : null });
         const repairAction = readiness.repair?.action;
@@ -202,7 +202,9 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
             // Amber means "needs you": a service nobody connected or a tool not yet installed is an offer, so it stays quiet.
             status: { tone: readiness.tone === 'ready' && location === 'unknown' ? 'attention' : readiness.tone,
                 label: [statusLabel, location === 'unknown' ? t('managedMachines.add.status.billingUnknown') : null].filter(Boolean).join(' · ') },
-            action: needsApp ? { kind: 'handoff', label: t('managedMachines.add.action.getTheApp'),
+            action: placement.requiresController ? { kind: 'choose', label: t('managedMachines.add.chooseController'),
+                onPress: () => open(id, undefined), disabled: !catalog.isCurrentFor(id) || hostPending }
+            : needsApp ? { kind: 'handoff', label: t('managedMachines.add.action.getTheApp'),
                 onPress: () => showManagedGetTheAppModal(title) }
             // Only the card's own failed check offers Retry here; a failed controller catalog is said once, by the
             // page line and its Retry, while each card keeps the step its own answer gives (Connect pairs with No account).

@@ -693,6 +693,23 @@ describe('portable managed reconciliation', () => {
             provisioner: { ...provisioner, bootstrapTransport: undefined }, action: 'machines.managed.bootstrap.retry' });
         expect(recovered).toMatchObject({ enrolledMachineId: 'guest', resource, observation: { availability: 'present' } });
         expect(recovered.observation?.reason).toBeUndefined();
+    it.each(['browser', 'native'] as const)('refuses an undeliverable Home payload before paid admission on %s', async host => {
+        const run = boundary();
+        let admissions = 0;
+        const acquire = { host, provisioner: { ...provisioner, browserReachable: true },
+            guestCli: { source: 'home-payload' as const }, localPayloadAvailable: false,
+            admit: async () => { admissions++; return machine; }, onAccepted: () => {},
+            run: (row: ManagedMachineFullV1) => reconcileManagedMachine({ ...run.input, machine: row }),
+        };
+        await expect(executeManagedMachineAcquire(acquire)).rejects.toMatchObject({ code: 'provider_unavailable' });
+        expect(admissions).toBe(0);
+        expect(run.roles).toEqual([]);
+        expect(run.events).toEqual([]);
+        const result = await executeManagedMachineAcquire({ ...acquire, localPayloadAvailable: true });
+        expect(result.result.enrolledMachineId).toBe('guest');
+        expect(admissions).toBe(1);
+        expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);
+    });
         expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);
         expect(run.events.filter(event => event === 'enroll')).toHaveLength(1);
     });

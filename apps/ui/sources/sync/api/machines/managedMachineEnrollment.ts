@@ -33,6 +33,13 @@ export type UiManagedMachineEnrollmentDependencies = Omit<ManagedMachineEnrollme
     readBootstrapCredential?(): Promise<string>;
 }>;
 
+/** The default downloader cannot deliver Home-owned payload bytes, even on a native HTTP host. */
+export function readUiManagedMachineEnrollmentCapabilities(
+    deps?: Pick<UiManagedMachineEnrollmentDependencies, 'installNativePayload'>,
+): Readonly<{ localPayloadAvailable: boolean }> {
+    return { localPayloadAvailable: typeof deps?.installNativePayload === 'function' };
+}
+
 /** Invoking-app IO and private questions for the shared ordinary enrollment recipe. */
 export async function runUiManagedMachineEnrollment(input: UiManagedMachineEnrollmentInput,
     deps: UiManagedMachineEnrollmentDependencies): Promise<Readonly<{ machineId: string }>> {

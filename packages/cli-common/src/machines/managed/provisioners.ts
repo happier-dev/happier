@@ -1,4 +1,5 @@
 import type { PluginAccountExecutionSelectionV1 } from '@happier-dev/protocol/plugins/availability';
+import type { GuestCliIdentityV1 } from '@happier-dev/protocol/features';
 import type { MachineProvisionersListResultV1, MachineProvisionerContributionV1, MachineProvisionerCheckResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ManagedMachineActionOutputSchemasV1,
     type ManagedAcquireInputV1, type ManagedMachineActionInputV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -45,19 +46,25 @@ export function qualifyManagedOpaquePresetProvisionerV1(params: Readonly<{
     }
 }
 
+/** Omitting the provisioner qualifies CLI delivery before an opaque preset can expose its declaration. */
 export function readMachineProvisionerHostAvailability(input: Readonly<{
-    host: 'browser' | 'native'; provisioner: Pick<MachineProvisionerContributionV1, 'browserReachable'>;
+    host: 'browser' | 'native'; provisioner?: Pick<MachineProvisionerContributionV1, 'browserReachable'>;
     acquireExecutionTarget?: ManagedProvisionerDiscoveryEntry['acquireExecutionTarget'];
     controller?: ManagedMachineV1['controller'];
+    guestCli?: Pick<GuestCliIdentityV1, 'source'>;
+    localPayloadAvailable?: boolean;
 }>): Pick<MachineProvisionerCheckResultV1, 'available' | 'code'> & Readonly<{
     executionTarget: 'account' | 'daemon'; controller?: ManagedMachineV1['controller']; requiresController: boolean;
 }> {
+    if (!input.provisioner && !input.guestCli) return { available: false, code: 'guest_cli_identity_unavailable',
+        executionTarget: 'account', requiresController: false };
     // Machine placement runs the same Account role with native host services; it does not change its declaration.
-    const executionTarget = input.acquireExecutionTarget === 'daemon'
-        || input.host === 'browser' && input.provisioner.browserReachable !== true && input.controller
+    const payloadRequiresController = input.guestCli?.source === 'home-payload' && input.localPayloadAvailable !== true;
+    const executionTarget = input.acquireExecutionTarget === 'daemon' || payloadRequiresController
+        || input.provisioner && input.host === 'browser' && input.provisioner.browserReachable !== true && input.controller
         ? 'daemon' : 'account';
     const controller = executionTarget === 'daemon' ? input.controller : undefined;
-    const unavailable = !controller && input.host === 'browser' && input.provisioner.browserReachable !== true;
+    const unavailable = !controller && (payloadRequiresController || input.provisioner && input.host === 'browser' && input.provisioner.browserReachable !== true);
     return { executionTarget, requiresController: executionTarget === 'daemon' && !controller, ...(controller ? { controller } : {}),
         ...(unavailable ? { available: false, code: 'provider_unavailable' as const } : { available: true }) };
 }

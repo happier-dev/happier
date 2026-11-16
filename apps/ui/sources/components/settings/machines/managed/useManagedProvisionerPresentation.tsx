@@ -23,6 +23,7 @@ import { resolvePluginContributedActionIconName } from '@/components/plugins/act
 import { launchPluginSurfaceAction } from '@/components/plugins/surfaces/launchPluginSurfaceAction';
 import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import type { ManagedPrerequisiteV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import type { GuestCliIdentityV1 } from '@happier-dev/protocol/features';
 import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useMountedClientActionDemand } from '@/components/appShell/plugins/mountedClientActionDemand';
 import type { PluginUiClientExecutableProjectionSource } from '@/components/plugins/reactNative/clientExecutableProjection';
@@ -34,6 +35,8 @@ import { useServerScopedMachine } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { readRuntimeFetchHost } from '@/utils/system/runtimeFetch';
+import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
+import { readUiManagedMachineEnrollmentCapabilities } from '@/sync/api/machines/managedMachineEnrollment';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import type { PluginSurfaceActionDispatchOutcome } from '@/components/plugins/surfaces/actionFailure';
@@ -155,8 +158,10 @@ function ManagedProvisionerGlyph(props: Readonly<{ pluginId?: string; icon?: str
 /** Runtime host demand belongs to an open provider catalog or configurator. */
 export function useManagedProvisionerRuntimeHost(input: Readonly<{
     serverId: string; accountScope?: ServerAccountScope | null;
-}>) {
+}>): (Readonly<{ host: 'browser' | 'native'; guestCli: GuestCliIdentityV1 }>
+    & ReturnType<typeof readUiManagedMachineEnrollmentCapabilities>) | 'unavailable' | null {
     const serverUrl = input.accountScope ? getServerProfileById(input.serverId)?.serverUrl : undefined;
+    const features = useServerFeaturesSnapshotForServerId(input.serverId, { enabled: !!serverUrl });
     const [host, setHost] = React.useState<Readonly<{ serverUrl: string; value: 'browser' | 'native' | 'unavailable' }> | null>(null);
     React.useEffect(() => {
         if (!serverUrl) return;
@@ -166,7 +171,12 @@ export function useManagedProvisionerRuntimeHost(input: Readonly<{
         }, () => { if (active) setHost({ serverUrl, value: 'unavailable' }); });
         return () => { active = false; };
     }, [serverUrl]);
-    return host?.serverUrl === serverUrl ? host?.value ?? null : null;
+    const runtimeHost = host?.serverUrl === serverUrl ? host?.value ?? null : null;
+    const guestCli = features.status === 'ready' ? features.features.capabilities.guestCli : undefined;
+    const available = React.useMemo(() => runtimeHost && runtimeHost !== 'unavailable' && guestCli
+        ? { host: runtimeHost, guestCli, ...readUiManagedMachineEnrollmentCapabilities() } : null, [runtimeHost, guestCli]);
+    if (runtimeHost === 'unavailable' || features.status !== 'loading' && !guestCli) return 'unavailable';
+    return available;
 }
 
 /** Catalog declarations own display identity; the selected controller's admitted bundles own translation. */

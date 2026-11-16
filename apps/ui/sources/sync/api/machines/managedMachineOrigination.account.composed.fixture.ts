@@ -106,6 +106,9 @@ const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machin
     ['native refused roles seed', false, null, false, false, false, false],
     ['native E2EE one-off', false, null, false, false, false, false],
     ['native opaque E2EE preset', false, null, false, false, true, false],
+    ['native Home payload one-off', false, null, false, false, false, false],
+    ['native Home payload unknown source', false, null, false, false, false, false],
+    ['native Home payload opaque preset', false, null, false, false, true, false],
     ['native opaque E2EE preset missing policy', false, null, false, false, true, false],
     ['native opaque Plain preset missing policy', false, null, false, false, true, false],
     ['native opaque Plain preset delegated policy', false, null, false, false, true, false],
@@ -118,6 +121,8 @@ const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machin
     ['browser cancel', false, 'machines.managed.cancel', false, false, false, false],
     ['browser absent cleanup', false, 'machines.managed.delete', true, false, false, false],
     ['browser stopped retained cancel', false, 'machines.managed.cancel', false, true, false, false],
+    ['browser Home payload one-off', false, null, false, false, false, false],
+    ['browser Home payload opaque preset', false, null, false, false, true, false],
     ['browser authored failure', false, null, false, false, false, false],
     ['browser retained acquisition Delete bound', false, 'machines.managed.delete', false, false, false, false, 'bound'],
     ['browser retained acquisition Delete unknown', false, 'machines.managed.delete', false, false, false, false, 'unknown'],
@@ -130,6 +135,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     const presetMode = plainPreset ? 'plain' as const : 'e2ee' as const;
     const e2eeAccount = opaquePreset && !plainPreset || label === 'native E2EE one-off';
     if (host === 'native') vi.stubGlobal('__TAURI_INTERNALS__', { invoke: () => null });
+    const homePayload = label.includes('Home payload');
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { bindPresentUserActionConfirmation } = await import('@/sync/ops/actions/presentUserConfirmation');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -170,8 +176,16 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     const provisioner = { ...declaredProvisioner,
         retention: RetentionCapabilitiesV1Schema.parse(declaredProvisioner.retention) };
     const selected = { service: { pluginId: PLUGIN_MANIFEST.id, localId: 'vercel-account' }, accountId: 'explicit-selected' };
+    // This HTTP fixture serves the captured signed stable release below, not
+    // the source Home's development payload.
+    homeFeatures.capabilities.guestCli = { source: homePayload ? 'home-payload' : 'public-release',
+        line: signedRelease.version.split('.').slice(0, 2).join('.'), channel: 'stable' };
+    if (label.endsWith('unknown source')) homeFeatures.capabilities.guestCli = undefined;
     const secret = 'private-selected-vercel-token';
     let credential: unknown;
+    // Match the connection's pushed public snapshot to this Home's HTTP identity.
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features: homeFeatures } });
     let configuration: unknown;
     let managed: ReturnType<typeof ManagedMachineV1Schema.parse> | undefined;
     let admissions = 0;
@@ -280,8 +294,24 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                     return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
                 }
                 if (event.includes('rpc')) { machineRpcs++; throw new Error('Unexpected Machine operation RPC'); }
+    let releaseRequests = 0;
+    const releaseResponse = (address: URL) => {
+        releaseRequests++;
+        if (address.pathname === '/repos/happier-dev/happier/releases') {
+            return Response.json([{ tag_name: `cli-v${signedRelease.version}`, draft: false, prerelease: false }]);
+        }
+        if (address.pathname !== `/repos/happier-dev/happier/releases/tags/cli-v${signedRelease.version}`)
+            homeBoundaryFailures.push({ releasePath: address.pathname });
+        expect(address.pathname).toBe(`/repos/happier-dev/happier/releases/tags/cli-v${signedRelease.version}`);
+        return Response.json({ assets: [
+            `checksums-happier-v${signedRelease.version}.txt`,
+            `checksums-happier-v${signedRelease.version}.txt.minisig`,
+            `happier-v${signedRelease.version}-linux-x64.tar.gz`,
+        ].map(name => ({ name, browser_download_url: `${signedRelease.source}${name}` })) });
+    };
                 return { ok: true };
             });
+        if (address.origin === 'https://api.github.com') return releaseResponse(address);
         },
         request });
     async function requestHome(url: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
@@ -744,7 +774,9 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             persistent: true, status: vendorStopped ? 'stopped' : 'running', tags: { 'happier-managed-id': 'managed-1' },
             expiresAt: Date.now() + 300000, networkPolicy: { mode: 'allow-all' } }, session });
         native.fetch.mockImplementation(async (url, init) => {
-            const path = new URL(String(url)).pathname;
+            const address = new URL(String(url));
+            if (address.origin === 'https://api.github.com') return releaseResponse(address);
+            const path = address.pathname;
             expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${secret}`);
             if (path === '/v9/projects/prj_one') return Response.json({ id: 'prj_one' });
             if (path === '/v2/teams/team_one') return Response.json({ id: 'team_one', billing: { plan: 'pro' } });
@@ -832,19 +864,10 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         }
         // Captured public release HTTP bytes keep signature verification and
         // guest installation real; no internal recipe or Action port is replaced.
-        const releaseMetadataPaths: string[] = [];
         vi.stubGlobal('fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
             const address = new URL(String(url));
             if (address.origin === 'https://api.vercel.com') return native.fetch(url, init);
-            if (address.origin === 'https://api.github.com') {
-                releaseMetadataPaths.push(address.pathname);
-                expect(address.pathname).toBe('/repos/happier-dev/happier/releases/tags/cli-dev');
-                return Response.json({ assets: [
-                `checksums-happier-v${signedRelease.version}.txt`,
-                `checksums-happier-v${signedRelease.version}.txt.minisig`,
-                `happier-v${signedRelease.version}-linux-x64.tar.gz`,
-                ].map(name => ({ name, browser_download_url: `${signedRelease.source}${name}` })) });
-            }
+            if (address.origin === 'https://api.github.com') return releaseResponse(address);
             if (address.origin === 'https://github.com') {
                 throw new TypeError('GitHub release asset downloads lack browser CORS');
             }
@@ -908,6 +931,14 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             });
             expect(JSON.stringify(failure)).not.toContain(secret);
             expect(allocations).toBe(0);
+        if (homePayload) {
+            const refused = await executor.execute('machines.managed.acquire', input, context);
+            expect({ admissions, allocations, machineRpcs, approvals }, JSON.stringify(refused)).toEqual({ admissions: 0, allocations: 0, machineRpcs: 0, approvals: 0 });
+            expect(refused).toMatchObject({ ok: false, failureCause: { errorCode: label.endsWith('unknown source')
+                ? 'guest_cli_identity_unavailable' : 'provider_unavailable' } });
+            expect(managed).toBeUndefined();
+            return;
+        }
             return;
         }
         const stages = new Set<string>();
@@ -953,7 +984,6 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             expect(admittedPresetPolicy, JSON.stringify(interrupted)).toEqual({
                 retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage });
         }
-        expect(releaseMetadataPaths, JSON.stringify(interrupted)).toEqual(['/repos/happier-dev/happier/releases/tags/cli-dev']);
         expect(stages, JSON.stringify(interrupted)).toEqual(new Set(['installing', 'joining']));
         readCreationStage = undefined;
         if (missingPolicy && !plainPreset) {

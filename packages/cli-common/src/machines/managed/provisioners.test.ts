@@ -133,6 +133,27 @@ describe('provisioner host availability before acquisition', () => {
         expect(result).toMatchObject({ available: value.available, executionTarget: value.target });
         expect(result.controller).toEqual(value.target === 'daemon' && value.selected ? controller : undefined);
     });
+    it('qualifies CLI delivery without opening an opaque preset and preserves explicit browser qualification', () => {
+        expect(readMachineProvisionerHostAvailability({ host: 'browser' })).toMatchObject({ available: false,
+            code: 'guest_cli_identity_unavailable' });
+        expect(readMachineProvisionerHostAvailability({ host: 'browser', guestCli: { source: 'public-release' } }))
+            .toMatchObject({ available: true, executionTarget: 'account' });
+        expect(readMachineProvisionerHostAvailability({ host: 'browser', provisioner: {}, guestCli: { source: 'public-release' } }))
+            .toMatchObject({ available: false, code: 'provider_unavailable' });
+    });
+    it.each(['browser', 'native'] as const)('requires a controller for Home payloads without local delivery on %s', host => {
+        const request = { host, provisioner: { browserReachable: true }, acquireExecutionTarget: 'account' as const,
+            guestCli: { source: 'home-payload' as const }, localPayloadAvailable: false };
+        expect(readMachineProvisionerHostAvailability(request)).toMatchObject({ available: false,
+            executionTarget: 'daemon', requiresController: true });
+        const controller = { machineId: 'reviewed', installationId: 'reviewed-installation' };
+        expect(readMachineProvisionerHostAvailability({ ...request, controller })).toMatchObject({ available: true,
+            executionTarget: 'daemon', requiresController: false, controller });
+        expect(readMachineProvisionerHostAvailability({ ...request, localPayloadAvailable: true })).toMatchObject({ available: true,
+            executionTarget: 'account', requiresController: false });
+        expect(readMachineProvisionerHostAvailability({ ...request, guestCli: { source: 'public-release' as const } })).toMatchObject({ available: true,
+            executionTarget: 'account', requiresController: false });
+    });
     it.each([undefined, false])('refuses browser allocation without a positively reachable recipe (%s)', browserReachable => {
         expect(readMachineProvisionerHostAvailability({ host: 'browser', provisioner: { browserReachable } }))
             .toEqual({ available: false, code: 'provider_unavailable', executionTarget: 'account', requiresController: false });

@@ -251,15 +251,15 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     };
     // Adopted in this render, so no effect ever sees a draft placed by the other role.
     const declaredAcquireTarget = catalogProvisioner?.acquireExecutionTarget;
-    const hostAvailability = !props.presetOnly && !creationPreset && !pooledDraft && catalogProvisioner && declaredAcquireTarget && accountHost !== null && accountHost !== 'unavailable'
-        ? readMachineProvisionerHostAvailability({ host: accountHost, provisioner: catalogProvisioner.descriptor,
+    const hostAvailability = !props.presetOnly && !pooledDraft && catalogProvisioner && declaredAcquireTarget && accountHost !== null && accountHost !== 'unavailable'
+        ? readMachineProvisionerHostAvailability({ ...accountHost, provisioner: catalogProvisioner.descriptor,
             acquireExecutionTarget: declaredAcquireTarget, controller: controllerCandidate }) : null;
     const effectiveAcquireTarget = creationPreset || declaredAcquireTarget === 'daemon' ? declaredAcquireTarget : hostAvailability?.executionTarget;
     if (effectiveAcquireTarget && effectiveAcquireTarget !== acquireTarget) setAcquireTarget(effectiveAcquireTarget);
     // Host discovery follows the catalog's Account binding. Do not create a controller-bound draft until it settles.
-    const accountHostPending = !props.presetOnly && !creationPreset && declaredAcquireTarget === 'account' && accountHost === null;
-    const accountHostUnreadable = !props.presetOnly && !creationPreset && declaredAcquireTarget === 'account' && accountHost === 'unavailable';
-    const needsApp = hostAvailability?.available === false;
+    const accountHostPending = !props.presetOnly && declaredAcquireTarget === 'account' && accountHost === null;
+    const accountHostUnreadable = !props.presetOnly && declaredAcquireTarget === 'account' && accountHost === 'unavailable';
+    const needsApp = hostAvailability?.available === false && !hostAvailability.requiresController;
     const pageChip = accountAcquire || pooledDraft || props.presetOnly ? null : scope.chip;
     // A retained catalog remains readable while the selected controller answers, but cannot admit credential-bearing work.
     const catalogCurrent = catalog.current;
@@ -672,6 +672,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         : (!catalogPlacementAvailable || (teamId || preset?.owner.kind === 'team') && !pooledDraft && !catalogController) && !delegatedPreset ? t('managedMachines.controller.requiredUnnamed')
         : poolUnavailableAtReview ? t('machinePresets.poolNoMachine')
         : !credentialsReady ? t('managedMachines.credential.choose')
+        : hostAvailability?.requiresController ? t('managedMachines.controller.requiredUnnamed')
         : !props.presetOnly && accountSettings.settings?.managedMachineCreationEnabled === false ? t('managedMachines.creation.disabledTitle')
         : !accountSettings.settings || !props.presetOnly && accountSettings.settings.managedMachineCreationEnabled !== true ? t(accountSettings.error ? 'common.unavailable' : 'common.loading')
         : draft?.check?.available === false ? draft.check.status

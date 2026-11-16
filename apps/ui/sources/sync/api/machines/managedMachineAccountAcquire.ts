@@ -26,6 +26,8 @@ import { AcquireResultV1Schema, projectManagedOpaquePresetObservationV1,
 import { MachineProvisionerResizeResultV1Schema, type MachineProvisionerSizeV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readRuntimeFetchHost } from '@/utils/system/runtimeFetch';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 import { resolveDefaultNativeSshSystemTaskCapability } from '@/components/systemTasks/bridges/native';
@@ -37,7 +39,8 @@ import { createUiManagedAccountNative, readUiManagedAccountAdmission, type UiMan
 import { admitUiManagedAccountHome, createUiManagedAccountHome, createUiManagedAccountHomeRequest, normalizeUiManagedAccountMachine,
     type UiManagedAccountMachineNormalizer } from './managedMachineAccountHome';
 import { completeUiManagedAccountGuest } from './managedMachineAccountGuest';
-import { runUiManagedMachineEnrollment, type UiManagedMachineEnrollmentDependencies } from './managedMachineEnrollment';
+import { runUiManagedMachineEnrollment, readUiManagedMachineEnrollmentCapabilities,
+    type UiManagedMachineEnrollmentDependencies } from './managedMachineEnrollment';
 import { createMachinePresetActionClient } from './managedMachinePresets';
 
 type UiManagedAccountRecipeParams = Readonly<{
@@ -280,6 +283,11 @@ function readUiManagedAccountRequestEnvelopeDigest(params: Omit<UiManagedAccount
 /** Foreground Account work owns no fictitious Machine Action operation. */
 export async function executeUiManagedAccountAcquire(params: Omit<UiManagedAccountRecipeParams, 'input'> & { input: ManagedAcquireInputV1 }) {
     const host = await readRuntimeFetchHost(params.account.endpointUrl);
+    const features = await getServerFeaturesSnapshot({ serverId: params.account.serverId, signal: params.signal });
+    const delivery = readMachineProvisionerHostAvailability({ host,
+        guestCli: features.status === 'ready' ? features.features.capabilities.guestCli : undefined,
+        ...readUiManagedMachineEnrollmentCapabilities(params) });
+    if (!delivery.available) throw new ManagedMachineControllerError(delivery.code ?? 'provider_unavailable');
     if (!isManagedPresetAcquireInputV1(params.input)) {
         const admitted = readUiManagedAccountAdmission(params.context);
         const client = createUiManagedAccountHome({ ...params, provisioner: admitted.provisioner });

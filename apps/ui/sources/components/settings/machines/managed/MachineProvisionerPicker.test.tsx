@@ -338,10 +338,14 @@ describe('provisioner picker demand', () => {
     } finally { await screen.unmount(); }
   });
 
-  it('retains Account provisioner descriptors when this Home has no controller', async () => {
+  it.each(['home-payload', 'public-release'] as const)('retains Account offers and chooses their existing configuration path for a %s Home without a controller', async source => {
     await installBundledMachinePlugins();
     const serverId = await harness.addHome({ name: 'Cloud', serverUrl: 'https://cloud-empty.example.test',
       serverIdentityId: 'srv_cloud_empty', accountId: 'owner', currentAccount: true });
+    const { FeaturesResponseSchema } = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
+    const features = FeaturesResponseSchema.parse(await (await harness.request('https://cloud-empty.example.test/v1/features')).json());
+    features.capabilities.guestCli = { source, line: '0.3', channel: 'stable' };
+    harness.answer(serverId, '/v1/features', { body: features });
     const { CONTRIBUTION: contribution } = await import('../../../../../../../packages/plugins/machine-vercel/src/machine/schemas');
     const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
     onTestFinished(clearPluginAccountAvailabilityProjection);
@@ -352,7 +356,8 @@ describe('provisioner picker demand', () => {
     onTestFinished(() => { runtimeHost.current = null; });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
-    const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={() => {}} />);
+    const selected = vi.fn();
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={selected} />);
     try {
       // The Account catalog's first read is still loading: no Machine is needed, so the page never says one is (D21).
       expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
@@ -360,8 +365,16 @@ describe('provisioner picker demand', () => {
       expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
       await waitForHomeGovernance(() => {
         const cards = screen.tree.findAll(node => node.props.testID === 'managed-picker.provisioners')[0]?.props.cards;
-        expect(cards?.find((card: { id: string }) => card.id === buildQualifiedPluginContributionKey(contribution))).toBeDefined();
+        const card = cards?.find((card: { id: string }) => card.id === buildQualifiedPluginContributionKey(contribution));
+        expect(card).toMatchObject({ action: { kind: 'choose' } });
+        expect(card.action.disabled).not.toBe(true);
       });
+      const key = buildQualifiedPluginContributionKey(contribution);
+      const action = screen.tree.findAll(node => typeof node.props.testID === 'string' && node.props.testID.endsWith(`.${key}.action`))[0];
+      expect(action).toBeDefined();
+      await screen.pressByTestIdAsync(action.props.testID);
+      expect(selected).toHaveBeenCalledWith(expect.objectContaining({ serverId, provisioner: key }));
+      expect(selected.mock.calls[0]?.[0].controller).toBeUndefined();
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
     } finally { await screen.unmount(); }
   });
