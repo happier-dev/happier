@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseThemeProfilesLocalState, resolveThemeProfilesState } from './themeProfilePersistence';
+import { parseThemeProfilesLocalState, resolveThemeProfilesState, ThemeProfileDeviceSelectionSchema } from './themeProfilePersistence';
 import type { ThemeProfileV1 } from './themeProfileTypes';
 
 const profile = (id: string): ThemeProfileV1 => ({
@@ -14,6 +14,12 @@ const profile = (id: string): ThemeProfileV1 => ({
 });
 
 describe('theme profile persistence', () => {
+    it('retains a tagged plugin choice while its contribution is unavailable', () => {
+        const selection = { light: null, dark: { kind: 'plugin', pluginId: 'custom.palette', contributionId: 'night' } };
+        expect(ThemeProfileDeviceSelectionSchema.parse(selection)).toEqual(selection);
+        expect(resolveThemeProfilesState([], { profiles: [], activeProfileIds: { light: null, dark: null } },
+            ThemeProfileDeviceSelectionSchema.parse(selection)).activeProfileIds).toEqual({ light: null, dark: null });
+    });
     it('migrates a legacy active profile id into both visual mode selections', () => {
         const result = parseThemeProfilesLocalState({
             activeProfileId: 'ocean',

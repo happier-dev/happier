@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import { ThemeProfileIdSchema, ThemeProfileStoredSchema } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { ThemeProfileIdSchema, ThemeProfileStoredSchema, ThemeReferenceSchema, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 export { ThemeProfileLibrarySchema, ThemeProfileLibraryStoredSchema } from '@happier-dev/protocol/account/settings/themeProfiles';
 
 import { projectThemeProfileMigration } from './themeProfileMigrationEdits';
@@ -157,11 +157,23 @@ export const ThemeProfileDeviceSelectionSchema: z.ZodMiniType<ThemeProfileDevice
     const canonical = ThemeProfileSelectionSchema.parse(record);
     const read = (mode: ThemeProfileMode): ThemeProfileDeviceSelectionByMode[ThemeProfileMode] => {
         if (!isRecord(record[mode])) return canonical[mode];
+        const reference = ThemeReferenceSchema.safeParse(record[mode]);
+        if (reference.success) return reference.data;
         const parsed = ThemeProfileLegacySelectionSchema.safeParse(record[mode]);
         return parsed.success ? parsed.data : null;
     };
     return { light: read('light'), dark: read('dark') };
 }));
+
+/** Released custom ids remain migration input; current writes use tagged references. */
+export function readThemeProfileReferenceSelection(selection: ThemeProfileDeviceSelectionByMode | null): Readonly<Record<ThemeProfileMode, ThemeReference | null>> {
+    const read = (mode: ThemeProfileMode): ThemeReference | null => {
+        const value = selection?.[mode];
+        if (value && typeof value === 'object' && 'kind' in value) return value;
+        return typeof value === 'string' && isBuiltInThemeProfilePresetId(value) ? { kind: 'built-in', presetId: value } : null;
+    };
+    return { light: read('light'), dark: read('dark') };
+}
 
 /** Encode selections against the exact Account and local libraries the user saw. */
 export function encodeThemeProfileSelection(
@@ -192,9 +204,15 @@ export function resolveThemeProfilesStateSnapshot(
     const composedProfiles = merged.profiles;
     const composedIds = new Set(composedProfiles.map((profile) => profile.id));
     const resolve = (id: ThemeProfileDeviceSelectionByMode[ThemeProfileMode]): string | null => {
-        const resolved = typeof id === 'string'
-            ? activeProfileIds === null ? isBuiltInThemeProfilePresetId(id) ? id : merged.legacyProfileIds.get(id) ?? null : id
-            : id ? merged.legacyProfileIds.get(id.legacyProfileId) ?? null : null;
+        let resolved: string | null = null;
+        if (typeof id === 'string') {
+            resolved = activeProfileIds === null && !isBuiltInThemeProfilePresetId(id) ? merged.legacyProfileIds.get(id) ?? null : id;
+        } else if (id && 'kind' in id) {
+            if (id.kind === 'artifact') resolved = id.id;
+            if (id.kind === 'built-in') resolved = id.presetId;
+        } else if (id) {
+            resolved = merged.legacyProfileIds.get(id.legacyProfileId) ?? null;
+        }
         return sanitizeActiveProfileId(resolved, composedIds);
     };
     const origins: Array<[string, string]> = [];
