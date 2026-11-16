@@ -56,6 +56,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', a
 });
 const { renderHook, standardCleanup, createSessionFixture, createMachineFixture, createDeferred, waitForTestEvent } = await import('@/dev/testkit');
 const { getStorage } = await import('@/sync/domains/state/storage');
+const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
 await import('@/sync/syncEngine');
 const { useSessionScmWalkthrough, useScmWalkthroughState, useScmWalkthroughStates } = await import('./useSessionScmWalkthrough');
 const { useScmResultReceiptUndo } = await import('./useScmResultReceiptUndo');
@@ -120,7 +121,8 @@ beforeEach(async () => {
     const machine = createMachineFixture({ id: 'restore-machine', activeAt: Date.now() });
     const session = createSessionFixture({ id: sessionId, serverId, active: true,
         metadata: { path: '/repo/exact', host: 'test.local', machineId: machine.id, flavor: 'codex' } });
-    getStorage().setState({ sessions: { [sessionId]: session }, machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+    getStorage().setState({ sessions: { [sessionId]: session } });
+    await publishMachineInventoryForTest({ serverId, accountId }, [machine]);
 });
 afterEach(async () => {
     standardCleanup();
@@ -521,7 +523,8 @@ describe('saved output restoration', () => {
         const settings = getStorage().getState().settings;
         restorePrDraftSettings = () => getStorage().setState({ settings });
         getStorage().setState({ settings: { ...settings,
-            [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: profile.catalogId } });
+            [SCM_DIFF_SUMMARY_SETTING_KEYS.runner]: { v: 1, modelSelection: { agentTargetKey: profile.modelSelector!.backendTargetKey!,
+                providerConnectionId: null, modelId: profile.modelSelector!.modelId! } } } });
     }
     it('keeps an unknown PR draft pending and rereads its exact receipt to apply once without another Start', async () => {
         const uncertain = draftResult('draft-uncertain', false, true);
@@ -622,7 +625,6 @@ describe('saved output restoration', () => {
             comparison: { kind: 'workingTree' }, output: 'summary' }));
         const sidebar = await mount();
         await vi.waitFor(() => expect(sidebar.getCurrent().viewModel?.resultId).toBe(original.resultId));
-        await vi.waitFor(() => expect(sidebar.getCurrent().modelAvailable).toBe(true));
         let pending: ReturnType<ReturnType<typeof useScmDiffSummaryBinding>['onStart']> | undefined;
         await act(async () => { pending = sidebar.getCurrent().onStart(['summary'], { pullRequestDraft: {} }); });
         await vi.waitFor(() => expect(boundary.methods).toContain(RPC_METHODS.SCM_DIFF_SUMMARY_DRAFT_PULL_REQUEST));
@@ -825,28 +827,28 @@ describe('saved output restoration', () => {
             machineListStatusByServerId: { [serverId]: 'loading' } });
         const hook = await renderHook(() => useScmWalkthroughState({ sessionId }, { kind: 'workingTree' }, output, serverId));
         expect(hook.getCurrent().restoreState).toBe('restoring');
-        await act(async () => { getStorage().setState({ sessions: { [sessionId]: session },
-            machines: Object.fromEntries(machines.map(machine => [machine.id, machine])), machineListByServerId: { [serverId]: machines },
-            machineListStatusByServerId: { [serverId]: 'idle' } }); });
+        await act(async () => { getStorage().setState({ sessions: { [sessionId]: session } });
+            await publishMachineInventoryForTest({ serverId, accountId }, machines); });
         expect(hook.getCurrent()).toMatchObject({ viewModel: null, restoreState: 'unavailable' });
         expect(boundary.reads).toEqual([]);
         await act(async () => { hook.getCurrent().retryRestore(); });
         expect(hook.getCurrent().restoreState).toBe('unavailable');
-        await act(async () => { getStorage().setState({ machines: { [machines[0]!.id]: machines[0]! },
-            machineListByServerId: { [serverId]: [machines[0]!] } }); });
+        await act(async () => { await publishMachineInventoryForTest({ serverId, accountId }, [machines[0]!]); });
         await waitForHomeGovernance(() => expect(hook.getCurrent().restoreState).toBe('ready'));
     });
     it('keeps a known offline machine distinct from unknown presence without reading it', async () => {
         inventory([]);
         const machine = createMachineFixture({ id: 'restore-machine', active: false, activeAt: 1 });
-        getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+        // This is an initial offline census, not an older heartbeat replacing the default online row.
+        await publishMachineInventoryForTest({ serverId, accountId }, []);
+        await publishMachineInventoryForTest({ serverId, accountId }, [machine]);
         const hook = await renderHook(() => useScmWalkthroughState({ sessionId }, { kind: 'workingTree' }, 'walkthrough', serverId));
         expect(hook.getCurrent().restoreState).toBe('unavailable');
         expect(boundary.reads).toEqual([]);
     });
     it.each(['session', 'machine'] as const)('reads saved %s output with unknown presence, and retains it as presence flaps', async kind => {
         inventory([saved('unknown-presence', { walkthrough: reading, commitPlan: proposal }, ['walkthrough', 'commitPlan'])], kind === 'session');
-        getStorage().setState({ machines: {}, machineListByServerId: { [serverId]: [] } });
+        await publishMachineInventoryForTest({ serverId, accountId }, []);
         const host = kind === 'session' ? { sessionId } : { machineId: 'restore-machine', cwd: '/repo/exact' };
         const target = { kind: 'workingTree' as const };
         const hook = await renderHook(() => ({ ...useScmWalkthroughState(host, { ...target }, 'walkthrough', serverId),
@@ -855,10 +857,10 @@ describe('saved output restoration', () => {
         await waitForHomeGovernance(() => expect(hook.getCurrent().viewModel?.resultId).toBe('unknown-presence'));
         const original = hook.getCurrent().viewModel;
         const offline = createMachineFixture({ id: 'restore-machine', active: false, activeAt: 1 });
-        await act(async () => { getStorage().setState({ machines: { [offline.id]: offline }, machineListByServerId: { [serverId]: [offline] } }); });
+        await act(async () => { await publishMachineInventoryForTest({ serverId, accountId }, [offline]); });
         expect(hook.getCurrent().presence.reachability).toBe('unreachable');
         expect(hook.getCurrent().viewModel).toBe(original);
-        await act(async () => { getStorage().setState({ machines: {}, machineListByServerId: { [serverId]: [] } }); });
+        await act(async () => { await publishMachineInventoryForTest({ serverId, accountId }, []); });
         await hook.rerender();
         expect(hook.getCurrent().presence.reachability).toBe('unknown');
         expect(hook.getCurrent().viewModel).toBe(original);

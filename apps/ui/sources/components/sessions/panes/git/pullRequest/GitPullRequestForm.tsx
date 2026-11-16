@@ -5,7 +5,7 @@ import type { ScmBranchListEntry } from '@happier-dev/protocol/scm/branches';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm/pullRequests';
 
 import { ScmDiffSummaryFailureNotice } from '@/components/sessions/files/comparison/ScmDiffSummaryFailureNotice';
-import { ScmDiffSummaryModelPicker } from '@/components/settings/sourceControl/ScmDiffSummaryModelPicker';
+import { LlmTaskRunnerPicker } from '@/components/settings/llmTasks/LlmTaskRunnerPicker';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -258,14 +258,16 @@ export const GitPullRequestForm = React.memo(function GitPullRequestForm(props: 
                 <AttentionBanner presentation="strip" tone="warning" testID="git-pull-request-form-draft-body-notice" title={bodyDraft.message} />
             ) : null}
             {bodyDraft.modelChoice.choosing ? (
-                <ScmDiffSummaryModelPicker
-                    presentation="inline"
+                <LlmTaskRunnerPicker
+                    task="scm_diff_summary"
+                    presentation="chips"
+                    engineFieldTitle={null}
                     value={bodyDraft.model}
                     onChange={bodyDraft.setModel}
-                    modelChoices={bodyDraft.modelChoices}
                     machineId={bodyDraft.machineId}
-                    serverId={bodyDraft.serverId}
-                    testID="git-pull-request-form-draft-body-model"
+                    serverId={bodyDraft.serverId ?? null}
+                    sessionAgentTargetKey={bodyDraft.sessionAgentTargetKey}
+                    testIDPrefix="git-pull-request-form-draft-body-model"
                 />
             ) : null}
             {failureText ? (

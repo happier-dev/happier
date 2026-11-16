@@ -93,6 +93,7 @@ const { standardCleanup } = await import('@/dev/testkit/cleanup/standardCleanup'
 const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
 const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
 const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { createScmDiffSummaryModelCatalogHttpBoundary } = await import('@/dev/testkit/harness/scmDiffSummaryModelCatalogBoundary');
 const { createScmRunActionHttpBoundary } = await import('@/dev/testkit/harness/scmActionTransport');
@@ -153,8 +154,8 @@ function proposalDiagnostic(plan: ReturnType<typeof useScmCommitPlan> | null) {
     return JSON.stringify({ phase: plan?.phase, supportedComparison: plan?.supportedComparison,
         binding: bound ? { host: bound.host, scope: bound.scope, cwd: bound.cwd, machine: bound.machine,
             current: bound.isCurrent(), machineReachable: bound.machineReachable, canControl: bound.canControl,
-            canSend: bound.canSend, launch: bound.launch, comparison: bound.comparison, selected: bound.selected,
-            modelAvailable: bound.modelAvailable, error: bound.error,
+            canSend: bound.canSend, launch: bound.launch, comparison: bound.comparison, model: bound.model,
+            error: bound.error,
             resultId: bound.viewModel?.resultId, revision: bound.viewModel?.revision,
             outputState: bound.viewModel?.outputs?.commitPlan?.state,
             captured: bound.capturedComparison ? { id: bound.capturedComparison.id,
@@ -184,6 +185,15 @@ function savedResult(revision: number, status: 'unknown' | 'applying' | 'complet
         } });
 }
 
+function savedProgressResult(revision: number, status: Parameters<typeof savedResult>[1]) {
+    const result = savedResult(revision, status);
+    // Both shared binding outputs have settled; unrelated result pushes need no discovery read.
+    return ScmDiffSummaryResultSchema.parse({ ...result, output: { ...result.output,
+        requestedOutputs: ['commitPlan', 'walkthrough'], outputs: { ...result.output.outputs,
+            walkthrough: { state: 'complete', value: { title: 'Saved reading', intro: '', stops: [], otherChangeRefs: [] } } },
+    } });
+}
+
 async function pushResultUpdate(serverId: string, revision: number, resultId = 'poll-result', machineId = 'machine:commit-progress') {
     const { handleEphemeralSocketUpdate } = await import('@/sync/engine/socket/socket');
     await handleEphemeralSocketUpdate({ sourceServerId: serverId,
@@ -196,12 +206,12 @@ async function mountProposal(sessionId: string, saved = savedResult(1, 'unknown'
     boundary.sessionId = sessionId;
     boundary.saved = saved;
     const home = await addHome(sessionId);
-    const machine = createMachineFixture({ id: 'machine:commit-progress', activeAt: Date.now() });
+    const machine = createMachineFixture({ id: 'machine:commit-progress', activeAt: Date.now(), presenceProtocolVersion: 1 });
     const session = createSessionFixture({ id: boundary.sessionId, serverId: home.id, active: true,
         metadata: { path: '/repo/exact', host: 'tester.local', machineId: machine.id, flavor: 'codex' } });
-    getStorage().setState({ sessions: { [session.id]: session }, machines: { [machine.id]: machine },
-        machineListByServerId: { [home.id]: [machine] }, settings: { ...initialStorage.settings,
+    getStorage().setState({ sessions: { [session.id]: session }, settings: { ...initialStorage.settings,
             experiments: true, featureToggles: { 'execution.runs': true } } });
+    await publishMachineInventoryForTest({ serverId: home.id, accountId: 'commit-plan-account' }, [machine]);
     const latest: { current: ReturnType<typeof useSessionCommitPlan> | null } = { current: null };
     const visibility: { setEnabled: React.Dispatch<React.SetStateAction<boolean>> | null } = { setEnabled: null };
     function Probe() {
@@ -233,10 +243,11 @@ async function mountWorkspaceProposal(saved = savedResult(1, 'unknown'), renderP
             boundary.requests.push({ method: RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, machineId: machine.id, payload: input });
             return remote(RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, input);
         } })).installOn(homes, home.id);
-    getStorage().setState({ profileScope: { serverId: home.id, accountId: 'commit-plan-account' },
-        sessions: {}, machines: machineKnown ? { [machine.id]: machine } : {}, machineListByServerId: { [home.id]: machineKnown ? [machine] : [] },
+    getStorage().setState({ sessions: {},
         settings: { ...initialStorage.settings, experiments: true, featureToggles: { 'execution.runs': true },
-            [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: profile.catalogId } });
+            [SCM_DIFF_SUMMARY_SETTING_KEYS.runner]: { v: 1, modelSelection: { agentTargetKey: profile.modelSelector!.backendTargetKey!,
+                providerConnectionId: null, modelId: profile.modelSelector!.modelId! } } } });
+    await publishMachineInventoryForTest({ serverId: home.id, accountId: 'commit-plan-account' }, machineKnown ? [machine] : []);
     // A visible Run Follow control consumes the applied Account, not a saved-Home credential alone.
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     const latest: { current: ReturnType<typeof useSessionCommitPlan> | null } = { current: null };
@@ -317,9 +328,10 @@ describe('proposal discard Action policy', () => {
                 expect(boundary.requests.filter(request => request.method === method)).toEqual([]);
                 expect(latest.current?.proposal).not.toBeNull();
                 expect(latest.current?.undoDiscard).toBeNull();
-                if (policy === 'defaultRejected') expect(confirm).toHaveBeenCalledTimes(1);
+                // Ask on the person's own UI press is local confirmation, never self-approval.
+                if (policy === 'defaultRejected' || policy === 'required') expect(confirm).toHaveBeenCalledTimes(1);
                 else expect(confirm).not.toHaveBeenCalled();
-                if (policy === 'required') expect(homes.artifacts(home.id).list()).toHaveLength(1);
+                if (policy === 'required') expect(homes.artifacts(home.id).list()).toHaveLength(0);
                 return;
             }
             await vi.waitFor(() => expect(boundary.requests.filter(request => request.method === method)).toHaveLength(1));
@@ -385,7 +397,6 @@ describe('exact workspace commit plans', () => {
             ...saved.output, revision: 0, outputs: { commitPlan: { state: 'pending' } },
         })) : admission.promise;
         const { latest, screen, home, machine } = await mountWorkspaceProposal(saved, true, true);
-        await vi.waitFor(() => expect(latest.current?.binding.modelAvailable, proposalDiagnostic(latest.current)).toBe(true));
         await vi.waitFor(() => expect(latest.current?.binding.launch.canLaunchExecutionRuns).toBe(true));
         await act(async () => { await latest.current!.binding.onStart(['commitPlan']); });
         await act(async () => { await pushResultUpdate(home.id, saved.revision, saved.resultId, machine.id); });
@@ -421,7 +432,6 @@ describe('exact workspace commit plans', () => {
         boundary.generate = async () => fresh;
         const { latest, screen, machine } = await mountWorkspaceProposal(failed, true, true);
         await vi.waitFor(() => expect(latest.current?.binding.restoreState).toBe('ready'));
-        await vi.waitFor(() => expect(latest.current?.binding.modelAvailable, proposalDiagnostic(latest.current)).toBe(true));
         await vi.waitFor(() => expect(latest.current?.binding.launch.canLaunchExecutionRuns).toBe(true));
         expect(latest.current?.binding.viewModel?.savedResult?.resultId, proposalDiagnostic(latest.current)).toBe(failed.resultId);
         expect(latest.current?.binding.generationFailure).toMatchObject({ reason: 'generationFailed' });
@@ -440,7 +450,6 @@ describe('exact workspace commit plans', () => {
         boundary.listSaved = false;
         boundary.generate = async () => failed.output;
         const { latest, screen } = await mountWorkspaceProposal(failed, true, true);
-        await vi.waitFor(() => expect(latest.current?.binding.modelAvailable, proposalDiagnostic(latest.current)).toBe(true));
         await vi.waitFor(() => expect(latest.current?.binding.launch.canLaunchExecutionRuns).toBe(true));
         await act(async () => { await latest.current!.binding.onStart(['commitPlan']); });
         await vi.waitFor(() => expect(latest.current?.binding.viewModel?.status).toBe('failed'));
@@ -458,7 +467,6 @@ describe('exact workspace commit plans', () => {
         const admission = createDeferred<unknown>();
         boundary.generate = () => admission.promise;
         const { latest, screen, machine } = await mountWorkspaceProposal(savedResult(1, 'complete'), true, true);
-        await vi.waitFor(() => expect(latest.current?.binding.modelAvailable, proposalDiagnostic(latest.current)).toBe(true));
         await vi.waitFor(() => expect(latest.current?.binding.launch.canLaunchExecutionRuns).toBe(true));
         expect(latest.current?.phase).toBe('none');
         let start!: ReturnType<ReturnType<typeof useSessionCommitPlan>['binding']['onStart']>;
@@ -532,12 +540,13 @@ describe('exact workspace commit plans', () => {
         expect(screen.findByTestId('commit-proposal-notify')).toBeNull();
     });
 
-    it('regenerates a restored proposal with its actually offered model without visiting the empty-state picker', async () => {
+    it('regenerates a restored proposal with its stored runner without visiting the empty-state picker', async () => {
         const saved = ScmDiffSummaryResultSchema.parse({ ...savedResult(1, 'complete'), application: undefined });
         const { latest, machine } = await mountWorkspaceProposal(saved, true);
         await vi.waitFor(() => expect(latest.current?.phase, proposalDiagnostic(latest.current)).toBe('ready'));
         await vi.waitFor(() => expect(latest.current?.binding.launch.canLaunchExecutionRuns).toBe(true));
-        await vi.waitFor(() => expect(latest.current?.binding.selected.success, proposalDiagnostic(latest.current)).toBe(true));
+        // The stored runner is the per-run choice; no picker visit is needed to regenerate.
+        expect(latest.current?.binding.model).toMatchObject({ v: 1, modelSelection: expect.any(Object) });
         expect(latest.current?.actions.onRegenerate).toBeDefined();
         await act(async () => latest.current?.actions.onRegenerate?.());
         await vi.waitFor(() => expect(latest.current?.binding.generationFailure).toMatchObject({ reason: 'generationFailed' }));
@@ -588,7 +597,7 @@ describe('exact workspace commit plans', () => {
 
 describe('useSessionCommitPlan application progress', () => {
     it.each(['session', 'workspace'] as const)('observes approved apply progress and Stop revisions in a mounted %s proposal without an active Action request', async host => {
-        const proposal = savedResult(1, 'unknown');
+        const proposal = savedProgressResult(1, 'unknown');
         const { application: _application, ...editable } = proposal;
         const { latest, home, screen } = host === 'session' ? await mountProposal('approved-commit-progress', editable)
             : await mountWorkspaceProposal(editable);
@@ -600,7 +609,7 @@ describe('useSessionCommitPlan application progress', () => {
         boundary.read = async () => { reads++; return { success: true, result: boundary.saved }; };
         const push = (revision: number, resultId = proposal.resultId, machineId = host === 'session' ? 'machine:commit-progress' : 'machine:workspace-commit-plan', serverId = home.id) =>
             pushResultUpdate(serverId, revision, resultId, machineId);
-        const applying = savedResult(2, 'applying');
+        const applying = savedProgressResult(2, 'applying');
         boundary.saved = applying;
         await act(async () => { await push(2, 'another-result'); await push(2, proposal.resultId, 'another-machine');
             await push(2, proposal.resultId, undefined, 'another-home'); });
@@ -616,7 +625,7 @@ describe('useSessionCommitPlan application progress', () => {
         await act(async () => { await push(3); });
         await vi.waitFor(() => expect(latest.current?.proposal?.application?.stopAfterCurrent).toBe(true));
         expect(reads).toBe(2);
-        boundary.saved = savedResult(4, 'complete');
+        boundary.saved = savedProgressResult(4, 'complete');
         await act(async () => { publishHomeAccountChange(home.id, undefined, { source: 'connected' }); });
         await vi.waitFor(() => expect(latest.current?.proposal?.groups[0]?.state).toBe('landed'));
         expect(reads).toBe(3);

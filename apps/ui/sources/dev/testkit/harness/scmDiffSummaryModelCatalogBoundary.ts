@@ -47,7 +47,7 @@ export async function createScmDiffSummaryModelCatalogHttpBoundary(params: Reado
     const paths = ['/v1/machines', '/v1/machines/read-batch', bindExternalActionExecutionAuthorizationHttpPathV1(MODEL_CATALOG_ACTION_ID),
         `/v1/actions/${MODEL_CATALOG_ACTION_ID}`] as const;
     return {
-        paths, handle: boundary.handle,
+        paths, handle: boundary.handle, machine: boundary.machine,
         /** Answers these paths on a `homeGovernanceHarness` Home. */
         installOn(homes: HomeGovernanceHarness, homeId: string) {
             for (const path of paths) homes.answer(homeId, path, { select: async input => {

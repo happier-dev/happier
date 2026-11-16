@@ -21,16 +21,17 @@ const { SPECIMEN_START_FAILURES } = await import('@/components/dev/changes/walkt
 
 describe('ScmDiffSummaryStartOptions', () => {
     it('names the one cause a start cannot run, instead of one sentence for every cause', () => {
-        const ready = { machineReachability: 'reachable', modelAvailable: true, canSend: true, launch: { canLaunchExecutionRuns: true, launchUnavailableReason: null } } as const;
+        const ready = { machineReachability: 'reachable', canSend: true, launch: { canLaunchExecutionRuns: true, launchUnavailableReason: null } } satisfies Parameters<typeof scmDiffSummaryPrerequisiteOf>[0];
         expect(scmDiffSummaryPrerequisiteOf(ready)).toBeNull();
         const causes = [
             scmDiffSummaryPrerequisiteOf({ ...ready, machineReachability: 'unreachable', launch: { canLaunchExecutionRuns: false, launchUnavailableReason: 'machineOffline' } }),
             scmDiffSummaryPrerequisiteOf({ ...ready, launch: { canLaunchExecutionRuns: false, launchUnavailableReason: 'sessionInactive' } }),
-            scmDiffSummaryPrerequisiteOf({ ...ready, modelAvailable: false }),
         ];
-        expect(causes).toEqual(['walkthroughStart.machineOffline', 'sessionAgentActivity.roster.unavailable.sessionInactive', 'walkthroughStart.chooseModel']);
-        // The Machine being away outranks what the Session or model would need once it is back.
-        expect(scmDiffSummaryPrerequisiteOf({ ...ready, machineReachability: 'unreachable', modelAvailable: false })).toBe('walkthroughStart.machineOffline');
+        // A model is never a prerequisite: Auto is resolved on the executing machine, which refuses with a typed reason.
+        expect(causes).toEqual(['walkthroughStart.machineOffline', 'sessionAgentActivity.roster.unavailable.sessionInactive']);
+        // The Machine being away outranks what the Session would need once it is back.
+        expect(scmDiffSummaryPrerequisiteOf({ ...ready, machineReachability: 'unreachable', launch: { canLaunchExecutionRuns: false, launchUnavailableReason: 'sessionInactive' } }))
+            .toBe('walkthroughStart.machineOffline');
         expect(scmDiffSummaryPrerequisiteOf({ ...ready, machineReachability: 'unknown',
             canSend: false, launch: { canLaunchExecutionRuns: false, launchUnavailableReason: 'machineOffline' } })).toBe('walkthroughStart.unavailable');
     });
@@ -54,7 +55,7 @@ describe('ScmDiffSummaryStartOptions', () => {
     it('lets the model choice already on screen be the next step, instead of a second control for it', async () => {
         const onChooseModel = vi.fn();
         const screen = await renderScreen(<ScmDiffSummaryStartOptions testID="start-options" failure={SPECIMEN_START_FAILURES.model} message={null}
-            model={{ value: '', onChange: vi.fn(), testID: 'start-options-model' }} onChooseModel={onChooseModel} />);
+            model={{ value: { v: 1, mode: 'auto' }, onChange: vi.fn(), testID: 'start-options-model' }} onChooseModel={onChooseModel} />);
         expect(screen.findByTestId('start-options-model')).not.toBeNull();
         expect(screen.getTextContent()).toContain('walkthrough.generationFailure.modelUnavailable');
         expect(screen.findByTestId('start-options-choose-model')).toBeNull();
@@ -65,13 +66,11 @@ describe('ScmDiffSummaryStartOptions', () => {
         expect(screen.getTextContent()).toBe('walkthrough.generationFailure.modelUnavailable');
     });
 
-    it('sends the person to the model choice and opens its choices, from every surface that shows a result', async () => {
-        const setOpen = vi.fn();
-        const hook = await renderHook(() => useSummaryModelChoice({ setOpen }));
+    it('puts the model choice on screen when the person is sent to it, from every surface that shows a result', async () => {
+        const hook = await renderHook(() => useSummaryModelChoice());
         expect(hook.getCurrent().choosing).toBe(false);
         await act(async () => { hook.getCurrent().choose(); });
         expect(hook.getCurrent().choosing).toBe(true);
-        expect(setOpen).toHaveBeenCalledWith(true);
         await hook.unmount();
     });
 

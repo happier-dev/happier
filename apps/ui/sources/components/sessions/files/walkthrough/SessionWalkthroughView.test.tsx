@@ -1,15 +1,15 @@
 import * as React from 'react';
+import type { LlmTaskRunnerChoiceV1, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import '@/dev/testkit/harness/syncSingletonLoader';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyScmReviewedMarkIntent, buildScmComparisonIdentity, ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema, ScmDiffSummaryDiscussInputSchema, ScmDiffSummaryGenerateInputSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryResultSchema, ScmDiffSummaryResultReadInputSchema, ScmDiffSummaryResultEditInputSchema } from '@happier-dev/protocol/scm';
+import { applyScmReviewedMarkIntent, buildScmReviewedMarksKey, buildScmReviewScopeId, buildScmComparisonIdentity, ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema, ScmDiffSummaryDiscussInputSchema, ScmDiffSummaryGenerateInputSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryResultSchema, ScmDiffSummaryResultReadInputSchema, ScmDiffSummaryResultEditInputSchema } from '@happier-dev/protocol/scm';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { CapabilitiesDescribeResponse } from '@happier-dev/protocol/capabilities';
 import { ExecutionRunGetResponseSchema} from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { decodeScmDiffSummaryModelOverride } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
@@ -202,13 +202,12 @@ const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/ma
 const { readMachineActivity } = await import('@/sync/domains/machines/machineActivity');
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-const { encodeScmDiffSummaryModelOverride, decodeScmDiffSummaryModelOverride } = await import('@/settings/scmDiffSummary/settings');
 const { getScmDiffSummaryState, getScmDiffSummaryOperationState } = await import('@/sync/ops/scmDiffSummary/generate');
 const { getMachineCapabilitiesCacheState } = await import('@/hooks/server/useMachineCapabilitiesCache');
 const { getAgentCore, getAgentStaticModels } = await import('@happier-dev/agents');
 const { buildScmDiffSummaryModelProfiles } = await import('@/settings/scmDiffSummary/models');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-const { ScmDiffSummaryModelPicker } = await import('@/components/settings/sourceControl/ScmDiffSummaryModelPicker');
+const { LlmTaskRunnerPicker } = await import('@/components/settings/llmTasks/LlmTaskRunnerPicker');
 const { notifyExecutionRunActivity } = await import('@/sync/runtime/executionRuns/executionRunActivityBus');
 const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
 const { createScmDiffSummaryModelCatalogHttpBoundary } = await import('@/dev/testkit/harness/scmDiffSummaryModelCatalogBoundary');
@@ -218,6 +217,7 @@ const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRu
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 const { encodeBase64StoredJsonContentEnvelope } = await import('@/sync/encryption/base64StoredJsonContent');
+const { createAccountKvHttpFixture } = await import('@/dev/testkit/fixtures/accountKvHttpFixture');
 const { formatWithCachedDateTimeFormatter } = await import('@/utils/datetime/cachedIntlFormatters');
 const { getPreferredLanguage, t } = await import('@/text');
 await loadSyncSingletonForTests();
@@ -244,9 +244,19 @@ const initialRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
 let accountCredentials: import('@/auth/storage/tokenStorage').AuthCredentials;
 let restoreObservationClock: (() => void) | null = null;
 let servedHome: Awaited<ReturnType<typeof serveActionHomes>> | null = null;
+let catalogMachine: Awaited<ReturnType<typeof createScmDiffSummaryModelCatalogHttpBoundary>>['machine'] | null = null;
 
 function publishMachines(home: Readonly<{ id: string }>, machines: Array<ReturnType<typeof createMachineFixture>>,
     accountId = 'walkthrough-account') {
+    const remote = catalogMachine;
+    const published = remote ? machines.find(machine => machine.id === remote.id) : undefined;
+    if (remote && published) {
+        // HTTP hydration and pushed inventory describe the same external Home presence fact.
+        remote.active = published.active;
+        remote.activeAt = published.activeAt;
+        if (published.presenceProtocolVersion === 1) remote.presenceProtocolVersion = 1;
+        else delete remote.presenceProtocolVersion;
+    }
     // Raw inventory writes bypass the separate Machine presence/activity projections.
     const scope = { serverId: home.id, accountId };
     const store = getStorage().getState();
@@ -277,6 +287,7 @@ afterEach(async () => {
     boundary.accountRoute = null;
     boundary.generate = null;
     boundary.catalog = null;
+    catalogMachine = null;
     boundary.discoveredModels = [];
     boundary.nativeModelsByAgent = null;
     boundary.modelCatalogReads = 0;
@@ -291,14 +302,16 @@ async function createHome(serverUrl: string, settings?: Readonly<Record<string, 
     if (catalogMachineId) {
         // Offered Summary models come only from the executing Machine's catalog; the first Agent is its automatic default.
         const { getAgentCore, getAgentStaticModels } = await import('@happier-dev/agents');
-        boundary.catalog = (await createScmDiffSummaryModelCatalogHttpBoundary({ serverUrl, serverIdentityId,
+        const catalog = await createScmDiffSummaryModelCatalogHttpBoundary({ serverUrl, serverIdentityId,
             accountId: 'walkthrough-account', machineId: catalogMachineId, automaticTarget,
             targets: (['codex', 'claude'] as const).map(agentId => ({ backendTarget: { kind: 'backend' as const, backendId: agentId },
                 // The Machine's catalog owns cost tiers; its first model is the low-cost automatic default.
                 models: (boundary.nativeModelsByAgent?.[agentId] ?? getAgentStaticModels(agentId)).map((model, index) => index === 0 ? { ...model, costTier: 'low' as const } : model),
                 ...(agentId === 'codex' ? { discoveredModels: boundary.discoveredModels } : {}),
                 catalogModels: getAgentStaticModels(agentId, { catalogOnly: true }),
-                agentFormats: getAgentCore(agentId)?.structuredOutput?.formats })) })).handle;
+                agentFormats: getAgentCore(agentId)?.structuredOutput?.formats })) });
+        boundary.catalog = catalog.handle;
+        catalogMachine = catalog.machine;
     }
     const runActions = catalogMachineId ? await createScmRunActionHttpBoundary({ serverUrl, serverIdentityId,
         accountId: 'walkthrough-account', machineId: catalogMachineId,
@@ -331,13 +344,18 @@ async function createHome(serverUrl: string, settings?: Readonly<Record<string, 
     return home;
 }
 
-async function mount(comparison: SessionScmReviewComparison, sessionId: string, storedModel = '', renderBar: (actions: React.ReactNode, sections?: MenuSections) => React.ReactNode = barWithMenu, authenticated = true,
+function runnerOfProfile(profile: { modelSelector?: { backendTargetKey?: string; modelId?: string } }): LlmTaskRunnerConfigV1 {
+    return { v: 1, modelSelection: { agentTargetKey: profile.modelSelector!.backendTargetKey!, providerConnectionId: null, modelId: profile.modelSelector!.modelId! } };
+}
+
+async function mount(comparison: SessionScmReviewComparison, sessionId: string, storedRunner: LlmTaskRunnerChoiceV1 | null = null, renderBar: (actions: React.ReactNode, sections?: MenuSections) => React.ReactNode = barWithMenu, authenticated = true,
     automaticTarget?: Parameters<typeof createScmDiffSummaryModelCatalogHttpBoundary>[0]['automaticTarget'],
     renderDestination?: (props: React.ComponentProps<typeof SessionWalkthroughView>) => React.ReactElement) {
     const settings = { ...initialStorage.settings, experiments: true, featureToggles: { 'execution.runs': true },
-        'scm.diffSummary.modelProfileOverride': storedModel };
+        'scm.diffSummary.runnerV1': storedRunner };
     const home = await createHome(`https://${sessionId}.example.test`, settings, `machine:${sessionId}`, automaticTarget);
-    const machine = createMachineFixture({ id: `machine:${sessionId}`, activeAt: Date.now(), storageMode: 'plain' });
+    // These current Home sessions publish authoritative presence; the legacy grace case below has its own fixture.
+    const machine = createMachineFixture({ id: `machine:${sessionId}`, activeAt: Date.now(), storageMode: 'plain', presenceProtocolVersion: 1 });
     const session = createSessionFixture({ id: sessionId, serverId: home.id, active: true,
         metadata: { path: '/repo/exact', host: 'tester.local', machineId: machine.id, flavor: 'codex', ...boundary.sessionMetadata } });
     getStorage().setState({ sessions: { [sessionId]: session },
@@ -380,33 +398,23 @@ async function mountWithAccountMarks(sessionId: string, suggestedQuestions?: str
                     ...(suggestedQuestions ? { suggestedQuestions } : {}) }], otherChangeRefs: [] } } },
             analysis: { suppliedChangeRefs: ['captured-change'], analysedChangeRefs: ['captured-change'], remainingChangeRefs: [] },
         } });
-    let stored = encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: applyScmReviewedMarkIntent(boundary.savedResult.output.comparison!, null, [], true) });
-    let version = 1;
-    let writes = 0;
-    let reads = 0;
-    const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200 });
-    // Account HTTP is the external boundary; mode admission, JSON custody, CAS,
-    // marks membership and the active Account lifetime all remain real.
-    boundary.accountRoute = async ({ path, method, body }) => {
-        if (path === '/v1/kv' && method === 'POST') {
-            const mutation = (body as { mutations: Array<{ version: number; value: string; key: string }> }).mutations[0]!;
-            expect(mutation.version).toBe(version);
-            stored = mutation.value;
-            writes++;
-            return json({ success: true, results: [{ key: mutation.key, version: ++version }] });
-        }
-        if (path.startsWith('/v1/kv/')) {
-            reads++;
-            return json({ key: decodeURIComponent(path.slice('/v1/kv/'.length)), value: stored, version });
-        }
-        return undefined;
-    };
-    const mounted = await mount({ kind: 'workingTree' }, sessionId, '', undefined, true, undefined, renderDestination);
+    const comparisonRecord = boundary.savedResult.output.comparison!;
+    const key = buildScmReviewedMarksKey(buildScmReviewScopeId({ repositoryRootPath: comparisonRecord.repository.rootPath,
+        source: comparisonRecord.source }));
+    const stored = encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: applyScmReviewedMarkIntent(comparisonRecord, null, [], true) });
+    const kv = createAccountKvHttpFixture({ rows: new Map([[key, { key, value: stored, version: 1 }]]) });
+    // Serve the canonical opaque Account KV wire routes; mode admission, record parsing and CAS stay real.
+    boundary.accountRoute = async ({ url, method, body }) => await kv.handleFetch(url, { method,
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }) }) ?? undefined;
+    const reads = () => kv.readRequests().filter(request => request.path === '/v1/kv/bulk').length;
+    const writes = () => kv.readRequests().filter(request => request.path === '/v1/kv' && request.method === 'POST').length;
+    const mounted = await mount({ kind: 'workingTree' }, sessionId, null, undefined, true, undefined, renderDestination);
+    await vi.waitFor(() => expect(mounted.screen.getTextContent()).toContain('Retained stop'));
     await vi.waitFor(() => {
         const button = mounted.screen.findByTestId('walkthrough-mark-retained');
         expect(button).toBeTruthy();
         expect(button?.props.disabled).not.toBe(true);
-        expect(reads).toBeGreaterThan(0);
+        expect(reads()).toBeGreaterThan(0);
     });
     const entry = Object.values(getScmDiffSummaryState().entriesByKey).find(value => value.sessionId === sessionId)!;
     expect(entry.observedAtMs).toBeGreaterThan(0);
@@ -416,7 +424,7 @@ async function mountWithAccountMarks(sessionId: string, suggestedQuestions?: str
         const machine = { ...current, active: false, activeAt };
         await act(async () => publishMachines(mounted.home, [machine]));
     };
-    return { ...mounted, offline, writes: () => writes, observedAtMs: entry.observedAtMs };
+    return { ...mounted, offline, writes, observedAtMs: entry.observedAtMs };
 }
 
 describe('SessionWalkthroughView retained offline reading through real Account marks', () => {
@@ -458,7 +466,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
             claude: [{ id: 'served-claude', name: 'Served Claude model' }] };
         const inheritedModelId = 'served-codex';
         boundary.sessionMetadata = { sessionAppliedModelV1: { v: 1, provider: 'codex', modelId: inheritedModelId, updatedAt: 1 } };
-        const { screen } = await mount({ kind: 'workingTree' }, 'review-model-options', '', undefined, true, undefined,
+        const { screen } = await mount({ kind: 'workingTree' }, 'review-model-options', null, undefined, true, undefined,
             props => <ReviewOptions {...props} />);
         const settings = getStorage().getState().settings;
         const picker = () => screen.tree.findByType(SessionModelPicker);
@@ -538,23 +546,24 @@ describe('SessionWalkthroughView retained offline reading through real Account m
             return <SessionWalkthroughView {...props} scopeId={`session:${props.sessionId}`}
                 key={width < 600 ? 'phone' : 'desktop'} layout={width < 600 ? 'phone' : 'wide'} />;
         }
-        const { screen } = await mount({ kind: 'workingTree' }, 'responsive-model-draft', '', undefined, true, undefined,
+        const { screen } = await mount({ kind: 'workingTree' }, 'responsive-model-draft', null, undefined, true, undefined,
             props => <ResponsiveDestination {...props} />);
         const { ScmWalkthroughView } = await import('./ScmWalkthroughView');
         const bound = () => screen.tree.findByType(ScmWalkthroughView).props.bound as React.ComponentProps<typeof ScmWalkthroughView>['bound'];
         await vi.waitFor(() => expect(bound().restoreState).toBe('ready'));
         const settings = getStorage().getState().settings;
-        const explicit = encodeScmDiffSummaryModelOverride({ backendTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }), modelId: 'gpt-6-luna' });
+        const explicit = { v: 1, modelSelection: { agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }),
+            providerConnectionId: null, modelId: 'gpt-6-luna' } } satisfies LlmTaskRunnerConfigV1;
         await act(async () => bound().setModel(explicit));
-        expect(bound().model).toBe(explicit);
+        expect(bound().model).toEqual(explicit);
         for (const width of [390, 1440]) {
             await act(async () => resize(width));
-            expect(bound().model).toBe(explicit);
+            expect(bound().model).toEqual(explicit);
         }
-        // The default row is also an explicit choice, rather than absence of a draft.
-        await act(async () => bound().setModel(''));
+        // Auto is also an explicit per-run choice, rather than absence of a draft.
+        await act(async () => bound().setModel({ v: 1, mode: 'auto' }));
         await act(async () => resize(390));
-        expect(bound().model).toBe('');
+        expect(bound().model).toEqual({ v: 1, mode: 'auto' });
         expect(getStorage().getState().settings).toBe(settings);
         expect(generationCalls()).toEqual([]);
     });
@@ -579,10 +588,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
             launch: { canLaunchExecutionRuns: true }, comparison: { kind: 'workingTree' }, output }), {
             wrapper: ({ children }) => <InjectedAuthProvider credentials={accountCredentials}>{children}</InjectedAuthProvider>,
         });
-        await vi.waitFor(() => {
-            expect(hook.getCurrent().viewModel?.resultId).toBe(boundary.savedResult!.resultId);
-            expect(hook.getCurrent().modelChoices.items.some(item => item.title === 'GPT-6-Luna')).toBe(true);
-        });
+        await vi.waitFor(() => expect(hook.getCurrent().viewModel?.resultId).toBe(boundary.savedResult!.resultId));
         await act(async () => { await hook.getCurrent().onStart(); });
         expect(generationCalls()).toHaveLength(1);
         expect(ScmDiffSummaryGenerateInputSchema.parse(generationCalls()[0]!.payload)).toMatchObject({
@@ -591,78 +597,14 @@ describe('SessionWalkthroughView retained offline reading through real Account m
             cachePolicy: { mode: 'bypass' },
         });
         if (output === 'summary') {
-            // The picker encodes an intentional choice of its default row as ''. It must replace the saved producer.
-            await act(async () => hook.getCurrent().setModel(''));
+            // Tapping Auto replaces the saved producer and sends no model: the executing machine resolves Auto.
+            await act(async () => hook.getCurrent().setModel({ v: 1, mode: 'auto' }));
             await act(async () => { await hook.getCurrent().onStart(); });
             expect(generationCalls()).toHaveLength(2);
-            expect(ScmDiffSummaryGenerateInputSchema.parse(generationCalls()[1]!.payload).modelSelector)
-                .toEqual(decodeScmDiffSummaryModelOverride(hook.getCurrent().modelChoices.defaultProfile!.catalogId));
+            expect(ScmDiffSummaryGenerateInputSchema.parse(generationCalls()[1]!.payload)).not.toHaveProperty('modelSelector');
         }
     }, 120_000);
 
-    it.each(['ready', 'failed', 'missingAuth'] as const)('offers Choose model before retrying a saved reading whose producer catalog is %s', async catalogState => {
-        const modelId = catalogState === 'missingAuth' ? 'gpt-6-luna' : 'retired-model';
-        if (catalogState === 'missingAuth') boundary.discoveredModels = [{ id: modelId, name: modelId, capabilities: { structuredOutput: 'supported' } }];
-        const comparison = { id: 'retired-producer', source: { kind: 'workingTree' }, repository: { rootPath: '/repo/exact' },
-            endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } };
-        boundary.savedSessionId = 'retry-retired-producer';
-        boundary.savedResult = ScmDiffSummaryResultSchema.parse({ resultId: 'retired-result', revision: 1, canUndo: false,
-            generator: { backendTarget: { kind: 'backend', backendId: 'codex' }, modelId,
-                ...(catalogState !== 'missingAuth' ? { connectedServices: null } : {}) },
-            output: { success: true, resultId: 'retired-result', revision: 1, sourceKey: comparison.id, comparison,
-                producer: { kind: 'generation', modelId },
-                metadata: { sourceKey: comparison.id, source: comparison.source }, requestedOutputs: ['walkthrough'],
-                outputs: { walkthrough: { state: 'failed' } },
-                analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } } });
-        const catalogReady = createDeferred<void>();
-        const { screen } = await mount({ kind: 'workingTree' }, boundary.savedSessionId, '', undefined, true, undefined, props => {
-            const catalog = boundary.catalog!;
-            boundary.catalog = async (...args) => {
-                if (new URL(String(args[0])).pathname === '/v1/actions/agents.models.list') {
-                    await catalogReady.promise;
-                    if (catalogState === 'failed') throw new Error('Catalog transport unavailable');
-                }
-                return catalog(...args);
-            };
-            return <SessionWalkthroughView {...props} />;
-        });
-        await vi.waitFor(() => expect(boundary.modelCatalogReads).toBeGreaterThanOrEqual(1));
-        // A held observation is not evidence that the producer disappeared.
-        if (catalogState !== 'missingAuth') expect(screen.findByTestId('walkthrough-choose-model')).toBeNull();
-        await act(async () => catalogReady.resolve());
-        await vi.waitFor(() => expect(screen.findByTestId('walkthrough-notice-failed')).toBeTruthy());
-        await vi.waitFor(() => expect(screen.findByTestId('walkthrough-choose-model')).toBeTruthy());
-        expect(screen.getTextContent()).toContain(catalogState === 'failed'
-            ? t('walkthroughSettings.loadModelsFailed') : 'The selected model isn’t available right now.');
-        if (catalogState === 'failed') expect(screen.getTextContent()).not.toContain('The selected model isn’t available right now.');
-        await screen.pressByTestIdAsync('walkthrough-retry');
-        expect(generationCalls()).toEqual([]);
-    }, 120_000);
-
-    it.each(['complete', 'writing'] as const)('names the %s reading from the admitted Run model and the picker catalog without another acquisition', async state => {
-        boundary.discoveredModels = [{ id: 'gpt-6-luna', name: 'GPT-6-Luna', capabilities: { structuredOutput: 'supported' } }];
-        boundary.runResponse = ExecutionRunGetResponseSchema.parse({ run: {
-            runId: 'label-generator', callId: 'label-call', sidechainId: 'label-sidechain', intent: 'scm_diff_summary',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only', retentionPolicy: 'resumable',
-            runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 100,
-            resolvedSelection: { source: 'inherited', modelId: 'gpt-6-luna' },
-        } });
-        const comparison = { id: 'label-comparison', source: { kind: 'workingTree' }, repository: { rootPath: '/repo/exact' },
-            endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } };
-        boundary.savedSessionId = 'producer-catalog-label';
-        boundary.savedResult = ScmDiffSummaryResultSchema.parse({ resultId: 'producer-label-result', revision: 1, canUndo: false,
-            generator: { backendTarget: { kind: 'backend', backendId: 'codex' } },
-            output: { success: true, resultId: 'producer-label-result', revision: 1, sourceKey: comparison.id, comparison, runId: 'label-generator',
-                producer: { kind: 'generation', ...(state === 'complete' ? { modelId: 'gpt-6-luna' } : {}) },
-                metadata: { sourceKey: comparison.id, source: comparison.source }, requestedOutputs: ['walkthrough'],
-                outputs: { walkthrough: { state, value: { title: 'Retained reading', intro: '', stops: [], otherChangeRefs: [] } } },
-                analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } } });
-        const { screen } = await mount({ kind: 'workingTree' }, 'producer-catalog-label');
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('GPT-6-Luna'));
-        expect(screen.getTextContent()).not.toContain('gpt-6-luna');
-        expect(boundary.modelCatalogReads).toBe(1);
-        expect(generationCalls()).toEqual([]);
-    });
     it('names a cold-loaded reading from the Session model list while the picker catalog cannot', async () => {
         boundary.sessionMetadata = { sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 1, currentModelId: 'gpt-6-luna',
             availableModels: [{ id: 'gpt-6-luna', name: 'GPT-6-Luna' }] } };
@@ -694,7 +636,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
                 analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } } });
         const selector = { kind: 'workingTree' as const, comparisonId: comparison.id,
             savedResult: { cwd: comparison.repository.rootPath, resultId: boundary.savedResult.resultId } };
-        const { screen, home, machine } = await mount(selector, boundary.savedSessionId, '', undefined, true, undefined, props =>
+        const { screen, home, machine } = await mount(selector, boundary.savedSessionId, null, undefined, true, undefined, props =>
             <SessionCapturedScmReviewDetailsView sessionId={props.sessionId} serverId={explicitHome ? props.serverId : undefined}
                 scopeId={`session:${props.sessionId}`} comparison={selector} target={{ comparison: selector, view: 'walkthrough' }} />);
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('Finished receipt reading'));
@@ -766,7 +708,6 @@ describe('SessionWalkthroughView retained offline reading through real Account m
             wrapper: ({ children }) => <InjectedAuthProvider credentials={accountCredentials}>{children}</InjectedAuthProvider>,
         });
         await vi.waitFor(() => expect(hook.getCurrent().machineReachable).toBe(true));
-        expect(hook.getCurrent().modelAvailable).toBe(true);
         expect(hook.getCurrent().launch).toMatchObject({ canLaunchExecutionRuns: false, launchUnavailableReason: 'notEnabled' });
         await act(async () => { await hook.getCurrent().onStart(); });
         expect(generationCalls()).toEqual([]);
@@ -882,7 +823,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
                 scopeId={scopeId} comparison={comparison} target={{ comparison, view: 'walkthrough' }} />;
         }
         const { screen } = await mount({ kind: 'commit', commit: 'a'.repeat(40), comparisonId: 'captured-review' },
-            'captured-review-progress', '', undefined, true, undefined, props => <CapturedDestination {...props} />);
+            'captured-review-progress', null, undefined, true, undefined, props => <CapturedDestination {...props} />);
         await vi.waitFor(() => expect(screen.findAllByTestId('review-walkthrough-steps').length).toBeGreaterThan(0));
         expect(boundary.sessionCalls.some(call => call.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET
             && (call.payload as { runId?: string }).runId === 'review-run')).toBe(true);
@@ -890,7 +831,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
     });
 
     it.each([
-        { name: 'retires workspace-native generation at silent heartbeat expiry and recovers on heartbeat', expiry: true },
+        { name: 'retires workspace-native generation at legacy heartbeat expiry and recovers on heartbeat', expiry: true },
         { name: 'starts workspace-native generation and observes its exact Run output without Session notifications', expiry: false },
     ])('$name', async ({ expiry }) => {
         boundary.capabilities = async () => ({ protocolVersion: 1, results: {
@@ -900,7 +841,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
         const profiles = buildScmDiffSummaryModelProfiles({ backendTarget: { kind: 'backend', backendId: 'claude' },
             models: getAgentStaticModels('claude'), agentFormats: getAgentCore('claude')?.structuredOutput?.formats });
         const settings = { ...initialStorage.settings, experiments: true, featureToggles: { 'execution.runs': true },
-            'scm.diffSummary.modelProfileOverride': profiles.find(profile => profile.structuredOutput === 'supported')!.catalogId };
+            'scm.diffSummary.runnerV1': runnerOfProfile(profiles.find(profile => profile.structuredOutput === 'supported')!) };
         const home = await createHome('https://native-generation.example.test', settings, 'native-machine');
         const machine = createMachineFixture({ id: 'native-machine', activeAt: Date.now(), storageMode: 'plain' });
         getStorage().setState({ sessions: {},
@@ -929,11 +870,12 @@ describe('SessionWalkthroughView retained offline reading through real Account m
         await vi.waitFor(() => expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(false));
         if (expiry) {
             await act(async () => { vi.advanceTimersByTime(120_000); });
-            expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(false);
-            await act(async () => publishMachines(home, [{ ...machine, active: false, activeAt: Date.now() }]));
+            expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(true);
+            // Legacy Homes use activeAt freshness, so an offline observation retains the expired heartbeat.
+            await act(async () => publishMachines(home, [{ ...machine, active: false }]));
             expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(true);
             expect(generationCalls()).toEqual([]);
-            // Reconnect is newer; equal-timestamp presence intentionally retains the offline fact.
+            // A fresh heartbeat makes the legacy Machine reachable again.
             await act(async () => { vi.advanceTimersByTime(1); });
             const heartbeat = { ...machine, activeAt: Date.now() };
             await act(async () => publishMachines(home, [heartbeat]));
@@ -1080,7 +1022,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
         await screen.pressByTestIdAsync('walkthrough-mark-retained');
         await vi.waitFor(() => {
             expect(writes(), screen.getTextContent()).toBe(1);
-            expect(screen.findHostByTestId('walkthrough-mark-retained')?.props['aria-checked']).toBe(true);
+            expect(screen.findHostByTestId('walkthrough-mark-retained')?.props.accessibilityLabel).toBe(t('walkthrough.unmarkReviewedA11y'));
         });
         // The operations owner captures its observation clock at creation.
         // Move only the consumer's Date boundary after that real read; timers
@@ -1094,7 +1036,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
         const readingView = screen.find(node => node.props.scopeLabel === 'Shown comparison'
             && node.props.reading !== undefined && node.props.start !== undefined);
         expect(readingView.props.reading.stops[0].files[0].unifiedDiff).toContain('+retained-code');
-        expect(screen.findHostByTestId('walkthrough-mark-retained')?.props['aria-checked']).toBe(true);
+        expect(screen.findHostByTestId('walkthrough-mark-retained')?.props.accessibilityLabel).toBe(t('walkthrough.unmarkReviewedA11y'));
         await screen.pressByTestIdAsync('walkthrough-mark-retained');
         expect(writes()).toBe(1);
         expect(screen.findHostByTestId('walkthrough-notice-offline')).toBeTruthy();
@@ -1121,7 +1063,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
         await screen.pressByTestIdAsync('walkthrough-mark-retained');
         await vi.waitFor(() => {
             expect(writes()).toBe(2);
-            expect(screen.findHostByTestId('walkthrough-mark-retained')?.props['aria-checked']).toBe(false);
+            expect(screen.findHostByTestId('walkthrough-mark-retained')?.props.accessibilityLabel).toBe(t('walkthrough.markReviewedA11y'));
         });
     }, 120_000);
 
@@ -1147,7 +1089,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
 describe('SessionWalkthroughView START through real generation and model owners', () => {
     it('keeps the reading render idle when an unrelated source-control preference changes', async () => {
         const renderBar = vi.fn((actions: React.ReactNode) => actions);
-        const { home, machine } = await mount({ kind: 'workingTree' }, 'settings-locality', '', renderBar);
+        const { home, machine } = await mount({ kind: 'workingTree' }, 'settings-locality', null, renderBar);
         await vi.waitFor(() => expect(getMachineCapabilitiesCacheState(machine.id, home.id)?.status).toBe('loaded'));
         await act(async () => {});
         const before = renderBar.mock.calls.length;
@@ -1197,11 +1139,6 @@ describe('SessionWalkthroughView START through real generation and model owners'
         expect(boundary.calls.filter((call) => call.method === RPC_METHODS.CAPABILITIES_DETECT)
             .flatMap((call) => (call.payload as { requests?: Array<{ id: string }> }).requests ?? [])
             .some((request) => request.id.includes('models'))).toBe(false);
-        const picker = screen.findByType(DropdownMenu);
-        const eligible = picker.props.items.find((item: { id: string; disabled?: boolean }) => decodeScmDiffSummaryModelOverride(item.id) !== null && !item.disabled);
-        expect(eligible).toBeDefined();
-        // Exercise the actual shared picker selection; no catalog or availability callback is mocked.
-        await act(async () => picker.props.onSelect(eligible.id));
         expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(true);
         await screen.pressByTestIdAsync('walkthrough-start');
         expect(generationCalls()).toEqual([]);
@@ -1210,12 +1147,13 @@ describe('SessionWalkthroughView START through real generation and model owners'
         } }));
         await vi.waitFor(() => expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('walkthrough-start');
-        const selector = decodeScmDiffSummaryModelOverride(eligible.id);
         await vi.waitFor(() => {
             expect(generationCalls()).toEqual([expect.objectContaining({ machineId: machine.id, serverId: home.id,
-                accountId: 'walkthrough-account', payload: expect.objectContaining({ sessionId, cwd: '/repo/exact', source, outputs: ['walkthrough'], modelSelector: selector }) })]);
+                accountId: 'walkthrough-account', payload: expect.objectContaining({ sessionId, cwd: '/repo/exact', source, outputs: ['walkthrough'] }) })]);
+            // Auto sends no model: the executing machine's task-runner owner decides on the Session's own Agent.
+            expect(generationCalls()[0]!.payload).not.toHaveProperty('modelSelector');
             const entry = Object.values(getScmDiffSummaryState().entriesByKey).find((value) => value.sessionId === sessionId);
-            expect(entry).toMatchObject({ sessionId, input: { source, modelSelector: selector }, latestOutput: { success: true, metadata: { source } } });
+            expect(entry).toMatchObject({ sessionId, input: { source }, latestOutput: { success: true, metadata: { source } } });
         });
     }, 120_000);
 
@@ -1227,7 +1165,7 @@ describe('SessionWalkthroughView START through real generation and model owners'
         } });
         // A Session may have an applied connected model while its Account has no automatic route.
         // The UI cannot decide that inherited selection from the Account catalog.
-        const { screen } = await mount({ kind: 'workingTree' }, `automatic-model-${automatic}`, '', undefined, true,
+        const { screen } = await mount({ kind: 'workingTree' }, `automatic-model-${automatic}`, null, undefined, true,
             automatic ? undefined : null);
         await vi.waitFor(() => expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('walkthrough-start');
@@ -1235,12 +1173,8 @@ describe('SessionWalkthroughView START through real generation and model owners'
         expect(generationCalls()[0]!.payload).not.toHaveProperty('modelSelector');
     }, 120_000);
 
-    /** The first eligible model of the real picker: Start needs a settled machine and a chosen model. */
+    /** Start needs a settled machine; the model is Auto unless chosen, resolved on the executing machine. */
     async function chooseEligibleModel(screen: Awaited<ReturnType<typeof mount>>['screen']) {
-        const picker = screen.findByType(DropdownMenu);
-        const eligible = picker.props.items.find((item: { id: string; disabled?: boolean }) => decodeScmDiffSummaryModelOverride(item.id) !== null && !item.disabled);
-        expect(eligible).toBeDefined();
-        await act(async () => picker.props.onSelect(eligible.id));
         await vi.waitFor(() => expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(false));
     }
     const EXECUTION_CAPABILITIES = async () => ({ protocolVersion: 1, results: {
@@ -1296,19 +1230,11 @@ describe('SessionWalkthroughView START through real generation and model owners'
         expect(screen.getTextContent()).toContain('The selected model isn’t available right now.');
         expect(screen.getTextContent()).not.toContain('Provider xyz');
         expect(screen.getTextContent()).not.toContain('MODEL_UNAVAILABLE');
-        expect(screen.findAllByType(ScmDiffSummaryModelPicker)).toHaveLength(0);
-        // The action puts the picker on screen with its choices open; the open popover listens to the browser window, which this host lacks.
-        const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
-        Object.defineProperty(globalThis, 'window', { configurable: true,
-            value: { addEventListener: () => {}, removeEventListener: () => {}, setTimeout, clearTimeout, visualViewport: undefined } });
-        try {
-            await screen.pressByTestIdAsync('walkthrough-choose-model');
-            expect(screen.findAllByType(ScmDiffSummaryModelPicker)).toHaveLength(1);
-            expect(screen.findAllByType(ScmDiffSummaryModelPicker)[0]!.props.modelChoices.open).toBe(true);
-        } finally {
-            if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
-            else Reflect.deleteProperty(globalThis, 'window');
-        }
+        expect(screen.findAllByType(LlmTaskRunnerPicker)).toHaveLength(0);
+        // The action puts the shared runner picker on screen for this run, asking about the Session's own Agent.
+        await screen.pressByTestIdAsync('walkthrough-choose-model');
+        expect(screen.findAllByType(LlmTaskRunnerPicker)).toHaveLength(1);
+        expect(screen.findAllByType(LlmTaskRunnerPicker)[0]!.props).toMatchObject({ task: 'scm_diff_summary', value: { v: 1, mode: 'auto' } });
     }, 120_000);
 
     it('keeps Start unavailable while Explain changes is off, says so, and leads to the setting', async () => {
@@ -1328,39 +1254,12 @@ describe('SessionWalkthroughView START through real generation and model owners'
         expect(screen.getTextContent()).not.toContain('is off');
     }, 120_000);
 
-    it('does not admit a syntactically valid stored selector absent from the real eligible catalog', async () => {
-        boundary.capabilities = async () => ({ protocolVersion: 1, results: {
-            'tool.executionRuns': { ok: true, checkedAt: Date.now(), data: { backends: { codex: { available: true } } } },
-        } });
-        const stored = encodeScmDiffSummaryModelOverride({ backendTargetKey: 'agent:happier.agent.codex/codex', modelId: 'not-in-the-real-catalog' });
-        const { screen, home, machine } = await mount({ kind: 'workingTree' }, 'unavailable-model', stored);
-        await vi.waitFor(() => expect(getMachineCapabilitiesCacheState(machine.id, home.id)?.status).toBe('loaded'));
-        expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(true);
-        await screen.pressByTestIdAsync('walkthrough-start');
-        expect(generationCalls()).toEqual([]);
-        // With the same settled machine and access grant, choosing an actual
-        // eligible item recovers admission; the unavailable value was the blocker.
-        const picker = screen.findByType(DropdownMenu);
-        const eligible = picker.props.items.find((item: { id: string; disabled?: boolean }) => decodeScmDiffSummaryModelOverride(item.id) !== null && !item.disabled);
-        expect(eligible).toBeDefined();
-        await act(async () => picker.props.onSelect(eligible.id));
-        await vi.waitFor(() => expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(false));
-        await screen.pressByTestIdAsync('walkthrough-start');
-        await vi.waitFor(() => expect(generationCalls()).toEqual([expect.objectContaining({ payload: expect.objectContaining({
-            sessionId: 'unavailable-model', cwd: '/repo/exact', source: { kind: 'workingTree' }, outputs: ['walkthrough'],
-            modelSelector: decodeScmDiffSummaryModelOverride(eligible.id),
-        }) })]));
-    }, 120_000);
-
     it('keeps the exact captured identity and reports unavailable evidence without replacing it with a fresh source', async () => {
         const comparisonId = 'c'.repeat(64);
         boundary.capabilities = async () => ({ protocolVersion: 1, results: {
             'tool.executionRuns': { ok: true, checkedAt: Date.now(), data: { backends: { codex: { available: true, intents: ['scm_diff_summary'] } } } },
         } });
         const { screen } = await mount({ kind: 'workingTree', comparisonId }, 'captured-route');
-        const picker = screen.findByType(DropdownMenu);
-        const eligible = picker.props.items.find((item: { id: string; disabled?: boolean }) => decodeScmDiffSummaryModelOverride(item.id) !== null && !item.disabled);
-        await act(async () => picker.props.onSelect(eligible.id));
         await vi.waitFor(() => expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('walkthrough-start');
         await vi.waitFor(() => expect(generationCalls()).toEqual([expect.objectContaining({ payload: expect.objectContaining({
@@ -1383,8 +1282,8 @@ describe('SessionWalkthroughView START through real generation and model owners'
         const profiles = buildScmDiffSummaryModelProfiles({ backendTarget: { kind: 'backend', backendId: 'claude' },
             models: getAgentStaticModels('claude'), agentFormats: getAgentCore('claude')?.structuredOutput?.formats });
         const supported = profiles.filter((profile) => profile.structuredOutput === 'supported');
-        const stored = supported[0]!.catalogId;
-        const changedPreference = supported[1]!.catalogId;
+        const stored = runnerOfProfile(supported[0]!);
+        const changedPreference = runnerOfProfile(supported[1]!);
         boundary.savedSessionId = 'reopened-stale';
         boundary.savedResult = ScmDiffSummaryResultSchema.parse({ resultId: 'reopened-result', revision: 4, canUndo: false,
             generator: { backendTarget: { kind: 'backend', backendId: 'claude' } },
@@ -1398,22 +1297,22 @@ describe('SessionWalkthroughView START through real generation and model owners'
         const { screen, home, machine } = await mount({ kind: 'workingTree' }, boundary.savedSessionId, stored);
         await vi.waitFor(() => expect(getMachineCapabilitiesCacheState(machine.id, home.id)?.status).toBe('loaded'));
         await vi.waitFor(() => expect(screen.findByTestId('walkthrough-notice-stale')).toBeTruthy());
-        expect(screen.findAllByType(ScmDiffSummaryModelPicker)).toHaveLength(0);
+        expect(screen.findAllByType(LlmTaskRunnerPicker)).toHaveLength(0);
         expect(generationCalls()).toEqual([]);
         // Remote Account settings also publish into this real store. Unlike
         // restoration's brief empty frame, an already-open reading has no picker
         // to settle availability for the newly selected supported model.
         await act(async () => getStorage().setState((state) => ({ settings: {
-            ...state.settings, 'scm.diffSummary.modelProfileOverride': changedPreference,
+            ...state.settings, 'scm.diffSummary.runnerV1': changedPreference,
         } })));
         await vi.waitFor(() => expect(screen.findByTestId('walkthrough-refresh')).toBeTruthy());
         await screen.pressByTestIdAsync('walkthrough-refresh');
         // The shared selected-model observer admits a supported Account preference
         // directly; reopening a picker is not a prerequisite for Refresh.
-        expect(screen.findAllByType(ScmDiffSummaryModelPicker)).toHaveLength(0);
+        expect(screen.findAllByType(LlmTaskRunnerPicker)).toHaveLength(0);
         await vi.waitFor(() => expect(generationCalls()).toEqual([expect.objectContaining({ machineId: machine.id, serverId: home.id,
             accountId: 'walkthrough-account', payload: expect.objectContaining({ sessionId: 'reopened-stale', cwd: '/repo/exact', source: { kind: 'workingTree' },
-                outputs: ['walkthrough'], modelSelector: decodeScmDiffSummaryModelOverride(changedPreference), cachePolicy: { mode: 'bypass' } }) })]));
+                outputs: ['walkthrough'], modelSelector: expect.objectContaining({ modelSelection: changedPreference.modelSelection }), cachePolicy: { mode: 'bypass' } }) })]));
         await vi.waitFor(() => expect(Object.values(getScmDiffSummaryState().entriesByKey)
             .filter(entry => entry.sessionId === 'reopened-stale').map(entry => entry.latestOutput))
             .toContainEqual(expect.objectContaining({ success: true, sourceKey: 'comparison:reopened-stale' })));

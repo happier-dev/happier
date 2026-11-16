@@ -155,7 +155,7 @@ function StartFrame(props: Readonly<{ phone: boolean; failure: ScmDiffSummaryFai
                 layout={props.phone ? 'phone' : 'wide'} actions={EDIT_ACTIONS} active={false}
                 start={{ onStart: noop, busy: false, disabled: Boolean(props.disabled), reason: null,
                     options: <ScmDiffSummaryStartOptions testID="commit-proposal-start-options" failure={props.failure} message={null}
-                        model={{ value: '', onChange: noop, testID: 'commit-proposal-model-choice' }} onChooseModel={noop} onEnableExplain={noop} /> }} />
+                        model={{ value: { v: 1, mode: 'auto' }, onChange: noop, testID: 'commit-proposal-model-choice' }} onChooseModel={noop} onEnableExplain={noop} /> }} />
         </View>
     );
 }

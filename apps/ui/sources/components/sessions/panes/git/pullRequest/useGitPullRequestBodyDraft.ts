@@ -42,7 +42,7 @@ export function useGitPullRequestBodyDraft(params: Readonly<{
             return { title: '', body: params.body, draft: false, base, ...current, bodyDraft: next };
         });
     }, [key, scmDraft.setPullRequest, params.body, base]);
-    const modelChoice = useSummaryModelChoice(bound.modelChoices);
+    const modelChoice = useSummaryModelChoice();
     const openExplainSetting = useOpenExplainChangesSetting();
     const [report, setReport] = React.useState<Report | null>(null);
     const bodyRef = React.useRef(params.body);
@@ -142,8 +142,8 @@ export function useGitPullRequestBodyDraft(params: Readonly<{
         useCandidate: React.useCallback(() => { if (candidate !== null) params.setBody(candidate); setBodyDraft(previous => ({ ...previous, candidate: null })); }, [candidate, params.setBody, setBodyDraft]),
         keepMine: React.useCallback(() => setBodyDraft(previous => ({ ...previous, candidate: null })), [setBodyDraft]),
         modelChoice,
-        modelChoices: bound.modelChoices,
         model: bound.model,
+        sessionAgentTargetKey: bound.sessionAgentTargetKey,
         setModel: bound.setModel,
         machineId: bound.machine?.machineId ?? null,
         serverId: bound.serverId,

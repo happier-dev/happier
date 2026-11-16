@@ -2,10 +2,10 @@ import { scmDiffSummarySettingBinding as portableBinding, SCM_DIFF_SUMMARY_SETTI
 import type { SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
 import type { Settings } from '@/sync/domains/settings/settings';
 
-export { SCM_DIFF_SUMMARY_SETTING_KEYS, encodeScmDiffSummaryModelOverride, decodeScmDiffSummaryModelOverride, resolveScmDiffSummaryDefaultModelProfile, resolveScmDiffSummaryModelSelection, resolveScmDiffSummarySettings } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
+export { SCM_DIFF_SUMMARY_SETTING_KEYS, encodeScmDiffSummaryModelOverride, decodeScmDiffSummaryModelOverride, projectScmDiffSummaryModelSelector, readScmDiffSummaryRunnerChoice, resolveScmDiffSummaryDefaultModelProfile, resolveScmDiffSummaryModelSelection, resolveScmDiffSummarySettings } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 export type { ScmDiffSummaryCatalogProfile, ResolvedScmDiffSummarySettings } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 
 /** Both host adapters consume the one catalog admission and CAS recheck. */
-export function scmDiffSummarySettingBinding(key: typeof SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride | typeof SCM_DIFF_SUMMARY_SETTING_KEYS.prefetch | typeof SCM_DIFF_SUMMARY_SETTING_KEYS.outputLanguage | typeof SCM_DIFF_SUMMARY_SETTING_KEYS.investigateSurroundingFiles): SettingStorageBinding {
+export function scmDiffSummarySettingBinding(key: typeof SCM_DIFF_SUMMARY_SETTING_KEYS.runner | typeof SCM_DIFF_SUMMARY_SETTING_KEYS.prefetch | typeof SCM_DIFF_SUMMARY_SETTING_KEYS.outputLanguage | typeof SCM_DIFF_SUMMARY_SETTING_KEYS.investigateSurroundingFiles): SettingStorageBinding {
     return portableBinding<Settings>(key);
 }

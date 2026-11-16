@@ -18,7 +18,7 @@ import type { SessionScmReviewComparison } from '@/components/sessions/panes/det
 import { resolveScmDiffSummaryDiscussionTarget } from '@/sync/domains/scm/diffSummary/discussion';
 import { useAskSessionReveal } from '@/components/ui/code/selection/useAskSessionReveal';
 import { getSessionComposerDraftSnapshot, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
-import { ScmDiffSummaryModelPicker } from '@/components/settings/sourceControl/ScmDiffSummaryModelPicker';
+import { LlmTaskRunnerPicker } from '@/components/settings/llmTasks/LlmTaskRunnerPicker';
 import { ScmDiffSummaryStartOptions, scmDiffSummaryPrerequisiteOf, scmDiffSummaryStartOptionsOf, useOpenExplainChangesSetting, useSummaryModelChoice } from '@/components/sessions/files/comparison/ScmDiffSummaryStartOptions';
 import { applySavedScmDiffSummaryResult } from '@/sync/ops/scmDiffSummary/generate';
 import { getStorage } from '@/sync/domains/state/storage';
@@ -72,8 +72,8 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
     // The comparison's saved result, restore/reread and START: the one binding Walkthrough and Commits share.
     const bound = props.bound;
     const { scope, machine, machineReachability, canControl, canSend, launch, viewModel, capturedComparison, cwd, operations,
-        error, setError, model, setModel, modelChoices, modelAvailable, starting } = bound;
-    const modelChoice = useSummaryModelChoice(modelChoices);
+        error, setError, model, setModel, starting } = bound;
+    const modelChoice = useSummaryModelChoice();
     const displayHomeId = scope?.serverId ?? props.serverId;
     // Subscribe to attribution, not heartbeat objects. Exact Home lookup and
     // machine naming stay at their existing owners while the machine is offline.
@@ -241,7 +241,7 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
     // Agent beside its mark ("Codex read all 2"), and only then the generic "The model".
     const { engine: producerEngine } = useRunAnsweringEngine({ backendTarget: producerTarget, modelId: producerModelId,
         selection: producerSelection, sessionId: props.sessionId, serverId: props.serverId,
-        machineId: bound.host.machineId, cwd, catalogProfiles: modelChoices.catalogProfiles });
+        machineId: bound.host.machineId, cwd });
     const producerLabel = React.useMemo(() => {
         if (producerEngine) return producerEngine.label;
         try { return resolveExecutionRunBackendLabel(producerTarget); } catch { return null; }
@@ -295,7 +295,9 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
     return (
         <View style={{ flex: 1, minHeight: 0 }}>
             {props.renderBar(<>{explainAction}{findAction}{conversationAction}</>, savedSections, reviewStatus)}
-            {modelChoice.choosing ? <ScmDiffSummaryModelPicker value={model} onChange={setModel} modelChoices={modelChoices} machineId={machine?.machineId} serverId={props.serverId} /> : null}
+            {modelChoice.choosing ? <LlmTaskRunnerPicker task="scm_diff_summary" presentation="chips" engineFieldTitle={null} value={model} onChange={setModel}
+                machineId={machine?.machineId ?? null} serverId={props.serverId ?? null} sessionAgentTargetKey={bound.sessionAgentTargetKey}
+                testIDPrefix="walkthrough-model-choice" /> : null}
             <WalkthroughStopExchangesProvider source={exchangeSource} modelLabel={producerLabel} onOpenConversation={openConversation}>
             <WalkthroughView
                 reading={reading ?? EMPTY_WALKTHROUGH_READING}
@@ -324,13 +326,12 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
                 update={updateWitnessed && onUndo ? { title: t('walkthrough.saved.updated'), onUndo } : null}
                 stale={capturedComparison?.freshness === 'stale' ? { ...(canSend && launch.canLaunchExecutionRuns ? { onRefresh: () => {
                     if (!bound.isCurrent()) return;
-                    if (!modelAvailable) modelChoice.choose();
-                    else void onStart();
+                    void onStart();
                 } } : {}) } : null}
                 start={{ options: <ScmDiffSummaryStartOptions {...scmDiffSummaryStartOptionsOf(bound, { testID: 'walkthrough-start-options', modelTestID: 'walkthrough-model-choice',
                         prerequisite: scmDiffSummaryPrerequisiteOf(bound),
                         onEnableExplain: openExplainSetting })} />,
-                    onStart, busy: starting, disabled: Boolean(bound.startBlocker) || !modelAvailable || !canSend || !launch.canLaunchExecutionRuns }}
+                    onStart, busy: starting, disabled: Boolean(bound.startBlocker) || !canSend || !launch.canLaunchExecutionRuns }}
                 failure={bound.generationFailure}
                 onEnableExplain={openExplainSetting}
                 onRetry={bound.admission ? undefined : onStart}

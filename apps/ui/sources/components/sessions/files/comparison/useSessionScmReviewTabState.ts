@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneContext';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createSessionScmReviewDetailsTab, SESSION_DETAILS_SCM_REVIEW_TAB_KEY, type SessionScmReviewTarget } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
@@ -29,10 +30,11 @@ export function useSessionScmReviewComparison(sessionId: string, serverId: strin
 const SCROLL_PERSIST_DEBOUNCE_MS = 250;
 const SCROLL_PERSIST_EPSILON_PX = 1;
 
-type ReviewModelChoice = Readonly<{ hostKey: string; preference: string | null; value: string }>;
+/** A per-run runner choice for this host, kept until the host or the stored preference changes. */
+type ReviewModelChoice = Readonly<{ hostKey: string; preference: string; value: LlmTaskRunnerChoiceV1 }>;
 
 /** Responsive presenters can remount the form; its draft belongs to the retained review pane. */
-export function useScmReviewModelChoice(hostKey: string, preference: string | null, scopeId?: string) {
+export function useScmReviewModelChoice(hostKey: string, preference: string, scopeId?: string) {
     const [localChoice, setLocalChoice] = React.useState<ReviewModelChoice | null>(null);
     const pane = useOptionalAppPaneContext(context => {
         const tab = scopeId ? context.state.scopes[scopeId]?.details.tabState[SESSION_DETAILS_SCM_REVIEW_TAB_KEY] : null;
@@ -41,7 +43,7 @@ export function useScmReviewModelChoice(hostKey: string, preference: string | nu
     });
     const dispatch = pane?.dispatch;
     const choice = scopeId && pane ? pane.choice : localChoice;
-    const setModel = React.useCallback((value: string) => {
+    const setModel = React.useCallback((value: LlmTaskRunnerChoiceV1) => {
         const modelChoice = { hostKey, preference, value };
         if (scopeId && dispatch) {
             dispatch({ type: 'patchDetailsTabState', scopeId, tabKey: SESSION_DETAILS_SCM_REVIEW_TAB_KEY,

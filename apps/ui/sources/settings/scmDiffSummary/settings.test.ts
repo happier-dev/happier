@@ -8,69 +8,41 @@ import {
 } from './settings';
 import { settingsParse } from '@/sync/domains/settings/settings';
 
+const CODEX_MODEL = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-model' };
+
 describe('SCM diff-summary settings', () => {
-    it('resolves the persisted canonical selector through the protocol target reader', () => {
-        const storedValue = encodeScmDiffSummaryModelOverride({ backendTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-model' });
-        expect(resolveScmDiffSummaryModelSelection({ storedValue, catalogProfiles: [{ catalogId: storedValue, title: 'Offered model',
-            modelSelector: { backendTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-model' }, structuredOutput: 'supported' }] })).toMatchObject({
+    it('resolves the stored runner through the protocol target reader', () => {
+        const catalogId = encodeScmDiffSummaryModelOverride({ backendTargetKey: CODEX_MODEL.agentTargetKey, modelId: CODEX_MODEL.modelId });
+        expect(resolveScmDiffSummaryModelSelection({ runner: { v: 1, modelSelection: CODEX_MODEL }, catalogProfiles: [{ catalogId, title: 'Offered model',
+            modelSelector: { backendTargetKey: CODEX_MODEL.agentTargetKey, modelId: CODEX_MODEL.modelId }, structuredOutput: 'supported' }] })).toMatchObject({
             success: true, backendTarget: { kind: 'backend', backendId: 'codex' },
-            modelSelector: { backendTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-model' },
+            modelSelector: { backendTargetKey: CODEX_MODEL.agentTargetKey, modelId: CODEX_MODEL.modelId },
         });
-        expect(resolveScmDiffSummaryModelSelection({ storedValue: 'model:{bad-json}' })).toMatchObject({ success: false });
     });
-    it('refuses a catalog choice with explicit unsupported structured output instead of using it', () => {
-        const catalogProfiles = [{ catalogId: 'backend:unsupported', title: 'Unsupported model', structuredOutput: 'unsupported' as const }];
+    it('refuses a stored runner whose catalog model has unsupported structured output instead of using it', () => {
+        const catalogId = encodeScmDiffSummaryModelOverride({ backendTargetKey: CODEX_MODEL.agentTargetKey, modelId: CODEX_MODEL.modelId });
         expect(resolveScmDiffSummarySettings({
-            storedSettings: { [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: 'backend:unsupported' }, catalogProfiles,
+            storedSettings: { [SCM_DIFF_SUMMARY_SETTING_KEYS.runner]: { v: 1, modelSelection: CODEX_MODEL } },
+            catalogProfiles: [{ catalogId, title: 'Unsupported model', structuredOutput: 'unsupported' }],
         })).toMatchObject({ modelOverride: null, modelOverrideError: 'SCM_DIFF_SUMMARY_MODEL_UNSUPPORTED' });
     });
-    it('keeps an unresolved stored choice visible as a failure rather than silently using the default', () => {
+    it('keeps an explicit runner the catalog cannot vouch for visible as a choice rather than silently using Auto', () => {
         expect(resolveScmDiffSummarySettings({
-            storedSettings: { [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: 'missing-runtime-choice' }, catalogProfiles: [],
-        })).toMatchObject({ modelOverride: null, modelOverrideError: 'SCM_DIFF_SUMMARY_MODEL_UNAVAILABLE' });
+            storedSettings: { [SCM_DIFF_SUMMARY_SETTING_KEYS.runner]: { v: 1, modelSelection: CODEX_MODEL } }, catalogProfiles: [],
+        }).modelOverride?.modelSelector).toMatchObject({ modelSelection: CODEX_MODEL });
     });
-    it('defaults prefetch off behind an explicit preference gate', () => {
+    it('defaults the runner to Auto and prefetch off behind an explicit preference gate', () => {
         const parsed = settingsParse({});
 
         expect(parsed[SCM_DIFF_SUMMARY_SETTING_KEYS.enabled]).toBe(true);
         expect(parsed[SCM_DIFF_SUMMARY_SETTING_KEYS.prefetch]).toBe(false);
         expect(parsed[SCM_DIFF_SUMMARY_SETTING_KEYS.investigateSurroundingFiles]).toBe(false);
-        expect(parsed[SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]).toBe('');
+        expect(parsed[SCM_DIFF_SUMMARY_SETTING_KEYS.runner]).toBeNull();
         expect(resolveScmDiffSummarySettings({ storedSettings: parsed, catalogProfiles: [] })).toEqual({
             enabled: true,
             prefetch: false,
             investigateSurroundingFiles: false,
             outputLanguage: null,
-            modelOverride: null,
-        });
-    });
-
-    it('resolves model overrides through runtime catalog ids only', () => {
-        expect(resolveScmDiffSummarySettings({
-            storedSettings: {
-                [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: 'profile:thorough-summary',
-            },
-            catalogProfiles: [
-                { catalogId: 'profile:fast-summary', title: 'Fast summary' },
-                { catalogId: 'profile:thorough-summary', title: 'Thorough summary' },
-            ],
-        }).modelOverride).toEqual({
-            catalogId: 'profile:thorough-summary',
-            title: 'Thorough summary',
-        });
-    });
-
-    it('ignores raw labels that do not resolve to runtime catalog ids', () => {
-        expect(resolveScmDiffSummarySettings({
-            storedSettings: {
-                [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: 'Thorough summary',
-                [SCM_DIFF_SUMMARY_SETTING_KEYS.prefetch]: true,
-            },
-            catalogProfiles: [
-                { catalogId: 'profile:thorough-summary', title: 'Thorough summary' },
-            ],
-        })).toMatchObject({
-            prefetch: true,
             modelOverride: null,
         });
     });

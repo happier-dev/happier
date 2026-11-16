@@ -128,7 +128,7 @@ function StartFrame(props: Readonly<{ phone: boolean; failure: ScmDiffSummaryFai
                 scopeLabel={resolveFilesComparisonLabel(PENDING, null)}
                 onShowFiles={noop}
                 start={{ onStart: noop, disabled: props.disabled, options: <ScmDiffSummaryStartOptions testID="walkthrough-start-options" failure={props.failure} message={null}
-                    model={{ value: '', onChange: noop, testID: 'walkthrough-model-choice' }} onChooseModel={noop} onEnableExplain={noop} /> }}
+                    model={{ value: { v: 1, mode: 'auto' }, onChange: noop, testID: 'walkthrough-model-choice' }} onChooseModel={noop} onEnableExplain={noop} /> }}
             />
         </View>
     );

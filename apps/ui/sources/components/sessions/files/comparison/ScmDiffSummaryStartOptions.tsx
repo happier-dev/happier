@@ -3,7 +3,8 @@ import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { ScmDiffSummaryModelPicker } from '@/components/settings/sourceControl/ScmDiffSummaryModelPicker';
+import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import { LlmTaskRunnerPicker } from '@/components/settings/llmTasks/LlmTaskRunnerPicker';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -40,15 +41,14 @@ export function describeScmDiffSummaryFailure(failure: ScmDiffSummaryFailurePres
 /** Room for the message and its next step, so a refusal appearing or clearing never moves the state around it. */
 const REFUSAL_LINES = 2;
 
-/** The model choice of a start action: the shared picker's props, from the generation binding. */
+/** The runner choice of a start action (Auto unless chosen), from the generation binding. */
 type StartModel = Readonly<{
-    value: string;
-    onChange: (value: string) => void;
-    modelChoices?: React.ComponentProps<typeof ScmDiffSummaryModelPicker>['modelChoices'];
+    value: LlmTaskRunnerChoiceV1;
+    onChange: (value: LlmTaskRunnerChoiceV1) => void;
     machineId?: string | null;
     serverId?: string | null;
-    /** What an unset choice runs on (a Session's own model), so it never reads as a step still to take. */
-    unsetLabel?: string | null;
+    /** The hosting Session's own Agent: Auto stays on it. */
+    sessionAgentTargetKey?: string | null;
     testID: string;
 }>;
 
@@ -74,15 +74,16 @@ export function ScmDiffSummaryStartOptions(props: Readonly<{
     return (
         <View style={styles.group}>
             {props.model ? (
-                <ScmDiffSummaryModelPicker
-                    presentation="inline"
+                <LlmTaskRunnerPicker
+                    task="scm_diff_summary"
+                    presentation="chips"
+                    engineFieldTitle={null}
                     value={props.model.value}
                     onChange={props.model.onChange}
-                    modelChoices={props.model.modelChoices}
-                    machineId={props.model.machineId}
-                    serverId={props.model.serverId}
-                    unsetLabel={props.model.unsetLabel}
-                    testID={props.model.testID}
+                    machineId={props.model.machineId ?? null}
+                    serverId={props.model.serverId ?? null}
+                    sessionAgentTargetKey={props.model.sessionAgentTargetKey ?? null}
+                    testIDPrefix={props.model.testID}
                 />
             ) : null}
             <View testID={`${props.testID}-refusal`} style={styles.refusal} accessibilityLiveRegion="polite">
@@ -111,12 +112,11 @@ export function ScmDiffSummaryStartOptions(props: Readonly<{
 
 /**
  * The model choice of a surface that already shows a result: the picker is not on screen until the person is sent
- * to it (a refusal's "Choose model", a refresh with no usable model), and then it opens with its choices showing.
+ * to it (a refusal's "Choose model").
  */
-export function useSummaryModelChoice(modelChoices: Readonly<{ setOpen: (open: boolean) => void }>): Readonly<{ choosing: boolean; choose: () => void }> {
+export function useSummaryModelChoice(): Readonly<{ choosing: boolean; choose: () => void }> {
     const [choosing, setChoosing] = React.useState(false);
-    const { setOpen } = modelChoices;
-    const choose = React.useCallback(() => { setChoosing(true); setOpen(true); }, [setOpen]);
+    const choose = React.useCallback(() => { setChoosing(true); }, []);
     return { choosing, choose };
 }
 
@@ -131,13 +131,12 @@ export function useOpenExplainChangesSetting(): () => void {
  * first, then what the host's launch owner says, then the model. Null when it can run. A cause with no clearer words
  * keeps the general sentence.
  */
-export function scmDiffSummaryPrerequisiteOf(bound: Pick<ReturnType<typeof useScmDiffSummaryBinding>, 'machineReachability' | 'modelAvailable' | 'canSend' | 'launch'>): string | null {
+export function scmDiffSummaryPrerequisiteOf(bound: Pick<ReturnType<typeof useScmDiffSummaryBinding>, 'machineReachability' | 'canSend' | 'launch'>): string | null {
     const reason = bound.launch.launchUnavailableReason ?? null;
     if (bound.machineReachability === 'unreachable') return t('walkthroughStart.machineOffline');
     // The launch owner can refuse unknown presence too; only confirmed absence means offline.
     if (reason === 'machineOffline') return t('walkthroughStart.unavailable');
     if (reason) return t(SESSION_EXECUTION_RUN_LAUNCH_UNAVAILABLE_KEYS[reason]);
-    if (!bound.modelAvailable) return t('walkthroughStart.chooseModel');
     return bound.canSend && bound.launch.canLaunchExecutionRuns ? null : t('walkthroughStart.unavailable');
 }
 
@@ -153,11 +152,9 @@ export function scmDiffSummaryStartOptionsOf(
         onEnableExplain: input.onEnableExplain,
         message: bound.error ?? input.prerequisite,
         ...(input.modelTestID ? {
-            model: { value: bound.model, onChange: bound.setModel, modelChoices: bound.modelChoices,
+            model: { value: bound.model, onChange: bound.setModel,
                 machineId: bound.machine?.machineId, serverId: bound.serverId, testID: input.modelTestID,
-                // A Session-hosted start with no choice runs on that Session's model (the binding sends no override).
-                unsetLabel: 'sessionId' in bound.host && bound.host.sessionId ? t('walkthroughSettings.sessionModel') : null },
-            onChooseModel: () => bound.modelChoices.setOpen(true),
+                sessionAgentTargetKey: bound.sessionAgentTargetKey },
         } : {}),
     };
 }

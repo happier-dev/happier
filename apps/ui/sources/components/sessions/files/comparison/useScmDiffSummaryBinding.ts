@@ -1,13 +1,14 @@
 import * as React from 'react';
 import type { SessionExecutionRunLaunchUnavailableReason } from '@/hooks/session/useSessionExecutionRunLaunchability';
 import type { ScmDiffSummaryOutputKind } from '@happier-dev/protocol/scm/diffSummary';
-import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { isLlmTaskRunnerAutoV1, LlmTaskRunnerChoiceV1Schema, type LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { getStorage, useSetting } from '@/sync/domains/state/storage';
 import { useScmWalkthroughStates, type ScmWalkthroughRestoration, type ScmWalkthroughSelection } from '@/components/sessions/files/walkthrough/useSessionScmWalkthrough';
-import { encodeScmDiffSummaryModelOverride, resolveScmDiffSummaryModelSelection, SCM_DIFF_SUMMARY_SETTING_KEYS } from '@/settings/scmDiffSummary/settings';
+import { projectScmDiffSummaryModelSelector, SCM_DIFF_SUMMARY_SETTING_KEYS } from '@/settings/scmDiffSummary/settings';
 import { scmComparisonSourceOf } from '@/sync/domains/scm/diffSummary/selection';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import {
@@ -19,12 +20,22 @@ import {
 import { createScmDiffSummaryResultOperations, type ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
 import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { t } from '@/text';
-import { SCM_DIFF_SUMMARY_DISABLED_FAILURE, SCM_DIFF_SUMMARY_MODEL_CATALOG_UNAVAILABLE_FAILURE, SCM_DIFF_SUMMARY_MODEL_UNAVAILABLE_FAILURE, selectScmDiffSummaryProducerModel } from '@/sync/domains/scm/diffSummary/state';
+import { SCM_DIFF_SUMMARY_DISABLED_FAILURE, selectScmDiffSummaryProducerModel } from '@/sync/domains/scm/diffSummary/state';
 import { scmComparisonKey } from './filesComparison';
-import { useScmDiffSummaryModelChoices } from '@/components/settings/sourceControl/useScmDiffSummaryModelChoices';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { useScmReviewModelChoice } from './useSessionScmReviewTabState';
+import { useSessionSelector } from '@/sync/store/hooks';
+import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import type { Session } from '@/sync/domains/state/storageTypes';
+
+const AUTO_CHOICE: LlmTaskRunnerChoiceV1 = Object.freeze({ v: 1, mode: 'auto' });
+
+function readSessionAgentTargetKey(session: Session | null): string | null {
+    const resolved = session ? resolveSessionActionDefaultBackend({ session }) : null;
+    const target = resolved?.agentTarget ?? resolved?.backendTarget;
+    try { return target ? buildBackendTargetKeyV2(target) : null; } catch { return null; }
+}
 
 /**
  * A comparison view's binding to its admitted host's saved diff-summary result: the one store's projection for the
@@ -50,6 +61,8 @@ export function useScmDiffSummaryBinding(params: Readonly<{
 }>) {
     const { host, serverId, comparison, output, machine, machineReachable, launch } = params;
     const sessionId = 'sessionId' in host ? host.sessionId : null;
+    // The hosting Session's own Agent: Auto stays on it, and the picker's "currently" reads the same input.
+    const sessionAgentTargetKey = useSessionSelector(sessionId ?? '', serverId, readSessionAgentTargetKey);
     const binding = useServerCredentialAccountScopeBinding(serverId).binding;
     const scope = binding?.isCurrent() ? binding.scope : null;
     const canControl = Boolean(scope) && params.canControl;
@@ -65,8 +78,12 @@ export function useScmDiffSummaryBinding(params: Readonly<{
         return () => { if (currentHostKey.current === hostKey) currentHostKey.current = null; };
     }, [hostKey]);
     const explainEnabled = useSetting(SCM_DIFF_SUMMARY_SETTING_KEYS.enabled) !== false;
-    const storedModel = useSetting(SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride);
-    const { chosenModel, setModel } = useScmReviewModelChoice(hostKey, typeof storedModel === 'string' ? storedModel : null, params.paneScopeId);
+    const storedSetting = useSetting(SCM_DIFF_SUMMARY_SETTING_KEYS.runner);
+    const storedChoice = React.useMemo(() => {
+        const parsed = LlmTaskRunnerChoiceV1Schema.safeParse(storedSetting ?? null);
+        return parsed.success ? parsed.data : null;
+    }, [storedSetting]);
+    const { chosenModel, setModel } = useScmReviewModelChoice(hostKey, JSON.stringify(storedChoice), params.paneScopeId);
     const [starting, setStarting] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const [inputObservation, setInputObservation] = React.useState<Readonly<{ hostKey: string; runId: string; inputId: string; resultId: string }> | null>(null);
@@ -87,26 +104,14 @@ export function useScmDiffSummaryBinding(params: Readonly<{
     const observedSelection = ProviderBoundModelRefSchema.safeParse(producer.backendTarget && producer.modelId
         && !producer.selection?.modelSelection?.providerConnectionId && !viewModel?.latestRun?.resolvedSelection?.teamCredentialModel
         ? { agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(producer.backendTarget)), providerConnectionId: null, modelId: producer.modelId } : null);
-    const observedValue = observedSelection.success ? encodeScmDiffSummaryModelOverride({ backendTargetKey: observedSelection.data.agentTargetKey,
-        modelId: observedSelection.data.modelId,
-        ...(producer.selection?.connectedServices !== undefined ? { connectedServices: producer.selection.connectedServices } : {}) }) : undefined;
-    // An explicit picker choice (including its default row) wins. Otherwise keep the Account preference,
-    // or reuse the displayed producer rather than turning a saved retry into fresh host inheritance.
+    // An explicit per-run choice (including Auto) wins. Otherwise keep the Account preference, or reuse the
+    // displayed producer with its recorded authentication rather than turning a saved retry into fresh Auto.
     // A model-only observation may label the reading, but cannot reconstruct its authentication.
-    const recordedModel = producer.selection?.connectedServices !== undefined ? observedValue : undefined;
-    const model = chosenModel ?? (typeof storedModel === 'string' && storedModel.trim() ? storedModel : recordedModel ?? '');
-    const modelChoices = useScmDiffSummaryModelChoices({ value: model, observedValue, machineId: machine?.machineId,
-        serverId, observeSelection: Boolean(scope && machineReachable && comparison && restoreState === 'ready') });
-    const explicitSelection = Boolean(model.trim()) || chosenModel !== null;
-    const selected = resolveScmDiffSummaryModelSelection({ storedValue: model || (chosenModel !== null ? modelChoices.defaultProfile?.catalogId ?? '' : ''),
-        catalogProfiles: modelChoices.catalogProfiles });
-    // Only a fresh, untouched selection inherits from the host. A retry must name an offered model.
-    const modelAvailable = (!viewModel && !explicitSelection) || (explicitSelection && selected.success && modelChoices.selectionAvailable);
+    const recordedChoice = React.useMemo<LlmTaskRunnerChoiceV1 | null>(() => observedSelection.success && producer.selection?.connectedServices !== undefined
+        ? { v: 1, modelSelection: observedSelection.data, connectedServices: producer.selection.connectedServices } : null,
+    [observedSelection.success ? JSON.stringify(observedSelection.data) : null, JSON.stringify(producer.selection?.connectedServices)]);
+    const model: LlmTaskRunnerChoiceV1 = chosenModel ?? (storedChoice && !isLlmTaskRunnerAutoV1(storedChoice) ? storedChoice : recordedChoice ?? storedChoice ?? AUTO_CHOICE);
     const generationFailure = viewModel?.error && !(viewModel.error.reason === 'disabled' && explainEnabled) ? viewModel.error : null;
-    // A plain retry cannot repair a settled missing model. Keep stronger refusals and pending observations truthful.
-    const retryModelFailure = generationFailure?.nextAction !== 'retry' || modelAvailable ? null
-        : modelChoices.catalogStatus === 'ready' ? SCM_DIFF_SUMMARY_MODEL_UNAVAILABLE_FAILURE
-            : modelChoices.catalogStatus === 'error' ? SCM_DIFF_SUMMARY_MODEL_CATALOG_UNAVAILABLE_FAILURE : null;
     const capturedComparison = viewModel?.comparison ?? null;
     const cwd = capturedComparison?.repository.rootPath ?? machine?.basePath ?? null;
     const operations = React.useMemo(() => scope ? createScmDiffSummaryResultOperations({ ...host,
@@ -115,7 +120,7 @@ export function useScmDiffSummaryBinding(params: Readonly<{
 
     /** `pullRequestDraft` asks the host to write the summary's pull request description from the repository template and recorded Session outcomes. */
     const onStart = React.useCallback(async (outputs: readonly ScmDiffSummaryOutputKind[] = [output], options: Readonly<{ pullRequestDraft?: Readonly<{ providerId?: string }> }> = {}): Promise<ScmDiffSummaryOperationResult | null> => {
-        if (!isCurrent() || !scope || !cwd || !comparison || (!viewModel && restoreState !== 'ready') || !modelAvailable || !canSend || !launch.canLaunchExecutionRuns || starting) return null;
+        if (!isCurrent() || !scope || !cwd || !comparison || (!viewModel && restoreState !== 'ready') || !canSend || !launch.canLaunchExecutionRuns || starting) return null;
         setStarting(true); setError(null);
         let draftAccount: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | null = null;
         try {
@@ -126,19 +131,21 @@ export function useScmDiffSummaryBinding(params: Readonly<{
                 if (!areServerAccountScopesEqual(draftAccount.accountOnlyLifetime.scope, scope)) throw new Error(t('walkthroughStart.unavailable'));
             }
             const source = scmComparisonSourceOf(comparison, sessionId ?? '');
+            // Auto sends no model: the executing machine's task-runner owner picks on the Session's own Agent.
+            const explicit = isLlmTaskRunnerAutoV1(model) ? null : model;
             return await generateScmDiffSummaryFromUserAction({ ...host, serverId: scope.serverId, scope,
                 shouldContinue: draftAccount?.accountOnlyLifetime.isCurrent ?? isCurrent,
-                ...(explicitSelection && selected.success ? { backendTarget: selected.backendTarget } : {}),
+                ...(explicit ? { backendTarget: readBackendTargetRefV2(parseBackendTargetKeyV2(explicit.modelSelection.agentTargetKey)) } : {}),
                 input: { cwd, source, ...(comparison.comparisonId ? { comparisonId: comparison.comparisonId } : {}),
                     outputs: [...outputs], ...(options.pullRequestDraft ? { pullRequestDraft: options.pullRequestDraft } : {}),
-                    ...(explicitSelection && selected.success ? { modelSelector: selected.modelSelector } : {}) },
-                settings: { ...getStorage().getState().settings, [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: model },
+                    ...(explicit ? { modelSelector: projectScmDiffSummaryModelSelector(explicit) } : {}) },
+                settings: { ...getStorage().getState().settings, [SCM_DIFF_SUMMARY_SETTING_KEYS.runner]: explicit ?? model },
                 intent: viewModel ? 'regenerate' : 'generate' });
         } catch (failure) {
             if (isCurrent()) setError(failure instanceof Error ? failure.message : t('walkthroughStart.unavailable'));
             return null;
         } finally { draftAccount?.dispose(); if (isCurrent()) setStarting(false); }
-    }, [binding, isCurrent, scope?.serverId, scope?.accountId, cwd, comparison, sessionId, host.machineId, output, selected, explicitSelection, modelAvailable, canSend, launch.canLaunchExecutionRuns, starting, model, Boolean(viewModel), restoreState]);
+    }, [binding, isCurrent, scope?.serverId, scope?.accountId, cwd, comparison, sessionId, host.machineId, output, canSend, launch.canLaunchExecutionRuns, starting, model, Boolean(viewModel), restoreState]);
 
     const key = viewModel?.requestKey;
     const resultId = viewModel?.resultId;
@@ -225,13 +232,14 @@ export function useScmDiffSummaryBinding(params: Readonly<{
         admission: viewModel?.admission ?? null, checkAdmission, cancelGeneration,
         error, setError,
         /** The typed refusal or failure of the comparison's generation; never its diagnostic code or message. */
-        generationFailure: retryModelFailure ?? generationFailure,
+        generationFailure,
         /**
          * Why Start cannot run at all: Explain changes is off. Start stays unavailable and says how to turn it on;
          * an action that still reaches the generation owner (Refresh, Try again) is refused there with the same
          * typed failure, which `generationFailure` then carries.
          */
         startBlocker: explainEnabled ? null : SCM_DIFF_SUMMARY_DISABLED_FAILURE,
-        model, setModel, modelChoices, modelAvailable, selected, starting, onStart,
+        /** The per-run runner choice (Auto unless chosen); the executing machine resolves Auto. */
+        model, setModel, sessionAgentTargetKey, starting, onStart,
     } as const;
 }

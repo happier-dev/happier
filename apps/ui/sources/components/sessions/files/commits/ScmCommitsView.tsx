@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 
 import { ScmDiffSummaryFailureNotice } from '@/components/sessions/files/comparison/ScmDiffSummaryFailureNotice';
-import { ScmDiffSummaryModelPicker } from '@/components/settings/sourceControl/ScmDiffSummaryModelPicker';
+import { LlmTaskRunnerPicker } from '@/components/settings/llmTasks/LlmTaskRunnerPicker';
 import { ScmDiffSummaryStartOptions, scmDiffSummaryPrerequisiteOf, scmDiffSummaryStartOptionsOf, useOpenExplainChangesSetting, useSummaryModelChoice } from '@/components/sessions/files/comparison/ScmDiffSummaryStartOptions';
 import { RunWorkNotifications } from '@/components/sessions/work/RunWorkNotifications';
 import { t } from '@/text';
@@ -32,7 +32,7 @@ export const ScmCommitsView = React.memo(function ScmCommitsView(props: ScmCommi
     const plan = props.plan;
     const bound = plan.binding;
     const openExplainSetting = useOpenExplainChangesSetting();
-    const modelChoice = useSummaryModelChoice(bound.modelChoices);
+    const modelChoice = useSummaryModelChoice();
     const canStart = plan.supportedComparison && bound.canSend && bound.launch.canLaunchExecutionRuns;
     const addToSaved = plan.addToSaved;
     const start = React.useMemo(() => {
@@ -44,7 +44,7 @@ export const ScmCommitsView = React.memo(function ScmCommitsView(props: ScmCommi
                 options: <ScmDiffSummaryStartOptions {...scmDiffSummaryStartOptionsOf(bound, { testID: 'commit-proposal-start-options',
                     prerequisite: !bound.canControl ? t('walkthroughStart.unavailable') : null, onEnableExplain: openExplainSetting })} /> };
         }
-        const ready = canStart && !bound.startBlocker && bound.modelAvailable;
+        const ready = canStart && !bound.startBlocker;
         return {
             onStart: () => { if (ready) void bound.onStart(['commitPlan']); },
             busy: bound.starting,
@@ -73,8 +73,9 @@ export const ScmCommitsView = React.memo(function ScmCommitsView(props: ScmCommi
     return (
         <View style={{ flex: 1, minHeight: 0 }}>
             {props.renderBar(plan.proposal?.groups.length ?? null)}
-            {modelChoice.choosing ? <ScmDiffSummaryModelPicker value={bound.model} onChange={bound.setModel} modelChoices={bound.modelChoices}
-                machineId={bound.machine?.machineId} serverId={bound.serverId} /> : null}
+            {modelChoice.choosing ? <LlmTaskRunnerPicker task="scm_diff_summary" presentation="chips" engineFieldTitle={null} value={bound.model} onChange={bound.setModel}
+                machineId={bound.machine?.machineId ?? null} serverId={bound.serverId ?? null} sessionAgentTargetKey={bound.sessionAgentTargetKey}
+                testIDPrefix="commit-proposal-model-choice" /> : null}
             <CommitProposalView
                 proposal={plan.proposal}
                 phase={plan.phase}

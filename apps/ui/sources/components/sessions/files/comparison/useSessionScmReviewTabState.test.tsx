@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PropsWithChildren } from 'react';
+import type { LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { act, renderHook, standardCleanup } from '@/dev/testkit';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -34,19 +35,20 @@ describe('review selection restoration', () => {
         function Wrapper({ children }: PropsWithChildren) {
             return <AppPaneProvider><DispatchProbe />{children}</AppPaneProvider>;
         }
-        const initialProps: { host: string; preference: string | null } = { host: 'home/account/comparison/walkthrough', preference: null };
-        const hook = await renderHook(({ host, preference }: { host: string; preference: string | null }) => {
+        const initialProps: { host: string; preference: string } = { host: 'home/account/comparison/walkthrough', preference: 'null' };
+        const explicit = { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna' } } satisfies LlmTaskRunnerConfigV1;
+        const hook = await renderHook(({ host, preference }: { host: string; preference: string }) => {
             renders++;
             return useScmReviewModelChoice(host, preference, 'session:model-draft');
         }, { initialProps, wrapper: Wrapper });
-        await act(async () => hook.getCurrent().setModel('explicit-model'));
-        expect(hook.getCurrent().chosenModel).toBe('explicit-model');
+        await act(async () => hook.getCurrent().setModel(explicit));
+        expect(hook.getCurrent().chosenModel).toEqual(explicit);
         renders = 0;
         await act(async () => dispatch({ type: 'patchDetailsTabState', scopeId: 'another-pane', tabKey: 'file:a', patch: { scrollTop: 100 } }));
         expect(renders).toBe(0);
-        await hook.rerender({ host: 'another-account/comparison/walkthrough', preference: null });
+        await hook.rerender({ host: 'another-account/comparison/walkthrough', preference: 'null' });
         expect(hook.getCurrent().chosenModel).toBeNull();
-        await hook.rerender({ host: 'home/account/comparison/walkthrough', preference: 'new-account-preference' });
+        await hook.rerender({ host: 'home/account/comparison/walkthrough', preference: JSON.stringify({ v: 1, mode: 'auto' }) });
         expect(hook.getCurrent().chosenModel).toBeNull();
     });
 

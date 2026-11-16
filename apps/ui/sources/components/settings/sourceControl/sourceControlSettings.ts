@@ -20,7 +20,7 @@ export const SOURCE_CONTROL_SETTINGS = defineSettingsPage({
             titleKey: 'walkthroughSettings.title',
             settings: {
                 explainChanges: {},
-                summaryModel: { storage: scmDiffSummarySettingBinding(SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride),  },
+                summaryModel: { storage: scmDiffSummarySettingBinding(SCM_DIFF_SUMMARY_SETTING_KEYS.runner),  },
                 outputLanguage: { storage: scmDiffSummarySettingBinding(SCM_DIFF_SUMMARY_SETTING_KEYS.outputLanguage) },
                 prepareAfterTurn: { storage: scmDiffSummarySettingBinding(SCM_DIFF_SUMMARY_SETTING_KEYS.prefetch),  },
                 investigateSurroundingFiles: { storage: scmDiffSummarySettingBinding(SCM_DIFF_SUMMARY_SETTING_KEYS.investigateSurroundingFiles) },

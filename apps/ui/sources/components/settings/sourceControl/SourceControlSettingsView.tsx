@@ -2,7 +2,6 @@ import React from 'react';
 import { Platform } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
-import { DEFAULT_AGENT_ID, type AgentId } from '@/agents/catalog/catalog';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -19,6 +18,7 @@ import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machine
 import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { getLanguageEnglishName, getLanguageNativeName, SUPPORTED_LANGUAGE_CODES, t, type TranslationKey } from '@/text';
 import type { ImageBackground, ImageBackgroundByKind } from '@/sync/domains/settings/registry/local/localSettingDefinitions.files';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -34,14 +34,12 @@ import {
     shouldConfirmRemoteOperation,
 } from '@/scm/settings/remoteConfirmationPolicy';
 import { CommitMessageInstructionsSetting } from './CommitMessageInstructionsSetting';
-import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { getAgentDropdownMenuItems } from '@/components/settings/pickers/agentDropdownItems';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { SOURCE_CONTROL_SETTINGS } from '@/components/settings/sourceControl/sourceControlSettings';
-import { ScmDiffSummaryModelPicker } from '@/components/settings/sourceControl/ScmDiffSummaryModelPicker';
+import { LlmTaskRunnerPicker } from '@/components/settings/llmTasks/LlmTaskRunnerPicker';
 import { WalkthroughSavedSettings } from '@/components/settings/sourceControl/WalkthroughSavedSettings';
 import { FileEditorAiSuggestionSettings } from '@/components/settings/sourceControl/FileEditorAiSuggestionSettings';
 import { ResourceOpenLocationSetting } from '@/components/settings/sourceControl/ResourceOpenLocationSetting';
@@ -240,7 +238,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
         ...(selectedOutputLanguage && !SUPPORTED_LANGUAGE_CODES.some((code) => code === selectedOutputLanguage)
             ? [{ id: selectedOutputLanguage, title: selectedOutputLanguage }] : []),
     ], [selectedOutputLanguage]);
-    const [summaryModel] = useSettingMutable('scm.diffSummary.modelProfileOverride');
+    const [summaryRunnerChoice] = useSettingMutable('scm.diffSummary.runnerV1');
     const [summaryModelAvailable, setSummaryModelAvailable] = React.useState(false);
     const [scmRemoteConfirmPolicy] = useSettingMutable('scmRemoteConfirmPolicy');
     const [scmPushRejectPolicy, setScmPushRejectPolicy] = useSettingMutable('scmPushRejectPolicy');
@@ -259,7 +257,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [showLineNumbersInToolViews, setShowLineNumbersInToolViews] = useSettingMutable('showLineNumbersInToolViews');
     const [wrapLinesInDiffs, setWrapLinesInDiffs] = useSettingMutable('wrapLinesInDiffs');
     const [scmCommitMessageGeneratorEnabled, setScmCommitMessageGeneratorEnabled] = useSettingMutable('scmCommitMessageGeneratorEnabled');
-    const [scmCommitMessageGeneratorBackendId] = useSettingMutable('scmCommitMessageGeneratorBackendId');
+    const [scmCommitMessageGeneratorRunnerV1] = useSettingMutable('scmCommitMessageGeneratorRunnerV1');
     const [scmIncludeCoAuthoredBy, setScmIncludeCoAuthoredBy] = useSettingMutable('scmIncludeCoAuthoredBy');
     const [filesEditorAutoSave, setFilesEditorAutoSave] = useSettingMutable('filesEditorAutoSave');
     const [formatOnSave, setFormatOnSave] = useSettingMutable('filesEditorFormatOnSave');
@@ -292,15 +290,6 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const effectiveFilesChangedFilesRowDensity = filesChangedFilesRowDensity === 'compact' ? 'compact' : 'comfortable';
     const effectiveMarkdownDefaultEditMode = markdownDefaultEditMode === 'raw' ? 'raw' : 'rich';
     const effectiveCommitMessageGeneratorEnabled = scmCommitMessageGeneratorEnabled === true;
-    const effectiveCommitMessageGeneratorBackendId = typeof scmCommitMessageGeneratorBackendId === 'string' && scmCommitMessageGeneratorBackendId.trim()
-        ? scmCommitMessageGeneratorBackendId.trim()
-        : DEFAULT_AGENT_ID;
-    const enabledAgentIds = useEnabledAgentIds();
-    // A stored Agent that is not enabled here (say, an externally installed one) stays listed as the current choice.
-    const commitMessageAgentItems = React.useMemo(() => getAgentDropdownMenuItems({
-        agentIds: enabledAgentIds.includes(effectiveCommitMessageGeneratorBackendId as AgentId)
-            ? enabledAgentIds : [...enabledAgentIds, effectiveCommitMessageGeneratorBackendId as AgentId],
-    }), [effectiveCommitMessageGeneratorBackendId, enabledAgentIds]);
     const effectiveIncludeCoAuthoredBy = scmIncludeCoAuthoredBy === true;
     const effectiveRemoteConfirmPolicy = normalizeScmRemoteConfirmPolicy(scmRemoteConfirmPolicy);
     const confirmsPull = shouldConfirmRemoteOperation(effectiveRemoteConfirmPolicy, 'pull');
@@ -334,7 +323,6 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
         }));
     const selectedRoutingOption = routingOptions.find((option) => option.id === effectiveScmGitRepoPreferredBackendId);
     const [routingMenuOpen, setRoutingMenuOpen] = React.useState(false);
-    const [commitAgentMenuOpen, setCommitAgentMenuOpen] = React.useState(false);
 
     // One anchor per page for the per-backend default diff: search reveals the first backend that
     // offers a choice, and the first backend's section answers when none does.
@@ -390,20 +378,14 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 />
                 {effectiveCommitMessageGeneratorEnabled ? (
                     <SettingAnchor setting={SOURCE_CONTROL_SETTINGS.settings.commitMessageAgent}>
-                        <DropdownMenu
-                            open={commitAgentMenuOpen}
-                            onOpenChange={setCommitAgentMenuOpen}
-                            items={commitMessageAgentItems}
-                            selectedId={effectiveCommitMessageGeneratorBackendId}
-                            variant="selectable"
-                            matchTriggerWidth
-                            connectToTrigger
-                            onSelect={(id) => { void setSetting(SOURCE_CONTROL_SETTINGS.settings.commitMessageAgent, id); setCommitAgentMenuOpen(false); }}
-                            itemTrigger={{
-                                title: t(SOURCE_CONTROL_SETTINGS.settings.commitMessageAgent.titleKey),
-                                subtitle: t('settingsSourceControl.page.generator.agentDescription'),
-                                itemProps: { testID: 'settings.sourceControl.commitMessageAgent', subtitleLines: 0 },
-                            }}
+                        <LlmTaskRunnerPicker
+                            task="scm_commit_message"
+                            value={scmCommitMessageGeneratorRunnerV1}
+                            onChange={(next) => { void setSetting(SOURCE_CONTROL_SETTINGS.settings.commitMessageAgent, projectNativeJsonValueForTransport(next)); }}
+                            machineId={executionTarget?.machine.id ?? null}
+                            serverId={executionTarget?.serverId ?? null}
+                            engineFieldTitle={t(SOURCE_CONTROL_SETTINGS.settings.commitMessageAgent.titleKey)}
+                            testIDPrefix="settings.sourceControl.commitMessageAgent"
                         />
                     </SettingAnchor>
                 ) : null}
@@ -431,10 +413,16 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         rightElement={<Switch value={explainChanges !== false} onValueChange={setExplainChanges} />}
                         onPress={() => setExplainChanges(explainChanges === false)} />
                     <SettingAnchor setting={SOURCE_CONTROL_SETTINGS.settings.summaryModel}>
-                        <ScmDiffSummaryModelPicker value={typeof summaryModel === 'string' ? summaryModel : ''}
-                            onChange={value => { void setSetting(SOURCE_CONTROL_SETTINGS.settings.summaryModel, value); }}
+                        <LlmTaskRunnerPicker
+                            task="scm_diff_summary"
+                            value={summaryRunnerChoice}
+                            onChange={next => { void setSetting(SOURCE_CONTROL_SETTINGS.settings.summaryModel, projectNativeJsonValueForTransport(next)); }}
                             onAvailabilityChange={setSummaryModelAvailable}
-                            machineId={executionTarget?.machine.id} serverId={executionTarget?.serverId} testID="settings.sourceControl.summaryModel" />
+                            machineId={executionTarget?.machine.id ?? null}
+                            serverId={executionTarget?.serverId ?? null}
+                            engineFieldTitle={t(SOURCE_CONTROL_SETTINGS.settings.summaryModel.titleKey)}
+                            testIDPrefix="settings.sourceControl.summaryModel"
+                        />
                     </SettingAnchor>
                     <SettingAnchor setting={SOURCE_CONTROL_SETTINGS.settings.outputLanguage}>
                         <DropdownMenu

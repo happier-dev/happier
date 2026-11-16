@@ -6,7 +6,7 @@ import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { buildScmDiffSummaryModelProfiles } from '@/settings/scmDiffSummary/models';
 import { resolveScmDiffSummaryDefaultModelProfile } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { createScmDiffSummarySettingsCatalogReader } from './scmDiffSummarySettingsCatalog';
 import { captureLazyActionAccountContext } from './actionAccountContext';
@@ -72,7 +72,7 @@ describe('Summary settings machine catalog admission', () => {
 
         const target = { serverIdentityId: 'srv_summary_settings', machineId: machine.id };
         const selectionKey = MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.sourceControl;
-        const settings = { ...settingsDefaults, machineAdministrationTargetsLocalV1: selection === 'saved' ? {
+        const settings: Settings = { ...settingsDefaults, machineAdministrationTargetsLocalV1: selection === 'saved' ? {
             [selectionKey]: target,
         } : {} };
         if (selection === 'observed') rememberMachineAdministrationTargetObservation(account.accountLifetime.scope, selectionKey, target);
