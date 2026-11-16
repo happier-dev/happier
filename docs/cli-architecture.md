@@ -3352,9 +3352,19 @@ Account with a changed endpoint therefore makes the preparation stale. Stale
 preparation, an unsupported variant, or native image absence takes the ordinary
 cold launch path. A supplier CLI identity change alone keeps the physical launch
 warm and selects CLI replacement at Session start through the existing installer.
-The retained build identity is provenance, not image freshness. Changes do not
-start a background rebuild; a new explicit Prepare replaces the
-old owned artifact within its new admission.
+The retained build identity is provenance, not image freshness. The encrypted
+preset's `preparation.whenHappierUpdates` defaults to `update-at-start`. With
+`rebuild-automatically`, first use after a CLI identity change runs the existing
+finite Prepare only when the Session starter can Manage the preset, under their
+own admission and the normal cost review. A Team Use member keeps the warm image
+and CLI replacement. There is no background timer or poller. Running Prepare
+requires retained requester Account custody. A foreign controller with only its
+existing codec keeps the warm image and CLI replacement even for a starter who
+can Manage; the controller never borrows author or daemon sign-in for this action.
+A new Prepare replaces the old owned artifact within its new admission. Archive removes the preset’s
+prepared image through the same operation owner and native destroy, while the
+preset rows, revisions and capacity retain their reversible behavior. Restore
+returns it cold; only an explicit Prepare rebuilds the image.
 
 Home checks Machine and preset authority at admission. The original signed binding
 retains `presetPreparationAdmission` with Home, preset and initial revision;

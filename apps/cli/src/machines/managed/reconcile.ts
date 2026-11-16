@@ -51,6 +51,7 @@ import { MachineProvisionerPreparationInspectResultV1Schema, readMachineProvisio
     readMachineProvisionerPreparedLaunchV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { rebuildManagedPresetAtFirstUse } from './presetPreparationRebuild';
 
 export type ManagedMachineReconciliationInput = Readonly<{
     input: ManagedMachineAcquisitionDriverInput;
@@ -626,7 +627,7 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
         prepareAcquire: async (machine, configuration, captureConfiguration) => {
             const hydrator = params.hydrator;
             if (!hydrator?.isOpaque(machine) || !retainedProvisioner) return { machine };
-            const content = hydrator.readPresetDefinition(machine);
+            let content = hydrator.readPresetDefinition(machine);
             if (!content?.launch || !machine.preset) throw new ManagedMachineControllerError('credential_unavailable');
             if (!configuration && content.preparation?.enabled) configuration = await captureConfiguration();
             if (!configuration) return { machine };
@@ -640,8 +641,17 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                         readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata, signal: params.options.signal,
                         ...(params.input.guestCliFetch ? { fetchImpl: params.input.guestCliFetch } : {}) });
                     // Unsubmitted preparation captures this same basis before constructing native invocations.
-                    const decision = readManagedMachinePresetPreparationV1({ content,
+                    let decision = readManagedMachinePresetPreparationV1({ content,
                         cliIdentity: cli.identity, credentialConfigurations: credentialConfigurations! });
+                    if (decision.kind === 'warm' && decision.updateCli
+                        && content.preparation.whenHappierUpdates === 'rebuild-automatically') {
+                        await rebuildManagedPresetAtFirstUse({ input: params.input, options: params.options,
+                            machine, hydrator, content, cliIdentity: cli.identity,
+                            credentialConfigurations: credentialConfigurations! });
+                        content = hydrator.readPresetDefinition(machine)!;
+                        decision = readManagedMachinePresetPreparationV1({ content,
+                            cliIdentity: cli.identity, credentialConfigurations: credentialConfigurations! });
+                    }
                     if (decision.kind === 'warm') {
                         const preparedLaunch = readMachineProvisionerPreparedLaunchV1({ provisioner: retainedProvisioner.identity,
                             descriptor: retainedProvisioner.definition, artifact: decision.artifact });

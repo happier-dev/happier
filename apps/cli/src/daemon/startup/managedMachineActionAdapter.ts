@@ -166,6 +166,7 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
                 ...(params.managedGuestLocalStop ? { managedGuestLocalStop: params.managedGuestLocalStop } : {}),
                 credentials: controllerCredentials,
                 observeRecordedApprovalExecution: params.observeRecordedApprovalExecution,
+                ...(params.waitForActionOperationCompletion ? { waitForActionOperationCompletion: params.waitForActionOperationCompletion } : {}),
                 homeTarget,
                 readGuestHomeHostIdentity: params.readGuestHomeHostIdentity,
                 ...(params.readPolicyCurrent ? { readPolicyCurrent: params.readPolicyCurrent } : {}),

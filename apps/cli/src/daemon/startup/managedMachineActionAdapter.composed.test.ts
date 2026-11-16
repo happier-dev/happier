@@ -241,7 +241,7 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
 }
 
 describe('daemon managed Machine Action factory', () => {
-    it.each(['ready', 'inspected', 'cancelled', 'replaced', 'interrupted-adopt', 'interrupted-replace', 'interrupted-reconnected', 'trust-approved', 'trust-declined', 'native-failed'] as const)('prepares a private preset beneath its original public Action (%s)', async outcome => {
+    it.each(['ready', 'inspected', 'cancelled', 'replaced', 'interrupted-adopt', 'interrupted-replace', 'interrupted-reconnected', 'trust-approved', 'trust-declined', 'native-failed', 'ask-first'] as const)('prepares a private preset beneath its original public Action (%s)', async outcome => {
         const actionId = MACHINE_PRESET_PREPARE_ACTION_ID_V1;
         const payload = await createCliPayloadFixture();
         onTestFinished(() => payload.cleanup());
@@ -288,6 +288,8 @@ describe('daemon managed Machine Action factory', () => {
                 preparation: { enabled: true } } }, recipients: [] });
         const writes: number[] = [];
         const roots: string[] = [];
+        const approvalRequests: ReturnType<typeof StoredApprovalRequestSchema.parse>[] = [];
+        const approvalArtifacts = new Map<string, Readonly<Record<string, unknown>>>();
         const nativeRoles: string[] = [];
         const artifact = { contributionRef: provider, schemaVersion: 1, value: { launch: { name: 'prepared' } } };
         const replacementArtifact = { ...artifact, contributionRef: { ...provider, localId: 'replacement' } };
@@ -388,6 +390,10 @@ describe('daemon managed Machine Action factory', () => {
             if (path === ACCOUNT_SECURITY_PATH_V1) return { status: 200, data: AccountSecurityGetResponseV1Schema.parse({ v: 1,
                 encryptionMode: 'plain', nativeEmail: null, password: { status: 'not_enrolled', revision: null } }) };
             if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }) };
+            if (path.startsWith('/v1/artifacts/')) {
+                const stored = approvalArtifacts.get(decodeURIComponent(path.split('/').at(-1)!));
+                return stored ? { status: 200, data: stored } : { status: 404, data: { error: 'not_found' } };
+            }
             throw new Error(`Unexpected preparation GET ${path}`);
         });
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
@@ -408,6 +414,17 @@ describe('daemon managed Machine Action factory', () => {
                     target: { kind: 'machine', machineId: 'controller' }, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
             }
             if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
+            if (path === '/v1/artifacts') {
+                // Persisted approval HTTP is the boundary; policy, review and signing stay real.
+                const record = body as Readonly<{ id: string; header: string; body: string; dataEncryptionKey: string }>;
+                const content = decodePlainArtifactStoredContent(record.body);
+                const stored = typeof content === 'object' && content !== null ? Reflect.get(content, 'body') : null;
+                approvalRequests.push(StoredApprovalRequestSchema.parse(JSON.parse(String(stored))));
+                const artifact = { ...record, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+                    headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+                approvalArtifacts.set(record.id, artifact);
+                return { status: 200, data: artifact };
+            }
             if (path.endsWith('/presets/get')) return { status: 200, data: { kind: 'found', preset } };
             if (path.endsWith('/presets/update')) {
                 const mutation = ManagedMachinePresetUpdateInputV1Schema.parse(body);
@@ -445,9 +462,10 @@ describe('daemon managed Machine Action factory', () => {
                 ownCredentials: accountCredentials, isCurrent: async () => true, createExecutor: () => executor });
             if (!requester) throw new Error('Prepare requester custody is unavailable');
             onTestFinished(() => requester.dispose());
-            const confirmation = bindPresentUserActionConfirmationV1(actionId, input, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+            const callerContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
                 runtimeAccountId: 'account', actionRequestId: requestId, serverId: configuration.activeServerId,
-                serverIdentityId: 'srv_home', externalActionTarget: authorization.binding.target });
+                serverIdentityId: 'srv_home', externalActionTarget: authorization.binding.target } satisfies ActionExecutorContext;
+            const confirmation = outcome === 'ask-first' ? callerContext : bindPresentUserActionConfirmationV1(actionId, input, callerContext);
             const context = { ...confirmation, externalActionExecutionAuthorization: requester.authorization,
                 signExternalActionApprovalInput: (args: Parameters<NonNullable<ActionExecutorContext['signExternalActionApprovalInput']>>[0]) =>
                     signExternalActionApprovalInputV1({ authorizationToken: authorization.token, ...args, privateKey: signing.secretKey }),
@@ -457,6 +475,17 @@ describe('daemon managed Machine Action factory', () => {
             return result;
         };
         const result = await start();
+        if (outcome === 'ask-first') {
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+                result: { kind: 'approval_request_created', actionId, artifactId: expect.any(String) } });
+            expect(approvalRequests).toHaveLength(1);
+            expect(approvalRequests[0]).toMatchObject({ actionId, actionArgs: input,
+                summary: expect.stringContaining('charges may apply') });
+            expect(nativeRoles).toEqual([]);
+            expect(writes).toEqual([]);
+            expect(openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared).toBeUndefined();
+            return;
+        }
         expect(result.ok ? null : { ...result, nativeRoles, writes,
             prepared: openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared }).toBeNull();
         expect(result).toMatchObject({ ok: true, result: { status: 'accepted', operationId: 'prepare-operation' } });

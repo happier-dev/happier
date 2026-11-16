@@ -690,6 +690,8 @@ type OriginalAccountActionInput = Readonly<{
   managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
   /** Host provenance retained inside the existing installation-bound private box. */
   invocation?: ExternalActionRequesterInvocationV1;
+  /** Host-private requester custody already disclosed to this exact installed target. */
+  requesterCustody?: ExternalActionExecutionAuthorizationV1;
   /** Host-private installed Run origin. Home reads consent from that Run, never from this caller. */
   installedWorkflow?: Readonly<{
     context: ActionExecutorContext; machineId: string; installationId: string; privateKey: ExternalActionMachineRequestSigningKey;
@@ -824,6 +826,23 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     ? workflowCaller.authorization.externalActionExecutionAuthorization : undefined;
   const workflowBinding = workflowAuthorization?.binding;
   const accountId = workflowBinding?.accountId ?? publisherAccountId;
+  const retainedRequester = input.requesterCustody ? readRequesterAccountActionContext(input.requesterCustody) : null;
+  // An ordinary child keeps caller constraints, never the parent's consent.
+  const retainedInvocation = retainedRequester?.invocation ? (() => {
+    const { presentUserConfirmation: _confirmation, reviewedParent: _review,
+      actionRequestAttributionV1: _attribution, ...caller } = retainedRequester.invocation;
+    return caller;
+  })() : undefined;
+  if (input.requesterCustody && (!retainedRequester || input.target.kind !== 'machine'
+    || input.requesterCustody.binding.accountId !== accountId
+    || input.requesterCustody.binding.serverIdentityId !== input.serverIdentityId
+    || input.requesterCustody.binding.machineId !== input.target.machineId
+    || normalizeServerHttpBaseUrl(retainedRequester.serverHttpBaseUrl) !== homeUrl
+    || !sameStrictJsonValue(encodeStoredCredentials(retainedRequester.credentials), encodeStoredCredentials(input.credentials))
+    || retainedInvocation && (!sameStrictJsonValue(retainedInvocation, input.invocation)
+      || input.authority !== retainedInvocation.authority))) {
+    return fail('admission_unavailable', 'dispatch.retained_requester');
+  }
   const spawnChild = input.nativeCredentialSpawnChild;
   const spawnRequester = spawnChild
     ? readRequesterAccountActionContext(spawnChild.context.externalActionExecutionAuthorization) : null;
@@ -844,6 +863,8 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     && (!workflowBinding || 'authentication' in workflowBinding || workflowBinding.custodianAccountId !== publisherAccountId
       || workflowBinding.serverIdentityId !== input.serverIdentityId)) return fail('admission_unavailable', 'dispatch.workflow_binding');
   const isCurrent = async () => !input.signal?.aborted
+    && (!retainedRequester || await phase('retained_requester_custody', () =>
+      (retainedRequester.isCustodyCurrent ?? retainedRequester.isCurrent)()))
     && (!spawnRequester || input.isCurrent === spawnRequester.isCurrent || await phase('spawn_custody', () => spawnRequester.isCurrent()))
     && (!input.isCurrent || await phase('currentness', () => input.isCurrent!()));
   if (!await isCurrent()) return fail('target_unavailable');
@@ -1119,7 +1140,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     }
   } else if (scopedController || machine && access && (foreign || requiresMachineProof)) {
     if (!input.serverIdentityId) return fail('admission_unavailable', 'dispatch.machine_home_identity');
-    if (foreign && !controllerCodec && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
+    if (foreign && !controllerCodec && !retainedRequester && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
     const readInstalledMachine = async (observed: CurrentAccountMachineInventoryItem) => {
       const isOriginalTarget = input.target.kind === 'machine' && observed.id === input.target.machineId && requiresMachineProof;
       if (isOriginalTarget && installedRead.status === 'rejected') throw installedRead.reason;
@@ -1134,6 +1155,10 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     if (!installed) return fail('admission_unavailable', 'dispatch.machine_installation');
     const destinationId = scopedController?.machineId ?? machine!.id;
     const custodianAccountId = scopedController?.custodian.accountId ?? access!.custodian.accountId;
+    if (input.requesterCustody && (input.requesterCustody.binding.installationId !== installed.installationId
+      || input.requesterCustody.binding.custodianAccountId !== custodianAccountId)) {
+      return fail('admission_unavailable', 'dispatch.retained_requester_installation');
+    }
     const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({ actionId, envelope, machineId: destinationId,
       pat: input.credentials.token, serverHttpBaseUrl: homeUrl,
       ...(nativeCredentialSpawnChild ? { nativeCredentialSpawnChild } : {}),
@@ -1197,7 +1222,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
           installationPublicKey: decodeBase64(installed.installationPublicKey, scopedController ? 'base64url' : 'base64'), randomBytes });
       } else if (foreign || input.invocation) {
         if (!installed.installationPublicKey) return fail('admission_unavailable', 'dispatch.requester_installation_key');
-        if (foreign) {
+        if (foreign && !retainedRequester) {
           const refusal = await confirmDisclosure({ id: machine!.id, custodian: machine!.access?.custodian });
           if (refusal) return refusal;
         }

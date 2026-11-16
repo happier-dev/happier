@@ -95,6 +95,8 @@ export type ManagedMachineAcquisitionDriverInput = Readonly<{
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     /** HTTP boundary shared by Home CLI identity and public release discovery. */
     guestCliFetch?: typeof fetch;
+    /** Join the installed host's existing finite Prepare operation, including cleanup. */
+    waitForActionOperationCompletion?: import('@/api/apiMachine').ApiMachineClient['waitForActionOperationCompletion'];
     prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
 }>;
 

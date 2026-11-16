@@ -10,6 +10,8 @@ import { ManagedMachineFullV1Schema, isManagedOpaquePresetMachineV1,
 import { ManagedMachinePresetContentV1Schema, ManagedMachinePresetStoredContentV1Schema, openManagedMachinePresetContentV1,
     openManagedMachinePresetRecipientProjectionV1, readManagedMachinePresetContentOverrideForModeV1,
     resolveManagedMachinePresetResizeOverrideV1,
+    replaceManagedMachinePresetPreparationV1,
+    type ManagedMachinePresetPreparedWriteV1,
     rewrapManagedMachinePresetRecipientsV1,
     type ManagedMachinePresetContentV1, type ManagedMachinePresetNativeControlResultV1,
     type ManagedMachinePresetStoredContentCarrierV1, type ManagedMachinePresetStoredContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -407,6 +409,26 @@ export function createManagedPresetHydrator(input: Readonly<{
             ...(prepared.presetRecipients === undefined ? {} : { presetRecipients: prepared.presetRecipients }) };
     }
 
+    /** Import only the completed image into the already admitted Machine snapshot. */
+    async function replacePreparation(machine: ManagedMachineFullV1, prepared: ManagedMachinePresetPreparedWriteV1,
+        signal?: AbortSignal): Promise<void> {
+        const snapshot = snapshots.get(machine.id);
+        if (!snapshot || !machine.preset || !samePreset(snapshot.preset, machine.preset)) {
+            throw new ManagedMachineControllerError('credential_unavailable');
+        }
+        const replacement = await withVerifiedAccount(machine.preset.contentEncryptionMode, signal, account => {
+            const common = { presetId: snapshot.preset.id, content: snapshot.content,
+                expectedOperationId: snapshot.opened.prepared?.operationId ?? null, prepared };
+            return snapshot.preset.contentEncryptionMode === 'plain'
+                ? replaceManagedMachinePresetPreparationV1({ ...common, mode: 'plain' })
+                : account.accountKey === undefined ? null : replaceManagedMachinePresetPreparationV1({ ...common, mode: 'e2ee',
+                    recipients: snapshot.recipients, accountId: account.accountId, accountKey: account.accountKey, randomBytes });
+        });
+        if (!replacement) throw new ManagedMachineControllerError('credential_unavailable');
+        snapshots.set(machine.id, { ...snapshot, content: replacement.content,
+            opened: { ...snapshot.opened, prepared: replacement.prepared } });
+    }
+
     async function preparePresetContentReport(machine: ManagedMachineFullV1, report: PresetReportInput,
         signal?: AbortSignal): Promise<ManagedMachinePresetStoredContentV1> {
         return (await preparePresetReport(machine, report, signal)).content;
@@ -564,7 +586,7 @@ export function createManagedPresetHydrator(input: Readonly<{
     }
 
     return { open, openSnapshot, withPresetDefinition, openRecipientProjection, openRead, withE2eeAccountKey, normalize, prepareAdmissionAcquire, prepareResize, preparePresetContentReport, prepareBoundSetupReport, prepareControllerReport, prepareResizeReport,
-        rememberReviewedFacts, readReviewedFacts, readSetupDefinition, readPresetDefinition, isOpaque, structural, projectEnrollmentCorrelation };
+        replacePreparation, rememberReviewedFacts, readReviewedFacts, readSetupDefinition, readPresetDefinition, isOpaque, structural, projectEnrollmentCorrelation };
 }
 
 export type ManagedPresetHydrator = ReturnType<typeof createManagedPresetHydrator>;

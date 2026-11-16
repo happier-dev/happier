@@ -5053,7 +5053,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         return { ok: true, result };
       }
-      const dispatchMachineManagedResult = await dispatchMachineManaged({ actionId, deps, admittedInput, ctx, isDeferredApprovalResult,
+      const dispatchMachineManagedResult = await dispatchMachineManaged({ actionId, deps, admittedInput,
+        ctx: actionId === MANAGED_ACQUIRE_ACTION_ID_V1 ? withOrdinaryChildAction(ctx) : ctx, isDeferredApprovalResult,
         retireOpenManagedDeleteApprovals: (input, context) => retireOpenSubjectApprovals({ kind: 'managedMachine', ...input }, context) });
       if (dispatchMachineManagedResult !== null) return dispatchMachineManagedResult;
 

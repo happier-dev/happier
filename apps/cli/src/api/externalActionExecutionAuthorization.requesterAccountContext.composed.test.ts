@@ -5,7 +5,7 @@ import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugi
 import { createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { createPlatformFailureEnrollmentForHost } from '@/deployments/platformFailureEnrollment';
-import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema, AutomationDefinitionReconcileRequestSchema,
+import { AccountProfileSchema, AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema, AutomationDefinitionReconcileRequestSchema,
   FeaturesResponseSchema, openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1,
   type AutomationDefinitionDetail, type ActionExecutorContext } from '@happier-dev/protocol';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -13,6 +13,7 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFAC
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/plugin-sdk/events';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAccountHomeHttp, registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
 import { admitRequesterAccountActionContext, prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
@@ -572,9 +573,11 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       installationPublicKey: encodeBase64(controllerPublicKey),
       access: { ...machine.access, custodian: { accountId: options.controllerCustodianAccountId ?? 'alice', displayName: 'Alice' } } };
     if (request.url === '/v1/features' || request.url === '/v1/features/authenticated') {
-      return respond(FeaturesResponseSchema.parse({ capabilities: { serverIdentity: { serverIdentityId: homeIdentityId } } }));
+      return respond(FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: homeIdentityId } } }));
     }
     if (request.url === '/v2/account/settings') return respond({ content: null, version: 0 });
+    if (request.url === '/v1/account/profile') return respond(AccountProfileSchema.parse({ id: 'bob' }));
+    if (request.url === '/v1/account/encryption/currentness') return respond(createAccountEncryptionCurrentnessFixture({ mode, settingsVersion: 0 }));
     if (request.url === '/v1/account/encryption') {
       await options.beforeEncryptionRead?.();
       if (options.passiveReadDelayMs) await new Promise(resolve => setTimeout(resolve, options.passiveReadDelayMs));
@@ -872,6 +875,55 @@ it('spends the same contributed requester custody through CLI and native HTTP po
 });
 
 describe('ordinary CLI requester Account custody on the existing Action carrier', () => {
+  it.each(['same', 'installation', 'target', 'account', 'home', 'automation', 'api-token'] as const)('reuses disclosed requester custody only for its exact installed target (%s)', async mismatch => {
+    await withConfiguredDaemonTestHome({ prefix: 'ordinary-child-custody-' }, async () => {
+      const events: string[] = [];
+      const target = await home('plain', events, { originalOwnAction: 'agents.models.list' });
+      const channel = await createRequesterCurrentnessSocketHarness();
+      const credentials: StoredCredentials = { token: token(), encryption: null,
+        credentialProvenance: mismatch === 'api-token' ? 'api_token' : 'stored_session' };
+      const invocation = { caller: { kind: 'host' as const }, surface: 'cli' as const,
+        authority: mismatch === 'automation' ? 'account_automation' as const : 'present_user' as const };
+      const source = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'already-admitted-parent', binding: {
+        accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 7 },
+        accountEncryptionMode: 'plain', serverIdentityId: homeIdentityId,
+        machineId: mismatch === 'target' ? 'other-machine' : 'alice-machine',
+        installationId: mismatch === 'installation' ? 'other-installation' : 'alice-installation',
+        actionId: 'agents.models.list', requestId: 'parent-request', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
+          v: 1, requestId: 'parent-request', target: { kind: 'machine', machineId: 'alice-machine' }, input: ownMachineInput }),
+        target: { kind: 'machine', machineId: mismatch === 'target' ? 'other-machine' : 'alice-machine' },
+      } });
+      let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+      try {
+        requester = await runWithServerHttpBaseUrl(target.url, () => admitRequesterAccountActionContext({
+          authorization: source, credentials, invocation, serverId: configuration.activeServerId, serverIdentityId: homeIdentityId,
+          serverHttpBaseUrl: target.url, isCurrent: async () => true,
+        }));
+        expect(requester).not.toBeNull();
+        if (!requester) throw new Error('Expected admitted requester custody');
+        const result = await dispatchOriginalAccountAction({ actionId: 'agents.models.list', input: ownMachineInput,
+          requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' },
+          credentials: mismatch === 'account' ? { ...credentials, token: credentials.token.replace('signature', 'other-signature') } : credentials,
+          serverHttpBaseUrl: target.url, serverIdentityId: mismatch === 'home' ? 'other-home' : homeIdentityId,
+          authority: invocation.authority, invocation,
+          requesterCustody: requester.authorization });
+        if (mismatch === 'same') {
+          expect(result).toMatchObject({ ok: true, result: ownMachineResult });
+          expect(events).toContain('dispatch');
+          const delivered = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+          const opened = openExternalActionRequesterAccountContextV1({ authorization: delivered.executionAuthorization,
+            machineId: 'alice-machine', installationId: 'alice-installation', serverIdentityId: homeIdentityId,
+            purpose: { kind: 'external_action' }, installationPrivateKey: target.privateKey, includeInvocation: true });
+          expect(opened?.invocation).toEqual(invocation);
+          expect(opened?.credentials.token).toBe(credentials.token);
+        } else {
+          expect(result).toMatchObject({ ok: false, errorCode: mismatch === 'automation' || mismatch === 'api-token'
+            ? 'requester_account_material_unavailable' : 'admission_unavailable' });
+          expect(events).not.toContain('dispatch');
+        }
+      } finally { await requester?.dispose(); await channel.close(); }
+    });
+  });
   it.each(['plain', 'e2ee'] as const)('forwards exact Account power admission without selecting a native recovery controller (%s)', async mode => {
     const events: string[] = [];
     const target = await home(mode, events, { custodianAccountId: 'bob', originalOwnAction: 'machines.managed.power.set',

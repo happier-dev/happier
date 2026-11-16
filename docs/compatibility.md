@@ -9,8 +9,17 @@ not image freshness. The private binding reader accepts and discards the retired
 supplier CLI identity remains build provenance. A CLI-only change selects the
 same warm image with private `preparationExecution.updateCli: true`, and the
 existing guest installer replaces the CLI during admitted Session startup.
-Launch or setup changes still select a cold launch. No automatic rebuild setting
-is introduced. The inspected prospective 0.2 frontier `cfbc463ba8` has neither
+Launch or setup changes still select a cold launch. The optional encrypted
+`preparation.whenHappierUpdates` preference defaults to `update-at-start`.
+`rebuild-automatically` requests the existing finite Prepare on first use after
+a supplier CLI identity change only when the Session starter can Manage the
+preset. It uses that person's admission and the existing cost review. Team Use
+members retain the warm launch and CLI replacement. No author authority is
+borrowed, and no timer, poller or separate preference store is introduced.
+Foreign controllers holding only the existing codec also retain the warm image
+and CLI replacement, including when the starter can Manage: that custody contains
+no requester sign-in for a fresh Prepare admission.
+The inspected prospective 0.2 frontier `cfbc463ba8` has neither
 managed preset nor prepared-image schemas; no predecessor wire adapter is added.
 
 ## Preset configuration counter (unreleased 0.3)

@@ -25,9 +25,25 @@ import { pathToFileURL } from 'node:url';
 import nacl from 'tweetnacl';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
-import { decodeExternalActionHttpBodyV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, decodeExternalActionHttpBodyV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { reloadConfiguration } from '@/configuration';
+import { createMachineProvisionerSpecializedPreparationAuthorFixture } from '../../../../../packages/plugin-sdk/fixtures/authoring-inference/machineProvisioners';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { createManagedMachinePresetPreparationBindingV1 } from '@happier-dev/cli-common/machines/managed';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { configuration } from '@/configuration';
+import { AccountProfileSchema } from '@happier-dev/protocol';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 const trustBoundary = vi.hoisted(() => ({ stopScan: false }));
 vi.mock('node:child_process', async original => {
@@ -66,10 +82,11 @@ function guestExec(input: unknown) {
 }
 
 function harness(options: Readonly<{ streamRole?: boolean; holdStream?: boolean; guest?: boolean; targetExec?: (body: unknown) => Promise<ReturnType<typeof guestExec>>; targetPutFile?: (body: unknown) => Promise<void>;
+    nativeOptions?: Parameters<typeof fixture>[0];
     onNativeRole?: NonNullable<Parameters<typeof fixture>[0]>['onNativeRole'] }> = {}) {
     const calls: string[] = [];
     const inputs: unknown[] = [];
-    const native = fixture({ credentialPurposes: [], streamRole: options.streamRole ?? true,
+    const native = fixture({ ...options.nativeOptions, credentialPurposes: [], streamRole: options.streamRole ?? true,
         nativeCredentialService: Boolean(options.onNativeRole),
         ...(options.guest || options.targetExec ? { nativeRoleResults: { exec: (options.targetExec ?? guestExec) as never } } : {}),
         async onNativeRole(role, input, context) {
@@ -126,6 +143,198 @@ exit 91
 }
 
 describe('Session-target authority for managed provider channel roles', () => {
+    it.each(['manager', 'member', 'same-cli', 'default', 'configuration-changed', 'codec-only',
+        'latest-configuration-changed', 'optin-removed', 'deferred-approval', 'latest-already-rebuilt'] as const)(
+      'consumes automatic prepared rebuild through first acquisition (%s)', async scenario => {
+        await withConfiguredDaemonTestHome({ prefix: 'first-use-preparation-' }, async () => {
+            await installableGuestCliPayload();
+            const localPayloadRoot = process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT!;
+            vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', JSON.stringify({ root: localPayloadRoot, identity: 'a'.repeat(64) }));
+            const manifest = normalizePluginManifestV2(createMachineProvisionerSpecializedPreparationAuthorFixture().manifest);
+            const provider = { pluginId: manifest.id, localId: manifest.contributes.machineProvisioners[0]!.id };
+            const launch = { provider, schemaVersion: 1, name: 'Admitted name', choices: { name: 'local' } };
+            const artifact = (name: string) => ({ contributionRef: provider, schemaVersion: 1, value: { launch: { name } } });
+            let inspectedArtifact = artifact('old-image');
+            const acquired: unknown[] = [];
+            const h = harness({ nativeOptions: { fixtureManifest: manifest, nativeRoleResults: {
+                check: { available: true },
+                options: { base: { launch: launch.choices, nativeFacts: { preparationGuest: {
+                    target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' } } },
+                    dimensions: { size: [], image: [], location: [], network: [], duration: [] } },
+                preparationInspect: () => ({ kind: 'ready', artifact: inspectedArtifact }),
+            } }, onNativeRole: async (role, body) => {
+                if (role === 'acquire') { acquired.push(body); throw new Error('Fixture stops before guest allocation'); }
+            } });
+            const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null };
+            const row = ManagedOpaquePresetMachineV1Schema.parse({ id: 'first-use', homeId, custodianAccountId: 'owner',
+                controller: machine.controller, preset: { id: 'first-use-preset', revision: 1, contentEncryptionMode: 'plain' },
+                acquisitionMode: 'resource-bound', allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now',
+                intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+            const content = { t: 'plain' as const, v: ManagedMachinePresetContentV1Schema.parse({ v: 1, name: 'Admitted name', launch,
+                preparation: { enabled: true, whenHappierUpdates: scenario === 'default' ? 'update-at-start' : 'rebuild-automatically' },
+                prepared: { operationId: 'original-build', status: 'ready', artifact: inspectedArtifact, cliBinaryPath: '/prepared/happier',
+                    binding: createManagedMachinePresetPreparationBindingV1({ content: { launch: scenario === 'configuration-changed'
+                        ? { ...launch, choices: { name: 'other-configuration' } } : launch }, credentialConfigurations: [],
+                        cliIdentity: `home-payload:${(scenario === 'same-cli' ? 'a' : 'b').repeat(64)}` }) } }) };
+            let current = row;
+            let presetContent = scenario === 'latest-configuration-changed'
+                ? { ...content, v: { ...content.v, launch: { ...launch, choices: { name: 'later-configuration' } } } }
+                : scenario === 'optin-removed'
+                    ? { ...content, v: { ...content.v, preparation: { enabled: true, whenHappierUpdates: 'update-at-start' as const } } }
+                    : content;
+            let presetRevision = 1;
+            let prepareCalls = 0;
+            let capabilityReads = 0;
+            let presetReads = 0;
+            let approvalReads = 0;
+            let recordedApproval: ReturnType<typeof StoredApprovalRequestSchema.parse> | undefined;
+            const progress: unknown[] = [];
+            if (scenario === 'latest-already-rebuilt') {
+                inspectedArtifact = artifact('new-image');
+                presetContent = { ...content, v: { ...content.v, prepared: { ...content.v.prepared,
+                    artifact: inspectedArtifact, binding: createManagedMachinePresetPreparationBindingV1({ content: { launch },
+                        credentialConfigurations: [], cliIdentity: `home-payload:${'a'.repeat(64)}` }) } } };
+            }
+            const operations = createHostActionOperationRuntime({ machineId: machine.controller!.machineId,
+                resolveAccountId: async () => 'owner', generateOperationId: () => 'new-image-operation' });
+            const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                const path = new URL(String(url)).pathname;
+                if (path.endsWith('/presets/get')) { presetReads++; return { status: 200, data: { kind: 'found', preset: {
+                    id: row.preset.id, homeId, revision: presetRevision, controller: machine.controller, contentEncryptionMode: 'plain',
+                    owner: scenario === 'member' ? { kind: 'team', teamId: 'team' } : { kind: 'account', accountId: 'owner' },
+                    content: presetContent, recipients: [] } } }; }
+                if (path.endsWith('/teams/get')) { capabilityReads++; return { status: 200, data: {
+                    id: 'team', name: 'Team', description: null, logo: null, archivedAt: null, recovery: null,
+                    policy: { v: 1, sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed',
+                        defaultSessionHistoryAccess: 'from_membership', admissionMode: 'invite_only', authenticationPolicy: null,
+                        authenticationPolicyStatus: 'available' }, viewerRole: 'member',
+                    capabilities: { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true }, counts: null,
+                    admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+                } }; }
+                if (path.endsWith('/execution-authorization')) {
+                    const request = body as { envelope: { v: 1; requestId: string; target: { kind: 'machine'; machineId: string }; input: unknown } };
+                    return { status: 200, data: { v: 1, token: 'fresh-prepare-root', binding: { accountId: 'owner', custodianAccountId: 'owner',
+                        authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain', serverIdentityId: homeId,
+                        ...machine.controller, actionId: 'machines.presets.prepare', requestId: request.envelope.requestId,
+                        target: request.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+                        presetPreparationAdmission: request.envelope.input } } };
+                }
+                if (path === '/v1/actions/machines.presets.prepare') {
+                    prepareCalls++;
+                    const request = body as { envelope: { requestId: string; input: unknown } };
+                    const result = await operations.observeExecution({ actionId: 'machines.presets.prepare', input: request.envelope.input,
+                        actionRequestId: request.envelope.requestId, execute: async operation => {
+                            const accepted = { status: 'accepted' as const, operationId: operation.operationAcceptance!.operationId,
+                                machineId: machine.controller!.machineId };
+                            operation.operationAcceptance!.accept(accepted);
+                            inspectedArtifact = artifact('new-image');
+                            presetContent = { t: 'plain', v: ManagedMachinePresetContentV1Schema.parse({ ...content.v, name: 'Later rename',
+                                prepared: { ...content.v.prepared, operationId: accepted.operationId, artifact: inspectedArtifact,
+                                    binding: createManagedMachinePresetPreparationBindingV1({ content: { launch }, credentialConfigurations: [],
+                                        cliIdentity: `home-payload:${'a'.repeat(64)}` }) } }) };
+                            presetRevision++;
+                            return { ok: true, result: accepted };
+                        } });
+                    if (scenario === 'deferred-approval') {
+                        // Home's recorded Artifact is the persistence boundary. The real observer
+                        // consumes the exact child origin and its recorded ordinary execution.
+                        recordedApproval = StoredApprovalRequestSchema.parse({ v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 2,
+                            decision: { kind: 'approve', decidedAtMs: 2 },
+                            createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'machines.presets.prepare',
+                            actionArgs: request.envelope.input, summary: 'Build a prepared image; charges may apply.',
+                            approval: { flow: 'deferred', result: 'required' },
+                            executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+                                serverId: configuration.activeServerId, serverIdentityId: homeId, accountId: 'owner',
+                                machineId: machine.controller!.machineId, actionId: 'machines.presets.prepare', requestId: request.envelope.requestId },
+                            execution: { executedAtMs: 2, ok: true, result: result.ok ? result.result : null } });
+                        return { status: 200, data: { v: 1, actionId: 'machines.presets.prepare', requestId: request.envelope.requestId,
+                            execution: { ok: true, result: { kind: 'approval_request_created', artifactId: 'prepare-approval',
+                                actionId: 'machines.presets.prepare' } } } };
+                    }
+                    return { status: 200, data: { v: 1, actionId: 'machines.presets.prepare', requestId: request.envelope.requestId, execution: result } };
+                }
+                if (path.endsWith('/submit')) { current = { ...current, allocation: 'may-exist' }; return { status: 200, data: { submitted: true, machine: current } }; }
+                return { status: 200, data: { machine: current } };
+            });
+            const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: 'owner' }) };
+                if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ settingsVersion: 0 }) };
+                if (path === '/v2/account/settings') return { status: 200, data: { content: null, version: 0 } };
+                if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                if (path === '/v1/artifacts/prepare-approval' && recordedApproval) {
+                    approvalReads++;
+                    return { status: 200, data: { id: 'prepare-approval', ownerAccountId: 'owner', access: 'owner',
+                        encryptionMode: 'plain', publicAudience: 'none',
+                        header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(recordedApproval)),
+                        body: encodePlainArtifactStoredContent({ body: JSON.stringify(recordedApproval) }),
+                        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2 } };
+                }
+                const publication = { id: machine.controller!.machineId, kind: 'persistent', active: true, revokedAt: null,
+                    replacedByMachineId: null, installationId: machine.controller!.installationId, installationPublicKey: Buffer.from(nacl.sign.keyPair().publicKey).toString('base64'),
+                    storageMode: 'plain', access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
+                return { status: 200, data: path === '/v1/machines' ? [publication] : { machine: publication } };
+            });
+            const request = vi.spyOn(axios, 'request').mockImplementation(async config => {
+                if (String(config.method).toUpperCase() === 'POST') return await axios.post(String(config.url), config.data, config);
+                return await axios.get(String(config.url), config);
+            });
+            onTestFinished(() => { request.mockRestore(); post.mockRestore(); get.mockRestore(); });
+            const channel = await createRequesterCurrentnessSocketHarness();
+            onTestFinished(() => channel.close());
+            const acquisition = { selection: { kind: 'preset' as const, homeId, id: row.preset.id, revision: 1 }, controller: machine.controller };
+            const originalActionEnvelope = { v: 1 as const, requestId: 'first-use',
+                target: { kind: 'machine' as const, machineId: machine.controller!.machineId }, input: acquisition };
+            const source = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-acquire-root', binding: {
+                accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
+                accountEncryptionMode: 'plain', serverIdentityId: homeId, ...machine.controller, actionId: 'machines.managed.acquire',
+                requestId: 'first-use', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+                target: { kind: 'machine', machineId: machine.controller!.machineId } } });
+            const requester = await admitRequesterAccountActionContext({ authorization: source, credentials,
+                serverId: configuration.activeServerId, serverIdentityId: homeId, serverHttpBaseUrl: h.input.serverUrl, isCurrent: async () => true });
+            if (!requester) throw new Error('Expected admitted starter custody');
+            onTestFinished(() => requester.dispose());
+            const input = { ...h.input, token, credentials, externalActionMachineRequestPrivateKey: nacl.sign.keyPair().secretKey,
+                waitForActionOperationCompletion: operations.runner.waitForCompletion,
+                ...(scenario === 'deferred-approval' ? { observeRecordedApprovalExecution: createCliActionExecutorHarness({ token, credentials,
+                    sessionId: '', mode: 'plain', ctx: null, serverId: configuration.activeServerId,
+                    serverHttpBaseUrl: h.input.serverUrl }).observeRecordedApprovalExecution } : {}) };
+            const hydrator = createManagedPresetHydrator(input);
+            const opened = await hydrator.open(row, { content, recipients: [] });
+            const executor = createActionExecutor({ managedMachineAction: async ({ context }) => {
+                const options = { requestId: 'first-use', acquisitionMode: 'resource-bound' as const, context, signal: context.signal };
+                await reconcileManagedMachine({ input, options, hydrator, machine: opened, action: 'machines.managed.acquire',
+                    client: createManagedMachineControllerClient(input, options, 'machines.managed.acquire', hydrator) });
+                return {};
+            } });
+            const result = await executor.execute('machines.managed.acquire', acquisition, {
+                surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: 'first-use',
+                runtimeAccountId: 'owner', externalActionExecutionAuthorization: scenario === 'codec-only' ? source : requester.authorization,
+                signal: new AbortController().signal,
+                externalActionTarget: source.binding.target, originalActionEnvelope,
+                actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['cli'] } }),
+                operationOwnerUpdate: { update(value) { progress.push(value.progress); } } });
+            expect(acquired, JSON.stringify(result)).toHaveLength(1);
+            expect(prepareCalls).toBe(scenario === 'manager' || scenario === 'deferred-approval' ? 1 : 0);
+            expect(capabilityReads).toBe(scenario === 'member' ? 1 : 0);
+            expect(presetReads).toBe(scenario === 'manager' || scenario === 'deferred-approval' ? 2
+                : scenario === 'member' || scenario === 'latest-configuration-changed' || scenario === 'optin-removed'
+                    || scenario === 'latest-already-rebuilt' ? 1 : 0);
+            expect(acquired).toMatchObject([{ managedId: row.id, launch: { name: scenario === 'manager'
+                || scenario === 'deferred-approval' || scenario === 'latest-already-rebuilt' ? 'new-image'
+                : scenario === 'configuration-changed' ? 'local' : 'old-image' } }]);
+            expect(approvalReads).toBe(scenario === 'deferred-approval' ? 1 : 0);
+            if (scenario === 'deferred-approval') expect(progress).toContainEqual({ phase: 'waiting_for_approval',
+                label: 'Waiting for approval', approval: { kind: 'approval_request_created', artifactId: 'prepare-approval',
+                    actionId: 'machines.presets.prepare' } });
+            expect(hydrator.readPresetDefinition(opened)?.name).toBe('Admitted name');
+            expect(hydrator.readPresetDefinition(opened)?.preparationExecution?.updateCli).toBe(
+                scenario === 'member' || scenario === 'default' || scenario === 'codec-only'
+                    || scenario === 'latest-configuration-changed' || scenario === 'optin-removed' ? true : undefined);
+        });
+    });
     it.each([false, true])('uses the author digest for a cold source without preparation guest metadata (Prepare %s)', async enabled => {
         const acquired: unknown[] = [];
         const h = harness({ onNativeRole: async (role, body) => {
