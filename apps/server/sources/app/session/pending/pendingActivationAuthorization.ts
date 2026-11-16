@@ -183,6 +183,8 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
     currentAccess: Pick<EffectiveSessionAccess, 'accountId' | 'sessionId' | 'level'>;
     now?: Date;
     resumeWhenAvailable?: true;
+    /** This transaction wrote the row from its own target admission while holding the placement's controller locks. */
+    admittedInTransaction?: true;
 }>): Promise<PendingActivationPublicationTarget | undefined> {
     if (params.currentAccess.sessionId !== params.sessionId) return undefined;
     const eligible = await params.tx.sessionPendingMessage.findUnique({
@@ -207,23 +209,25 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
             resumeWhenAvailable: params.resumeWhenAvailable,
         })
     ) return undefined;
-    const controllerAccountIds = await readPendingActivationControllerAccountIdsInTx(
-        params.tx, inputAdmissionReceipt.data.admittedTarget?.machineId,
-    );
-    await acquireSessionAccountCursorLocksInTx(params.tx, [params.sessionId], controllerAccountIds);
-    const currentEligible = await params.tx.sessionPendingMessage.findUnique({
-        where: { sessionId_localId: { sessionId: params.sessionId, localId: params.requestId }, targetExecutionRunId: null },
-        select: ACTIVATION_ELIGIBILITY_SELECT,
-    });
-    const currentControllerAccountIds = await readPendingActivationControllerAccountIdsInTx(
-        params.tx, inputAdmissionReceipt.data.admittedTarget?.machineId,
-    );
-    // Standalone arming can wait on Accounts after reading the receipt. Rejoin
-    // the complete admission with its current receipt instead of committing a
-    // refusal from that stale eligible row or adding another Account later.
-    if (!isDeepStrictEqual(eligible, currentEligible)
-        || !isDeepStrictEqual(controllerAccountIds, currentControllerAccountIds)) {
-        throw new TransactionReplayRequiredError('pending-activation-target-changed');
+    if (!params.admittedInTransaction) {
+        const controllerAccountIds = await readPendingActivationControllerAccountIdsInTx(
+            params.tx, inputAdmissionReceipt.data.admittedTarget?.machineId,
+        );
+        await acquireSessionAccountCursorLocksInTx(params.tx, [params.sessionId], controllerAccountIds);
+        const currentEligible = await params.tx.sessionPendingMessage.findUnique({
+            where: { sessionId_localId: { sessionId: params.sessionId, localId: params.requestId }, targetExecutionRunId: null },
+            select: ACTIVATION_ELIGIBILITY_SELECT,
+        });
+        const currentControllerAccountIds = await readPendingActivationControllerAccountIdsInTx(
+            params.tx, inputAdmissionReceipt.data.admittedTarget?.machineId,
+        );
+        // Standalone arming can wait on Accounts after reading the receipt. Rejoin
+        // the complete admission with its current receipt instead of committing a
+        // refusal from that stale eligible row or adding another Account later.
+        if (!isDeepStrictEqual(eligible, currentEligible)
+            || !isDeepStrictEqual(controllerAccountIds, currentControllerAccountIds)) {
+            throw new TransactionReplayRequiredError('pending-activation-target-changed');
+        }
     }
     const session = await params.tx.session.findUniqueOrThrow({
         where: { id: params.sessionId },
@@ -233,7 +237,9 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
     const ownerAdmission = readPendingSessionInputAdmission({ sessionId: params.sessionId, accountId: session.accountId, pending: eligible });
     if (!ownerAdmission) return undefined;
     const admittedTarget = ownerAdmission.admittedTarget;
-    if (admittedTarget && !await isCurrentSessionInputMachineTargetInTx(params.tx, admittedTarget)) return undefined;
+    // Authorize once: the admitting transaction already decided this exact target.
+    if (admittedTarget && !params.admittedInTransaction
+        && !await isCurrentSessionInputMachineTargetInTx(params.tx, admittedTarget)) return undefined;
     const actorAccountId = session.accountId;
     const requestedAt = nextRequestedAt({
         now: params.now ?? new Date(),

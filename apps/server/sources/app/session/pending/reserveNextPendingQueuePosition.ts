@@ -1,9 +1,16 @@
 import { isDeepStrictEqual } from "node:util";
 import { inTx, TransactionReplayRequiredError, type ResolvedTransactionResult, type Tx } from "@/storage/inTx";
 import { assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
-import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
+import { acquireSessionAccountCursorLocksInTx, sessionAccountCursorLocksHoldSessionRows } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { readPendingActivationControllerAccountIdsInTx } from "./pendingActivationAuthorization";
-import { readCurrentCommittedSessionInputMachineTargetInTx } from "@/app/session/messages/sessionInputAdmission";
+import { readStoredCommittedSessionInputMachineTarget } from "@/app/session/messages/sessionInputAdmission";
+
+/** The lock audience comes from stored placement alone: controllers grant no authority, so Machine admission is decided once, under the lock. */
+async function readStoredPlacementMachineIdInTx(tx: Tx, sessionId: string): Promise<string | undefined> {
+    const session = await tx.session.findUnique({ where: { id: sessionId },
+        select: { accountId: true, archivedAt: true, runtimeMachineTarget: true } });
+    return session ? readStoredCommittedSessionInputMachineTarget({ ...session, id: sessionId })?.machineId : undefined;
+}
 
 export async function inPendingQueuePositionTx<T>(
     sessionId: string,
@@ -12,34 +19,32 @@ export async function inPendingQueuePositionTx<T>(
     readAdditionalPublicationAccountsInTx?: (tx: Tx) => Promise<readonly string[]>,
 ): Promise<ResolvedTransactionResult<T>> {
     return inTx(async (tx) => {
-        const committedTarget = targetMachineId === undefined
-            ? await readCurrentCommittedSessionInputMachineTargetInTx(tx, sessionId) : undefined;
-        const candidateMachineId = targetMachineId ?? committedTarget?.machineId;
-        const controllerAccountIds = await readPendingActivationControllerAccountIdsInTx(tx, candidateMachineId);
+        const readAudience = async (client: Tx, machineId: string | undefined) => ({
+            machineId,
+            controllerAccountIds: await readPendingActivationControllerAccountIdsInTx(client, machineId),
+            additionalAccountIds: await readAdditionalPublicationAccountsInTx?.(client) ?? [],
+        });
+        const audience = await readAudience(tx, targetMachineId ?? await readStoredPlacementMachineIdInTx(tx, sessionId));
+        const audienceAccountIds = [...new Set([...audience.controllerAccountIds, ...audience.additionalAccountIds])];
+        if (!sessionAccountCursorLocksHoldSessionRows()) {
+            // A single-writer database serializes this whole transaction: the
+            // audience read above cannot move before publication.
+            beforeAccountChangePublication(tx, audienceAccountIds, async () => undefined);
+            return fn(tx);
+        }
         // Admit the complete Account audience, then serialize Pending work at
         // the canonical Session resource fence. Publication remains terminal.
-        const additionalAccountIds = await readAdditionalPublicationAccountsInTx?.(tx) ?? [];
-        await acquireSessionAccountCursorLocksInTx(tx, [sessionId], [...controllerAccountIds, ...additionalAccountIds]);
-        const currentCommittedTarget = targetMachineId === undefined
-            ? await readCurrentCommittedSessionInputMachineTargetInTx(tx, sessionId) : undefined;
-        const currentControllerAccountIds = await readPendingActivationControllerAccountIdsInTx(
-            tx, targetMachineId ?? currentCommittedTarget?.machineId,
-        );
-        // Admission below reads current placement again. A changed placement
-        // must replay before Session locking can turn a new lower Account into
-        // an inversion against another publisher's ordered acquisition.
-        if (!isDeepStrictEqual(committedTarget, currentCommittedTarget)
-            || !isDeepStrictEqual(controllerAccountIds, currentControllerAccountIds)
-            || !isDeepStrictEqual(additionalAccountIds, await readAdditionalPublicationAccountsInTx?.(tx) ?? [])) {
+        await acquireSessionAccountCursorLocksInTx(tx, [sessionId], [...audience.controllerAccountIds, ...audience.additionalAccountIds]);
+        // A placement changed before the Session lock must replay before Session
+        // locking can turn a new lower Account into an inversion against another
+        // publisher's ordered acquisition. Under the lock placement cannot move.
+        const locked = await readAudience(tx, targetMachineId ?? await readStoredPlacementMachineIdInTx(tx, sessionId));
+        if (!isDeepStrictEqual(audience, locked)) {
             throw new TransactionReplayRequiredError("pending-activation-target-changed");
         }
-        const admittedExtraAccounts = new Set([...controllerAccountIds, ...additionalAccountIds]);
-        beforeAccountChangePublication(tx, [...admittedExtraAccounts], async client => {
-            const target = targetMachineId === undefined
-                ? await readCurrentCommittedSessionInputMachineTargetInTx(client, sessionId) : undefined;
-            const controllers = await readPendingActivationControllerAccountIdsInTx(client, targetMachineId ?? target?.machineId);
-            const additional = await readAdditionalPublicationAccountsInTx?.(client) ?? [];
-            assertAccountChangePublicationAudienceInTx(client, [...controllers, ...additional]);
+        beforeAccountChangePublication(tx, audienceAccountIds, async client => {
+            const current = await readAudience(client, locked.machineId);
+            assertAccountChangePublicationAudienceInTx(client, [...current.controllerAccountIds, ...current.additionalAccountIds]);
         });
         return fn(tx);
     }, { transactionClass: "pending-input-admission" });

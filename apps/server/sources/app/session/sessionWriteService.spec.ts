@@ -1,3 +1,4 @@
+import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { sessionDirectGrantProjectionFixture } from '@/app/session/access/sessionAccess.testkit';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -4529,18 +4530,9 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                     grants: [],
-                })
-                .mockResolvedValueOnce({
+                    currentStorageState: "hosted",
                     latestTurnId: null,
-                    seq: 5,
-                    pendingCount: 0,
-                    lastViewedSessionSeq: 5,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnStatus: null,
                     lastRuntimeIssue: null,
-                    active: true,
-                    archivedAt: null,
                 })
                 .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionGrant.findUnique.mockResolvedValue(null);
@@ -4599,7 +4591,7 @@ describe("sessionWriteService", () => {
             });
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
-                select: { id: true },
+                select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                 data: {
                     latestTurnId: "turn-1",
                     latestTurnStatus: "in_progress",
@@ -4747,18 +4739,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                     grants: [],
-                })
-                .mockResolvedValueOnce({
-                    latestTurnId: "turn-1",
-                    seq: 5,
-                    pendingCount: 0,
-                    lastViewedSessionSeq: 5,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnStatusObservedAt: BigInt(100),
-                    lastRuntimeIssue: null,
-                    active: true,
-                    archivedAt: null,
+                    currentStorageState: "hosted",
                 })
                 .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionGrant.findUnique.mockResolvedValue(null);
@@ -4816,7 +4797,7 @@ describe("sessionWriteService", () => {
             });
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
-                select: { id: true },
+                select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                 data: {
                     latestTurnId: "turn-1",
                     latestTurnStatus: "in_progress",
@@ -4984,18 +4965,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                     grants: [],
-                })
-                .mockResolvedValueOnce({
-                    latestTurnId: "turn-1",
-                    seq: 5,
-                    pendingCount: 0,
-                    lastViewedSessionSeq: 5,
-                    pendingPermissionRequestCount: 1,
-                    pendingUserActionRequestCount: 1,
-                    latestTurnStatusObservedAt: BigInt(100),
-                    lastRuntimeIssue: null,
-                    active: true,
-                    archivedAt: null,
+                    currentStorageState: "hosted",
                 });
             currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
@@ -5034,7 +5004,7 @@ describe("sessionWriteService", () => {
 
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
-                select: { id: true },
+                select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                 data: expect.objectContaining({
                     latestTurnId: "turn-1",
                     latestTurnStatus: "failed",
@@ -5263,18 +5233,13 @@ describe("sessionWriteService", () => {
                     pendingPermissionRequestCount: 0,
                     pendingUserActionRequestCount: 0,
                     latestTurnId: "turn-1",
-                    latestTurnStatus: "in_progress",
-                    latestTurnStatusObservedAt: BigInt(100),
+                    latestTurnStatus: "completed",
+                    latestTurnStatusObservedAt: BigInt(200),
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
                     grants: [],
-                })
-                .mockResolvedValueOnce({
-                    latestTurnId: "turn-1",
-                    latestTurnStatus: "completed",
-                    latestTurnStatusObservedAt: BigInt(200),
-                    lastRuntimeIssue: null,
+                    currentStorageState: "hosted",
                 });
             currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
@@ -5321,7 +5286,7 @@ describe("sessionWriteService", () => {
 
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
-                select: { id: true },
+                select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                 data: expect.objectContaining({
                     latestTurnStatus: "completed",
                     latestTurnStatusObservedAt: BigInt(200),
@@ -5444,19 +5409,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                     grants: [],
-                })
-                .mockResolvedValueOnce({
-                    seq: 5,
-                    pendingCount: 0,
-                    lastViewedSessionSeq: 5,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnId: "turn-1",
-                    latestTurnStatus: "completed",
-                    latestTurnStatusObservedAt: BigInt(200),
-                    lastRuntimeIssue: null,
-                    active: true,
-                    archivedAt: null,
+                    currentStorageState: "hosted",
                 })
                 .mockResolvedValueOnce(hostedTranscriptPublication());
             currentTx.sessionGrant.findUnique.mockResolvedValue(null);
@@ -5526,7 +5479,7 @@ describe("sessionWriteService", () => {
                 }),
             });
             // Non-current annotation touches recency only (6c42cf6285); exact args prove no lifecycle field moved.
-            expect(currentTx.session.update).toHaveBeenCalledWith({ where: { id: "s1" }, select: { id: true }, data: { updatedAt: expect.any(Date) } });
+            expect(currentTx.session.update).toHaveBeenCalledWith({ where: { id: "s1" }, select: SESSION_TRANSCRIPT_PUBLICATION_SELECT, data: { updatedAt: expect.any(Date) } });
             expect(res).toMatchObject({
                 ok: true,
                 didApply: true,
@@ -6132,19 +6085,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                     grants: [],
-                })
-                .mockResolvedValueOnce({
-                    seq: 5,
-                    pendingCount: 0,
-                    lastViewedSessionSeq: 5,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnId: null,
-                    latestTurnStatus: null,
-                    latestTurnStatusObservedAt: null,
-                    lastRuntimeIssue: null,
-                    active: true,
-                    archivedAt: null,
+                    currentStorageState: "hosted",
                 })
                 .mockResolvedValueOnce({
                     seq: 5,
@@ -6222,18 +6163,8 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                     grants: [],
-                })
-                .mockResolvedValueOnce({
-                    latestTurnId: "turn-1",
-                    seq: 5,
-                    pendingCount: 0,
-                    lastViewedSessionSeq: 5,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnStatus: "completed",
+                    currentStorageState: "hosted",
                     lastRuntimeIssue: null,
-                    active: true,
-                    archivedAt: null,
                 });
             currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
@@ -6264,7 +6195,7 @@ describe("sessionWriteService", () => {
 
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
-                select: { id: true },
+                select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                 data: {
                     latestTurnId: "turn-2",
                     latestTurnStatus: "in_progress",

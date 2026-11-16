@@ -118,7 +118,14 @@ export async function readCurrentCommittedSessionInputMachineTargetInTx(tx: Tx, 
     options?: Readonly<{ admittedWork: true }> | Readonly<{ admitted: AdmittedMachine }>): Promise<SessionInputMachineTargetV1 | undefined> {
     const session = await tx.session.findUnique({ where: { id: sessionId },
         select: { accountId: true, archivedAt: true, runtimeMachineTarget: true } });
-    const stored = session ? readStoredCommittedSessionInputMachineTarget({ ...session, id: sessionId }) : undefined;
+    return session ? await readCurrentCommittedSessionInputMachineTargetForSessionInTx(tx, { ...session, id: sessionId }, options) : undefined;
+}
+
+/** The same decision for a caller that already read the Session's placement columns in this transaction. */
+export async function readCurrentCommittedSessionInputMachineTargetForSessionInTx(tx: Tx,
+    session: Parameters<typeof readStoredCommittedSessionInputMachineTarget>[0],
+    options?: Readonly<{ admittedWork: true }> | Readonly<{ admitted: AdmittedMachine }>): Promise<SessionInputMachineTargetV1 | undefined> {
+    const stored = readStoredCommittedSessionInputMachineTarget(session);
     if (!stored) return undefined;
     const current = await readCurrentSessionInputMachineTargetInTx(tx, stored, options);
     return current && sameMachineTarget(current, stored) ? stored : undefined;

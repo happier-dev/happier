@@ -52,17 +52,16 @@ export async function applyPendingSessionStateChange(params: {
         baseData.meaningfulActivityAt = meaningfulActivityAt;
     }
 
-    const session = await applyPendingCounterUpdate({
-        tx,
-        sessionId,
-        pendingCountDelta,
-        pendingBlockedCountDelta,
-        data: baseData,
-        initialState: {
-            pendingCount: before.pendingCount,
-            pendingBlockedCount: before.pendingBlockedCount,
-            pendingVersion: before.pendingVersion,
+    // The Session resource lock above (SQLite: the single writer) holds this row
+    // from the read through the write, so the counters are written from `before`.
+    const session = await tx.session.update({
+        where: { id: sessionId },
+        data: {
+            ...baseData,
+            pendingCount: Math.max(0, before.pendingCount + pendingCountDelta),
+            pendingBlockedCount: Math.max(0, before.pendingBlockedCount + pendingBlockedCountDelta),
         },
+        select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
     });
 
     const recipientCursors = await markPendingStateChangedRecipients({
@@ -89,74 +88,4 @@ export async function applyPendingSessionStateChange(params: {
             ? { meaningfulActivityAt }
             : {}),
     };
-}
-
-type PendingCounterState = {
-    pendingCount: number;
-    pendingBlockedCount: number;
-    pendingVersion: number;
-};
-
-async function applyPendingCounterUpdate(params: {
-    tx: Tx;
-    sessionId: string;
-    pendingCountDelta: number;
-    pendingBlockedCountDelta: number;
-    data: {
-        pendingVersion: { increment: 1 };
-        meaningfulActivityAt?: Date;
-    };
-    initialState: PendingCounterState;
-}): Promise<PendingCounterState> {
-    let current = params.initialState;
-    let pendingCountDelta = params.pendingCountDelta;
-    let pendingBlockedCountDelta = params.pendingBlockedCountDelta;
-
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-        const nextPendingCount = Math.max(0, current.pendingCount + pendingCountDelta);
-        const nextPendingBlockedCount = Math.max(0, current.pendingBlockedCount + pendingBlockedCountDelta);
-        const updated = await params.tx.session.updateMany({
-            where: {
-                id: params.sessionId,
-                pendingCount: current.pendingCount,
-                pendingBlockedCount: current.pendingBlockedCount,
-                pendingVersion: current.pendingVersion,
-            },
-            data: {
-                ...params.data,
-                pendingCount: nextPendingCount,
-                pendingBlockedCount: nextPendingBlockedCount,
-            },
-        });
-
-        if (updated.count > 0) {
-            return params.tx.session.findUniqueOrThrow({
-                where: { id: params.sessionId },
-                select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
-            });
-        }
-
-        current = await params.tx.session.findUniqueOrThrow({
-            where: { id: params.sessionId },
-            select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
-        });
-        if (params.initialState.pendingCount <= 0 && params.pendingCountDelta < 0) {
-            pendingCountDelta = 0;
-        }
-        if (params.initialState.pendingBlockedCount <= 0 && params.pendingBlockedCountDelta < 0) {
-            pendingBlockedCountDelta = 0;
-        }
-    }
-
-    const nextPendingCount = Math.max(0, current.pendingCount + pendingCountDelta);
-    const nextPendingBlockedCount = Math.max(0, current.pendingBlockedCount + pendingBlockedCountDelta);
-    return params.tx.session.update({
-        where: { id: params.sessionId },
-        data: {
-            ...params.data,
-            pendingCount: nextPendingCount,
-            pendingBlockedCount: nextPendingBlockedCount,
-        },
-        select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
-    });
 }

@@ -163,7 +163,15 @@ export async function acceptSessionPersonalEventOnceInTx(tx: Tx, params: Session
     if (!await isServerFeatureEnabledForHome('sessions.following', { tx })) return [];
     const occurrence = params.onceOccurrence;
     if (!occurrence) return [];
-    const candidates = await listSessionPersonalEventRecipientsInTx(tx, params);
+    // Only an Account holding a notify-once witness can be armed: with none, nobody is;
+    // otherwise narrow to those before any per-recipient policy, mute or access read.
+    const witnesses = new Set((await tx.accountSessionFollow.findMany({
+        where: { sessionId: params.sessionId, notifyOnce: { not: null } }, select: { accountId: true },
+    })).map(row => row.accountId));
+    if (witnesses.size === 0) return [];
+    const candidates = await listSessionPersonalEventRecipientsInTx(tx, params, {
+        narrowCandidates: async accountIds => accountIds.filter(accountId => witnesses.has(accountId)),
+    });
     const armed = candidates.filter(candidate => candidate.once !== undefined);
     if (!armed.length) return [];
     await acquireAccountChangePublicationLocksInTx(tx, armed.map(candidate => candidate.accountId), { includeSingleAccount: true });

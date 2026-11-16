@@ -761,6 +761,11 @@ function buildLegacyThinkingProjectionWriteData(params: Readonly<{
     return {};
 }
 
+const SESSION_MUTATION_CONTEXT_SELECT = {
+    tag: true, encryptionMode: true, agentStateVersion: true, latestTurnStatusObservedAt: true, ...selectSessionActivityBadgeInputs(),
+} as const;
+type SessionMutationContextState = Prisma.SessionGetPayload<{ select: typeof SESSION_MUTATION_CONTEXT_SELECT }>;
+
 export type SessionMutationContextResult =
     | {
         ok: true;
@@ -770,6 +775,8 @@ export type SessionMutationContextResult =
         sessionEncryptionMode: "e2ee" | "plain";
         recipientAccountIds: string[];
         sessionActivityBadgeInputs: SessionActivityBadgeInputs;
+        /** The same locked Session read, for writers that decide from its turn and storage facts. */
+        sessionState: SessionMutationContextState;
       }
     | { ok: false; error: "session-not-found" | "forbidden" };
 
@@ -838,7 +845,7 @@ async function readSessionMutationContextInTx(
     tx: Tx,
     params: SessionMutationContextInput,
 ): Promise<SessionMutationContextResult | SessionMutationContextTypedResult> {
-    const contextSelect = { tag: true, encryptionMode: true, ...selectSessionActivityBadgeInputs() } as const;
+    const contextSelect = SESSION_MUTATION_CONTEXT_SELECT;
     const input = { tx, accountId: params.actorUserId, sessionId: params.sessionId };
     // One Session read (after the Session lock) serves the context, the access decision and the
     // current recipients: the access projection already carries the recipient census's Session facts.
@@ -860,6 +867,7 @@ async function readSessionMutationContextInTx(
         sessionEncryptionMode: session.encryptionMode === "plain" ? "plain" : "e2ee",
         recipientAccountIds: await resolveCurrentSessionRecipientAccountIdsInTx(tx, { sessionId: params.sessionId, session: row }),
         sessionActivityBadgeInputs: toSessionActivityBadgeInputs(session),
+        sessionState: session,
     };
 }
 
@@ -3091,13 +3099,9 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             return { ok: false, error: access.error };
         }
 
-        const writeAuthority = await tx.session.findFirst({
-            where: {
-                id: params.turnMutation.sessionId,
-                currentStorageState: "hosted",
-            },
-            select: { id: true, accountId: true },
-        });
+        // The context's one locked Session read carries the storage authority and turn facts.
+        const session = access.sessionState;
+        const writeAuthority = session.currentStorageState === "hosted" ? { accountId: session.accountId } : null;
         if (!writeAuthority) {
             return {
                 ok: false,
@@ -3155,19 +3159,6 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             });
         }
 
-        const session = await tx.session.findUnique({
-            where: { id: params.turnMutation.sessionId },
-            select: withSessionContentSelect({
-                ...selectSessionActivityBadgeInputs(),
-                agentStateVersion: true,
-                latestTurnId: true,
-                latestTurnStatusObservedAt: true,
-            }),
-        }).then(decodeSessionStoredContent);
-        if (!session) {
-            return { ok: false, error: "session-not-found" };
-        }
-
         if (params.turnMutation.action === 'session_opened') {
             const state = materializedSessionTurnState(session);
             const issue = state.lastRuntimeIssue;
@@ -3180,12 +3171,12 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             // Opening resolves the Session's startup projection, not the failed
             // historical turn. Advance its existing freshness frontier so a late
             // heartbeat of that turn cannot restore the resolved issue.
-            await tx.session.update({ where: { id: sessionId }, data: {
+            const publication = await tx.session.update({ where: { id: sessionId }, select: SESSION_TRANSCRIPT_PUBLICATION_SELECT, data: {
                 lastRuntimeIssue: null,
                 latestTurnStatusObservedAt: toObservedAtBigInt(params.turnMutation.observedAt),
             } });
             const recipientCursors = params.markParticipants ? await markSessionProjectionRecipientsChanged({
-                tx, sessionId, recipientAccountIds: access.recipientAccountIds,
+                tx, sessionId, recipientAccountIds: access.recipientAccountIds, publication,
                 hint: { latestTurnStatusObservedAt: params.turnMutation.observedAt },
                 usageAccountingChanged: false,
                 // Turn rows and the latest-status projection: no transcript seq, metadata or archive change.
@@ -3453,9 +3444,10 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             ...(shouldMaterialize ? { lastRuntimeIssue: appliedTurn.lastRuntimeIssueJson ?? null } : {}),
         };
         // Non-current settlements and annotations still change stored Turn facts.
-        await tx.session.update({
+        // The update returns this Session's publication fields for the recipient fanout below.
+        const publication = await tx.session.update({
             where: { id: params.turnMutation.sessionId },
-            select: { id: true },
+            select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
             data: shouldMaterialize ? {
                 latestTurnId: targetTurnId,
                 latestTurnStatus: appliedTurn.status,
@@ -3476,6 +3468,7 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                 tx,
                 sessionId: params.turnMutation.sessionId,
                 recipientAccountIds: access.recipientAccountIds,
+                publication,
                 hint: { latestTurnStatusObservedAt: params.turnMutation.observedAt },
                 usageAccountingChanged: false,
                 // Turn rows and the latest-status projection: no transcript seq, metadata or archive change.

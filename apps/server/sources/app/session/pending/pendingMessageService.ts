@@ -3,7 +3,7 @@ import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { DiscussionMessageAddressingV1Schema, type DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/references';
-import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer, readCurrentSessionInputMachineTargetInTx, readCurrentCommittedSessionInputMachineTargetInTx, readStoredSessionInputAdmissionReceipt, isSessionInputTargetCurrentForPublisherInTx, areCurrentSessionInputMachineTargetsInTx } from "@/app/session/messages/sessionInputAdmission";
+import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer, readCurrentSessionInputMachineTargetInTx, readCurrentCommittedSessionInputMachineTargetForSessionInTx, readStoredSessionInputAdmissionReceipt, isSessionInputTargetCurrentForPublisherInTx, areCurrentSessionInputMachineTargetsInTx } from "@/app/session/messages/sessionInputAdmission";
 import { markSessionProjectionRecipientsChanged, type SessionRecipientCursor, type SessionRecipientPublication } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { markPendingStateChangedRecipients } from "@/app/session/pending/markPendingStateChangedRecipients";
 import { pendingPublicationResult, type PendingPublicationFields } from "./pendingPublicationResult";
@@ -887,10 +887,52 @@ async function enqueuePendingMessageWithAdmission(
                 && requestAccountId !== session.accountId) return {
                 ok: false, error: 'forbidden', admissionRejectionCode: 'session_input_unauthorized',
             } as const;
-            const retainedPending = await tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId, localId } },
-                select: { replyProgress: true, status: true, discardedReason: true, inputAdmissionReceipt: true } });
-            const retainedReplyRow = retainedPending
-                ?? await tx.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId, localId } }, select: { replyProgress: true } });
+            // One read of each retained row for this localId serves reply, suppression and idempotency checks:
+            // nothing below writes either row before the idempotency decision.
+            const retainedPending = await tx.sessionPendingMessage.findUnique({
+                where: { sessionId_localId: { sessionId, localId } },
+                select: {
+                    localId: true,
+                    targetExecutionRunId: true,
+                    messageRole: true,
+                    content: true,
+                    requestedAction: true,
+                    status: true,
+                    deliveryState: true,
+                    deliveryBlockedReason: true,
+                    position: true,
+                    createdAt: true,
+                    updatedAt: true,
+                    discardedAt: true,
+                    discardedReason: true,
+                    authorAccountId: true,
+                    inputAdmissionReceipt: true,
+                    requestEqualityEvidenceV1: true,
+                    providerAction: true,
+                    replyProgress: true,
+                },
+            });
+            const readRetainedTranscript = () => tx.sessionMessage.findUnique({
+                where: { sessionId_localId: { sessionId, localId } },
+                select: { contentBytes: true,
+                    id: true,
+                    seq: true,
+                    localId: true,
+                    sidechainId: true,
+                    targetExecutionRunId: true,
+                    content: true,
+                    messageRole: true,
+                    deliveryResolution: true,
+                    inputAdmissionReceipt: true,
+                    authorAccountId: true,
+                    requestEqualityEvidenceV1: true,
+                    replyProgress: true,
+                    createdAt: true,
+                    updatedAt: true,
+                },
+            }).then(row => decodeStoredSessionMessage(row));
+            const retainedTranscript = retainedPending ? undefined : await readRetainedTranscript();
+            const retainedReplyRow = retainedPending ?? retainedTranscript;
             const suppressedReceipt = retainedPending?.status === 'discarded' && retainedPending.discardedReason === 'session_input_muted'
                 ? readStoredSessionInputAdmissionReceipt(retainedPending.inputAdmissionReceipt) : undefined;
             const suppressedDiscussionReplay = suppressedReceipt?.issuer === 'authenticatedMachine'
@@ -934,8 +976,10 @@ async function enqueuePendingMessageWithAdmission(
             // the Session's main runner. Its retained Machine placement does
             // not admit that provider; the provider/run ingress does so later.
             const requiresMachineTarget = deliveryMode !== "external_handoff";
+            // The target this transaction admitted under the census lock of its controllers.
+            let transactionAdmittedTarget: SessionInputMachineTargetV1 | undefined;
             const committedTarget = !requiresMachineTarget || session.runtimeMachineTarget == null ? undefined
-                : await readCurrentCommittedSessionInputMachineTargetInTx(tx, sessionId);
+                : await readCurrentCommittedSessionInputMachineTargetForSessionInTx(tx, { ...session, id: sessionId });
             if (requiresMachineTarget && session.runtimeMachineTarget != null && !committedTarget) return {
                 ok: false, error: "session-not-found", admissionRejectionCode: "session_input_target_unavailable",
             } as const;
@@ -993,9 +1037,11 @@ async function enqueuePendingMessageWithAdmission(
                         admissionRejectionCode: "session_input_unauthorized",
                     } as const;
                 }
-                const admittedTarget = await readCurrentSessionInputMachineTargetInTx(tx, {
-                    accountId: session.accountId, sessionId, machineId: targetMachineId,
-                });
+                // The committed placement was admitted for this exact tuple just above.
+                const admittedTarget = committedTarget?.machineId === targetMachineId ? committedTarget
+                    : await readCurrentSessionInputMachineTargetInTx(tx, {
+                        accountId: session.accountId, sessionId, machineId: targetMachineId,
+                    });
                 // The released owned, uninstalled tuple predates installation admission.
                 // It retains the old receipt/hint, never a foreign or installed fallback.
                 const legacyOwnedTarget = admission.kind === 'account' && targetExecutionRunId === null
@@ -1038,6 +1084,7 @@ async function enqueuePendingMessageWithAdmission(
                     } as const;
                 }
                 if (admittedTarget) inputAdmissionReceipt = SessionInputAdmissionReceiptV1Schema.parse({ ...inputAdmissionReceipt, admittedTarget });
+                transactionAdmittedTarget = admittedTarget;
             }
 
             let suppressedFollow: Pick<Parameters<typeof retainSuppressedSessionFollowInputInTx>[1], 'delivery' | 'progresses' | 'relations'> | undefined;
@@ -1145,29 +1192,7 @@ async function enqueuePendingMessageWithAdmission(
                 } as const;
             }
 
-            const existing = await tx.sessionPendingMessage.findUnique({
-                where: { sessionId_localId: { sessionId, localId } },
-                select: {
-                    localId: true,
-                    targetExecutionRunId: true,
-                    messageRole: true,
-                    content: true,
-                    requestedAction: true,
-                    status: true,
-                    deliveryState: true,
-                    deliveryBlockedReason: true,
-                    position: true,
-                    createdAt: true,
-                    updatedAt: true,
-                    discardedAt: true,
-                    discardedReason: true,
-                    authorAccountId: true,
-                    inputAdmissionReceipt: true,
-                    requestEqualityEvidenceV1: true,
-                    providerAction: true,
-                    replyProgress: true,
-                },
-            });
+            const existing = retainedPending;
             if (existing) {
                 const identityConflict = {
                     ok: false,
@@ -1369,24 +1394,7 @@ async function enqueuePendingMessageWithAdmission(
                 };
             }
 
-            const terminalTranscript = await tx.sessionMessage.findUnique({
-                where: { sessionId_localId: { sessionId, localId } },
-                select: { contentBytes: true,
-                    id: true,
-                    seq: true,
-                    localId: true,
-                    sidechainId: true,
-                    targetExecutionRunId: true,
-                    content: true,
-                    messageRole: true,
-                    deliveryResolution: true,
-                    inputAdmissionReceipt: true,
-                    authorAccountId: true,
-                    requestEqualityEvidenceV1: true,
-                    createdAt: true,
-                    updatedAt: true,
-                },
-            }).then(row => decodeStoredSessionMessage(row));
+            const terminalTranscript = retainedTranscript !== undefined ? retainedTranscript : await readRetainedTranscript();
             if (terminalTranscript) {
                 const identityConflict = {
                     ok: false,
@@ -1647,6 +1655,9 @@ async function enqueuePendingMessageWithAdmission(
                 sessionId,
                 requestId: localId,
                 currentAccess: access.access,
+                ...(inputAdmissionReceipt.admittedTarget === undefined
+                    || isDeepStrictEqual(inputAdmissionReceipt.admittedTarget, transactionAdmittedTarget)
+                    ? { admittedInTransaction: true as const } : {}),
                 ...(params.resumeWhenAvailable === true ? { resumeWhenAvailable: true as const } : {}),
             }) : undefined;
             const { pendingCount, pendingBlockedCount, pendingVersion, recipientCursors, badgeAttentionChanged, meaningfulActivityAt } = await applyPendingSessionStateChange({
