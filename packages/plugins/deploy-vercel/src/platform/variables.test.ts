@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import * as entry from '../index.js';
@@ -31,7 +32,7 @@ it('preserves foreign keys and removes owned keys when secret custody is unavail
   try {
     const result = await kit.invokeAction('variables-sync', { ...common, desiredRevision: 2,
       owned: [{ key: 'OLD', providerId: 'old-id', desiredRevision: 1, providerRevision: '20' }],
-      set: [{ purpose: 'variable', phase: 'runtime', name: 'TOKEN', source: { kind: 'secret', ref: savedRef, resourceRevision: 3 } }],
+      set: [createDeploymentVariableBindingV1({ phase: 'runtime', name: 'TOKEN', source: { kind: 'secret', ref: savedRef, resourceRevision: 3 } })],
       remove: ['OLD'], useOurs: [], keepTheirs: [] });
     expect(result).toMatchObject({ v: 1, owned: [], failures: [{ key: 'TOKEN', code: 'outcome_unknown' }] });
     expect(JSON.stringify(result)).not.toContain(privateValue);
@@ -57,7 +58,7 @@ it('requires the reviewed Use ours choice for drift and relinquishes Keep theirs
     const result = await kit.invokeAction('variables-sync', { ...common, desiredRevision: 2,
       owned: [{ key: 'TOKEN', providerId: 'changed', desiredRevision: 1, providerRevision: '20' },
         { key: 'KEEP', providerId: 'keep', desiredRevision: 1, providerRevision: '20' }],
-      set: [{ purpose: 'variable', phase: 'runtime', name: 'TOKEN', source: { kind: 'value', value: 'desired' } }],
+      set: [createDeploymentVariableBindingV1({ phase: 'runtime', name: 'TOKEN', source: { kind: 'value', value: 'desired' } })],
       remove: ['KEEP', 'FOREIGN'], useOurs: [], keepTheirs: ['KEEP'] });
     expect(result).toMatchObject({ owned: [{ key: 'TOKEN', providerId: 'changed', desiredRevision: 1, providerRevision: '20' }],
       failures: [{ key: 'TOKEN', code: 'deployment_conflict' }] });
@@ -102,7 +103,7 @@ it('retains only successful per-key provenance when the provider refuses another
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
     const result = await kit.invokeAction('variables-sync', { ...common, desiredRevision: 2, owned: [],
-      set: ['GOOD', 'FAIL'].map(name => ({ purpose: 'variable', phase: 'runtime', name, source: { kind: 'value', value: 'plain' } })),
+      set: ['GOOD', 'FAIL'].map(name => createDeploymentVariableBindingV1({ phase: 'runtime', name, source: { kind: 'value', value: 'plain' } })),
       remove: [], useOurs: [], keepTheirs: [] });
     expect(result).toMatchObject({ owned: [{ key: 'GOOD', providerId: 'good', desiredRevision: 2, providerRevision: '1' }],
       failures: [{ key: 'FAIL', code: 'provider_request_failed' }] });
@@ -133,7 +134,7 @@ it.each(['set', 'remove'] as const)('retains acknowledged ownership when a recei
     const acknowledged = { key: 'GOOD', providerId: 'good-id', desiredRevision: 2, providerRevision: '30' };
     await expect(kit.invokeAction('variables-sync', { ...common, desiredRevision: 2,
       owned: operation === 'remove' ? [existing] : [],
-      set: (operation === 'set' ? ['GOOD', 'BAD'] : ['GOOD']).map(name => ({ purpose: 'variable', phase: 'runtime', name,
+      set: (operation === 'set' ? ['GOOD', 'BAD'] : ['GOOD']).map(name => createDeploymentVariableBindingV1({ phase: 'runtime', name,
         source: { kind: 'value', value: 'plain' } })), remove: operation === 'remove' ? ['BAD'] : [],
       useOurs: [], keepTheirs: [] }, { signal: controller.signal })).resolves.toMatchObject({
       owned: operation === 'remove' ? [existing, acknowledged] : [acknowledged],
@@ -172,7 +173,7 @@ it.each(['set', 'remove'] as const)('preserves a foreign replacement during %s w
   try {
     const result = await kit.invokeAction('variables-sync', { ...common, desiredRevision: 2,
       owned: [{ key: 'TOKEN', providerId: 'deleted-old-row', desiredRevision: 1, providerRevision: '20' }],
-      set: operation === 'set' ? [{ purpose: 'variable', phase: 'runtime', name: 'TOKEN', source: { kind: 'value', value: 'desired' } }] : [],
+      set: operation === 'set' ? [createDeploymentVariableBindingV1({ phase: 'runtime', name: 'TOKEN', source: { kind: 'value', value: 'desired' } })] : [],
       remove: operation === 'remove' ? ['TOKEN'] : [], useOurs: [], keepTheirs: [] });
     expect(vendorValue).toBe('vendor-choice');
     expect(result).toMatchObject({ failures: operation === 'set' ? [{ key: 'TOKEN', code: 'deployment_conflict' }] : [],
@@ -191,8 +192,8 @@ it('does not send a secret write when invocation custody is unavailable', async 
     const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
     try {
       const result = await kit.invokeAction('variables-sync', { ...common, desiredRevision: 2, owned: [],
-        set: [{ purpose: 'variable', phase: 'runtime', name: 'TOKEN', source: { kind: 'secret',
-          ref: 'happier:shared-secret:v1:token', resourceRevision: 3 } }], remove: [], useOurs: [], keepTheirs: [] });
+        set: [createDeploymentVariableBindingV1({ phase: 'runtime', name: 'TOKEN', source: { kind: 'secret',
+          ref: 'happier:shared-secret:v1:token', resourceRevision: 3 } })], remove: [], useOurs: [], keepTheirs: [] });
       expect(result).toMatchObject({ owned: [], failures: [{ key: 'TOKEN', code: 'outcome_unknown' }] });
       expect(writes).toBe(0);
     } finally { await kit.dispose(); }
