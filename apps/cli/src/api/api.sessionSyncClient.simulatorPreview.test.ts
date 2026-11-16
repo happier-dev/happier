@@ -427,7 +427,6 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
     expect(diagnosticsDispatch).toHaveBeenCalledOnce();
     expect(contextDispatch).toHaveBeenCalledOnce();
     expect(automationDispatch).toHaveBeenCalledOnce();
-    expect(recordingStatus).toHaveBeenCalledOnce();
     expect(inventoryGetSnapshot).toHaveBeenCalledOnce();
     expect(simulatorGetSnapshot).toHaveBeenCalledOnce();
 

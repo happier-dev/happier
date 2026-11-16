@@ -187,7 +187,11 @@ describe('trusted Machine key envelope continuation', () => {
       }
       vi.useRealTimers();
       await channel.disconnect();
-      expect(await prepareMachineAccessKeyEnvelopes({ ...params, credentials })).toMatchObject({ kind: 'unavailable' });
+      expect(await prepareMachineAccessKeyEnvelopes({ ...params, credentials })).toEqual({ kind: 'prepared' });
+      expect(await prepareMachineAccessKeyEnvelopes({ ...params, credentials,
+        isCredentialCurrent: () => false })).toEqual({ kind: 'unavailable', code: 'machine_key_changed' });
+      expect(await prepareMachineAccessKeyEnvelopes({ ...params, credentials,
+        signal: AbortSignal.abort() })).toEqual({ kind: 'unavailable', code: 'machine_key_changed' });
     } finally { vi.useRealTimers(); await observation.dispose(); await channel.close(); }
     expect(axios.post).not.toHaveBeenCalled();
   });

@@ -1258,7 +1258,7 @@ describe('managed inventory CLI Home adapter', () => {
       result: { ok: true, sessionId, stopped: false,
         stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'daemon_stop_requested' } } });
     await expect(invoke(cli, surface, 'execution.run.stop', { sessionId, runId }, sessionId))
-      .resolves.toEqual({ ok: true, result: surface === 'cli' ? { ok: true } : {} });
+      .resolves.toEqual({ ok: true, result: { ok: true } });
     expect(seenRpc).toEqual([
       { method: `controller-1:${RPC_METHODS.STOP_SESSION}`, request: { sessionId } },
       { method: `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_STOP}`, request: { runId } },
