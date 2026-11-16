@@ -22,7 +22,7 @@ import { resolveExecutionBackendTargetSelectionForValue } from '../resolveAction
 import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/resourceV1.js';
 import { ExecutionRunIntentSchema } from '../../execution/runs/runPrimitives.js';
 import { projectExecutionRunChildChoiceV1, withExecutionRunStartFailureDetails } from '../../execution/runs/responseSchemas.js';
-import type { WorkflowResolvedStepSelectionV1 } from '../../workflows/workflowStepSelectionV1.js';
+import { resolveWorkflowStepSelectionV1, type WorkflowResolvedStepSelectionV1 } from '../../workflows/workflowStepSelectionV1.js';
 import { readRoleEngineModelRefV1, type RoleEngineV1 } from '../../prompts/roles/roleArtifactV1.js';
 import { parseQualifiedPluginContributionKey } from '../../plugins/contributionIdentity.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
@@ -218,8 +218,10 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
     const selectedFacts = (facts: AgentStartFactsV1): AgentStartFactsV1 => {
         if (!selected)
             return facts;
-        const options = selected.sessionConfigOptionOverrides;
         const target = overrideEngine ? selected.agentTarget ?? unresolved : facts.agentTarget ?? selected.agentTarget ?? undefined;
+        const options = target?.kind === 'agent'
+            ? resolveWorkflowStepSelectionV1({ defaults: selected, step: { agentTarget: target }, purpose: 'authoring' })
+                .selection.sessionConfigOptionOverrides : selected.sessionConfigOptionOverrides;
         const selectedModel = inheritWorkflowModel ? selectedModelForTarget(target) : undefined;
         return {
             ...facts,
@@ -238,7 +240,7 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
     };
     if (!isAgentStartActionV1(actionId))
         return { ok: true, requests: [], effectiveInput: request };
-    const selectedInput = projectActionWorkflowSelectionInputV1(actionId, request, selected);
+    let selectedInput = projectActionWorkflowSelectionInputV1(actionId, request, selected);
     const projectSelectedEngine = (input: Readonly<Record<string, unknown>>, kind: 'spawn_new' | 'execution_run') => {
         if (!overrideEngine || !selected?.agentTarget)
             return input;
@@ -312,6 +314,13 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
             knownFacts: selectedFacts(executionRunStartFactsV1(startInput, unresolved, context, baseline)),
         };
     inheritWorkflowModel = targets.every((target) => !target || selected?.modelSelection === undefined || selectedModelForTarget(target) !== undefined);
+    if (selected) {
+        // The Workflow selection owner drops inherited model/effort when any concrete engine replaces it.
+        const compatible = targets.reduce((selection, target) => target?.kind === 'agent'
+            ? resolveWorkflowStepSelectionV1({ defaults: selection, step: { agentTarget: target }, purpose: 'authoring' }).selection
+            : selection, selected);
+        selectedInput = projectActionWorkflowSelectionInputV1(actionId, request, compatible);
+    }
     if (!inheritWorkflowModel && request.modelSelection === undefined && request.modelId === undefined && request.teamCredentialModel === undefined)
         delete selectedInput.modelSelection;
     const perTargetConnectedServices = request.connectedServicesByBackendTargetKey;

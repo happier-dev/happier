@@ -458,6 +458,26 @@ describe('canonical Action agent-start adapter', () => {
     } }], effectiveInput: { initialInput: { text: { kind: 'input', name: 'task' } } } });
   });
 
+  it.each([false, true])('inherits effort only for the Workflow Agent and preserves other options: same=%s', same => {
+    const result = resolveActionAgentStartRequestsV1({ actionId: 'execution.run.start',
+      input: { backendTarget: same ? roleTarget : nativeTarget, intent: 'delegate' }, context: {},
+      baseline: { machineId: 'run-machine', directory: '/repo' }, effectiveSelection: { selection: {
+        agentTarget: roleTarget, sessionConfigOptionOverrides: { v: 1, updatedAt: 0, overrides: {
+          reasoning_effort: { value: 'high', updatedAt: 0 }, verbosity: { value: 'brief', updatedAt: 0 },
+        } },
+      } },
+    });
+    if (!result.ok) throw new Error(result.errorCode);
+    const request = result.requests[0];
+    if (!request || request.kind !== 'execution_run') throw new Error('expected_execution_start');
+    expect(request.facts.configOptions).toEqual({ verbosity: { value: 'brief', updatedAtMs: 0 },
+      ...(same ? { reasoning_effort: { value: 'high', updatedAtMs: 0 } } : {}),
+    });
+    expect(result.effectiveInput.sessionConfigOptionOverrides).toEqual({ v: 1, updatedAt: 0, overrides: {
+      verbosity: { value: 'brief', updatedAt: 0 }, ...(same ? { reasoning_effort: { value: 'high', updatedAt: 0 } } : {}),
+    } });
+  });
+
   it('does not borrow a Workflow default model from another explicit Action Agent', () => {
     const result = resolveActionAgentStartRequestsV1({ actionId: 'execution.run.start',
       input: { backendTarget: nativeTarget, intent: 'delegate' }, context: {},
