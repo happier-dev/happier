@@ -17,6 +17,14 @@ const binaryPath = '/opt/happier/cli/current/happier';
 const artifact = { contributionRef: content.launch.provider, schemaVersion: 1, value: { image: 'owned-image' } };
 
 describe('preset preparation freshness', () => {
+  it('retains the original preparation host without making it a freshness input', () => {
+    const host = { machineId: 'original-local-image-host' };
+    const binding = createManagedMachinePresetPreparationBindingV1({ content, ...current, ...host });
+    expect(binding).toMatchObject(host);
+    expect(readManagedMachinePresetPreparationV1({ content: { ...content,
+      prepared: { operationId: 'build-1', status: 'ready', binding, artifact, cliBinaryPath: binaryPath } }, ...current }))
+      .toMatchObject({ kind: 'warm' });
+  });
   it('keeps an old prepared image cold after author reapproval changes the contents at the same source path', () => {
     const source = { ...content, launch: { ...content.launch,
       choices: { workspaceFolder: '/workspace', configPath: '/workspace/.devcontainer/devcontainer.json' } },

@@ -37,7 +37,7 @@ function opaqueAccountNativeFixture() {
 }
 
 describe('CLI Account opaque preset native roles', () => {
-    it('runs Archive cleanup beneath its reviewed Account parent from the original launch without a Machine row', async () => {
+    it.each([undefined, 'original-host'])('runs original-host Archive cleanup only with retained placement (%s)', async originalMachineId => {
         const manifest = PluginManifestV2Schema.parse(LIMA_PLUGIN.manifest);
         const selected = resolvePluginAccountExecutionSelectionV1({ pluginId: manifest.id, intentRead: null,
             bundled: createPluginAccountBundledSelectionV1({ packageName: '@happier-dev/plugins-machine-lima', manifest }) });
@@ -56,7 +56,7 @@ describe('CLI Account opaque preset native roles', () => {
                     { action: { pluginId: launch.provider.pluginId, localId: provisioner.preparation!.actions.destroy }, role: 'preparationDestroy' }],
                 executeAdmittedAction: async ({ context }) => {
                     const invoke = createCliManagedAccountNativeInvocationForLaunch({ launch,
-                        provisioner, selected, context, requestId, credentialConfigurations });
+                        provisioner, selected, context, requestId, credentialConfigurations, ...{ originalMachineId } });
                     await invoke('preparationInspect', { nativeOperation: { native: 'original-image' } });
                     await invoke('preparationDestroy', { nativeOperation: { native: 'original-image' } });
                     return { ok: true, result: { kind: 'refused', code: 'managed_not_found' } };
@@ -76,14 +76,17 @@ describe('CLI Account opaque preset native roles', () => {
         });
         const result = await executor.execute('machines.presets.archive', archiveInput, {
             surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner',
+            runtimeActionMachineId: 'original-host',
             actionRequestId: requestId,
             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
             presentUserConfirmation: { actionId: 'machines.presets.archive',
                 inputDigest: computeActionInputApprovalDigestV1('machines.presets.archive', archiveInput), requestId,
                 accountId: 'owner', serverId: 'home' },
         });
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'refused', code: 'managed_not_found' } });
-        expect(observed).toHaveLength(2);
+        expect(result, JSON.stringify(result)).toMatchObject(originalMachineId
+            ? { ok: true, result: { kind: 'refused', code: 'managed_not_found' } }
+            : { ok: false, errorCode: 'controller_unavailable' });
+        expect(observed).toHaveLength(originalMachineId ? 2 : 0);
     });
 
     it('routes opened power, resize, and diagnostics roles through the reviewed host child without exposing the opened machine', async () => {

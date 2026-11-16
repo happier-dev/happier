@@ -33,6 +33,8 @@ export type ManagedMachinePresetPreparationCustodyV1 =
   | Readonly<{ mode: 'e2ee'; accountId: string; accountKey: Uint8Array; randomBytes: (length: number) => Uint8Array }>;
 export type ManagedMachinePresetPreparationOperationInputV1 = Readonly<{
   operationId: string; expectedRevision: number;
+  /** Installed host that owns Machine-placement native image effects. */
+  machineId?: string;
   credentialConfigurations: ManagedMachinePresetPreparedV1['binding']['credentialConfigurations'];
   /** Current canonical supplier metadata; permits adoption without composing archives. */
   cliIdentity?: string;
@@ -160,6 +162,7 @@ async function advanceOperation(input: OperationInput, current: OpenPreset,
       ...(composition.bakedSetup === undefined ? {} : { buildSetup: composition.bakedSetup }),
       binding: createManagedMachinePresetPreparationBindingV1({ content: { ...capturedContent, launch: capturedContent.launch },
         presetRevision: current.preset.revision, cliIdentity: composition.input.cli.identity,
+        machineId: input.machineId,
         credentialConfigurations: input.credentialConfigurations }) };
     const persisted = await persist(input, current, building, 'pending', input.expectedRevision);
     if (!('prepared' in persisted)) return persisted;

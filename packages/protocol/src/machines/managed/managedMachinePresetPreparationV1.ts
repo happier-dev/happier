@@ -39,6 +39,8 @@ export const ManagedMachinePresetPreparationBindingV1Schema = lazyZodSchema(() =
   presetRevision: z.number().check(z.int(), z.positive()),
   configuration: ManagedMachinePresetPreparationConfigurationV1Schema,
   cliIdentity: id(),
+  /** Original Prepare host; legacy images omit it and cannot select a local cleanup host. */
+  machineId: z.optional(id()),
   credentialConfigurations: z.array(z.strictObject({
     account: asProtocolZod(QualifiedConnectedAccountRefSchema),
     revision: z.nullable(id()),

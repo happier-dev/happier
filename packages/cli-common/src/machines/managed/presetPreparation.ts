@@ -11,6 +11,7 @@ export function createManagedMachinePresetPreparationBindingV1(params: Preparati
   content: Pick<ManagedMachinePresetContentV1, 'setup' | 'authorEffectReview'> & {
     launch: NonNullable<ManagedMachinePresetContentV1['launch']>;
   };
+  machineId?: string;
 }>): ManagedMachinePresetPreparationBindingV1 {
   const { name: _name, ...launch } = params.content.launch;
   return { presetRevision: params.presetRevision,
@@ -19,6 +20,7 @@ export function createManagedMachinePresetPreparationBindingV1(params: Preparati
         reviewedEffectDigest: params.content.authorEffectReview.reviewedEffectDigest,
       }) },
     cliIdentity: params.cliIdentity,
+    ...(params.machineId === undefined ? {} : { machineId: params.machineId }),
     credentialConfigurations: params.credentialConfigurations };
 }
 
@@ -36,7 +38,8 @@ export function readManagedMachinePresetPreparationV1(params: PreparationIdentit
   const prepared = content.prepared;
   if (prepared === undefined) return { kind: 'cold', reason: 'unprepared' };
   if (content.launch === undefined || !sameStrictJsonValue(prepared.binding,
-    createManagedMachinePresetPreparationBindingV1({ ...params, content: { ...content, launch: content.launch } }),
+    createManagedMachinePresetPreparationBindingV1({ ...params, content: { ...content, launch: content.launch },
+      machineId: prepared.binding.machineId }),
     { omitUndefinedObjectMembers: true })) return { kind: 'cold', reason: 'stale' };
   if (prepared.status !== 'ready') return { kind: 'cold', reason: prepared.status };
   if (prepared.cliBinaryPath === undefined) return { kind: 'cold', reason: 'unprepared' };

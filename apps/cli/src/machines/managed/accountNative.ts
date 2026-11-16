@@ -36,8 +36,11 @@ export function createCliManagedAccountNativeInvocationForLaunch(input: Readonly
     context: ActionExecutorContext;
     signal?: AbortSignal;
     requestId: string;
+    /** Retained Prepare placement; missing legacy placement cannot select a Machine effect. */
+    originalMachineId?: string;
 }>): ManagedNativeInvocation {
-    return createAccountNativeInvocation({ ...input, useReviewedParent: true });
+    return createAccountNativeInvocation({ ...input, useReviewedParent: true,
+        originalPreparation: { machineId: input.originalMachineId } });
 }
 
 function createAccountNativeInvocation(input: Readonly<{
@@ -50,6 +53,7 @@ function createAccountNativeInvocation(input: Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
     requestId: string;
+    originalPreparation?: Readonly<{ machineId?: string }>;
 }>): ManagedNativeInvocation {
     const { launch, provisioner, selected } = input;
     const reviewedParent = input.useReviewedParent ? readHostAdmittedReviewedParentV1(input.context.hostReviewedChild) : null;
@@ -58,6 +62,15 @@ function createAccountNativeInvocation(input: Readonly<{
         const localId = roles.find(candidate => candidate.role === role)?.action;
         if (!localId) throw new ManagedMachineControllerError('provider_unavailable');
         const identity = { pluginId: launch.provider.pluginId, localId };
+        const declaration = selected.manifest.contributes.actions.find(action => action.id === localId);
+        if (!declaration) throw new ManagedMachineControllerError('provider_unavailable');
+        if (input.originalPreparation && declaration.execution?.target !== 'account') {
+            const machineId = input.context.runtimeActionMachineId ?? input.context.externalActionExecutionAuthorization?.binding.machineId;
+            // Cross-host routing waits for Home's original-placement admission. Never substitute today's controller.
+            if (!input.originalPreparation.machineId || input.originalPreparation.machineId !== machineId) {
+                throw new ManagedMachineControllerError('controller_unavailable');
+            }
+        }
         const port = input.useReviewedParent && reviewedParent
             ? createManagedOpaquePresetReviewedChildPortV1({ parent: reviewedParent, context: input.context,
                 launch, provisioner, localId, role,
@@ -69,8 +82,6 @@ function createAccountNativeInvocation(input: Readonly<{
                 } })
             : input.context.hostReviewedChild;
         if (!port) throw new ManagedMachineControllerError('admission_unavailable');
-        const declaration = selected.manifest.contributes.actions.find(action => action.id === localId);
-        if (!declaration) throw new ManagedMachineControllerError('provider_unavailable');
         const requests = resolvePluginContributionHostAccessRequestsV2({ manifest: selected.manifest, pluginId: identity.pluginId,
             contribution: { family: 'actions', localId }, requestIds: declaration.hostAccess ?? [] });
         const authorizations = bindManagedMachineRoleCredentials({
