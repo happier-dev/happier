@@ -2009,6 +2009,15 @@ consumers keep the existing array, schema-map and accessor contracts. Spec
 authors must still avoid reading the catalog while their modules are evaluating,
 and ordinary schema initialization must remain safe independently.
 
+In 0.3 development source, `action_interception_rejected` is presented as
+a refusal. `readActionFailurePresentationV1` owns that classification and reads
+only the producer's safe `details.message`; absent text uses the surface's
+ordinary translated fallback. Agent, CLI and MCP projections quote a supplied
+reason as untrusted Workflow text and omit opaque diagnostics. UI error and
+tool-result adapters consume the same projection. Presentation never exposes
+raw command output or executes a reason. The Windows tools-call adapter uses
+the same projection; composed refusal/cancellation validation remains in progress.
+
 | Decision or fact | Owner |
 |---|---|
 | The Action registry: every row, its schemas, surfaces, safety and approval | `packages/protocol/src/actions/actionSpecs.ts` |
