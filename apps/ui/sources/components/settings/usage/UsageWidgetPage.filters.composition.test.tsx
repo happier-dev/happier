@@ -152,8 +152,8 @@ afterEach(async () => {
 
 
 /** The page scope one filter shows: its chip's selection, which the bar reads from the mounted page context. */
-function shownScope(bar: { scopeFilters: readonly { field: string; selected: readonly string[] }[] }, field: string): readonly string[] {
-    return bar.scopeFilters.find((filter) => filter.field === field)?.selected ?? [];
+function shownScope(filters: React.ComponentProps<typeof UsageFilterBar>['scopeFilters'], field: string): readonly string[] {
+    return filters.find((filter) => filter.field === field)?.selected ?? [];
 }
 
 describe('mounted Usage page scope commands', () => {
@@ -262,7 +262,7 @@ describe('mounted Usage page scope commands', () => {
                 await waitForHomeGovernance(() => {
                     expect(summary()?.requestedQuery.period.relative).toBe(period);
                     expect(summary()?.shownQuery?.period.relative).toBe(period);
-                    expect(summary()?.requestedQuery.machines).toEqual(shownScope(screen.findByType(UsageFilterBar).props, 'machines'));
+                    expect(summary()?.requestedQuery.machines).toEqual(shownScope(screen.findByType(UsageFilterBar).props.scopeFilters, 'machines'));
                     expect(summary()?.shownQuery?.machines).toEqual(summary()?.requestedQuery.machines);
                     expect(summary()?.pending).toBe(false);
                     expect(summary()?.accounting).toBeDefined();
@@ -532,7 +532,7 @@ describe('mounted Usage page scope commands', () => {
                 const filter = machineFilter()!;
                 const option = filter.options.find((value: { id: string }) => value.id === 'machine-a')!;
                 await invoke(`${filter.label}: ${option.label}`);
-                expect(shownScope(screen.findByType(UsageFilterBar).props, 'machines')).toEqual(['machine-a']);
+                expect(shownScope(screen.findByType(UsageFilterBar).props.scopeFilters, 'machines')).toEqual(['machine-a']);
             }
             expect.soft(posts(), `${selection} layout admission cannot acquire under UI authority`).toBe(before);
             expect.soft(screen.findAllByType(SurfaceStateCard).some(node => node.props.diagnosticCode === 'action_disabled')).toBe(true);
@@ -789,7 +789,7 @@ describe('mounted Usage page scope commands', () => {
             const sourceFilter = filters.find((filter: { field: string }) => filter.field === 'sources');
             const source = sourceFilter.options.find((option: { id: string }) => option.id === 'native');
             await invoke(`${sourceFilter.title}: ${source.label}`);
-            expect(shownScope(toolbar(), 'sources')).toEqual(['native']);
+            expect(shownScope(toolbar().scopeFilters, 'sources')).toEqual(['native']);
         }
         await invoke(t('usage.board.page.costBasisReported'));
         expect(toolbar().costBasis).toBe('reported');

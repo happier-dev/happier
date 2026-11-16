@@ -9,9 +9,12 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage } from '@/sync/domains/state/storage';
-import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQueryResources } from '@/sync/api/account/usageQueryResource';
-import { normalizeUsageQuery, normalizeUsageQueryBatchInput, getUsageQueryBatchKey, getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQueryResources, readUiUsageQueryBatch } from '@/sync/api/account/usageQueryResource';
+import { normalizeUsageQuery, normalizeUsageQueryBatchInput, getUsageQueryBatchKey, getUsageQueryKey, usageQueryToAnalyticsRequest, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { resolveUsagePageAccountingReads } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { createUsageWidgetPresets, USAGE_WIDGET_PRESET_IDS, USAGE_BUILTIN_WIDGET_IDS_V1, flattenWidgetLayoutWidgetsV1, WidgetLayoutItemsV1Schema, readBuiltinWidgetDescriptorV1, resolveConfiguredWidgetInputs } from '@happier-dev/protocol/widgets';
+import { applyUsageSocketUpdate } from '@/sync/engine/socket/usageUpdates';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { useUsageWidgetResource, useUsageWidgetBodyModel, type UsageWidgetResource, type UsageWidgetBodyModel } from './useUsageWidgetResource';
 import type { UsageWidgetQueryPlan } from './usageWidgetQueries';
@@ -23,7 +26,7 @@ import { RankedRows } from '@happier-dev/plugin-ui/presentation';
 import { UsageWidgetBody } from './widgets/UsageWidgetBody';
 import { UsageBreakdownsWidget } from './widgets/UsageBreakdownsWidget';
 import { UsageWidgetBatchProvider, useUsageWidgetModel, useUsageWidgetBatchInventorySlice, useUsageWidgetBatchSlices } from './widgets/usageWidgetBatch';
-import { readUsageWidgetQueryOverrides } from './usageWidgetPageContext';
+import { readUsageWidgetQueryOverrides, readUsageWidgetPageContext, readUsageWidgetPageScope, resolveUsageWidgetPageInitialQuery } from './usageWidgetPageContext';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -1274,6 +1277,137 @@ describe('Usage widget shared Resource selection', () => {
             expect(publications, 'equivalent plan does not publish Resource activity').toBe(0);
             expect(renders - baseline, 'each visible body renders only for the parent update').toBe(bodyIds.length);
         } finally { release(); }
+    });
+    it('refreshes each affected 90D Overview query once per typed Usage push, sharing reads and leaving allowance facts quiet', async () => {
+        let now = Date.now();
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        let revision = 1;
+        let held: ReturnType<typeof createDeferred<void>> | undefined;
+        const credentials = await mountHome(async request => {
+            if (request.path !== '/v2/usage/query') return undefined;
+            const admittedRevision = revision;
+            await held?.promise;
+            return Response.json({ ...accounting, totals: { ...accounting.totals, eventCount: admittedRevision } });
+        });
+        const pageQuery = resolveUsageWidgetPageInitialQuery({ initialFilters: { period: '90days', metric: 'tokens', costMode: 'auto', focus: null },
+            nowMs: now, timeZoneOffsetMinutes: 0 });
+        const context = readUsageWidgetPageContext(readUsageWidgetPageScope(pageQuery));
+        const names = Object.fromEntries(USAGE_WIDGET_PRESET_IDS.map(id => [id, id])) as Record<typeof USAGE_WIDGET_PRESET_IDS[number], string>;
+        const overview = createUsageWidgetPresets(names).find(preset => preset.id === 'overview')!;
+        const widgets = flattenWidgetLayoutWidgetsV1(WidgetLayoutItemsV1Schema.parse(overview.items)).map(row => {
+            const definition = row.instance.definition;
+            const id = definition.kind === 'builtin' ? USAGE_BUILTIN_WIDGET_IDS_V1.find(id => id === definition.id) : undefined;
+            if (!id) throw new Error('Overview must contain Usage builtins');
+            const binding = resolveConfiguredWidgetInputs({ descriptor: readBuiltinWidgetDescriptorV1(definition)!,
+                instance: row.instance, providedContext: context, viewerValues: {} });
+            if (binding.status !== 'ready') throw new Error(`Overview binding refused: ${id}`);
+            return { id, input: binding.input, testID: row.instance.id };
+        });
+        const clauses = readUsageWidgetQueryOverrides(pageQuery);
+        let slices: ReturnType<typeof useUsageWidgetBatchSlices> = [];
+        let inventory: ReturnType<typeof useUsageWidgetBatchInventorySlice>;
+        function Observe() { slices = useUsageWidgetBatchSlices(); inventory = useUsageWidgetBatchInventorySlice(); return null; }
+        function Page(props: Readonly<{ visible: boolean }>) {
+            return <InjectedAuthProvider credentials={credentials}><CoreCollectionScope>
+                {props.visible ? <UsageWidgetBatchProvider clauses={clauses} inventoryQuery={pageQuery}>
+                    {widgets.map(widget => <UsageWidgetBody key={widget.testID} {...widget} serverId={home!.homes.a!.id} />)}
+                    <Observe />
+                </UsageWidgetBatchProvider> : null}
+            </CoreCollectionScope></InjectedAuthProvider>;
+        }
+        const screen = await renderScreen(<Page visible={false} />);
+        // React's instrumentation boundary counts committed executions of the real fact bodies.
+        // The canonical dispatcher supplies exactly these slice/query/presentation props.
+        type Fiber = { type: unknown; flags: number; alternate: Fiber | null; return: Fiber | null;
+            child: Fiber | null; sibling: Fiber | null; stateNode: { current: Fiber } | null;
+            memoizedProps: { testID?: string; slice?: unknown; query?: UsageQuery; presentation?: unknown } };
+        const current = new WeakMap<Fiber, boolean>();
+        const renders = new Map<string, number>();
+        const queries = new Map<string, UsageQuery>();
+        const widgetIds = new Set(widgets.map(widget => widget.testID));
+        const release = screen.subscribe(() => {
+            let root = (screen.root as unknown as { _fiber: Fiber })._fiber;
+            while (root.return) root = root.return;
+            const stack = [root.stateNode!.current];
+            while (stack.length) {
+                const fiber = stack.pop()!;
+                const props = fiber.memoizedProps;
+                let parent = fiber.return;
+                while (parent && parent.memoizedProps?.testID !== props?.testID) parent = parent.return;
+                // Count the dispatcher's fact body once; a body's internal presentation wrapper
+                // (Rhythm's Original style, for example) is part of that same widget execution.
+                if (typeof fiber.type === 'function' && props.testID && widgetIds.has(props.testID)
+                    && props.slice && props.query && props.presentation !== undefined
+                    && !(parent?.memoizedProps?.slice && parent.memoizedProps.query && parent.memoizedProps.presentation !== undefined)) {
+                    queries.set(props.testID, props.query);
+                    if (current.get(fiber) !== true && (!fiber.alternate || (fiber.flags & 1) === 1)) {
+                        renders.set(props.testID, (renders.get(props.testID) ?? 0) + 1);
+                    }
+                }
+                current.set(fiber, true);
+                if (fiber.alternate) current.set(fiber.alternate, false);
+                if (fiber.sibling) stack.push(fiber.sibling);
+                if (fiber.child) stack.push(fiber.child);
+            }
+        });
+        const requests = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch');
+        const settled = () => slices.length === widgets.length && slices.every(slice => !slice.pending)
+            && inventory !== undefined && !inventory.pending;
+        try {
+            await screen.update(<Page visible />);
+            await expect.poll(settled).toBe(true);
+            await flushHookEffects({ cycles: 20 });
+            expect(queries.size, 'all seven real Overview bodies are observed').toBe(widgets.length);
+            const displayed = [...queries.values()];
+            expect(displayed.every(query => query.period.relative === '90days')).toBe(true);
+            const allowance = widgets.filter(widget => queries.get(widget.testID)!.includeAccounting === false);
+            const affected = widgets.filter(widget => queries.get(widget.testID)!.includeAccounting !== false);
+            expect(allowance).toHaveLength(2);
+            expect(affected).toHaveLength(5);
+            const beforeReads = requests().length;
+            const beforeRenders = new Map(renders);
+            const retained = new Map(slices.filter(slice => slice.shownQuery.includeAccounting === false).map(slice => [slice.key, slice]));
+            const captured = captureUiUsageQueryAccountContext(credentials)!;
+            const admittedQueries = [...slices.map(slice => slice.shownQuery), inventory!.shownQuery];
+            now += 1000;
+            revision = 2;
+            held = createDeferred<void>();
+            await act(async () => applyUsageSocketUpdate({ type: 'usage', id: 'overview-changed-session', key: 'one-real-fact',
+                tokens: { total: 1 }, cost: { total: 0 }, timestamp: now,
+                accountingChange: { sessionId: 'overview-changed-session', observedFromMs: now - 2000 } },
+            captured.accountLifetime.scope.serverId, captured.accountLifetime.scope.accountId));
+            await expect.poll(() => requests().length).toBe(beforeReads + 1);
+            // A second real consumer joins while the mounted widget set's server read is held.
+            const joined = readUiUsageQueryBatch(captured, { queries: admittedQueries });
+            await flushHookEffects({ cycles: 20 });
+            expect(requests().length - beforeReads, 'shared in-flight inputs add no server read').toBe(1);
+            const expectedKeys = resolveUsagePageAccountingReads(admittedQueries, now).map(({ query, period }) =>
+                getUsageAnalyticsQueryRequestKey(usageQueryToAnalyticsRequest({ ...query, period }, now)));
+            const requested = requests().slice(beforeReads).flatMap(request => UsageAnalyticsQueryBatchRequestSchema.parse(request.body).queries);
+            const actualKeys = requested.map(getUsageAnalyticsQueryRequestKey);
+            expect(actualKeys.sort(), 'one read per demanded accounting key, including comparison dependencies and page inventory').toEqual([...new Set(expectedKeys)].sort());
+            expect(actualKeys.length, 'no repeated query key inside or across physical reads').toBe(new Set(actualKeys).size);
+            await act(async () => { held!.resolve(); await joined; });
+            held = undefined;
+            await expect.poll(settled).toBe(true);
+            await flushHookEffects({ cycles: 20 });
+            expect(slices.filter(slice => slice.shownQuery.includeAccounting !== false).map(slice => slice.accounting?.totals.eventCount))
+                .toEqual(affected.map(() => 2));
+            for (const [key, slice] of retained) expect(slices.find(next => next.key === key)).toBe(slice);
+            const deltas = widgets.map(widget => ({ widget: widget.id, renders: renders.get(widget.testID)! - beforeRenders.get(widget.testID)! }));
+            for (const widget of allowance) expect(renders.get(widget.testID)! - beforeRenders.get(widget.testID)!, widget.id).toBe(0);
+            for (const widget of affected) {
+                const count = renders.get(widget.testID)! - beforeRenders.get(widget.testID)!;
+                expect(count, `${widget.id}: one pending-source transition and one replacement`).toBe(2);
+            }
+            await act(async () => { await readUiUsageQueryBatch(captured, { queries: admittedQueries }); });
+            await flushHookEffects({ cycles: 20 });
+            expect(requests().length - beforeReads, 'settlement and an unchanged reread schedule no follow-up batch').toBe(1);
+            console.info('usage-90d-overview-push-counts', JSON.stringify({ typedPushes: 1, mountedWidgets: widgets.length,
+                affectedWidgets: affected.length, unaffectedWidgets: allowance.length, physicalReads: requests().length - beforeReads,
+                accountingQueryKeys: actualKeys.length, currentRangeQueries: requested.filter(query => query.dateRange?.endMs === now).length,
+                renders: deltas }));
+        } finally { held?.resolve(); release(); await screen.unmount(); }
     });
     it('keeps settled allowance bodies quiet through accounting-only pushes in a mixed page batch', async () => {
         let amount = 1;
