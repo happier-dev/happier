@@ -47,6 +47,14 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createDaemonDeploymentActionDeps } from '../../createDaemonDeploymentActionDeps';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
+import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
+import { readOwnedNoticeArtifactV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { logger } from '@/ui/logger';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
@@ -157,6 +165,8 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
         throw new Error(`Unexpected retained receipt: ${deploymentId}`);
     };
     let inventoryReads = 0;
+    const noticeRows = new Map<string, { id: string } & Record<string, unknown>>();
+    const healthLog = vi.spyOn(logger, 'infoFile');
     const openedReceiptArtifacts: string[] = [];
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', jti: home })).toString('base64url')}.signature`;
     const credentials: StoredCredentials = { token, encryption: homeInventoryMode === 'e2ee'
@@ -201,6 +211,14 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
         });
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(url).pathname;
+            if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, [...noticeRows.values()]) };
+            const noticeRow = noticeRows.get(path.split('/')[3]!);
+            if (noticeRow) return { status: 200, data: path.endsWith('/recipients') ? {
+                artifactId: noticeRow.id, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+                dataEncryptionKey: noticeRow.dataEncryptionKey, callerDataEncryptionKey: noticeRow.dataEncryptionKey, recipients: [],
+                provenanceDataEncryptionKey: noticeRow.provenanceDataEncryptionKey,
+                callerProvenanceDataEncryptionKey: noticeRow.provenanceDataEncryptionKey,
+            } : noticeRow };
             if ((requester || prepareReadRole) && path === '/v1/account/profile') return { status: 200, data: { id: requester ? 'bob' : 'owner' } };
             if ((requester || prepareReadRole) && path === '/v2/account/settings') return { status: 200,
                 data: { content: requester?.settingsContent ?? { t: 'plain', v: {} }, version: 1 } };
@@ -229,6 +247,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
                     encryptionMode: mode, dataEncryptionKey: key.mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : key.dataEncryptionKey,
                     header: encode({ kind: document.kind, title: 'Domain' }), body: encode({ body: JSON.stringify(document.value) }),
                     headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
+                return { status: 404, data: { error: 'not_found' } };
             }
             if (!selected) throw new Error(`Unexpected Account Artifact read: ${path}`);
             openedReceiptArtifacts.push(selected.deployment.contentArtifactId);
@@ -239,14 +258,24 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
                 body: encode({ body: JSON.stringify(selected.content) }), headerVersion: 1, bodyVersion: 1,
                 seq: 1, createdAt: 1, updatedAt: 1 } };
         });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, input) => {
+            if (new URL(url).pathname === '/v1/artifacts/read') return artifactReadResponse(input, id => noticeRows.get(id) ?? null);
+            const mutation = readCarrierMutation(input);
+            const id = typeof mutation.id === 'string' ? mutation.id : new URL(url).pathname.split('/').at(-1)!;
+            const prior = noticeRows.get(id);
+            const version = Number(prior?.bodyVersion ?? 0) + 1;
+            noticeRows.set(id, { ...prior, ...mutation, id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+                encryptionMode: mode, headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version });
+            return { status: 200, data: { id, success: true, headerVersion: version, bodyVersion: version } };
+        });
     }
     const fixture = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
         controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
     const runtime = createMachineServicesRuntime({ target,
         readMetadata: () => ({ status: 'ready', metadataVersion: 1, metadata: { serviceWatchesV1: { v: 1, watches: [] } } }),
         captureMetadataPort() { throw new Error('Read-only recovery must not write Machine metadata'); },
-        restoreEnvironmentServices: (owner, signal) => homeInventoryMode
-            ? restoreOwnServerServicesForHost({ ...target, installationId: 'installation-a', owner, signal,
+        restoreEnvironmentServices: (owner, signal, observations) => homeInventoryMode
+            ? restoreOwnServerServicesForHost({ ...observations, ...target, installationId: 'installation-a', owner, signal,
                 isCurrent: () => !signal.aborted, async resolveRuntime() { return { ...target, accountId: 'owner', credentials,
                     serverHttpBaseUrl: serverUrl, isCurrent: async () => !signal.aborted }; } })
             : restoreOwnServerDeploymentServices({ ...target,
@@ -265,6 +294,25 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     const readInput = { ...target, environmentId: environment.id, deploymentId: receipt.deployment.id,
         targetLinkId: link.id, installationId: 'installation-a', service };
     return { docker, runtime, reads, context, readInput, service, serviceFor,
+        noticeDiagnostics: () => healthLog.mock.calls.filter(([tag]) => tag.startsWith('[deploymentHealth]')),
+        async executeNoticeRestart(input: unknown) {
+            const request = DeploymentActionInputSchemasV1['deployments.restart'].parse(input);
+            const host = { ...target, credentials, serverHttpBaseUrl: serverUrl,
+                resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' } as const) };
+            const deps = createDaemonDeploymentActionDeps({ ...host, runtime: createOwnServerDeploymentRuntimeForHost(host) });
+            const operations = createHostActionOperationRuntime({ machineId: target.machineId, resolveAccountId: async () => 'owner' });
+            return await operations.observeExecution({ actionId: 'deployments.restart', input: request, rpcContext: context,
+                execute: async operation => ({ ok: true, result: await deps.deploymentAction('deployments.restart', request, {
+                    ...context, operationAcceptance: operation.operationAcceptance, operationOwnerUpdate: operation.operationOwnerUpdate,
+                }) }) });
+        },
+        async readNotices() {
+            const store = createCredentialedAccountArtifactStore(credentials);
+            return await Promise.all([...noticeRows.keys()].map(async id => {
+                const artifact = await runWithServerHttpBaseUrl(serverUrl, () => store.read(id, { includeSharedAudience: false }));
+                return artifact ? readOwnedNoticeArtifactV1(artifact, 'owner') : null;
+            }));
+        },
         readHandle: () => fixture.registry.projectManagedServices.resolveEnvironmentService(identity.homeServerIdentityId, service),
         targetLinkId: link.id,
         async prepareBindings() {
@@ -333,6 +381,34 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
 }
 
 describe('retained Environment service recovery on first use', () => {
+    it.each(['plain', 'e2ee'] as const)('publishes the restored stopped service through the native notice owner with its current restart choice ($0)', async mode => {
+        const fixture = await createRestartedEnvironmentFixture('stopped', mode);
+        try {
+            const listed = await fixture.list();
+            expect(listed).toMatchObject({ kind: 'snapshot', services: [{ state: 'stopped' }] });
+            if (listed.kind !== 'snapshot') throw new Error('Expected restored service inventory');
+            await vi.waitFor(async () => {
+                expect(await fixture.readNotices(), JSON.stringify(fixture.noticeDiagnostics())).toEqual(expect.arrayContaining([expect.objectContaining({
+                    kind: 'account_notice.v1', healthPhase: 'open',
+                    source: { kind: 'host', topic: 'service_health', subject: fixture.service },
+                    recoveryChoices: [expect.objectContaining({ actionId: 'deployments.restart', input: expect.objectContaining({
+                        environmentId: fixture.readInput.environmentId, deploymentId: fixture.readInput.deploymentId,
+                        service: fixture.service, expectedGeneration: listed.services[0]!.generation,
+                    }) })],
+                })]));
+            });
+            expect((await fixture.docker.readInvocations()).filter(call => call.args.includes('up'))).toHaveLength(1);
+            const notice = (await fixture.readNotices()).find(value => value?.kind === 'account_notice.v1'
+                && value.source.kind === 'host' && value.source.topic === 'service_health'
+                && value.page?.kind === 'host' && value.page.page === 'machine_service');
+            if (notice?.kind !== 'account_notice.v1') throw new Error('Expected restored service notice');
+            const restart = notice.recoveryChoices?.find(choice => choice.actionId === 'deployments.restart');
+            if (!restart) throw new Error('Expected native restart recovery choice');
+            expect(await fixture.executeNoticeRestart(restart.input)).toMatchObject({ ok: true,
+                result: { kind: 'observed', serviceId: fixture.service.serviceId, generation: listed.services[0]!.generation } });
+            expect((await fixture.docker.readInvocations()).filter(call => call.args.includes('restart'))).toHaveLength(1);
+        } finally { await fixture.dispose(); }
+    });
     it('reads a healthy selected service when another retained service source is missing', async () => {
         const fixture = await createRestartedEnvironmentFixture('running', 'plain', 'mixed-service-sources', true, false, 'app', [], true);
         try {

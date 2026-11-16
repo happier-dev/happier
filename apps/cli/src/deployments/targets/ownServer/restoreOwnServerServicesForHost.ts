@@ -20,6 +20,8 @@ import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { decodeBase64 } from '@/api/encryption';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { configuration } from '@/configuration';
+import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { attachDeploymentServiceHealthNotices, type DeploymentServiceHealthNoticeInput } from '../../deploymentServiceHealthNotices';
 
 const refuse = (code: string, stage = 'service.restoration'): never => { throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { stage }); };
 
@@ -29,11 +31,13 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
     serverId: string;
     machineId: string;
     installationId: string;
-    owner: RestoreOwnServerDeploymentServicesInput['owner'];
+    owner: RestoreOwnServerDeploymentServicesInput['owner'] & Pick<ReturnType<typeof createManagedServicesOwner>, 'machineServiceRows'>;
     signal: AbortSignal;
     isCurrent(): boolean;
     resolveRuntime(signal: AbortSignal): Promise<MachineTerminalAccountReadRuntime | null>;
     acquireServiceExportForward?: OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
+    readHealthAlertSource?: DeploymentServiceHealthNoticeInput['readHealthAlertSource'];
+    currentDomainEdgeObservation?: NonNullable<DeploymentServiceHealthNoticeInput['nativeWorkload']>['edge'];
 }>): Promise<readonly EnvironmentServiceRecoveryRow[]> {
     input.signal.throwIfAborted();
     const runtime = await input.resolveRuntime(input.signal);
@@ -67,6 +71,15 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
             return result.ok ? result : refuse(result.error);
         },
     };
+    const acquirePluginRuntimeRegistryLease = async () => {
+        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+        return lease ?? refuse('service_unavailable');
+    };
+    const host = { credentials: runtime.credentials, serverId: input.serverId,
+        serverHttpBaseUrl: runtime.serverHttpBaseUrl, machineId: input.machineId,
+        resolveRequesterIdentity: async () => ({ kind: 'unknown' as const, reason: 'requester_authority_unavailable' as const }),
+        acquirePluginRuntimeRegistryLease, acquireServiceExportForward: input.acquireServiceExportForward };
+    const dependencies = createDaemonDeploymentActionDeps({ ...host, runtime: createOwnServerDeploymentRuntimeForHost(host) });
     const failures: EnvironmentServiceRecoveryRow[] = [];
     let cursor: string | undefined;
     do {
@@ -94,13 +107,15 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
                 deploymentId, context }, receiptHost);
             const projection = createDeploymentMemberVersionProjectionV1(link, links);
             const opened = new Map<string, DeploymentReceiptDetailV1>();
-            for await (const receipt of readOwnServerDeploymentReceiptHistoryForHost({ environmentId: environment.id,
+            const receiptHistory = (signal: AbortSignal) => readOwnServerDeploymentReceiptHistoryForHost({ environmentId: environment.id,
                 lineage: getDeploymentTargetLinkLineageV1(link, links),
                 readPage: next => deploymentAction!('deployments.receipts.list', { serverId: input.serverId,
-                    environmentId: environment.id, ...(next ? { cursor: next } : {}) }, context),
-                readCurrent: readReceipt,
-                open: deployment => openDeploymentReceiptForHost(deployment, context, receiptHost),
-            })) {
+                    environmentId: environment.id, ...(next ? { cursor: next } : {}) }, { signal }),
+                readCurrent: deploymentId => readDeploymentReceiptForHost({ environmentId: environment.id,
+                    deploymentId, context: { signal } }, receiptHost),
+                open: deployment => openDeploymentReceiptForHost(deployment, { signal }, receiptHost),
+            });
+            for await (const receipt of receiptHistory(input.signal)) {
                 opened.set(receipt.deployment.id, receipt);
                 const complete = projection.addReceipt(receipt);
                 if (complete || projection.getVersions()[input.machineId]?.deploymentId != null) break;
@@ -109,20 +124,21 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
             if (!version?.deploymentId || version.uncertain) continue;
             const receipt = opened.get(version.deploymentId) ?? await readReceipt(version.deploymentId);
             failures.push(...await restoreOwnServerDeploymentServices({ ...input, receipt, readReceipt,
+                observeServices({ handles, homeServerIdentityId }) {
+                    attachDeploymentServiceHealthNotices({ ...host, homeServerIdentityId,
+                        environment: detail, handles, recoveryReceipt: receipt, serviceRows: input.owner.machineServiceRows,
+                        readHealthAlertSource: input.readHealthAlertSource,
+                        readEnvironment: signal => dependencies.readDeploymentEnvironment({ environmentId: environment.id, context: { signal } }),
+                        nativeWorkload: { installationId: input.installationId, handles, rows: input.owner.machineServiceRows,
+                            ...(input.currentDomainEdgeObservation ? { edge: input.currentDomainEdgeObservation } : {}),
+                            receipts: (_environment, signal) => receiptHistory(signal) },
+                    });
+                },
                 async restoreServiceReferences({ docker, engine, onFailure }) {
                     const addresses = receipt.content.ownServer?.referenceAddresses ?? [];
                     if (!addresses.some(address => address.route?.kind === 'iroh' || address.route?.kind === 'local')) return { async close() {} };
                     const identity = readInstallationIdentityIfExistsSync();
                     if (!identity || identity.installationId !== input.installationId) return refuse('admission_unavailable');
-                    const acquirePluginRuntimeRegistryLease = async () => {
-                        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
-                        return lease ?? refuse('service_unavailable');
-                    };
-                    const host = { credentials: runtime.credentials, serverId: input.serverId,
-                        serverHttpBaseUrl: runtime.serverHttpBaseUrl, machineId: input.machineId,
-                        resolveRequesterIdentity: async () => ({ kind: 'unknown' as const, reason: 'requester_authority_unavailable' as const }),
-                        acquirePluginRuntimeRegistryLease, acquireServiceExportForward: input.acquireServiceExportForward };
-                    const dependencies = createDaemonDeploymentActionDeps({ ...host, runtime: createOwnServerDeploymentRuntimeForHost(host) });
                     const lease = await acquirePluginRuntimeRegistryLease();
                     try {
                         const { homeServerIdentityId } = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,

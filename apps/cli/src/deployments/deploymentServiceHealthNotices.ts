@@ -133,7 +133,7 @@ export type DeploymentServiceHealthNoticeInput = Readonly<{
     homeServerIdentityId: string;
     serverHttpBaseUrl: string;
     machineId: string;
-    environment: DeploymentEnvironmentDetailV1;
+    environment: Pick<DeploymentEnvironmentDetailV1, 'environment'>;
     recoveryReceipt?: DeploymentReceiptDetailV1;
     serviceRows?: Pick<ReturnType<typeof createMachineServiceRowProjection>, 'read'>;
     readEnvironment(signal: AbortSignal): Promise<DeploymentEnvironmentDetailV1>;

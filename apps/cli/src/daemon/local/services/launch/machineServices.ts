@@ -43,7 +43,8 @@ export function createMachineServicesRuntime(input: Readonly<{
     onSummary?(summary: MachineManagedServicesSummaryV1): void;
     readMetadata(): MachineMetadataFieldReadV1;
     captureMetadataPort(): MachineMetadataFieldPortV1;
-    restoreEnvironmentServices?(owner: ResolvedExecutablePluginRuntimeRegistry['projectManagedServices'], signal: AbortSignal): Promise<void | readonly EnvironmentServiceRecoveryRow[]>;
+    restoreEnvironmentServices?(owner: ResolvedExecutablePluginRuntimeRegistry['projectManagedServices'], signal: AbortSignal,
+        observations: Pick<ResolvedExecutablePluginRuntimeRegistry, 'readHealthAlertSource' | 'currentDomainEdgeObservation'>): Promise<void | readonly EnvironmentServiceRecoveryRow[]>;
 }>): Readonly<{ execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure>; sampleUsage(): Promise<readonly MachineServiceUsageV1[]>; getSummary(): MachineManagedServicesSummaryV1 | undefined; canReadHistory(serviceId: string, request: MachineServiceDisclosureRequest): Promise<boolean>; reconcile(): Promise<void>; ensureEnvironmentServices: EnsureEnvironmentServices; dispose(): Promise<void> }> {
     let disposed = false;
     const rows = createMachineServiceRowProjection(revision);
@@ -539,7 +540,7 @@ export function createMachineServicesRuntime(input: Readonly<{
         if (!lease) return [];
         try {
             const owner = lease.registry.projectManagedServices;
-            return await owner.restoreEnvironmentServices(target, () => input.restoreEnvironmentServices!(owner, lifetime.signal), lifetime.signal);
+            return await owner.restoreEnvironmentServices(target, () => input.restoreEnvironmentServices!(owner, lifetime.signal, lease.registry), lifetime.signal);
         } finally { await lease.release(); }
     }
     async function ensureEnvironmentServices(scope?: EnvironmentServiceRecoveryScope): Promise<void> {

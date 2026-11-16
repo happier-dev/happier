@@ -3067,13 +3067,13 @@ export class ApiMachineClient {
                 void this.updateDaemonState(state => ({ ...(state ?? { status: 'running' as const }), managedServices }))
                     .catch(() => logger.warn('[API MACHINE] Machine service summary publication failed'));
             },
-            restoreEnvironmentServices: async (owner, signal) => {
+            restoreEnvironmentServices: async (owner, signal, observations) => {
                 const installationId = this.machineRuntimeInstallationId;
                 const serverId = await resolveServerProfileHomeIdentityId(this.machineRuntimeServerId);
                 if (!installationId || !serverId) throw machineServiceAdmissionFailure(
                     !installationId ? 'service.installation' : 'service.home_identity');
                 const { restoreOwnServerServicesForHost } = await import('@/deployments/targets/ownServer/restoreOwnServerServicesForHost');
-                return await restoreOwnServerServicesForHost({ serverId, machineId: this.machine.id, installationId, owner, signal,
+                return await restoreOwnServerServicesForHost({ ...observations, serverId, machineId: this.machine.id, installationId, owner, signal,
                     acquireServiceExportForward: this.lifecycleDependencies.acquireServiceExportForward,
                     resolveRuntime: async workSignal => {
                         let reason = 'unavailable';

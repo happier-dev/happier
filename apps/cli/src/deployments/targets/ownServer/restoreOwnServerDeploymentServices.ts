@@ -1,7 +1,7 @@
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { EnvironmentServiceRecoveryRow } from '@/plugins/runtime/invocation/services/environmentServiceRecovery';
 import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
-import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import type { createManagedServicesOwner, EnvironmentProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { configuration } from '@/configuration';
 import { authorizePluginExecLaunchForHost, readPluginExecProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
 import { produceEnvironmentProjectServices } from '@/daemon/local/services/launch/projectDeclarations';
@@ -25,6 +25,8 @@ export type RestoreOwnServerDeploymentServicesInput = Readonly<{
     signal: AbortSignal;
     isCurrent(): boolean;
     readReceipt?(deploymentId: string): Promise<DeploymentReceiptDetailV1>;
+    observeServices?(input: Readonly<{ homeServerIdentityId: string;
+        handles: readonly EnvironmentProjectManagedServiceHandle[] }>): void;
     restoreServiceReferences?(input: Readonly<{ docker: ProjectNativeDockerPort; engine: NativeDockerEngineFacts;
         onFailure(failure: ActionExecuteFailure | null): void }>): Promise<Readonly<{ close(): Promise<void> }>>;
 }>;
@@ -46,8 +48,9 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
     const serviceIdentity = (composeService: string) => ({ kind: 'deployment' as const, machineId: input.machineId,
         environmentId: identity.environmentId, environmentInstanceId: identity.environmentInstanceId, composeService,
         serviceId: `${identity.environmentInstanceId}/${composeService}` });
-    if (projection.services.every(service => input.owner.resolveEnvironmentService(identity.homeServerIdentityId,
-        serviceIdentity(service))?.deploymentId === receipt.deployment.id)) return [];
+    const existingHandles = projection.services.map(service => input.owner.resolveEnvironmentService(identity.homeServerIdentityId,
+        serviceIdentity(service)));
+    if (existingHandles.every(handle => handle?.deploymentId === receipt.deployment.id)) return [];
     const assertCurrent = async () => {
         input.signal.throwIfAborted();
         if (!input.isCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'service_unavailable', error: 'Service observation is unavailable' });
@@ -169,5 +172,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         unavailable(projection.services.filter(service => !consumers.some(handle => handle.composeService === service)
             && !failures.some(row => row.identity?.kind === 'deployment' && row.identity.composeService === service)), error);
     } finally { await release(); }
+    const restored = consumers.filter(handle => !existingHandles.includes(handle));
+    if (restored.length) input.observeServices?.({ homeServerIdentityId: identity.homeServerIdentityId, handles: restored });
     return failures;
 }
