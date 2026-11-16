@@ -68,8 +68,10 @@ export async function settleManagedMachineDeleteIntent(input: Readonly<{
                 deletion.result.nativeCause ? { kind: 'managedNative', nativeCause: deletion.result.nativeCause } : undefined) : undefined;
         try { machine = await input.report(deletion); }
         catch (reportError) {
-            if (!nativeFailure) throw reportError;
+            const failure = nativeFailure ?? ManagedMachineControllerError.fromUnknownNativeResult(deletion.result);
+            if (!failure) throw reportError;
             input.onNativeFailureReportError(reportError);
+            throw failure;
         }
         if (nativeFailure) throw nativeFailure;
         if (machine.allocation === 'confirmed-absent' && !machine.submittedNativeEffect) return machine;

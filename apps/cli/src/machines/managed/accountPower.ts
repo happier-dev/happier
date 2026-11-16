@@ -74,8 +74,10 @@ export async function executeCliManagedAccountPower(input: Readonly<{
     try {
         await input.post('report-intent', await hydrator.prepareControllerReport('report-intent', { ...correlation, result: power.result, observation: power.observation }, input.signal), ManagedControllerMachineOutputV1Schema, null);
     } catch (reportError) {
-        if (!nativeFailure) throw reportError;
+        const failure = nativeFailure ?? ManagedMachineControllerError.fromUnknownNativeResult(power.result);
+        if (!failure) throw reportError;
         logger.warn('[MANAGED MACHINE] Native outcome report failed', projectActionFailureCauseV1(reportError, 'machines.managed.power.set'));
+        throw failure;
     }
     if (nativeFailure) throw nativeFailure;
     if (power.result.kind !== 'confirmed' || !power.observation

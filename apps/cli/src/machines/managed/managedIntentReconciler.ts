@@ -593,9 +593,10 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                     machine = result.kind === 'bound' ? await client.reportIssuedRebuildBound(machine, result)
                         : await reportIntent({ ...correlation, result, ...(observation ? { observation } : {}) });
                 } catch (error) {
-                    if (!nativeFailure) throw error;
+                    const failure = nativeFailure ?? ManagedMachineControllerError.fromUnknownNativeResult(result);
+                    if (!failure) throw error;
                     logger.warn('[MANAGED MACHINE] Native outcome report failed', projectActionFailureCauseV1(error, params.action));
-                    throw nativeFailure;
+                    throw failure;
                 }
                 if (nativeFailure) throw nativeFailure;
                 const settled = outstanding ? publishSettledNativeOperation(before, machine, outstanding) : undefined;

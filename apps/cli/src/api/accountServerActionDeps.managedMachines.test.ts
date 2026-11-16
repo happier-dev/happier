@@ -645,7 +645,7 @@ describe('managed inventory CLI Home adapter', () => {
   });
 
   async function failedAccountPowerFixture(kind: 'unknown' | 'refused', nativeFailure?: ActionExecuteFailure | Error, reportRefused = false,
-    returnedOutcome?: 'refused' | 'guest-startup-failed' | 'confirmed') {
+    returnedOutcome?: 'refused' | 'unknown' | 'guest-startup-failed' | 'confirmed') {
     const guestStartup = returnedOutcome === 'guest-startup-failed';
     const base = managedFixture({ nativeTransport: guestStartup });
     const manifest = normalizePluginManifestV2({ ...base.manifest, contributes: { ...base.manifest.contributes,
@@ -699,8 +699,8 @@ describe('managed inventory CLI Home adapter', () => {
             power: guestStartup && powered ? 'running' : 'stopped', storage: 'retained' } };
           if (role === 'power') {
             powered = true;
-            return { ok: true, result: returnedOutcome === 'refused'
-              ? { kind: 'refused', code: 'native_permission_denied', nativeCause: { httpStatusClass: '4xx' } } : { kind: 'confirmed' } };
+            return { ok: true, result: returnedOutcome === 'refused' || returnedOutcome === 'unknown'
+              ? { kind: returnedOutcome, code: 'native_permission_denied', nativeCause: { httpStatusClass: '4xx' } } : { kind: 'confirmed' } };
           }
           if (role === 'bootstrap') return { ok: true, result: { kind: 'native',
             transport: { contributionRef: provider, schemaVersion: 1 } } };
@@ -746,7 +746,7 @@ describe('managed inventory CLI Home adapter', () => {
     } finally { warnings.mockRestore(); }
   });
 
-  it.each(['guest-startup-failed', 'refused', 'confirmed'] as const)(
+  it.each(['guest-startup-failed', 'refused', 'unknown', 'confirmed'] as const)(
     'preserves a known returned Account power failure when reporting fails while exposing confirmed report failure (%s)', async outcome => {
       const authored = projectContributedActionFailure({ errorCode: 'native_transport_unavailable', error: 'Reconnect the native provider',
         data: { failureCause: { phase: 'action.invoke', errorClass: 'Error', errorCode: 'EPIPE', httpStatus: null } } });
@@ -763,9 +763,11 @@ describe('managed inventory CLI Home adapter', () => {
             return schema.parse(response.data);
           } });
         if (outcome === 'guest-startup-failed') await expect(execution).rejects.toBe(nativeFailure);
-        else await expect(execution).rejects.toMatchObject({ code: outcome === 'refused' ? 'native_permission_denied' : 'managed_request_failed' });
-        expect(reports).toEqual([expect.objectContaining({ result: expect.objectContaining(outcome === 'refused'
-          ? { kind: 'refused', code: 'native_permission_denied' } : { kind: 'confirmed' }) })]);
+        else await expect(execution).rejects.toMatchObject(outcome === 'refused' || outcome === 'unknown'
+          ? { code: 'native_permission_denied', details: { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx' } } }
+          : { code: 'managed_request_failed' });
+        expect(reports).toEqual([expect.objectContaining({ result: expect.objectContaining(outcome === 'refused' || outcome === 'unknown'
+          ? { kind: outcome, code: 'native_permission_denied' } : { kind: 'confirmed' }) })]);
         expect(native).toEqual(outcome === 'guest-startup-failed' ? ['inspect', 'power', 'inspect', 'bootstrap', 'exec']
           : outcome === 'refused' ? ['power'] : ['power', 'inspect']);
         if (outcome === 'confirmed') expect(warnings).not.toHaveBeenCalled();

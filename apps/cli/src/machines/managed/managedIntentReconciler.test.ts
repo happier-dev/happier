@@ -400,6 +400,31 @@ it.each(['power-refused', 'delete-refused', 'rebuild-refused', 'guest-startup-fa
     expect(JSON.stringify(warnings.mock.calls)).not.toContain('private-home-report-body');
 });
 
+it.each(['delete', 'stop'] as const)('preserves an unknown native %s cause when Home rejects its outcome report', async intent => {
+    const nativeCause = { localCause: 'native_command_failed', command: intent, exitCode: 1,
+        stderr: 'Native command failed for [redacted]' } as const;
+    const result = { kind: 'unknown', code: 'native_command_failed', nativeCause } as const;
+    const test = setup(undefined, result, intent);
+    const transport = test.post.getMockImplementation()!;
+    test.post.mockImplementation(async (url, body, config) => String(url).endsWith('/report-intent')
+        ? { status: 400, data: { code: 'invalid-params', message: 'private-home-report-body' } }
+        : await transport(url, body, config));
+    // Console/file output is the external logging boundary.
+    const warnings = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const failure = await test.run();
+    expect(failure).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown',
+        details: { kind: 'managedNative', nativeCause },
+        failureCause: { errorCode: 'native_command_failed' } });
+    expect(test.post.mock.calls.find(([url]) => String(url).endsWith('/report-intent'))?.[1])
+        .toMatchObject({ result });
+    expect(test.readMachine().submittedNativeEffect).toMatchObject({ intent });
+    expect(test.effects).toEqual([intent === 'delete' ? 'destroy' : 'power']);
+    expect(warnings).toHaveBeenCalledWith(expect.any(String), {
+        phase: 'managed.controller.report_intent', errorClass: 'ManagedMachineControllerError', errorCode: 'invalid-params', httpStatus: 400,
+    });
+    expect(JSON.stringify({ failure, warnings: warnings.mock.calls })).not.toContain('private-home-report-body');
+});
+
 it('preserves the native pre-handler refusal and submitted custody when refusal reporting fails', async () => {
     const test = setup();
     test.setMachine({ desiredWhen: 'after-idle' });

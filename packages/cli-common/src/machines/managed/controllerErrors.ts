@@ -1,5 +1,5 @@
 import { ManagedMachineFailureDetailsV1Schema, type ManagedMachineFailureDetailsV1, type ManagedNativeFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { MachineProvisionerNativeCauseV1Schema, type MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { projectActionFailureCauseV1,
     type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
@@ -14,6 +14,15 @@ export class ManagedMachineControllerError extends Error {
         readonly failureCause?: ActionFailureCauseV1, cause?: unknown) {
         super(code, cause ? { cause } : undefined);
         this.name = 'ManagedMachineControllerError';
+    }
+
+    /** Reporting failure must not erase a native cause or turn uncertainty into refusal. */
+    static fromUnknownNativeResult(result: Readonly<{
+        kind: string; code?: string; nativeCause?: MachineProvisionerNativeCauseV1;
+    }>): ManagedMachineControllerError | undefined {
+        if (result.kind !== 'unknown' || !result.nativeCause) return undefined;
+        return new ManagedMachineControllerError(result.code ?? 'native_intent_unconfirmed', undefined,
+            { kind: 'managedNative', nativeCause: result.nativeCause });
     }
 
     /** Child Actions return public failures, never raw exceptions or message text. */
