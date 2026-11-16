@@ -347,7 +347,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     const noChoicesLine = !noChoices ? null
         : usageLimitWait ?? (unavailableMachine !== null
             ? t('workflows.recovery.choicesOnReconnect', { machine: unavailableMachine.name })
-            : resolveNoChoicesLine(recovery, runAgainShown ? null : props.noChoicesNext ?? null));
+            : resolveNoChoicesLine(runAgainShown ? null : props.noChoicesNext ?? null));
     // A failed step's own result is the detail of what went wrong; it waits one quiet tap away in its card.
     const failureDetails = props.lifecycle === 'failed' && props.finalResult == null && props.waitPrompt == null
         ? props.progress?.result : undefined;
@@ -1036,18 +1036,13 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
 }
 
 /**
- * The card's one line when the step has no recovery choice: why (when the cause says it) and what the
- * person can do on this page. Follow the recovery owner's typed reason rather than treating every
- * unavailable target as an execution whose stop is unconfirmed.
+ * The card's one line when the step has no recovery choice and what the person can do on this page.
+ * Unavailable choices alone establish neither activity nor prior effects.
  */
 function resolveNoChoicesLine(
-    recovery: WorkflowInvocationRecoveryPresentation,
     next: 'stop' | 'run_again' | 'open_workflow' | null,
 ): string {
-    const why = recovery.failureCause?.kind === 'reported_failure' && recovery.failureCause.code === 'target_unavailable'
-        && recovery.unavailableReasons.reattach !== 'execution_not_admitted'
-        ? t('workflows.recovery.unconfirmedStop')
-        : t('workflows.recovery.noChoices');
+    const why = t('workflows.recovery.noChoices');
     const then = next === 'stop' ? t('workflows.recovery.nextStop')
         : next === 'run_again' ? t('workflows.recovery.nextRunAgain')
             : next === 'open_workflow' ? t('workflows.recovery.nextOpenWorkflow') : null;

@@ -329,11 +329,11 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
     const startupRecovery = presentSessionStartupFailureRecovery([runtimeIssue?.code, params.progress?.reason?.failureCause?.errorCode,
         params.progress?.reason?.code, params.progress?.reason?.message]);
     const headline = failed && params.progress?.reason
-        ? startupRecovery?.cause
+        ? describeRecordedTransportFailure(params.progress.reason.code)
+            ?? startupRecovery?.cause
             ?? issue.summary
             ?? presentSessionStartupFailureCause(params.progress.reason.failureCause?.errorCode)
             ?? presentSessionStartupFailureCause(params.progress.reason.code)
-            ?? describeRecordedTransportFailure(params.progress.reason.code)
             ?? (params.progress.blockKind === 'root' ? describeRunPublicationFailure(params.progress.reason.code) : null)
             ?? resolveActionExecutionErrorMessage({ code: params.progress.reason.code }, reportedMessage || params.progress.reason.code)
         : null;

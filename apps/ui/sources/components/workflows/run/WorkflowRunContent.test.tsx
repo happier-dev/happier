@@ -3275,7 +3275,7 @@ describe('WorkflowRunContent', () => {
     expect(text).not.toContain('"references"');
   });
 
-  it('names the Run\'s own way forward when a step whose target stopped answering has no recovery choice', async () => {
+  it('names the Run\'s own way forward without inferring unknown effects from an unavailable target', async () => {
     const render = async (overrides: Partial<ContentProps>) => {
       const invocation = createWorkflowInvocationIndexFixture({ id: 'inv-1', lifecycle: 'failed' });
       const progress = {
@@ -3298,15 +3298,15 @@ describe('WorkflowRunContent', () => {
         .find((item) => item.props.testID === 'workflow-run-recovery-cause')?.props.subtitle;
     };
     let lastScreen: Awaited<ReturnType<typeof renderContent>> | null = null;
-    // Still open: no proof the step stopped, so nothing restarts it here; the Run's Stop is the way on.
+    // An unavailable target alone does not establish whether effects or activity are unknown.
     expect(await render({ run: createWorkflowRunSummaryFixture({ state: 'running' }), onCancel: vi.fn() }))
-      .toBe('workflows.recovery.unconfirmedStop workflows.recovery.nextStop');
+      .toBe('workflows.recovery.noChoices workflows.recovery.nextStop');
     expect(lastScreen!.findByTestId('workflow-run-recovery-run-again')).toBeNull();
     // Ended: Run again is the way on, as the card's own primary right under the failure; the line says only why.
     const onRunAgain = vi.fn();
     expect(await render({ run: createWorkflowRunSummaryFixture({ state: 'failed', availability: { cancel: false } as never }),
       onRunAgain }))
-      .toBe('workflows.recovery.unconfirmedStop');
+      .toBe('workflows.recovery.noChoices');
     await lastScreen!.pressByTestIdAsync('workflow-run-recovery-run-again');
     expect(onRunAgain).toHaveBeenCalledOnce();
     // A real preparation refusal can carry target_unavailable before any input was admitted.
@@ -3323,6 +3323,21 @@ describe('WorkflowRunContent', () => {
         restoreWorkspace: { kind: 'unavailable', reason: 'workspace_unavailable' },
       },
     })).toBe('workflows.recovery.noChoices workflows.recovery.nextStop');
+
+    // B220-03: the retained Action refusal belongs to a settled parent Run.
+    // A lack of retry choices does not turn its target refusal into an unknown stop.
+    const refused = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'action',
+      invocationPath: { blockId: 'refused', scope: [{ kind: 'iteration', blockId: 'failureMap', index: 1 }] },
+      attempt: '0', logicalInvocationRecordId: 'inv-1', reason: { code: 'target_unavailable', message: 'target_unavailable',
+        failureCause: { phase: 'workflow.run.summaries', errorClass: 'Error', errorCode: 'target_unavailable', httpStatus: null } },
+      execution: { kind: 'action', actionId: 'workflow.run.summaries', actionRequestId: 'refusal-request', localInputId: 'workflow:refused:action',
+        input: {} } });
+    const unavailable = { kind: 'unavailable', reason: 'run_not_interrupted' } as const;
+    expect(await render({ run: createWorkflowRunSummaryFixture({ state: 'succeeded', workflowCustodyState: 'settled' }),
+      selectedInvocationProgress: refused, invocationProgressById: new Map([['inv-1', refused]]),
+      selectedInvocationRecoveryAvailability: { reattach: unavailable, retry: unavailable, continueSameConversation: unavailable,
+        continueFreshAgent: unavailable, restoreWorkspace: unavailable }, onRunAgain,
+    })).toBe('workflows.recovery.noChoices');
   });
 
   it('heads an uncertain step with its effects and an unexplained failed step with cause not recorded', async () => {
@@ -3497,17 +3512,18 @@ describe('WorkflowRunContent', () => {
       .toContain('workflows.run.stepNumber:{"ordinal":"1"}');
     await interrupted.unmount();
 
-    // Admission can park the root before a leaf exists. Its retained storage
+    // Storage can park the root before a Session leaf is admitted. Its retained
     // cause must still explain the interrupted Run without selecting a step.
     const root = createWorkflowInvocationIndexFixture({ id: 'root-storage', parentRecordId: null, lifecycle: 'needs_attention' });
     const rootProgress = WorkflowProgressEnvelopeV1Schema.parse({ ...progress, blockKind: 'root', invocationPath: { blockId: '$root', scope: [] },
       logicalInvocationRecordId: root.id, reason: { code: 'storage_unavailable',
         message: 'Workflow storage is temporarily unavailable (database_transaction_timeout).',
-        failureCause: { phase: 'workflow.storage.invocations.admit', errorClass: 'Error', errorCode: 'database_transaction_timeout', httpStatus: 503 } } });
+        failureCause: { phase: 'workflow.storage.invocations.fact', errorClass: 'Error', errorCode: 'database_transaction_timeout', httpStatus: 503 } } });
     const beforePrepare = await renderContent({ run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
       invocations: [root], selectedInvocationId: null, invocationProgressById: new Map([[root.id, rootProgress]]),
       firstFailedInvocationId: null, firstFailedInvocationResolution: 'resolved' });
-    expect(beforePrepare.findByTestId('workflow-run-failure-reason')?.props.children).toContain('session.startFailure.cause.database_transaction_timeout');
+    expect(beforePrepare.findByTestId('workflow-run-failure-reason')?.props.children).toContain('workflows.readState.storageTitle');
+    expect(beforePrepare.getTextContent()).not.toContain('session.startFailure.cause.database_transaction_timeout');
     expect(beforePrepare.getTextContent()).not.toContain('Workflow storage is temporarily unavailable (database_transaction_timeout).');
     await beforePrepare.unmount();
 
