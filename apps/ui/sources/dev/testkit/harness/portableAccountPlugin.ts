@@ -114,7 +114,11 @@ export async function installPortableAccountPluginForTest(input: Readonly<{
         occurrenceId, resourceKind: declaration.kind, scope: declaration.scope,
         contentType: declaration.contentType, execution: declaration.execution,
         hostAccountOrigin: origin, accountResourceDeclaration: declaration }));
-    const contributionIds = [...projectedActions.map(action => action.id), ...projectedResources.map(resource => `resources/${resource.id}`)];
+    const connectedAccountDescriptorsById = Object.fromEntries(Object.entries(
+        readPluginAccountAvailability(input.accountLifetime.scope).readAccountUiProjection()?.connectedAccountDescriptorsById ?? {},
+    ).filter(([, descriptor]) => descriptor.pluginId === input.manifest.id));
+    const contributionIds = [...projectedActions.map(action => action.id), ...projectedResources.map(resource => `resources/${resource.id}`),
+        ...Object.values(connectedAccountDescriptorsById).map(descriptor => `connectedAccountDescriptors/${descriptor.id}`)];
     const projection: PluginUiProjectionModel = {
         ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
         installedPackagesById: { [input.manifest.id]: PluginProjectionInstalledPackageV2Schema.parse({
@@ -123,6 +127,7 @@ export async function installPortableAccountPluginForTest(input: Readonly<{
         }) },
         actionsById: Object.fromEntries(projectedActions.map(action => [`${input.manifest.id}/${action.id}`, action])),
         resourcesById: Object.fromEntries(projectedResources.map(resource => [`${input.manifest.id}/${resource.id}`, resource])),
+        connectedAccountDescriptorsById,
         reactNativeBundlesById: Object.fromEntries(contributionIds.map(contributionId => {
             const id = `reactNativeBundle:${input.manifest.id}:${contributionId}`;
             return [id, { id, pluginId: input.manifest.id, occurrenceId, contributionKind: 'reactNativeBundle' as const,

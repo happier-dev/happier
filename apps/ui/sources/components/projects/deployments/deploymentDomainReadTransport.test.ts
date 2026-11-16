@@ -64,7 +64,7 @@ describe('deployment Domain read transport', () => {
             body: JSON.stringify({ artifactIds: [domain.contentArtifactId, environmentHeader.contentArtifactId] }) });
         const batch = await bundled.json();
         homes.answer(serverId, '/v1/deployments/domains', { body: { ok: true,
-            items: [{ domain, environment: environmentHeader }], artifacts: batch.items.filter((item: { artifactId: string }) => item.artifactId === domain.contentArtifactId)
+            items: [{ domain, environment: environmentHeader }], artifacts: batch.items
                 .flatMap((item: { ok: boolean; artifact?: unknown }) => item.ok ? [item.artifact] : []), nextCursor: 'page-two' } });
         homes.answer(serverId, '/v1/deployments/data-services', { body: { ok: true,
             items: [{ environment: environmentHeader }],
@@ -73,7 +73,7 @@ describe('deployment Domain read transport', () => {
         const readCount = () => homes.requests.filter(request => request.path === '/v1/artifacts/read').length;
         const before = readCount();
         expect(await transport.listDomainPage!(scope, {}, options)).toMatchObject({ ok: true,
-            value: { items: [{ domain: { id: domain.id }, environment: { id: environmentHeader.id } }], nextCursor: 'page-two' } });
+            value: { items: [{ domain: { id: domain.id }, environment: { id: environmentHeader.id }, environmentTitle: 'Production' }], nextCursor: 'page-two' } });
         expect(await transport.listDataServicePage!(scope, {}, options)).toMatchObject({ ok: true,
             value: { items: [{ environment: { id: environmentHeader.id }, title: 'Production', content: detail.content }], nextCursor: 'page-two' } });
         expect(readCount()).toBe(before);

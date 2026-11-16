@@ -20,6 +20,7 @@ vi.mock('socket.io-client', async importOriginal =>
 installDisconnectedServerSocketBoundary();
 const { useEnvironmentSecretBindingsEditor } = await import('./useEnvironmentSecretBindingsEditor');
 const { useEnvironmentSavedSecretBindings } = await import('./useEnvironmentSavedSecretBindings');
+const { Modal } = await import('@/modal');
 let home: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | null = null;
 beforeEach(() => { resetSavedSecretCatalogEngineForTests(); resetSavedSecretCatalogSnapshotsForTests(); resetTeamActionClientForTests(); });
 afterEach(async () => { await standardCleanup(); resetSavedSecretCatalogEngineForTests(); await home?.dispose(); home = null; });
@@ -44,8 +45,8 @@ describe('Environment Saved Secret creation through the existing owner', () => {
         const resource = home.resources.find(row => 'resourceId' in row);
         if (!resource || !('resourceId' in resource)) throw new Error('Missing created resource');
         expect(hook.getCurrent().bindings).toEqual([
-            { purpose: 'variable', name: 'TOKEN', phase: 'runtime', source: { kind: 'secret', ref: resource.entry.ref, resourceRevision: 1 } },
-            { purpose: 'variable', name: 'PORT', phase: 'runtime', source: { kind: 'value', value: '3000' } },
+            { purpose: 'variable', name: 'TOKEN', phase: 'runtime', grantRef: expect.any(String), source: { kind: 'secret', ref: resource.entry.ref, resourceRevision: 1 } },
+            { purpose: 'variable', name: 'PORT', phase: 'runtime', grantRef: expect.any(String), source: { kind: 'value', value: '3000' } },
         ]);
         expect(JSON.stringify(hook.getCurrent().bindings).includes('local-secret-sentinel')).toBe(false);
         expect(hook.getCurrent().editor.bulk).toBeNull();
@@ -75,7 +76,7 @@ describe('Environment Saved Secret creation through the existing owner', () => {
         const resource = home.resources.find(row => 'resourceId' in row);
         if (!resource || !('resourceId' in resource)) throw new Error('Missing created resource');
         expect(hook.getCurrent().bindings).toEqual([{
-            purpose: 'variable', name, phase: 'runtime',
+            purpose: 'variable', name, phase: 'runtime', grantRef: expect.any(String),
             source: { kind: 'secret', ref: resource.entry.ref, resourceRevision: 1 },
         }]);
     });
@@ -170,25 +171,28 @@ describe('Environment Saved Secret creation through the existing owner', () => {
         } finally { release.resolve(); }
     });
 
-    it('uses the admitted UI creation once even when Account policy asks first', async () => {
+    it.each([true, false])('creates and binds only after the person accepts the Account Ask confirmation (%s)', async accepted => {
         home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [], actionsSettingsV1: {
             v: 1, actions: { 'secrets.create': { approvalRequiredSurfaces: ['ui'] } },
         } }) });
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(accepted);
         const onApprovalPending = vi.fn();
         const hook = await mount();
         await act(async () => {
             expect(await hook.getCurrent().creation.createAndBind(
                 { name: 'TOKEN', value: 'local-approval', phase: 'runtime' }, { onApprovalPending },
-            )).toMatchObject({ ok: true });
+            )).toMatchObject({ ok: accepted });
         });
         expect(onApprovalPending).not.toHaveBeenCalled();
-        expect(home.creations).toHaveLength(1);
-        const resource = home.resources.find(row => 'resourceId' in row);
-        if (!resource || !('resourceId' in resource)) throw new Error('Missing created resource');
-        expect(hook.getCurrent().bindings).toEqual([{
-            purpose: 'variable', name: 'TOKEN', phase: 'runtime',
-            source: { kind: 'secret', ref: resource.entry.ref, resourceRevision: 1 },
-        }]);
+        expect(home.creations).toHaveLength(accepted ? 1 : 0);
+        if (accepted) {
+            const resource = home.resources.find(row => 'resourceId' in row);
+            if (!resource || !('resourceId' in resource)) throw new Error('Missing created resource');
+            expect(hook.getCurrent().bindings).toEqual([{
+                purpose: 'variable', name: 'TOKEN', phase: 'runtime', grantRef: expect.any(String),
+                source: { kind: 'secret', ref: resource.entry.ref, resourceRevision: 1 },
+            }]);
+        } else expect(hook.getCurrent().bindings).toEqual([]);
         expect(hook.getCurrent().creation.status).toBe('idle');
         expect(hook.getCurrent().creation.busy).toBe(false);
     });

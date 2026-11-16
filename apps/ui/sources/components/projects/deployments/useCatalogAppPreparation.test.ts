@@ -63,8 +63,9 @@ describe('catalog App preparation entry', () => {
 
     it('does no work on mount and prepares the exact pin through the existing scoped Action without repository or resource writes', async () => {
         const { useCatalogAppPreparation } = await import('./useCatalogAppPreparation');
+        const serverIdentityId = `srv_${'b'.repeat(32)}`;
         const serverId = await homes.addHome({ name: 'Catalog entry', serverUrl: 'https://catalog-entry.test',
-            serverIdentityId: `srv_${'b'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+            serverIdentityId, accountId: 'owner', currentAccount: true });
         const account = await captureLazyActionAccountContext(serverId);
         const machine = { id: 'target', installationId: 'installed' };
         const template = DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'App',
@@ -100,7 +101,7 @@ describe('catalog App preparation entry', () => {
         try {
             expect(requests).toHaveLength(0);
             expect(await hook.getCurrent()(input)).toEqual(prepared);
-            expect(requests).toEqual([input]);
+            expect(requests).toEqual([{ ...input, serverId: serverIdentityId }]);
             expect(homes.requestsFor('/v1/artifacts')).toHaveLength(0);
             expect(homes.requestsFor('/v1/projects/sources')).toHaveLength(0);
             expect(homes.requestsFor('/v1/deployments/environments')).toHaveLength(0);
