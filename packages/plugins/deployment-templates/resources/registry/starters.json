@@ -13,7 +13,11 @@
           "html",
           "css"
         ],
-        "buildGoal": "Build a responsive website from this HTML and CSS example. Replace the sample content with original content and use HTTPS for external resources."
+        "buildGoal": "Build a responsive website from this HTML and CSS example. Replace the sample content with original content and use HTTPS for external resources.",
+        "deploy": {
+          "framework": "html",
+          "output": "static"
+        }
       }
     },
     {
@@ -27,7 +31,11 @@
           "expo",
           "react-native"
         ],
-        "buildGoal": "Build a cross-platform mobile app from this blank Expo template, replacing the placeholder screen with the requested product."
+        "buildGoal": "Build a cross-platform mobile app from this blank Expo template, replacing the placeholder screen with the requested product.",
+        "deploy": {
+          "framework": "expo",
+          "output": "static"
+        }
       }
     },
     {
