@@ -19,6 +19,7 @@ import { ExternalActionManagedControlAdmissionV1Schema, isExternalActionRequestV
 import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
 import { PROJECT_READINESS_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import { isMachineSetupCombinedRunHttpPurpose } from '@/app/auth/externalActionMachineSetupWorkflowPurpose';
+import { readManagedBoundSessionHttpPurpose } from './externalActionManagedSessionPurpose';
 import { isExternalActionConnectedAccountInventoryHttpPurpose } from './externalActionConnectedAccountInventoryPurpose';
 import { isExternalActionConnectedSubscriptionPriceHttpPurpose } from './externalActionConnectedMetadataPurpose';
 import * as z from 'zod/mini';
@@ -3526,6 +3527,7 @@ export async function verifyExternalActionDomainExecutionRequest(
     let managedGuestActivity: VerifiedExternalActionExecutionRequest['managedGuestActivity'];
     let deploymentChildMachineRead: DeploymentChildMachineRead | undefined;
     let setupMachineReadId: string | undefined;
+    let managedBoundSessionPurpose: boolean | null;
     let deploymentChildArtifactRead: VerifiedExternalActionExecutionRequest['deploymentChildArtifactRead'];
     let registryAppUpdateRead: VerifiedExternalActionExecutionRequest['registryAppUpdateRead'];
     let backupHttpPurpose: DeploymentBackupHttpPurpose | undefined;
@@ -3778,21 +3780,9 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (!managedRoot.success && isMachineConnectorSecretGrantHttpPurpose(verified.binding, verified.effectActionId, proof)) {
         // The signed setup scope names reviewed grants; configure retains its
         // exact-installation scope. The route owns proof and target access.
-    } else if (verified.binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
-        && proof.method.toUpperCase() === 'POST' && proof.path.split('?')[0] === '/v1/machines/setup/report') {
-        const report = MachineSetupReportInputV1Schema.safeParse(proof.body);
-        if (verified.effectActionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 || !report.success || !('target' in report.data)
-            || report.data.homeId !== verified.binding.serverIdentityId || !report.data.target.sessionId
-            || report.data.target.controller.machineId !== verified.binding.machineId
-            || report.data.target.controller.installationId !== verified.binding.installationId) return refuse('managed_bound_session_setup');
-        // Birth already admitted this association. Consume its exact active
-        // Session once; do not mint a second admission or re-evaluate permissions.
-        const session = await db.session.findFirst({ where: { id: report.data.target.sessionId,
-            accountId: verified.binding.accountId, managedCreationId: report.data.managedId, archivedAt: null,
-            managedCreation: { homeId: report.data.homeId, custodianAccountId: verified.binding.custodianAccountId,
-                controllerMachineId: verified.binding.machineId, controllerInstallationId: verified.binding.installationId },
-        }, select: { id: true } });
-        if (!session) return refuse('managed_bound_session_setup');
+    } else if ((managedBoundSessionPurpose = await readManagedBoundSessionHttpPurpose(
+        verified.binding, verified.effectActionId, proof)) !== null) {
+        if (!managedBoundSessionPurpose) return refuse('managed_bound_session_setup');
     } else if (managedRoot.success) {
         const path = proof.path.split('?')[0];
         const method = proof.method.toUpperCase();

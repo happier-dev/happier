@@ -414,7 +414,12 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             managedAcquireDelegation: request.externalActionExecutionAuthorizationBinding?.managedAcquireDelegation, authentication: readTeamOperationAuthenticationFromRequest(request), requestEnvelopeDigest, input: request.body });
     }));
     app.post("/v1/machines/managed/controller/context", { preHandler: app.authenticate, schema: { body: ManagedControllerContextInputV1Schema } }, async (request, reply) => respond(reply, async () => {
-        const proof = request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
+        // The signed HTTP purpose has already bound this active Session to its
+        // creation and installed controller. Read the retained creation context.
+        const boundSession = request.externalActionExecutionAuthorized === true && request.body.sessionId !== undefined
+            && isSessionSpawnNewActionIdV1(request.externalActionEffectActionId ?? '');
+        const proof = boundSession ? { requestAuthority: 'creation' as const }
+            : request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
             ? await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/context', request.body, 'read')
             : await requireManagedOperationRequest(request, request.body, [...effects, 'machines.managed.credentials.install'], { retainedContext: true });
         return await inTx(async (tx) => {

@@ -402,6 +402,81 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
         } finally { await f.app.close(); }
     });
 
+    it('reads only the active Session-bound creation context through its original spawn admission', async () => {
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const f = await createSignedDiscussionHttpFixture(undefined, [], false, custodian.id,
+            { machineReads: true, allowedActionIds: ['session.spawn_new'] });
+        try {
+            await db.machine.update({ where: { id: f.machine.id }, data: { active: true,
+                operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities:
+                    MachineOperationProtocolCapabilitiesV1Schema.parse({ requesterExecutionIsolation: { protocolVersions: [1] } }) } });
+            const homeId = await getOrCreateServerIdentityId();
+            const controller = { machineId: f.machine.id, installationId: f.machine.installationId! };
+            const createRow = () => db.managedMachine.create({ data: { homeId, custodianAccountId: custodian.id,
+                controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+                admittedActionRequestId: randomUUID(), admittedInput: { enrollmentAccountId: f.account.id, acquisitionMode: 'resource-bound' },
+                launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Session guest', choices: {} },
+                resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+                allocation: 'bound', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+            const row = await createRow();
+            const otherRow = await createRow();
+            const session = await db.session.create({ data: { accountId: f.account.id, tag: randomUUID(), metadata: '{}',
+                encryptionMode: 'plain', managedCreationId: row.id } });
+            const authorization = await f.mint('session.spawn_new', {
+                executionTarget: { serverId: homeId, machineId: f.machine.id }, directory: { kind: 'managed' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            });
+            const path = '/v1/machines/managed/controller/context';
+            const input = { homeId, managedId: row.id, sessionId: session.id, expectedIntentRevision: 0, controller };
+            const context = (body: unknown = input) => f.app.inject({ method: 'POST', url: path, payload: body,
+                headers: { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'session.spawn_new',
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, installationId: controller.installationId,
+                        requestId: authorization.binding.requestId, target: authorization.binding.target,
+                        effectActionId: 'session.spawn_new', method: 'POST', path, body, privateKey: f.keyPair.secretKey }) } });
+            // The admitted spawn continues after access changes; this read is not another admission.
+            expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
+                machineId: f.machine.id, principal: { kind: 'account', accountId: f.account.id } })))
+                .toMatchObject({ kind: 'removed' });
+            const response = await context();
+            expect(response.statusCode, response.body).toBe(200);
+            expect(authorization.binding.requestId).not.toBe(row.admittedActionRequestId);
+            expect(response.json()).toMatchObject({ requestId: row.admittedActionRequestId, machine: { id: row.id } });
+            const expectRefused = async (body: unknown = input) => {
+                const response = await context(body);
+                expect(response.statusCode, response.body).toBe(401);
+                expect(response.json()).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'managed_bound_session_setup' });
+            };
+            for (const body of [
+                { ...input, managedId: otherRow.id },
+                { ...input, sessionId: randomUUID() },
+                { ...input, controller: { ...controller, machineId: randomUUID() } },
+                { ...input, controller: { ...controller, installationId: randomUUID() } },
+                { ...input, homeId: 'srv_another_home' },
+                { homeId, managedId: row.id, expectedIntentRevision: 0, controller },
+            ]) await expectRefused(body);
+            const otherController = await db.machine.create({ data: { id: randomUUID(), accountId: custodian.id,
+                installationId: randomUUID(), metadata: '{}' } });
+            for (const data of [
+                { controllerMachineId: otherController.id },
+                { controllerInstallationId: otherController.installationId },
+                { custodianAccountId: f.account.id },
+                { homeId: 'srv_another_home' },
+            ]) {
+                await db.managedMachine.update({ where: { id: row.id }, data });
+                await expectRefused();
+                await db.managedMachine.update({ where: { id: row.id }, data: { homeId, custodianAccountId: custodian.id,
+                    controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId } });
+            }
+            await db.session.update({ where: { id: session.id }, data: { accountId: custodian.id } });
+            await expectRefused();
+            await db.session.update({ where: { id: session.id }, data: { accountId: f.account.id, archivedAt: new Date() } });
+            await expectRefused();
+        } finally { await f.app.close(); }
+    });
+
     it('resolves the generic reviewed setup Plan used by template instantiation', async () => {
         const f = await createSignedDiscussionHttpFixture(undefined, [], false, undefined, { machineReads: true });
         try {

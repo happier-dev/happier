@@ -648,6 +648,7 @@ export const ManagedAdmissionOutputV1Schema = lazyZodSchema(() => z.union([
 export type ManagedAdmissionOutputV1 = z.infer<typeof ManagedAdmissionOutputV1Schema>;
 export const ManagedControllerContextInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), controller: z.optional(ManagedControllerV1Schema),
   requestId: z.optional(id()),
+  sessionId: z.optional(id()),
   includeEnrollmentInstallation: z.optional(z.literal(true)),
   includeNativeCredentialBindings: z.optional(z.literal(true)),
 }));
