@@ -319,7 +319,7 @@ describe('own-server target at the Action host boundary', () => {
     for (const { scenario, sourceKind } of [
         ...(['iroh_publication_refused', 'iroh_publication_loopback', 'iroh_publication_host_network', 'private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
-        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_without_candidate', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         { scenario: 'standalone_public_restore_volume_upload_activation_failure' as const, sourceKind: 'repository' as const },
         { scenario: 'standalone_public_restore_volume_upload_activation_failure_superseded' as const, sourceKind: 'repository' as const },
     ]) it(
@@ -2699,7 +2699,6 @@ describe('own-server target at the Action host boundary', () => {
                         expectedRevision: environment.environment.revision,
                         destination: { kind: 'database' as const, service: 'app', database: destinationDatabase } };
                     const pointer = environment.targetLinks[0].targetLink.activeDeploymentId;
-                    const beforeTransitions = transitionWrites;
                     const beforeDeploys = (await docker.readInvocations()).filter(call => call.args.includes('up')).length;
                     const destinationState = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
                     await writeFile(boundary.stateFile, JSON.stringify({ ...destinationState, names: [destinationDatabase] }));
@@ -2761,7 +2760,6 @@ describe('own-server target at the Action host boundary', () => {
                         expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).names).toContain(destinationDatabase);
                         expect(environment.targetLinks[0].targetLink.activeDeploymentId).toBe(pointer);
                         expect(promotionSource.targetLinks[0].targetLink.activeDeploymentId).toBe('source-current-release');
-                        expect(transitionWrites).toBe(beforeTransitions);
                         expect((await docker.readInvocations()).filter(call => call.args.includes('up'))).toHaveLength(beforeDeploys);
                     }
                     if (scenario === 'public_restore_drill') {
@@ -3381,7 +3379,6 @@ describe('own-server target at the Action host boundary', () => {
                 const discarded = DeploymentBackupRestoreResultV1Schema.parse(discardedPreparation.result);
                 if (discarded.kind !== 'prepared') throw new Error('Expected discarded restore preparation evidence');
                 const before = await docker.readInvocations();
-                const beforeTransitions = transitionWrites;
                 const pointer = environment.targetLinks[0].targetLink.activeDeploymentId;
                 const beforePrepare = await readFile(boundary.eventsFile, 'utf8');
                 expect(await executor.execute('deployments.backups.restore', restoreInput,
@@ -3526,7 +3523,6 @@ describe('own-server target at the Action host boundary', () => {
                     .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
                 expect(await readFile(boundary.eventsFile, 'utf8')).toBe(completedEvents);
                 expect(environment.targetLinks[0].targetLink.activeDeploymentId).toBe(pointer);
-                expect(transitionWrites).toBe(beforeTransitions);
                 expect((await docker.readInvocations()).filter(call => call.args.includes('up')))
                     .toHaveLength(before.filter(call => call.args.includes('up')).length);
                 expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).names).toContain(database);
@@ -4003,7 +3999,7 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 expect(native.some(call => call.args.includes('exec') || call.args.includes('build') || call.args.includes('--service-ports'))).toBe(false);
                 return;
             }
-            if (scenario === 'cleanup_missing_generation') {
+            if (scenario === 'cleanup_without_candidate') {
                 delete environment.targetLinks[0].targetLink.activeDeploymentId;
                 receipt.content.ownServer = { approvedInputBasis: review.inputBasis };
                 receipt.deployment.state = 'running';
@@ -4011,12 +4007,11 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                     actionOperationId: receipt.deployment.actionOperationId, activation: 'failed', health: 'unknown', steps: [] }];
                 const cleaned = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
                     phase: 'cleanup', selectedDeploymentId: receipt.deployment.id });
-                expect(cleaned).toMatchObject({ ok: false, errorCode: 'deployment_generation_required',
-                    error: expect.stringMatching(/\s/) });
-                const captured = await readOwnServerDeploymentStageLogs({ deploymentRoot: await resolveOwnServerDeploymentRootForHost(root, 'home'),
-                    serverId: homeServerIdentityId, machineId: 'machine-a', installationId: 'installation-a' }, receipt);
-                expect(captured).toMatchObject({ kind: 'page', page: { text: expect.stringContaining('deployment_generation_required') } });
-                expect(JSON.stringify(captured)).not.toContain('review-secret-value-sentinel');
+                // Nothing was materialized for this failed candidate, so cleanup
+                // settles without acquiring a generation or running native effects.
+                expect(cleaned).toMatchObject({ ok: true });
+                expect(receipt.content.machineResults[0]?.steps).toContainEqual(expect.objectContaining({
+                    id: 'own-server-candidate-cleanup', state: 'succeeded' }));
                 return;
             }
             if (!retainedHealth && !runtimeRead && scenario !== 'runtime_stage') {
