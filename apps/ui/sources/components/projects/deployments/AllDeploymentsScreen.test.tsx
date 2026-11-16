@@ -126,6 +126,26 @@ async function render(controller: DeploymentReadControllerV1, ready: string) {
 }
 
 describe('Projects → All deployments', () => {
+  // SERVICES-ACCEPT-1116 F7: the phone title flipped "All services ⌄" (Apps) ↔ "Services" and moved the views 2 px. The
+  // page is Services on every view (lab svcHead); Apps carries its saved view under the views, as the Workflows home does.
+  it('keeps one title, Services, on every view and carries the Apps saved view under the views', async () => {
+    const { t } = await import('@/text');
+    const { controller } = controllerFor(() => page([environment('env-shop', 'source-shop', 'Production', { projectSourceName: 'storefront' })]));
+    try {
+      for (const view of ['apps', 'domains'] as const) {
+        const screen = await renderScreen(<Page controller={controller} view={view} />);
+        await act(async () => {
+          await waitForTestEvent(screen.subscribe, () => screen.findByTestId('services.views'), (node) => node !== null);
+        });
+        const head = screen.root.findAll((node) => node.props.testID === 'all-deployments.header' && 'search' in node.props)[0]!;
+        expect(head.props.title).toBe(t('projects.deployments.services.title'));
+        expect(head.props.titleControl).toBeUndefined();
+        expect(screen.findByTestId('services-page-space-title') !== null).toBe(view === 'apps');
+        await screen.unmount();
+      }
+    } finally { controller.retire(); }
+  });
+
   it('keeps other Services views reachable while Apps is loading', async () => {
     const held = createDeferred<ListResult>();
     const { controller } = controllerFor(() => page([]), { listEnvironments: () => held.promise });

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 
 import {
@@ -370,8 +370,10 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
 
 /**
  * The Services page head with its saved views (owner D5). Where no Services column stands beside the page (a phone, or a
- * wide window with the column closed) the page places the shared title menu, strip, conditions and filter, as the
- * Workflows phone page does; beside the column, the column's header places them and the page draws none.
+ * wide window with the column closed) the page places the shared space menu, strip, conditions and filter; beside the
+ * column, the column's header places them and the page draws none. The page is Services on every view (lab svcHead):
+ * the Apps saved view's menu stands under the views at section scale, as on the Workflows home, so the title never
+ * changes with the view (SERVICES-ACCEPT-1116 F7).
  */
 function ServicesPageHeader(props: Readonly<{
   header: React.ComponentProps<typeof MainScreenHeader>;
@@ -379,17 +381,23 @@ function ServicesPageHeader(props: Readonly<{
   placesSpaces: boolean;
 }>) {
   const { header, placesSpaces } = props;
-  const spaceHeader = useServicesSpaceHeader(props.servicesView, 'services-page-space');
+  const spaceHeader = useServicesSpaceHeader(props.servicesView, 'services-page-space', 'section');
   // One tree whether or not the page places them: the column opening or closing never remounts the head.
   return (
     <>
       <MainScreenHeader
         {...header}
         {...(placesSpaces ? {
-          titleControl: spaceHeader.titleControl,
-          // The view's conditions end the field, as on My work and Workflows; the title's menu also opens them.
+          // The view's conditions end the field, as on My work and Workflows; the space menu also opens them.
           search: header.search ? { ...header.search, trailing: spaceHeader.filterButton } : header.search,
-          band: <>{header.band}{spaceHeader.strip}{spaceHeader.conditionRow}</>,
+          band: <>
+            {header.band}
+            <View style={styles.spaceLine}>
+              {spaceHeader.titleControl}
+              <View style={styles.spaceStrip}>{spaceHeader.strip}</View>
+            </View>
+            {spaceHeader.conditionRow}
+          </>,
         } : {})}
       />
       {placesSpaces ? spaceHeader.overlays : null}
@@ -461,3 +469,15 @@ function DeployAppButton(props: Readonly<{ onPress: () => void }>) {
   );
 }
 
+const styles = StyleSheet.create((theme) => ({
+  // The Apps saved view's menu, then its spaces strip beside it (the Workflows home's control line).
+  spaceLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s8,
+  },
+  spaceStrip: {
+    flex: 1,
+    minWidth: 0,
+  },
+}));
