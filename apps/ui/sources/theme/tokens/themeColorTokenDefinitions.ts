@@ -279,6 +279,7 @@ export const THEME_COLOR_TOKEN_CLASSIFICATIONS = [
     { path: ['diff', 'success'], status: 'derived', reason: 'Diff success summary color follows state success semantics.' },
 
     { path: ['border', 'faint'], status: 'internal', reason: 'About half the weight of border.subtle: the content-width separator between groups of one section\'s rows. An internal chrome detail, like border.subtle, and absent from the theme-profile border palette.' },
+    { path: ['border', 'divider'], status: 'internal', reason: 'The one list-row rule between rows of two or more lines, at one perceived weight in light and dark; an internal chrome detail like border.subtle, absent from the theme-profile border palette.' },
     { path: ['border', 'subtle'], status: 'internal', reason: 'Half-weight seam hairline for pane edges and quiet toolbar controls; an internal chrome detail rather than a V1 public border token, and deliberately absent from the theme-profile border palette.' },
 
     ...(['default', 'surface', 'strong', 'subtle', 'modal', 'danger'] as const).map((role) => ({

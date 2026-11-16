@@ -1618,7 +1618,7 @@ export const Item = React.memo<ItemProps>((props) => {
         || (Boolean(bottomElement) && bottomElementOutsidePressable));
     const fillMargins = ruleOutsideFill ? readHorizontalMargins(pressableStyle) : NO_MARGINS;
     const listRule = listRuleShown ? <HappierListRowRule startPx={listRuleStartPx + fillMargins.start}
-        endPx={fillMargins.end} color={theme.colors.border.subtle} /> : null;
+        endPx={fillMargins.end} color={theme.colors.border.divider} /> : null;
     const dividerNode = listRuleRow ? listRule : (sharedItemBehavior.dividerVisible ? (
         <HappierDivider
             color={flatDividerColor ?? theme.colors.border.default}

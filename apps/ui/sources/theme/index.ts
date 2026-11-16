@@ -166,6 +166,8 @@ const lightThemeBase = {
             // edge without competing with the content inside it. Introduced for the sidebar/content
             // seam and shared by the quiet toolbar buttons rather than re-typed as a literal.
             subtle: 'rgba(0, 0, 0, 0.06)',
+            // The one list-row rule between rows of two or more lines (DESIGN "One list-row rule"): the divider ink.
+            divider: 'rgba(0, 0, 0, 0.06)',
             // About half the weight of `subtle`: the content-width separator between groups of one
             // section's rows (a pause inside the section), so it never competes with the section's
             // own full-width hairline (`subtle`) above it.
@@ -542,9 +544,10 @@ const darkThemeBase = {
             // See the light theme's note. Tracks dark `state.active.foreground`.
             focus: '#9EB9FF',
             modal: 'rgba(255,255,255,0.080)',
-            // The divider ink at the doctrine's 6% (light is 6% black): at 4% the one list-row rule all but vanished
-            // between dark Sessions rows (owner 2026-11-15).
-            subtle: 'rgba(255,255,255,0.060)',
+            subtle: 'rgba(255,255,255,0.040)',
+            // The list-row rule at light's perceived weight (owner 2026-11-15): the same 6% inverted all but vanished on
+            // the dark page (APCA about Lc 3 against light's 9); 10% white reads like light's 6% black, not heavier.
+            divider: 'rgba(255,255,255,0.100)',
             faint: 'rgba(255,255,255,0.024)',
         },
         chrome: {

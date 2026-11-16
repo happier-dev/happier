@@ -305,6 +305,7 @@ export function projectPluginUiHostPalette(theme: Pick<Theme, 'colors' | 'dark'>
         sheetBorder: colors.border.default,
         sheetEdge: resolveThemeCardEdge(theme) ?? undefined,
         rowDivider: colors.border.subtle,
+        listRowRule: colors.border.divider,
         groupDivider: colors.border.faint,
         controlBorder: colors.border.strong,
         controlEdge: resolveThemeControlEdge(theme, 'strong') ?? undefined,

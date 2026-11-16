@@ -103,6 +103,11 @@ export type HappierUiPalette = Readonly<{
   /** The hairline between the rows of a sheet, from the rows' text edge to their trailing inset. */
   rowDivider: string;
   /**
+   * The one list-row rule between rows of two or more lines, at one perceived weight in light and dark (the host's
+   * divider ink). Absent, the rule takes `rowDivider`.
+   */
+  listRowRule?: string;
+  /**
    * The separator between groups of a sheet's rows (`HappierPageSheetGroup`): content width and
    * lighter than `rowDivider`, so a group edge reads as a pause inside the section, not an edge.
    */

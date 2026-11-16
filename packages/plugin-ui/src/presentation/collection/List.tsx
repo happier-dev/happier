@@ -1384,7 +1384,7 @@ export function HappierListItem({
         // A column's rows are parted by the one list-row rule, from the row's text column (owner 2026-11-15).
         <NavigationRowRule
           startPx={resolveHappierCollectionRowTextStartPx({ glyph: icon !== undefined && icon !== null })}
-          color={collectionPalette(resolvedTheme, navigationPalette).rowDivider}
+          color={collectionPalette(resolvedTheme, navigationPalette).listRowRule ?? collectionPalette(resolvedTheme, navigationPalette).rowDivider}
           multiline={described}
           selected={selected === true}
         />

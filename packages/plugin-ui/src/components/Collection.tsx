@@ -1711,9 +1711,10 @@ function ListCells<Item>(props: Readonly<{
 
 /** A list row's rule, drawn while its list says another row follows and neither it nor the next row is filled. */
 function CollectionListRowRule(props: Readonly<{ startPx: number; multiline: boolean }>): ReactElement | null {
-  // The row divider ink every list and column row uses (the palette's `rowDivider`).
+  // The list-row rule's ink every list and column row uses (the palette's `listRowRule`, else its `rowDivider`).
   const theme = useHappierUiTheme();
-  const color = (useOptionalHappierUiPalette() ?? resolveHappierUiPalette(theme)).rowDivider;
+  const palette = useOptionalHappierUiPalette() ?? resolveHappierUiPalette(theme);
+  const color = palette.listRowRule ?? palette.rowDivider;
   const followed = useContext(HappierListRowFollowedContext);
   const selection = useContext(ListItemSelectionContext);
   const open = useContext(HappierListRowOpenContext);
@@ -2479,8 +2480,14 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   }, [props.afterRows, catalogList, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, grouped, model.keyOf, model.sections, pageSections, pageTable, tree]);
   // A page section's last row ends its sheet; on one table's sheet only the very last row does (a band follows the rest).
   const previousDividedKeys = useRef<ReadonlySet<string> | null>(null);
+  // A browse list on a phone lies flat on the page (owner 2026-11-15): its sheet divides its rows in the one list-row
+  // rule's ink, and only rows of two or more lines (owner ~20:40Z); one-line rows part by spacing alone.
+  const flatBrowseSheet = enclosingPageSheet === null && narrowRows;
+  const oneLineRows = rowRole !== 'catalogRow' && isSingleLineListAnatomy(anatomy);
+  const flatBrowseColors = useMemo(() => palette === null || palette.listRowRule === undefined ? palette
+    : { ...palette, rowDivider: palette.listRowRule }, [palette]);
   const dividedKeys = useMemo(() => {
-    if (!pageSections || catalogDirectory) {
+    if (!pageSections || catalogDirectory || (flatBrowseSheet && oneLineRows)) {
       previousDividedKeys.current = null;
       return null;
     }
@@ -2494,7 +2501,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     const next = new Set(keys);
     previousDividedKeys.current = next;
     return next;
-  }, [catalogDirectory, drawnSections, model.keyOf, pageSections, pageTable]);
+  }, [catalogDirectory, drawnSections, flatBrowseSheet, model.keyOf, oneLineRows, pageSections, pageTable]);
   // An ungrouped page list (a phone, a narrow page) keeps the table's header recomposed on its sheet: what the rows
   // are on the left, the order they are in on the right (lab `rp` Hp "Started by Happier · Memory ↓").
   const sort = props.sort;
@@ -2709,7 +2716,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         columnGapPx: CATALOG_ROW.directoryColumnGap,
         ...(props.testID === undefined ? {} : { lineTestID: `${props.testID}:directory-line` }),
       } } : { pageSheet: {
-        colors: palette,
+        colors: flatBrowseSheet && flatBrowseColors !== null ? flatBrowseColors : palette,
         header: pageSheetHeader,
         // A browse list on a phone lies flat on the page, its rows parted by their text-inset hairlines (owner 2026-11-15).
         flatSheet: enclosingPageSheet === null && !narrowRows,
@@ -2771,7 +2778,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         {header}
       </driver.AnimatedView>
     ),
-  }), [canPeek, catalogDirectory, catalogSideList, directoryColumns, directoryHeadingInsetPx, driver, expandable, metrics, model, multipleStore, navigationKeys, nestedTable, setBranchOpen, treeNodes, props.retainedRowKeys, pageScroll, wrapTitles, ruledInsetPx, pageVirtualized, pageGeometry, pageSections, pageTable, pageSheetHeader, enclosingPageSheet, containingMaterial, paintColor, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, transition, view.scrollRequest, viewportScrollRequest, rowGeometry, props.useRowActions]);
+  }), [canPeek, catalogDirectory, catalogSideList, directoryColumns, directoryHeadingInsetPx, driver, expandable, metrics, model, multipleStore, navigationKeys, nestedTable, setBranchOpen, treeNodes, props.retainedRowKeys, pageScroll, wrapTitles, ruledInsetPx, pageVirtualized, pageGeometry, pageSections, pageTable, pageSheetHeader, enclosingPageSheet, flatBrowseColors, flatBrowseSheet, containingMaterial, paintColor, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, transition, view.scrollRequest, viewportScrollRequest, rowGeometry, props.useRowActions]);
 
   // ---- Escape returns to the table from anywhere inside the Collection (web keyboard) ----
   const rootRef = useRef<View | null>(null);
