@@ -22,7 +22,7 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
-use happier_iroh_native::MachineHandshakeProvider;
+use happier_iroh_native::{MachineHandshakeProvider, MachineHttpObserver};
 use happier_iroh_native::{
     begin_endpoint_shutdown_json, happier_iroh_native_create_endpoint_json,
     happier_iroh_native_ensure_home_tunnel_json, happier_iroh_native_free_string,
@@ -35,7 +35,7 @@ use happier_iroh_native::{
     happier_iroh_native_start_machine_tunnel_json, happier_iroh_native_stop_home_acceptor_json,
     happier_iroh_native_stop_machine_acceptor_json, happier_iroh_native_stop_machine_tunnel_json,
     happier_iroh_native_wait_machine_tunnel_closed_json,
-    start_machine_http_tunnel_with_handshake_provider_json, IrohError,
+    start_machine_http_tunnel_with_callbacks_json, IrohError,
 };
 #[cfg(feature = "test-relay-fixture")]
 use happier_iroh_native::{
@@ -49,26 +49,41 @@ use napi::{Env, Error, JsValue, Result, Status};
 use napi_derive::napi;
 
 type HandshakeProviderFunction = ThreadsafeFunction<(), Promise<String>, (), Status, false>;
+type HttpObserverFunction = ThreadsafeFunction<String, Promise<()>, String, Status, false>;
 
 fn start_machine_http_tunnel_operation(
     request: String,
     handshake_provider: Option<std::sync::Arc<HandshakeProviderFunction>>,
+    http_observer: Option<std::sync::Arc<HttpObserverFunction>>,
 ) -> Result<String> {
-    if let Some(callback) = &handshake_provider {
-        let callback = std::sync::Arc::clone(callback);
-        let provider: MachineHandshakeProvider = std::sync::Arc::new(move || {
-            let callback = std::sync::Arc::clone(&callback);
-            Box::pin(async move {
-                let promise = callback
-                    .call_async_catch(())
-                    .await
-                    .map_err(|_| IrohError::Cancelled)?;
-                promise.await.map_err(|_| IrohError::Cancelled)
-            })
+    if handshake_provider.is_some() || http_observer.is_some() {
+        let provider = handshake_provider.map(|callback| {
+            let provider: MachineHandshakeProvider = std::sync::Arc::new(move || {
+                let callback = std::sync::Arc::clone(&callback);
+                Box::pin(async move {
+                    let promise = callback
+                        .call_async_catch(())
+                        .await
+                        .map_err(|_| IrohError::Cancelled)?;
+                    promise.await.map_err(|_| IrohError::Cancelled)
+                })
+            });
+            provider
         });
-        return Ok(start_machine_http_tunnel_with_handshake_provider_json(
+        let observer: Option<MachineHttpObserver> = http_observer.map(|callback| {
+            std::sync::Arc::new(move |event: String| {
+                let callback = std::sync::Arc::clone(&callback);
+                Box::pin(async move {
+                    if let Ok(promise) = callback.call_async_catch(event).await {
+                        let _ = promise.await;
+                    }
+                }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+            }) as MachineHttpObserver
+        });
+        return Ok(start_machine_http_tunnel_with_callbacks_json(
             &request,
             provider,
+            observer,
         )
         .to_string());
     }
@@ -332,9 +347,10 @@ pub fn start_machine_http_tunnel(
     env: &Env,
     request: String,
     handshake_provider: Option<std::sync::Arc<HandshakeProviderFunction>>,
+    http_observer: Option<std::sync::Arc<HttpObserverFunction>>,
 ) -> Result<PromiseRaw<'_, String>> {
     run_lifecycle_operation(env, move || {
-        start_machine_http_tunnel_operation(request, handshake_provider)
+        start_machine_http_tunnel_operation(request, handshake_provider, http_observer)
     })
 }
 #[napi]

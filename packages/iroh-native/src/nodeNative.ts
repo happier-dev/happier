@@ -37,7 +37,7 @@ export {
 export type { IrohRelayEnvConfig } from './relayConfig.js';
 export type { IrohRelayPolicy } from './types.js';
 export type { NativeIrohModule } from './HappierIrohNative.types.js';
-export type { IrohNodeMachineHttpHandshakeRefusal, IrohNodeStartMachineHttpTunnelRequest } from './nodeNative.types.js';
+export type { IrohNodeMachineHttpHandshakeRefusal, IrohNodeStartMachineHttpTunnelRequest, IrohNodeMachineHttpObservation } from './nodeNative.types.js';
 export { createNodeIrohHomeTunnelSession } from './nodeHomeTunnelSession.js';
 export type {
   NodeIrohHomeTunnelLease,
@@ -59,6 +59,7 @@ import {
   type IrohNodeStartHomeAcceptorRequest,
   type IrohNodeStartMachineAcceptorRequest,
   type IrohNodeStartMachineHttpTunnelRequest,
+  type IrohNodeMachineHttpObservation,
   type IrohNodeStartMachineTunnelRequest,
   type IrohNodeTunnelStarted,
   type IrohNodeTunnelStatus,
@@ -849,8 +850,8 @@ export function createIrohNodeNativeModule(
     startMachineHttpTunnel: async (
       request: IrohNodeStartMachineHttpTunnelRequest,
     ) => {
-      const { handshakeProvider, ...serialized } = request;
-      if (!handshakeProvider) {
+      const { handshakeProvider, httpObserver, ...serialized } = request;
+      if (!handshakeProvider && !httpObserver) {
         return validateMachineHttpTunnelStarted(
           await callOperation(
             addon.startMachineHttpTunnel(serializeRequest(serialized)),
@@ -861,7 +862,7 @@ export function createIrohNodeNativeModule(
         await callOperation(
           addon.startMachineHttpTunnel(
             serializeRequest(serialized),
-            async () => {
+            handshakeProvider ? async () => {
               const handshakeJson = await handshakeProvider();
               if (typeof handshakeJson !== 'string') {
                 throw new TypeError(
@@ -869,7 +870,27 @@ export function createIrohNodeNativeModule(
                 );
               }
               return handshakeJson;
-            },
+            } : undefined,
+            httpObserver ? async (eventJson: string) => {
+              const value = requireRecord(JSON.parse(eventJson), 'HTTP observation');
+              const connectionId = requireString(value.connectionId, 'connectionId');
+              let event: IrohNodeMachineHttpObservation;
+              if (value.kind === 'closed') event = { kind: 'closed', connectionId };
+              else {
+                const requestId = requireString(value.requestId, 'requestId');
+                if (value.kind === 'request') event = { kind: 'request', connectionId, requestId };
+                else if (value.kind === 'response') {
+                  const headers = requireRecord(value.headers, 'HTTP observation headers');
+                  const typedHeaders: Record<string, string> = {};
+                  for (const [name, header] of Object.entries(headers)) {
+                    if (typeof header !== 'string') throw new TypeError('Invalid HTTP observation header');
+                    typedHeaders[name] = header;
+                  }
+                  event = { kind: 'response', connectionId, requestId, status: requireNumber(value.status, 'status'), headers: typedHeaders };
+                } else throw new TypeError('Invalid HTTP observation kind');
+              }
+              await httpObserver(event);
+            } : undefined,
           ),
         ),
       );

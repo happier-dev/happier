@@ -29,8 +29,10 @@ import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecyc
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 import { presentSessionTeamCredentialDenial } from '../../../../../ui/sources/components/sessions/presentation/sessionTeamCredentialDenialPresentation';
 import { createSessionBrokerApplicationEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
-import { createProviderBrokerRouteGrantSigningInputV2, type ProviderBrokerAccountOpenResponseV2, type SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { createProviderBrokerRouteGrantSigningInputV2, PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER,
+  type ProviderBrokerAccountOpenResponseV2, type SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { writeProviderBrokerApplicationFailure } from '@/providers/broker/providerBrokerApplicationServer';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
 const root = { keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') };
@@ -96,6 +98,77 @@ function brokerOpen(
 }
 
 describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
+  it('attributes actual application HTTP refusals to each request turn after Home refresh succeeds', async () => {
+    let turnId = 'first';
+    const evidence = createSessionBrokerApplicationEvidence({ sessionId: 'session-1', pid: 123,
+      readActiveTurnId: () => turnId, isCurrent: () => true });
+    const openHttpTunnel = vi.fn<DaemonMachineIrohRuntime['openHttpTunnel']>(async () => ({
+      localPort: 41_001, localCapability: 'c'.repeat(64), remoteEndpointId: targetEndpoint,
+      observedPath: 'direct', close: async () => undefined,
+    }));
+    const open = createProviderBrokerMachineCarrierTunnelOpen({
+      accountId: 'account-worker', localMachineId: 'machine-worker',
+      runtime: { endpoint: { endpointId: initiatorEndpoint }, openHttpTunnel },
+      resolveTrustRoots: () => [root], nowMs: () => 200,
+      beginSessionApplicationRequest: () => evidence.beginRequest(),
+    });
+    await open({ brokerOpen: brokerOpen(), refreshBrokerOpen: async () => brokerOpen() });
+    // Native's metadata boundary reports separate requests on one keepalive connection.
+    const transport = openHttpTunnel.mock.calls[0]?.[0];
+    const observer = transport?.httpObserver;
+    await observer?.({ kind: 'request', connectionId: '1', requestId: '1' });
+    turnId = 'second';
+    await observer?.({ kind: 'request', connectionId: '1', requestId: '2' });
+    const headers: Record<string, string> = {};
+    writeProviderBrokerApplicationFailure({
+      header: (name, value) => { headers[name] = value; }, code: () => ({ send: () => undefined }),
+    }, { ok: false, reasonCode: 'team_credential_usage_limit', usageLimit: {
+      metric: 'total_tokens', remaining: '0', resetsAtUtc: '2026-11-17T00:00:00.000Z',
+    } }, 'resource-1');
+    await observer?.({ kind: 'response', connectionId: '1', requestId: '1', status: 403, headers });
+    await expect(evidence.readFailureEvidence('second')).resolves.toEqual({ denial: null });
+    await observer?.({ kind: 'response', connectionId: '1', requestId: '2', status: 403, headers });
+    await expect(evidence.readFailureEvidence('second')).resolves.toMatchObject({ denial: {
+      v: 1, resourceId: 'resource-1', reasonCode: 'team_credential_usage_limit',
+      usageLimit: { metric: 'total_tokens', remaining: '0', resetsAtUtc: '2026-11-17T00:00:00.000Z' },
+    } });
+    const mutations: SessionTurnMutationV1[] = [];
+    const lifecycle = createSessionTurnLifecycle({
+      session: { sessionId: 'session-1', enqueueSessionTurnMutation: async mutation => { mutations.push(mutation); } },
+      readTeamCredentialFailureEvidence: activeTurnId => evidence.readFailureEvidence(activeTurnId),
+    });
+    lifecycle.observeRuntimeEvent({ sequence: 1, sessionId: 'session-1', emittedAtMs: 200,
+      kind: 'turn-start', turnId: 'second', startedBy: 'host' });
+    // The Agent can drop the broker body entirely. The host consumes the
+    // transport's exact request evidence for the ordinary generic failure.
+    lifecycle.observeRuntimeEvent({ sequence: 2, sessionId: 'session-1', emittedAtMs: 201,
+      kind: 'turn-failed', turnId: 'second', diagnostic: { code: 'codex_app_server_turn_failed',
+        severity: 'error', message: 'HTTP 403', details: { v: 1, source: 'agent_session_error' } } });
+    await lifecycle.drainAcceptedLifecycle();
+    expect(mutations.at(-1)).toMatchObject({ action: 'fail', issue: { source: 'team_credential',
+      teamCredential: { reasonCode: 'team_credential_usage_limit', resourceId: 'resource-1', usageLimit: {
+        metric: 'total_tokens', remaining: '0', resetsAtUtc: '2026-11-17T00:00:00.000Z',
+      } } } });
+    // A new accepted Home open is not an application success and cannot erase
+    // a target refusal before the Agent reports its terminal failure.
+    await transport?.handshakeProvider?.();
+    await transport?.handshakeProvider?.();
+    await expect(evidence.readFailureEvidence('second')).resolves.toMatchObject({ denial: { reasonCode: 'team_credential_usage_limit' } });
+    for (const [requestId, status, responseHeaders] of [
+      ['3', 403, {}], // A vendor 403 without broker headers stays unclassified.
+      ['4', 200, headers], // Header-like content cannot make success a refusal.
+      ['5', 403, { [PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER]: 'not_a_broker_code' }],
+    ] as const) {
+      await observer?.({ kind: 'request', connectionId: '1', requestId });
+      await observer?.({ kind: 'response', connectionId: '1', requestId, status, headers: responseHeaders });
+      await expect(evidence.readFailureEvidence('second')).resolves.toEqual({ denial: null });
+    }
+    await observer?.({ kind: 'request', connectionId: '1', requestId: '6' });
+    await observer?.({ kind: 'closed', connectionId: '1' });
+    await observer?.({ kind: 'response', connectionId: '1', requestId: '6', status: 403, headers });
+    await expect(evidence.readFailureEvidence('second')).resolves.toEqual({ denial: null });
+  });
+
   it('continues signed V2 Runs without Home opens until the existing stream-admission expiry', async () => {
     let now = 200;
     const sign = (issuedAt: number, expiresAt: number): SignedProviderBrokerRouteGrantV2 => {

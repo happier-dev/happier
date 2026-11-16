@@ -64,7 +64,7 @@ pub use native_http_lease::NativeHttpLease;
 #[cfg(not(target_arch = "wasm32"))]
 pub use machine::{
     MachineAcceptor, MachineAcceptorConfig, MachineAcceptorStatus, MachineFailureCode,
-    MachineHandshakeProvider, MachineHttpTunnel, MachineTunnel, MachineTunnelConfig,
+    MachineHandshakeProvider, MachineHttpObservation, MachineHttpObserver, MachineHttpTunnel, MachineTunnel, MachineTunnelConfig,
     MachineTunnelStatus, IROH_MACHINE_APPLICATION_CAPABILITY_HEADER,
     IROH_MACHINE_APPLICATION_PORT_HEADER, IROH_MACHINE_HTTP_LOCAL_CAPABILITY_HEADER,
     MACHINE_ADMISSION_PATH, MACHINE_CONTROL_TIMEOUT, MACHINE_REMOTE_ENDPOINT_HEADER,

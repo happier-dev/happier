@@ -2036,6 +2036,16 @@ resolver/target, target failure and cancellation. Diagnostics contain fixed
 classes rather than error messages, URLs, headers, bodies or signed authority.
 A missing HTTP
 status alone cannot distinguish a rejected stream from a transport failure.
+In 0.3 development source, actual Team Session HTTP refusals also reach the
+host's existing Session failure evidence. The native HTTP carrier pairs each
+request with its response, including reused connections, and reports only the
+broker's closed reason and usage-limit headers. The host captures the current
+turn when the request starts; a delayed response cannot become another turn's
+denial. Accepted Home refreshes do not erase an application refusal. Request
+and response bodies stay native, and a vendor HTTP 403 without a recognized
+broker reason remains unclassified. This path requires the matching rebuilt
+Node native addon and daemon source; source changes alone do not update a
+running addon. It adds no admission decision, automatic retry or polling.
 Account-connection open and fresh-access refusals also retain Home's existing
 closed admission reason as `admissionReasonCode` in those file records. The
 daemon carries that reason in the existing runner failure cause; the runner's

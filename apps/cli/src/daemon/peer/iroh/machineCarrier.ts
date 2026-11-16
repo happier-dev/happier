@@ -1,6 +1,6 @@
 import type { SessionRuntimeCarrierFailureV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { PeerTcpTunnelStreamConnection } from '@happier-dev/peer-transport';
-import { MACHINE_ALPN, type IrohNodeMachineHttpHandshakeRefusal } from '@happier-dev/iroh-native/node';
+import { MACHINE_ALPN, type IrohNodeMachineHttpHandshakeRefusal, type IrohNodeStartMachineHttpTunnelRequest } from '@happier-dev/iroh-native/node';
 import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
 import type { IrohProviderBrokerHandshake } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { IrohMachineCarrierFlowV1, PeerFlowKindV1, RunnerBrokerReadinessRequestV1 } from '@happier-dev/protocol';
@@ -140,6 +140,8 @@ export type ProviderBrokerMachineCarrierTransportOpenInput = Readonly<{
     flow: 'provider_broker';
     handshake: IrohProviderBrokerHandshake;
     handshakeProvider?: () => Promise<IrohProviderBrokerHandshake>;
+    httpObserver?: IrohNodeStartMachineHttpTunnelRequest['httpObserver'];
+    observedResponseHeaders?: readonly string[];
 }>;
 
 /** Pre-Session, content-free readiness uses the same carrier but a distinct

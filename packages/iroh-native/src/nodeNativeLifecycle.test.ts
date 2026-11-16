@@ -7,7 +7,7 @@ import { connect, createServer, type Server } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { loadIrohNodeNative, resolveIrohNodeAddonPath } from './nodeNative';
-import { IROH_NODE_NATIVE_EXPORTS, type NodeIrohNativeModule } from './nodeNative.types';
+import { IROH_NODE_NATIVE_EXPORTS, type NodeIrohNativeModule, type IrohNodeMachineHttpObservation } from './nodeNative.types';
 import { createNodeIrohHomeTunnelSession } from './nodeHomeTunnelSession';
 
 /**
@@ -482,6 +482,62 @@ describeWhenNative('Iroh Node lifecycle binding over the shared native runtime',
     await expect(addon.getMachineAcceptorStatus(serverEndpoint.endpointHandle)).resolves.toBeNull();
     await addon.shutdownEndpoint({ endpointHandle: clientEndpoint.endpointHandle });
     await addon.shutdownEndpoint({ endpointHandle: serverEndpoint.endpointHandle });
+  });
+
+  it('observes paired HTTP metadata through the real binding while keepalive bodies stay native', { timeout: 90_000 }, async () => {
+    const addon = requireNative();
+    const body = 'HTTP/1.1 403 Forbidden\r\nx-broker-code: body-only\r\n\r\n';
+    let received = 0;
+    const server = createServer(socket => {
+      let buffer = '';
+      socket.on('data', bytes => {
+        buffer += bytes.toString('utf8');
+        let end: number;
+        while ((end = buffer.indexOf('\r\n\r\n')) >= 0) {
+          buffer = buffer.slice(end + 4);
+          received++;
+          if (received === 1) socket.write(`HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nSet-Cookie: private\r\n\r\n${Buffer.byteLength(body).toString(16)}\r\n${body}\r\n0\r\n\r\n`);
+          else socket.end('HTTP/1.1 403 Forbidden\r\nx-broker-code: team_credential_usage_limit\r\nContent-Length: 3\r\n\r\nno!');
+        }
+      });
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('application listener missing');
+    echo = { server, port: address.port, connections: { count: 0 } };
+    keyDir = await mkdtemp(join(tmpdir(), 'happier-iroh-http-observation-'));
+    const endpoint = await addon.createEndpoint({ keyPath: join(keyDir, 'server.key'), relayPolicy: 'disabled', capProfile: 'machineBulk' });
+    const client = await addon.createEndpoint({ keyPath: join(keyDir, 'client.key'), relayPolicy: 'disabled', capProfile: 'machineBulk' });
+    admission = await startAdmissionServer(client.endpointId, address.port);
+    await addon.startMachineAcceptor({ endpointHandle: endpoint.endpointHandle, admissionPort: admission.port });
+    const endpointStatus = await addon.getEndpointStatus(endpoint.endpointHandle);
+    const events: IrohNodeMachineHttpObservation[] = [];
+    const tunnel = await addon.startMachineHttpTunnel({
+      endpointHandle: client.endpointHandle, endpointId: endpoint.endpointId,
+      directAddresses: endpointStatus?.directAddresses,
+      handshakeJson: JSON.stringify({ v: 1, kind: 'provider_broker' }),
+      observedResponseHeaders: ['x-broker-code'], httpObserver: async event => { events.push(event); },
+    });
+    const response = await new Promise<string>((resolve, reject) => {
+      const socket = connect(tunnel.localPort, '127.0.0.1');
+      const chunks: Buffer[] = [];
+      socket.on('data', bytes => chunks.push(bytes));
+      socket.on('error', reject);
+      socket.on('end', () => { socket.end(); resolve(Buffer.concat(chunks).toString('utf8')); });
+      socket.on('connect', () => socket.write([1, 2].map(id => `GET /${id} HTTP/1.1\r\nHost: local\r\nX-Happier-Machine-Local-Capability: ${tunnel.localCapability}\r\n\r\n`).join('')));
+    });
+    expect(received).toBe(2);
+    expect(response).toContain(body);
+    expect(response.endsWith('\r\n\r\nno!')).toBe(true);
+    expect(events.filter(event => event.kind === 'response')).toEqual([
+      { kind: 'response', connectionId: '1', requestId: '1', status: 200, headers: {} },
+      { kind: 'response', connectionId: '1', requestId: '2', status: 403, headers: { 'x-broker-code': 'team_credential_usage_limit' } },
+    ]);
+    expect(events.filter(event => event.kind === 'request')).toHaveLength(2);
+    await addon.stopMachineTunnel(tunnel.machineTunnelId);
+    await addon.stopMachineAcceptor({ endpointHandle: endpoint.endpointHandle });
+    await addon.shutdownEndpoint({ endpointHandle: client.endpointHandle });
+    await addon.shutdownEndpoint({ endpointHandle: endpoint.endpointHandle });
   });
 
   it('requests distinct fresh handshakes for later provider HTTP connections', { timeout: 90_000 }, async () => {

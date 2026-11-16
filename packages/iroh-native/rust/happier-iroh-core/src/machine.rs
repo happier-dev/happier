@@ -23,6 +23,10 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 use tokio::task::{JoinHandle, JoinSet};
 
+#[path = "machine_http_observation.rs"]
+mod http_observation;
+pub use http_observation::{MachineHttpObservation, MachineHttpObserver};
+
 pub const MAX_MACHINE_HANDSHAKE_BYTES: usize = 64 * 1024;
 pub const MACHINE_CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 pub const MACHINE_ADMISSION_PATH: &str = "/v1/iroh/machine/admit";
@@ -1022,12 +1026,18 @@ async fn forward_capability_gated_http_requests<R, W>(
     allow_websocket: bool,
     mut buffered: Vec<u8>,
     mut request: CapabilityGatedHttpRequestHead,
+    observation: Option<(&MachineHttpObservation, u64, mpsc::UnboundedSender<http_observation::ObservedRequest>)>,
 ) -> std::io::Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
+    let mut request_id = 0;
     loop {
+        request_id += 1;
+        if let Some((observer, connection_id, requests)) = &observation {
+            http_observation::begin_request(observer, *connection_id, request_id, &request, requests).await;
+        }
         destination.write_all(&request.sanitized).await?;
         match request.body_framing {
             HttpRequestBodyFraming::WebSocket => {
@@ -1060,7 +1070,7 @@ impl MachineHttpTunnel {
         endpoint: &crate::IrohEndpoint,
         config: MachineTunnelConfig,
     ) -> Result<Self> {
-        Self::start_inner(endpoint, config, None, None).await
+        Self::start_inner(endpoint, config, None, None, None).await
     }
 
     pub async fn start_with_handshake_provider(
@@ -1068,7 +1078,7 @@ impl MachineHttpTunnel {
         config: MachineTunnelConfig,
         handshake_provider: MachineHandshakeProvider,
     ) -> Result<Self> {
-        Self::start_inner(endpoint, config, Some(handshake_provider), None).await
+        Self::start_inner(endpoint, config, Some(handshake_provider), None, None).await
     }
 
     pub async fn start_with_local_admission(
@@ -1077,14 +1087,15 @@ impl MachineHttpTunnel {
         admission: MachineLocalAdmission,
         handshake_provider: Option<MachineHandshakeProvider>,
     ) -> Result<Self> {
-        if validate_handshake(&config.handshake_json)? != MachineTunnelPurpose::ProviderBroker
-            || config.endpoint_id != endpoint.id().to_string()
-            || admission.endpoint_id != config.endpoint_id
-            || *admission.shutdown.borrow()
-        {
-            return Err(IrohError::InvalidDescriptor);
-        }
-        Self::start_inner(endpoint, config, handshake_provider, Some(admission)).await
+        Self::start_inner(endpoint, config, handshake_provider, Some(admission), None).await
+    }
+
+    pub async fn start_with_http_observation(
+        endpoint: &crate::IrohEndpoint, config: MachineTunnelConfig,
+        handshake_provider: Option<MachineHandshakeProvider>,
+        admission: Option<MachineLocalAdmission>, observation: MachineHttpObservation,
+    ) -> Result<Self> {
+        Self::start_inner(endpoint, config, handshake_provider, admission, Some(observation)).await
     }
 
     async fn start_inner(
@@ -1092,8 +1103,18 @@ impl MachineHttpTunnel {
         config: MachineTunnelConfig,
         handshake_provider: Option<MachineHandshakeProvider>,
         local_admission: Option<MachineLocalAdmission>,
+        observation: Option<MachineHttpObservation>,
     ) -> Result<Self> {
         let purpose = validate_handshake(&config.handshake_json)?;
+        if let Some(admission) = &local_admission {
+            if purpose != MachineTunnelPurpose::ProviderBroker
+                || config.endpoint_id != endpoint.id().to_string()
+                || admission.endpoint_id != config.endpoint_id
+                || *admission.shutdown.borrow()
+            {
+                return Err(IrohError::InvalidDescriptor);
+            }
+        }
         if !matches!(purpose,
             MachineTunnelPurpose::ProviderBroker | MachineTunnelPurpose::TcpTunnel) {
             return Err(IrohError::InvalidDescriptor);
@@ -1122,6 +1143,7 @@ impl MachineHttpTunnel {
         let (shutdown, mut shutdown_rx) = watch::channel(false);
         let task = tokio::spawn(async move {
             let mut streams = JoinSet::new();
+            let mut connection_id = 0u64;
             loop {
                 tokio::select! {
                     _ = shutdown_rx.changed() => { break; }
@@ -1130,6 +1152,9 @@ impl MachineHttpTunnel {
                         let Ok((mut application, _)) = accepted else { break };
                         let capability = Arc::clone(&capability);
                         let state = Arc::clone(&tunnel_state);
+                        connection_id += 1;
+                        let connection_id = connection_id;
+                        let observation = observation.clone();
                         streams.spawn(async move {
                             let mut buffered = Vec::with_capacity(1024);
                             let initial = tokio::time::timeout(
@@ -1159,6 +1184,8 @@ impl MachineHttpTunnel {
                             if secured.write_all(&capability).await.is_err() { return; }
                             let (mut application_read, mut application_write) = application.split();
                             let (mut secured_read, mut secured_write) = secured.split();
+                            let (request_tx, request_rx) = observation.as_ref()
+                                .map(|_| mpsc::unbounded_channel()).unzip();
                             let requests = forward_capability_gated_http_requests(
                                 &mut application_read,
                                 &mut secured_write,
@@ -1166,9 +1193,15 @@ impl MachineHttpTunnel {
                                 allow_websocket,
                                 buffered,
                                 initial_request,
+                                observation.as_ref().zip(request_tx).map(|(observer, tx)| (observer, connection_id, tx)),
                             );
                             let responses = async {
-                                let result = tokio::io::copy(&mut secured_read, &mut application_write).await;
+                                let result = if let Some((observer, request_rx)) = observation.as_ref().zip(request_rx) {
+                                    http_observation::forward_responses(&mut secured_read, &mut application_write,
+                                        request_rx, observer, connection_id).await
+                                } else {
+                                    tokio::io::copy(&mut secured_read, &mut application_write).await.map(|_| ())
+                                };
                                 let _ = application_write.shutdown().await;
                                 result
                             };
@@ -1188,6 +1221,9 @@ impl MachineHttpTunnel {
                                 Some(Ok(())) => { let _ = responses.await; }
                                 Some(Err(error)) => record(local_http_request_failure(&error)),
                                 None => {}
+                            }
+                            if let Some(observer) = &observation {
+                                (observer.observer)(serde_json::json!({"kind":"closed", "connectionId":connection_id.to_string()}).to_string()).await;
                             }
                         });
                     }
@@ -1603,7 +1639,7 @@ mod handshake_tests {
         let head = super::read_capability_gated_http_request_head(&mut server, &mut buffered, capability.as_bytes(), true).await
             .expect("authenticated WebSocket head").expect("request");
         let (mut received, mut destination) = tokio::io::duplex(4096);
-        super::forward_capability_gated_http_requests(&mut server, &mut destination, capability.as_bytes(), true, buffered, head).await.unwrap();
+        super::forward_capability_gated_http_requests(&mut server, &mut destination, capability.as_bytes(), true, buffered, head, None).await.unwrap();
         drop(destination);
         let mut output = Vec::new();
         received.read_to_end(&mut output).await.unwrap();

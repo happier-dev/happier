@@ -31,6 +31,7 @@ import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH, PROVIDER_BROKER_CLOSE_REQUEST_ID_HE
 import { logger } from '@/ui/logger';
 import { providerBrokerApplicationFailureBody, type SessionBrokerApplicationOutcomeRecorder } from '@/providers/broker/providerBrokerApplicationFailure';
 import { SessionRuntimeTeamCredentialDenialDetailsV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { createSessionBrokerHttpObserver, SESSION_BROKER_OBSERVED_RESPONSE_HEADERS } from '@/providers/broker/sessionBrokerHttpObservation';
 
 type BrokerReleasePhase = 'public_listener_withdrawal' | 'private_control_dial'
   | 'delete_dispatched' | 'response_received' | 'private_control_close';
@@ -195,7 +196,6 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
           throw new MachineCarrierError(verified.reasonCode, 'Fresh Provider broker authority was rejected.');
         }
         signal?.throwIfAborted();
-        recordOutcome?.(null);
         return IrohProviderBrokerHandshakeSchema.parse({
           v: payload.v,
           kind: 'provider_broker',
@@ -232,11 +232,18 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
     // A signed Run open owns its admission until the existing grant expiry.
     // Sessions still refresh before dial and for each later carrier stream.
     let firstHandshake = admittedRun ? handshake : refreshBrokerOpen ? await refreshHandshake() : null;
+    const sessionConsumerId = payload.v === 1 && payload.consumer.kind === 'session' ? payload.consumer.sessionId : undefined;
     const transportInput: ProviderBrokerMachineCarrierTransportOpenInput = {
       alpn: MACHINE_ALPN,
       remoteEndpointId: payload.target.endpointId,
       flow: 'provider_broker',
       handshake: firstHandshake ?? handshake,
+      ...(payload.v === 1 && sessionConsumerId && input.beginSessionApplicationRequest ? {
+        observedResponseHeaders: SESSION_BROKER_OBSERVED_RESPONSE_HEADERS,
+        httpObserver: createSessionBrokerHttpObserver({ resourceId: payload.resourceId,
+          beginRequest: () => input.beginSessionApplicationRequest?.(sessionConsumerId),
+        }),
+      } : {}),
       handshakeProvider: async () => {
         if (admittedRun && firstHandshake) {
           if (releasing) throw new MachineCarrierError('broker_consumer_closed', 'Provider broker consumer has been withdrawn.');

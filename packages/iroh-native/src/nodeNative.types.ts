@@ -62,6 +62,7 @@ export type IrohNodeNativeAddon = Readonly<{
   startMachineHttpTunnel: (
     request: string,
     handshakeProvider?: () => Promise<string>,
+    httpObserver?: (eventJson: string) => Promise<void>,
   ) => Promise<string>;
 }> & {
   [Name in Exclude<IrohNodeNativeExportName, 'getAvailability' | 'startMachineHttpTunnel' | 'waitMachineTunnelClosed'>]: (
@@ -119,7 +120,17 @@ export type IrohNodeStartMachineHttpTunnelRequest = IrohNodeStartMachineTunnelRe
    * stream opens. Resolves to a handshake or JSON-serialized local HTTP refusal.
    */
   handshakeProvider?: () => Promise<string>;
+  /** Metadata only. Request/response pairs include every keepalive request. */
+  httpObserver?: (event: IrohNodeMachineHttpObservation) => Promise<void>;
+  /** Only these response headers cross the native binding; bodies stay native. */
+  observedResponseHeaders?: readonly string[];
 }>;
+
+export type IrohNodeMachineHttpObservation = Readonly<{ connectionId: string }> & (
+  | Readonly<{ kind: 'request'; requestId: string }>
+  | Readonly<{ kind: 'response'; requestId: string; status: number; headers: Readonly<Record<string, string>> }>
+  | Readonly<{ kind: 'closed' }>
+);
 
 export type IrohNodeEnsureHomeTunnelRequest = Readonly<{
   endpointHandle: string;

@@ -19,7 +19,7 @@ import type {
 type MachineHttpTunnelOpenInput = (MachineCarrierTransportOpenInput
   | ProviderBrokerMachineCarrierTransportOpenInput
   | RunnerBrokerReadinessMachineCarrierTransportOpenInput)
-  & Readonly<{ handshakeProvider?: () => Promise<ProviderBrokerMachineCarrierTransportOpenInput['handshake']> }>;
+  & Pick<ProviderBrokerMachineCarrierTransportOpenInput, 'handshakeProvider' | 'httpObserver' | 'observedResponseHeaders'>;
 type WorkspaceMachineCarrierTransportOpenInput = MachineCarrierTransportOpenInput & Readonly<{
   flow: 'workspace_sync';
 }>;
@@ -278,6 +278,10 @@ export async function createDaemonMachineIrohRuntime(input: Readonly<{
       ...(parsedRemote.directAddresses ? { directAddresses: parsedRemote.directAddresses } : {}),
       ...(parsedRemote.relayUrls ? { relayUrls: parsedRemote.relayUrls } : {}),
       handshakeJson: JSON.stringify(transportInput.handshake),
+      ...(transportInput.httpObserver ? {
+        httpObserver: transportInput.httpObserver,
+        observedResponseHeaders: transportInput.observedResponseHeaders,
+      } : {}),
       ...(transportInput.handshakeProvider ? {
         handshakeProvider: async () => {
           try {

@@ -15,7 +15,7 @@ use happier_iroh_core::{
     MachineHttpTunnel, MachineTunnel, MachineTunnelConfig, MachineTunnelStatus, NativeHttpLease, RelayPolicy,
     RelaySelection,
 };
-pub use happier_iroh_core::{IrohError, MachineHandshakeProvider};
+pub use happier_iroh_core::{IrohError, MachineHandshakeProvider, MachineHttpObserver};
 use serde::Deserialize;
 use serde_json::{json, Value};
 #[cfg(feature = "test-relay-fixture")]
@@ -128,6 +128,8 @@ struct StartMachineTunnelRequest {
     cap_profile: String,
     #[serde(default)]
     native_http_lease: Option<NativeHttpLeaseRequest>,
+    #[serde(default)]
+    observed_response_headers: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1356,12 +1358,13 @@ fn start_machine_http_tunnel(value: *const c_char) -> Value {
         Ok(value) => value,
         Err((code, message)) => return error_response(code, message),
     };
-    start_machine_http_tunnel_input(input, None)
+    start_machine_http_tunnel_input(input, None, None)
 }
 
 fn start_machine_http_tunnel_input(
     input: StartMachineTunnelRequest,
     handshake_provider: Option<MachineHandshakeProvider>,
+    http_observer: Option<MachineHttpObserver>,
 ) -> Value {
     if input.native_http_lease.is_some() {
         return error_response("invalid-request", "nativeHttpLease requires startMachineTunnel");
@@ -1418,7 +1421,12 @@ fn start_machine_http_tunnel_input(
                     handshake_json: input.handshake_json,
                     cap_profile,
                 };
-                if let Some(local_admission) = local_admission {
+                if let Some(observer) = http_observer {
+                    MachineHttpTunnel::start_with_http_observation(&endpoint, tunnel_config, handshake_provider,
+                        local_admission, happier_iroh_core::MachineHttpObservation {
+                            header_names: input.observed_response_headers, observer,
+                        }).await
+                } else if let Some(local_admission) = local_admission {
                     MachineHttpTunnel::start_with_local_admission(
                         &endpoint, tunnel_config, local_admission, handshake_provider,
                     ).await
@@ -1480,9 +1488,17 @@ pub fn start_machine_http_tunnel_with_handshake_provider_json(
     request: &str,
     handshake_provider: MachineHandshakeProvider,
 ) -> Value {
+    start_machine_http_tunnel_with_callbacks_json(request, Some(handshake_provider), None)
+}
+
+pub fn start_machine_http_tunnel_with_callbacks_json(
+    request: &str,
+    handshake_provider: Option<MachineHandshakeProvider>,
+    http_observer: Option<MachineHttpObserver>,
+) -> Value {
     lifecycle_result(|| {
         match serde_json::from_str::<StartMachineTunnelRequest>(request) {
-            Ok(input) => start_machine_http_tunnel_input(input, Some(handshake_provider)),
+            Ok(input) => start_machine_http_tunnel_input(input, handshake_provider, http_observer),
             Err(_) => error_response("invalid-request", "request is not valid JSON"),
         }
     })
