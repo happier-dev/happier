@@ -1174,7 +1174,6 @@ export const DeploymentEnvironmentDetail = React.memo(
                     environmentId: detail.environment.id }}
                   deploymentSourceName={projectSource.source?.source.name}
                   controllerMachineId={detail.environment.controllerMachineId}
-                  active={props.demand.mounted && props.demand.visible}
                   pushSetup={detail.content.definition.kind === 'repository' && detail.environment.runtimeTargetLinkId ? {
                     environment: { serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
                       environmentId: detail.environment.id },

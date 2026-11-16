@@ -3,8 +3,6 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 
-import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
-import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -12,15 +10,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
 
-import {
-  projectAccountTriggerRows,
-  type AccountTriggerRow,
-  type TriggerSubject,
-} from './accountTriggerRows';
-import {
-  NewAccountTriggerPopover,
-  useAccountWorkflowEditor,
-} from './AccountTriggersSection';
+import type { AccountTriggerRow, TriggerSubject } from './accountTriggerRows';
+import { NewAccountTriggerPopover } from './AccountTriggersSection';
 import { GuidedAutomationSetup } from './GuidedAutomationSetup';
 import { DeploymentPushTriggerSetup } from './DeploymentPushTriggerSetup';
 import type { DeploymentPushSetupConfig } from './deploymentPushSetup';
@@ -33,9 +24,7 @@ import {
   type SubjectTriggerStarter,
 } from './subjectTriggerStarters';
 import { TriggerRow } from './TriggerRow';
-import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
-
-const ACCOUNT_TRIGGER_QUERY = { scope: 'account_inline' } as const;
+import { useResourceAutomationsSection } from './useResourceAutomationsSection';
 
 type Opening =
   | Readonly<{ kind: 'custom' }>
@@ -65,36 +54,12 @@ export const SubjectTriggersSection = React.memo(
       deploymentSourceName?: string;
       controllerMachineId?: string;
       pushSetup?: DeploymentPushSetupConfig;
-      active?: boolean;
     }>,
   ) {
-    const { binding } = useServerCredentialAccountScopeBinding(props.deploymentEnvironment?.serverId);
-    const accountLifetime = props.deploymentEnvironment ? binding : undefined;
-    const read = useWorkflowTriggerSets(ACCOUNT_TRIGGER_QUERY, accountLifetime);
-    const editor = useAccountWorkflowEditor({ read, accountLifetime });
-    const services = useMachineServicesList({ serverId: props.deploymentEnvironment?.serverId ?? '',
-      machineId: props.subject.machineId, environmentId: props.deploymentEnvironment?.environmentId,
-      active: props.active !== false && props.subject.kind === 'environment' && props.deploymentEnvironment !== undefined });
-    const environmentServices = React.useMemo(() => services.rows?.map(service => ({
-      machineId: props.subject.machineId, serviceId: service.serviceId,
-    })), [services.rows, props.subject.machineId]);
-    const { sets, status } = read;
-    const rows = React.useMemo(
-      () =>
-        projectAccountTriggerRows({
-          sets,
-          resolveWorkflowTitle: editor.resolveWorkflowTitle,
-          subject: props.subject,
-          services: environmentServices,
-        }),
-      [sets, editor.resolveWorkflowTitle, props.subject, environmentServices],
-    );
+    const { accountLifetime, read, editor, rows, project } = useResourceAutomationsSection(props);
+    const { status } = read;
     const addAnchor = React.useRef<View>(null);
     const [opening, setOpening] = React.useState<Opening | null>(null);
-    const project = React.useMemo(
-      () => ({ machineId: props.subject.machineId, directory: '~' }),
-      [props.subject.machineId],
-    );
     const starterAvailable = (starter: SubjectTriggerStarter) => starter === 'scheduledJob'
       ? props.deploymentEnvironment !== undefined : starter !== 'deployOnPush' || props.pushSetup !== undefined;
     const empty = rows.length === 0;

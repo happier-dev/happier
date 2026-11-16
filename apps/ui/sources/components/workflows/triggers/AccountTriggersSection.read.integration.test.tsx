@@ -13,6 +13,8 @@ installDisconnectedServerSocketBoundary();
 // Runtime consumers load after the boundary so they bind the disconnected socket.
 const { AccountTriggersSection } = await import('./AccountTriggersSection');
 const { ScheduledWorkflowSection } = await import('./ScheduledWorkflowSection');
+const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
@@ -28,9 +30,10 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
     status, headers: { 'Content-Type': 'application/json' },
 });
 /** The Home's plain-Account HTTP answers; only the Automation read is supplied by the caller. */
-function homeRequest(automations: () => Promise<Response>) {
-    return async (url: unknown) => {
-        const path = new URL(String(url)).pathname;
+function homeRequest(automations: (url: URL, init?: RequestInit) => Promise<Response>) {
+    return async (url: unknown, init?: RequestInit) => {
+        const requestUrl = new URL(String(url));
+        const path = requestUrl.pathname;
         if (path === '/health') return json({});
         if (path === '/v1/features' || path === '/v1/features/authenticated') {
             const features = createRootLayoutFeaturesResponse();
@@ -47,7 +50,7 @@ function homeRequest(automations: () => Promise<Response>) {
             recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
         if (path === '/v2/account/settings') return json({ content: null, version: 0 });
         if (path === '/v1/artifacts') return json([]);
-        if (path === '/v3/automations' || path === '/v3/automations/query') return automations();
+        if (path === '/v3/automations' || path === '/v3/automations/query') return automations(requestUrl, init);
         return json({ error: 'route_not_found' }, 404);
     };
 }
@@ -59,6 +62,32 @@ afterEach(async () => {
 });
 
 describe('Account trigger HTTP read failure and recovery', () => {
+    it('resource attachment reads follow the layout presentation owner without an active prop', async () => {
+        await loadSyncSingletonForTests();
+        let reads = 0;
+        const account = await restoreServerAccountForTest({
+            serverUrl: `https://subject-trigger-demand-${crypto.randomUUID()}.test`,
+            accountId: 'subject-trigger-demand',
+            request: homeRequest(async (url, init) => {
+                // Bootstrap's managed-target migration shares this endpoint; only the
+                // Account-inline detail query belongs to the mounted section.
+                if (url.pathname === '/v3/automations/query'
+                    && JSON.parse(String(init?.body)).scope === 'account_inline') reads++;
+                return json({ automations: [], nextCursor: null });
+            }),
+        });
+        disposals.push(() => account.dispose());
+        const subject = { kind: 'machine' as const, machineId: 'demand-machine' };
+        const content = (presented: boolean) => <PluginSurfaceFocusEligibilityProvider active={presented}>
+            <SubjectTriggersSection subject={subject} subjectName="Demand Machine" />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(content(false));
+        await flushHookEffects();
+        expect(reads).toBe(0);
+        await act(async () => screen.update(content(true)));
+        await vi.waitFor(() => expect(reads).toBeGreaterThan(0));
+        await screen.unmount();
+    });
     it.each([
         { surface: 'triggers', failure: 'offline', Component: AccountTriggersSection, readId: 'account-triggers-read', retryId: 'account-triggers-read-retry', sectionId: 'workflows-column:group:triggers' },
         { surface: 'triggers', failure: 'unavailable', Component: AccountTriggersSection, readId: 'account-triggers-read', retryId: 'account-triggers-read-retry', sectionId: 'workflows-column:group:triggers' },
