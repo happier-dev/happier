@@ -27,6 +27,9 @@ vi.mock('react-native-safe-area-context', () => ({
     initialWindowMetrics: null,
 }));
 
+// Collect the real UI graph after installing platform mocks, before timing interactions.
+const { VoiceGlanceOverlay } = await import('./VoiceGlancePopover');
+
 /**
  * D2 (qa-4-design-5): on a phone the Voice glance is the lab's sheet (grabber, the glance's own
  * Voice header, the 64 pt hero and the control row) instead of an anchored popover the composer
@@ -103,7 +106,6 @@ afterEach(async () => {
 });
 
 async function renderOverlay(model: VoiceSurfaceViewModel, onRequestClose: () => void) {
-    const { VoiceGlanceOverlay } = await import('./VoiceGlancePopover');
     const anchorRef = React.createRef<View>();
     return await renderScreen(<>
         <View ref={anchorRef} testID="anchor" />
