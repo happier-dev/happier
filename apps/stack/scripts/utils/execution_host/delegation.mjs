@@ -114,6 +114,22 @@ async function reconcileExecutionHostAfterStart({
   return tunnelResult;
 }
 
+async function prepareHostWorkspaceMount(profile, {
+  env = process.env,
+  executor,
+  mount = mountExecutionHostWorkspace,
+  reportWarning = defaultBoundary().reportWarning,
+} = {}) {
+  if (profile.autoMount !== true) return;
+  try {
+    await mount({ profile, env, executor });
+  } catch (error) {
+    // The file view is optional: delegated commands reach the canonical
+    // workspace over SSH, independently of the controller's SSHFS mount.
+    reportWarning(`[execution-host] workspace file mount unavailable; continuing delegated command: ${error?.message ?? error}`);
+  }
+}
+
 async function prepareSshHost(profile, { workspaceId, stackName, env, executor, reportWarning }) {
   for (const workspace of profile.workspaces) {
     try {
@@ -126,7 +142,7 @@ async function prepareSshHost(profile, { workspaceId, stackName, env, executor, 
       reportWarning?.(`${error.message}; existing listener left in place. Release the manual tunnel to enable supervised forwarding.`);
     }
   }
-  if (profile.autoMount === true) await mountExecutionHostWorkspace({ profile, env, executor });
+  await prepareHostWorkspaceMount(profile, { env, executor, reportWarning });
 }
 
 export function mapHostCwdToGuest(profile, hostCwd) {
@@ -274,13 +290,7 @@ export async function prepareManagedHost(profile, dependencies = {}) {
       );
     }
   }
-  if (profile.autoMount === true) {
-    await mount({
-      profile,
-      env: process.env,
-      executor,
-    });
-  }
+  await prepareHostWorkspaceMount(profile, { executor, mount, reportWarning: dependencies.reportWarning });
   return { serviceTunnelRuntimeStartedAt };
 }
 

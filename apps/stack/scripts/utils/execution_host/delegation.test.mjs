@@ -116,6 +116,47 @@ test('SSH primary delegates TUI with enrolled transport, PTY, mapped cwd and the
   assert.ok(evaluated.stdout.split('\n').includes("quote'arg"));
 });
 
+test('SSH primary keeps stop, status and TUI usable when its optional file mount is dead', async t => {
+  for (const command of ['stop', 'status', 'tui']) {
+    await t.test(command, async t => {
+      const { fixture, env, selected } = await sshFixture(t);
+      const bin = fixture.path('bin');
+      const mountDir = fixture.path('home');
+      await mkdir(bin);
+      // These executables replace only OS commands. Mount inspection and
+      // delegation remain real, including the exact stale-FUSE incident.
+      await writeFile(join(bin, 'mount'), `#!/bin/sh\nprintf '%s\\n' 'enrolled-nl2: on ${mountDir} (macfuse)'\n`, { mode: 0o755 });
+      await writeFile(join(bin, 'ls'), "#!/bin/sh\necho 'Device not configured' >&2\nexit 1\n", { mode: 0o755 });
+      await writeFile(join(bin, 'ssh'), '#!/bin/sh\nexit 3\n', { mode: 0o755 });
+      const warnings = [];
+      const spawns = [];
+      const result = await runDelegatedHstackCommand({
+        profile: { ...selected, autoMount: true, hostMountDir: mountDir },
+        argv: [command], cwd: '/Users/example/happier/dev',
+        env: { ...env, PATH: `${bin}:${env.PATH}` },
+        boundary: {
+          async capture(_command, args) {
+            return { exitCode: args.at(-1).includes('HAPPIER_STACK_REPO_DIR') ? 3 : 0, out: '', err: '' };
+          },
+          spawn(command, args) {
+            spawns.push({ command, args });
+            const child = new EventEmitter();
+            setImmediate(() => child.emit('close', 0, null));
+            return child;
+          },
+          onSignal() { return () => {}; },
+          reportWarning(message) { warnings.push(message); },
+        },
+      });
+      assert.deepEqual(result, { exitCode: 0, signal: null });
+      assert.equal(spawns[0].command, 'ssh');
+      assert.ok(spawns[0].args.at(-1).includes(command));
+      assert.ok(warnings.some(message => message.includes('Device not configured')),
+        'the unavailable mount must remain visible while SSH delegation succeeds');
+    });
+  }
+});
+
 test('unreachable SSH primary refuses before command dispatch with no local fallback', async t => {
   const { env, selected } = await sshFixture(t);
   const spawns = [];
@@ -270,6 +311,19 @@ test('managed host preparation mounts an enabled guest workspace after the VM is
     ['forward', 'primary', '0.3', { kind: 'test-executor' }],
     ['mount', 'primary', '/Users/example/.happier-stack/workspace', { kind: 'test-executor' }],
   ]);
+});
+
+test('managed host preparation preserves remote execution when its optional workspace mount fails', async () => {
+  const warnings = [];
+  const result = await prepareManagedHost({ ...namedProfile, autoMount: true }, {
+    workspaceId: '0.3', executor: { kind: 'test-executor' },
+    start: async () => {}, doctor: async () => ({ ok: true }),
+    reconcileServiceTunnel: async () => ({ runtimeStartedAt: 'running' }),
+    mount: async () => { throw new Error('Device not configured'); },
+    reportWarning: message => warnings.push(message),
+  });
+  assert.equal(result.serviceTunnelRuntimeStartedAt, 'running');
+  assert.ok(warnings.some(message => message.includes('Device not configured')));
 });
 
 test('named host preparation reconciles only the delegated workspace service tunnel before guest execution', async () => {
