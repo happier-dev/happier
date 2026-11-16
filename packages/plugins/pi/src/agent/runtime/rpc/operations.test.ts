@@ -3240,8 +3240,9 @@ describe('createPiRuntimeOperations', () => {
           code: 'rate_limit_exceeded',
           severity: 'error',
           message: 'Service temporarily unavailable. Please retry.',
-          details: { failureCause: { phase: 'turn', failureReason: 'unknown', providerErrorCode: 'rate_limit_exceeded', httpStatus: 429,
-            actionCause: { phase: 'agent.turn', errorClass: 'UnknownThrownValue', errorCode: 'rate_limit_exceeded', httpStatus: 429 },
+          // The canonical Session cause owner omits arbitrary raw exception codes.
+          details: { failureCause: { phase: 'turn', failureReason: 'unknown', httpStatus: 429,
+            actionCause: { phase: 'agent.turn', errorClass: 'UnknownThrownValue', errorCode: null, httpStatus: 429 },
           } },
         },
       }),
