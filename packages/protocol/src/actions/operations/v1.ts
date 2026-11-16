@@ -424,6 +424,8 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
     kind: z.literal('systemTask'),
     id: ActionOperationIdentifierV1Schema,
     taskKind: z.literal('remote.ssh.bootstrapMachine.v1'),
+    /** The admitted finite task's current question, including Prepare before a managed Machine exists. */
+    prompt: z.optional(ManagedMachineBootstrapPromptV1Schema),
   }),
   z.strictObject({
     kind: z.literal('handoff'),

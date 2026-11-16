@@ -48,6 +48,12 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('carries the pending SSH trust question on an admitted standalone task without a managed Machine', () => {
+    const domainRef = { kind: 'systemTask', id: 'prepare-trust', taskKind: 'remote.ssh.bootstrapMachine.v1',
+      prompt: { kind: 'ssh.trustHost', message: 'Trust this guest?', host: '192.168.64.7', keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:guest', existingFingerprint: null } };
+    expect(ActionOperationDomainRefV1Schema.parse(domainRef)).toEqual(domainRef);
+  });
   it('retains the closed native Caddy observation through the public failed operation reader', () => {
     const details = DeploymentDomainCaddyFailureDetailsV1Schema.parse({ requiredFact: 'caddyContainer',
       failure: { kind: 'native_observation_unavailable', reason: 'required_fact_unavailable',
