@@ -1,4 +1,4 @@
-import { resolvePublishTargetRecommendation } from '@happier-dev/deployments';
+import { OWN_SERVER_DEPLOYMENT_TARGET_V1, resolvePublishTargetRecommendation } from '@happier-dev/deployments';
 import { isMachineRoleActiveV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { deploymentRecommendationDescription } from './deploymentRecommendationDescription';
 import { projectDeploymentConfigurePreflightV1 } from './deploymentPreflightWarnings';
@@ -234,8 +234,10 @@ export const DeploymentEnvironmentDraft = React.memo(
         : definitionKind ? { from: definitionKind } : { kind: 'repository' }),
       explicitTarget: targetKey !== MACHINE_TILE ? { id: targetKey, targetClass: 'platform' } : undefined,
       targets: [{ id: MACHINE_TILE, targetClass: 'ownServer', availability: allMachines == null ? 'unknown'
-        : chosen && answers(chosen) ? 'available' : 'unavailable' },
-        ...platformTargets.map(target => ({ id: target.key, targetClass: 'platform' as const, availability: 'unknown' as const }))],
+        : chosen && answers(chosen) ? 'available' : 'unavailable',
+        accepts: OWN_SERVER_DEPLOYMENT_TARGET_V1.accepts, needs: OWN_SERVER_DEPLOYMENT_TARGET_V1.needs },
+        ...platformTargets.map(target => ({ id: target.key, targetClass: 'platform' as const, availability: 'unknown' as const,
+          accepts: target.accepts, needs: target.needs }))],
     });
     const offeredPlatformTargets = platformTargets.filter(target => recommendation.offeredTargetIds.includes(target.key));
     const onPlatform = recommendation.target?.targetClass === 'platform';
