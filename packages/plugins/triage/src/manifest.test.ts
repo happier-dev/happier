@@ -450,6 +450,15 @@ describe('Triage plugin manifest', () => {
     },
   );
 
+  it.each(['internal/tasks/list-instances-v1', 'internal/tasks/scan-v1', 'internal/tasks/get-v1', 'internal/tasks/read-session-links-v1'])(
+    'keeps the built-in %s Account read on the invoking UI without a Machine', id => {
+      expect(PLUGIN_MANIFEST.contributes.actions.find(candidate => candidate.id === id)).toMatchObject({
+        execution: { target: 'account', invokingUi: true,
+          account: { artifactId: 'triage-account-runtime', exportName: 'activate' } },
+      });
+    },
+  );
+
   it('declares localized Voice Action presentation in every shipped Triage bundle', () => {
     const action = PLUGIN_MANIFEST.contributes.actions.find(
       (candidate) => candidate.id === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,

@@ -25,7 +25,8 @@ export const INTERNAL_TASK_DESCRIPTOR_V1 = TriageSourceDescriptorV1Schema.parse(
 const surfaces = ['plugin', 'ui', 'agent', 'mcp', 'cli'] as const;
 const write = { surfaces, placementBindings: [], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
   dangerLevel: 'safe' } as const;
-const read = { surfaces, placementBindings: [], execution: TRIAGE_DATA_ACTION_EXECUTION_V1, dangerLevel: 'safe' } as const;
+const read = { surfaces, placementBindings: [], execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
+  dangerLevel: 'safe' } as const;
 // Account-data edits retain their direct default; explicit Ask still wins at the approval owner.
 const taskWrite = { ...write, confirmationWhen: {
   op: 'not', predicate: { op: 'eq', path: 'instance.binding.source', value: 'accountData' },
