@@ -81,6 +81,11 @@ export type ListCollectionControl = Readonly<{
      * and its action on line 2, rather than truncating both beside each other (DESIGN "Phones recompose").
      */
     stackedHeadings?: boolean;
+    /**
+     * A group sharing the sheet draws its heading as the table's group band (owner D1, 11-16): this style, title role
+     * and its rows' count at its end, rather than a bold sub-heading at another indent.
+     */
+    groupBand?: Readonly<{ style: HappierStyleProp; titleRole: 'micro' }>;
   }>;
   /**
    * A page's catalog directory (S10: the Store, Installed): its groups are page sections of catalog rows standing on

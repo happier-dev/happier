@@ -7500,6 +7500,17 @@ describe('an ungrouped page list (a phone)', () => {
     view.unmount();
   });
 
+  it('draws each group sharing a page section as the table\'s group band, its rows counted at its end (owner D1)', () => {
+    const view = mountTree({ presentation: 'list', scroll: 'page', sectioned: true });
+    view.measure(1200);
+    const rows = view.rows();
+    let sheet = view.rowElement(rows[0]!).parentElement!;
+    while (!sheet.contains(view.rowElement(rows[rows.length - 1]!))) sheet = sheet.parentElement!;
+    // The same band the wide table draws ("Your machines 8"): its title, then how many rows it holds.
+    expect(sheet.textContent?.replace(/\s/gu, ' ')).toContain('Started by Happier7');
+    view.unmount();
+  });
+
   it('gives each group sharing a page section its own action, beside its own sub-heading', () => {
     const opened: string[] = [];
     const view = mountTree({ presentation: 'list', scroll: 'page', sectioned: true,

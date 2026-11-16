@@ -656,6 +656,12 @@ function groupBandFrame(heightPx: number, textInsetPx: number) {
   } as const;
 }
 
+/** A group's band on a page list's shared sheet: the table's band, growing with a phone's stacked heading. */
+function sheetGroupBandStyle(heightPx: number, fill: string) {
+  const { height, ...frame } = groupBandFrame(heightPx, HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx);
+  return { ...frame, minHeight: height, justifyContent: 'center', backgroundColor: fill } as const;
+}
+
 /**
  * A full-bleed table's group band (a page table on its own sheet edge, whose rows run edge to edge): square and flush,
  * straight under the column headings and onto its rows, in the same planned height (owner 2026-11-15, A3). Only a
@@ -2471,7 +2477,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         // A page section names its rows; a dense list's caption band counts them (a nested group every item
         // it holds, open or not, but not the owners shown only to place a match).
         // A collapsed group counts the rows it puts away. A catalog list's group is a plain heading (lab m:mcp), uncounted.
-        ...((pageSections && !pageTable) || catalogList ? {} : { count: tree === null ? (model.sections[index]?.items.length ?? section.items.length)
+        // A group sharing a page section's sheet is that sheet's band, counted like the table's (owner D1).
+        ...((pageSections && !pageTable && group?.section === undefined) || catalogList ? {} : { count: tree === null ? (model.sections[index]?.items.length ?? section.items.length)
           : (model.sections[index]?.items ?? []).filter((member) => tree.get(model.keyOf(member))?.context !== true).length }),
         ...(group?.description === undefined ? {} : { description: group.description }),
         // Groups that are parts of one page section share its heading and sheet (page sections only).
@@ -2731,6 +2738,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         flatSheet: enclosingPageSheet === null && !narrowRows,
         ...(enclosingPageSheet === null && narrowRows ? { rowInsetPx: HAPPIER_PAGE_METRICS.headingOpticalInsetPx } : {}),
         stackedHeadings: narrowRows,
+        // A group sharing the sheet is banded the way the wide table bands its groups, on the page rows' inset; its band
+        // grows with a phone's stacked line rather than clipping it.
+        // A phone keeps the resting list's plain heading on its rows' inset (the app's phone group), not a band.
+        ...(narrowRows ? {} : { groupBand: { titleRole: 'micro' as const, style: sheetGroupBandStyle(metrics.groupHeader, palette.inset) } }),
       } }),
     } : wrapTitles || catalogSideList ? {
       // The resting list (a phone, a narrow page) groups on the page canvas: a plain heading over rows parted by
