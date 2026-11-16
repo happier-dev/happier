@@ -8,6 +8,8 @@ import type {
 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
 
 export const SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_METHOD =
     RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH;
@@ -22,6 +24,7 @@ export type SessionConnectedServiceAuthSwitchErrorCode =
     | 'session_not_found'
     | 'agent_mismatch'
     | 'unsupported_service'
+    | 'continuity_unsupported'
     | 'profile_missing'
     | 'profile_disconnected'
     | 'group_missing'
@@ -88,6 +91,16 @@ export type SessionConnectedServiceAuthSwitchResult =
         continuityByServiceId?: Readonly<Record<string, string>>;
         diagnostics?: SessionConnectedServiceAuthSwitchDiagnostics;
       }>;
+
+/** The composer consumes the settled domain result after Action approval. */
+export function readSessionConnectedServiceAuthSwitchActionResult(result: ActionExecuteResult): SessionConnectedServiceAuthSwitchResult {
+    if (!result.ok && result.details && typeof result.details === 'object'
+        && 'ok' in result.details && result.details.ok === false) {
+        return result.details as Extract<SessionConnectedServiceAuthSwitchResult, { ok: false }>;
+    }
+    requireActionSuccess(result);
+    return result.result as SessionConnectedServiceAuthSwitchResult;
+}
 
 export async function setSessionConnectedServiceAuthBinding(params: Readonly<{
     sessionId: string;

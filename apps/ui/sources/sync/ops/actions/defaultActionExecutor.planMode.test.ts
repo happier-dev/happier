@@ -3284,22 +3284,59 @@ describe('default Action executor mode and catalog contracts', () => {
   });
 
 
-  it('routes a confirmed connected-account chip mutation through its Action owner', async () => {
+  it.each(['ui', 'agent', 'mcp'] as const)('routes a confirmed connected-account mutation through its %s Action owner', async (surface) => {
     daemonAnswer = () => ({ ok: true, action: 'metadata_updated' });
     const input = {
       sessionId: 's1', agentId: 'claude', machineId: 'machine-a', serverId,
       bindings: { v: 2 as const, bindingsByServiceId: {} },
     };
+    await installActionSettings({}, undefined, { 'session.connected_services_auth.set': ['agent', 'mcp'] });
+    installSession('s1', { machineId: 'machine-a', flavor: 'claude' });
     const result = await createDefaultActionExecutor().execute(
       'session.connected_services_auth.set',
       input,
-      { ...context(), presentUserConfirmation: { actionId: 'session.connected_services_auth.set' } },
+      { ...context(), surface, defaultSessionId: 's1',
+        ...(surface === 'agent' ? { authority: 'account_automation' as const,
+          actionCaller: { kind: 'session' as const, sessionId: 's1', starterDepth: 0, turnDepth: 0 } } : {}),
+        presentUserConfirmation: { actionId: 'session.connected_services_auth.set' } },
     );
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, action: 'metadata_updated' } });
     expect(outgoing).toContainEqual(expect.objectContaining({
       method: `machine-a:${RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH}`,
       params: expect.objectContaining({ sessionId: 's1', agentId: 'claude', bindings: input.bindings }),
     }));
+  });
+
+  it.each(['ui', 'agent', 'mcp'] as const)('retains auth-switch continuity recovery through the %s Action and composer reader', async (surface) => {
+    const { ConnectedServiceUxDiagnosticV1Schema } = await import('@happier-dev/protocol/connect/connectedServiceUxDiagnostics');
+    const { readSessionConnectedServiceAuthSwitchActionResult } = await import('@/sync/ops/connectedServices/sessionAuthSwitch');
+    // Exact public failure shape from the daemon switch owner's continuity refusal.
+    const refusal = {
+      ok: false as const,
+      errorCode: 'continuity_unsupported' as const,
+      serviceId: 'happier.agent.muse/muse-account',
+      diagnostics: {
+        failurePhase: 'continuity' as const,
+        uxDiagnostic: ConnectedServiceUxDiagnosticV1Schema.parse({
+          code: 'continuity_unsupported', failurePhase: 'continuity', source: 'manual_auth_switch',
+          serviceId: 'happier.agent.muse/muse-account', retryable: false,
+          suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'],
+        }),
+      },
+    };
+    daemonAnswer = () => refusal;
+    const actionId = 'session.connected_services_auth.set';
+    await installActionSettings({}, undefined, { [actionId]: ['agent', 'mcp'] });
+    installSession('s1', { machineId: 'machine-a', flavor: 'muse' });
+    const result = await createDefaultActionExecutor().execute(actionId, {
+      sessionId: 's1', agentId: 'muse', machineId: 'machine-a', serverId,
+      bindings: { v: 2, bindingsByServiceId: { 'happier.agent.muse/muse-account': { source: 'native' } } },
+    }, { ...context(), surface, defaultSessionId: 's1',
+      ...(surface === 'agent' ? { authority: 'account_automation' as const,
+        actionCaller: { kind: 'session' as const, sessionId: 's1', starterDepth: 0, turnDepth: 0 } } : {}),
+      presentUserConfirmation: { actionId } });
+    expect(result).toMatchObject({ ok: false, errorCode: refusal.errorCode, details: refusal });
+    expect(readSessionConnectedServiceAuthSwitchActionResult(result)).toEqual(refusal);
   });
 
   it.each([

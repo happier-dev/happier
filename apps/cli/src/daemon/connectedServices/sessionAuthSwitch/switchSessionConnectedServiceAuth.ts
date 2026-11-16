@@ -351,6 +351,8 @@ function resolveSwitchUxDiagnosticCode(
   errorCode: SessionConnectedServiceAuthSwitchErrorCode,
 ): ConnectedServiceUxDiagnosticV1['code'] | null {
   switch (errorCode) {
+    case 'continuity_unsupported':
+      return CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.continuityUnsupported;
     case 'provider_session_state_unavailable_for_resume':
       return CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume;
     case 'metadata_update_failed':

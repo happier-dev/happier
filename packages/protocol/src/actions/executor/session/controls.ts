@@ -396,7 +396,10 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
             machineId: string;
             serverId?: string | null;
           }>;
-          return completeActionResult(await deps.sessionConnectedServicesAuthSet(input, ctx));
+          const result = await deps.sessionConnectedServicesAuthSet(input, ctx);
+          const completed = completeActionResult(result);
+          // The auth-switch owner supplies the service and executable recovery diagnostic.
+          return completed.ok ? completed : { ...completed, details: result };
         }
 
         if (actionId === 'session.target.primary.set') {

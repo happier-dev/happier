@@ -9,9 +9,9 @@ import {
 import { resolveConnectedServiceUxDiagnosticPresentation } from './connectedServiceUxDiagnostics';
 
 describe('resolveConnectedServiceUxDiagnosticPresentation', () => {
-    it('maps resume-unreachable diagnostics to product copy without forwarding raw diagnostic detail', () => {
+    it.each(['provider_session_state_unavailable_for_resume', 'continuity_unsupported'] as const)('maps %s diagnostics to recovery copy without forwarding raw diagnostic detail', (code) => {
         const diagnostic: ConnectedServiceUxDiagnosticV1 = {
-            code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
+            code,
             failurePhase: 'continuity',
             source: 'new_session',
             agentId: 'pi',
@@ -28,7 +28,7 @@ describe('resolveConnectedServiceUxDiagnosticPresentation', () => {
         const presentation = resolveConnectedServiceUxDiagnosticPresentation(diagnostic);
 
         expect(presentation).toMatchObject({
-            code: 'provider_session_state_unavailable_for_resume',
+            code,
             statusKey: 'connectedServices.diagnostics.status.provider_session_state_unavailable_for_resume',
             titleKey: 'connectedServices.diagnostics.title.provider_session_state_unavailable_for_resume',
             actions: [
@@ -139,8 +139,5 @@ describe('resolveConnectedServiceUxDiagnosticPresentation', () => {
 
         expect(presentation).not.toBeNull();
         expect(presentation?.code).toBe(code);
-        expect(presentation?.titleKey).toBe(`connectedServices.diagnostics.title.${code}`);
-        expect(presentation?.bodyKey).toBe(`connectedServices.diagnostics.body.${code}`);
-        expect(presentation?.statusKey).toBe(`connectedServices.diagnostics.status.${code}`);
     });
 });

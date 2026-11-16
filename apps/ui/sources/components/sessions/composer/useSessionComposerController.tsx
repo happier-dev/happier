@@ -43,7 +43,7 @@ import { useSessionConnectedServicesAuthSwitch } from "@/components/sessions/age
 import { useExistingSessionCapabilitiesChip } from "@/components/sessions/capabilities/useSessionCapabilitiesChip";
 import { executeSessionLifecycleAction } from "@/components/sessions/actions/sessionActionExecution";
 import type { CurrentUiContextCommandInvocation } from "@/components/appShell/currentUiContext/CurrentUiContextCommands";
-import { type SessionConnectedServiceAuthSwitchResult, setSessionConnectedServiceAuthBinding } from "@/sync/ops/connectedServices/sessionAuthSwitch";
+import { type SessionConnectedServiceAuthSwitchResult, setSessionConnectedServiceAuthBinding, readSessionConnectedServiceAuthSwitchActionResult } from "@/sync/ops/connectedServices/sessionAuthSwitch";
 import { resolveResumeFailurePresentation } from "@/sync/domains/session/resume/resolveResumeFailurePresentation";
 import { presentSessionCredentialReconnectFailure } from "@/sync/ops/actions/sessionSpawnFailurePresentation";
 import { buildPluginDetailRoute, storeMachineRouteParams } from "@/components/settings/plugins/model/pluginsSurfaceRoutes";
@@ -4983,8 +4983,7 @@ export function useSessionComposerController({
                 scope: sessionAccountScope,
                 onApprovalPending: pendingRecoveryApproval.requestApproval,
             });
-            if (!settled.ok) throw new Error(settled.error);
-            return settled.result as SessionConnectedServiceAuthSwitchResult;
+            return readSessionConnectedServiceAuthSwitchActionResult(settled);
         }, [actionExecutor, pendingRecoveryApproval.requestApproval, sessionAccountLifetime, sessionAccountScope, sessionId, sessionRouteServerId]);
         const requestedRouteSelection = React.useMemo(() => {
             const requested = effectiveModelTransitionActionRequired?.requestedSelection;

@@ -25,6 +25,8 @@ type DiagnosticStatusKey = Extract<
 >;
 
 const DIAGNOSTIC_TITLE_KEYS = {
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.continuityUnsupported]:
+        'connectedServices.diagnostics.title.provider_session_state_unavailable_for_resume',
     [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume]:
         'connectedServices.diagnostics.title.provider_session_state_unavailable_for_resume',
     [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing]:
@@ -56,6 +58,8 @@ const DIAGNOSTIC_TITLE_KEYS = {
 } satisfies Record<ConnectedServiceUxDiagnosticCodeV1, DiagnosticTitleKey>;
 
 const DIAGNOSTIC_BODY_KEYS = {
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.continuityUnsupported]:
+        'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume',
     [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume]:
         'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume',
     [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing]:
@@ -87,6 +91,8 @@ const DIAGNOSTIC_BODY_KEYS = {
 } satisfies Record<ConnectedServiceUxDiagnosticCodeV1, DiagnosticBodyKey>;
 
 const DIAGNOSTIC_STATUS_KEYS = {
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.continuityUnsupported]:
+        'connectedServices.diagnostics.status.provider_session_state_unavailable_for_resume',
     [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume]:
         'connectedServices.diagnostics.status.provider_session_state_unavailable_for_resume',
     [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing]:

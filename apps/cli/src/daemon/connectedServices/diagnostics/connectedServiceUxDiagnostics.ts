@@ -6,6 +6,7 @@ export function resolveConnectedServiceUxDiagnosticActions(
   retryable: boolean,
 ): ReadonlyArray<ConnectedServiceUxDiagnosticV1['suggestedActions'][number]> {
   switch (code) {
+    case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.continuityUnsupported:
     case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume:
     case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing:
     case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.resumeReachabilityInputsMissing:

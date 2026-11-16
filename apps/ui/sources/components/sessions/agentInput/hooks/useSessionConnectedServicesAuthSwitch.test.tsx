@@ -41,7 +41,7 @@ const modalShowMock = vi.hoisted(() => vi.fn((_config: Parameters<IModal['show']
 
 function expectConnectSheet(service: { pluginId: string; localId: string }, accountId?: string, anchor?: import('@/components/ui/popover/_types').PopoverAnchor) {
     expect(modalShowMock).toHaveBeenLastCalledWith(expect.objectContaining({ props: expect.objectContaining({
-        request: { scope: null, service, ...(accountId ? { intent: 'reconnect', account: { service, accountId } } : {}), ...(anchor ? { anchor } : {}) },
+        request: { scope: null, service, intent: 'link', ...(accountId ? { intent: 'reconnect', account: { service, accountId } } : {}), ...(anchor ? { anchor } : {}) },
     }) }));
 }
 
@@ -527,7 +527,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         } finally { await hook.unmount(); }
     });
 
-    it('opens a fresh editable session under the selected account without retrying the unavailable resume', async () => {
+    it.each(['provider_session_state_unavailable_for_resume', 'continuity_unsupported'] as const)('opens a fresh editable session under the selected account without retrying %s', async (errorCode) => {
         const connection = await restoreServerAccountForTest({ serverUrl: 'http://auth-switch-fresh.example.test', accountId: 'account-a',
             request: async url => {
                 const path = new URL(String(url)).pathname;
@@ -536,18 +536,24 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 return null;
             } });
         seedCodexProfile();
+        const previousBinding = errorCode === 'continuity_unsupported'
+            ? { source: 'connected', selection: 'profile', profileId: 'happier' } as const
+            : { source: 'native' } as const;
+        const selectedBinding = errorCode === 'continuity_unsupported'
+            ? { source: 'native' } as const
+            : { source: 'connected', selection: 'profile', profileId: 'happier' } as const;
         storage.setState({ profileScope: { serverId: connection.home.id, accountId: 'account-a' },
             profile: AccountProfileSchema.parse({ ...profileDefaults, id: 'account-a', ...profileState.current }) });
         const session = createSessionFixture({ id: 'fresh-source', serverId: connection.home.id, metadata: {
             path: '/workspace/checkout-service', host: 'test', machineId: 'machine-1',
             flavor: 'codex',
             backendTarget: { kind: 'backend', backendId: 'codex' },
-            connectedServices: { v: 2, bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } } },
+            connectedServices: { v: 2, bindingsByServiceId: { [CODEX_SERVICE_KEY]: previousBinding } },
         } });
         storage.getState().applySessions([session]);
         setSessionConnectedServiceAuthBindingMock.mockResolvedValue({ ok: false,
-            errorCode: 'provider_session_state_unavailable_for_resume', serviceId: CODEX_SERVICE_KEY,
-            diagnostics: { uxDiagnostic: { code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
+            errorCode, serviceId: CODEX_SERVICE_KEY,
+            diagnostics: { uxDiagnostic: { code: errorCode,
                 failurePhase: 'continuity', source: 'manual_auth_switch', serviceId: CODEX_SERVICE_KEY,
                 agentId: 'codex', retryable: false,
                 suggestedActions: [CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.startFreshUnderSelectedAccount],
@@ -564,7 +570,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }));
             await act(async () => { await Promise.resolve(); });
             await act(async () => {
-                renderChipPopover(hook).setBindingForService(CODEX_SERVICE_KEY, { source: 'connected', selection: 'profile', profileId: 'happier' });
+                renderChipPopover(hook).setBindingForService(CODEX_SERVICE_KEY, selectedBinding);
                 await Promise.resolve();
             });
             const buttons = modalAlertMock.mock.calls.at(-1)?.[2] as Array<{ text: string; onPress?: () => void }>;
@@ -578,11 +584,11 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             const draft = readNewSessionDraftFromRepository({ scope: { serverId: connection.home.id, accountId: 'account-a' }, draftId: route.params.draftId });
             expect(draft).toMatchObject({ selectedMachineId: 'machine-1', selectedPath: '/workspace/checkout-service',
                 backendNewSessionOptionStateByTargetKey: { 'agent:happier.agent.codex/codex': { connectedServices: {
-                    v: 2, bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'happier' } },
+                    v: 2, bindingsByServiceId: { [CODEX_SERVICE_KEY]: selectedBinding },
                 } } },
             });
             expect(draft?.resumeSessionId).toBeFalsy();
-            expect(session.metadata?.connectedServices).toEqual({ v: 2, bindingsByServiceId: { [CODEX_SERVICE_KEY]: { source: 'native' } } });
+            expect(session.metadata?.connectedServices).toEqual({ v: 2, bindingsByServiceId: { [CODEX_SERVICE_KEY]: previousBinding } });
             expect(hook.getCurrent().actionableState).toBeNull();
             await hook.unmount();
         } finally { await connection.dispose(); }

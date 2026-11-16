@@ -67,7 +67,7 @@ import { resolveTrackedSessionRunnerActivity } from '@/daemon/sessionRunnerRunti
 let catalogRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => {
   catalogRuntime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-    runtimeOptions: { pluginIds: ['happier.agent.claude', 'happier.agent.codex', 'happier.agent.gemini'] } });
+    runtimeOptions: { pluginIds: ['happier.agent.claude', 'happier.agent.codex', 'happier.agent.gemini', 'happier.agent.muse'] } });
 });
 afterAll(async () => { await catalogRuntime?.dispose(); });
 
@@ -2790,6 +2790,37 @@ describe('switchSessionConnectedServiceAuth', () => {
     });
     expect(result).toMatchObject({ ok: false, diagnostics: { uxDiagnostic: { code } } });
     expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('old-profile'));
+  });
+
+  it('offers fresh-session recovery when switching Muse from a connected account to its own sign-in', async () => {
+    // READY143 returned this real continuity refusal without an executable UX diagnostic.
+    const serviceId = 'happier.agent.muse/muse-account';
+    const previousBindings = { v: 2 as const, bindingsByServiceId: {
+      [serviceId]: { source: 'connected' as const, selection: 'profile' as const, profileId: 'old-profile' },
+    } };
+    const tracked = trackedSession({ spawnOptions: {
+      directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'muse', sourceKind: 'built_in' },
+      connectedServices: previousBindings,
+    } });
+    const result = await switchSessionConnectedServiceAuth({
+      core: createCore(), getChildren: () => [tracked],
+      api: { listConnectedServiceProfiles: async () => ({ serviceId, profiles: [] }), getConnectedServiceAuthGroup: async () => null },
+      resolveContinuity: async input => resolveSessionConnectedServiceSwitchContinuity({
+        sessionId: input.sessionId, agentId: input.agentId, serviceId: input.serviceId,
+        previousBinding: input.previous, nextBinding: input.next, tracked: input.tracked,
+        fromBindingsRaw: input.previousBindings, toBindings: input.normalizedBindings, accountSettings: null,
+      }),
+      restartSession: async () => { throw new Error('refused switch must not restart'); },
+      hotApply: async () => { throw new Error('refused switch must not hot apply'); },
+      registerHotApplyTargets: () => {}, emitSessionEvent: () => {},
+      request: { sessionId: 'sess_1', agentId: 'muse',
+        bindings: { v: 2, bindingsByServiceId: { [serviceId]: { source: 'native' } } } },
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'continuity_unsupported', serviceId,
+      diagnostics: { failurePhase: 'continuity', uxDiagnostic: { code: 'continuity_unsupported', retryable: false,
+        suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'] } },
+    });
+    expect(tracked.spawnOptions?.connectedServices).toEqual(previousBindings);
   });
 
   it('keeps continuity diagnostics path-safe in public auth-switch results', async () => {
