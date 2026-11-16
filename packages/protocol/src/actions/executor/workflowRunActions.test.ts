@@ -161,13 +161,14 @@ function ownerDeps(storage: WorkflowAccountRunActionDeps['storage']): WorkflowAc
   };
 }
 
-function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>) {
+function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>, workspace?: ReturnType<typeof WorkflowProgressEnvelopeV1Schema.parse>['workspace']) {
   const id = '66666666-6666-4666-8666-666666666666';
   const index = WorkflowRunInvocationIndexV1Schema.parse({ id, runId, sequence: '0', parentRecordId: null,
     memberOrdinal: '0', attempt: '0', contentRevision: '0', lifecycle: 'completed',
     createdAt: snapshot.run.createdAt, updatedAt: snapshot.run.updatedAt });
   const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
-    blockKind: 'root', invocationPath: { blockId: '$root', scope: [] }, attempt: '0', logicalInvocationRecordId: id });
+    blockKind: 'root', invocationPath: { blockId: '$root', scope: [] }, attempt: '0', logicalInvocationRecordId: id,
+    ...(workspace ? { workspace } : {}) });
   return { index, progress, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
     mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
       recordId: id, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0' }, progress })) };
@@ -1755,10 +1756,16 @@ describe('shared Account workflow run owner', () => {
             address: scenario === 'miswired' ? { ...address, sessionId: 'other' } : address };
         },
       } satisfies Pick<ActionExecutorDeps, 'sessionList' | 'workflowAction' | 'resolveSessionReference'>;
-      const failure = await resolveActionCurrentSessionScopeFailure(scopedActionId, {
+      const result = resolveActionCurrentSessionScopeFailure(scopedActionId, {
         sessionId: scenario === 'different' ? 'other' : address.sessionId,
         ...(scenario === 'foreign_home' ? { serverId: 'other-home' } : {}),
       }, context, { sessionId: 'current_session' }, deps);
+      if (scenario === 'unreadable') {
+        await expect(result).rejects.toMatchObject({ code: 'storage_unavailable' });
+        expect(reads).toEqual([]);
+        return;
+      }
+      const failure = await result;
       if (scenario === 'admitted' || scenario === 'scale' || scenario === 'originless' || scenario === 'retry' || scenario === 'recovered_parent') {
         expect(failure).toBeNull();
         expect(reads).toEqual([address.sessionId]);
@@ -3326,7 +3333,8 @@ describe('shared Account workflow run owner', () => {
       : Object.assign(new Error('storage_unavailable'), { code: 'storage_unavailable' });
     const snapshot = runSnapshot();
     const accepted = await materializeWorkflowAcceptedSnapshotV1({
-      definition: validateWorkflowDefinition({ version: 1, inputs: [], defaults: {},
+      definition: validateWorkflowDefinition({ version: 1, inputs: [], defaults: scenario === 'restore_parallel'
+        ? { workspace: { kind: 'new_worktree', source: { kind: 'original' } } } : {},
         blocks: scenario === 'restore_parallel'
           ? [{ kind: 'parallel', id: 'work', maxConcurrent: 1, failurePolicy: 'collect_outcomes', branches: [{ id: 'branch', blocks: [
             { kind: 'action', id: 'command', actionId: 'machines.command.run', input: { command: { kind: 'literal', value: 'pwd' } } },
@@ -3345,7 +3353,12 @@ describe('shared Account workflow run owner', () => {
       mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId }, acceptedSnapshot: accepted.snapshot,
     }));
     snapshot.run = { ...snapshot.run, state: 'interrupted', revision: 2 };
-    const root = storedRootInvocation(snapshot);
+    const workspace = {
+      creationIntent: { kind: 'git_worktree', sourceDirectory: '/repo', baseRef: 'a'.repeat(40), displayName: 'work', branchMode: 'new' },
+      descriptor: { machineId: 'machine-a', directory: '/repo/work', checkoutRootPath: '/repo/work',
+        checkout: { kind: 'git_worktree', branchName: 'work' } },
+    } as const;
+    const root = storedRootInvocation(snapshot, scenario === 'restore_parallel' ? workspace : undefined);
     const recordId = '33333333-3333-4333-8333-333333333333';
     const index = WorkflowRunInvocationIndexV1Schema.parse({ id: recordId, runId, sequence: '1',
       parentRecordId: root.index.id, memberOrdinal: '0', attempt: '0', contentRevision: '1', lifecycle: scenario === 'retry_action' ? 'failed' : 'needs_attention',
@@ -3355,11 +3368,8 @@ describe('shared Account workflow run owner', () => {
       ...(scenario === 'restore_parallel' ? { container: { kind: 'parallel', nextBranchOrdinal: '1' } } : {}), invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: recordId,
       ...(scenario === 'retry_action' ? { execution: { kind: 'action', actionId: 'machines.command.run',
         localInputId: 'failed-command-input', actionRequestId: 'failed-command', input: { command: 'pwd' } } } : {}),
-      ...(scenario === 'retry_action' ? {} : { reason: { code: 'workspace_unavailable' } }), workspace: {
-        creationIntent: { kind: 'git_worktree', sourceDirectory: '/repo', baseRef: 'a'.repeat(40), displayName: 'work', branchMode: 'new' },
-        descriptor: { machineId: 'machine-a', directory: '/repo/work', checkoutRootPath: '/repo/work',
-          checkout: { kind: 'git_worktree', branchName: 'work' } },
-      } });
+      ...(scenario === 'retry_action' ? {} : { reason: { code: 'workspace_unavailable' } }),
+      ...(scenario === 'restore_parallel' ? {} : { workspace }) });
     const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
       mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId, recordId,
         sequence: '1', parentRecordId: root.index.id, memberOrdinal: '0', attempt: '0' }, progress,
@@ -3407,7 +3417,10 @@ describe('shared Account workflow run owner', () => {
       admissions++;
       return { disposition: 'accepted', run: snapshot.run, invocations: [replacement] };
     } }), observeRecovery: async () => ({ activity: 'not_active', canReattach: false, canContinueConversation: false }),
-      restoreWorkspace: async () => { restorations++; if (restoreFailure) throw failure; return { ok: true }; } });
+      restoreWorkspace: async request => {
+        expect(request).toEqual(workspace);
+        restorations++; if (restoreFailure) throw failure; return { ok: true };
+      } });
     const context = { authority: 'present_user', callerPermissionMode: 'safe-yolo', actionRequestId: 'recover-non-agent',
       externalActionTarget: { kind: 'machine', machineId: 'machine-a' } } as const;
     const args = scenario === 'retry_action'
@@ -3431,8 +3444,11 @@ describe('shared Account workflow run owner', () => {
     expect(admissions).toBe(1);
     expect(restorations).toBe(scenario === 'retry_action' ? 0 : 1);
     expect(replacementProgress).toMatchObject({ blockKind: progress.blockKind, attempt: '1', previousAttemptRecordId: recordId,
-      logicalInvocationRecordId: recordId, workspace: progress.workspace });
-    if (scenario === 'restore_parallel') expect(replacementProgress).toMatchObject({ container: { kind: 'parallel', nextBranchOrdinal: '0' } });
+      logicalInvocationRecordId: recordId, ...(progress.workspace ? { workspace: progress.workspace } : {}) });
+    if (scenario === 'restore_parallel') {
+      expect(replacementProgress).toMatchObject({ container: { kind: 'parallel', nextBranchOrdinal: '0' } });
+      expect(replacementProgress).not.toHaveProperty('workspace');
+    }
     expect(replacementProgress).not.toHaveProperty('recovery');
     expect(replacementProgress).not.toHaveProperty('input');
     expect(replacementProgress).not.toHaveProperty('reason');

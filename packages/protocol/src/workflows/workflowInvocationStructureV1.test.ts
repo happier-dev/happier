@@ -144,20 +144,28 @@ describe('frozen invocation structure owner', () => {
     await expect(resolve(definition, [row(0, null, '0', 'root', '$root'), row(1, 0, '1', 'wait', 'leaf')])).resolves.toBeUndefined();
   });
 
-  it('keeps the child root distinct from a nearer inherited parallel conversation owner', async () => {
+  it.each([
+    { kind: 'parallel', target: 2 }, { kind: 'parallel', target: 3 }, { kind: 'parallel', target: 4 },
+    { kind: 'loop', target: 2 }, { kind: 'loop', target: 3 }, { kind: 'loop', target: 4 },
+  ] as const)('keeps the child workspace root distinct from a nearer $kind conversation owner (target $target)', async ({ kind, target }) => {
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], defaults: {}, blocks: [
       { kind: 'workflow', id: 'nested', workflowRef: 'builtin:child', input: {} },
     ] });
     const child = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], defaults: {}, blocks: [
-      { kind: 'parallel', id: 'fanout', maxConcurrent: 1, failurePolicy: 'fail_stop', branches: [
+      ...(kind === 'parallel' ? [{ kind: 'parallel', id: 'fanout', maxConcurrent: 1, failurePolicy: 'fail_stop', branches: [
         { id: 'branch', blocks: [{ kind: 'step', id: 'work', document, result: { kind: 'text' } }] },
-      ] },
+      ] }] : [{ kind: 'loop', id: 'fanout', repetition: { kind: 'items', items: { kind: 'literal', value: ['first'] },
+        execution: 'parallel', failurePolicy: 'collect_outcomes' }, body: [{ kind: 'step', id: 'work', document, result: { kind: 'text' } }] }]),
     ] });
-    await expect(resolve(definition, [row(0, null, '0', 'root', '$root'), row(1, 0, '0', 'workflow', 'nested'),
-      row(2, 1, '0', 'parallel', 'fanout'),
-      row(3, 2, '0', 'parallel', 'fanout', { frame: { ownerBlockId: 'fanout', source: { kind: 'branch', branchId: 'branch' } } }),
-      row(4, 3, '0', 'step', 'work')], { 'builtin:child': child })).resolves.toMatchObject({
-      sourceKey: 'builtin:child', rootConversationOwnerRecordId: ids[1], inheritedConversationOwnerRecordId: ids[3],
+    const rows = [row(0, null, '0', 'root', '$root'), row(1, 0, '0', 'workflow', 'nested'),
+      row(2, 1, '0', kind, 'fanout'),
+      row(3, 2, '0', kind, 'fanout', { frame: { ownerBlockId: 'fanout', source: kind === 'parallel'
+        ? { kind: 'branch', branchId: 'branch' } : { kind: 'item', index: '0' } } }), row(4, 3, '0', 'step', 'work')];
+    if (target !== 4) await expect(resolve(definition, rows.slice(0, target + 1), { 'builtin:child': child })).resolves.toBeUndefined();
+    await expect(resolveWorkflowInvocationStructureV1({ definition, frozenChildren: { 'builtin:child': child },
+      invocation: rows[target]!, readInvocation: async id => rows.find(candidate => candidate.index.id === id),
+      keyOfInvocation: value => value.index.id, includeStructuralFrames: true })).resolves.toMatchObject({
+      sourceKey: 'builtin:child', rootConversationOwnerRecordId: ids[1], inheritedConversationOwnerRecordId: target === 2 ? ids[1] : ids[3],
     });
   });
 });

@@ -1839,6 +1839,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     if (prior.progress.blockKind !== 'workflow' && prior.progress.workspace?.descriptor) return [prior.progress.workspace];
     const structure = await resolveWorkflowInvocationStructureV1({ definition: opened.accepted.definition,
       frozenChildren: opened.accepted.frozenChildren, invocation: prior,
+      includeStructuralFrames: true,
       keyOfInvocation: row => row.index.id,
       readInvocation: id => readPriorProgress(prior.index.runId, id, opened, signal) });
     if (!structure) return [];
@@ -1851,8 +1852,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     const frozen = opened.accepted.materializedLeaves.find(leaf => leaf.sourceKey === structure.sourceKey
       && leaf.blockId === structure.leaf.id && leaf.kind === structure.leaf.kind);
-    if (!frozen) return [];
-    const selection = frozen.authoredWorkspace;
+    // Structural frames have no independent workspace selection; they share
+    // the exact generated default owned by this frozen definition's root.
+    const selection = frozen?.authoredWorkspace ?? { kind: 'inherit' as const };
     if (structure.definition.defaults.workspace?.kind !== 'new_worktree'
       || (selection.kind !== 'inherit'
         && !(selection.kind === 'new_worktree' && selection.source.kind === 'workflow'))) return [];

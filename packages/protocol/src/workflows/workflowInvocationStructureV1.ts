@@ -62,20 +62,31 @@ export function workflowBodyOwnsConversation(owner: Extract<WorkflowBlock, { kin
     || (owner.repetition.kind === 'items' && owner.repetition.execution === 'parallel');
 }
 
-/** One frozen ancestry walk for result contracts, lexical frames and admission ownership. */
-export async function resolveWorkflowInvocationStructureV1(params: WorkflowInvocationBindingParamsV1 & Readonly<{
+type WorkflowInvocationStructureParamsV1 = WorkflowInvocationBindingParamsV1 & Readonly<{
   keyOfInvocation: (row: WorkflowInvocationBindingRowV1) => string;
   /** Admission may narrow ancestry lifetime; completed result sources are not ancestors. */
   isAncestryCurrent?: (row: WorkflowInvocationBindingRowV1) => boolean;
-}>): Promise<Readonly<{
-  leaf: WorkflowLeafV1;
+}>;
+type WorkflowInvocationStructureV1<TBlock extends WorkflowBlock> = Readonly<{
+  leaf: TBlock;
   definition: WorkflowDefinitionV1;
   sourceKey: string;
   frame: WorkflowScopeFrameV1;
   inheritedConversationOwnerRecordId: string;
   rootConversationOwnerRecordId: string;
   inputs: WorkflowResolvedInputsV1;
-}> | undefined> {
+}>;
+
+/** One frozen ancestry walk for result contracts, lexical frames and admission ownership. */
+export function resolveWorkflowInvocationStructureV1(params: WorkflowInvocationStructureParamsV1 & Readonly<{
+  includeStructuralFrames: true;
+}>): Promise<WorkflowInvocationStructureV1<WorkflowBlock> | undefined>;
+export function resolveWorkflowInvocationStructureV1(params: WorkflowInvocationStructureParamsV1 & Readonly<{
+  includeStructuralFrames?: false;
+}>): Promise<WorkflowInvocationStructureV1<WorkflowLeafV1> | undefined>;
+export async function resolveWorkflowInvocationStructureV1(params: WorkflowInvocationStructureParamsV1 & Readonly<{
+  includeStructuralFrames?: boolean;
+}>): Promise<WorkflowInvocationStructureV1<WorkflowBlock> | undefined> {
   if (params.isAncestryCurrent?.(params.invocation) === false) return undefined;
   const ancestry: WorkflowInvocationBindingRowV1[] = [params.invocation];
   const seen = new Set([params.invocation.index.id]);
@@ -128,6 +139,9 @@ export async function resolveWorkflowInvocationStructureV1(params: WorkflowInvoc
             position: Number(source.index) + 1, count: itemValues.length } }
           : source.kind !== 'item' && frame.item ? { item: frame.item } : {}) };
       if (workflowBodyOwnsConversation(bodyOwner)) inheritedConversationOwnerRecordId = index.id;
+      if (params.includeStructuralFrames && position === ancestry.length - 1) {
+        return { leaf: bodyOwner, definition, sourceKey, frame, inheritedConversationOwnerRecordId, rootConversationOwnerRecordId, inputs };
+      }
       bodyOwner = undefined;
       bodyOwnerKey = undefined;
       itemValues = undefined;
@@ -136,7 +150,8 @@ export async function resolveWorkflowInvocationStructureV1(params: WorkflowInvoc
     if (bodyOwner) return undefined;
     const block = frame.blocks[Number(index.memberOrdinal)];
     if (!block || block.kind !== progress.blockKind || block.id !== progress.invocationPath.blockId) return undefined;
-    if (position === ancestry.length - 1) return block.kind === 'step' || block.kind === 'action' || block.kind === 'wait' || block.kind === 'workflow'
+    if (position === ancestry.length - 1) return params.includeStructuralFrames
+      || block.kind === 'step' || block.kind === 'action' || block.kind === 'wait' || block.kind === 'workflow'
       ? { leaf: block, definition, sourceKey, frame, inheritedConversationOwnerRecordId, rootConversationOwnerRecordId, inputs } : undefined;
     if (block.kind === 'if') {
       if (progress.container?.kind !== 'if') return undefined;
