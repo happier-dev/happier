@@ -104,21 +104,19 @@ function acceptedResult(event: SimulatorPreviewActionV1): SimulatorPreviewAction
 // controls — they gate viewer-facing frame forwarding through the same sideband path.
 type EncoderStreamRuntimeAction = Extract<
     SimulatorPreviewActionV1,
-    { type: 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request' }
+    { type: 'simulator.quality.set' | 'simulator.keyframe.request' }
 >;
 
 function isEncoderStreamRuntimeAction(event: SimulatorPreviewActionV1): event is EncoderStreamRuntimeAction {
     return event.type === 'simulator.quality.set'
-        || event.type === 'simulator.keyframe.request'
-        || event.type === 'simulator.snapshot.request';
+        || event.type === 'simulator.keyframe.request';
 }
 
 function requiredStreamControlForAction(
     event: EncoderStreamRuntimeAction,
 ): keyof SimulatorStreamControlsV1 {
     if (event.type === 'simulator.quality.set') return 'setQuality';
-    if (event.type === 'simulator.keyframe.request') return 'requestKeyframe';
-    return 'snapshot';
+    return 'requestKeyframe';
 }
 
 function availableCapture(
@@ -292,17 +290,7 @@ export function createSimulatorPreviewDaemonRuntime(
             return unavailableResult(event, 'simulator_stream_control_dispatch_unavailable');
         }
 
-        // The legacy snapshot request asks for a fresh keyframe and acknowledges dispatch; it
-        // returns no image or saved screenshot. Quality/keyframe RPCs forward their typed control.
-        const control: MachineLiveStreamControlSidebandV1 = event.type === 'simulator.snapshot.request'
-            ? {
-                v: 1,
-                streamId: event.streamId,
-                sourceId: event.sourceId,
-                eventId: event.eventId,
-                kind: 'request_keyframe',
-            }
-            : event.control;
+        const control = event.control;
 
         // Validate the lease against the live capture source before mutating the encoder.
         const activeLease = leaseManager.read({
@@ -339,6 +327,9 @@ export function createSimulatorPreviewDaemonRuntime(
             };
         }
         const event = parsed.data;
+        if (event.type === 'simulator.snapshot.request') {
+            return unavailableResult(event, 'simulator_screenshot_requires_device_action');
+        }
         const read = await readResources(adapter, input.captureReconciler);
         const resource = findActionResource(read.resources, event);
 

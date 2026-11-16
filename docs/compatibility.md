@@ -1,5 +1,21 @@
 # Compatibility and version skew
 
+## Simulator device Actions (unreleased 0.3)
+
+Simulator discovery optionally carries device state, runtime identity, AVD name,
+supported device operations and hardware-button subsets. The daemon's platform
+inventory owns these facts; capture availability is independent of whether a
+device can boot or accept a platform command. Device Actions use closed operation
+inputs and typed results. Screenshot Actions return an image through Session
+media; the old stream snapshot Action takes the same device/screenshot input.
+Frame refresh remains the keyframe Action. The retired raw preview snapshot event
+is refused rather than acknowledging a keyframe as a saved screenshot.
+
+Matching Protocol, SDK, CLI and UI reload together under the unpublished 0.3
+direct cut. Earlier strict development readers reject the new discovery fields,
+and earlier callers of the snapshot Action must migrate their input. This adds no
+persisted format, database migration, wire epoch or compatibility adapter.
+
 ## Managed guest carrier diagnostics (unreleased 0.3)
 
 Managed guest Home failure details and provider observations optionally retain

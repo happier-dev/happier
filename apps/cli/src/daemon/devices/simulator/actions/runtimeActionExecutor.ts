@@ -1,6 +1,8 @@
 import { BACKABLE_SIMULATOR_STREAM_CONTROLS_V1, classifySimulatorRuntimeActionBackingV1, isSimulatorRuntimeActionIdV1 } from '@happier-dev/protocol/devices/simulator/runtimeActionBacking';
 import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isSimulatorDeviceOperationRuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import type { SimulatorDeviceOperationV1 } from '@happier-dev/protocol/devices/simulator/operationsV1';
 import { isBackedSimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
 import type { MachineLiveStreamInputControlKindV1, RuntimeActionExecute, RuntimeActionExecuteArgs, SimulatorDeviceResourceV1, SimulatorRuntimeActionIdV1, SimulatorSidebandKindV1, SimulatorStreamControlsV1 } from '@happier-dev/protocol';
 
@@ -74,7 +76,6 @@ const STREAM_CONTROL_RUNTIME_ACTION_REQUIRED_BIT: Readonly<Partial<Record<
     keyof SimulatorStreamControlsV1
 >>> = {
     'devices.simulator.stream.keyframe': 'requestKeyframe',
-    'devices.simulator.stream.snapshot': 'snapshot',
     'devices.simulator.stream.quality.set': 'setQuality',
     'devices.simulator.stream.fps.set': 'setFps',
     'devices.simulator.stream.scale.set': 'setScale',
@@ -190,6 +191,13 @@ export function createSimulatorDaemonRuntimeActionExecutor(
 
         const parsed = parseRuntimeActionInput(args);
         if (!parsed.ok) return parsed.result;
+
+        if (isSimulatorDeviceOperationRuntimeActionIdV1(args.actionId)) {
+            const operation = parsed.input as SimulatorDeviceOperationV1;
+            return input.routes.dispatchDeviceOperation
+                ? await input.routes.dispatchDeviceOperation(operation, args.context)
+                : { ok: false, errorCode: 'simulator_device_operations_unavailable', step: operation.operation };
+        }
 
         if (isUnbackedSimulatorRuntimeAction(args.actionId)) {
             return unbackedSimulatorActionResult;

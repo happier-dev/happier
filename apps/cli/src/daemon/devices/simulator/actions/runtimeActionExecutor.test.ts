@@ -625,16 +625,6 @@ describe('daemon simulator runtime action executor', () => {
                 },
             }),
             runtimeArgs({
-                actionId: 'devices.simulator.stream.snapshot',
-                input: {
-                    type: 'simulator.snapshot.request',
-                    simulatorId: 'sim_ios',
-                    streamId: 'stream_1',
-                    sourceId: 'source_ios',
-                    eventId: 'snapshot_1',
-                },
-            }),
-            runtimeArgs({
                 actionId: 'devices.simulator.stream.quality.set',
                 input: {
                     type: 'simulator.quality.set',
@@ -898,11 +888,6 @@ describe('daemon simulator runtime action executor', () => {
                             v: 1, kind: 'request_keyframe', streamId: 'stream_1',
                             sourceId: 'source_ios', eventId: 'k1',
                         },
-                    };
-                case 'devices.simulator.stream.snapshot':
-                    return {
-                        type: 'simulator.snapshot.request', simulatorId: 'sim_ios',
-                        streamId: 'stream_1', sourceId: 'source_ios', eventId: 's1',
                     };
                 case 'devices.simulator.stream.quality.set':
                     return {

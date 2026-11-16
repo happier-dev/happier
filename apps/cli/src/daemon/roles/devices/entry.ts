@@ -25,7 +25,11 @@ import { createIosSimulatorPlatformAdapter } from '@/daemon/devices/simulator/pl
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import { createSimulatorPreviewDaemonRuntime } from '@/daemon/devices/simulator/runtime';
 import { createSimulatorStreamControlBridge } from '@/daemon/devices/simulator/streamControlBridge';
+import { createSimulatorDeviceOperations } from '@/daemon/devices/simulator/operations/deviceOperations';
+import { createSimulatorDeviceOperationRoutes } from '@/daemon/devices/simulator/operations/routes';
 import { createRecordingSessionMediaHost } from '@/daemon/recording/sessionMediaHost';
+import { createSessionImageMediaWriter } from '@/session/media/createSessionImageMediaWriter';
+import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 
 import type { MachineRoleStopReason } from '../types';
 
@@ -163,6 +167,15 @@ export async function activateDevicesRole(ctx: DevicesRoleContext): Promise<Devi
         }
       : {}),
   });
+  const simulatorPreviewRoutes = createSimulatorDeviceOperationRoutes({
+    previewRoutes: simulatorPreviewRuntime.routes,
+    operations: createSimulatorDeviceOperations(),
+    mediaWriter: createSessionImageMediaWriter({
+      workingDirectory: configuration.happyHomeDir,
+      storage: 'daemon',
+      pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+    }),
+  });
   // Driver installation/capture is lazy and follows an approved explicit-target Action,
   // never daemon startup. Native lifecycle uses the already-published capture registry.
   let computerRoutes: ComputerRoutes | null = params.liveStreamCaptureRegistry
@@ -208,12 +221,12 @@ export async function activateDevicesRole(ctx: DevicesRoleContext): Promise<Devi
   void browserRoutePublication.refreshBrowserRouteOwners().catch((error) => {
     logger.debug('[DAEMON RUN] Browser route startup refresh failed (non-fatal)', error);
   });
-  runtimeActionRouteProviderTarget.setSimulatorPreviewRoutesProvider?.(() => simulatorPreviewRuntime.routes);
-  params.onSimulatorPreviewRoutesReady?.(simulatorPreviewRuntime.routes);
+  runtimeActionRouteProviderTarget.setSimulatorPreviewRoutesProvider?.(() => simulatorPreviewRoutes);
+  params.onSimulatorPreviewRoutesReady?.(simulatorPreviewRoutes);
 
   return {
     computerRoutes: resolveComputer,
-    simulatorPreviewRoutes: simulatorPreviewRuntime.routes,
+    simulatorPreviewRoutes,
     browser: {
       refreshRouteOwners: browserRoutePublication.refreshBrowserRouteOwners,
       purgeForSessionDeleted: browserRoutePublication.purgeBrowserStorageForSessionDeleted,

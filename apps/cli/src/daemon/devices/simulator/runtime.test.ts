@@ -196,7 +196,7 @@ describe('daemon simulator preview runtime', () => {
         });
         expect(result).toMatchObject({
             status: 'unavailable',
-            reasonCode: 'simulator_stream_control_unbacked',
+            reasonCode: 'simulator_screenshot_requires_device_action',
         });
         expect(dispatchStreamControl).not.toHaveBeenCalled();
     });
@@ -748,7 +748,7 @@ describe('daemon simulator preview runtime', () => {
             v: 1,
             eventType: 'simulator.snapshot.request',
             status: 'unavailable',
-            reasonCode: 'simulator_stream_control_unbacked',
+            reasonCode: 'simulator_screenshot_requires_device_action',
             diagnostics: [],
         });
         expect(dispatchAction).not.toHaveBeenCalled();
