@@ -225,7 +225,7 @@ export type UsageQueryResultSlice = z.infer<typeof UsageQueryResultSliceSchema>;
 type AdmittedUsageProjection<T> = Readonly<{ inputs: Readonly<Record<string, unknown>>; value: T }>;
 type UsagePageProjections = {
   calendar: AdmittedUsageProjection<UsageAgentAccountingCalendar | undefined>;
-  howYouWork: AdmittedUsageProjection<UsageQueryResultSlice['howYouWork']>;
+  howYouWork: AdmittedUsageProjection<UsageQueryResultSlice['howYouWork']> & Readonly<{ period?: UsageWorkIntervalsInput['period'] }>;
   coach: AdmittedUsageProjection<UsageQueryResultSlice['coach']>;
   work: AdmittedUsageProjection<UsageQueryResultSlice['work']>;
   mergedOutcomes: AdmittedUsageProjection<UsageQueryResultSlice['mergedOutcomes']>;
@@ -839,7 +839,10 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
     const sessionCoverage = detailAuthorized ? detailSnapshot?.sessionCoverage : undefined;
     const calendarStartMs = endMs === undefined ? undefined
       : resolveUsageQueryPeriod(query, endMs).startMs === undefined ? undefined : startMs;
-    const detailFacts = projectAdmittedUsageInputs(admitted?.howYouWork, {
+    const priorDetailPeriod = admitted?.howYouWork.period;
+    const detailPeriod = endMs === undefined || endMs < startMs ? undefined
+      : priorDetailPeriod?.startMs === startMs && priorDetailPeriod.endMs === endMs ? priorDetailPeriod : { startMs, endMs };
+    const projectedDetailFacts = projectAdmittedUsageInputs(admitted?.howYouWork, {
       accounting: snapshot?.value, detail: observedDetail, calendar: calendar.value, startMs, endMs, calendarStartMs,
       selectedSessions: sessionCoverage?.selected, admittedSessions: sessionCoverage?.admitted, unreadSessions: sessionCoverage?.notRead,
       // The resolver uses this clock only to select today's calendar day.
@@ -849,11 +852,11 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
       retaining: retainedHowYouWork !== undefined,
       retained: retainedHowYouWork === admitted?.howYouWork.value && admitted?.howYouWork.inputs.retaining
         ? admitted.howYouWork.inputs.retained : retainedHowYouWork,
-    }, () => endMs === undefined || endMs < startMs ? undefined : retainUsageHowYouWorkReferences(resolveUsageHowYouWork({
-      period: { startMs, endMs }, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes,
+    }, () => !detailPeriod ? undefined : retainUsageHowYouWorkReferences(resolveUsageHowYouWork({
+      period: detailPeriod, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes,
       accounting: snapshot?.value, detail: observedDetail,
       accountingCalendar: calendar.value,
-      calendarPeriod: { startMs: calendarStartMs, endMs },
+      calendarPeriod: { startMs: calendarStartMs, endMs: detailPeriod.endMs },
       includeSteering: query.includeTranscriptEvidence,
       includeAgentCalendar: query.includeActivity || query.includeModelTimeline,
       costMode: query.costBasis,
@@ -861,6 +864,8 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
       retained: retainedHowYouWork,
       nowMs: detailNowMs, nightHours,
     }), admitted?.howYouWork.value));
+    const detailFacts: UsagePageProjections['howYouWork'] = projectedDetailFacts === admitted?.howYouWork
+      ? projectedDetailFacts : { ...projectedDetailFacts, period: detailPeriod };
     const detailProjection = detailFacts.value;
     const admittedDetail = observedDetail?.status === 'unknown' ? undefined : observedDetail;
     const coachEvidence = admittedDetail?.coach;

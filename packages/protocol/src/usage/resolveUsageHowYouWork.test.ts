@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveUsageHowYouWork, UsageHowYouWorkSchema, UsageSessionEvidenceCoverageSchema } from './resolveUsageHowYouWork.js';
+import { normalizeUsageQuery, resolveUsageQueryPeriod } from '../inputs/usageQuery.js';
 
 const hour = 3_600_000;
 const day = Date.parse('2026-10-09T00:00:00Z');
@@ -9,6 +10,65 @@ const fact = (workId: string, startMs: number, endMs: number) => ({
 });
 
 describe('How-you-work admitted projection', () => {
+    it('releases retired private projections across twenty rolling two-scope round trips', async () => {
+        const { Session: InspectorSession } = await import('node:inspector');
+        const detail: NonNullable<Parameters<typeof resolveUsageHowYouWork>[0]['detail']> = { status: 'available',
+            facts: [fact('retained-source', day, day + hour)],
+            acceptedInputs: [{ inputId: 'steer', workId: 'retained-source', turnId: 'turn', acceptedAtMs: day + hour / 2, deliveryKind: 'steer' }],
+            permissions: [{ requestId: 'permission', workId: 'retained-source', requestedAtMs: day + hour / 2,
+                decidedAtMs: day + hour / 2 + 1000, toolId: 'shell', answeringClientCategory: 'web' }],
+            closedTurns: [{ workId: 'retained-source', agentId: 'agent', status: 'completed', startMs: day, endMs: day + hour }] };
+        const queries = ['30days', '7days'].map(relative => normalizeUsageQuery({ period: { relative } }));
+        const current: ReturnType<typeof resolveUsageHowYouWork>[] = [];
+        const control: { value?: ReturnType<typeof resolveUsageHowYouWork> } = {};
+        const families = (value: ReturnType<typeof resolveUsageHowYouWork>) => ({
+            intervals: value.intervals!, inputs: value.inputs!, permissions: value.permissions!, runLengths: value.runLengths!,
+        });
+        const references: Record<keyof ReturnType<typeof families>, WeakRef<object>[]> = {
+            intervals: [], inputs: [], permissions: [], runLengths: [],
+        };
+        const inspector = new InspectorSession();
+        inspector.connect();
+        const collect = async () => {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
+        };
+        const assertRetained = (withControl: boolean) => {
+            const counts: Record<string, number> = {};
+            for (const name of Object.keys(references) as (keyof typeof references)[]) {
+                const expected = new Set<object>(current.map(value => families(value)[name]));
+                if (withControl) expected.add(families(control.value!)[name]);
+                const actual = new Set(references[name].flatMap(reference => { const value = reference.deref(); return value ? [value] : []; }));
+                counts[name] = actual.size;
+                expect.soft(actual.size, `${name}: only current query admissions and explicit control retain projections`).toBe(expected.size);
+                expect.soft([...actual].every(value => expected.has(value)), `${name}: retired absolute ranges are collectible`).toBe(true);
+            }
+            return counts;
+        };
+        try {
+            for (let round = 0; round < 20; round++) for (const [index, query] of queries.entries()) {
+                const nowMs = day + 4 * hour + (round * queries.length + index) * 60_000;
+                const period = resolveUsageQueryPeriod(query, nowMs);
+                if (period.startMs === undefined) throw new Error('Expected a finite rolling period');
+                const value = resolveUsageHowYouWork({ period: { startMs: period.startMs, endMs: period.endMs },
+                    timeZoneOffsetMinutes: 0, nowMs, detail, includeAgentCalendar: false });
+                expect(value.intervals?.agentTimeMs).toBe(hour);
+                expect(value.inputs?.acceptedCount).toBe(1);
+                expect(value.runLengths?.sampleCount).toBe(1);
+                current[index] = value;
+                if (round === 0 && index === 0) control.value = value;
+                for (const [name, object] of Object.entries(families(value))) references[name as keyof typeof references].push(new WeakRef(object));
+            }
+            await collect();
+            const withControl = assertRetained(true);
+            control.value = undefined;
+            await collect();
+            const withoutControl = assertRetained(false);
+            console.info('usage-private-retained-generations', { withControl, current: withoutControl });
+            expect(detail.facts).toHaveLength(1); // The admitted Session source intentionally outlives its retired views.
+        } finally { inspector.disconnect(); }
+    });
+
     it('reports admitted Sessions whose private facts have not been read without counting them as observed', () => {
         expect(UsageSessionEvidenceCoverageSchema.parse({ selected: 4, admitted: 3, notRead: 2 }))
             .toEqual({ selected: 4, admitted: 3, notRead: 2 });

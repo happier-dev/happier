@@ -122,15 +122,16 @@ type UsagePrivateSourceProjection = Readonly<{
     steering: Map<number, PreparedUsageSteeringEvidence>;
 }>;
 type UsagePrivateDetailState = {
-    intervals: Map<string, ReturnType<typeof prepareUsageWorkIntervals>>;
-    prepared: Map<string, UsagePrivateSourceProjection>;
-    projections: Map<string, UsagePrivateDetailProjection>;
+    intervals: WeakMap<UsageWorkIntervalsInput['period'], ReturnType<typeof prepareUsageWorkIntervals>>;
+    prepared: WeakMap<UsageWorkIntervalsInput['period'], UsagePrivateSourceProjection>;
+    projections: WeakMap<UsageWorkIntervalsInput['period'], UsagePrivateDetailProjection>;
     historicalSources: Map<UsageCollaborationFact, Readonly<{ source: OpenedUsageSession | undefined;
         membership: readonly boolean[] | undefined; value: UsageCollaborationFact }>>;
 };
-// Private evidence has the opened input's lifetime. Accounting and output demand
-// can advance independently, and never make those admitted facts new again.
+// Opened evidence can outlive many rolling queries. Prepared populations belong
+// to each admitted period, so retiring that query also retires its preparation.
 const privateDetailProjections = new WeakMap<UsageHowYouWorkDetailInput, UsagePrivateDetailState>();
+const privateTodayPeriods = new WeakMap<UsageWorkIntervalsInput['period'], UsageWorkIntervalsInput['period']>();
 const privateDetailPartitions = Symbol('usage private source partitions');
 type PartitionedPrivateDetail = UsageHowYouWorkDetailInput & {
     [privateDetailPartitions]?: Readonly<{ sources: readonly UsageHowYouWorkDetailInput[];
@@ -139,7 +140,7 @@ type PartitionedPrivateDetail = UsageHowYouWorkDetailInput & {
 function privateDetailState(detail: UsageHowYouWorkDetailInput): UsagePrivateDetailState {
     let state = privateDetailProjections.get(detail);
     if (!state) {
-        state = { intervals: new Map(), prepared: new Map(), projections: new Map(), historicalSources: new Map() };
+        state = { intervals: new WeakMap(), prepared: new WeakMap(), projections: new WeakMap(), historicalSources: new Map() };
         privateDetailProjections.set(detail, state);
     }
     return state;
@@ -156,13 +157,21 @@ function projectUsagePrivateIntervals(detail: UsageHowYouWorkDetailInput, input:
 }
 function prepareUsagePrivateIntervals(detail: UsageHowYouWorkDetailInput, period: UsageWorkIntervalsInput['period']) {
     const state = privateDetailState(detail);
-    const key = JSON.stringify([period.startMs, period.endMs]);
-    let intervals = state.intervals.get(key);
+    let intervals = state.intervals.get(period);
     if (!intervals) {
         intervals = prepareUsageWorkIntervals(detail.facts ?? [], period);
-        state.intervals.set(key, intervals);
+        state.intervals.set(period, intervals);
     }
     return intervals;
+}
+
+/** Today's clipping shares the admitted query's lifetime, including across source phases. */
+function retainPrivateTodayPeriod(period: UsageWorkIntervalsInput['period'], today: UsageWorkIntervalsInput['period']) {
+    if (period.startMs === today.startMs && period.endMs === today.endMs) return period;
+    const retained = privateTodayPeriods.get(period);
+    if (retained?.startMs === today.startMs && retained.endMs === today.endMs) return retained;
+    privateTodayPeriods.set(period, today);
+    return today;
 }
 /** Internal provenance from the canonical query projector; never serialized or admitted as new evidence. */
 export function retainUsagePrivateDetailPartitions(detail: UsageHowYouWorkDetailInput,
@@ -221,8 +230,8 @@ export function resolveUsageHowYouWork(input: Readonly<{
         intervals = { ...intervals, night: { ...intervals.night, activityCount: nightShift.recordedActivityCount } };
     }
     const today = input.nowMs === undefined ? null : resolveUsageCalendarInstant(input.nowMs, input.timeZoneOffsetMinutes);
-    const todayPeriod = today ? { startMs: Math.max(today.bucketStartMs, input.period.startMs),
-        endMs: Math.min(today.bucketEndMs, input.period.endMs) } : null;
+    const todayPeriod = today ? retainPrivateTodayPeriod(input.period, { startMs: Math.max(today.bucketStartMs, input.period.startMs),
+        endMs: Math.min(today.bucketEndMs, input.period.endMs) }) : null;
     const todayIntervals = detail?.facts !== undefined && todayPeriod && todayPeriod.startMs < todayPeriod.endMs
         ? projectUsagePrivateIntervals(detail, { period: todayPeriod, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes, facts: detail.facts }) : null;
     const result: UsageHowYouWork = {
@@ -302,8 +311,7 @@ export function resolveUsageHowYouWork(input: Readonly<{
 function projectUsagePrivateDetail(detail: UsageHowYouWorkDetailInput,
     period: UsageWorkIntervalsInput['period']): UsagePrivateDetailProjection {
     const state = privateDetailState(detail);
-    const key = JSON.stringify([period.startMs, period.endMs]);
-    const previous = state.projections.get(key);
+    const previous = state.projections.get(period);
     if (previous) return previous;
     const partitions = (detail as PartitionedPrivateDetail)[privateDetailPartitions];
     const sources = (partitions?.sources ?? [detail]).map(source => prepareUsagePrivateSource(source, period));
@@ -369,15 +377,14 @@ function projectUsagePrivateDetail(detail: UsageHowYouWorkDetailInput,
         }));
     const projection = { value: result, selectedInputs, selectedPermissions, sources,
         steering: new Map<number, NonNullable<UsageHowYouWork['steering']>>() } satisfies UsagePrivateDetailProjection;
-    state.projections.set(key, projection);
+    state.projections.set(period, projection);
     return projection;
 }
 
 function prepareUsagePrivateSource(detail: UsageHowYouWorkDetailInput,
     period: UsageWorkIntervalsInput['period']): UsagePrivateSourceProjection {
     const state = privateDetailState(detail);
-    const key = JSON.stringify([period.startMs, period.endMs]);
-    const previous = state.prepared.get(key);
+    const previous = state.prepared.get(period);
     if (previous) return previous;
     const inPeriod = (instant: number) => Number.isSafeInteger(instant) && instant >= period.startMs && instant < period.endMs;
     const events = [...(detail.phaseEvents ?? []).map(source => ({ source, event: { ...source }, nativeCompaction: false })),
@@ -394,6 +401,6 @@ function prepareUsagePrivateSource(detail: UsageHowYouWorkDetailInput,
         permissions: prepareUsageWorkPermissions(detail.permissions ?? [], period),
         turns: prepareUsageClosedTurns(detail.closedTurns ?? [], period),
         collaboration: prepareUsageCollaborationFacts(detail.collaboration ?? [], period), steering: new Map() };
-    state.prepared.set(key, prepared);
+    state.prepared.set(period, prepared);
     return prepared;
 }

@@ -228,8 +228,9 @@ type IntervalProjectionCache = {
     withActivity: WeakMap<readonly number[], Map<string, UsageWorkIntervalsProjection>>;
 };
 
-// Facts and activity arrays are immutable snapshots. Their identity owns the lifetime of these projections.
-const intervalProjections = new WeakMap<readonly UsageWorkIntervalFact[], IntervalProjectionCache>();
+// Facts can outlive rolling views. The admitted period owns each projection's
+// lifetime; immutable facts and activity still distinguish its source inputs.
+const intervalProjections = new WeakMap<readonly UsageWorkIntervalFact[], WeakMap<UsageWorkIntervalsInput['period'], IntervalProjectionCache>>();
 
 const SpanSchema = lazyZodSchema(() => z.strictObject({ startMs: z.number().check(z.int()), endMs: z.number().check(z.int()) }));
 const DurationSchema = lazyZodSchema(() => z.number().check(z.nonnegative()));
@@ -337,17 +338,19 @@ export function projectPreparedUsageWorkIntervals(input: UsageWorkIntervalsInput
         || input.period.endMs < input.period.startMs || !Number.isInteger(input.timeZoneOffsetMinutes)
         || Math.abs(input.timeZoneOffsetMinutes) > 840) throw new RangeError('Invalid usage interval period or offset');
     if (input.nightHours && !UsageNightHoursV1Schema.safeParse(input.nightHours).success) throw new RangeError('Invalid usage night hours');
-    let byFacts = intervalProjections.get(input.facts);
+    let byPeriod = intervalProjections.get(input.facts);
+    if (!byPeriod) { byPeriod = new WeakMap(); intervalProjections.set(input.facts, byPeriod); }
+    let byFacts = byPeriod.get(input.period);
     if (!byFacts) {
         byFacts = { withoutActivity: new Map(), withActivity: new WeakMap() };
-        intervalProjections.set(input.facts, byFacts);
+        byPeriod.set(input.period, byFacts);
     }
     let byOptions = input.activityAtMs === undefined ? byFacts.withoutActivity : byFacts.withActivity.get(input.activityAtMs);
     if (!byOptions) {
         byOptions = new Map();
         if (input.activityAtMs !== undefined) byFacts.withActivity.set(input.activityAtMs, byOptions);
     }
-    const optionsKey = JSON.stringify([input.period.startMs, input.period.endMs, input.timeZoneOffsetMinutes,
+    const optionsKey = JSON.stringify([input.timeZoneOffsetMinutes,
         input.nightHours?.startHour ?? null, input.nightHours?.endHour ?? null]);
     const cached = byOptions.get(optionsKey);
     if (cached) return cached;

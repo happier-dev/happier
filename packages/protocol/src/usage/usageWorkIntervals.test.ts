@@ -66,9 +66,13 @@ describe('projectUsageWorkIntervals', () => {
         const observed = busy('one', '2026-07-02T08:00:00Z', '2026-07-02T10:00:00Z');
         const facts = [{ ...observed, get evidenceId() { factPasses += 1; return observed.evidenceId; } }];
         const activityAtMs = [at('2026-07-02T08:30:00Z')];
-        const full = () => projectUsageWorkIntervals({ period: { ...period }, timeZoneOffsetMinutes: 120,
+        // These two admitted views own their periods; fresh option wrappers do
+        // not give the source facts ownership of every historical range.
+        const fullPeriod = { ...period };
+        const todayPeriod = { startMs: at('2026-07-02T00:00:00Z'), endMs: period.endMs };
+        const full = () => projectUsageWorkIntervals({ period: fullPeriod, timeZoneOffsetMinutes: 120,
             facts, activityAtMs, nightHours: { startHour: 8, endHour: 10 } });
-        const today = () => projectUsageWorkIntervals({ period: { startMs: at('2026-07-02T00:00:00Z'), endMs: period.endMs },
+        const today = () => projectUsageWorkIntervals({ period: todayPeriod,
             timeZoneOffsetMinutes: 120, facts });
         const firstFull = full();
         const firstToday = today();

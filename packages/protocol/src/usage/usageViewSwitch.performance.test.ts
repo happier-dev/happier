@@ -139,6 +139,40 @@ it('prepares only the changed Session private facts while merging the admitted p
     expect(visits.slice(1), 'independent unchanged Session facts must not be prepared again').toEqual([0, 0]);
 });
 
+it('keeps private preparation with the admitted numeric period when accounting advances', () => {
+    let preparations = 0;
+    const query = normalizeUsageQuery({ period: { startMs: startMs - 29 * 86_400_000, endMs: period.endMs + 2 * 86_400_000 },
+        includeComparison: false, includeWorkEvidence: false, includeActivity: false, includeModelTimeline: false });
+    const detail: howYouWork.UsageHowYouWorkDetailInput = { status: 'available',
+        facts: [{ ...fact(0), get evidenceId() { preparations++; return 'busy-0'; } }],
+        acceptedInputs: [{ workId: 'work-0', inputId: 'steer', turnId: 'turn-0', acceptedAtMs: startMs + 2, deliveryKind: 'steer' }] };
+    let previous: UsageQueryBatchResult | undefined;
+    const run = (eventCount: number, nowMs = period.endMs) => {
+        const accounting = { v: 1 as const, totals: { eventCount,
+            tokens: { input: eventCount, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: eventCount },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } };
+        previous = resolveUsagePageAggregation({ queries: [query], previous, nowMs,
+            accounting: [{ query, value: accounting, status: 'available' }], howYouWork: [{ query, detail }] });
+        return previous.results[0]!.howYouWork!;
+    };
+    expect(run(1).inputs?.acceptedCount).toBe(1);
+    expect(preparations, 'the admitted full window and today both prepare their real source').toBe(2);
+    preparations = 0;
+    for (let generation = 2; generation <= 20; generation++) {
+        const value = run(generation);
+        expect(value.footprint?.coverage.accountedTokens.total).toBe(generation);
+        expect(value.intervals?.agentTimeMs).toBe(3_600_000 - 2);
+        expect(value.inputs?.acceptedCount).toBe(1);
+    }
+    expect(preparations, 'changed accounting keeps the current query period and its Session preparation').toBe(0);
+    const nextDayMs = period.endMs + 86_400_000;
+    expect(run(21, nextDayMs).todayInParallel?.agentTimeMs).toBe(0);
+    expect(preparations, 'a new today role prepares its newly clipped range once').toBe(1);
+    preparations = 0;
+    expect(run(22, nextDayMs).todayInParallel?.agentTimeMs).toBe(0);
+    expect(preparations, 'the current today role reuses its period across changed accounting').toBe(0);
+});
+
 it('merges cross-Session witnesses before choosing duplicate winners, conflicts and attribution', () => {
     const sessions: OpenedUsageSession[] = ['first', 'second'].map(id => ({ id, metadata: null, agentState: null }));
     const permission = { workId: 'work-0', requestId: 'shared', requestedAtMs: startMs + 1,
