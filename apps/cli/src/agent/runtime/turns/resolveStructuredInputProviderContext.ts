@@ -64,7 +64,7 @@ export type StructuredInputProviderDispatchContext = StructuredInputDispatchCont
 export class StructuredInputComposerReferenceUnavailableError extends Error {
   readonly code = 'composer_reference_unavailable';
 
-  constructor() {
+  constructor(readonly retryable = true, readonly preparationCause?: RunnerDaemonPluginServicesPreparationCauseV1) {
     super('Composer reference resolution is unavailable');
     this.name = 'StructuredInputComposerReferenceUnavailableError';
   }

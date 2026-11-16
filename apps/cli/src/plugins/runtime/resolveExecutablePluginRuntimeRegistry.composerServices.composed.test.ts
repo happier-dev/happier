@@ -21,10 +21,19 @@ import { createPosthogEvidenceCandidate, resolvePosthogEvidenceReference } from 
 import { encodePosthogConfiguration } from '../../../../../packages/plugins/posthog/src/source/instance';
 import { POSTHOG_ISSUE_EVENTS_INCLUDE } from '../../../../../packages/plugins/posthog/src/api/types/events';
 import posthogEventPage from '../../../../../packages/plugins/posthog/src/api/__fixtures__/queryIssueEventsPage.json';
+import { SENTRY_ACCOUNT_ACTIONS } from '../../../../../packages/plugins/sentry/src/accountActions';
+import { SENTRY_ACTION_IDS } from '../../../../../packages/plugins/sentry/src/sentryContracts';
+import { POSTHOG_ACCOUNT_ACTIONS } from '../../../../../packages/plugins/posthog/src/accountActions';
+import { POSTHOG_ACTION_IDS } from '../../../../../packages/plugins/posthog/src/posthogContracts';
 import { TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 
 import { prepareSessionInputForProviderDispatch, readStructuredInputPreparationFailure } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createStablePluginConnectedAccountsHost } from './invocation/services/connectedAccounts';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { logger } from '@/ui/logger';
+import { createRunnerDaemonPluginServicesPreparationError } from '@/daemon/agentRuntime/runnerDaemonPluginServicesHost';
 import { admitPluginSessionInputAttachmentsV1 } from '@/session/composer/admitPluginSessionInputAttachmentsV1';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -194,7 +203,7 @@ async function fixture(declareStorage: boolean) {
     return { ...runtime, account, external };
 }
 
-function occurrenceFixture(kind: 'sentry' | 'posthog') {
+function occurrenceFixture(kind: 'sentry' | 'posthog', credentialFailure?: 'native' | 'typed' | 'uncoded') {
     const entryId = kind === 'sentry' ? '5501001' : '00000000-0000-4000-8000-000000000001';
     const teamUuid = '00000000-0000-4000-8000-0000000000d1';
     const from = '2026-07-01T00:00:00.000Z';
@@ -227,19 +236,57 @@ function occurrenceFixture(kind: 'sentry' | 'posthog') {
             frozenRequest: { v: 1, issueId: entryId, from, to, filterTestAccounts: false, onlyAppFrames: false, include: POSTHOG_ISSUE_EVENTS_INCLUDE, limit: 2, offset: 0 },
             selectedAbsoluteOffset: 0 });
     if (!candidate) throw new Error(`Could not create ${kind} occurrence fixture`);
-    return { instance, localRef, candidate: candidate.candidate, async resolve(id: string, context: PluginInvocationContext) {
+    const actionId = kind === 'sentry' ? SENTRY_ACTION_IDS.readEvent : POSTHOG_ACTION_IDS.issueEvents;
+    const action = kind === 'sentry' ? SENTRY_ACCOUNT_ACTIONS[SENTRY_ACTION_IDS.readEvent] : POSTHOG_ACCOUNT_ACTIONS[POSTHOG_ACTION_IDS.issueEvents];
+    const { execution: _execution, hostAccess: _hostAccess, connectedAccountPurposeBindings: _bindings, ...declaration } = action;
+    const withSourceBoundaries = async <T>(context: PluginInvocationContext, run: (context: PluginInvocationContext) => Promise<T>) => {
+        const consumer = { pluginId: instance.instance.source.pluginId, localId: context.contribution.id };
+        // Only the source Action owns a credential binding; Composer references do not.
+        const purpose = { consumer: { ...consumer, localId: actionId }, purpose: instance.binding.purpose };
+        const binding = { purpose, target: { kind: 'account' as const, account: instance.binding.account } };
+        const owner = createConnectedAccountPurposeBindingOwner({
+            store: { read: async () => ({ v: 1, bindings: [binding] }),
+                update: async mutate => mutate({ v: 1, bindings: [binding] }), subscribe: () => ({ dispose() {} }) },
+            selectTarget: async () => binding.target,
+            resolveTarget: async () => ({ account: instance.binding.account, displayName: 'Fixture' }),
+            projectTargetAccounts: async () => { throw new Error('No enumeration during dispatch'); },
+            // Account metadata and credential acquisition are external boundaries.
+            assertTargetAccountMaterializable: async () => {
+                if (credentialFailure === 'typed') throw new PluginError({ code: 'plugin_connected_account_binding_out_of_scope', message: 'PRIVATE refusal' });
+            },
+            materializeAccount: async () => {
+                if (credentialFailure === 'uncoded') throw new Error('PRIVATE credential fetch failed');
+                if (credentialFailure === 'native') throw new Error('PRIVATE credential fetch failed', {
+                    cause: Object.assign(new Error('PRIVATE fixture certificate'), { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' }),
+                });
+                return { kind: 'httpHeaders', headers: { authorization: 'Bearer fixture' } };
+            },
+        });
+        const host = createStablePluginConnectedAccountsHost(owner);
+        const connectedAccounts = host.bind({ plugin: { id: consumer.pluginId, version: '1.0.0' },
+            contribution: { id: consumer.localId, qualifiedId: `${consumer.pluginId}/composerReferences/${consumer.localId}` },
+            occurrenceId: 'occurrence-fixture', correlationId: 'occurrence-correlation', surface: 'cli',
+            signal: context.signal, retirementSignal: context.signal, isOccurrenceCurrent: () => true,
+        }, [{ purpose: instance.binding.purpose, serviceRefs: [instance.binding.account.service],
+            operations: ['use'], materializationKinds: ['httpHeaders'] }]);
         // Provider HTTP and credential acquisition are the only substituted boundaries.
         const boundaryContext = { ...context, services: { ...context.services,
             connectedAccounts: { ...context.services.connectedAccounts,
-                materializeListedAccount: async () => ({ kind: 'httpHeaders' as const, headers: { authorization: 'Bearer fixture' } }) },
+                materializeListedAccount: connectedAccounts.materializeListedAccount },
             http: { ...context.services.http, request: async (request: Readonly<{ url: string }>) => ({ status: 200,
                 finalUrl: request.url, headers: { 'content-type': 'application/json' },
                 body: new TextEncoder().encode(JSON.stringify(kind === 'sentry' ? sentryRaw : {
                     ...posthogEventPage, results: posthogEventPage.results.slice(0, 1), limit: 1, offset: 0,
                     hasMore: true, nextOffset: 1,
                 })) }) } } };
-        return await (kind === 'sentry' ? resolveSentryEvidenceReference : resolvePosthogEvidenceReference)(id, boundaryContext);
-    } };
+        try { return await run(boundaryContext); }
+        finally { host.retire(); }
+    };
+    return { instance, localRef, candidate: candidate.candidate, actionId, declaration,
+        read: (input: unknown, context: PluginInvocationContext) => withSourceBoundaries(context, bound => action.run(input, bound)),
+        resolve: (id: string, context: PluginInvocationContext) => withSourceBoundaries(context,
+            bound => (kind === 'sentry' ? resolveSentryEvidenceReference : resolvePosthogEvidenceReference)(id, bound)),
+    };
 }
 
 async function prepare(registry: Awaited<ReturnType<typeof fixture>>['registry']) {
@@ -324,14 +371,22 @@ describe('declared Composer callback services through admitted runtime compositi
     it.each([
         { kind: 'sentry', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain' },
         { kind: 'posthog', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain' },
+        { kind: 'sentry', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain', credentialFailure: 'native' },
+        { kind: 'posthog', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain', credentialFailure: 'native' },
+        { kind: 'sentry', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain', credentialFailure: 'typed' },
+        { kind: 'posthog', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain', credentialFailure: 'typed' },
+        { kind: 'sentry', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain', credentialFailure: 'uncoded' },
         { kind: 'entry', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain' },
         { kind: 'entry', sourceExecution: 'daemon', requester: 'guest', encryptionMode: 'plain' },
         { kind: 'entry', sourceExecution: 'account', requester: 'owner', encryptionMode: 'plain' },
         { kind: 'selectedForgeEvidence', sourceExecution: 'daemon', requester: 'owner', encryptionMode: 'plain' },
         { kind: 'entry', sourceExecution: 'accountNative', requester: 'owner', encryptionMode: 'plain' },
         { kind: 'entry', sourceExecution: 'accountNative', requester: 'owner', encryptionMode: 'e2ee' },
-    ] as const)('dispatches the real Triage delivery producer through activation, Account storage and the admitted source ($kind/$sourceExecution/$requester/$encryptionMode)', async ({ kind, sourceExecution, requester, encryptionMode }) => {
-        const selectedOccurrence = kind === 'sentry' || kind === 'posthog' ? occurrenceFixture(kind) : null;
+    ] as const)('dispatches the real Triage delivery producer through activation, Account storage and the admitted source ($kind/$sourceExecution/$requester/$encryptionMode/$credentialFailure)', async testCase => {
+        const { kind, sourceExecution, requester, encryptionMode } = testCase;
+        const credentialFailure = 'credentialFailure' in testCase ? testCase.credentialFailure : undefined;
+        const warnings = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const selectedOccurrence = kind === 'sentry' || kind === 'posthog' ? occurrenceFixture(kind, credentialFailure) : null;
         const baseFixture = createTriageSourceV1Fixture();
         const sourceFixture = selectedOccurrence ? { ...baseFixture, configuredInstance: selectedOccurrence.instance,
             getResult: { ...baseFixture.getResult, localRef: selectedOccurrence.localRef } } : baseFixture;
@@ -354,6 +409,10 @@ describe('declared Composer callback services through admitted runtime compositi
         const provider = definePlugin({
             id: sourceIdentity.pluginId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
             actions: {
+                ...(selectedOccurrence ? { [selectedOccurrence.actionId]: {
+                    ...selectedOccurrence.declaration,
+                    run: selectedOccurrence.read,
+                } } : {}),
                 instances: { title: 'Instances', surfaces: roles.listInstances.declaration.surfaces,
                     dangerLevel: 'safe', inputSchema: roles.listInstances.declaration.input.schema,
                     resultSchema: roles.listInstances.declaration.resultSchema, run: () => source.listInstancesResult },
@@ -581,8 +640,15 @@ export function activate(registrar) { registrar.actions.register('${getActionId}
                 prompt: { text: delivery.text, localId: 'triage-input', structuredInput }, transformedUserText: delivery.text,
                 providerNativeCommand: false, signal: new AbortController().signal, localId: 'triage-input',
                 services: { sessionId: 'cmwircsyq0152mcnzs977nj4b',
-                    resolveComposerReference: input => runWithServerHttpBaseUrl('https://composer-account.example.test',
-                        () => subject.registry.composerReferences!.resolve({ ...input, sessionId: 'cmwircsyq0152mcnzs977nj4b' })),
+                    resolveComposerReference: async input => {
+                        try {
+                            return await runWithServerHttpBaseUrl('https://composer-account.example.test',
+                                () => subject.registry.composerReferences!.resolve({ ...input, sessionId: 'cmwircsyq0152mcnzs977nj4b' }));
+                        } catch (error) {
+                            // Exercise the real daemon-to-Runner failure projection too.
+                            throw createRunnerDaemonPluginServicesPreparationError(error, 'dispatch');
+                        }
+                    },
                     resolveComposerAttachmentForDispatch: input => subject.registry.composerAttachments!.resolveForDispatch({ ...input, requesterAccount }),
                 },
             });
@@ -593,11 +659,27 @@ export function activate(registrar) { registrar.actions.register('${getActionId}
                 expect(account.reads).toEqual([]);
                 return;
             }
+            if (credentialFailure) {
+                const causeCode = credentialFailure === 'typed' ? 'plugin_connected_account_binding_out_of_scope'
+                    : credentialFailure === 'native' ? 'DEPTH_ZERO_SELF_SIGNED_CERT' : 'action_failed';
+                const error = await preparation.catch((error: unknown) => error);
+                expect(readStructuredInputPreparationFailure(error)).toMatchObject({
+                    code: 'composer_reference_unavailable', retryable: credentialFailure !== 'typed',
+                    preparationCause: { code: causeCode, stage: 'dispatch' },
+                });
+                expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, preparingPrompt: true }))
+                    .toMatchObject({ source: 'dependency_failure', failureCause: { preparationCause: { code: causeCode } } });
+                expect(warnings.mock.calls.find(([message]) => message === '[connected-account-materialization-failed]')?.[1])
+                    .toMatchObject({ phase: 'connected_accounts.materialize_listed', errorCode: causeCode });
+                expect(JSON.stringify([error, warnings.mock.calls])).not.toContain('PRIVATE');
+                return;
+            }
             expect(await preparation.then(() => null, error => readStructuredInputPreparationFailure(error))).toBeNull();
             const prepared = await preparation;
             expect(prepared.requiredPrompt).toContain(kind === 'entry' ? source.getResult.snapshot.title : selectedOccurrence ? 'TypeError' : 'Retain this failing assertion');
             expect(reads).toEqual(kind === 'entry' && sourceExecution !== 'account' ? [source.getInput] : []);
         } finally {
+            warnings.mockRestore();
             rpc?.mockRestore();
             await subject.dispose(); await requesterChannel.close(); restoreAccountHttp(); await app.close(); await rm(home, { recursive: true, force: true });
             resetActiveAccountSettingsSnapshotForTests();

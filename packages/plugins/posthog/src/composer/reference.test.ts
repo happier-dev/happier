@@ -7,6 +7,8 @@ import { POSTHOG_CONNECTED_ACCOUNT_PURPOSE } from '../posthogContracts.js';
 import type { PosthogFrozenIssueEventsRequestV1 } from '../source/detail/issueEventsContract.js';
 import { encodePosthogConfiguration } from '../source/instance.js';
 import type { PosthogProjectedIssueEvent } from '../ui/detail/issueEventProjection.js';
+import { POSTHOG_ACTION_IDS } from '../posthogContracts.js';
+import { readPosthogSampledEvents } from '../source/operations.js';
 
 import { decodePosthogEvidenceCandidate } from './candidate.js';
 import {
@@ -90,20 +92,23 @@ function sourceContext(
         headers: { 'content-type': 'application/json' },
         body: new TextEncoder().encode(JSON.stringify(response)),
     }));
-    const executeAction = vi.fn(async () => ({
+    // The Account Action transport is outside this plugin; execute its real read below.
+    const executeAction = vi.fn(async (ref: { pluginId: string; localId: string }, input: unknown) => ref.localId === POSTHOG_ACTION_IDS.issueEvents
+        ? await readPosthogSampledEvents(input, value) : ({
         kind: 'read' as const,
         instances: [{ v: 1 as const, lifecycle: 'active' as const, configured: currentInstance }],
         status: 'complete' as const,
     }));
-    return {
-        value: {
+    const value = {
             signal: new AbortController().signal,
             services: {
                 actions: { execute: executeAction },
                 connectedAccounts: { materializeListedAccount },
                 http: { request },
             },
-        } as unknown as PluginInvocationContext,
+        } as unknown as PluginInvocationContext;
+    return {
+        value,
         executeAction,
         materializeListedAccount,
         request,

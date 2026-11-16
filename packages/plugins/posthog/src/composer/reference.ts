@@ -18,10 +18,10 @@ import {
     readCurrentTriageConfiguredSourceInstanceV1,
 } from '@happier-dev/triage-sources/runtime';
 
-import { encodePosthogSampledEventsContinuation } from '../source/detail/issueEventsContract.js';
+import { encodePosthogSampledEventsContinuation, PosthogSampledEventsResultV1Schema } from '../source/detail/issueEventsContract.js';
 import { buildPosthogCollisionScope } from '../source/identity.js';
 import { resolvePosthogInvocationScope } from '../source/invocationScope.js';
-import { readPosthogSampledEvents } from '../source/operations.js';
+import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../posthogContracts.js';
 import type { PosthogProjectedIssueEvent } from '../ui/detail/issueEventProjection.js';
 
 import {
@@ -35,10 +35,12 @@ export {
 } from './candidate.js';
 export type { PosthogEvidenceCandidateInput } from './candidate.js';
 
-function unavailableEvidence(reason: string): PluginError {
+function unavailableEvidence(reason: string, retryable = false): PluginError {
     return new PluginError({
         code: 'posthog/evidence-unavailable',
         message: `The selected PostHog evidence is unavailable (${reason}).`,
+        retryable,
+        failureCause: { phase: 'composer_reference.resolve', errorClass: 'Error', errorCode: reason, httpStatus: null },
     });
 }
 
@@ -173,7 +175,9 @@ export async function resolvePosthogEvidenceReference(
         limit: 1,
     });
     if (continuation === null) throw unavailableEvidence('evidence-contract-exceeded');
-    const read = await readPosthogSampledEvents({
+    const read = PosthogSampledEventsResultV1Schema.parse(await context.services.actions.execute({
+        pluginId: POSTHOG_PLUGIN_ID, localId: POSTHOG_ACTION_IDS.issueEvents,
+    }, {
         v: 1,
         instance: current.instance,
         localRef: {
@@ -183,8 +187,8 @@ export async function resolvePosthogEvidenceReference(
         },
         limit: 1,
         continuation,
-    }, context);
-    if (read.kind !== 'sampled') throw unavailableEvidence(read.failure.code);
+    }, { signal: context.signal }));
+    if (read.kind !== 'sampled') throw unavailableEvidence(read.failure.code, read.failure.class === 'transient');
     if (read.omittedRowCount !== 0 || read.events.length !== 1) {
         throw unavailableEvidence('event-count-mismatch');
     }

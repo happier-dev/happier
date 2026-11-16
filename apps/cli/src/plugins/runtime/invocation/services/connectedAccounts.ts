@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
-import { QualifiedConnectedAccountMaterialError, ConnectedAccountProducerResultError, ConnectedAccountAuthenticationModeUnavailableError, ConnectedAccountRuntimeInvocationNotStartedError, readConnectedAccountListLimit } from '@happier-dev/cli-common/connectedAccounts';
-import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readConnectedAccountListLimit } from '@happier-dev/cli-common/connectedAccounts';
+import { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 import { logger } from '@/ui/logger';
 import { withActionFailureCauseDiagnostic, withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -193,23 +194,20 @@ function materializationOutOfScope(): PluginError {
 function materializationFailure(error: unknown, seed: PluginInvocationServicesSeed,
     operation: 'materialize' | 'materialize_listed'): unknown {
     const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
-    const failureCause = {
-        phase: `connected_accounts.${operation}`,
-        errorClass: diagnostic.errorClass,
-        errorCode: error instanceof QualifiedConnectedAccountMaterialError
-            || error instanceof ConnectedAccountProducerResultError
-            || error instanceof ConnectedAccountAuthenticationModeUnavailableError
-            || error instanceof ConnectedAccountRuntimeInvocationNotStartedError
-            ? error.code : diagnostic.errorCode,
-        httpStatus: diagnostic.httpStatus,
-    };
-    // Preserve the exception identity for non-Action consumers (including HTTP custody).
-    // The Action exception projector consumes this existing private diagnostic carrier.
-    if (error instanceof Error) {
+    const projected = projectActionFailureCauseV1(error, `connected_accounts.${operation}`);
+    const authoredCode = readActionErrorCodeV1(error);
+    const code = authoredCode ?? projected.errorCode ?? 'action_failed';
+    const failureCause = { ...projected, errorCode: projected.errorCode ?? code };
+    // Typed custody errors retain their identity. Untyped adapter failures leave
+    // the host with a code and sanitized cause, never arbitrary exception prose.
+    const failure = authoredCode ? error : new PluginError({
+        code, message: 'Connected Account materialization failed', retryable: true, failureCause,
+    }, { cause: error });
+    if (failure instanceof Error) {
         try {
-            withActionFailureCauseDiagnostic(error, { name: failureCause.errorClass, code: failureCause.errorCode, status: failureCause.httpStatus }, failureCause.phase);
+            withActionFailureCauseDiagnostic(failure, { failureCause }, failureCause.phase);
             // Prose remains private until the existing host diagnostic redactor projects it.
-            withActionFailureDiagnostic(error, { phase: failureCause.phase, causeKind: 'native_failure', error });
+            withActionFailureDiagnostic(failure, { phase: failureCause.phase, causeKind: 'native_failure', error });
         }
         catch { /* A frozen exception still reaches the file diagnostic below. */ }
     }
@@ -220,7 +218,7 @@ function materializationFailure(error: unknown, seed: PluginInvocationServicesSe
             stackFrames: diagnostic.stackFrames,
         });
     } catch { /* File logging cannot replace the materialization failure. */ }
-    return error;
+    return failure;
 }
 
 function listingOutOfScope(): PluginError {

@@ -22,6 +22,8 @@ import {
   resolveSentryEvidenceReference,
 } from './reference.js';
 import { decodeSentryEvidenceCandidate } from './candidate.js';
+import { readSentryEvent } from '../source/detailOperations.js';
+import { SENTRY_ACTION_IDS } from '../sentryContracts.js';
 
 const ORIGIN = 'https://de.sentry.io';
 const ORGANIZATION_ID = '7701';
@@ -153,23 +155,22 @@ function host(
     kind: 'httpHeaders' as const,
     headers: { authorization: 'Bearer secret' },
   }));
-  const executeAction = vi.fn(async () => ({
+  // The Account Action transport is outside this plugin; execute its real read below.
+  const executeAction = vi.fn(async (ref: { pluginId: string; localId: string }, input: unknown) => ref.localId === SENTRY_ACTION_IDS.readEvent
+    ? await readSentryEvent(input, context) : ({
     kind: 'read' as const,
     instances: [{ v: 1 as const, lifecycle: 'active' as const, configured: currentInstance }],
     status: 'complete' as const,
   }));
+  const context = {
+    signal: new AbortController().signal,
+    services: { actions: { execute: executeAction }, connectedAccounts: { materializeListedAccount }, http: { request } },
+  } as unknown as PluginInvocationContext;
   return {
     request,
     materializeListedAccount,
     executeAction,
-    context: {
-      signal: new AbortController().signal,
-      services: {
-        actions: { execute: executeAction },
-        connectedAccounts: { materializeListedAccount },
-        http: { request },
-      },
-    } as unknown as PluginInvocationContext,
+    context,
   };
 }
 

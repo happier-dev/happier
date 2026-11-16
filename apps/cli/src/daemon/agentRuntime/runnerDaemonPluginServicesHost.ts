@@ -112,7 +112,7 @@ export function projectRunnerDaemonPluginServicesFailure(
     // adapter boundary. Consume that sanitized owner result through wrappers.
     const actionCause = projectActionFailureCauseV1(error);
     const causeCode = RunnerDaemonPluginServicesPreparationCauseV1Schema.shape.code.safeParse(
-        admissionReasonCode ?? candidateCode ?? actionCause.errorCode
+        admissionReasonCode ?? actionCause.errorCode ?? candidateCode
         ?? (actionCause.errorClass === 'TypeError' || actionCause.errorClass === 'RangeError'
             || actionCause.errorClass === 'SyntaxError' ? actionCause.errorClass : undefined),
     );

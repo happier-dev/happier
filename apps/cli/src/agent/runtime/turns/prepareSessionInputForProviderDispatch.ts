@@ -1,6 +1,7 @@
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { readSessionPreparationFailureCode, RunnerDaemonPluginServicesPreparationCauseV1Schema, type RunnerDaemonPluginServicesPreparationCauseV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { RunnerDaemonPluginServicesPreparationCauseV1Schema, type RunnerDaemonPluginServicesPreparationCauseV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { projectSessionInputReferencesV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { formatFileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
@@ -14,7 +15,6 @@ import { normalizePermissionModeQueuedPromptLocalIds, type PermissionModeQueuedP
 import { SessionInputDispatchAdmissionError } from '@/api/session/sessionInputDispatchAdmissionError';
 import type { SessionClientInteractionApi } from '@/api/session/client/transport/sessionClientInteractionApi';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
-import { inspectOwnErrorCodeDataProperty } from '@/agent/runtime/session/process/agentRuntimeBridgeError';
 import { DiscussionAttachmentPreparationError, type DiscussionAttachmentDispatchInput,
   type DiscussionAttachmentDispatchResult } from '@/discussions/materializeDiscussionInputAttachments';
 import {
@@ -76,6 +76,19 @@ export type SessionInputDispatchServices = Readonly<{
     selection?: ProviderBoundModelRef; readSelection?: () => ProviderBoundModelRef }>;
 }>;
 
+function readComposerPreparationCause(error: unknown): RunnerDaemonPluginServicesPreparationCauseV1 | undefined {
+  const details = isPluginError(error) ? error.details : undefined;
+  const retained = RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse(
+    details && typeof details === 'object' && 'cause' in details ? details.cause
+      : error instanceof Error ? Object.getOwnPropertyDescriptor(error, 'preparationCause')?.value : undefined,
+  );
+  if (retained.success) return retained.data;
+  const projected = RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse({
+    code: projectActionFailureCauseV1(error).errorCode, stage: 'dispatch',
+  });
+  return projected.success ? projected.data : undefined;
+}
+
 /** Resolve one message's current reference context once for budgeting and final dispatch. */
 export async function resolveSessionInputForProviderDispatch(input: Readonly<{
   prompt: PermissionModeQueuedPrompt;
@@ -114,7 +127,16 @@ export async function resolveSessionInputForProviderDispatch(input: Readonly<{
     catalogs: services?.catalogs,
     signal: input.signal,
     ...(services?.resolveComposerReference ? { composerReferences: {
-      resolve: services.resolveComposerReference,
+      resolve: async request => {
+        try {
+          return await services.resolveComposerReference!(request);
+        } catch (error) {
+          if (isAbortLikeError(error) || error instanceof StructuredInputComposerReferenceUnavailableError) throw error;
+          throw new StructuredInputComposerReferenceUnavailableError(
+            isPluginError(error) ? error.retryable : true, readComposerPreparationCause(error),
+          );
+        }
+      },
       signal: input.signal,
     } } : {}),
     ...(attachmentResolver && sessionId && input.localId ? { composerAttachments: {
@@ -127,24 +149,11 @@ export async function resolveSessionInputForProviderDispatch(input: Readonly<{
         } catch (error) {
           if (isAbortLikeError(error) || error instanceof StructuredInputComposerAttachmentResolutionError) throw error;
           const pluginError = isPluginError(error);
-          const pluginDetails = pluginError ? error.details : undefined;
-          const pluginCause = pluginDetails && typeof pluginDetails === 'object' && 'cause' in pluginDetails
-            ? pluginDetails.cause : undefined;
-          const retainedCause = RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse(pluginError
-            ? pluginCause
-            : error instanceof Error ? Object.getOwnPropertyDescriptor(error, 'preparationCause')?.value : undefined);
-          const errorCode = inspectOwnErrorCodeDataProperty(error);
-          const preparationCause = retainedCause.success ? retainedCause
-            : RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse({
-              code: pluginError ? error.code : errorCode.kind === 'string'
-                ? readSessionPreparationFailureCode(errorCode.value) : undefined,
-              stage: 'dispatch',
-            });
           throw new StructuredInputComposerAttachmentResolutionError(
             'composer_attachment_resolution_failed',
             pluginError ? error.retryable : true,
             'Composer attachment resolver failed before provider dispatch',
-            preparationCause.success ? preparationCause.data : undefined,
+            readComposerPreparationCause(error),
           );
         }
       },
@@ -284,7 +293,8 @@ export function readStructuredInputPreparationFailure(error: unknown): Readonly<
     return {
       code: error.code,
       message: error.message,
-      retryable: true,
+      retryable: error.retryable,
+      ...(error.preparationCause ? { preparationCause: error.preparationCause } : {}),
     };
   }
   if (error instanceof StructuredInputSessionMediaProjectionError) {

@@ -16,8 +16,8 @@ import { deriveSentryCollisionScope } from '../instances/sentryCollisionScope.js
 import {
   type SentryEventProjectionV1,
 } from '../privacy/sentryEventProjection.js';
-import { SENTRY_ENTRY_KIND_ID } from '../sentryContracts.js';
-import { readSentryEvent } from '../source/detailOperations.js';
+import { SENTRY_ACTION_IDS, SENTRY_ENTRY_KIND_ID, SENTRY_PLUGIN_ID } from '../sentryContracts.js';
+import { SentryReadEventResultV1Schema } from '../detail/detailContracts.js';
 
 import {
   decodeSentryEvidenceCandidate,
@@ -32,10 +32,12 @@ export {
   deriveSentryEvidenceInstanceDigest,
 } from './candidate.js';
 
-function unavailableEvidence(reason: string): PluginError {
+function unavailableEvidence(reason: string, retryable = false): PluginError {
   return new PluginError({
     code: 'sentry/evidence-unavailable',
     message: `The selected Sentry evidence is unavailable (${reason}).`,
+    retryable,
+    failureCause: { phase: 'composer_reference.resolve', errorClass: 'Error', errorCode: reason, httpStatus: null },
   });
 }
 
@@ -233,7 +235,9 @@ export async function resolveSentryEvidenceReference(
   const instance = current.instance;
   const invoked = decodeSentryLocalInstanceKey(instance.localInstanceKey);
   if (!invoked.ok) throw unavailableEvidence('configured-source-invalid');
-  const result = await readSentryEvent({
+  const result = SentryReadEventResultV1Schema.parse(await context.services.actions.execute({
+    pluginId: SENTRY_PLUGIN_ID, localId: SENTRY_ACTION_IDS.readEvent,
+  }, {
     v: 1,
     instance,
     localRef: {
@@ -242,9 +246,12 @@ export async function resolveSentryEvidenceReference(
       entryId: candidate.entryId,
     },
     selector: { kind: 'event', eventId: candidate.eventId },
-  }, context);
-  if (result.kind !== 'event' || result.projection.eventId !== candidate.eventId) {
-    throw unavailableEvidence(result.kind === 'event' ? 'event-changed' : result.failure.code);
+  }, { signal: context.signal }));
+  if (result.kind !== 'event') {
+    throw unavailableEvidence(result.failure.code, result.failure.class === 'transient');
+  }
+  if (result.projection.eventId !== candidate.eventId) {
+    throw unavailableEvidence('event-changed');
   }
   return selectedEvidenceResolution(
     candidateId,
