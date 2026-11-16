@@ -41,11 +41,11 @@ describe('Voice Start selection admission through the Action executor', () => {
                 identity: { callerCreationNamespace: 'user', creationKey: 'voice-configured-acp-root' },
                 recipe: { execution: { machineId: 'machine-1', directory: { kind: 'path', path: '/project' } },
                     organization: { folderId: null, tagIds: [] }, agentTarget },
-            }), runtimeDescriptorV1: { v: 1, agentId: 'custom-acp', agent: {} },
+            }), runtimeDescriptorV1: { v: 1, agentId: 'custom-acp', agent: { definitionId: 'qa-foldseed-acp' } },
         }, directory: '/project' });
         const targetKey = 'agent:happier.agent.custom-acp/custom-acp:definition:qa-foldseed-acp';
         const ownerMetadata = { ...projectCurrentAgentSessionView(committed, { agentId: 'custom-acp',
-            runtimeDescriptor: { v: 1, agentId: 'custom-acp', agent: {} },
+            runtimeDescriptor: { v: 1, agentId: 'custom-acp', agent: { definitionId: 'qa-foldseed-acp' } },
             ...(shape === 'legacy' ? { configuredBackend: { v: 1 as const, backendId: 'qa-foldseed-acp', title: 'QA Voice OpenCode ACP', updatedAt: 1 } } : {}),
         }), sessionModelsV1: { v: 1, agentId: 'custom-acp', updatedAt: 1, currentModelId: 'opencode/big-pickle',
             availableModels: [{ id: 'opencode/big-pickle', name: 'Big Pickle' }],

@@ -196,7 +196,7 @@ describe('VoiceHistoryScreen', () => {
     dom?.window.close();
   });
 
-  it('stops a cold list at its first header pages and fetches the next pages only on Load more', async () => {
+  it('stops a cold list at its first selected header pages and fetches the next pages only on Load more', async () => {
     const { createDefaultVoiceHistoryConsumer } = await import('./defaultVoiceHistoryConsumer');
     const { buildSystemSessionMetadataV1 } = await import('@happier-dev/protocol/sessions/control/contract');
     const { SessionListQueryV1Schema, SESSION_LIST_PAGE_DEFAULT_LIMIT } = await import('@happier-dev/protocol/sessions/listing/query');
@@ -224,11 +224,11 @@ describe('VoiceHistoryScreen', () => {
           ...(voice ? buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) : {}) } }),
       { credentials: account.credentials, mode: 'plain' },
     );
-    // Both server pages are full and retain cursors. Eight Voice rows already
-    // exceed the four visible rows measured on Account A's 577px viewport.
+    // The Session-list owner fills selected pages. Both first pages contain a
+    // full page of Voice headers and retain cursors for an explicit Load more.
     const [active, archived, older] = await Promise.all([
-      Promise.all(Array.from({ length: SESSION_LIST_PAGE_DEFAULT_LIMIT }, (_, index) => makeRow(`first-active-${index}`, index < 8, false))),
-      Promise.all(Array.from({ length: SESSION_LIST_PAGE_DEFAULT_LIMIT }, (_, index) => makeRow(`first-archived-${index}`, false, true))),
+      Promise.all(Array.from({ length: SESSION_LIST_PAGE_DEFAULT_LIMIT }, (_, index) => makeRow(`first-active-${index}`, true, false))),
+      Promise.all(Array.from({ length: SESSION_LIST_PAGE_DEFAULT_LIMIT }, (_, index) => makeRow(`first-archived-${index}`, true, true))),
       makeRow('demanded-older-voice', true, false),
     ]);
     const requests: Array<{ storage: string; cursor: string | undefined }> = [];
@@ -1210,14 +1210,14 @@ describe('VoiceHistoryScreen', () => {
           serverId={target.params.serverId} pendingMessages={[pending]} discardedMessages={[]} />);
         expect(writes).toEqual([]);
         await act(async () => { destination.pressByTestId('pendingMessages.sendAsNew:held-input'); });
-        await waitForTestEvent(destination.subscribe, () => expect(destination.findHostByTestId('web-modal-confirm')).not.toBeNull());
+        await waitForTestEvent(destination.subscribe, () => expect(destination.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
         expect(writes).toEqual([]);
-        await destination.pressByTestIdAsync('web-modal-cancel');
+        await destination.pressByTestIdAsync('actions.confirmation-review.decision-reject');
         expect(writes).toEqual([]);
         expect(destination.findByTestId('pendingMessages.sendAsNew:held-input')).not.toBeNull();
         await act(async () => { destination.pressByTestId('pendingMessages.sendAsNew:held-input'); });
-        await waitForTestEvent(destination.subscribe, () => expect(destination.findHostByTestId('web-modal-confirm')).not.toBeNull());
-        await destination.pressByTestIdAsync('web-modal-confirm');
+        await waitForTestEvent(destination.subscribe, () => expect(destination.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        await destination.pressByTestIdAsync('actions.confirmation-review.decision-approve');
         const { WebAlertModal } = await import('@/modal/components/WebAlertModal');
         await waitForTestEvent(destination.subscribe, () => {
           const alert = destination.findAllByType(WebAlertModal).find(node => node.props.config.type === 'alert');

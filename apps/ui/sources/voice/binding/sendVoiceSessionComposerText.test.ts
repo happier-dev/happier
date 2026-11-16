@@ -399,7 +399,7 @@ describe('Voice composer through Sync HTTP custody', () => {
     it('blocks a typed before-effect rejection when the public provider lifecycle changes carrier during enqueue HTTP', async () => {
         changeControlBeforeEnqueueAck = true;
         expect(await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'hello', localId: 'carrier-changed',
-            getAdapter: getVoiceAdapterRegistry().get })).toEqual({ ok: false, reason: 'terminal_rejected', localId: 'carrier-changed',
+            getAdapter: getVoiceAdapterRegistry().get })).toMatchObject({ ok: false, reason: 'terminal_rejected', localId: 'carrier-changed',
                 errorCode: 'VOICE_TEXT_TURN_REJECTED_BEFORE_EFFECT', message: 'voice_transcript_carrier_changed' });
         expect(providerMessages).toEqual([]);
         expect(deliveryStatus).toEqual({ status: 'blocked', reason: 'provider_rejected_before_acceptance' });
@@ -479,7 +479,9 @@ describe('Voice composer through Sync HTTP custody', () => {
         const result = await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'hello', localId: 'provider-failed',
             getAdapter: getVoiceAdapterRegistry().get,
         });
-        expect(result).toEqual({ ok: true, localId: 'provider-failed', disposition: 'ambiguous', message: 'voice_service_unavailable' });
+        expect(result).toMatchObject({ ok: true, localId: 'provider-failed', disposition: 'ambiguous', message: 'voice_service_unavailable',
+            failureCause: expect.objectContaining({ phase: 'voice.runtime' }) });
+        expect(JSON.stringify(result)).not.toContain('/Users/private/transcript');
         expect(providerMessages).toEqual(['hello']);
         expect(pendingRows()).toEqual([expect.objectContaining({ localId: 'provider-failed', pendingDeliveryStatus: 'blocked',
             pendingDeliveryBlockedReason: 'delivery_outcome_uncertain' })]);
@@ -604,7 +606,8 @@ describe('Voice composer through Sync HTTP custody', () => {
         const result = await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'hello', localId: 'untyped-error',
             getAdapter: getVoiceAdapterRegistry().get,
         });
-        expect(result).toEqual({ ok: true, localId: 'untyped-error', disposition: 'ambiguous', message: 'voice_service_unavailable' });
+        expect(result).toMatchObject({ ok: true, localId: 'untyped-error', disposition: 'ambiguous', message: 'voice_service_unavailable',
+            failureCause: expect.objectContaining({ phase: 'voice.runtime' }) });
         await sync.fetchPendingMessages('carrier-s1');
         expect(pendingRows()).toEqual([expect.objectContaining({ localId: 'untyped-error', pendingDeliveryStatus: 'blocked',
             pendingDeliveryBlockedReason: 'delivery_outcome_uncertain' })]);
@@ -956,12 +959,13 @@ describe('Voice composer through Sync HTTP custody', () => {
                 const failure = dispatch.mock.settledResults[0];
                 expect(failure?.type).toBe('rejected');
                 if (failure?.type !== 'rejected' || !(failure.value instanceof Error)) throw new Error('Actual native direct-session failure was not observable');
-                expect(result).toEqual({ ok: true, localId, disposition: 'ambiguous', message: failure.value.message });
+                expect(result).toMatchObject({ ok: true, localId, disposition: 'ambiguous', message: failure.value.message,
+                    failureCause: expect.objectContaining({ phase: 'voice.runtime' }) });
             } else if (outcome === 'selection-unavailable' || outcome === 'target-offline') expect(result).toMatchObject({ ok: false, localId,
                 reason: 'terminal_rejected', message: outcome === 'selection-unavailable' ? 'voice_agent_selection_unavailable' : expect.any(String) });
             else if (outcome === 'aborted-settlement-failed') expect(result).toMatchObject({ ok: true, localId,
                 disposition: 'accepted_unsettled', message: expect.stringContaining('pending settlement failed:') });
-            else expect(result).toEqual(outcome === 'unacknowledged'
+            else expect(result).toMatchObject(outcome === 'unacknowledged'
                 ? { ok: true, localId, disposition: 'ambiguous', message: 'send_failed' }
                 : { ok: true, localId, disposition: 'settled' });
             expect(httpEvents.filter(event => event.startsWith('settle:'))).toEqual(acceptsTranscript ? [`settle:${localId}`] : []);

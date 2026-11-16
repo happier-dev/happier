@@ -34,7 +34,7 @@ import {
 } from '@happier-dev/protocol/voice/toolResultsChannel';
 import { buildToolResultsFollowUpPrompt } from '@/voice/context/buildVoiceToolResultsFollowUp';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
-import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
+import { isActionDiscoverableOnToolSurface } from '@happier-dev/protocol/actions/actionToolExposure';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { createPlainV2SessionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { NotificationChannelCatalogRecordV1Schema, NotificationChannelCatalogMutationV1Schema,
@@ -508,7 +508,7 @@ describe('Voice Action reference catalog', () => {
       .toMatchObject({ ok: false, errorCode: 'session_not_selected' });
   });
   it.each(['ui', 'voice', 'voice-disabled'] as const)('discovers a displayed Voice preference and settles its approval through %s', async decisionPath => {
-    expect(isActionDirectToolExposedOn(getActionSpec('settings.list'), 'agent')).toBe(true);
+    expect(isActionDiscoverableOnToolSurface(getActionSpec('settings.list'), 'agent')).toBe(true);
     const serverId = await home.addHome({ name: 'Global Voice settings', serverUrl: 'https://global-voice-settings.test',
       accountId: 'alice', currentAccount: true });
     const features = createRootLayoutFeaturesResponse();

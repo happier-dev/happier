@@ -14,6 +14,7 @@ import { DaemonVoiceSpeechTranscribeUploadInitResponseSchema, DaemonVoiceSpeechT
 } from '@happier-dev/protocol/daemon/voiceSpeech';
 import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 
 const { createPluginUiExecutableModuleHost } = await import("@/components/plugins/reactNative/executableModuleHost");
 const { EMPTY_PLUGIN_UI_PROJECTION } = await import("@/sync/domains/plugins/ui/projection");
@@ -57,8 +58,7 @@ beforeEach(async () => {
     });
     network.setRpcResponder(async request => await machineRpc(request));
     const machines = ['machine-selected', 'machine-attempt', 'machine-other'].map(id => createMachineFixture({ id, activeAt: Date.now() }));
-    storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-        machineListByServerId: { ...initialLists, [account.home.id]: machines } });
+    await publishMachineInventoryForTest({ serverId: account.home.id, accountId: 'artifact-account' }, machines);
     selectMachine('machine-selected');
     const recipient = createTransferRecipientKeyPair();
     machineRpc.mockReset();
