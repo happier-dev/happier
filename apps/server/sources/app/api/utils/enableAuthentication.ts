@@ -195,7 +195,8 @@ export function enableAuthentication(app: Fastify) {
             const [routeSessionId, ...additionalSessionIds] = routeSessionIds;
             const proof = {
                 onRefusal: (phase: ExternalActionAuthorizationRefusalPhase, failure?: ActionExecuteFailure) => {
-                    authorizationRefusal = phase;
+                    // The innermost owner refuses first; an enclosing carrier refusal must not mask its cause.
+                    authorizationRefusal ??= phase;
                     if (failure) authorizationFailure = failure;
                 },
                 authorizationToken: executionAuthorization,

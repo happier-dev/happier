@@ -203,7 +203,7 @@ export type DeploymentRootBindingAdmission =
       ok: true;
       deploymentLinkAdmission?: NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']>;
     }>
-  | Readonly<{ ok: false; code?: Extract<DeploymentPreparationAuthorization, { ok: false }>['code'] }>;
+  | Readonly<{ ok: false; code?: Extract<DeploymentPreparationAuthorization, { ok: false }>['code']; placement?: ActionExecuteFailure }>;
 
 /**
  * The one admission of a parsed root binding's deployment facts: Link,

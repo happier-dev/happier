@@ -19,7 +19,8 @@ import { MACHINE_SERVICE_ADOPT_ACTION_ID, MACHINE_SERVICE_ADOPT_CREATE_ROLE_V1,
     MACHINE_SERVICE_ADOPT_BINDINGS_ROLE_V1 } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, readCreatedDeploymentEnvironmentIdInTx,
     type DeploymentEnvironmentRow } from './deploymentEnvironmentService';
-import { admitDeploymentMachineInTx, type DeploymentAuthentication } from './deploymentAdmission';
+import { admitDeploymentMachineInTx, projectDeploymentSourceMachinePlacementFailure, type DeploymentAuthentication } from './deploymentAdmission';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readPreviewCompanionMainInTx } from './previewEnvironmentRelation';
 import { deploymentInProgressStates, readAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
 import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentTargetLinkInputV1Schema,
@@ -708,7 +709,18 @@ export function createDeploymentCandidateArtifactMutationGuard(input: Readonly<{
 }
 
 export type DeploymentPreparationAuthorization = Readonly<{ ok: true }>
-    | Readonly<{ ok: false; code: 'credential_scope_denied' | 'source_access_denied' | 'source_changed' }>;
+    | Readonly<{ ok: false; code: 'credential_scope_denied' | 'source_access_denied' | 'source_changed'; placement?: ActionExecuteFailure }>;
+
+const preparationScopeDenied = { ok: false, code: 'credential_scope_denied' } as const;
+
+/** A Source owner that may manage but cannot use the Machine keeps the Machine owner's share remedy. */
+async function admitPreparationMachineInTx(tx: Tx, owner: ProjectSourceOwnerV1, machineId: string,
+    installationId: string): Promise<DeploymentPreparationAuthorization> {
+    const failure = await admitDeploymentMachineInTx(tx, owner, machineId, 'target', installationId);
+    if (!failure) return { ok: true };
+    const placement = projectDeploymentSourceMachinePlacementFailure(failure);
+    return placement ? { ...preparationScopeDenied, placement } : preparationScopeDenied;
+}
 
 async function readCreateSource(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     admission: CreateAdmission, authentication: DeploymentAuthentication): Promise<DeploymentPreparationAuthorization> {
@@ -1457,17 +1469,25 @@ export async function readAdmittedCreateDeploymentEnvironmentCustodyInTx(tx: Tx,
 export async function isTemplateInstantiationAuthorizedInTx(tx: Tx,
     binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'actionId' | 'machineId' | 'installationId' | 'serverIdentityId'>,
     admission: TemplateAdmission, authentication: DeploymentAuthentication): Promise<boolean> {
+    return (await readTemplateInstantiationAuthorizationInTx(tx, binding, admission, authentication)).ok;
+}
+
+async function readTemplateInstantiationAuthorizationInTx(tx: Tx,
+    binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'actionId' | 'machineId' | 'installationId' | 'serverIdentityId'>,
+    admission: TemplateAdmission, authentication: DeploymentAuthentication): Promise<DeploymentPreparationAuthorization> {
     if (binding.actionId !== DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
-        || admission.environment.kind === 'create' && admission.environment.controllerMachineId !== binding.machineId) return false;
+        || admission.environment.kind === 'create' && admission.environment.controllerMachineId !== binding.machineId) return preparationScopeDenied;
     const source = admission.source ? await resolveProjectSourceAccessInTx(tx, binding.accountId, admission.source.id, authentication) : null;
     const owner = admission.newProject?.owner ?? (source?.ok ? source.owner : null);
     if (!owner || (admission.newProject ? !await canManageProjectSourceOwnerInTx(tx, binding.accountId, owner, authentication)
-        : !source?.ok || !source.canManageOwner) || await admitDeploymentMachineInTx(tx, owner,
-        admission.machineId, 'target', admission.target.installationId)) return false;
+        : !source?.ok || !source.canManageOwner)) return preparationScopeDenied;
+    const machine = await admitPreparationMachineInTx(tx, owner, admission.machineId, admission.target.installationId);
+    if (!machine.ok) return machine;
     const environmentId = await readTemplateEnvironmentId(tx, binding, admission);
-    if (!environmentId) return admission.environment.kind === 'create' && admission.target.kind === 'new';
+    if (!environmentId) return admission.environment.kind === 'create' && admission.target.kind === 'new' ? { ok: true } : preparationScopeDenied;
     const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId, environmentId, authentication);
-    return loaded.ok && loaded.admission.canManage && matchesTemplateEnvironmentScopeInTx(tx, binding, admission, loaded.row);
+    return loaded.ok && loaded.admission.canManage && await matchesTemplateEnvironmentScopeInTx(tx, binding, admission, loaded.row)
+        ? { ok: true } : preparationScopeDenied;
 }
 
 /** The signed root already admitted its requester; later steps retain only its selected relations. */
@@ -1544,12 +1564,27 @@ export async function readDeploymentPreparationAuthorizationInTx(tx: Tx, binding
     admission: DeploymentPreparationAdmissionV1, authentication: DeploymentAuthentication = {},
 ): Promise<DeploymentPreparationAuthorization> {
     if (admission.operation === 'create') return readCreateSource(tx, binding, admission, authentication);
+    if (admission.operation === 'template') return readTemplateInstantiationAuthorizationInTx(tx, binding, admission, authentication);
+    if (admission.operation === 'catalog') return readCatalogPreparationAuthorizationInTx(tx, binding, admission, authentication);
     return await isOtherDeploymentPreparationAuthorizedInTx(tx, binding, admission, authentication)
-        ? { ok: true } : { ok: false, code: 'credential_scope_denied' };
+        ? { ok: true } : preparationScopeDenied;
+}
+
+async function readCatalogPreparationAuthorizationInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    admission: Extract<DeploymentPreparationAdmissionV1, { operation: 'catalog' }>, authentication: DeploymentAuthentication,
+): Promise<DeploymentPreparationAuthorization> {
+    if (binding.actionId !== deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || admission.machineId !== binding.machineId
+        || admission.installationId !== binding.installationId) return preparationScopeDenied;
+    if (admission.newProject) return await canManageProjectSourceOwnerInTx(tx, binding.accountId, admission.newProject.owner, authentication)
+        ? admitPreparationMachineInTx(tx, admission.newProject.owner, admission.machineId, admission.installationId) : preparationScopeDenied;
+    if (!admission.source) return preparationScopeDenied;
+    const source = await resolveProjectSourceAccessInTx(tx, binding.accountId, admission.source.id, authentication);
+    return source.ok && source.canManageOwner && source.source.revision === admission.source.revision
+        ? admitPreparationMachineInTx(tx, source.owner, admission.machineId, admission.installationId) : preparationScopeDenied;
 }
 
 async function isOtherDeploymentPreparationAuthorizedInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
-    admission: Exclude<DeploymentPreparationAdmissionV1, { operation: 'create' }>, authentication: DeploymentAuthentication,
+    admission: Exclude<DeploymentPreparationAdmissionV1, { operation: 'create' | 'template' | 'catalog' }>, authentication: DeploymentAuthentication,
 ): Promise<boolean> {
     if (admission.operation === 'setup') {
         if (deploymentPreparationOperationForActionV1(binding.actionId) !== 'setup') return false;
@@ -1565,17 +1600,6 @@ async function isOtherDeploymentPreparationAuthorizedInTx(tx: Tx, binding: Exter
             if (!await readSetupDeploymentEnvironment(tx, binding, selected, authentication)) return false;
         }
         return true;
-    }
-    if (admission.operation === 'template') return isTemplateInstantiationAuthorizedInTx(tx, binding, admission, authentication);
-    if (admission.operation === 'catalog') {
-        if (binding.actionId !== deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || admission.machineId !== binding.machineId
-            || admission.installationId !== binding.installationId) return false;
-        if (admission.newProject) return await canManageProjectSourceOwnerInTx(tx, binding.accountId, admission.newProject.owner, authentication)
-            && !await admitDeploymentMachineInTx(tx, admission.newProject.owner, admission.machineId, 'target', admission.installationId);
-        if (!admission.source) return false;
-        const source = await resolveProjectSourceAccessInTx(tx, binding.accountId, admission.source.id, authentication);
-        return source.ok && source.canManageOwner && source.source.revision === admission.source.revision
-            && !await admitDeploymentMachineInTx(tx, source.owner, admission.machineId, 'target', admission.installationId);
     }
     if (deploymentPreparationOperationForActionV1(binding.actionId) !== admission.operation) return false;
     if (admission.source) {

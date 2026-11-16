@@ -1187,6 +1187,44 @@ describe('reviewed create preparation authority', () => {
     });
 
     it.each(['deployments.templates.instantiate', 'deployments.publish.prepare'] as const)(
+        'refuses a new Team project on an unshared Machine at %s mint with the share remedy, and admits it once shared', async actionId => {
+        const f = await fixture();
+        const team = await db.team.create({ data: { name: 'Team project placement' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: f.actor.id, role: 'owner' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+        const newProject = { name: 'Team project', requestKey: crypto.randomUUID(), owner: { kind: 'team' as const, teamId: team.id } };
+        const templateRef = { sourceId: 'apps', itemId: 'web', version: '1',
+            ref: { kind: 'content' as const, digest: `sha256:${'c'.repeat(64)}` } };
+        const instantiateInput = {
+            mode: 'preview' as const, serverId, machineId: f.machine.id, newProject, templateRef,
+            environment: { kind: 'create' as const, name: 'Team app', requestKey: crypto.randomUUID(),
+                protection: 'nonProduction' as const, purpose: 'standard' as const, deployerMode: 'managers' as const,
+                controllerMachineId: f.machine.id },
+            target: { kind: 'new' as const, installationId: f.machine.installationId! },
+            destination: { kind: 'stored' as const }, bindings: [],
+        };
+        const previewInput = { serverId, machineId: f.machine.id, installationId: f.machine.installationId!, newProject, templateRef };
+        const input = actionId === 'deployments.templates.instantiate' ? instantiateInput : previewInput;
+        const envelope = { v: 1 as const, requestId: f.binding.requestId, target: f.binding.target, input };
+        const mintInput = { ...f.binding, actionId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input) };
+        // The Team owner's personal Machine is not the Team's workload Machine until it is shared.
+        await expect(auth.mintExternalActionExecutionAuthorization(mintInput, { input })).rejects.toMatchObject({
+            code: 'credential_scope_denied',
+            details: { reason: 'source_machine_access_missing', requiredFact: 'source_machine_use', remedy: 'share_machine_with_source_owner' } });
+        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: f.actor.id,
+            machineId: f.machine.id, principal: { kind: 'team', teamId: team.id }, level: 'view' })))
+            .toMatchObject({ kind: 'saved' });
+        await expect(auth.mintExternalActionExecutionAuthorization(mintInput, { input }))
+            .resolves.toMatchObject({ binding: { actionId } });
+        // A role-less member stays refused without learning the placement remedy.
+        await expect(auth.mintExternalActionExecutionAuthorization({ ...mintInput, accountId: member.id, custodianAccountId: member.id },
+            { input })).rejects.toMatchObject({ code: 'credential_scope_denied', details: undefined });
+    });
+
+    it.each(['deployments.templates.instantiate', 'deployments.publish.prepare'] as const)(
         'retains admitted Source Manage through the first %s Source read after membership withdrawal', async actionId => {
         const f = await fixture();
         const team = await db.team.create({ data: { name: 'Admitted preparation Source' } });

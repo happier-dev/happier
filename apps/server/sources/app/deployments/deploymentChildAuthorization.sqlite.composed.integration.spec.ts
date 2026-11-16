@@ -6357,6 +6357,62 @@ describe('deployment children retain their controller Action authority', () => {
         expect(writes).toEqual([]);
     });
 
+    it('admits a draft DNS preview on its controller guest and reports another Machine\'s child as its typed placement cause', async () => {
+        const f = await fixture();
+        // Own-server guest shape: one Machine is controller, builder and the only runtime member.
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { machines: { deleteMany: {},
+            create: [{ machineId: f.controller.id, installationId: f.controller.installationId, position: 0, state: 'active' }] } } });
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { buildMachineId: f.controller.id } });
+        const link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } });
+        const actionId = 'deployments.domains.verify';
+        const input = { mode: 'preview' as const, serverId, environmentId: f.environment.id,
+            targetLinkId: f.link.id, expectedRevision: f.environmentRevision, expectedTargetLinkRevision: link.revision,
+            requestKey: crypto.randomUUID(), content: { hostname: 'localhost', target: { service: 'web', containerPort: 80 },
+                healthCheck: { path: '/', expectStatus: 200 }, tls: { kind: 'managed' as const } } };
+        const requestId = crypto.randomUUID();
+        const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
+        const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domainDns', actionId, input,
+            machineId: f.controller.id, installationId: f.controller.installationId });
+        const get = async (app: Parameters<Parameters<typeof withAuthenticatedTestApp>[1]>[0], params: DeploymentChildRpcV1,
+            caller: typeof f.controller = f.controller) => {
+            const target = { kind: 'machine' as const, machineId: caller.id };
+            const envelope = { v: 1 as const, requestId, target, input };
+            const deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+            const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                accountId: f.account.id, authentication, actionId, machineId: caller.id, target, requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input, deploymentNativeAdmission });
+            const method = params.machineId + ':' + RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, childRequestId = crypto.randomUUID();
+            const deploymentChildRouting = projectDeploymentChildRoutingV1(params);
+            const source = { method, requestId: childRequestId, params, originalActionEnvelope: envelope, externalActionExecution: {
+                v: 1 as const, authorization, effectActionId: actionId, target, installationId: caller.installationId,
+                deploymentChildRouting, machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: caller.installationId, method, requestId: childRequestId,
+                    params, deploymentChildRouting, privateKey: caller.keys.secretKey }) } };
+            const path = '/v1/machines/' + f.controller.id;
+            return app.inject({ method: 'GET', url: path, headers: {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]: encodeDeploymentChildExecutionV1(source),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: caller.installationId, requestId,
+                    method: 'GET', path, body: undefined, deploymentChildExecution: source, privateKey: caller.keys.secretKey }),
+            } });
+        };
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const opened = await get(app, job);
+            expect(opened.statusCode, opened.body).toBe(200);
+            expect(opened.json()).toMatchObject({ machine: { id: f.controller.id } });
+            // Run from another of the person's Machines (W1-OWNSERVER-LIFECYCLE-165): the child's typed
+            // admission cause reaches the caller instead of the HTTP carrier that consumed it.
+            const refused = await get(app, job, f.outsider);
+            expect(refused.statusCode, refused.body).toBe(401);
+            expect(refused.json()).toMatchObject({ authorizationRefusal: 'deployment_child_admission',
+                details: { reason: 'controller_placement_mismatch', requiredFact: `controllerMachineId=${f.controller.id}` } });
+        }, { authentication: 'real' });
+    });
+
     it.each([
         ['plain', 'domainDiscover'], ['e2ee', 'domainDiscover'],
         ['plain', 'domain'], ['e2ee', 'domain'],

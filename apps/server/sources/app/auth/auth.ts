@@ -806,7 +806,8 @@ class AuthModule {
             linkAuthenticationEvidence: 'authentication' in supplied
                 ? supplied.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
         });
-        if (!bindingAdmission.ok) throw new ApiTokenOperationError(bindingAdmission.code ?? 'credential_scope_denied');
+        if (!bindingAdmission.ok) throw new ApiTokenOperationError(bindingAdmission.code ?? 'credential_scope_denied', undefined,
+            bindingAdmission.placement?.details, bindingAdmission.placement?.failureCause);
         if (bindingAdmission.deploymentLinkAdmission) {
             supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied,
                 deploymentLinkAdmission: bindingAdmission.deploymentLinkAdmission });

@@ -31,13 +31,22 @@ export function deploymentFailure<TError extends Extract<DeploymentActionFailure
         log({ module: 'deployments', errorCode: error, diagnostic: safeDiagnostic })) : failure;
 }
 
-/** The admission owner supplies the recorded placement; callers never select a replacement controller. */
-export function projectDeploymentControllerPlacementFailure(controllerMachineId: string): ActionExecuteFailure {
+/** One placement refusal shape: credential_scope_denied carrying the deciding owner's next Action. */
+function projectDeploymentPlacementRefusal(details: Readonly<{ reason: string; requiredFact: string; remedy: string }>,
+    phase: string): ActionExecuteFailure {
     const error = Object.assign(new Error('credential_scope_denied'), { code: 'credential_scope_denied' });
-    return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
-        details: { reason: 'controller_placement_mismatch', requiredFact: `controllerMachineId=${controllerMachineId}`,
-            remedy: `Run this action on Machine ${controllerMachineId}, or make that controller reachable, then retry` },
-        failureCause: projectActionFailureCauseV1(error, 'deployment.controller.placement') };
+    return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', details,
+        failureCause: projectActionFailureCauseV1(error, phase) };
+}
+/** The root ran on another Machine than the Environment's recorded controller; callers never select a replacement. */
+export function projectDeploymentControllerPlacementFailure(controllerMachineId: string): ActionExecuteFailure {
+    return projectDeploymentPlacementRefusal({ reason: 'controller_placement_mismatch', requiredFact: `controllerMachineId=${controllerMachineId}`,
+        remedy: `Run this action on Machine ${controllerMachineId}, or make that controller reachable, then retry` }, 'deployment.controller.placement');
+}
+/** The Source owner principal cannot use the selected Machine (admitDeploymentMachinesInTx); other Machine failures stay bare. */
+export function projectDeploymentSourceMachinePlacementFailure(failure: DeploymentFailure): ActionExecuteFailure | undefined {
+    if (failure.error !== 'machine_unavailable' || failure.diagnostic?.reason !== 'source_machine_access_missing') return undefined;
+    return projectDeploymentPlacementRefusal(failure.diagnostic, 'deployment.source.machine_placement');
 }
 export interface DeploymentSourceAdmission {
     readonly source: ProjectSourceV1;
