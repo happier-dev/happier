@@ -299,6 +299,8 @@ export type CliActionDepsParams = Readonly<{
     'sessionCreationTag' | 'spawnNonce' | 'resumeOnly' | 'initialSessionRolesV1' | 'runtimeDescriptorV1'> & Readonly<{
       /** Portable Workflow null explicitly selects native authentication. */
       connectedServices?: null;
+      /** Placement retained by the original accepted Workflow run. */
+      sessionPlacement?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionPlacementSelectionV1;
       /** The original startup owner retains exact launch-retirement evidence. */
       projectCreationFailure?: (error: unknown) => import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1').SessionSpawnNewResultV1;
     }>;

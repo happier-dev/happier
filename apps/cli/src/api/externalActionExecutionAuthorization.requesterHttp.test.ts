@@ -57,6 +57,48 @@ const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
 });
 
 describe('requester HTTP authority on the existing external Action carrier', () => {
+  it('selects the saved Workflow Machine before reading and signing the original target', async () => {
+    const actionId = 'workflow.run.start';
+    const sessionPlacement = { kind: 'machine' as const,
+      target: { serverId: 'srv_bob_home', machineId: 'selected-machine' } };
+    const expectedTarget = { kind: 'machine' as const, machineId: 'selected-machine',
+      project: { machineId: 'selected-machine', directory: '/workspace', sessionPlacement } };
+    const machineReads: string[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      machineReads.push(path);
+      return { status: 200, data: { machine: { id: 'selected-machine', kind: 'persistent', active: true,
+        installationId: 'installation', revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null,
+        runnerContentKeyBinding: null, installationPublicKey: null,
+        access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } } };
+    });
+    let mintedTarget: unknown;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (String(url).endsWith('/execution-authorization')) {
+        const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+        mintedTarget = request.envelope.target;
+        return { status: 200, data: { v: 1, token: 'workflow-proof', binding: {
+          accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_bob_home',
+          machineId: 'selected-machine', custodianAccountId: 'bob', installationId: 'installation', actionId,
+          requestId: 'saved-machine-run', target: request.envelope.target, accountEncryptionMode: 'plain',
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+        } } };
+      }
+      return { status: 200, data: { v: 1, actionId, requestId: 'saved-machine-run',
+        execution: { ok: true, result: { kind: 'approval_request_created', artifactId: 'workflow-review', actionId } } } };
+    });
+    const result = await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId,
+      input: { runId: '00000000-0000-4000-8000-000000000001', source: { kind: 'inline', definition: { blocks: ['Review'] } } },
+      requestId: 'saved-machine-run', target: { kind: 'machine', machineId: 'history-machine',
+        project: { machineId: 'history-machine', directory: '/workspace', workspaceRefId: 'old-workspace', sessionPlacement } },
+      credentials: { token: accountToken, encryption: null }, serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home' });
+    expect(result).toMatchObject({ ok: true, result: { artifactId: 'workflow-review' } });
+    expect(machineReads).toContain('/v1/machines/selected-machine');
+    expect(machineReads).not.toContain('/v1/machines/history-machine');
+    expect(mintedTarget).toEqual(expectedTarget);
+  });
+
   it.each(['brokered', 'direct'] as const)('signs the exact reviewed provider child on a finite %s Team acquisition under its original root', async mode => {
     const admitted = await executionAuthorizationOwner.projectExternalActionRequesterHttpAuthorization({
       authorization, target, serverId: 'bob-profile', serverIdentityId: 'srv_bob_home',

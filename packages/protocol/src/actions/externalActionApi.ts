@@ -96,7 +96,7 @@ import {
   parseActionExecuteFailure,
   type ActionExecuteResult,
 } from './actionExecutionResult.js';
-import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { StrictJsonValueSchema, sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import {
   measurePluginJsonUtf8Bytes,
@@ -709,7 +709,8 @@ export function externalActionTargetsEqualV1(
   if (!left.project || !right.project) return left.project === right.project;
   return left.project.machineId === right.project.machineId
     && left.project.directory === right.project.directory
-    && left.project.workspaceRefId === right.project.workspaceRefId;
+    && left.project.workspaceRefId === right.project.workspaceRefId
+    && sameStrictJsonValue(left.project.sessionPlacement, right.project.sessionPlacement);
 }
 
 /**

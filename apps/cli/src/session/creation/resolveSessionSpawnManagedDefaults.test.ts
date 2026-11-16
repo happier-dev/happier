@@ -50,6 +50,32 @@ const initialPolicy = configuration.organizationPolicy;
 afterEach(() => { Object.defineProperty(configuration, 'organizationPolicy', { value: initialPolicy, configurable: true }); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('Session spawn defaults at admission', () => {
+  it.each(['configured', 'missing', 'preset-mismatch', 'machine'] as const)(
+    'honors an admitted Workflow selection through Machine policy (%s)', async scenario => {
+    const configured = { provisioner: { pluginId: 'example.sandbox', localId: 'sandbox' }, presetId: 'development-preset' };
+    const resolved = await resolveSessionSpawnManagedDefaults({
+      executionTarget: { serverId: 'home', machineId: 'machine' }, agentTarget: target,
+    }, {
+      agentId: 'codex', accountSettings: {}, organizationPolicy: { status: 'absent' },
+      openedMachineMetadata: { isolationPolicyV1: {
+        configuredSandboxes: scenario === 'missing' ? {} : { development: configured },
+        workKinds: { sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' },
+          automationsWorkflows: scenario === 'machine'
+            ? { kind: 'sandbox', configuredSandboxId: 'development', lifecycle: 'fresh' } : { kind: 'directly' } },
+      } },
+      startContext: { authority: 'account_automation', actionCaller: { kind: 'workflowRun', runId: 'run',
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } },
+      admittedWorkflowPlacement: { kind: 'machine', target: { serverId: 'home', machineId: 'machine' },
+        ...(scenario !== 'machine' ? { configuredSandbox: { kind: 'sandbox' as const, configuredSandboxId: 'development',
+          lifecycle: 'shared-kept' as const, ...configured, presetId: scenario === 'preset-mismatch' ? 'other-preset' : configured.presetId } } : {}) },
+      readTeam: async () => team(), readHome: async () => ({ homeDefaults: null }),
+    });
+    if (scenario === 'missing' || scenario === 'preset-mismatch') {
+      expect(resolved.resolveIsolation).toThrowError(expect.objectContaining({ errorCode: 'target_unavailable' }));
+    } else expect(resolved.resolveIsolation()).toMatchObject({ workKind: 'automationsWorkflows',
+      choice: { kind: 'sandbox', configuredSandboxId: 'development', lifecycle: scenario === 'machine' ? 'fresh' : 'shared-kept' },
+      configuredSandbox: configured });
+  });
   it('preserves explicit native authentication instead of reapplying a saved connected account', async () => {
     const resolved = await resolveSessionSpawnManagedDefaults({ executionTarget: { serverId: 'home', machineId: 'machine' },
       agentTarget: target, connectedServices: null }, {

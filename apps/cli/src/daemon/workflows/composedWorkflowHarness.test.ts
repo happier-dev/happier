@@ -190,8 +190,7 @@ import { createWorkflowProducerBinding } from './workflowScopeBinding';
 import { bindAutomationWorkflowInputs, isWorkflowJsonObject } from './input';
 import { createProductionWorkflowRunCoordinator } from './production';
 import { createWorkflowSessionStepExecutor, type WorkflowSessionStartup } from './sessionStepExecutor';
-import { runObservedWorkflowSessionStartup } from './workflowSessionStartup';
-import { createAdmittedWorkflowSessionHost } from './workflowSessionStartup.testkit';
+import { createAdmittedWorkflowSessionHost, runAdmittedObservedWorkflowSessionStartup as runObservedWorkflowSessionStartup } from './workflowSessionStartup.testkit';
 import { observeWorkflowInvocationRecoveryEvidence } from './invocationRecoveryObserver';
 import { readExecutionRunWorkflowObservationSink, type ExecutionRunWorkflowObservationSink } from '@/agent/runtime/bridges/executionRun/executionRunWorkflowObservation';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
@@ -262,6 +261,12 @@ let freshSessionNonceBoundary: ((request: unknown) => unknown) | null = null;
 let readinessCurrentness: AvailableAutomationAccountEncryptionV1['witness'] = currentness;
 
 async function readSessionReadiness(url: string) {
+  if (url.endsWith('/v2/account/settings')) return { status: 200,
+    data: { version: 1, content: { t: 'plain', v: {} } } };
+  if (url.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
+  if (url.endsWith('/v1/account/entity-rows/connected-accounts/purposes')) return { status: 200, data: {
+    status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } },
+  } };
   if (url.endsWith('/messages/reply-capability')) return { status: 200,
     data: SessionMessageReplyCapabilityV1Schema.parse({ v: 1, protocolVersions: [1] }) };
   if (/\/messages\/by-local-id\/[^/]+\/reply$/.test(new URL(url, 'http://workflow-home.test').pathname)) return { status: 200,
@@ -306,6 +311,10 @@ beforeEach(() => {
   readinessCurrentness = currentness;
   vi.spyOn(axios, 'get').mockImplementation(readSessionReadiness);
   vi.spyOn(axios, 'post').mockImplementation(writeSessionReadiness);
+  vi.spyOn(axios, 'request').mockImplementation(async ({ url }) => {
+    if (String(url).endsWith('/v1/home/governance/get')) return { status: 200, data: { homeDefaults: null } };
+    throw new Error(`Unexpected Home Action request: ${String(url)}`);
+  });
 });
 
 afterEach(async () => {
@@ -2254,18 +2263,16 @@ describe('composed Workflow front door and claimed execution', () => {
       'happier.agent.claude/anthropic': { source: 'native' as const },
     } };
     const definition: WorkflowDefinitionV1 = {
-      version: 1, inputs: [], defaults: nativeMetadata ? { acpSessionModeId: 'default', engine: {
-        agentTarget, modelSelection: { v: 1, ref: {
+      version: 1, inputs: [], defaults: nativeMetadata ? { acpSessionModeId: 'default', agentTarget, modelSelection: { v: 1, ref: {
           agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'claude-haiku-4-5',
-        }, updatedAt: 1791761380474 },
-      } } : { agentTarget, acpSessionModeId: 'default', connectedServices },
+        }, updatedAt: 1791761380474 } } : { agentTarget, acpSessionModeId: 'default', connectedServices },
       blocks: [step('one', { name: 'One', ...(nativeMetadata ? { execution: { connectedServices,
-          ...(effort ? { engine: { agentTarget, effort } } : {}) } } : {}) }),
+          ...(effort ? { agentTarget, sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 0, overrides: { reasoning_effort: { value: effort, updatedAt: 0 } } } } : {}) } } : {}) }),
         step('two', { name: 'Two', ...(nativeMetadata ? { execution: { connectedServices,
-          ...(effort ? { engine: { agentTarget, effort } } : {}) } } : {}) }),
+          ...(effort ? { agentTarget, sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 0, overrides: { reasoning_effort: { value: effort, updatedAt: 0 } } } } : {}) } } : {}) }),
         step('three', { name: 'Name', ...(freshThird ? { execution: { conversation: { kind: 'fresh' } } }
           : nativeMetadata ? { execution: { connectedServices,
-            ...(effort ? { engine: { agentTarget, effort } } : {}) } } : {}) })],
+            ...(effort ? { agentTarget, sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 0, overrides: { reasoning_effort: { value: effort, updatedAt: 0 } } } } : {}) } } : {}) })],
     };
     // R31's saved-source.json pins the authored Haiku/profile choices above.
     // R37b's private child was deleted before diagnosis. Exercise the actual

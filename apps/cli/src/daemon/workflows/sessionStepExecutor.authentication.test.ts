@@ -2,6 +2,7 @@ import axios from 'axios';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ConnectedAccountCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import * as persistence from '@/persistence';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -38,6 +39,7 @@ it.each(['profile', 'group', 'override', 'native', 'explicit_native'] as const)(
     vi.spyOn(axios, 'get').mockImplementation(async input => {
       const path = new URL(String(input)).pathname;
       if (path === '/v2/account/settings') return { status: 200, data: { version: 9, content: { t: 'plain', v: {} } } };
+      if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
       if (path === '/v1/account/entity-rows/connected-accounts/purposes') return { status: 200,
@@ -55,6 +57,11 @@ it.each(['profile', 'group', 'override', 'native', 'explicit_native'] as const)(
     vi.spyOn(axios, 'post').mockImplementation(async input => {
       if (new URL(String(input)).pathname === '/v2/sessions/lookup-by-tags') return { status: 200, data: { sessions: [] } };
       throw new Error('Unexpected Home mutation');
+    });
+    vi.spyOn(axios, 'request').mockImplementation(async ({ url }) => {
+      if (new URL(String(url)).pathname === '/v1/home/governance/get') return { status: 200,
+        data: HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }) };
+      throw new Error('Unexpected Home Action');
     });
     const admitted: unknown[] = [];
     const machineBoundary: typeof machineRpc.callExactMachineRpc = async ({ method, request }) => {
@@ -99,7 +106,7 @@ it.each(['profile', 'group', 'override', 'native', 'explicit_native'] as const)(
     }));
     if (authentication === 'native' || authentication === 'explicit_native') {
       await expect(result).rejects.toMatchObject({ code: 'agent_signed_out' });
-      expect(admitted).toEqual([expect.not.objectContaining({ connectedServices: expect.anything() })]);
+      expect(admitted).toEqual([expect.objectContaining({ connectedServices: { v: 2, bindingsByServiceId: {} } })]);
     } else {
       await expect(result).resolves.toMatchObject({ sessionId: 'connected-child' });
       expect(admitted).toEqual([expect.objectContaining({ connectedServices: { v: 2, bindingsByServiceId: expect.objectContaining({

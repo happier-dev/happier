@@ -182,6 +182,7 @@ export function normalizeWorkflowProjectTarget(input: Readonly<{
     ...(input.projectTarget.workspaceRefId
       ? { workspaceRefId: input.projectTarget.workspaceRefId }
       : {}),
+    ...(input.projectTarget.sessionPlacement ? { sessionPlacement: input.projectTarget.sessionPlacement } : {}),
   };
 }
 
@@ -241,12 +242,13 @@ export async function prepareWorkflowAcceptedWorkspaceTarget(input: Readonly<{
     checkoutRootPath,
     ...(input.projectTarget.workspaceRefId ? { workspaceRefId: input.projectTarget.workspaceRefId } : {}),
   };
+  const placement = normalizedTarget.sessionPlacement ? { sessionPlacement: normalizedTarget.sessionPlacement } : {};
   if (!workflowUsesOriginalCommittedRevision(input.definition)) {
-    return { ok: true, workspaceTarget: { project } };
+    return { ok: true, workspaceTarget: { project, ...placement } };
   }
   const originalCommittedRevision = inspected?.inspection.committedRevision;
   return originalCommittedRevision
-    ? { ok: true, workspaceTarget: { project, originalCommittedRevision } }
+    ? { ok: true, workspaceTarget: { project, originalCommittedRevision, ...placement } }
     : { ok: false, code: 'committed_revision_unavailable' };
 }
 

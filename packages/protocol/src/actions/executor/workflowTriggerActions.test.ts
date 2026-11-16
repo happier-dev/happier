@@ -1469,6 +1469,26 @@ describe('person-saved deployment trigger consent', () => {
 });
 
 describe('workflow trigger Automation composition', () => {
+  it('assigns saved Session placement before sealing Automation workspace intent', async () => {
+    const f = fixture();
+    const sessionPlacement = { kind: 'machine' as const,
+      target: { serverId: 'home-one', machineId: 'selected-machine' } };
+    const saved = await f.actions.add({ workflow, trigger,
+      project: { ...project, workspaceRefId: 'old-machine-workspace', sessionPlacement } });
+    const row = f.rows.get(saved.set.automationId)!;
+    expect(row.assignments).toMatchObject([{ machineId: 'selected-machine' }]);
+    expect(await f.deps.openContext(row)).toMatchObject({ workspace: { directory: project.directory, sessionPlacement } });
+    expect(await f.deps.openContext(row)).not.toHaveProperty('workspace.workspaceRefId');
+
+    const nextPlacement = { ...sessionPlacement, target: { ...sessionPlacement.target, machineId: 'next-machine' } };
+    await f.actions.update({ automationId: row.id, expectedRevision: row.templateVersion,
+      patch: { project: { ...project, workspaceRefId: 'another-old-workspace', sessionPlacement: nextPlacement } } });
+    const updated = f.rows.get(row.id)!;
+    expect(updated.assignments).toMatchObject([{ machineId: 'next-machine' }]);
+    expect(await f.deps.openContext(updated)).toMatchObject({ workspace: { sessionPlacement: nextPlacement } });
+    expect(await f.deps.openContext(updated)).not.toHaveProperty('workspace.workspaceRefId');
+  });
+
   it('re-saves an unchanged encrypted Team audience once without changing the execution context or trigger', async () => {
     const f = fixture();
     const encryption: AvailableAutomationAccountEncryptionV1 = { kind: 'available',

@@ -58,12 +58,13 @@ export function resolveWorkflowProjectWorkspaceRefId(input: Readonly<{
 }
 
 function withWorkspaceRefId(
-    target: Readonly<{ machineId: string; directory: string }>,
+    target: Readonly<Pick<WorkflowProjectTargetV1, 'machineId' | 'directory' | 'sessionPlacement'>>,
     workspaceRefId: string | undefined,
 ): WorkflowProjectTargetV1 {
     return {
         machineId: target.machineId,
         directory: target.directory,
+        ...(target.sessionPlacement === undefined ? {} : { sessionPlacement: target.sessionPlacement }),
         ...(workspaceRefId === undefined ? {} : { workspaceRefId }),
     };
 }
@@ -117,5 +118,8 @@ export function setWorkflowProjectDirectory(input: Readonly<{
             serverId: input.serverId,
             workspaceRefs: input.workspaceRefs,
         });
-    return withWorkspaceRefId({ machineId: input.current.machineId, directory: input.directory }, workspaceRefId);
+    return withWorkspaceRefId({ machineId: input.current.machineId, directory: input.directory,
+        ...(isWorkflowProjectTarget(input.current) && input.current.sessionPlacement !== undefined
+            ? { sessionPlacement: input.current.sessionPlacement } : {}),
+    }, workspaceRefId);
 }

@@ -3,7 +3,8 @@ import { parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecut
 import { MachineRolesSetInputV1Schema, type MachineRolesSetInputV1 } from '@happier-dev/protocol/actions/specs/machineRoles';
 import { type ExternalActionHeaderRefusal, refuseExternalActionHeaders } from './externalActionHeaderRefusal';
 import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal';
-import { ACTION_INVOKE_ACTION_ID_V1, APPROVAL_REQUEST_DECIDE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, APPROVAL_REQUEST_DECIDE_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { resolveWorkflowProjectTargetMachineV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/ed25519';
 import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, projectExternalActionMachineRuntimeDemandV1, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
@@ -787,6 +788,10 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   });
   const phase = <T>(name: string, read: () => T | Promise<T>) => runTracedExternalActionInnerStage(`dispatch.${name}`, read);
   input.signal?.throwIfAborted();
+  if (input.actionId === WORKFLOW_RUN_START_ACTION_ID_V1 && input.target.kind === 'machine' && input.target.project) {
+    const project = resolveWorkflowProjectTargetMachineV1(input.target.project);
+    input = { ...input, target: { ...input.target, machineId: project.machineId, project } };
+  }
   const installedCaller = input.installedWorkflow?.context.actionCaller;
   if (input.installedWorkflow && installedCaller?.kind === 'workflowRun'
     && isReviewedMachineSetupCodecV1({ actionId: input.actionId, workflowActionOrigin: {

@@ -5,6 +5,16 @@ import { WorkflowWorkspaceDescriptorV1Schema } from '@happier-dev/protocol/workf
 import { projectAcceptedWorkflowRunTarget } from './projectAcceptedWorkflowRunTarget';
 
 describe('projectAcceptedWorkflowRunTarget', () => {
+    it('retains saved Session placement in the signed Workflow host target', () => {
+        const sessionPlacement = { kind: 'machine' as const, target: { serverId: 'home', machineId: 'machine-1' },
+            configuredSandbox: { kind: 'sandbox' as const, configuredSandboxId: 'development', lifecycle: 'fresh' as const,
+                provisioner: { pluginId: 'test.sandbox', localId: 'local' }, presetId: 'development' } };
+        const selected = { machineId: 'machine-1', directory: '/repo', sessionPlacement };
+        const signed = ExternalActionTargetV1Schema.parse({ kind: 'machine', machineId: selected.machineId,
+            project: projectAcceptedWorkflowRunTarget(selected) });
+        expect(signed).toMatchObject({ project: { sessionPlacement } });
+    });
+
     it('projects only the original signed project target fields for a reviewed new whole Run', () => {
         const accepted = WorkflowWorkspaceDescriptorV1Schema.parse({
             machineId: 'machine-1',

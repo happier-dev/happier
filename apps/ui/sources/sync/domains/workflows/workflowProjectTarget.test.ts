@@ -30,6 +30,14 @@ const context = {
 } as const;
 
 describe('workflow project target', () => {
+    it('retains saved Session placement when editing the project folder', () => {
+        const sessionPlacement = { kind: 'preset' as const, homeId: 'server-1', presetId: 'preset-1' };
+        expect(setWorkflowProjectDirectory({ ...context,
+            current: { machineId: 'machine-1', directory: '/home/dev/repo', sessionPlacement },
+            directory: '/home/dev/other',
+        })).toMatchObject({ directory: '/home/dev/other', workspaceRefId: 'ws-other', sessionPlacement });
+    });
+
     it('does not pick a checkout when the selected Home and root have duplicate refs', () => {
         expect(resolveWorkflowProjectWorkspaceRefId({
             ...context,

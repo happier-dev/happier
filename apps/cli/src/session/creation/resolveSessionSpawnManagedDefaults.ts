@@ -21,6 +21,7 @@ import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/hom
 import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveManagedSessionDefaults, type ManagedConnectedServiceDefaultV1, type ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams/managedDefaults';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import type { SessionPlacementSelectionV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { ConnectedServiceBindingsV2, SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol';
 import { materializeSessionSpawnConnectedServicesDefaults, mergeSessionTeamCredentialBindingIntents, readAgentPurposeDefaults, type ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 
@@ -41,14 +42,17 @@ function isolationUnavailable(reason: string): never {
 }
 
 function resolveSessionSpawnIsolation(input: SpawnDefaultSelections, openedMetadata: unknown,
-  context: ActionExecutorContext | undefined): SessionSpawnIsolationDecision | null {
+  context: ActionExecutorContext | undefined, admittedWorkflowPlacement: SessionPlacementSelectionV1 | undefined): SessionSpawnIsolationDecision | null {
   let policy: MachineIsolationPolicyV1 | null;
   try { policy = readMachineIsolationPolicyV1(openedMetadata ?? {}); }
   catch { return isolationUnavailable('machine_isolation_policy_unreadable'); }
-  if (!policy || input.sourceContext || input.configuration?.providerSessionResume) return null;
+  if (input.sourceContext || input.configuration?.providerSessionResume) return null;
+  const selectedSandbox = admittedWorkflowPlacement?.kind === 'machine' ? admittedWorkflowPlacement.configuredSandbox : undefined;
+  if (!policy) return selectedSandbox ? isolationUnavailable('machine_isolation_sandbox_unavailable') : null;
   const binding = context?.externalActionExecutionAuthorization?.binding;
   const caller = readInitiatingActionCallerV1(context?.actionCaller);
-  const run = caller?.kind === 'workflowRun' || caller?.kind === 'automationRun' || Boolean(binding?.workflowActionOrigin);
+  const run = admittedWorkflowPlacement !== undefined || caller?.kind === 'workflowRun'
+    || caller?.kind === 'automationRun' || Boolean(binding?.workflowActionOrigin);
   const bot = binding?.actionId === BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
     || (context?.actionCaller?.kind === 'plugin' && input.attestedContext !== undefined);
   if (!run && !bot && (input.identity?.bot || input.identity?.createdAsBot)) {
@@ -67,10 +71,14 @@ function resolveSessionSpawnIsolation(input: SpawnDefaultSelections, openedMetad
       details: { reason: 'machine_isolation_override_requires_interactive_manage' }, effectAttempted: false });
     return { policy, workKind, choice: { kind: 'directly' } };
   }
-  const choice = policy.workKinds[workKind];
+  const choice = selectedSandbox ? { kind: selectedSandbox.kind, configuredSandboxId: selectedSandbox.configuredSandboxId,
+    lifecycle: selectedSandbox.lifecycle } : policy.workKinds[workKind];
   if (choice.kind === 'directly') return { policy, workKind, choice };
   const configuredSandbox = policy.configuredSandboxes[choice.configuredSandboxId];
-  if (!configuredSandbox) return isolationUnavailable('machine_isolation_sandbox_unavailable');
+  if (!configuredSandbox || selectedSandbox && (selectedSandbox.presetId !== configuredSandbox.presetId
+    || buildQualifiedPluginContributionKey(selectedSandbox.provisioner) !== buildQualifiedPluginContributionKey(configuredSandbox.provisioner))) {
+    return isolationUnavailable('machine_isolation_sandbox_unavailable');
+  }
   return { policy, workKind, choice, configuredSandbox };
 }
 
@@ -85,6 +93,7 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   agentId: string;
   openedMachineMetadata?: unknown;
   startContext?: ActionExecutorContext;
+  admittedWorkflowPlacement?: SessionPlacementSelectionV1;
   machineIsolation?: MachineIsolationV1 | null;
   machineIsolationPolicy?: Readonly<Pick<MachineIsolationPolicyV1, 'agentNativeSandboxEnabled'>> | null;
   sandboxTypeSupportsNativeSandbox?: boolean;
@@ -203,7 +212,7 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   ];
   const teamCredentialBindings = mergeSessionTeamCredentialBindingIntents({ explicit: explicitTeamBindings, admitted: admittedTeamBindings });
   return {
-    resolveIsolation: () => resolveSessionSpawnIsolation(input, params.openedMachineMetadata, params.startContext),
+    resolveIsolation: () => resolveSessionSpawnIsolation(input, params.openedMachineMetadata, params.startContext, params.admittedWorkflowPlacement),
     placement: resolved.placement,
     nativeSandbox: resolved.agentSandbox.value,
     agentSandbox: resolved.agentSandbox,

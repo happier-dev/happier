@@ -1,7 +1,7 @@
 import React from 'react';
 
 import { WorkflowRunStartRequestV1Schema, WorkflowRunStartResultV1Schema, WorkflowRunGetResultV1Schema, type WorkflowRunStartRequestV1, type WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import type { WorkflowProjectTargetV1, WorkflowRunsOnTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
+import { resolveWorkflowProjectTargetMachineV1, type WorkflowProjectTargetV1, type WorkflowRunsOnTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { projectNativeJsonValueForTransport, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -132,7 +132,8 @@ export type WorkflowRunNowController = Readonly<{
 async function resolveWorkflowRunNowPlacement(request: WorkflowRunNowRequest & Readonly<{ runId: string }>,
     lifetime: ActiveServerAccountScopeLifetime): Promise<WorkflowRunNowRequest & Readonly<{ runId: string; project?: WorkflowProjectTargetV1 }>> {
     const project = request.project;
-    if (project === undefined || !('pool' in project)) return { ...request, project };
+    if (project === undefined) return { ...request, project };
+    if (!('pool' in project)) return { ...request, project: resolveWorkflowProjectTargetMachineV1(project) };
     const resolved = await resolveMachinePool(lifetime.scope.serverId,
         { poolId: project.pool.poolId, requestKey: request.runId, purpose: 'session' },
         { expectedAccountId: lifetime.scope.accountId });

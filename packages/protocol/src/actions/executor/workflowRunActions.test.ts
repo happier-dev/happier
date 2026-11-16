@@ -174,6 +174,24 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>) {
 }
 
 describe('shared Account workflow run owner', () => {
+  it('refuses lost-start rejoin with a different saved Session placement', async () => {
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async () => runSnapshot() }));
+    const input = WorkflowRunStartRequestV1Schema.parse({ runId, source: {
+      kind: 'saved', definitionId: 'def-1', revision: { headerVersion: 1, bodyVersion: 1 },
+    } });
+    const context = { surface: 'cli' as const, externalActionTarget: { kind: 'machine' as const,
+      machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } };
+    await expect(owner.execute({ actionId: 'workflow.run.start', input, context })).resolves.toMatchObject({ admission: 'existing' });
+    await expect(owner.execute({ actionId: 'workflow.run.start', input, context: { ...context,
+      externalActionTarget: { ...context.externalActionTarget, project: { ...context.externalActionTarget.project,
+        sessionPlacement: { kind: 'machine', target: { serverId: 'home', machineId: 'machine-a' }, configuredSandbox: {
+          kind: 'sandbox', configuredSandboxId: 'development', lifecycle: 'fresh',
+          provisioner: { pluginId: 'test.sandbox', localId: 'local' }, presetId: 'development',
+        } },
+      } },
+    } })).rejects.toMatchObject({ code: 'currentness_conflict' });
+  });
+
   it.each([false, true])('starts a repository workflow document and rejoins its frozen source without rereading the file (Discussion=%s)', async fromDiscussion => {
     const stored = new Map<string, ReturnType<typeof runSnapshot>>();
     let fileReads = 0;

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { WorkflowBlock, WorkflowDefinitionV1, WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows';
+import { WorkflowProjectTargetV1Schema, WorkflowAcceptedWorkspaceTargetV1Schema } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
 import {  WorkflowRuntimeInterruption, workflowInvocationKey } from './coordinator';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
@@ -296,6 +297,25 @@ describe('resolveWorkflowWorkspace', () => {
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    { kind: 'machine', target: { serverId: 'server-1', machineId: 'machine-1' } },
+    { kind: 'machine', target: { serverId: 'server-1', machineId: 'machine-1' }, configuredSandbox: {
+      kind: 'sandbox', configuredSandboxId: 'development', lifecycle: 'shared-kept',
+      provisioner: { pluginId: 'happier.machine.test', localId: 'sandbox' }, presetId: 'development',
+    } },
+    { kind: 'preset', homeId: 'home-1', presetId: 'cloud-development' },
+  ] as const)('retains saved Session placement in the accepted Workflow host context ($kind)', async sessionPlacement => {
+    const selected = { machineId: 'machine-1', directory: '/repo', sessionPlacement };
+    const prepared = await prepareWorkflowAcceptedWorkspaceTarget({
+      projectTarget: WorkflowProjectTargetV1Schema.parse(selected), definition: { version: 1, inputs: [], defaults: {}, blocks: [] },
+      pathIsDirectory: async () => true, inspectLocation: async () => null,
+    });
+    expect(prepared).toEqual({ ok: true, workspaceTarget: {
+      project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' }, sessionPlacement,
+    } });
+    if (prepared.ok) expect(WorkflowAcceptedWorkspaceTargetV1Schema.parse(prepared.workspaceTarget)).toEqual(prepared.workspaceTarget);
   });
 
   it('freezes the canonical nested project directory and original committed revision before admission', async () => {

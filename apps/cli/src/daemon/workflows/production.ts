@@ -1346,7 +1346,6 @@ export type WorkflowProductionExecutionDeps = Readonly<{
   /** Device-local profile/routing key used by Session and Action transports. */
   serverId: string;
   machineAdmissionTransport: NonNullable<Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']>;
-  resolveTeamCredentialResourceCatalog?: Parameters<typeof createProductionFreshWorkflowSessionConversation>[0]['resolveTeamCredentialResourceCatalog'];
   resolveExistingSessionConversation: Parameters<typeof createProductionWorkflowSessionStepExecutor>[0]['resolveExistingSessionConversation'];
   /** Canonical Session I/O boundary adapter; production uses the incumbent default owner. */
   sessionInput?: Parameters<typeof createProductionWorkflowSessionStepExecutor>[0]['sessionInput'];
@@ -1977,15 +1976,13 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       machineId: params.machineId,
       workDepth: accepted.workDepth,
       originRunId: claim.runId,
+      ...(accepted.workspaceTarget.sessionPlacement ? { sessionPlacement: accepted.workspaceTarget.sessionPlacement } : {}),
       ...(accepted.origin?.originSessionId ? { originSessionId: accepted.origin.originSessionId } : {}),
       ...(accepted.origin?.discussion ? { discussionOrigin: accepted.origin.discussion } : {}),
       machineAdmissionTransport: params.execution.machineAdmissionTransport,
       visibleTeamId: initial.keyCensus.visibleTeamId,
       ...(params.execution.action ? { action: params.execution.action } : {}),
       ...(params.execution.sessionStartup ? { sessionStartup: params.execution.sessionStartup } : {}),
-      ...(params.execution.resolveTeamCredentialResourceCatalog
-        ? { resolveTeamCredentialResourceCatalog: params.execution.resolveTeamCredentialResourceCatalog }
-        : {}),
     });
     const resolveFrozenRole = (executionParams: Pick<Parameters<WorkflowStepExecutor>[0], 'role'>) => executionParams.role;
     const conversations = createProductionWorkflowConversationOwner({

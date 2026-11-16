@@ -1105,6 +1105,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       if (!sameSource
         || (combined !== undefined && !sameStrictJsonValue(existing.accepted.approvedOperation?.parent, combined.parent))
         || existing.snapshot.managedCreationId !== (input.managedCreation?.managedId ?? null)
+        || !sameStrictJsonValue(existing.accepted.workspaceTarget.sessionPlacement, expectedTarget?.sessionPlacement)
         || ((inputSource.kind === 'saved' || inputSource.kind === 'inline') && inputSource.visibleTeamId !== undefined
           && inputSource.visibleTeamId !== existing.snapshot.keyCensus.visibleTeamId)
         || !sameStrictJsonValue(existing.accepted.roleOverrides ?? [], replaySource?.accepted.roleOverrides ?? input.roleOverrides ?? [])

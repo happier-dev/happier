@@ -10,7 +10,6 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { formatWorkflowStepSessionTitle } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { cancelSessionInput } from '@/session/services/cancelSessionInput';
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
-import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import type { CreateSpawnedSessionParams } from '@/session/services/createSpawnedSession';
 import { buildSessionCreationCorrespondence } from '@/session/shared/sessionCreationCorrespondence';
 import { createSessionCreationSpawnNonce } from '@/session/shared/spawnNonce';
@@ -23,11 +22,6 @@ import { rethrowWorkflowSessionStartupFailure } from './workflowSessionStartupFa
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
-import {
-  mergeSessionTeamCredentialBindingIntents,
-  resolveSessionSpawnConnectedServicesDefaultsPayload,
-  type ResolveSpawnConnectedServicesTeamResourceCatalog,
-} from '@/session/services/spawnConnectedServicesDefaults';
 import { canonicalAbsolutePathsEqual } from '@/utils/path/expandHomeDirPath';
 import type {
   WorkflowAuthoredProducerRef,
@@ -90,7 +84,7 @@ import {
 function workflowSessionResumeOptions(selection: WorkflowStepExecutionSelection): NonNullable<Parameters<typeof requestInactiveSessionResume>[0]['incomingOptions']> {
   const terminal = projectSessionAuthoringTerminalForSpawn(selection.terminal);
   return {
-    ...(selection.launchEnvironment ? { environmentVariables: selection.launchEnvironment.values } : {}),
+    ...(selection.environmentVariables ? { environmentVariables: selection.environmentVariables } : {}),
     ...(selection.providerSessionResume ? { resume: selection.providerSessionResume.providerSessionId } : {}),
     ...(selection.permissionMode ? { permissionMode: parsePermissionIntentAlias(selection.permissionMode) ?? undefined } : {}),
     ...(selection.permissionModeUpdatedAt === undefined ? {} : { permissionModeUpdatedAt: selection.permissionModeUpdatedAt }),
@@ -158,7 +152,11 @@ export type WorkflowSessionStartup = (input: Readonly<{
   retainedOperationSnapshot?: unknown;
   authorization?: Parameters<WorkflowStepExecutor>[0]['authorization'];
   /** Private original Action admission; retained startup observes its existing decision. */
-  actionAdmission?: Readonly<{ input: SessionSpawnNewActionInputV2; context: ActionExecutorContext }>;
+  actionAdmission?: Readonly<{ input: SessionSpawnNewActionInputV2; context: ActionExecutorContext;
+    /** Portable definitions retain explicit native authentication as null. */
+    connectedServices?: null;
+    sessionPlacement?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionPlacementSelectionV1;
+  }>;
   onObservation?: (operation: ActionOperationSnapshotV1) => Promise<void>;
 }>) => Promise<Readonly<{ sessionId: string }>>;
 
@@ -174,6 +172,8 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
   /** Accepted Run depth, shared by every retry and recovery. */
   workDepth: number;
   originRunId: string;
+  /** Saved host selection frozen into the accepted Run, separate from its portable definition. */
+  sessionPlacement?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionPlacementSelectionV1;
   /** Accepted Session origin, when the Workflow was started under a lead. */
   originSessionId?: string;
   /** Only selected model participants acquire C3 slot ownership. */
@@ -181,7 +181,6 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
   /** Frozen Run visibility, not the Workflow's mutable access document. */
   visibleTeamId?: string | null;
   machineAdmissionTransport: NonNullable<Parameters<typeof enqueueWorkflowSessionInput>[0]['machineAdmissionTransport']>;
-  resolveTeamCredentialResourceCatalog?: ResolveSpawnConnectedServicesTeamResourceCatalog;
   sessionStartup?: WorkflowSessionStartup;
   /** The Run's canonical Action policy and approval/replay owner. */
   action?: WorkflowActionExecutor;
@@ -374,33 +373,9 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
       return { sessionId: created.sessionId, machineId: deps.machineId, directory: workspace.directory,
         origin, workDepth: deps.workDepth + 1 };
     }
-    const target = await prepareSessionCreationTarget({
-      request: {
-        directory: { kind: 'path', path: workspace.directory },
-      },
-      ...(signal ? { signal } : {}),
-    });
-    signal?.throwIfAborted();
-    if (!target.ok
-      || target.directoryCreationRequired
-      || !canonicalAbsolutePathsEqual(target.directory, workspace.directory)) {
-      throw new WorkflowSessionCompositionError(
-        target.ok ? 'conversation_workspace_mismatch' : target.code,
-      );
-    }
-
-    const connectedServicesDefault = selection.connectedServices === undefined
-      ? await resolveSessionSpawnConnectedServicesDefaultsPayload({
-          agentId: resolvedAgent.agentId,
-          credentials: deps.credentials,
-          signal,
-          ...(deps.resolveTeamCredentialResourceCatalog
-            ? { resolveTeamCredentialResourceCatalog: deps.resolveTeamCredentialResourceCatalog }
-            : {}),
-        })
-      : null;
-    signal?.throwIfAborted();
-    const connectedServices = selection.connectedServices ?? connectedServicesDefault?.connectedServices;
+    // The Workflow workspace owner has already realized the checkout. Session
+    // target preparation and unset defaults belong to the admitted spawn below.
+    const connectedServices = selection.connectedServices;
     const terminal = projectSessionAuthoringTerminalForSpawn(selection.terminal);
     const permissionMode = selection.permissionMode
       ? parsePermissionIntentAlias(selection.permissionMode)
@@ -470,7 +445,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
       credentials: deps.credentials,
       serverId: deps.serverId,
       machineId: deps.machineId,
-      directory: target.directory,
+      directory: workspace.directory,
       approvedNewDirectoryCreation: false,
       spawnNonce: creationKey,
       ...(observationOnly ? { resumeOnly: true } : {}),
@@ -497,7 +472,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
       ...(selection.modelSelection ? { modelSelection: selection.modelSelection } : {}),
       ...(selection.profileId ? { profileId: selection.profileId } : {}),
       ...(approvalProfileId === undefined ? {} : { approvalProfileId }),
-      ...(selection.launchEnvironment ? { environmentVariables: selection.launchEnvironment.values } : {}),
+      ...(selection.environmentVariables ? { environmentVariables: selection.environmentVariables } : {}),
       ...(selection.providerSessionResume ? { resume: selection.providerSessionResume.providerSessionId } : {}),
       ...(permissionMode ? { permissionMode } : {}),
       ...(launchConfiguration?.workspaceWrites !== undefined ? { workspaceWrites: launchConfiguration.workspaceWrites } : {}),
@@ -511,21 +486,9 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
         : {}),
       ...(selection.connectedServices
         ? { connectedServices: selection.connectedServices }
-        : connectedServicesDefault
-          ? {
-              connectedServices: connectedServicesDefault.connectedServices,
-              connectedServicesUpdatedAt: connectedServicesDefault.connectedServicesUpdatedAt,
-              // Defaulted Team targets are admitted only through the Session's
-              // own Team slot bindings, created with it.
-              ...(connectedServicesDefault.teamCredentialBindings
-                ? { teamCredentialBindings: connectedServicesDefault.teamCredentialBindings }
-                : {}),
-            }
-          : {}),
+        : {}),
       ...(sessionChoices.teamCredentialBindings !== undefined
-        ? { teamCredentialBindings: mergeSessionTeamCredentialBindingIntents({
-          explicit: sessionChoices.teamCredentialBindings, admitted: connectedServicesDefault?.teamCredentialBindings ?? null,
-        }) } : {}),
+        ? { teamCredentialBindings: sessionChoices.teamCredentialBindings } : {}),
       ...(selection.capabilitySelection ? { capabilitySelection: selection.capabilitySelection } : {}),
       ...(selection.transcriptStorage ? { transcriptStorage: selection.transcriptStorage } : {}),
       ...(terminal && Object.keys(terminal).length > 0 ? { terminal } : {}),
@@ -558,7 +521,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
     } : null);
     const correspondence = buildSessionCreationCorrespondence({
       identity: { sessionCreationTag: deriveWorkflowSessionCreationTag(deps.serverId, deps.originRunId, creationKey) },
-      recipe: { execution: { machineId: deps.machineId, directory: { kind: 'path', path: target.directory } },
+      recipe: { execution: { machineId: deps.machineId, directory: { kind: 'path', path: workspace.directory } },
         organization: request.organizationPlacement ?? { folderId: null, tagIds: [] }, agentTarget: selection.agentTarget!,
         modelSelection: request.modelSelection ?? null, profileId: request.profileId ?? null,
         ...(request.approvalProfileId === undefined ? {} : { approvalProfileId: request.approvalProfileId }),
@@ -578,6 +541,8 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
     const creationRequest = { ...request, sessionCreationTag: correspondence.sessionCreationTag,
       sessionCreationCorrespondence: correspondence };
     const actionAdmission = { context: startupContext,
+      ...(selection.connectedServices === null ? { connectedServices: null } : {}),
+      ...(deps.sessionPlacement ? { sessionPlacement: deps.sessionPlacement } : {}),
       input: projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
         // Project shared authoring fields from their canonical owner. Workflow-only
         // selection keys and unset nullable Workflow defaults are not Action input.
@@ -586,7 +551,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
           && (value !== null || key === 'approvalProfileId'))),
         ...launch,
         executionTarget: { serverId: deps.serverId, machineId: deps.machineId },
-        directory: { kind: 'path', path: target.directory }, creationKey, agentTarget: selection.agentTarget,
+        directory: { kind: 'path', path: workspace.directory }, creationKey, agentTarget: selection.agentTarget,
         ...(approvalProfileId === undefined ? {} : { approvalProfileId }),
         ...(request.agentModeId ? { agentModeId: request.agentModeId } : {}),
         ...(configuration ? { configuration } : {}),
@@ -596,6 +561,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
         ...(request.initialTitle ? { title: request.initialTitle } : {}),
         ...(request.initialAccess ? { initialAccess: request.initialAccess } : {}),
         ...(request.manager ? { manager: request.manager } : {}),
+        ...(discussionParticipant ? { discussionParticipant } : {}),
         ...(request.organizationPlacement ? { organizationPlacement: request.organizationPlacement } : {}),
       })) };
     logger.infoFile('[WORKFLOW] Run phase', { event: 'workflow_run_phase', runId: deps.originRunId,
@@ -608,7 +574,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
       ));
     signal?.throwIfAborted();
     await confirmDiscussionBinding(created.sessionId);
-    return { sessionId: created.sessionId, machineId: deps.machineId, directory: target.directory,
+    return { sessionId: created.sessionId, machineId: deps.machineId, directory: workspace.directory,
       origin, workDepth: deps.workDepth + 1 };
   };
 }

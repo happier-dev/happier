@@ -50,7 +50,6 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import type { StoredCredentials } from '@/persistence';
 import { waitForDaemonAdmission, type DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
-import { createSpawnConnectedServicesTeamResourceCatalogResolver } from '@/session/services/spawnConnectedServicesDefaults';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { createWorkflowDiscussionResultPublisher } from './workflowDiscussionPublication';
@@ -297,19 +296,10 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
       installationIdentity?: Readonly<{ installationId: string; privateKey: import('@/api/externalActionExecutionAuthorization').ExternalActionMachineRequestSigningKey }>;
       serverIdentityId?: string;
     }>) {
-      const accountServerActionDeps = createAccountServerActionDeps({ token: params.credentials.token, serverId,
-        serverHttpBaseUrl: readBaseUrl() });
       const parsedStamp = RequesterWorkAttributionV1Schema.safeParse(input.requesterWorkAttributionV1);
       const stamp = parsedStamp.success ? Object.freeze(parsedStamp.data) : undefined;
       const requesterWorkAttributionV1 = stamp?.serverId === serverId
         && stamp.accountId === params.accountId && stamp.machineId === input.machineId ? stamp : undefined;
-      const resolveTeamCredentialResourceCatalog = accountServerActionDeps.homeDomainAction
-        ? createSpawnConnectedServicesTeamResourceCatalogResolver({
-            homeDomainAction: accountServerActionDeps.homeDomainAction,
-            serverId,
-            accountId: params.accountId,
-          })
-        : undefined;
       const savedSecretOperationContext = input.savedSecretOperationContext;
       const actionExecutor = createCliActionExecutorFromCredentials({
         credentials: params.credentials,
@@ -506,7 +496,6 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
           ...(input.serverIdentityId ? { serverIdentityId: input.serverIdentityId } : {}),
           ...(input.sessionStartup ? { sessionStartup: input.sessionStartup } : {}),
           machineAdmissionTransport: input.machineAdmissionTransport,
-          ...(resolveTeamCredentialResourceCatalog ? { resolveTeamCredentialResourceCatalog } : {}),
           resolveExistingSessionConversation: resolveConversation,
           originSessionInput: {
             withdraw: async ({ sessionId, localInputId }) => await withdrawWorkflowOriginSessionInput({

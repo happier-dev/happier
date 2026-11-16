@@ -1,9 +1,8 @@
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionCompletionOperation } from '@happier-dev/protocol/actions/actionCompletion';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import type { ActionOperationRpcContext } from '@/daemon/actionOperations/actionOperationRpcHandlers';
-import { createSpawnedSession, type DirectSpawnedSessionTransport } from '@/session/services/createSpawnedSession';
+import type { DirectSpawnedSessionTransport } from '@/session/services/createSpawnedSession';
 import { classifyWorkflowAbort, WorkflowRuntimeInterruption } from './coordinator';
 import type { WorkflowSessionStartup } from './sessionStepExecutor';
 import { WorkflowSessionCompositionError } from './workflowConversation';
@@ -13,15 +12,14 @@ import { readRetainedWorkflowSessionStartupFailure, readWorkflowSessionStartupEr
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { enrichCliActionApprovalContext } from '@/session/actions/enrichCliActionApprovalContext';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
-import { prepareSessionAgentReadiness } from '@/session/creation/prepareSessionAgentReadiness';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
-import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import type { MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
+import type { CliActionDepsParams } from '@/session/actions/cliActionDeps/types';
 import type { CurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 
@@ -55,6 +53,8 @@ export type WorkflowSessionStartupHost = Readonly<{
   observeExecution: HostActionOperationRuntime['observeExecution'];
   rpcContext: ActionOperationRpcContext;
   machineActionDirectTargetTransport?: MachineActionDirectTargetTransport;
+  readMachineMetadataSnapshot?: NonNullable<CliActionDepsParams['sessionSpawnDirectTargetTransport']>['readMachineMetadataSnapshot'];
+  acquireSessionIsolationSandbox?: CliActionDepsParams['acquireSessionIsolationSandbox'];
   sessionCreationInstallation?: Pick<CurrentMachineInstallation['identity'], 'installationId' | 'privateKey'>;
   transport(operation: Parameters<Parameters<HostActionOperationRuntime['observeExecution']>[0]['execute']>[0]): DirectSpawnedSessionTransport;
   observeOperation(operation: ActionCompletionOperation, options: Readonly<{
@@ -165,8 +165,6 @@ export async function runObservedWorkflowSessionStartup(
             retained();
             // The original operation controls execution. A lost Workflow claim
             // ends observation but cannot cancel or replace admitted startup.
-            const create = () => runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createSpawnedSession({
-              ...input.request, signal: operation.signal, directTransport: host.transport(operation) }));
             if (!input.actionAdmission) throw new WorkflowSessionCompositionError('approval_context_unavailable');
             const { input: actionInput } = input.actionAdmission;
             const context = await enrichCliActionApprovalContext({ context: input.actionAdmission.context,
@@ -188,40 +186,32 @@ export async function runObservedWorkflowSessionStartup(
               actionsSettingsProvider: createActionSettingsProvider({
                 scopeKey: resolveAccountSettingsScopeKey(input.request.credentials), allowEnvironmentOverride: false,
               }),
+              machineAdmissionTransport: input.request.machineAdmissionTransport,
+              acquireSessionIsolationSandbox: host.acquireSessionIsolationSandbox,
+              sessionSpawnBirthContext: {
+                sessionCreationTag: input.request.sessionCreationTag,
+                spawnNonce: input.request.spawnNonce,
+                resumeOnly: input.request.resumeOnly,
+                initialSessionRolesV1: input.request.initialSessionRolesV1,
+                runtimeDescriptorV1: input.request.runtimeDescriptorV1,
+                ...(input.actionAdmission.connectedServices === null ? { connectedServices: null } : {}),
+                ...(input.actionAdmission.sessionPlacement ? { sessionPlacement: input.actionAdmission.sessionPlacement } : {}),
+                projectCreationFailure: error => {
+                  spawnFailure = error;
+                  const refusal = readWorkflowSessionStartupRefusal(error);
+                  if (refusal) return refusal;
+                  throw error;
+                },
+              },
               sessionSpawnDirectTargetTransport: {
                 machineId: host.machineId,
+                readMachineMetadataSnapshot: host.readMachineMetadataSnapshot,
                 spawnedSession: host.transport(operation),
                 prepare: (request, options) => prepareSessionCreationTarget({ request,
                   signal: options?.signal ?? operation.signal }),
               },
             }, {
               hostActionApprovalLifetime: { operationId, signal: operation.signal },
-              sessionSpawnNew: async args => {
-                const selectedAgent = resolveSessionCreationAgentTarget(args.agentTarget);
-                if (!selectedAgent) return { type: 'error', code: 'target_unavailable', retryable: false,
-                  failureCause: projectActionFailureCauseV1(
-                    { name: 'Error', code: 'agent_contribution_unavailable' }, 'session.agent_target') };
-                const readiness = await prepareSessionAgentReadiness({
-                  machineId: host.machineId, serverId: host.serverId, agentId: selectedAgent.agentId,
-                  ...(args.agentTarget.definitionId === undefined ? {} : { definitionId: args.agentTarget.definitionId }),
-                  ...(args.agentInstallConsent === undefined ? {} : { consent: args.agentInstallConsent }),
-                  ...(args.actionRequestId ? { requestId: args.actionRequestId } : {}),
-                  invoke: args.invokeAgentReadinessAction, signal: operation.signal,
-                });
-                if (readiness && 'result' in readiness) return readiness.result;
-                try {
-                  const created = await create();
-                  return { type: 'success', disposition: created.disposition, sessionId: created.sessionId,
-                    executionTarget: { serverId: host.serverId, machineId: host.machineId },
-                    organizationPlacement: created.organizationPlacement, initialInput: created.initialInput,
-                    ...(readiness ? { agentUpdate: readiness.agentUpdate } : {}) };
-                } catch (error) {
-                  spawnFailure = error;
-                  const refusal = readWorkflowSessionStartupRefusal(error);
-                  if (refusal) return refusal;
-                  throw error;
-                }
-              },
             });
             const prepared = await executor.prepare('session.spawn_new', actionInput, {
               ...context, ...operation, actionRequestId: input.creationKey,

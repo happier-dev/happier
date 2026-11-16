@@ -51,6 +51,18 @@ describe('AutomationStoredWorkflowDefinitionRecipeV2', () => {
     expect(parseAutomationStoredWorkflowDefinitionRecipeV2(serialized.serialized)).toEqual(serialized);
   });
 
+  it('retains saved Session placement in the private Automation workspace', () => {
+    const sessionPlacement = { kind: 'preset' as const, homeId: 'home-1', presetId: 'preset-1' };
+    const selected = { ...recipe, workflow: { ...recipe.workflow,
+      v: { ...recipe.workflow.v, workspace: { ...recipe.workflow.v.workspace, sessionPlacement } } } };
+    const serialized = serializeAutomationStoredWorkflowDefinitionRecipeV2(selected);
+    expect(serialized.kind).toBe('available');
+    if (serialized.kind !== 'available') throw new Error('expected saved placement');
+    expect(parseAutomationStoredWorkflowDefinitionRecipeV2(serialized.serialized)).toMatchObject({
+      kind: 'available', recipe: { workflow: { v: { workspace: { sessionPlacement } } } },
+    });
+  });
+
   it('keeps a new Automation display label inside the existing private workflow payload', () => {
     const labelled = {
       ...recipe,

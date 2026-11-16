@@ -5981,6 +5981,19 @@ Account credentials and no custodian-profile or native-login fallback. Machine
 access does not widen private Run readership. Missing custody returns the typed
 re-save/start-again refusal described in [requester custody](encryption.md#access-keys).
 
+In unreleased 0.3 development source, a saved Workflow project target carries
+optional Session placement separately from its portable definition. A saved
+Machine selects the Run and workspace Machine before admission. Its new Sessions
+use that Machine's `automationsWorkflows` policy unless an explicit configured
+Sandbox was saved. That choice retains the qualified provisioner, preset and
+lifecycle and must match the Machine's current configured entry. Workflow births
+reach the same receiving `session.spawn_new` policy owner; an unavailable or
+mismatched configured Sandbox returns `target_unavailable` without a host fallback.
+A policy's own Directly choice applies normally. A per-start Directly override
+requires interactive Manage and cannot come from an unattended Workflow.
+Cloud preset placement is declared in the shared selection contract; admitted
+acquisition and enrolled-guest continuation remain pending integration.
+
 Schedule and reply-handoff workers in each API process wake after committed
 schedule-cursor and ready/retry mutations. Durable rows remain authoritative;
 healthy workers sleep until the next schedule or handoff-lease deadline without

@@ -25,6 +25,7 @@ export function createAdmittedWorkflowSessionHost(
     serverHttpBaseUrl: resolveServerHttpBaseUrl(), mode: 'plain', ctx: null });
   return {
     action: deps.action ?? { executor, buildContext: async (execution: Parameters<WorkflowActionExecutor['buildContext']>[0]) => ({ ...buildWorkflowActionContext(execution),
+      defaultSessionId: execution.originSessionId ?? null,
       approvalProfileId: execution.approvalProfileId !== undefined ? execution.approvalProfileId
         : execution.origin?.actionPolicy?.approvalProfileId !== undefined
           ? execution.origin.actionPolicy.approvalProfileId : 'builtin:full-trust',
@@ -37,6 +38,7 @@ export function createAdmittedWorkflowSessionHost(
     }), observeRun: async () => { throw new Error('Session birth must not start an Execution Run'); } },
     sessionStartup: deps.sessionStartup ?? ((input: Parameters<WorkflowSessionStartup>[0]) => runObservedWorkflowSessionStartup(input, {
       serverId: deps.serverId, machineId: deps.machineId, observeExecution: operations.observeExecution, rpcContext: {},
+      readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
       transport: () => ({ spawn: (request, options) => callExactMachineRpc({ credentials: deps.credentials,
         machineId: deps.machineId, method: RPC_METHODS.SPAWN_HAPPY_SESSION, request, ...options }),
         resolveSpawnSessionByNonce: async (spawnNonce, options) => normalizeSpawnSessionNonceResolution(await callExactMachineRpc({ credentials: deps.credentials,
@@ -89,5 +91,6 @@ export function runAdmittedObservedWorkflowSessionStartup(
           principal: { kind: 'host' }, admittedPermissionCeiling: 'yolo' } },
       },
     }),
-  }, host);
+  }, { ...host, readMachineMetadataSnapshot: host.readMachineMetadataSnapshot
+    ?? (() => ({ status: 'ready', metadataVersion: 1, metadata: {} })) });
 }

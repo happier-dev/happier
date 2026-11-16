@@ -30,8 +30,6 @@ import { createTestWorkflowCoordinator, createInMemoryWorkflowCoordinatorStore }
 import { createGitWorkflowWorkspaceTestDependencies } from './workflowWorkspace.testkit';
 import { statSync } from 'node:fs';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
-import { createSpawnConnectedServicesTeamResourceCatalogResolver } from '@/session/services/spawnConnectedServicesDefaults';
-import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -254,6 +252,71 @@ function observeSessionSpawnAdmissions() {
 }
 
 describe('workflow Session step executor', () => {
+  it.each([
+    { name: 'refuses fresh Workflow birth when the receiving Machine isolation policy cannot be read',
+      isolationPolicyV1: {}, allowed: false, sessionPlacement: undefined },
+    { name: 'uses admitted Workflow policy rather than the interactive Session sandbox choice',
+      isolationPolicyV1: {
+        configuredSandboxes: { interactive: { provisioner: { pluginId: 'test.sandbox', localId: 'local' }, presetId: 'interactive-only' } },
+        workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'interactive', lifecycle: 'fresh' },
+          botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } },
+      }, allowed: true, sessionPlacement: undefined },
+    { name: 'honors a saved configured sandbox instead of the Workflow policy Directly default',
+      isolationPolicyV1: {
+        configuredSandboxes: { development: { provisioner: { pluginId: 'test.sandbox', localId: 'local' }, presetId: 'development' } },
+        workKinds: { sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } },
+      }, sessionPlacement: {
+        kind: 'machine' as const, target: { serverId: 'server-1', machineId: 'machine-1' }, configuredSandbox: {
+          kind: 'sandbox' as const, configuredSandboxId: 'development', lifecycle: 'fresh' as const,
+          provisioner: { pluginId: 'test.sandbox', localId: 'local' }, presetId: 'development',
+        },
+      }, allowed: false },
+    { name: 'honors a saved Machine on the admitted Workflow Run target with its Directly policy',
+      isolationPolicyV1: { configuredSandboxes: {},
+        workKinds: { sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } } },
+      sessionPlacement: { kind: 'machine' as const, target: { serverId: 'server-1', machineId: 'machine-1' } },
+      allowed: true },
+    { name: 'refuses a saved Machine outside the admitted Workflow Run target',
+      isolationPolicyV1: { configuredSandboxes: {},
+        workKinds: { sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } } },
+      sessionPlacement: { kind: 'machine' as const, target: { serverId: 'server-1', machineId: 'other-machine' } },
+      allowed: false },
+  ])('$name', async ({ isolationPolicyV1, allowed, sessionPlacement }) => {
+    const launches = installSessionCreationTransport();
+    const credentials = { token: 'token', encryption: null };
+    const scope = { accountId: 'account-1', machineId: 'machine-1' };
+    const operations = createHostActionOperationRuntime({ machineId: scope.machineId,
+      resolveAccountId: async () => scope.accountId });
+    const startup: WorkflowSessionStartup = input => runUnadmittedObservedWorkflowSessionStartup(input, {
+      serverId: 'server-1', machineId: scope.machineId, observeExecution: operations.observeExecution, rpcContext: {},
+      readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1,
+        metadata: { isolationPolicyV1 } }),
+      transport: () => ({ spawn: (request, options) => readiness.callMachineRpc({
+        method: RPC_METHODS.SPAWN_HAPPY_SESSION, request, ...options }),
+        resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) }),
+      observeOperation: (target, options) => operations.handlers.getV2({ operationId: target.operationId,
+        ...(options.waitForTerminal ? { waitForTerminal: true } : {}) }),
+      cancelOperation: async target => operations.runner.cancel(scope, target.operationId), cleanupOnFailure: async () => {},
+    });
+    const create = createProductionFreshWorkflowSessionConversation({ credentials, serverId: 'server-1',
+      machineId: scope.machineId, workDepth: 0, originRunId: 'isolated-workflow',
+      ...(sessionPlacement ? { sessionPlacement } : {}),
+      machineAdmissionTransport: vi.fn(), sessionStartup: startup });
+    const created = create({ creationKey: 'workflow:isolation-unreadable',
+      selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        connectedServices: { v: 2, bindingsByServiceId: {} } },
+      workspace: { machineId: scope.machineId, directory: '/repo', checkoutRootPath: '/repo' },
+    });
+    if (allowed) {
+      await expect(created).resolves.toMatchObject({ sessionId: 'new-session' });
+      expect(launches).toHaveLength(1);
+      expect(launches[0]?.managedTargetPlacement).toBeUndefined();
+    } else {
+      await expect(created).rejects.toMatchObject({ code: 'target_unavailable' });
+      expect(launches).toEqual([]);
+    }
+  });
+
   it('admits Workflow birth once and observes retained startup without another admission', async () => {
     const launches = installSessionCreationTransport();
     const prepareCalls = observeSessionSpawnAdmissions();
@@ -264,6 +327,7 @@ describe('workflow Session step executor', () => {
     const host = { serverId: 'server-1', machineId, observeExecution: operations.observeExecution, rpcContext: {} };
     const startup: WorkflowSessionStartup = input => runUnadmittedObservedWorkflowSessionStartup(input, {
       ...host,
+      readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
       transport: () => ({ spawn: (request, options) => readiness.callMachineRpc({ method: RPC_METHODS.SPAWN_HAPPY_SESSION, request, ...options }),
         resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) }),
       observeOperation: (target, options) => operations.handlers.getV2({ operationId: target.operationId,
@@ -501,6 +565,9 @@ describe('workflow Session step executor', () => {
       throw new Error(`Unexpected Home Action HTTP request: ${url}`);
     });
     readiness.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v2/account/settings')) return { status: 200,
+        data: { version: 1, content: { t: 'plain', v: {} } } };
+      if (url.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
       if (url.endsWith('/v1/account/entity-rows/connected-accounts/purposes')) return { status: 200, data: {
         status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } },
       } };
@@ -2568,7 +2635,7 @@ describe('workflow Session step executor', () => {
     const modelSelection = { v: 1 as const, updatedAt: 1, ref: {
       agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna',
     } };
-    const definition = { version: 1 as const, defaults: { engine: { agentTarget, modelSelection, effort: 'low' } },
+    const definition = { version: 1 as const, defaults: { agentTarget, modelSelection, sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 0, overrides: { reasoning_effort: { value: 'low', updatedAt: 0 } } } },
       blocks: [{ kind: 'step' as const, id: 'work', document: { text: 'Reply READY.', references: [], attachments: [] } }] };
     const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
       context: { source: { kind: 'inline' }, inputs: {}, machineId: 'machine-1', executionTarget: { kind: 'session' },
@@ -2652,6 +2719,12 @@ describe('workflow Session step executor', () => {
     const { executor } = createCliActionExecutorHarness({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
       serverId: 'server-1', serverHttpBaseUrl: resolveServerHttpBaseUrl(),
       // Replace only exact-Machine IPC; both paths run the real target and birth owners.
+      sessionSpawnDirectTargetTransport: { machineId: 'machine-1',
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
+        prepare: (request, options) => prepareSessionCreationTarget({ request, signal: options?.signal }),
+        spawnedSession: { spawn: async (request) => readiness.callMachineRpc({ method: RPC_METHODS.SPAWN_HAPPY_SESSION, request }),
+          resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) },
+      },
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async (method, request, options) => {
         if (method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE
           || method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
@@ -2721,7 +2794,8 @@ describe('workflow Session step executor', () => {
     await expect(create({ selection: restricted ? { permissionMode: 'read-only' } : {}, launch, workspace: { machineId: 'machine-1', directory: '/review', checkoutRootPath: '/review' },
       creationKey: 'workflow:run-model:inv-1' })).resolves.toMatchObject({ sessionId: 'new-session' });
     expect(launches).toEqual([expect.objectContaining({
-      originKind: 'run_step', originRunId: 'run-model', directory: '/review', agentTarget, modelSelection,
+      originKind: 'run_step', originRunId: 'run-model', directory: '/review',
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }, modelSelection,
       profileId: 'chosen-profile', permissionMode: restricted ? 'read-only' : 'default', agentModeId: 'plan', workspaceWrites: 'deny',
       sessionConfigOptionOverrides: expect.objectContaining({ overrides: { reasoning_effort: { value: 'high', updatedAt: 11 } } }),
       connectedServices: { v: 2, bindingsByServiceId: {} }, memoryEnabled: false,
@@ -2831,6 +2905,7 @@ describe('workflow Session step executor', () => {
         features: { sessions: { enabled: true, conversations: { enabled: true } }, sharing: { enabled: true, session: { enabled: true } } }, capabilities: {},
       } } : originalGet(url);
     });
+    const originalRequest = readiness.request.getMockImplementation()!;
     readiness.request.mockImplementation(async ({ url, method, data }: { url: string; method: string; data?: string }) => {
       if (url.endsWith('/v1/discussions/discussion-1') && method === 'GET') return { status: 200, data: { discussion: {
         id: 'discussion-1', ownerAccountId: 'account-1', encryptionMode: 'plain', anchor: null, access: 'owner', keyReadiness: true,
@@ -2853,7 +2928,7 @@ describe('workflow Session step executor', () => {
         participants: [{ participant: { kind: 'model', participantSlotId: creationKey }, launch,
           sessionId: boundSessionId, answerPolicy: 'when_addressed', createdAt: 1 }],
       } };
-      throw new Error(`Unexpected Discussion reservation request: ${method} ${url}`);
+      return originalRequest({ url, method, data });
     });
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`, encryption: null };
     const resolveRoleContext = frozenRole ? createWorkflowActionContextResolver(createCredentialedWorkflowMaterializationHostV1({
@@ -3325,26 +3400,24 @@ describe('workflow Session step executor', () => {
     });
     const serverHttpBaseUrl = resolveServerHttpBaseUrl();
     // These pages share a POST URL; the cursor lives in the strict request body.
-    // Once-only replies also make an incorrectly repeated page fail, not loop.
-    readiness.request.mockImplementationOnce(async (request: unknown) => {
-      expect(request).toMatchObject({ method: firstPage.method, url: `${serverHttpBaseUrl}${firstPage.path}`, data: firstPage.body });
-      return { status: 200, data: { resources: [], nextCursor: 'resource-page-2' } };
-    }).mockImplementationOnce(async (request: unknown) => {
-      expect(request).toMatchObject({ method: nextPage.method, url: `${serverHttpBaseUrl}${nextPage.path}`, data: nextPage.body });
+    const requestHome = readiness.request.getMockImplementation()!;
+    const pageRequests: unknown[] = [];
+    readiness.request.mockImplementation(async (request: { url: string; method: string; data?: unknown }) => {
+      if (request.url !== `${serverHttpBaseUrl}${firstPage.path}`) return requestHome(request);
+      pageRequests.push(request);
+      if (pageRequests.length === 1) {
+        expect(request).toMatchObject({ method: firstPage.method, data: firstPage.body });
+        return { status: 200, data: { resources: [], nextCursor: 'resource-page-2' } };
+      }
+      expect(pageRequests).toHaveLength(2);
+      expect(request).toMatchObject({ method: nextPage.method, data: nextPage.body });
       return { status: 200, data: resourcePage };
-    });
-    const resolveTeamCredentialResourceCatalog = createSpawnConnectedServicesTeamResourceCatalogResolver({
-      homeDomainAction: createAccountServerActionDeps({
-        token: credentials.token, credentials, serverId: 'server-1', serverHttpBaseUrl,
-      }).homeDomainAction!,
-      serverId: 'server-1', accountId: 'account-1',
     });
     const create = createProductionFreshWorkflowSessionConversation({
       credentials,
       serverId: 'server-1',
       machineId: 'machine-1',
       machineAdmissionTransport: vi.fn(),
-      resolveTeamCredentialResourceCatalog,
       workDepth: 0,
       originRunId: 'run-1',
     });

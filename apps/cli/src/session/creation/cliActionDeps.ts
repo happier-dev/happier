@@ -9,6 +9,7 @@ import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/o
 import { applyMachineSetupBeforeAgent } from '@/machines/setup/applyMachineSetupBeforeAgent';
 import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
+import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import { prepareSessionAgentReadiness } from './prepareSessionAgentReadiness';
 import { incompatibleSessionSpawnTarget, projectSessionInitialAccessEnvelopeHostErrorResult } from '../actions/cliActionDeps/sessionSpawnErrors';
 import { SessionSpawnNewIncompatibleTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -166,10 +167,10 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
    * the Action input and approval artifact instead of comparing it to that
    * profile-local value.
    */
-  const isCurrentSessionSpawnExecutionTarget = (executionTarget: Readonly<{
-    serverId: string;
-    machineId: string;
-  }>): boolean => {
+  const isCurrentSessionSpawnExecutionTarget = (executionTarget: SessionExecutionTargetV1,
+    selectedTarget?: SessionExecutionTargetV1): boolean => {
+    if (selectedTarget && (selectedTarget.machineId !== executionTarget.machineId
+      || !isSameActionHomeId(selectedTarget.serverId))) return false;
     const directTargetTransport = params.sessionSpawnDirectTargetTransport;
     if (directTargetTransport?.machineId === executionTarget.machineId) {
       return true;
@@ -524,7 +525,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         }
       }
 
-      if (!isCurrentSessionSpawnExecutionTarget(executionTarget)) {
+      if (!isCurrentSessionSpawnExecutionTarget(executionTarget,
+        birthContext?.sessionPlacement?.kind === 'machine' ? birthContext.sessionPlacement.target : undefined)) {
         return { type: 'error', code: 'target_unavailable', retryable: false };
       }
       if (managedCreation) {
@@ -739,6 +741,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         identity, attestedContext, isolationOverride, sourceContext }, {
         agentId: resolvedAgentTarget.agentId, accountSettings: defaultsSettings,
         openedMachineMetadata, startContext: context,
+        ...(birthContext?.sessionPlacement ? { admittedWorkflowPlacement: birthContext.sessionPlacement } : {}),
         nativeSandboxAvailable: resolvedAgentTarget.nativeSandboxAvailable, machineIsolation,
         ...(purposeCatalog ? { purposeCatalog } : {}),
         organizationPolicy: configuration.organizationPolicy,

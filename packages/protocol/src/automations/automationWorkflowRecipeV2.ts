@@ -12,6 +12,7 @@ import {
 } from '../workflows/workflowDefinitionV1.js';
 import { WorkflowDefinitionV1Schema } from '../workflows/workflowV1.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
+import { SessionPlacementSelectionV1Schema } from '../sessions/creation/sessionPlacementSelectionV1.js';
 import { AutomationTriggerIdSchema } from './automationTriggerIdentity.js';
 import { AutomationIdV1Schema } from './automationIdV1.js';
 import { WorkflowApprovedOperationV1Schema } from '../actions/approvedOperationV1.js';
@@ -96,6 +97,7 @@ export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.
   workspace: z.strictObject({
     directory: z.string().check(z.minLength(1)),
     workspaceRefId: zMini.optional(preservedBoundedNfcString(191, 'Workspace reference ids')),
+    sessionPlacement: z.optional(SessionPlacementSelectionV1Schema),
   }),
   executionTarget: WorkflowRunExecutionTargetV1Schema,
   inputs: zMini.optional(WorkflowResolvedInputsV1Schema),

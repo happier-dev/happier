@@ -192,6 +192,20 @@ describe('useWorkflowRunNowController', () => {
     const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     await getServerFeaturesSnapshot({ serverId: homeA, force: true });
   }
+  it('starts the Run on the saved Session Machine before binding its project', async () => {
+    executeMock.mockResolvedValueOnce(admitted('created'));
+    const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
+    const hook = await renderHook(() => useWorkflowRunNowController());
+    const sessionPlacement = { kind: 'machine' as const, target: { serverId: homeA, machineId: 'machine-1' } };
+    await act(async () => {
+      await hook.getCurrent().runNow({ runId: RUN_ID, source,
+        project: { machineId: 'machine-2', directory: '/repo', workspaceRefId: 'old-machine-workspace', sessionPlacement } });
+    });
+    expect(executeMock.mock.calls[0]?.[0].target).toMatchObject({ kind: 'machine', machineId: 'machine-1',
+      project: { machineId: 'machine-1', directory: '/repo', sessionPlacement } });
+    expect(executeMock.mock.calls[0]?.[0].target).not.toHaveProperty('project.workspaceRefId');
+  });
+
   it('starts a pool-targeted Run on the Machine the pool placement owner resolves, once', async () => {
     const poolId = '00000000-0000-4000-8000-0000000000aa';
     await enableMachinePools();

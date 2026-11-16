@@ -8,14 +8,13 @@ import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAc
 import { qualifiedPurposeKey, QualifiedConnectedAccountPurposeBindingTargetV1Schema, QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { ConnectedAccountServiceIdentityV1Schema } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
-import { SessionExecutionTargetV1Schema } from '../sessions/creation/sessionExecutionTargetV1.js';
-import { ManagedMachinePresetV1Schema } from '../machines/managed/managedMachinePresetV1.js';
+import { SessionMachinePlacementV1Schema, SessionPresetPlacementV1Schema } from '../sessions/creation/sessionPlacementSelectionV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import type { MachineIsolationPolicyV1, MachineIsolationV1 } from '../machines/machineIsolationV1.js';
 
 export const ManagedSessionPlacementV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ kind: z.literal('machine'), target: SessionExecutionTargetV1Schema }),
-  z.strictObject({ kind: z.literal('preset'), homeId: ManagedMachinePresetV1Schema.shape.homeId, presetId: ManagedMachinePresetV1Schema.shape.id }),
+  SessionMachinePlacementV1Schema,
+  SessionPresetPlacementV1Schema,
 ]));
 export type ManagedSessionPlacementV1 = z.infer<typeof ManagedSessionPlacementV1Schema>;
 

@@ -692,6 +692,23 @@ describe('External Action API envelope v1', () => {
     expect(ExternalActionTargetV1Schema.safeParse({ kind: 'account' }).success).toBe(false);
   });
 
+  it('binds saved Workflow Session placement in exact external Action target equality', () => {
+    const authorized = ExternalActionTargetV1Schema.parse({ kind: 'machine', machineId: 'machine-1', project: {
+      machineId: 'machine-1', directory: '/repo', sessionPlacement: { kind: 'machine',
+        target: { serverId: 'home', machineId: 'machine-1' }, configuredSandbox: {
+          kind: 'sandbox', configuredSandboxId: 'development', lifecycle: 'fresh',
+          provisioner: { pluginId: 'test.sandbox', localId: 'local' }, presetId: 'development',
+        } },
+    } });
+    expect(externalActionApi.externalActionTargetsEqualV1(authorized, ExternalActionTargetV1Schema.parse(authorized))).toBe(true);
+    const changed = ExternalActionTargetV1Schema.parse({ kind: 'machine', machineId: 'machine-1', project: {
+      machineId: 'machine-1', directory: '/repo',
+    } });
+    expect(externalActionApi.externalActionTargetsEqualV1(authorized, changed)).toBe(false);
+    expect(isExternalActionResolvedTargetAllowedV1({ authorizedTarget: authorized, resolvedTarget: changed,
+      selectedMachineId: 'machine-1' })).toBe(false);
+  });
+
   it('allows only the selected relay Machine to resolve its exact invocation target', () => {
     const relayTarget = { kind: 'machine' as const, machineId: 'machine-1' };
     expect(isExternalActionResolvedTargetAllowedV1({

@@ -8,15 +8,12 @@ import type {
  * describe the old Run and must not be presented as authority for the new one.
  */
 export function projectAcceptedWorkflowRunTarget(
-    project: Readonly<{
-        machineId: string;
-        directory: string;
-        workspaceRefId?: string;
-    }>,
+    project: Readonly<WorkflowProjectTargetV1>,
 ): WorkflowProjectTargetV1 {
     return {
         machineId: project.machineId,
         directory: project.directory,
         ...(project.workspaceRefId === undefined ? {} : { workspaceRefId: project.workspaceRefId }),
+        ...(project.sessionPlacement === undefined ? {} : { sessionPlacement: project.sessionPlacement }),
     };
 }
