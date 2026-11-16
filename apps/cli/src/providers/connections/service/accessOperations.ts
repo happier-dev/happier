@@ -1,6 +1,5 @@
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { isProviderConnectionCredentialSlotDeclaredV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
-import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { z as zodMiniCore0 } from 'zod/mini';
 
 import type {
@@ -16,7 +15,7 @@ import {
   parseProviderError,
   readSettings,
   readSnapshotSettings,
-  requireSavedSecretReferenceReady,
+  validateProviderSavedSecretSelection,
 } from './settings';
 import type {
   ProviderConnectionCreateInput,
@@ -159,11 +158,8 @@ export function createProviderAccessOperations(context: ProviderConnectionServic
             connectionId: input.connectionId, machineId: input.machineId,
           });
         }
-        // Shared-resource admission belongs to the catalog writer's fresh
-        // Saved Secret reference capture, not this incumbent display snapshot.
-        if (input.savedSecretId !== null && (input.preparedSavedSecret
-          || parseSavedSecretRefV1(input.savedSecretId).kind !== 'shared_resource')) {
-          requireSavedSecretReferenceReady({
+        if (input.savedSecretId !== null) {
+          validateProviderSavedSecretSelection({
             savedSecretId: input.savedSecretId,
             savedSecretMaterializer: snapshot.savedSecretMaterializer,
             connectionId: input.connectionId,

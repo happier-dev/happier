@@ -29,7 +29,7 @@ import {
   parseProviderError,
   readSettings,
   readSnapshotSettings,
-  requireSavedSecretReferenceReady,
+  validateProviderSavedSecretSelection,
 } from './settings';
 import type {
   ProviderConnectionCreateInput,
@@ -391,7 +391,7 @@ function validateCreatedConnectionSecret(
   if (input.enable && credential?.required === true && input.savedSecretId === null) {
     throw createProviderErrorV1('provider_secret_missing', { connectionId: connection.id, machineId: input.machineId });
   }
-  if (input.savedSecretId !== null) requireSavedSecretReferenceReady({
+  if (input.savedSecretId !== null) validateProviderSavedSecretSelection({
     savedSecretId: input.savedSecretId, savedSecretMaterializer: snapshot.savedSecretMaterializer,
     connectionId: connection.id, machineId: input.machineId, preparedSavedSecret: input.preparedSavedSecret,
   });

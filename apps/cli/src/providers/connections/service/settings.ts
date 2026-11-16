@@ -1,6 +1,7 @@
 import { ProviderErrorV1Schema, createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
 import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { AccountSettingsMutationResult, ProviderErrorV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import { applyProviderDefaultModelSelectionV1, type ProviderDefaultModelSelectionMutationV1 } from '@happier-dev/protocol/providers/selection/v1';
 import type { StoredCredentials } from '@/persistence';
@@ -70,6 +71,12 @@ export function readSnapshotSettings(snapshot: ProviderConnectionServiceSnapshot
 }
 
 export class ProviderConnectionValidationError extends Error {}
+
+/** Shared selections are admitted by the catalog writer's reference capture. */
+export function validateProviderSavedSecretSelection(input: Parameters<typeof requireSavedSecretReferenceReady>[0]): void {
+  if (!input.preparedSavedSecret && parseSavedSecretRefV1(input.savedSecretId).kind === 'shared_resource') return;
+  requireSavedSecretReferenceReady(input);
+}
 
 /**
  * Validates an opaque Saved Secret reference through the one Account-scoped

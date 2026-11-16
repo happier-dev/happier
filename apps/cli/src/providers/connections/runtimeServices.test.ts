@@ -2,7 +2,7 @@ import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unex
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
-import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, FeaturesResponseSchema, ProviderConnectionIdSchema, ProviderConnectionV1Schema, ProviderContributionV1Schema, SavedSecretSchema, createProviderErrorV1 } from '@happier-dev/protocol';
+import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, FeaturesResponseSchema, ProviderConnectionIdSchema, ProviderConnectionV1Schema, ProviderContributionV1Schema, SavedSecretSchema, createProviderErrorV1, createProviderDiscoveryCandidateIdV1 } from '@happier-dev/protocol';
 import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -168,7 +168,7 @@ describe('runtime Provider connection composition', () => {
         ? { ok: true, result: { status: 'success', connections: [{ connectionId: connection.id, authorized: true }] } }
         : { ok: true, result: { status: 'success', connectionId: connection.id, models: [{ id: 'requester-model' }] } });
     });
-  it('reads the selected Saved Secret at Machine binding admission before committing its link', async () => {
+  it.each(['reviewed', 'detected'] as const)('admits cold shared selections at the catalog writer for %s authoring and Machine binding', async authoring => {
     const { setActiveAccountSettingsSnapshot } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
     const { createRuntimeProviderConnectionServices } = await import('./runtimeServices');
     const credentials: StoredCredentials = { token: 'provider-fresh-secret-binding', encryption: null };
@@ -194,12 +194,21 @@ describe('runtime Provider connection composition', () => {
     mockProviderCatalogReadHttp(catalog);
     const get = vi.mocked(axios.get).getMockImplementation()!;
     let materialReads = 0;
+    let referenceReads = 0;
     let materialAvailable = true;
     let materialStatus = 200;
     vi.mocked(axios.get).mockImplementation(async (url, options) => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/entity-rows/provider-connections') return { status: 200, data: {
         status: 'present', revision: 1, content: { t: 'plain', v: catalog } } };
+      if (path === '/v1/account/saved-secrets/resources') {
+        referenceReads++;
+        if (materialStatus !== 200) throw new Error('Home reference catalog unavailable');
+        return { status: 200, data: { resources: materialAvailable ? [{ ref, source: 'shared_resource',
+          relationship: 'owner', name: 'Fresh secret', kind: 'apiKey', ownerAccountId: 'owner', revision: 1,
+          materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
+        }] : [] } };
+      }
       if (path === '/v1/account/saved-secrets/resources/materials') {
         materialReads++;
         return { status: materialStatus, data: { resources: materialAvailable ? [{ resourceId, encryptionMode: 'plain', recipientEnvelope: null,
@@ -221,27 +230,67 @@ describe('runtime Provider connection composition', () => {
       catalog = opened.catalog;
       return { status: 200, data: { status: 'updated', revision: 2, cursor: 2 } };
     });
+    const source = catalog.connections[0]!.source;
+    if (source.kind !== 'custom') throw new Error('Expected custom provider fixture');
+    const contributionKey = 'acme.cold/local';
+    const normalizedEndpointUrl = 'http://127.0.0.1:11434/v1';
+    const definition = ProviderContributionV1Schema.parse({ ...source.template, id: 'local', kind: 'local',
+      endpointTemplates: [{ ...source.template.endpointTemplates[0], baseUrl: undefined,
+        localUrlCandidates: [normalizedEndpointUrl] }],
+      discovery: { v: 1, listener: { executableBasenames: ['cold-provider'], defaultPorts: [11434] },
+        availabilityProbe: { endpointTemplateId: 'chat', path: '/models', parser: 'openai-models' } },
+    });
+    const candidateId = createProviderDiscoveryCandidateIdV1({ machineId: 'machine-a', contributionKey,
+      endpointTemplateId: 'chat', normalizedEndpointUrl });
     const services = createRuntimeProviderConnectionServices({ machineId: 'machine-a', credentials,
       happyHomeDir: configuration.happyHomeDir, featureGate: { isEnabled: () => true },
-      runtimeSummary: async () => { throw new Error('Unenabled Provider has no runtime admission'); },
-      resolveRegistry: async () => ({ providersByContributionKey: new Map() }), resolveAddresses: async () => ['1.1.1.1'] });
+      runtimeSummary: async () => ({ status: 'error', error: createProviderErrorV1('provider_secret_unavailable') }),
+      resolveRegistry: async () => ({ providersByContributionKey: new Map([[contributionKey, {
+        provenance: 'first_party', source: { kind: 'bundled' }, pluginId: 'acme.cold',
+        identity: { pluginId: 'acme.cold', localId: 'local' }, definition,
+      }]]) }), resolveAddresses: async () => ['127.0.0.1'],
+      // OS listener observation is the boundary; discovery selection and authoring stay real.
+      discoveryCandidates: async () => [{ v: 1, machineId: 'machine-a', contributionKey, providerName: 'Cold local',
+        endpointTemplateId: 'chat', normalizedEndpointUrl, candidateId,
+        evidence: { kind: 'attributed_listener' }, ownership: 'adopted', connection: { status: 'enable_default' } }],
+    });
+    const connectionId = ProviderConnectionIdSchema.parse('pc_created_cold');
+    if (authoring === 'detected') {
+      expect(await services.service.enableDetected({ action: 'enableDetected', machineId: 'machine-a', connectionId,
+        candidateId, displayName: null, savedSecretId: ref })).toMatchObject({ status: 'success' });
+      expect(catalog.machineGrants).toMatchObject([{ connectionId, machineId: 'machine-a' }]);
+    } else {
+      const preview = await services.service.previewCreateContribution({ machineId: 'machine-a', connectionId,
+        contributionKey, displayName: null, selectedCandidateId: candidateId });
+      expect(preview).toMatchObject({ status: 'success', authoringPreview: { status: 'resolved' } });
+      if (preview.status !== 'success' || preview.authoringPreview.status !== 'resolved') throw new Error('Expected authoring preview');
+      expect(await services.service.create({ action: 'createContribution', machineId: 'machine-a', connectionId,
+        contributionKey, displayName: null, savedSecretId: ref, enable: false,
+        authoringReview: { candidateId, fingerprint: preview.authoringPreview.fingerprint,
+          revision: preview.authoringPreview.revision },
+      })).toMatchObject({ status: 'success', created: true });
+    }
+    const createdBindings = catalog.secretBindingsByConnectionId[connectionId];
+    expect(createdBindings?.account?.apiKey ?? createdBindings?.byMachineId?.['machine-a']?.apiKey).toBe(ref);
+    expect(referenceReads).toBe(1);
     await expect(services.service.bindSecret({ action: 'bindSecret', machineId: 'machine-a',
       connectionId: 'pc_fresh_secret', credentialSlotId: 'apiKey', savedSecretId: ref, scope: 'machine',
     })).resolves.toMatchObject({ status: 'success', credential: { boundMachineIds: ['machine-a'] } });
     expect(catalog.secretBindingsByConnectionId[ProviderConnectionIdSchema.parse('pc_fresh_secret')]?.byMachineId?.['machine-a']?.apiKey).toBe(ref);
-    expect(materialReads).toBe(1);
-    expect(post).toHaveBeenCalledOnce();
+    expect(referenceReads).toBe(2);
+    expect(materialReads).toBe(0);
+    expect(post).toHaveBeenCalledTimes(2);
     materialAvailable = false;
     await expect(services.service.bindSecret({ action: 'bindSecret', machineId: 'machine-a',
       connectionId: 'pc_fresh_secret', credentialSlotId: 'apiKey',
       savedSecretId: 'happier:shared-secret:v1:absent', scope: 'machine',
-    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_secret_missing' } });
+    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_secret_unavailable' } });
     materialStatus = 503;
     await expect(services.service.bindSecret({ action: 'bindSecret', machineId: 'machine-a',
       connectionId: 'pc_fresh_secret', credentialSlotId: 'apiKey',
       savedSecretId: 'happier:shared-secret:v1:absent', scope: 'machine',
     })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_secret_unavailable' } });
-    expect(post).toHaveBeenCalledOnce();
+    expect(post).toHaveBeenCalledTimes(2);
   });
 
   it.each(['missing', 'ready'] as const)('isolates Home-current credential readiness per connection in Machine descriptions (%s)', async materialState => {

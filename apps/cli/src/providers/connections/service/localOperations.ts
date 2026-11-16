@@ -22,7 +22,7 @@ import {
   parseProviderError,
   readSettings,
   readSnapshotSettings,
-  requireSavedSecretReferenceReady,
+  validateProviderSavedSecretSelection,
 } from './settings';
 import type {
   ProviderConnectionServiceResult,
@@ -95,7 +95,7 @@ export function createProviderLocalOperations(context: ProviderConnectionService
     }
     if (input.savedSecretId !== null) {
       try {
-        requireSavedSecretReferenceReady({
+        validateProviderSavedSecretSelection({
           savedSecretId: input.savedSecretId,
           savedSecretMaterializer: snapshot.savedSecretMaterializer,
           connectionId: input.connectionId,
