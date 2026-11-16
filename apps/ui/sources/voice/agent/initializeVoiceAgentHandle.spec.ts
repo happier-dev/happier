@@ -1005,7 +1005,7 @@ describe('initializeVoiceAgentHandle', () => {
                     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' },
                         definitionId: 'qa-c-exact-args' } },
             }),
-            runtimeDescriptorV1: { v: 1, agentId: 'custom-acp', agent: {} },
+            runtimeDescriptorV1: { v: 1, agentId: 'custom-acp', agent: { definitionId: 'qa-c-exact-args' } },
         }, directory: '/workspace' }),
             sessionModelsV1: { v: 1 as const, agentId: 'custom-acp', updatedAt: 1, currentModelId: 'opencode/big-pickle',
                 availableModels: [{ id: 'opencode/big-pickle', name: 'Big Pickle' }],

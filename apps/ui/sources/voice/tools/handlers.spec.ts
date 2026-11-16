@@ -1698,11 +1698,12 @@ describe('voice tool handlers', () => {
       // in its startup catalog, then exercise that same entry below.
       expect(prompt, 'Voice must list creation before a default-Agent request').toContain(`- ${spawnTool}:`);
     }
-    // Both Home and Session calls consume the offered channel, including when
-    // an Agent is named. Hand-built arguments bypass the published projection.
-    const published = prompt.split('\n').find(line => line.startsWith(`- ${spawnTool}:`))
-      ?.match(/happier_voice_action (\{.*\})\.$/)?.[1] ?? '';
-    const publishedTurn = decodeVoiceAssistantActions([JSON.parse(published)]);
+    // The compact prompt indexes tools; the canonical Action owns full examples.
+    const discoveredSpec = JSON.parse(await tools.getActionSpec({ id: 'session.spawn_new' }));
+    expect(discoveredSpec.ok, JSON.stringify(discoveredSpec)).toBe(true);
+    const published = discoveredSpec.actionSpec.examples?.voice?.argsExample;
+    expect(published).toBeTruthy();
+    const publishedTurn = decodeVoiceAssistantActions([{ t: spawnTool, args: JSON.parse(published!) }]);
     expect(publishedTurn.actions, 'Creation needs executable function arguments in the offered catalog').toHaveLength(1);
     const example = publishedTurn.actions[0]!;
     if (!example.args || typeof example.args !== 'object' || Array.isArray(example.args)) throw new Error('Expected published Action arguments');
@@ -2881,15 +2882,17 @@ describe('voice tool handlers', () => {
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
     const { decodeVoiceAssistantActions } = await import('@happier-dev/protocol/voice/actions');
     const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' });
-    const documented = prompt.split('\n').find(line => line.startsWith('- sendSessionMessage:'))
-      ?.match(/happier_voice_action (\{.*\})\.$/)?.[1] ?? '';
-    const parsed = decodeVoiceAssistantActions([JSON.parse(documented)]);
+    expect(prompt).toContain('- sendSessionMessage:');
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ currentServerId: homeA, resolveSessionId: explicit => explicit || 's1' });
+    const discoveredSpec = JSON.parse(await tools.getActionSpec({ id: 'session.message.send' }));
+    expect(discoveredSpec.ok, JSON.stringify(discoveredSpec)).toBe(true);
+    const documented = discoveredSpec.actionSpec.examples?.voice?.argsExample;
+    expect(documented).toBeTruthy();
+    const parsed = decodeVoiceAssistantActions([{ t: 'sendSessionMessage', args: JSON.parse(documented!) }]);
     expect(parsed.actions).toHaveLength(1);
     const example = parsed.actions[0]!;
     if (!example.args || typeof example.args !== 'object' || Array.isArray(example.args)) throw new Error('Expected published Action arguments');
-    const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ currentServerId: homeA, resolveSessionId: explicit => explicit || 's1' });
-
     const action = { t: example.t, args: { ...example.args, sessionId: 's2', message: 'hello', reply: 'none' } };
     const result = await tools[action.t]!(action.args, { serverId: homeA, effectId: 'run96-session-send' });
 
@@ -3441,7 +3444,7 @@ describe('voice tool reset Account authority', () => {
         featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true },
         voiceSettingsV1: { providerId: 'local_conversation', providers: { local_conversation: { schemaVersion: 1,
           config: { agent: { transcript: { persistenceMode: 'persistent', epoch: 2 } } } } } },
-      }));
+      }), { serverIdentityId: 'srv_voice-settings-account' });
       const accountHome = getServerProfileById(account.scope.serverId);
       if (!accountHome) throw new Error('Restored Account Home missing');
       await adoptHomeProfile({ descriptor: { serverUrl: accountHome.serverUrl,

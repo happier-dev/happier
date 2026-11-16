@@ -5,7 +5,7 @@ import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalR
 import { t } from '@/text';
 import { z } from 'zod/mini';
 import { parseVoiceToolResultsFollowUp } from '@happier-dev/protocol/voice/toolResultsChannel';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { serveAccountHomes, installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -26,7 +26,7 @@ import { readStoredSessionMessages, type Message } from '@happier-dev/session-co
 import { readMountedSessionRealtimeTranscriptConsumerSessionIds } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
 import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 import { readCanonicalVoiceTranscriptSnapshot } from '@/voice/transcript/voiceConversationTranscript';
-import { createRetainedVoiceAgentRpcBoundary } from '@/dev/testkit/harness/voiceAgentRpcBoundary';
+import { createRetainedVoiceAgentActionHttpBoundaries, createRetainedVoiceAgentRpcBoundary } from '@/dev/testkit/harness/voiceAgentRpcBoundary';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SessionResumeRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamStartResponseSchema,
@@ -235,10 +235,13 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       id: 'deployment-webhook', kind: 'webhook', url: 'https://deployment-hook.test/notify', enabled: true,
       topics: {}, readyIncludeMessageText: false, requestIncludeMessageText: false, signingSecretRef: null }] });
     retainedAgent = await createRetainedVoiceAgentRpcBoundary({ handleOtherRpc: answerVoiceAgentRpc });
+    const actionHttp = await createRetainedVoiceAgentActionHttpBoundaries({ serverUrl: 'https://transcript-voice.test',
+      serverIdentityId: 'srv_transcript_voice', accountId: 'account-a', machineId: 'machine-1',
+      dispatch: (method, input) => retainedAgent.dispatch(method, input) });
     account = await serveAccountHomes({ homes: [
       { key: 'other', serverUrl: 'https://transcript-other.test', accountId: 'account-b' },
       { key: 'voice', serverUrl: 'https://transcript-voice.test', serverIdentityId: 'srv_transcript_voice', accountId: 'account-a', currentAccount: true, settings: buildAccountSettings() },
-    ], route: createSessionReadBatchHttpBoundary(request => {
+    ], route: createSessionReadBatchHttpBoundary(async request => {
       if (request.path === managedMachineActionEndpointPathV1('machines.managed.list')) {
         return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
       }
@@ -255,6 +258,11 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       // This Home has no target Session: do not serve the active Home's seed
       // through another Home's real scoped fetch.
       if (request.home === 'other') return undefined;
+      for (const boundary of actionHttp) {
+        const response = await boundary.handle(request.url, { method: request.method, headers: request.headers,
+          ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
+        if (response) return response;
+      }
       const artifactResponse = approvalArtifacts.handle(request.path + request.url.search, { method: request.method,
         ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
       if (artifactResponse) return artifactResponse;
@@ -269,7 +277,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
           return Response.json({ status: 'updated', revision: ++webhookRevision, cursor: webhookRevision });
         }
       }
-      const machine = createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' });
+      const machine = actionHttp[0]!.machine;
       if (request.path === '/v1/machines/read-batch' && request.method === 'POST') return createMachineReadBatchResponseFixture(
         request.body, id => id === machine.id ? machine : null);
       if (request.path === '/v1/machines') return Response.json([machine]);
@@ -329,7 +337,6 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     { path: 'setting', streamedNarration: true }, { path: 'existing-request', streamedNarration: true },
   ] as const)(
     'executes the spoken $path without a model confirmation round (streamed narration=$streamedNarration)', async ({ path, streamedNarration }) => {
-      const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
       const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
       const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
       const serverId = account.homes.voice!.id;
@@ -412,6 +419,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
             streaming: { ...local.streaming, enabled: true, ttsEnabled: true } } } } } }) });
       storage.setState({ settings });
       account.replaceAccountSettings('voice', { settings, version: 10 });
+      const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
       const spoken: string[] = [];
       const firstNarration = createDeferred<SpeechOptions>();
       const hostSummary = createDeferred<SpeechOptions>();
