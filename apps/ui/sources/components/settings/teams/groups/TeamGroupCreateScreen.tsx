@@ -135,7 +135,7 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
                 description: sealedDescription,
                 requestKey: submission.requestKey,
                 onApprovalSucceeded: openCreatedGroup,
-                onApprovalFailed: () => setError(t('teams.errors.generic')),
+                onApprovalFailed: (code) => setError(teamMutationFailureLabel({ kind: 'unknown', code, retryable: false })),
             });
         } catch (cause) {
             submitInFlightRef.current = false;

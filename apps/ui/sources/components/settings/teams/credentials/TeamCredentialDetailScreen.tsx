@@ -125,7 +125,7 @@ function directMaterialStateLabel(state: NonNullable<ReturnType<typeof useTeamCr
     }
 }
 
-type CredentialTestResult = Readonly<{ message: string; code?: string; detail?: string }>;
+type CredentialTestResult = Readonly<{ message: string | null; code?: string; detail?: string }>;
 
 function presentTestResult(result: TeamCredentialTestActionOutputV1): CredentialTestResult {
     return {
@@ -455,7 +455,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                         />
                     )}
                 />
-                {testResult?.code ? (
+                {testResult?.code && testResult.message !== null ? (
                     <SurfaceStateCard
                         key={`${testResult.code}:${testResult.detail ?? ''}`}
                         testID="team-credential-test-result"

@@ -312,7 +312,7 @@ const TeamLogoSection = React.memo(function TeamLogoSection(props: Readonly<{
                 onApprovalSucceeded: () => onSettled({ kind: 'succeeded' }),
                 onApprovalFailed: (code) => onSettled({
                     kind: 'failed',
-                    message: code === 'approval_rejected' ? t('teams.errors.forbidden') : t('teams.logo.failed'),
+                    message: teamMutationFailureLabel({ kind: 'unknown', code, retryable: false }),
                 }),
             });
             return outcome.kind === 'succeeded'

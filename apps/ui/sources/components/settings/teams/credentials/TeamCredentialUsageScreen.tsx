@@ -268,6 +268,9 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
         refresh: refreshToNow,
     });
 
+    const resourceFailureMessage = view?.error ? credentialFailureMessage(view.error) : null;
+    const usageFailureMessage = usage.error ? credentialFailureMessage(usage.error) : null;
+
     if (!featureEnabled || (!aggregate && view?.resolved && resource === null && catalogResource === null)) {
         return (
             <SurfaceStateCard
@@ -283,13 +286,13 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
 
     if (!aggregate && resource === null && catalogResource === null) {
         if (view?.error) {
-            return (
+            return resourceFailureMessage === null ? null : (
                 <ItemGroup>
                     <SurfaceStateCard
                         testID="team-credential-usage-resource-error"
                         kind="error"
                         size="line"
-                        title={credentialFailureMessage(view.error)}
+                        title={resourceFailureMessage}
                         action={{ label: t('common.retry'), onPress: () => void view.reload(), testID: 'team-credential-usage-resource-retry' }}
                         accessibilitySemantics="alert"
                     />
@@ -465,13 +468,13 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            {usage.partial && usage.error ? (
+            {usage.partial && usage.error && usageFailureMessage !== null ? (
                 <ItemGroup>
                     <SurfaceStateCard
                         testID="team-credential-usage-load-more-error"
                         kind="error"
                         size="line"
-                        title={credentialFailureMessage(usage.error)}
+                        title={usageFailureMessage}
                         action={{ label: t('common.retry'), disabled: usage.loadingMore, onPress: () => void usage.loadMore(), testID: 'team-credential-usage-load-more-retry' }}
                         accessibilitySemantics="alert"
                     />
@@ -563,13 +566,13 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            {usage.error && !usage.partial ? (
+            {usage.error && !usage.partial && usageFailureMessage !== null ? (
                 <ItemGroup>
                     <SurfaceStateCard
                         testID="team-credential-usage-error"
                         kind={usage.error.kind === 'forbidden' || usage.error.kind === 'unauthorized' ? 'denied' : 'error'}
                         size="line"
-                        title={credentialFailureMessage(usage.error)}
+                        title={usageFailureMessage}
                         reason={(usage.error.code === 'not_found_or_not_visible' || usage.error.code === 'forbidden') && target.subject
                             ? target.subject.kind === 'home'
                                 ? t('teams.credentials.usage.homeAdminRequired')
@@ -581,13 +584,13 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            {view?.error ? (
+            {view?.error && resourceFailureMessage !== null ? (
                 <ItemGroup>
                     <SurfaceStateCard
                         testID="team-credential-usage-resource-error"
                         kind="error"
                         size="line"
-                        title={credentialFailureMessage(view.error)}
+                        title={resourceFailureMessage}
                         action={{ label: t('common.retry'), onPress: () => void view.reload(), testID: 'team-credential-usage-resource-retry' }}
                         accessibilitySemantics="alert"
                     />

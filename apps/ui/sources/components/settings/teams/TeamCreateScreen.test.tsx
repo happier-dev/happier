@@ -89,6 +89,30 @@ afterEach(() => {
 });
 
 describe('TeamCreateScreen', () => {
+    it('keeps the creation draft silently when its native approval is declined', async () => {
+        const home = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'member-a', teamsEnabled: true });
+        await harness.selectHomes([home]);
+        harness.answer(home, ELIGIBILITY_PATH, { body: { teamsEnabled: true, createTeam: true, createTeamForChosenAccount: false } });
+        await harness.requireUiApproval(home, 'teams.create');
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
+        const screen = await renderCreate();
+        await vi.waitFor(() => expect(screen.findByTestId('teams-create-name')).not.toBeNull());
+        act(() => {
+            screen.changeTextByTestId('teams-create-name', 'Platform');
+            screen.changeTextByTestId('teams-create-description', 'Shared dev boxes');
+        });
+        await screen.pressByTestIdAsync('teams-create-submit');
+        expect(screen.findByTestId('teams-create-name')?.props.value).toBe('Platform');
+        expect(screen.findByTestId('teams-create-description')?.props.value).toBe('Shared dev boxes');
+        expect(screen.findByTestId('teams-create-submit')?.props.disabled).toBe(false);
+        expect(screen.getTextContent()).not.toContain('teams.errors.forbidden');
+        expect(screen.getTextContent()).not.toContain('teams.errors.generic');
+        expect(screen.getTextContent()).not.toContain('voiceSurface.actionCanceled');
+        expect(harness.requestsFor(TEAM_CREATE_PATH)).toHaveLength(0);
+        expect(routerReplace).not.toHaveBeenCalled();
+    });
+
     it('UX keeps the draft monogram preview the same while the name and description are typed', async () => {
         const home = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'member-a', teamsEnabled: true });
         await harness.selectHomes([home]);

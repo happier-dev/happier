@@ -146,9 +146,9 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
         void invitations.reload();
     }, [invitations.reload]));
 
-    const publishNotice = React.useCallback((message: string) => {
+    const publishNotice = React.useCallback((message: string | null) => {
         setNotice(message);
-        announceAccessibilityMessage(message);
+        if (message !== null) announceAccessibilityMessage(message);
     }, []);
 
     /**
@@ -282,8 +282,8 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
                             announceAccessibilityMessage(t('teams.invitations.stateRevoked'));
                             void invitations.reload();
                         },
-                        onApprovalFailed: () =>
-                            publishNotice(t('teams.errors.generic')),
+                        onApprovalFailed: (code) =>
+                            publishNotice(teamMutationFailureLabel({ kind: 'unknown', code, retryable: false })),
                     });
                 } catch (cause) {
                     setBusy(false);

@@ -57,7 +57,7 @@ export type TeamSectionContext = Readonly<{
     /** Registers a deferred Action approval created by a Team mutation. */
     requestApproval: (registration: ActionApprovalRegistration) => void;
     /** Settles self-removal at the destination host, even after its roster row unmounts. */
-    settleLeave: (outcome: Readonly<{ kind: 'succeeded' }> | Readonly<{ kind: 'failed'; message: string }>) => void;
+    settleLeave: (outcome: Readonly<{ kind: 'succeeded' }> | Readonly<{ kind: 'failed'; message: string | null }>) => void;
 }>;
 
 /**

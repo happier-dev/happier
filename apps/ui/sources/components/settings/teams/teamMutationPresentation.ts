@@ -25,7 +25,7 @@ export function teamReadFailureLabel(failure: HomeDomainFailure<string> | Scoped
     if (isActionTurnedOffErrorCode(failure.code)) return t('actionConfirmations.turnedOffReadMessage');
     if (failure.kind === 'unreachable') return t('teams.unavailable.offline');
     if (failure.kind === 'unknown' || failure.kind === 'invalid') return t('teams.errors.loadFailed');
-    return teamMutationFailureLabel({ ...failure, code: failure.code ?? null });
+    return teamFailureLabel({ ...failure, code: failure.code ?? null });
 }
 
 export type TeamReadFailureRetry = Readonly<{ onPress: () => void; testIDPrefix?: string }>;
@@ -55,8 +55,12 @@ export function teamReadFailureAction(
     };
 }
 
-export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy' | 'policy'): string {
-    if (isActionApprovalDeclinedErrorCode(failure.code)) return t('voiceSurface.actionCanceled');
+export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy' | 'policy'): string | null {
+    if (isActionApprovalDeclinedErrorCode(failure.code)) return null;
+    return teamFailureLabel(failure, context);
+}
+
+function teamFailureLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy' | 'policy'): string {
     if (failure.code === 'managed_default_machine_not_member_usable') return t('teams.settings.memberDefaults.machineNotMemberUsable');
     if (failure.code === 'team_authentication_required') return context === 'authentication_policy'
         ? t('teams.authentication.policy.authenticationRequired')
@@ -91,10 +95,12 @@ export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, con
 export function teamCreateFailureLabel(
     failure: HomeDomainFailure<string>,
     submittedOwner: boolean,
-): string {
+): string | null {
     if (isTeamCreateOwnerRefusal(failure)) {
         return submittedOwner ? t('teams.create.initialOwnerIneligible') : t('teams.create.initialOwnerRequired');
     }
+    if (failure.kind === 'invalid') return t('teams.errors.invalidName');
+    if (failure.kind === 'outcome_unknown') return t('teams.create.outcomeUnknown');
     return teamMutationFailureLabel(failure);
 }
 

@@ -463,7 +463,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     settleRosterChange(result, null);
                     continueHistoryPreparation(result);
                 },
-                onApprovalFailed: () => setNotice(t('teams.errors.generic')),
+                onApprovalFailed: (code) => setNotice(teamMutationFailureLabel({ kind: 'unknown', code, retryable: false })),
             }),
             null,
         );
@@ -653,8 +653,8 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                             // owes that distinction too.
                                             onApprovalSucceeded: (result) =>
                                                 settleRosterChange(result, external),
-                                            onApprovalFailed: () =>
-                                                setNotice(t('teams.errors.generic')),
+                                            onApprovalFailed: (code) =>
+                                                setNotice(teamMutationFailureLabel({ kind: 'unknown', code, retryable: false })),
                                         }),
                                         external,
                                     );

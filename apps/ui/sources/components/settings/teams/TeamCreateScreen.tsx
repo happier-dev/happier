@@ -53,7 +53,7 @@ import { teamDetailPath, teamsDirectoryPath } from './teamsRoutes';
 import { TeamLogoPicker } from './TeamLogoPicker';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { isTeamCreateOwnerRefusal, teamCreateFailureLabel } from './teamMutationPresentation';
+import { isTeamCreateOwnerRefusal, teamCreateFailureLabel, teamMutationFailureLabel } from './teamMutationPresentation';
 
 
 type CommittedTeam = Readonly<{
@@ -394,11 +394,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
             openCreatedTeam({ ...committed, team: logoOutcome.team });
             return true;
         }
-        setError(logoOutcome.failure.kind === 'outcome_unknown'
-            ? t('teams.errors.outcomeUnknown')
-            : logoOutcome.failure.kind === 'unreachable'
-                ? t('teams.errors.offline')
-                : t('teams.logo.failed'));
+        setError(teamMutationFailureLabel(logoOutcome.failure));
         return false;
     }, [openCreatedTeam, requestApproval]);
 
@@ -464,9 +460,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                         setSubmitting(false);
                     }
                 },
-                onApprovalFailed: (code) => setError(code === 'approval_rejected'
-                    ? t('teams.errors.forbidden')
-                    : t('teams.errors.generic')),
+                onApprovalFailed: (code) => setError(teamCreateFailureLabel({ kind: 'unknown', code, retryable: false }, submittedOwner)),
             });
             if (outcome.kind === 'succeeded') {
                 await commitCreatedTeam(outcome.team);
@@ -479,17 +473,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
             // under managed creation, or the named Account can no longer hold the Team.
             const ownerRefused = isTeamCreateOwnerRefusal(outcome.failure);
             if (ownerRefused && !submittedOwner) eligibility.refresh();
-            setError(ownerRefused
-                ? teamCreateFailureLabel(outcome.failure, submittedOwner)
-                : outcome.failure.kind === 'forbidden'
-                    ? t('teams.errors.forbidden')
-                    : outcome.failure.kind === 'invalid'
-                        ? t('teams.errors.invalidName')
-                        : outcome.failure.kind === 'outcome_unknown'
-                            ? t('teams.create.outcomeUnknown')
-                            : outcome.failure.kind === 'unreachable'
-                                ? t('teams.errors.offline')
-                            : t('teams.errors.generic'));
+            setError(teamCreateFailureLabel(outcome.failure, submittedOwner));
         } catch (cause) {
             // An explicit UI-approval requirement defers the creation instead of
             // reaching the Home. Registering this exact request is what lets the

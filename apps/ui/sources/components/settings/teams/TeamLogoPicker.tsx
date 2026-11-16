@@ -31,7 +31,7 @@ const ACCEPTED_LOGO_FORMATS = TEAM_LOGO_ACCEPTED_MIME_TYPES
 
 type LogoCommitResult =
     | Readonly<{ kind: 'succeeded' }>
-    | Readonly<{ kind: 'failed'; message: string }>;
+    | Readonly<{ kind: 'failed'; message: string | null }>;
 
 /** Reads a picked image without assuming a platform-specific file API. */
 async function readPickedImageBytes(

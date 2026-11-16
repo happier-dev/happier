@@ -152,9 +152,7 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
                 role,
                 historyAccess: historyChoiceAvailable ? historyAccess : 'from_membership',
                 onApprovalSucceeded: (membership) => settleAdmission(membership, includeHistory),
-                onApprovalFailed: (code) => setError(code === 'approval_rejected'
-                    ? t('teams.errors.forbidden')
-                    : t('teams.errors.generic')),
+                onApprovalFailed: (code) => setError(teamMutationFailureLabel({ kind: 'unknown', code, retryable: false })),
             });
         } catch (cause) {
             submitInFlightRef.current = false;

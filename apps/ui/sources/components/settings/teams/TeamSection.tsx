@@ -135,7 +135,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     const settleLeave = React.useCallback<TeamSectionContext['settleLeave']>((outcome) => {
         if (!mounted.current || currentScopeKey.current !== scopeKey) return;
         if (outcome.kind === 'succeeded') router.replace('/settings/teams');
-        else Modal.alert(t('homeGovernance.changeFailedTitle'), outcome.message);
+        else if (outcome.message !== null) Modal.alert(t('homeGovernance.changeFailedTitle'), outcome.message);
     }, [mounted, router, scopeKey]);
     const approvalRefresh = React.useCallback(() => {
         if (binding.kind === 'bound') binding.refresh();

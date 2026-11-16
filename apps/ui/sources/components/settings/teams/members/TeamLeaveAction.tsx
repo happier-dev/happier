@@ -29,7 +29,7 @@ export const TeamLeaveAction = React.memo(function TeamLeaveAction(props: Readon
         if (inFlight.current || !context.mutationsAvailable || context.approvalPending) return;
         inFlight.current = true;
         const finish = () => context.settleLeave({ kind: 'succeeded' });
-        const failure = (message: string) => context.settleLeave({ kind: 'failed', message });
+        const failure = (message: string | null) => context.settleLeave({ kind: 'failed', message });
         try {
             if (!mounted.current) return;
             setBusy(true);

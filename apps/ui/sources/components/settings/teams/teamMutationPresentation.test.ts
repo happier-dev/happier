@@ -48,10 +48,10 @@ describe('a Team read the person turned off in Settings, Actions', () => {
 });
 
 describe('teamMutationFailureLabel', () => {
-    it.each(['approval_canceled', 'approval_rejected'])('keeps the person’s %s decision distinct from genuine permission refusals', code => {
+    it.each(['approval_canceled', 'approval_rejected'])('silently keeps the person’s %s decision distinct from genuine permission refusals', code => {
         const failure = { kind: 'forbidden' as const, retryable: false, code };
-        expect(teamMutationFailureLabel(failure)).toBe('voiceSurface.actionCanceled');
-        expect(teamCreateFailureLabel(failure, false)).toBe('voiceSurface.actionCanceled');
+        expect(teamMutationFailureLabel(failure)).toBeNull();
+        expect(teamCreateFailureLabel(failure, false)).toBeNull();
         expect(teamMutationFailureLabel({ ...failure, code: 'team_forbidden' })).toBe('teams.errors.forbidden');
     });
 

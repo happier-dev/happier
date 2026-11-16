@@ -21,7 +21,6 @@ import type { ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedS
 import { getConnectedAccountNativeLoginConstraints } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveQualifiedConnectedServiceMarkId } from '@/components/settings/connectedServices/model/resolveQualifiedConnectedServiceMarkId';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
-import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { TeamCredentialResourceState } from './readinessPresentation';
 import { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 import { resolveUsageQueryPeriod, type UsageRelativePeriod } from '@happier-dev/protocol/inputs/usageQuery';
@@ -396,7 +395,7 @@ export function credentialDirectExportFailureMessage(
     return failure === undefined ? undefined : failure.message ?? t('common.unavailable');
 }
 
-export function credentialFailureMessage(failure: HomeDomainFailure<string>): string {
+export function credentialFailureMessage(failure: HomeDomainFailure<string>): string | null {
     const reconnect = teamCredentialReconnectPresentation(failure.code);
     if (reconnect) return reconnect.message;
     switch (failure.code) {
@@ -465,10 +464,7 @@ export function credentialFailureMessage(failure: HomeDomainFailure<string>): st
  * code arriving late, so it reads in exactly the same words it would have had
  * the approval not been required.
  */
-export function credentialApprovalFailureMessage(code: string): string {
-    if (isActionApprovalDeclinedErrorCode(code)) {
-        return t('teams.credentials.approvalDeclined');
-    }
+export function credentialApprovalFailureMessage(code: string): string | null {
     return credentialFailureMessage({ kind: 'unknown', retryable: false, code });
 }
 

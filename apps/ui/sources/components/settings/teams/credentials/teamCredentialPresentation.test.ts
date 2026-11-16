@@ -17,6 +17,7 @@ import {
     resourceState,
     resourceStateLabel,
     credentialFailureMessage,
+    credentialApprovalFailureMessage,
     credentialBrokeredSourceUseMessage,
     recoveryDestinationIsNavigable,
     teamCredentialRecoveryPresentation,
@@ -25,6 +26,13 @@ import {
 } from './teamCredentialPresentation';
 
 describe('teamCredentialPresentation', () => {
+    it.each(['approval_canceled', 'approval_rejected'])('keeps %s silent for immediate and deferred credential mutations', (code) => {
+        expect(credentialFailureMessage({ kind: 'forbidden', retryable: false, code })).toBeNull();
+        expect(credentialApprovalFailureMessage(code)).toBeNull();
+        expect(credentialFailureMessage({ kind: 'forbidden', retryable: false, code: 'resource_forbidden' }))
+            .toBe(t('teams.credentials.forbidden'));
+    });
+
     it('explains the declared native-login constraint without a hardcoded compatible Agent roster', () => {
         const message = credentialBrokeredSourceUseMessage({ pluginId: 'happier.agent.muse', localId: 'muse-account' });
         expect(message).toContain('Muse');
