@@ -19,6 +19,7 @@ import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/f
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { encodeBase64 } from '@/encryption/base64';
 import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 installSessionDetailsPanelNonRnModuleMocks();
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -610,6 +611,83 @@ it.each([500, 503, 'AbortError', 'invalidRecord', 'batch503', 'batch403'] as con
         expect(screen.findByTestId('core.area.widget.costs-body.body')).toBeNull();
     } finally { artifactReadFails = false; artifactReadError = undefined; artifactReadInvalid = false; artifactBatchReadFails = false;
         await screen.unmount(); await encryptedHome?.dispose(); }
+});
+
+it('re-admits the Usage area on reconnect while its pre-reconnect Artifact read is held', async () => {
+    const entered = createDeferred<void>();
+    const held = createDeferred<void>();
+    let reads = 0;
+    beforeArtifactRead = async () => {
+        if (++reads === 1) { entered.resolve(); await held.promise; }
+    };
+    const names = Object.fromEntries(USAGE_WIDGET_PRESET_IDS.map(id => [id, id])) as Record<(typeof USAGE_WIDGET_PRESET_IDS)[number], string>;
+    const providedContext = {};
+    const hook = await renderHook(() => {
+        const binding = useUsageWidgetAreaBinding({ serverId: runtime.serverId, providedContext, period: '7days', names });
+        return { binding, layout: useWidgetAreaLayout(binding.port!, binding.context) };
+    });
+    try {
+        await entered.promise;
+        expect(hook.getCurrent().layout.state.status).toBe('loading');
+        await act(async () => { publishHomeAccountChange(runtime.serverId, undefined, { source: 'connected' }); });
+        await vi.waitFor(() => expect(hook.getCurrent().layout.state).toMatchObject({
+            status: 'ready', context: hook.getCurrent().binding.context,
+        }));
+        expect(reads).toBe(2);
+        held.resolve();
+        await act(async () => { await held.promise; });
+        expect(hook.getCurrent().layout.state.status).toBe('ready');
+        expect(hook.getCurrent().layout.state).not.toHaveProperty('readFailure');
+    } finally { held.resolve(); beforeArtifactRead = undefined; await hook.unmount(); }
+});
+
+it('retries the latest Usage period and Machine scope after a failed fourth switch', async () => {
+    const names = Object.fromEntries(USAGE_WIDGET_PRESET_IDS.map(id => [id, id])) as Record<typeof USAGE_WIDGET_PRESET_IDS[number], string>;
+    const hook = await renderHook(({ period, machine }: { period: '7days' | '30days'; machine?: string }) => {
+        const providedContext = React.useMemo(() => readUsageWidgetPageContext(readUsageWidgetPageScope(normalizeUsageQuery({
+            period: { relative: period }, ...(machine ? { machines: [machine] } : {}),
+        }))), [period, machine]);
+        const binding = useUsageWidgetAreaBinding({ serverId: runtime.serverId, providedContext, period, names });
+        return { binding, layout: useWidgetAreaLayout(binding.port!, binding.context) };
+    }, { initialProps: { period: '7days' as '7days' | '30days', machine: undefined as string | undefined } });
+    const settled = () => vi.waitFor(() => {
+        expect(hook.getCurrent().layout.state).toMatchObject({ status: 'ready', context: hook.getCurrent().binding.context });
+        expect(hook.getCurrent().layout.state).not.toHaveProperty('readFailure');
+    });
+    try {
+        await settled();
+        await hook.rerender({ period: '30days', machine: undefined });
+        await settled();
+        await hook.rerender({ period: '30days', machine: 'machine-a' });
+        await settled();
+        await hook.rerender({ period: '7days', machine: 'machine-a' });
+        await settled();
+        const admitted = hook.getCurrent().layout.state;
+        artifactReadFails = true;
+        artifactBatchFailureStatus = 500;
+        artifactBatchReadFails = true;
+        await hook.rerender({ period: '30days', machine: 'machine-a' });
+        await act(async () => { await hook.getCurrent().layout.reload(); });
+        await vi.waitFor(() => expect(hook.getCurrent().layout.state).toMatchObject({
+            status: 'ready', readFailure: { reasonCode: 'widget_area_unavailable' },
+        }));
+        expect(hook.getCurrent().layout.state).toMatchObject({ context: admitted.status === 'ready' ? admitted.context : {} });
+        // Retry while the boundary is still failing must make a fresh request too.
+        let requests = layoutReadRequests;
+        await act(async () => {
+            expect(await hook.getCurrent().layout.reload()).toMatchObject({ status: 'unavailable', reasonCode: 'widget_area_unavailable' });
+        });
+        expect(layoutReadRequests).toBeGreaterThan(requests);
+        artifactReadFails = false;
+        artifactBatchReadFails = false;
+        await act(async () => {
+            expect(await hook.getCurrent().binding.port!.execute({ actionId: 'widgets.item.list' })).toMatchObject({ ok: true });
+        });
+        requests = layoutReadRequests;
+        await act(async () => { await hook.getCurrent().layout.reload(); });
+        expect(layoutReadRequests).toBeGreaterThan(requests);
+        await settled();
+    } finally { artifactReadFails = false; artifactBatchReadFails = false; await hook.unmount(); }
 });
 
 it('retains an admitted core-page area through a transient Artifact HTTP failure and admits recovery', async () => {

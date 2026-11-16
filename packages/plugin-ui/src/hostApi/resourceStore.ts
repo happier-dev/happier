@@ -18,6 +18,8 @@ export type PluginUiResourceReference = Parameters<PluginUiHostApi['readResource
 /** Same-process producers invalidate without acquiring bytes to manufacture a digest hint. */
 type PluginUiResourceClientEvent = ResourceSubscriptionEvent | Readonly<{
   kind: 'invalidated'; digest?: undefined; contentIdentity?: object;
+  /** Transport recovery replaces an interrupted read; ordinary pushes coalesce. */
+  supersede?: true;
 }>;
 
 /**
@@ -624,6 +626,19 @@ export function createPluginUiResourceStore(input: Readonly<{
     });
   }
 
+  function supersedeRead(entry: MutableEntry): void {
+    if (!entry.reading) return;
+    // Keep the live watch and admitted value while retiring only this read.
+    entry.readController?.abort();
+    entry.readController = null;
+    entry.reading = false;
+    entry.readQueued = false;
+    entry.readQueuedRetryOnFailure = false;
+    entry.readQueuedExpectedDigest = null;
+    settleRefreshWaiters(entry, false, 'plugin_resource_aborted');
+    settleRefreshWaiters(entry, true, 'plugin_resource_aborted');
+  }
+
   function requestRead(
     entry: MutableEntry,
     requestedPending: 'initial' | 'refresh',
@@ -784,6 +799,7 @@ export function createPluginUiResourceStore(input: Readonly<{
       return;
     }
     if (event.kind === 'invalidated') {
+      if ('supersede' in event && event.supersede === true) supersedeRead(entry);
       const retainsFreshSnapshot = (
         (event.digest !== undefined ? entry.snapshot.digest === event.digest
           : 'contentIdentity' in event && event.contentIdentity !== undefined
@@ -1058,18 +1074,7 @@ export function createPluginUiResourceStore(input: Readonly<{
               if (entry!.snapshot.value === undefined && !entry!.reading) requestRead(entry!, 'initial');
               return;
             }
-            if (options?.supersede && entry!.reading) {
-              // Explicit recovery consumes the queued invalidation demand. Keep
-              // the live watch and admitted value while retiring only this read.
-              entry!.readController?.abort();
-              entry!.readController = null;
-              entry!.reading = false;
-              entry!.readQueued = false;
-              entry!.readQueuedRetryOnFailure = false;
-              entry!.readQueuedExpectedDigest = null;
-              settleRefreshWaiters(entry!, false, 'plugin_resource_aborted');
-              settleRefreshWaiters(entry!, true, 'plugin_resource_aborted');
-            }
+            if (options?.supersede) supersedeRead(entry!);
             if (entry!.snapshot.subscription === 'reconnecting') startWatch(entry!);
             (entry!.reading ? entry!.queuedRefreshWaiters : entry!.refreshWaiters).add(resolve);
             requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');

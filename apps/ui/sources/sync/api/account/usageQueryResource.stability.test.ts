@@ -35,6 +35,45 @@ afterEach(async () => {
     vi.restoreAllMocks();
 });
 
+it('reissues an interrupted Usage read on reconnect without waiting for the pre-reconnect response', async () => {
+    const held = createDeferred<void>();
+    let reads = 0;
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-reconnect-pending.test', accountId: 'account-a' }],
+        route: async request => {
+            if (request.path !== '/v2/usage/query-batch') return undefined;
+            const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+            const observed = ++reads;
+            if (observed === 1) await held.promise;
+            return Response.json(usageCost.collectUsageAnalyticsBatchDelivery(usageCost.projectUsageAnalyticsBatchDelivery({ v: 1,
+                results: input.queries.map(query => ({ query, value: { v: 1, totals: { eventCount: observed,
+                    tokens: { input: observed, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: observed },
+                    cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } } })),
+            }, input, false)));
+        } });
+    const server = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const captured = captureUiUsageQueryAccountContext((await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!)!;
+    storage.setState({ profileScope: captured.accountLifetime.scope, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
+    const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 }, includeSessionEvidence: false,
+        includeTranscriptEvidence: false, includeWorkEvidence: false, includeQuotaHistory: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+        input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const stop = entry.subscribe(() => {}, true);
+    try {
+        await expect.poll(() => reads).toBe(1);
+        publishHomeAccountChange(server.id, undefined, { source: 'connected' });
+        await expect.poll(() => reads, { timeout: 1000 }).toBe(2);
+        await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+        expect(entry.getSnapshot().error).toBeUndefined();
+        expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.accounting?.totals.eventCount).toBe(2);
+        held.resolve();
+        await flushHookEffects({ cycles: 20 });
+        expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.accounting?.totals.eventCount).toBe(2);
+        expect(reads).toBe(2);
+    } finally { held.resolve(); stop(); }
+});
+
 it('publishes one delivered burst without preparing unconsumed Resource transport bytes', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_900_000_000_000);
     let entered = createDeferred<void>();
