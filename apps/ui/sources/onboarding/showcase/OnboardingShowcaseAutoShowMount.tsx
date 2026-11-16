@@ -1,5 +1,5 @@
-import { useSegments } from 'expo-router';
 import * as React from 'react';
+import { useCurrentRouteSegments } from '@/components/appShell/workspace/currentRouteLocation';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { isWelcomeRoute } from '@/auth/routing/authRouting';
@@ -26,7 +26,7 @@ export function OnboardingShowcaseAutoShowMount(): null {
     const showcase = useOnboardingShowcaseState();
     const modal = useModal();
     const modalStackActive = modal.state.modals.length > 0;
-    const welcomeActive = isWelcomeRoute(useSegments());
+    const welcomeActive = isWelcomeRoute(useCurrentRouteSegments());
     const ranRef = React.useRef(false);
 
     React.useEffect(() => {

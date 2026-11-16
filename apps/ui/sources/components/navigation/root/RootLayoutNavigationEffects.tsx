@@ -1,6 +1,6 @@
 import { installDesktopDeepLinks } from '@/desktop/deepLinks/installDesktopDeepLinks';
-import { router, useSegments } from 'expo-router';
-import { useCurrentRouteParamsSelector, useCurrentRoutePathname } from '@/components/appShell/workspace/currentRouteLocation';
+import { router } from 'expo-router';
+import { useCurrentRouteParamsSelector, useCurrentRoutePathname, useCurrentRouteSegments } from '@/components/appShell/workspace/currentRouteLocation';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -22,7 +22,7 @@ import { usePluginPageExplicitNavigation } from '@/components/plugins/pages/plug
 /**
  * Owns every navigation/auth-driven side effect from the app root layout.
  *
- * It subscribes to `usePathname()` / `useSegments()` and re-renders on each navigation, but it
+ * It subscribes to `usePathname()` / `useCurrentRouteSegments()` and re-renders on each navigation, but it
  * renders nothing (or only the web-only, invisible debug pathname readout), so its re-renders are
  * cheap and never touch the Stack subtree. Mounted as a sibling of the shell so the shell subscribes
  * to nothing that changes per navigation.
@@ -64,7 +64,7 @@ function LocalRootLayoutNavigationEffects(): React.ReactElement | null {
     const auth = useAuth();
     const isAuthenticated = auth.isAuthenticated;
     const refreshAuth = auth.refreshFromActiveServer;
-    const segments: readonly string[] = useSegments();
+    const segments: readonly string[] = useCurrentRouteSegments();
     const pathname = useCurrentRoutePathname();
     const routerServerId = useCurrentRouteParamsSelector(selectRouteServerId);
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';

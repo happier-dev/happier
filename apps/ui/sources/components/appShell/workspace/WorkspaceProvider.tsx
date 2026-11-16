@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useGlobalSearchParams, usePathname, useRouter, useSegments } from 'expo-router';
 import { resolveHref } from 'expo-router/build/link/href';
-import { matchWorkspaceDestinationRoute, workspacePluginAppPageRouteKey, workspaceRouteHref } from './workspaceRoutes';
+import { matchWorkspaceDestinationRoute, workspaceRouteHref } from './workspaceRoutes';
 import { CurrentRouteLocationProvider, readCurrentRouteLocation } from './currentRouteLocation';
 import { randomUUID } from '@/platform/randomUUID';
 import { Modal } from '@/modal';
@@ -75,19 +75,16 @@ function runNavigation(navigate: () => void, intent?: 'history'): void {
 
 /** Slice 2 owns the layout; this owner alone translates navigation intent to it and the URL. */
 /**
- * The path params of `path` when it addresses the route Expo presents now (`segments`, Expo's route
- * pattern), including a plugin root and its local locations, which share one retained page body.
- * The workspace matcher decodes each URL segment once; Expo must not serialize a hosted catch-all
- * again, because its catch-all serializer omits the outer escaping layer.
+ * The path params of `path` when the workspace hosts it (any destination route pattern). While the workspace
+ * hosts the route, Expo's scene draws no body: it is only this workspace's URL mirror, so moving to another
+ * hosted route needs no navigator update (three synchronous navigator commits per tab switch, P03-WEB-TAB-SWITCH).
+ * Current-route readers follow the workspace's URL (`currentRouteLocation`) until Expo itself moves. The
+ * workspace matcher decodes each URL segment once; Expo must not serialize a hosted catch-all again, because
+ * its catch-all serializer omits the outer escaping layer.
  */
-function sameExpoRouteParams(path: string, segments: readonly string[]): Record<string, string> | null {
-    const routeKey = segments.filter(segment => !(segment.startsWith('(') && segment.endsWith(')'))).join('/');
+function hostedRouteParams(path: string): Record<string, string> | null {
     const match = matchWorkspaceDestinationRoute(path);
-    if (!match) return null;
-    const pluginPageKey = workspacePluginAppPageRouteKey(routeKey);
-    if (match.routeKey !== routeKey
-        && (pluginPageKey === null || workspacePluginAppPageRouteKey(match.routeKey) !== pluginPageKey)) return null;
-    return { ...match.params };
+    return match ? { ...match.params } : null;
 }
 
 export function WorkspaceProvider(props: Readonly<{
@@ -248,12 +245,12 @@ export function WorkspaceProvider(props: Readonly<{
             const projected = phoneTransport && entry?.target.kind === 'newTab' ? '/' : href;
             mounted.projectedHref = projected;
             // The browser transport has already written the URL, and hosted bodies read their tab's params, not
-            // Expo's. Expo's scene for the same route pattern draws only navigation metadata, so a change of
-            // query or dynamic segment needs no navigator update: current-route readers follow the workspace's
-            // URL (`currentRouteLocation`) until Expo itself moves.
+            // Expo's. While the workspace hosts the route, Expo's scene draws only navigation metadata, so moving
+            // to any hosted route needs no navigator update: current-route readers follow the workspace's URL
+            // (`currentRouteLocation`) until Expo itself moves (a route the workspace does not host).
             const path = projected.split(/[?#]/)[0]!;
             // Only a scene that draws no body (the workspace hosts it) may keep another instance's params.
-            const routeParams = hostsBrowserHistory ? sameExpoRouteParams(path, latest.current.segments) : null;
+            const routeParams = hostsBrowserHistory ? hostedRouteParams(path) : null;
             const pathParams = !hostsBrowserHistory ? null : path === latest.current.pathname ? routeParams ?? {}
                 : hostsActiveRoute.current ? routeParams : null;
             if (pathParams) {

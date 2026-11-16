@@ -7,12 +7,33 @@ type RouteParams = Readonly<Record<string, string | string[] | undefined>>;
 export type CurrentRouteLocation = Readonly<{ pathname: string; params: RouteParams }>;
 
 /**
- * The workspace's current URL while Expo's mirror deliberately stays on the same route pattern
- * (`/session/A` while the browser shows `/session/B`). Null whenever Expo's location is current.
+ * The workspace's current URL while Expo's mirror deliberately stays behind it (`/session/A` or `/machines`
+ * while the browser shows `/session/B`). Null whenever Expo's location is current.
  */
-const CurrentRouteLocationContext = React.createContext<CurrentRouteLocation | null>(null);
 type CurrentRouteLocationStore = Readonly<{ getSnapshot(): CurrentRouteLocation | null; subscribe(listener: () => void): () => void }>;
 const CurrentRouteLocationStoreContext = React.createContext<CurrentRouteLocationStore | null>(null);
+
+/**
+ * The window's route owner for readers mounted above the workspace (app boot, root layout effects, shell
+ * presentation): the mounted workspace publishes its location here, so they follow the same URL as readers
+ * inside it. One workspace hosts a window's routes; with none mounted, Expo's location is current.
+ */
+const windowRouteLocation: { current: CurrentRouteLocation | null; owner: object | null; listeners: Set<() => void> } = {
+    current: null, owner: null, listeners: new Set(),
+};
+const windowRouteLocationStore: CurrentRouteLocationStore = {
+    getSnapshot: () => windowRouteLocation.current,
+    subscribe(listener) {
+        windowRouteLocation.listeners.add(listener);
+        return () => { windowRouteLocation.listeners.delete(listener); };
+    },
+};
+function publishWindowRouteLocation(owner: object | null, value: CurrentRouteLocation | null): void {
+    windowRouteLocation.owner = owner;
+    if (windowRouteLocation.current === value) return;
+    windowRouteLocation.current = value;
+    for (const listener of windowRouteLocation.listeners) listener();
+}
 
 /** Publishes the location both as a value and as a store that selectors subscribe to. */
 export function CurrentRouteLocationProvider(props: React.PropsWithChildren<Readonly<{ value: CurrentRouteLocation | null }>>): React.ReactElement {
@@ -23,9 +44,15 @@ export function CurrentRouteLocationProvider(props: React.PropsWithChildren<Read
         getSnapshot: () => current.current,
         subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     }));
-    React.useLayoutEffect(() => { for (const listener of listeners) listener(); }, [listeners, props.value]);
+    React.useLayoutEffect(() => {
+        for (const listener of listeners) listener();
+        publishWindowRouteLocation(store, props.value);
+    }, [listeners, props.value, store]);
+    React.useLayoutEffect(() => () => {
+        if (windowRouteLocation.owner === store) publishWindowRouteLocation(null, null);
+    }, [store]);
     return <CurrentRouteLocationStoreContext.Provider value={store}>
-        <CurrentRouteLocationContext.Provider value={props.value}>{props.children}</CurrentRouteLocationContext.Provider>
+        {props.children}
     </CurrentRouteLocationStoreContext.Provider>;
 }
 
@@ -48,17 +75,17 @@ export function readCurrentRouteLocation(href: string, pathParams: Readonly<Reco
 export function useCurrentRoutePathname(): string {
     // The path alone: a query write (a Session side tab's `right=`) publishes a new location on the same path.
     // The workspace starting to lead Expo on the same path is not a change either.
-    const store = React.useContext(CurrentRouteLocationStoreContext);
+    const store = React.useContext(CurrentRouteLocationStoreContext) ?? windowRouteLocationStore;
     const expoPathname = usePathname();
-    const readPathname = React.useCallback(() => store?.getSnapshot()?.pathname ?? expoPathname, [expoPathname, store]);
-    return React.useSyncExternalStore(store?.subscribe ?? subscribeNoLocation, readPathname, readPathname);
+    const readPathname = React.useCallback(() => store.getSnapshot()?.pathname ?? expoPathname, [expoPathname, store]);
+    return React.useSyncExternalStore(store.subscribe, readPathname, readPathname);
 }
 
 /** File-pattern segments from the same current location as the route params, never concrete path values. */
 export function useCurrentRouteSegments(): readonly string[] {
-    const store = React.useContext(CurrentRouteLocationStoreContext);
-    const readPathname = React.useCallback(() => store?.getSnapshot()?.pathname ?? null, [store]);
-    const pathname = React.useSyncExternalStore(store?.subscribe ?? subscribeNoLocation, readPathname, readPathname);
+    const store = React.useContext(CurrentRouteLocationStoreContext) ?? windowRouteLocationStore;
+    const readPathname = React.useCallback(() => store.getSnapshot()?.pathname ?? null, [store]);
+    const pathname = React.useSyncExternalStore(store.subscribe, readPathname, readPathname);
     const expoSegments = useSegments();
     return React.useMemo(() => {
         const route = pathname === null ? null : matchWorkspaceDestinationRoute(pathname);
@@ -68,30 +95,30 @@ export function useCurrentRouteSegments(): readonly string[] {
 
 /** The current route's path and query params, from the same owner as {@link useCurrentRoutePathname}. */
 export function useCurrentRouteParams<T extends RouteParams = RouteParams>(): T {
-    const workspace = React.useContext(CurrentRouteLocationContext);
+    const store = React.useContext(CurrentRouteLocationStoreContext) ?? windowRouteLocationStore;
+    const workspace = React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
     const params: RouteParams = useGlobalSearchParams();
     // Expo's typed params are the same untyped record narrowed by the caller.
     return (workspace?.params ?? params) as T;
 }
 
-const subscribeNoLocation = () => () => {};
 /**
  * One selected fact of the current route's params (same owner as `useCurrentRouteParams`). The reader
  * renders only when its selection changes (shallowly), not on another param's write. `select` must keep
  * its identity (a module-level function).
  */
 export function useCurrentRouteParamsSelector<T>(select: (params: RouteParams) => T): T {
-    const store = React.useContext(CurrentRouteLocationStoreContext);
+    const store = React.useContext(CurrentRouteLocationStoreContext) ?? windowRouteLocationStore;
     const getSnapshot = React.useMemo(() => {
         let previous: Readonly<{ value: T | typeof NO_LOCATION }> | undefined;
         return () => {
-            const location = store?.getSnapshot() ?? null;
+            const location = store.getSnapshot() ?? null;
             const next = location ? select(location.params) : NO_LOCATION;
             if (!previous || !shallow(previous.value, next)) previous = { value: next };
             return previous.value;
         };
     }, [select, store]);
-    const selected = React.useSyncExternalStore(store?.subscribe ?? subscribeNoLocation, getSnapshot, getSnapshot);
+    const selected = React.useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
     // Expo's own params move only on Expo navigation; they are current whenever the workspace leads nothing.
     const params = useGlobalSearchParams();
     const expoSelected = React.useMemo(() => select(params), [params, select]);

@@ -1,5 +1,5 @@
-import { Redirect, router, useSegments } from 'expo-router';
-import { useCurrentRouteParams, useCurrentRoutePathname } from '@/components/appShell/workspace/currentRouteLocation';
+import { Redirect, router } from 'expo-router';
+import { useCurrentRouteParams, useCurrentRoutePathname, useCurrentRouteSegments } from '@/components/appShell/workspace/currentRouteLocation';
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -43,7 +43,7 @@ const WebServerOverrideNavigationContext = React.createContext<Readonly<{
 /**
  * Single navigation-subscribing render owner for the app root layout.
  *
- * It subscribes to `useSegments()` / `usePathname()` / `useGlobalSearchParams()` (which change per
+ * It subscribes to `useCurrentRouteSegments()` / `usePathname()` / `useGlobalSearchParams()` (which change per
  * navigation) plus the connectivity/server signals that drive the unauthenticated redirect and the
  * session-route auth-recovery hold. It is the
  * ONLY navigation-subscribing owner in the root-layout render path: when no redirect/hold applies it
@@ -54,7 +54,7 @@ const WebServerOverrideNavigationContext = React.createContext<Readonly<{
 export function RootLayoutRedirectGate({ children }: { children: React.ReactNode }): React.ReactElement | null {
     const auth = useAuth();
     const isAuthenticated = auth.isAuthenticated;
-    const segments = useSegments();
+    const segments = useCurrentRouteSegments();
     const pathname = useCurrentRoutePathname();
     const globalSearchParams = useCurrentRouteParams();
     const endpointConnectivity = useEndpointConnectivity();
@@ -99,7 +99,7 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
 
     const shouldRedirect =
         !isAuthenticated
-        && !isPublicRouteForUnauthenticated(segments)
+        && !isPublicRouteForUnauthenticated([...segments])
         && !shouldHoldProtectedRouteForAuthRecovery;
 
     // Avoid rendering protected screens for a frame during redirect.

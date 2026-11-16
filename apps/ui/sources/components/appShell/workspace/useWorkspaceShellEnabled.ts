@@ -1,6 +1,5 @@
 import { Platform } from 'react-native';
-import { useSegments } from 'expo-router';
-import { useCurrentRoutePathname } from './currentRouteLocation';
+import { useCurrentRoutePathname, useCurrentRouteSegments } from './currentRouteLocation';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
@@ -25,7 +24,7 @@ export function useWorkspaceShellEnabled(): boolean {
 export function useWorkspacePresentation(): 'shell' | 'destination' | 'phone' | 'entry' | 'deferred' | null {
     const auth = useAuth();
     const pathname = useCurrentRoutePathname();
-    const segments = useSegments();
+    const segments = useCurrentRouteSegments();
     const isTablet = useIsTablet();
     const windowContext = resolveDesktopWindowContext();
     const onboarding = useOnboardingJourneySessionActive();

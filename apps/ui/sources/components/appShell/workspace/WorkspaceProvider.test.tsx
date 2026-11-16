@@ -24,7 +24,7 @@ import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive, type Work
 import { WorkspaceProvider } from './WorkspaceProvider';
 import { buildBotTemplateRecipientRoute, readBotTemplateRecipientRoute } from '@/components/sessions/bots/templates/botTemplateRecipientDestination';
 import { buildBotTemplateEditorRoute } from '@/components/sessions/bots/templates/botTemplateEditorDestination';
-import { useCurrentRouteParams, useCurrentRoutePathname } from './currentRouteLocation';
+import { useCurrentRouteParams, useCurrentRoutePathname, useCurrentRouteSegments } from './currentRouteLocation';
 import { WorkspaceAppShellProvider } from './WorkspaceAppShellProvider';
 import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
 import { DesktopDestinationWindow } from '@/desktop/window/DesktopDestinationWindow';
@@ -910,9 +910,10 @@ describe('consumed workspace navigation owner', () => {
         expect(writes.at(-1)).toBe('/session/A1?serverId=home-a&right=files');
         expect(navigation().state.tabs[tabId].target.params.right).toBe('files');
         expect(boundary.mirrors).toEqual([]);
-        // A different route pattern still moves the Expo navigator.
+        // Another hosted route pattern writes the browser URL; Expo's navigator stays a mirror (P03 ORCH W1).
         await act(async () => { navigation().navigationForTab(tabId).replace('/session/A1/files?serverId=home-a'); });
-        expect(boundary.mirrors.at(-1)).toMatch(/^\/session\/A1\/files\?/);
+        expect(writes.at(-1)).toMatch(/^\/session\/A1\/files\?/);
+        expect(boundary.mirrors).toEqual([]);
     });
 
     it('keeps operation and path readers still through a params-only Session pane write', async () => {
@@ -1010,6 +1011,58 @@ describe('consumed workspace navigation owner', () => {
         const focused = navigation().state;
         expect(focused.tabs[focused.groups[focused.focusedGroupId].activeTabId].target.params.id).toBe('A2');
         expect(boundary.mirrors).toEqual([]);
+    });
+
+    it('moves to another hosted route pattern with no Expo navigator update, and every current-route reader follows', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
+        boundary.segments = ['(app)', 'session', '[id]']; onTestFinished(() => { boundary.segments = null; });
+        const location = { pathname: boundary.pathname, search: '?serverId=home-a', hash: '' };
+        const entries: Array<{ state: unknown; href: string }> = [{ state: null, href: '/session/A1?serverId=home-a' }];
+        let index = 0;
+        const show = (href: string) => {
+            const url = new URL(href, 'https://workspace.test');
+            location.pathname = url.pathname; location.search = url.search;
+        };
+        const history = {
+            get state() { return entries[index]!.state; },
+            replaceState(state: unknown, _unused: string, href?: string | URL | null) {
+                const next = href ? String(href) : entries[index]!.href;
+                entries[index] = { state, href: next }; show(next);
+            },
+            pushState(state: unknown, _unused: string, href: string) {
+                entries.splice(index + 1, entries.length, { state, href }); index += 1; show(href);
+            },
+            go(delta: number) {
+                index += delta; show(entries[index]!.href);
+                window.dispatchEvent(Object.assign(new Event('popstate'), { state: entries[index]!.state }));
+            },
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const seen: Record<'shell' | 'hosted', Array<Readonly<{ pathname: string; segments: string }>>> = { shell: [], hosted: [] };
+        function CurrentRouteReader(props: Readonly<{ at: 'shell' | 'hosted' }>) {
+            seen[props.at].push({ pathname: useCurrentRoutePathname(), segments: useCurrentRouteSegments().join('/') });
+            return null;
+        }
+        const screen = await renderScreen(<>
+            <CurrentRouteReader at="shell" />
+            <WorkspaceProvider enabled catalog={catalog}>
+                {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<CurrentRouteReader at="hosted" /></>}
+            </WorkspaceProvider>
+        </>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        boundary.mirrors = [];
+
+        await act(async () => { navigation().openHref('/machines'); });
+        // The browser URL moved; Expo's navigator (a URL mirror while the workspace hosts the route) did not.
+        expect({ url: location.pathname, mirrors: boundary.mirrors, shell: seen.shell.at(-1), hosted: seen.hosted.at(-1) }).toEqual({
+            url: '/machines', mirrors: [],
+            shell: { pathname: '/machines', segments: 'machines' }, hosted: { pathname: '/machines', segments: 'machines' },
+        });
+
+        await act(async () => { history.go(-1); });
+        expect({ mirrors: boundary.mirrors, shell: seen.shell.at(-1)?.pathname, hosted: seen.hosted.at(-1)?.pathname })
+            .toEqual({ mirrors: [], shell: '/session/A1', hosted: '/session/A1' });
     });
 
     it.each([
@@ -2255,7 +2308,8 @@ describe('consumed workspace navigation owner', () => {
         const run = { kind: 'occurrence' as const, automationId: 'automation-one', runId: 'run-one' };
         const unqualified = createWorkflowRunRoute(run);
         await act(async () => { navigation().openHref(unqualified); });
-        expect(boundary.mirrors.at(-1)).toBe(unqualified);
+        // The hosted Run route is written to the browser; Expo's navigator is not driven (P03 ORCH W1).
+        expect({ url: `${location.pathname}${location.search}`, mirrors: boundary.mirrors }).toEqual({ url: unqualified, mirrors: [] });
 
         // Expo's imperative router changes native history before its query hooks publish.
         await act(async () => { history.pushState({}, '', createWorkflowRunRoute(run, 'unknown-home')); });

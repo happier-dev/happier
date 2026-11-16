@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useSegments } from 'expo-router';
+import { useCurrentRouteSegments } from '@/components/appShell/workspace/currentRouteLocation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { t } from '@/text';
 import { openAddHome } from '@/components/homes/add/openAddHome';
@@ -828,7 +828,7 @@ function PersonalHomeBootstrapRuntimeInner(props: Readonly<{
 }
 
 function EligibleDesktopPersonalHomeBootstrapRuntime(props: Readonly<{ children: React.ReactNode; requested: boolean; onSettled: () => void }>): React.ReactElement {
-    const segments = useSegments();
+    const segments = useCurrentRouteSegments();
     const activeSelection = useActiveServerSnapshot();
     useServerProfilesGeneration();
     const activeProfile = getServerProfileById(activeSelection.serverId);

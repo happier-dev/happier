@@ -4,8 +4,7 @@ import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/lau
 import React, { useCallback, useMemo } from 'react';
 import { useToggleThemeMode } from '@/components/settings/appearance/useApplyThemeSelection';
 import { Platform } from 'react-native';
-import { useSegments } from 'expo-router';
-import { useCurrentRouteParamsSelector } from '@/components/appShell/workspace/currentRouteLocation';
+import { useCurrentRouteParamsSelector, useCurrentRouteSegments } from '@/components/appShell/workspace/currentRouteLocation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { Modal } from '@/modal';
@@ -110,7 +109,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     })), { settings: ['commandPaletteEnabled', 'keyboardSingleKeyShortcutsEnabled',
         'keyboardShortcutDisabledCommandIdsV1', 'keyboardShortcutOverridesV1'] });
     const navigateToSession = useNavigateToSession();
-    const segments = useSegments();
+    const segments = useCurrentRouteSegments();
     const routeParams = useCurrentRouteParamsSelector(selectPaletteRouteParams);
     const activeSessionId = useMemo(
         () => readActiveSessionIdFromRoute(segments, routeParams.id),
