@@ -1,5 +1,6 @@
-import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
+import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas,
+  defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 const closed = { policy: 'closed' } as const;
 const text = defineProtocolString({ minLength: 1, pattern: '\\S' });
@@ -11,6 +12,8 @@ export const ColdLaunchSchema = defineProtocolObject({ imageRef: text,
 }, closed);
 export const ArtifactSchema = defineProtocolObject({ snapshotName: defineProtocolString({ pattern: '^snapshots/[^/]+$' }) }, closed);
 export const LaunchSchema = defineProtocolUnion([ColdLaunchSchema, ArtifactSchema]);
+export const PreparedArtifactSchema = defineProtocolObject({ operationId: text, builderLaunch: LaunchSchema,
+  snapshotName: defineProtocolString({ pattern: '^snapshots/[^/]+$' }), launch: ArtifactSchema }, closed);
 export const ResourceSchema = defineProtocolObject({ sandboxName: defineProtocolString({ pattern: '^sandboxes/[^/]+$' }) }, closed);
 export const OperationSchema = defineProtocolObject({ managedId: text, launch: LaunchSchema,
   sandboxName: defineProtocolString({ pattern: '^sandboxes/[^/]+$' }).optional(),
@@ -18,15 +21,15 @@ export const OperationSchema = defineProtocolObject({ managedId: text, launch: L
 export type Launch = ProtocolSchemaOutput<typeof LaunchSchema>;
 export type Resource = ProtocolSchemaOutput<typeof ResourceSchema>;
 export type Operation = ProtocolSchemaOutput<typeof OperationSchema>;
-export const PreparationInputSchema = defineProtocolObject({ launch: ColdLaunchSchema, setupScript: text }, closed);
-export const PreparationOperationSchema = defineProtocolObject({ operationId: text, input: PreparationInputSchema.optional(),
+export const PreparationInputSchema = createManagedMachinePresetPreparationBuildInputV1Schema(ColdLaunchSchema);
+export const PreparationOperationSchema = defineProtocolObject({ operationId: text, launch: LaunchSchema,
   sandboxName: defineProtocolString({ pattern: '^sandboxes/[^/]+$' }).optional(),
   snapshotName: defineProtocolString({ pattern: '^snapshots/[^/]+$' }).optional(),
-  phase: defineProtocolUnion([defineProtocolLiteral('creating'), defineProtocolLiteral('setup-unknown'),
-    defineProtocolLiteral('capturing'), defineProtocolLiteral('cleanup'), defineProtocolLiteral('destroying')]),
 }, closed);
 export type PreparationInput = ProtocolSchemaOutput<typeof PreparationInputSchema>;
 export type PreparationOperation = ProtocolSchemaOutput<typeof PreparationOperationSchema>;
+export const PREPARATION = defineMachineProvisionerPreparationSchemas({ input: PreparationInputSchema, launch: LaunchSchema,
+  artifact: PreparedArtifactSchema, nativeOperation: PreparationOperationSchema });
 export const ROLE = defineMachineProvisionerSchemas({ launch: LaunchSchema, resource: ResourceSchema });
 export const RECONCILIATION = defineMachineProvisionerReconciliationSchemas({ launch: LaunchSchema, resource: ResourceSchema, nativeOperation: OperationSchema });
 export const CONTRIBUTION = { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-cloud' } as const;

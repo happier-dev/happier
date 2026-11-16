@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { CloudError, cloudCode, object, invalidResponse, type createCloudClient } from './nativeClient.js';
 import { reference, type PreparationInput, type PreparationOperation } from './schemas.js';
 
@@ -14,97 +15,102 @@ function snapshot(value: unknown) {
 const displayName = (id: string) => 'happier-prepared-' + encodeURIComponent(id);
 const pending = (operation: PreparationOperation) => ({ kind: 'pending' as const, nativeOperationRef: reference(operation) });
 const unknown = (operation: PreparationOperation, code: string) => ({ kind: 'unknown' as const, code, nativeOperationRef: reference(operation) });
+const ready = (snapshotName: string, operation: PreparationOperation) => ({ kind: 'ready' as const,
+  artifact: reference({ operationId: operation.operationId, builderLaunch: operation.launch, snapshotName, launch: { snapshotName } }) });
 
-/** Native phases only. Preset/account/CLI freshness and credential-free script
- * composition belong to S1; no enrollment or Agent materialization occurs here. */
-export function createCloudPreparation(client: Client) {
-  async function inspect(operation: PreparationOperation) {
-    if (operation.phase === 'destroying') {
-      const removed = await destroy(operation);
-      return removed.kind === 'confirmed' ? { kind: 'absent' as const } : removed;
-    }
-    let current = operation;
+/** One finite build uses the host's admitted observation cadence. Inspection is
+ * recovery-only: it never reruns setup, captures another image or cleans up. */
+export function createCloudPreparation(client: Client, waitForNativeObservation: () => Promise<void>) {
+  async function builder(operation: PreparationOperation) {
+    try { return await client.locate({ managedId: 'prepare-' + operation.operationId, launch: operation.launch,
+      ...(operation.sandboxName ? { sandboxName: operation.sandboxName } : {}) }); }
+    catch (error) { if (error instanceof CloudError && error.status === 404) return undefined; throw error; }
+  }
+  async function captured(operation: PreparationOperation) {
     try {
-      if (current.phase === 'setup-unknown') return { kind: 'failed' as const, code: 'docker_cloud_setup_unconfirmed', nativeOperationRef: reference(current) };
-      if (!current.input) return unknown(current, 'docker_cloud_build_input_unavailable');
-      if (!current.sandboxName) {
-        const builder = await client.locate({ managedId: 'prepare-' + current.operationId, launch: current.input.launch });
-        if (!builder) return unknown(current, 'docker_cloud_builder_identity_unconfirmed');
-        current = { ...current, sandboxName: builder.name };
+      if (operation.snapshotName) {
+        const found = snapshot(body(await client.management(operation.snapshotName)));
+        if (found.name !== operation.snapshotName) return invalidResponse();
+        return found;
       }
-      const resource = { sandboxName: current.sandboxName! };
-      if (current.phase === 'creating') {
-        const builder = await client.read(resource);
-        if (builder.status === 'failed') return { kind: 'failed' as const, code: 'docker_cloud_builder_failed', nativeOperationRef: reference(current) };
-        if (builder.status !== 'running') return pending(current);
-        // Exec has no replay identity. Losing its reply must never rerun setup.
-        current = { ...current, phase: 'setup-unknown' };
-        const result = await client.execute(resource, ['sh', '-eu', '-c', current.input!.setupScript]);
-        if (result.exitCode !== 0 || result.incomplete) return unknown(current, 'docker_cloud_setup_failed');
-        current = { ...current, phase: 'capturing' };
-        const captured = snapshot(body(await client.management(resource.sandboxName + '/snapshots', 'POST', {
-          displayName: displayName(current.operationId), captureMode: 'disk',
-        }, { 'Idempotency-Key': current.operationId })));
-        current = { ...current, snapshotName: captured.name };
-      }
-      if (!current.snapshotName) {
-        const matches = (await client.list('snapshots')).map(snapshot).filter(item => item.displayName === displayName(current.operationId)
-          && item.sandbox === current.sandboxName);
-        if (matches.length !== 1) return unknown(operation, 'docker_cloud_snapshot_identity_unconfirmed');
-        current = { ...current, snapshotName: matches[0]!.name };
-      }
-      const captured = snapshot(body(await client.management(current.snapshotName!)));
-      if (captured.name !== current.snapshotName) return invalidResponse();
-      if (captured.status === 'deleted') return { kind: 'failed' as const, code: 'docker_cloud_snapshot_deleted', nativeOperationRef: reference(current) };
-      if (captured.status === 'failed') return { kind: 'failed' as const, code: 'docker_cloud_snapshot_failed', nativeOperationRef: reference(current) };
-      if (captured.status !== 'ready') return pending(current);
-      current = { ...current, phase: 'cleanup' };
-      const cleaned = await client.destroy(resource);
-      if (cleaned.kind !== 'confirmed') return pending(current);
-      return { kind: 'ready' as const, artifact: reference({ snapshotName: captured.name }) };
-    } catch (error) { return unknown(current, cloudCode(error)); }
+      const matches = (await client.list('snapshots')).map(snapshot).filter(item => item.displayName === displayName(operation.operationId));
+      if (matches.length > 1) throw new CloudError('docker_cloud_snapshot_identity_unconfirmed');
+      return matches[0];
+    } catch (error) { if (error instanceof CloudError && error.status === 404) return undefined; throw error; }
+  }
+  async function inspect(operation: PreparationOperation) {
+    try {
+      const [guest, image] = await Promise.all([builder(operation), captured(operation)]);
+      const retained = { ...operation, ...(guest ? { sandboxName: guest.name } : {}), ...(image ? { snapshotName: image.name } : {}) };
+      if (guest) return { kind: 'failed' as const, code: 'docker_cloud_cleanup_required', nativeOperationRef: reference(retained) };
+      if (!image || image.status === 'deleted') return { kind: 'absent' as const };
+      if (image.status === 'ready') return ready(image.name, retained);
+      if (image.status === 'creating') return pending(retained);
+      return { kind: 'failed' as const, code: 'docker_cloud_snapshot_failed', nativeOperationRef: reference(retained) };
+    } catch (error) { return unknown(operation, cloudCode(error)); }
   }
   async function build(operationId: string, input: PreparationInput) {
     await client.authorize();
-    let operation: PreparationOperation = { operationId, input, phase: 'creating' };
-    const created = await client.acquire(input.launch, 'prepare-' + operationId);
-    if (created.kind === 'rejected') return { kind: 'refused' as const, code: created.code };
-    if (created.kind === 'bound') operation = { ...operation, sandboxName: created.resource.value.sandboxName };
-    else if (created.kind === 'pending') operation = { ...operation, sandboxName: created.nativeOperationRef.value.sandboxName };
-    else return unknown(operation, 'docker_cloud_builder_identity_unconfirmed');
-    if (created.kind !== 'bound') return pending(operation);
-    const result = await inspect(operation);
-    // Build's public union uses unknown rather than inspect's failed/absent.
-    return result.kind === 'failed' ? unknown(result.nativeOperationRef.value, result.code)
-      : result.kind === 'absent' ? unknown(operation, 'docker_cloud_snapshot_absent') : result;
+    let operation: PreparationOperation = { operationId, launch: input.launch.choices };
+    try {
+      let acquired = await client.acquire(operation.launch, 'prepare-' + operationId);
+      if (acquired.kind === 'rejected') return { kind: 'refused' as const, code: acquired.code };
+      while (acquired.kind === 'pending') {
+        operation = { ...operation, sandboxName: acquired.nativeOperationRef.value.sandboxName };
+        await waitForNativeObservation();
+        acquired = await client.recover(acquired.nativeOperationRef.value);
+      }
+      if (acquired.kind !== 'bound') return unknown(operation, 'docker_cloud_builder_identity_unconfirmed');
+      operation = { ...operation, sandboxName: acquired.resource.value.sandboxName };
+      const resource = { sandboxName: operation.sandboxName! };
+      const directory = '/tmp/.happier-preparation-' + encodeURIComponent(operationId);
+      const run = async (argv: readonly string[]) => {
+        const result = await client.execute(resource, argv);
+        if (result.exitCode !== 0 || result.incomplete) throw new CloudError('docker_cloud_setup_failed');
+      };
+      await run(['mkdir', '-p', directory]);
+      for (const file of input.cli.files) await client.putFile(resource, directory + '/' + file.path, Buffer.from(file.contentsBase64, 'base64'), 0o600);
+      // Supplier-selected CLI installation and recipe-owner setup run in the
+      // image only. No enrollment, daemon, Agent or Account credential is baked.
+      await run(['sh', '-eu', '-c', `trap 'rm -rf -- "$1"' EXIT; cd -- "$1"; sh -c "$2"; sh -c "$3"`,
+        'happier-prepare', directory, input.cli.installScript, input.setupScript ?? '']);
+      let image = snapshot(body(await client.management(resource.sandboxName + '/snapshots', 'POST', {
+        displayName: displayName(operationId), captureMode: 'disk',
+      }, { 'Idempotency-Key': operationId })));
+      operation = { ...operation, snapshotName: image.name };
+      while (image.status === 'creating') {
+        await waitForNativeObservation();
+        const next = await captured(operation);
+        if (!next) return unknown(operation, 'docker_cloud_snapshot_absent');
+        image = next;
+      }
+      if (image.status !== 'ready') return unknown(operation, 'docker_cloud_snapshot_failed');
+      // Delete once, then observe. A 202 does not authorize a new build or a
+      // second setup run. Native absence proves the billed builder is gone.
+      const removed = await client.destroy(resource);
+      if (removed.kind !== 'confirmed' && removed.code) return unknown(operation, removed.code);
+      while (await builder(operation)) await waitForNativeObservation();
+      return ready(image.name, operation);
+    } catch (error) { return unknown(operation, cloudCode(error)); }
   }
   async function destroy(operation: PreparationOperation) {
-    let current = { ...operation, phase: 'destroying' as const };
+    let retained = operation;
     try {
-      if (!current.snapshotName && operation.phase === 'capturing') {
-        const matches = (await client.list('snapshots')).map(snapshot).filter(item => item.displayName === displayName(current.operationId)
-          && item.sandbox === current.sandboxName);
-        if (matches.length !== 1) return unknown(operation, 'docker_cloud_snapshot_identity_unconfirmed');
-        current = { ...current, snapshotName: matches[0]!.name };
+      const image = await captured(operation);
+      if (image && image.status !== 'deleted') {
+        retained = { ...retained, snapshotName: image.name };
+        await client.management(image.name, 'DELETE', undefined, { 'If-Match': image.etag });
+        const after = await captured(retained);
+        if (after && after.status !== 'deleted') return pending(retained);
       }
-      if (current.snapshotName) {
-        try {
-          const found = snapshot(body(await client.management(current.snapshotName)));
-          if (found.name !== current.snapshotName) return invalidResponse();
-          if (found.status !== 'deleted') {
-            const removed = await client.management(found.name, 'DELETE', undefined, { 'If-Match': found.etag });
-            if (removed.status !== 204) return pending(current);
-          }
-        } catch (error) { if (!(error instanceof CloudError && error.status === 404)) throw error; }
+      const guest = await builder(operation);
+      if (guest) {
+        retained = { ...retained, sandboxName: guest.name };
+        const removed = await client.destroy({ sandboxName: guest.name });
+        if (removed.kind !== 'confirmed') return removed.code ? unknown(retained, removed.code) : pending(retained);
       }
-      if (!current.sandboxName && current.input) {
-        const found = await client.locate({ managedId: 'prepare-' + current.operationId, launch: current.input.launch });
-        if (!found) return unknown(current, 'docker_cloud_builder_identity_unconfirmed');
-        current = { ...current, sandboxName: found.name };
-      }
-      if (current.sandboxName && (await client.destroy({ sandboxName: current.sandboxName })).kind !== 'confirmed') return pending(current);
       return { kind: 'confirmed' as const };
-    } catch (error) { return unknown(current, cloudCode(error)); }
+    } catch (error) { return unknown(retained, cloudCode(error)); }
   }
   return { build, inspect, destroy };
 }

@@ -4611,6 +4611,18 @@ timeout feature, with no additional local timer. The researched contract is
 [Docker Sandboxes REST v1](https://docs.docker.com/reference/api/sandboxes/latest/);
 real tenant, endpoint routing, billing and cleanup validation remain release checks.
 
+The Docker cloud contribution also supplies native Prepare build, inspect and
+destroy roles. A finite build requests Linux/amd64, installs the credential-free
+CLI supplied by the managed guest build-input owner, runs the composed setup,
+captures a reusable disk snapshot and waits for builder deletion before returning
+ready. The original admission and host observation cadence cover that operation;
+recovery inspection only reads native state. Interrupted builds retain native
+identities for the preset owner's adopt-or-delete recovery. The artifact's
+`launch` maps to Docker's snapshot restore input; cold image/resource overrides
+are not replayed onto a restored snapshot. Preset freshness, replacement and
+cold fallback remain with the shared prepared-preset owner. No enrollment,
+daemon, Session runner or Account/Agent credential enters the image build input.
+
 In 0.3 development source, Crabbox's missing native command is a managed-dependency
 prerequisite with a repair Action. The shared prerequisite presentation launches
 that Action; it delegates installation to the existing dependency service. The

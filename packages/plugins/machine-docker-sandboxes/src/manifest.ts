@@ -18,7 +18,8 @@ import { DOCKER_SANDBOXES_ROLE_SCHEMAS, DOCKER_SANDBOXES_RECONCILIATION_SCHEMAS,
 import { DOCKER_ACCOUNT_DESCRIPTOR, DOCKER_ACCOUNT_SERVICE, DOCKER_ACCOUNT_PURPOSE, prepareDockerAccount } from './machine/dockerAccount.js';
 import { DOCKER_CLOUD_PROVISIONER } from './cloud/contribution.js';
 import { createCloudClient, cloudCode, cloudFailure } from './cloud/nativeClient.js';
-import { ColdLaunchSchema as CloudLaunchSchema, ROLE as CLOUD_ROLE, RECONCILIATION as CLOUD_RECONCILIATION, RETENTION as CLOUD_RETENTION } from './cloud/schemas.js';
+import { createCloudPreparation } from './cloud/preparation.js';
+import { ColdLaunchSchema as CloudLaunchSchema, ROLE as CLOUD_ROLE, RECONCILIATION as CLOUD_RECONCILIATION, RETENTION as CLOUD_RETENTION, PREPARATION as CLOUD_PREPARATION } from './cloud/schemas.js';
 
 const processAccess = 'docker-sandboxes-process';
 const actionDefaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess] } as const;
@@ -107,6 +108,24 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
   ] },
   machineProvisioners: { [DOCKER_SANDBOXES_PROVISIONER_ID]: DOCKER_SANDBOXES_MACHINE_PROVISIONER, 'docker-cloud': DOCKER_CLOUD_PROVISIONER },
   actions: {
+    'cloud-prepare-build': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Prepare Docker cloud image', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Prepare Docker cloud image', body: 'Docker may bill the builder, snapshot and retained storage.' },
+      inputSchema: CLOUD_PREPARATION.buildInput, resultSchema: CLOUD_PREPARATION.buildResult,
+      async run(input, context) { return createCloudPreparation(createCloudClient(context), () => context.services.machineProvisioners.waitForNativeObservation()).build(input.operationId, input.input); } },
+    'cloud-prepare-inspect': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Inspect Docker cloud preparation', dangerLevel: 'safe',
+      inputSchema: CLOUD_PREPARATION.inspectInput, resultSchema: CLOUD_PREPARATION.inspectResult,
+      async run(input, context) { return createCloudPreparation(createCloudClient(context), () => context.services.machineProvisioners.waitForNativeObservation()).inspect('nativeOperation' in input
+        ? input.nativeOperation.value : { operationId: input.operationId, launch: input.launch }); } },
+    'cloud-prepare-destroy': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Delete Docker cloud preparation', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete Docker cloud preparation', body: 'Permanently deletes the prepared snapshot and its owned builder.' },
+      inputSchema: CLOUD_PREPARATION.destroyInput, resultSchema: CLOUD_PREPARATION.destroyResult,
+      async run(input, context) { const preparation = createCloudPreparation(createCloudClient(context), () => context.services.machineProvisioners.waitForNativeObservation());
+        if (input.nativeOperation) return preparation.destroy(input.nativeOperation.value);
+        // A ready artifact has no remaining builder. Its native name is the
+        // sole deletion target; no preset freshness or composition decision here.
+        const artifact = input.artifact!.value;
+        return preparation.destroy({ operationId: artifact.operationId, launch: artifact.builderLaunch,
+          snapshotName: artifact.snapshotName }); } },
     'cloud-check': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Check Docker cloud', dangerLevel: 'safe',
       inputSchema: CLOUD_ROLE.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) { return createCloudClient(context).check(); } },
@@ -114,7 +133,8 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
       inputSchema: CloudLaunchSchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: { fields: [{ path: 'imageRef', title: 'OCI image', widget: 'text', required: true, defaultValue: 'ubuntu:24.04' },
         { path: 'timeoutSeconds', title: 'Native lifetime (seconds)', widget: 'integer', description: 'Docker applies this lifetime. Omit to use the service policy.' }] },
-      async run(launch) { return { base: { launch, guestPlatform: 'linux', retention: CLOUD_RETENTION },
+      async run(launch) { return { base: { launch, guestPlatform: 'linux', retention: CLOUD_RETENTION,
+        nativeFacts: { preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' } } },
         dimensions: { size: [], location: [], network: [], duration: [], image: [{ id: launch.imageRef,
           title: launch.imageRef, assignments: [], guestPlatform: 'linux' }] } }; } },
     'cloud-acquire': { ...actionDefaults, hostAccess: ['docker-cloud-api', DOCKER_ACCOUNT_PURPOSE], title: 'Create Docker cloud sandbox', dangerLevel: 'writesRemote',

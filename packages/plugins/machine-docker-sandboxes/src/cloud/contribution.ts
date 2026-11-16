@@ -1,5 +1,6 @@
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { BILLING, RETENTION, LaunchSchema, ResourceSchema, OperationSchema } from './schemas.js';
+import { BILLING, RETENTION, LaunchSchema, ResourceSchema, OperationSchema, PreparationInputSchema,
+  PreparedArtifactSchema, PreparationOperationSchema } from './schemas.js';
 
 export const DOCKER_CLOUD_PROVISIONER = {
   title: 'Docker cloud', icon: 'cloud', resourceKind: 'docker-cloud-sandbox', schemaVersion: 1, enrollmentRole: 'sandbox',
@@ -12,4 +13,7 @@ export const DOCKER_CLOUD_PROVISIONER = {
     inspect: 'cloud-inspect', power: 'cloud-power', destroy: 'cloud-destroy' },
   bootstrapTransport: { kind: 'native', exec: 'cloud-exec', putFile: 'cloud-put-file' },
   reconciliation: { nativeOperationSchema: OperationSchema.jsonSchema, action: 'cloud-reconcile' },
+  preparation: { inputSchema: PreparationInputSchema.jsonSchema, artifactSchema: PreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: PreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'cloud-prepare-build', inspect: 'cloud-prepare-inspect', destroy: 'cloud-prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;

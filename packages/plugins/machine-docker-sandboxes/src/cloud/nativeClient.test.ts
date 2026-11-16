@@ -5,41 +5,25 @@ import { DOCKER_SANDBOXES_PLUGIN } from '../manifest.js';
 import { DOCKER_ACCOUNT_SERVICE } from '../machine/dockerAccount.js';
 import { sandboxFixture, endpointCredentialFixture, conflictFixture } from './fixtures.js';
 import { createCloudClient, type CloudContext } from './nativeClient.js';
-import { createCloudPreparation } from './preparation.js';
 
 const resource = { sandboxName: sandboxFixture.name };
 const launch = { imageRef: 'ubuntu:24.04', cpus: 2, memoryMib: 4096, timeoutSeconds: 3600 };
 const json = (value: unknown, status = 200) => ({ status, body: new TextEncoder().encode(JSON.stringify(value)), headers: { 'content-type': 'application/json' } });
 function vendor(options: { loseCreate?: boolean; createStatus?: number; pending?: boolean; deleteStatus?: number; refusal?: number; mismatch?: boolean;
-  snapshotPending?: boolean; loseSnapshot?: boolean; setupFailed?: boolean; emptyList?: boolean } = {}) {
+  emptyList?: boolean } = {}) {
   const requests: HttpRequest[] = [];
   const run = vi.fn(); const dependency = vi.fn(); let status = options.pending ? 'creating' : 'running';
-  let snapshotName: string | undefined; let snapshotDisplayName: string | undefined;
-  const snapshot = () => ({ name: snapshotName, uid: 'prepared-fixture', status: options.snapshotPending ? 'creating' : 'ready',
-    etag: '"snapshot-etag"', displayName: snapshotDisplayName, sandbox: sandboxFixture.name, createdAt: '2026-11-15T17:00:00Z' });
   const http = vi.fn(async (request: HttpRequest): Promise<HttpResponse> => {
     requests.push(request); const url = new URL(request.url);
     if (url.hostname === 'hub.docker.com') return { ...json({ access_token: 'fixture-management-token' }), finalUrl: request.url };
     const response = (() => {
       if (options.refusal) return json({ code: 'permissionDenied', message: 'private fixture-scoped-token' }, options.refusal);
-      if (url.pathname.endsWith('/snapshots') && request.method === 'POST') {
-        snapshotDisplayName = JSON.parse(new TextDecoder().decode(request.body)).displayName;
-        snapshotName = 'snapshots/prepared-fixture';
-        if (options.loseSnapshot) throw new Error('private snapshot response lost');
-        return json(snapshot(), options.snapshotPending ? 202 : 201);
-      }
-      if (url.pathname.endsWith('/snapshots')) return json({ snapshots: snapshotName ? [snapshot()] : [] });
-      if (url.pathname.includes('/snapshots/')) {
-        if (url.pathname.endsWith('/restore')) return json(sandboxFixture, 201);
-        if (request.method === 'DELETE') { snapshotName = undefined; return { status: 204, headers: {}, body: new Uint8Array() }; }
-        return snapshotName ? json(snapshot()) : json({ code: 'notFound' }, 404);
-      }
+      if (url.pathname.endsWith('/restore')) return json(sandboxFixture, 201);
       if (url.pathname.endsWith('/endpoint-credentials')) return json({ ...endpointCredentialFixture,
         ...(options.mismatch ? { audience: 'other-sandbox' } : {}) });
       if (url.hostname === 'sandbox.invalid') {
         if (url.pathname.endsWith('/files/content')) return { status: 204, headers: {}, body: new Uint8Array() };
         const body = JSON.parse(new TextDecoder().decode(request.body));
-        if (body.cmd.includes('credential-free-install')) return json({ exitCode: options.setupFailed ? 1 : 0, stdout: '', stderr: '', incomplete: false });
         const output = body.cmd[0] === 'mktemp' ? '/tmp/private-fixture\n'
           : body.cmd.join(' ').includes('uname') ? 'Linux\nx86_64\n/root\n' : undefined;
         return json({ exitCode: 0, stdout: output === undefined ? '/wA=' : Buffer.from(output).toString('base64'), stderr: 'gA==', incomplete: output === undefined });
@@ -70,11 +54,6 @@ async function withVendor(options: Parameters<typeof vendor>[0], test: (h: Retur
   try { await test(h, (id, input) => kit.invokeAction(id, input, { surface: 'plugin' })); }
   finally { await kit.dispose(); }
 }
-function preparation(h: ReturnType<typeof vendor>) {
-  // Same external credential/HTTP fixtures; all native logic remains real.
-  return createCloudPreparation(createCloudClient({ signal: new AbortController().signal, invokedAtMs: Date.parse('2026-11-15T17:00:00Z'),
-    services: h.services as unknown as CloudContext['services'] }));
-}
 
 describe('Docker cloud through registered Actions and vendor HTTP', () => {
   it('accepts an empty account inventory with the optional page array omitted', async () => {
@@ -93,6 +72,7 @@ describe('Docker cloud through registered Actions and vendor HTTP', () => {
       expect(new Headers(create.headers).get('authorization')).toBe('Bearer fixture-management-token');
       expect(new Headers(create.headers).get('Idempotency-Key')).toBe('managed-fixture');
       expect(JSON.parse(new TextDecoder().decode(create.body))).toMatchObject({ imageRef: launch.imageRef,
+        platform: { os: 'linux', architecture: 'amd64' },
         features: { timeouts: { timeout: '3600s' } }, labels: { 'happier-managed-id': 'managed-fixture' } });
       expect(h.run).not.toHaveBeenCalled(); expect(h.dependency).not.toHaveBeenCalled();
       expect(JSON.stringify(acquired)).not.toContain('token');
@@ -110,6 +90,15 @@ describe('Docker cloud through registered Actions and vendor HTTP', () => {
         expect(JSON.stringify(request)).not.toContain('fixture-management-token');
       }
       expect(h.requests.filter(r => r.url.includes('/files/content')).every(r => [...r.body ?? []].join() === '255,0')).toBe(true);
+    });
+  });
+  it('launches the prepared snapshot through native restore without cold image overrides', async () => {
+    await withVendor({}, async (h, invoke) => {
+      expect(await invoke('cloud-acquire', { launch: { snapshotName: 'snapshots/prepared-fixture' }, managedId: 'warm-fixture' }))
+        .toMatchObject({ kind: 'bound', resource: { value: resource } });
+      const restore = h.requests.find(r => r.url.endsWith('/snapshots/prepared-fixture/restore'))!;
+      expect(JSON.parse(new TextDecoder().decode(restore.body))).toEqual({ displayName: expect.stringMatching(/^happier-[a-f0-9]{56}$/) });
+      expect(h.requests.some(r => r.method === 'POST' && r.url.endsWith('/sandboxes'))).toBe(false);
     });
   });
   it('keeps a pending create identity and reconciles lost replies without a second POST', async () => {
@@ -151,51 +140,5 @@ describe('Docker cloud through registered Actions and vendor HTTP', () => {
       services: h.services as unknown as CloudContext['services'] });
     await expect(native.acquire(launch, 'cancelled-fixture')).rejects.toMatchObject({ name: 'AbortError' });
     expect(h.requests).toHaveLength(0);
-  });
-  it('Prepare builds only a clean owned guest, captures disk, deletes the builder, restores and deletes its artifact', async () => {
-    await withVendor({}, async (h, invoke) => {
-      const native = preparation(h);
-      const ready = await native.build('prepare-fixture', { launch, setupScript: 'credential-free-install' });
-      expect(ready).toMatchObject({ kind: 'ready', artifact: { value: { snapshotName: 'snapshots/prepared-fixture' } } });
-      const capture = h.requests.find(r => r.method === 'POST' && r.url.endsWith('/snapshots'))!;
-      expect(JSON.parse(new TextDecoder().decode(capture.body))).toMatchObject({ captureMode: 'disk' });
-      expect(h.requests.some(r => r.method === 'DELETE' && r.url.endsWith('/sandboxes/fixture'))).toBe(true);
-      expect(JSON.stringify(ready)).not.toContain('token');
-      expect(await invoke('cloud-acquire', { managedId: 'restored-fixture', launch: { snapshotName: 'snapshots/prepared-fixture' } }))
-        .toMatchObject({ kind: 'bound', resource: { value: resource } });
-      expect(h.requests.some(r => r.url.endsWith('/snapshots/prepared-fixture/restore'))).toBe(true);
-      expect(await native.destroy({ operationId: 'prepare-fixture', snapshotName: 'snapshots/prepared-fixture', phase: 'destroying' })).toEqual({ kind: 'confirmed' });
-    });
-  });
-  it('Prepare retains unknown capture identity for inspection without another build; failed setup never becomes usable', async () => {
-    await withVendor({ loseSnapshot: true }, async (h, invoke) => {
-      const native = preparation(h);
-      const result = await native.build('prepare-fixture', { launch, setupScript: 'credential-free-install' });
-      expect(result).toMatchObject({ kind: 'unknown', nativeOperationRef: { value: { operationId: 'prepare-fixture' } } });
-      if (!('nativeOperationRef' in result)) throw new Error('Expected retained build operation');
-      expect(await native.inspect(result.nativeOperationRef.value))
-        .toMatchObject({ kind: 'ready' });
-      expect(h.requests.filter(r => r.method === 'POST' && r.url.endsWith('/snapshots'))).toHaveLength(1);
-    });
-    await withVendor({ setupFailed: true }, async (h, invoke) => {
-      expect(await preparation(h).build('prepare-fixture', { launch, setupScript: 'credential-free-install' }))
-        .toMatchObject({ kind: 'unknown', code: 'docker_cloud_setup_failed' });
-      expect(h.requests.some(r => r.method === 'POST' && r.url.endsWith('/snapshots'))).toBe(false);
-    });
-  });
-  it('Prepare keeps a creating snapshot unusable and cancellation deletes the owned snapshot and builder', async () => {
-    await withVendor({ snapshotPending: true }, async (h) => {
-      const native = preparation(h);
-      const result = await native.build('prepare-fixture', { launch, setupScript: 'credential-free-install' });
-      expect(result.kind).toBe('pending');
-      if (!('nativeOperationRef' in result)) throw new Error('Expected retained pending snapshot');
-      expect(await native.inspect(result.nativeOperationRef.value)).toMatchObject({ kind: 'pending' });
-      expect(h.requests.some(r => r.method === 'DELETE')).toBe(false);
-      expect(await native.destroy(result.nativeOperationRef.value)).toEqual({ kind: 'confirmed' });
-      expect(h.requests.filter(r => r.method === 'DELETE').map(r => new URL(r.url).pathname)).toEqual([
-        '/sandboxes/v1/snapshots/prepared-fixture', '/sandboxes/v1/sandboxes/fixture',
-      ]);
-      expect(h.requests.filter(r => r.method === 'POST' && r.url.endsWith('/snapshots'))).toHaveLength(1);
-    });
   });
 });

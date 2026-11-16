@@ -127,7 +127,7 @@ export function createCloudClient(context: CloudContext) {
     try {
       const response = 'snapshotName' in launch
         ? await management(launch.snapshotName + '/restore', 'POST', { displayName: restoreName(managedId) }, { 'Idempotency-Key': managedId })
-        : await management('sandboxes', 'POST', { imageRef: launch.imageRef,
+        : await management('sandboxes', 'POST', { imageRef: launch.imageRef, platform: { os: 'linux', architecture: 'amd64' },
         ...((launch.cpus || launch.memoryMib) ? { resources: { ...(launch.cpus ? { cpus: launch.cpus } : {}), ...(launch.memoryMib ? { memoryMib: launch.memoryMib } : {}) } } : {}),
         labels: { 'happier-managed-id': managedId }, startupExecution: { rawImage: { start: { argv: ['sleep', 'infinity'] } } },
         ...(launch.timeoutSeconds === undefined ? {} : { features: { timeouts: { timeout: `${launch.timeoutSeconds}s` } } }),

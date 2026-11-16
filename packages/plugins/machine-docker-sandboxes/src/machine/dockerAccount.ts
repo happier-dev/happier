@@ -39,6 +39,7 @@ export const DOCKER_CONNECTED_ACCOUNT_RUNTIME: ConnectedAccountRuntime = {
 };
 export const DOCKER_ACCOUNT_DESCRIPTOR = {
   declaration: { title: 'Docker Hub', ui: { category: 'cloud-machines' }, authentication: {
+    account: { artifactId: 'account-runtime', exportName: 'activateAccount' },
     defaultModeId: 'pat',
     modes: [{ id: 'pat', title: 'Personal access token', kind: 'manual', apiKey: true,
       outcomeReconciliation: 'none', credentialOrigin: 'authentication',
