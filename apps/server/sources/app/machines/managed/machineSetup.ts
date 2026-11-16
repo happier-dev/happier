@@ -207,8 +207,7 @@ export async function reportMachineSetup(params: Readonly<{
     if ('state' in input && input.state !== 'failed' && input.errorCode !== undefined) throw new ManagedMachineError('invalid_request');
     return inManagedMachinePublicationTx(input, async tx => {
         if ('target' in input) {
-            if (params.creationManagedId !== input.managedId
-                || await readCurrentServerIdentityId(process.env, tx) !== input.homeId) throw new ManagedMachineError('permission_denied');
+            if (await readCurrentServerIdentityId(process.env, tx) !== input.homeId) throw new ManagedMachineError('permission_denied');
         } else await requireTargetInTx(tx, { ...params, input });
         const row = await readManagedMachineInTx(tx, input);
         await requireManagedCreationAccessInTx(tx, row, params.actorAccountId);

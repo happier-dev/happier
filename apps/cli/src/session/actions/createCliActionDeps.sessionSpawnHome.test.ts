@@ -14,9 +14,46 @@ import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionCon
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import nacl from 'tweetnacl';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
 
 describe('Session spawn Home admission', () => {
   afterEach(() => vi.restoreAllMocks());
+  it('refuses an unsigned foreign bound spawn with secret Setup before Account HTTP or native effects', async () => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'controller-account' })).toString('base64url')}.signature`;
+    // Home HTTP and Machine RPC are the boundaries. Keep spawn parsing,
+    // requester custody selection and admission real; no Setup context is authored.
+    const get = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected controller Account read'));
+    const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Unexpected controller Account write'));
+    const native = vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(new Error('Unexpected native effect'));
+    const legacyNative = vi.spyOn(machineRpc, 'callMachineRpc').mockRejectedValue(new Error('Unexpected native effect'));
+    const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain', ctx: null,
+      serverId: 'local-profile', serverIdentityId: 'portable-home', serverHttpBaseUrl: 'https://home.test' });
+    const request = SessionSpawnNewInputV2Schema.parse({
+      executionTarget: { serverId: 'portable-home', machineId: 'target-machine' },
+      directory: { kind: 'path', path: tmpdir() },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'worker' } },
+      managedTargetPlacement: { managedId: 'bound-secret-sandbox', workspaceRoot: '/workspace' },
+      machineSetupPlanInput: { homeId: 'portable-home', machineId: 'target-machine', sources: [
+        { kind: 'bundledPreset', ref: { pluginId: 'acme.setup', localId: 'script-secret', revision: '1' }, setup: {
+          scripts: [{ body: 'test -n "$SETUP_KEY"' }],
+          secretRefs: { v: 1, bindings: { SETUP_KEY: { ref: 'happier:shared-secret:v1:controller-setup-secret', revision: 1 } } },
+        } },
+        { kind: 'direct', setup: {} },
+      ] },
+    });
+    const creationKey = SessionCreationKeyV1Schema.parse('unsigned-foreign-bound-spawn');
+    await expect(deps.sessionSpawnNew({ ...request, creationKey,
+      sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey }),
+      actionCaller: { kind: 'host' },
+      context: { externalActionCredential: { accountId: 'foreign-requester', principalId: 'foreign-requester',
+        credentialId: 'foreign-service', grant: API_TOKEN_FULL_GRANT_V1 } },
+    })).rejects.toMatchObject({ code: 'action_failed', effectAttempted: false,
+      details: { authorizationRefusalReason: 'external_credential_without_authorization' } });
+    expect(get).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+    expect(native).not.toHaveBeenCalled();
+    expect(legacyNative).not.toHaveBeenCalled();
+  });
   it('retains machine admission cause on a refused /tmp directory spawn', async () => {
     const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error',
       errorCode: 'machine_unavailable', httpStatus: 403 };

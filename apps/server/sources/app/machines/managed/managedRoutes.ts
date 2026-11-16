@@ -210,7 +210,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 const binding = request.externalActionExecutionAuthorizationBinding;
                 // HTTP purpose already binds acquisition or Session reports to
                 // this row, and Retry to its retained input.
-                const creationManagedId = binding?.actionId === 'machines.managed.acquire' || binding && isSessionSpawnNewActionIdV1(binding.actionId)
+                const creationManagedId = binding?.actionId === 'machines.managed.acquire'
                     ? request.body.managedId
                     : binding?.managedAdmission?.actionId === 'machines.managed.bootstrap.retry'
                         ? binding.managedAdmission.input.managedId : undefined;
