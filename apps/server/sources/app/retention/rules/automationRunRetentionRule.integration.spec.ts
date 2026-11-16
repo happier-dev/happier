@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { serializeAutomationRunExecutionRecipeV1 } from "@happier-dev/protocol";
+import { deriveAutomationOccurrenceKeyV1, serializeAutomationRunExecutionRecipeV1 } from "@happier-dev/protocol";
 
 import type {
     AutomationExecutionDispatchState,
@@ -13,6 +13,11 @@ import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { createAutomationRunRetentionRule } from "./automationRunRetentionRule";
+
+const RETENTION_SOURCE_SELECTOR_ID = "6fa513cc-05db-44c3-8a5e-13bb991f4001";
+const CONTENT_SOURCE_SELECTOR_ID = "6fa513cc-05db-44c3-8a5e-13bb991f4002";
+const CLEAR_RELEASED_SOURCE_SELECTOR_ID = "6fa513cc-05db-44c3-8a5e-13bb991f4003";
+const RETENTION_RELEASED_SOURCE_SELECTOR_ID = "6fa513cc-05db-44c3-8a5e-13bb991f4004";
 
 function createPolicy(automationRunDays = 1): RetentionPolicy {
     const keepForever = { mode: "keep_forever" as const };
@@ -103,6 +108,44 @@ function conversationReplyHandoffFixture(
         replyHandoffId: `handoff-${id}`,
         replyHandoffState: state,
     } as const;
+}
+
+function pluginEventOccurrenceKey(params: Readonly<{
+    triggerId: string;
+    eventLocalId: string;
+    sourceSelectorId: string;
+    occurrenceId: string;
+    occurredAt: Date;
+}>) {
+    return deriveAutomationOccurrenceKeyV1({
+        triggerId: params.triggerId,
+        evidence: {
+            v: 1,
+            kind: "pluginEvent",
+            eventRef: { pluginId: "plugin.retention", localId: params.eventLocalId },
+            sourceSelectorId: params.sourceSelectorId,
+            occurrenceId: params.occurrenceId,
+            occurredAt: params.occurredAt.getTime(),
+            payload: {},
+        },
+    });
+}
+
+function conversationOccurrenceKey(occurrenceId: string, occurredAt: Date) {
+    return deriveAutomationOccurrenceKeyV1({
+        v: 1,
+        kind: "conversation",
+        bindingId: "retention-conversation-binding",
+        occurrenceId,
+        occurredAt: occurredAt.getTime(),
+        caller: {
+            pluginId: "happier.channels",
+            contributionLocalId: "automation/result-deliver-v1",
+            machineId: "machine-retention",
+        },
+        input: {},
+        replyContextIdentity: "retention-reply-context",
+    });
 }
 
 describe("automationRunRetentionRule", () => {
@@ -216,7 +259,7 @@ describe("automationRunRetentionRule", () => {
                 kind: "pluginEvent",
                 eventPluginId: "plugin.retention",
                 eventLocalId: "event/retention",
-                sourceSelectorId: "retention-source-selector",
+                sourceSelectorId: RETENTION_SOURCE_SELECTOR_ID,
                 sourceContractVersion: 1,
                 observationTransport: "checkpointedPull",
                 definitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
@@ -237,10 +280,16 @@ describe("automationRunRetentionRule", () => {
             causeTriggerKind: "pluginEvent" as const,
             causeTriggerRevision: 0,
             causeOccurredAt: finishedAt,
-            occurrenceKey: `retention-event-${fixture.id}`,
+            occurrenceKey: pluginEventOccurrenceKey({
+                triggerId: "trigger-event-retention",
+                eventLocalId: "event/retention",
+                sourceSelectorId: RETENTION_SOURCE_SELECTOR_ID,
+                occurrenceId: `retention-event-${fixture.id}`,
+                occurredAt: finishedAt,
+            }),
             causeEventPluginId: "plugin.retention",
             causeEventLocalId: "event/retention",
-            causeSourceSelectorId: "retention-source-selector",
+            causeSourceSelectorId: RETENTION_SOURCE_SELECTOR_ID,
             triggerEvidenceEnvelope,
             scheduledAt: finishedAt,
             dueAt: finishedAt,
@@ -257,7 +306,7 @@ describe("automationRunRetentionRule", () => {
                 triggerId: null,
                 causeKind: "conversation" as const,
                 causeOccurredAt: finishedAt,
-                occurrenceKey: `retention-conversation-${fixture.id}`,
+                occurrenceKey: conversationOccurrenceKey(`retention-conversation-${fixture.id}`, finishedAt),
                 legacyManualIdempotencyKey: null,
                 triggerEvidenceEnvelope,
                 ...(hasReplyHandoff
@@ -647,7 +696,7 @@ describe("automationRunRetentionRule", () => {
                     kind: "pluginEvent",
                     eventPluginId: "plugin.retention",
                     eventLocalId: "event/compaction",
-                    sourceSelectorId: "retention-compaction-source",
+                    sourceSelectorId: CONTENT_SOURCE_SELECTOR_ID,
                     sourceContractVersion: 1,
                     observationTransport: "checkpointedPull",
                     definitionEnvelope: "opaque-definition",
@@ -671,6 +720,21 @@ describe("automationRunRetentionRule", () => {
         const eventEvidence = JSON.stringify({ t: "encrypted", c: "opaque-event-evidence" });
         const conversationEvidence = JSON.stringify({ t: "encrypted", c: "opaque-conversation-evidence" });
         const activeEvidence = JSON.stringify({ t: "encrypted", c: "opaque-active-evidence" });
+        const eventOccurrenceKey = pluginEventOccurrenceKey({
+            triggerId: "trigger-retention-content-event",
+            eventLocalId: "event/compaction",
+            sourceSelectorId: CONTENT_SOURCE_SELECTOR_ID,
+            occurrenceId: "retention-compaction-event",
+            occurredAt: finishedAt,
+        });
+        const conversationKey = conversationOccurrenceKey("retention-compaction-conversation", finishedAt);
+        const activeOccurrenceKey = pluginEventOccurrenceKey({
+            triggerId: "trigger-retention-content-event",
+            eventLocalId: "event/compaction",
+            sourceSelectorId: CONTENT_SOURCE_SELECTOR_ID,
+            occurrenceId: "retention-compaction-active",
+            occurredAt: finishedAt,
+        });
         await db.automationRun.createMany({
             data: [
                 {
@@ -683,11 +747,11 @@ describe("automationRunRetentionRule", () => {
                     causeTriggerKind: "pluginEvent",
                     causeTriggerRevision: 0,
                     causeOccurredAt: finishedAt,
-                    occurrenceKey: "retention-compaction-event",
+                    occurrenceKey: eventOccurrenceKey,
                     occurrenceEvidenceEqualityTag: equalityTag,
                     causeEventPluginId: "plugin.retention",
                     causeEventLocalId: "event/compaction",
-                    causeSourceSelectorId: "retention-compaction-source",
+                    causeSourceSelectorId: CONTENT_SOURCE_SELECTOR_ID,
                     triggerEvidenceEnvelope: eventEvidence,
                     executionInputEnvelope: "opaque-event-input",
                     resultEnvelope: "opaque-event-result",
@@ -704,7 +768,7 @@ describe("automationRunRetentionRule", () => {
                     state: "succeeded",
                     causeKind: "conversation",
                     causeOccurredAt: finishedAt,
-                    occurrenceKey: "retention-compaction-conversation",
+                    occurrenceKey: conversationKey,
                     legacyManualIdempotencyKey: null,
                     occurrenceEvidenceEqualityTag: equalityTag,
                     triggerEvidenceEnvelope: conversationEvidence,
@@ -734,11 +798,11 @@ describe("automationRunRetentionRule", () => {
                     causeTriggerKind: "pluginEvent",
                     causeTriggerRevision: 0,
                     causeOccurredAt: finishedAt,
-                    occurrenceKey: "retention-compaction-active",
+                    occurrenceKey: activeOccurrenceKey,
                     occurrenceEvidenceEqualityTag: equalityTag,
                     causeEventPluginId: "plugin.retention",
                     causeEventLocalId: "event/compaction",
-                    causeSourceSelectorId: "retention-compaction-source",
+                    causeSourceSelectorId: CONTENT_SOURCE_SELECTOR_ID,
                     triggerEvidenceEnvelope: activeEvidence,
                     executionInputEnvelope: "opaque-active-input",
                     scheduledAt: finishedAt,
@@ -788,8 +852,8 @@ describe("automationRunRetentionRule", () => {
                 causeOccurredAt: finishedAt,
                 causeEventPluginId: "plugin.retention",
                 causeEventLocalId: "event/compaction",
-                causeSourceSelectorId: "retention-compaction-source",
-                occurrenceKey: "retention-compaction-active",
+                causeSourceSelectorId: CONTENT_SOURCE_SELECTOR_ID,
+                occurrenceKey: activeOccurrenceKey,
                 triggerEvidenceEnvelope: activeEvidence,
                 occurrenceEvidenceEqualityTag: equalityTag,
                 executionInputEnvelope: "opaque-active-input",
@@ -808,7 +872,7 @@ describe("automationRunRetentionRule", () => {
                 causeEventPluginId: null,
                 causeEventLocalId: null,
                 causeSourceSelectorId: null,
-                occurrenceKey: "retention-compaction-conversation",
+                occurrenceKey: conversationKey,
                 triggerEvidenceEnvelope: conversationEvidence,
                 occurrenceEvidenceEqualityTag: equalityTag,
                 executionInputEnvelope: "opaque-conversation-input",
@@ -826,8 +890,8 @@ describe("automationRunRetentionRule", () => {
                 causeOccurredAt: finishedAt,
                 causeEventPluginId: "plugin.retention",
                 causeEventLocalId: "event/compaction",
-                causeSourceSelectorId: "retention-compaction-source",
-                occurrenceKey: "retention-compaction-event",
+                causeSourceSelectorId: CONTENT_SOURCE_SELECTOR_ID,
+                occurrenceKey: eventOccurrenceKey,
                 triggerEvidenceEnvelope: eventEvidence,
                 occurrenceEvidenceEqualityTag: equalityTag,
                 executionInputEnvelope: "opaque-event-input",
@@ -969,7 +1033,7 @@ describe("automationRunRetentionRule", () => {
                 deletedAt: new Date("2026-08-01T00:00:00.000Z"),
                 eventPluginId: "plugin.retention",
                 eventLocalId: "event/retention",
-                sourceSelectorId: "clear-released-event-selector",
+                sourceSelectorId: CLEAR_RELEASED_SOURCE_SELECTOR_ID,
                 sourceContractVersion: 1,
             },
         });
@@ -989,9 +1053,15 @@ describe("automationRunRetentionRule", () => {
                 causeTriggerRevision: 0,
                 causeEventPluginId: "plugin.retention",
                 causeEventLocalId: "event/retention",
-                causeSourceSelectorId: "clear-released-event-selector",
+                causeSourceSelectorId: CLEAR_RELEASED_SOURCE_SELECTOR_ID,
                 causeOccurredAt: finishedAt,
-                occurrenceKey: `${id}-occurrence`,
+                occurrenceKey: pluginEventOccurrenceKey({
+                    triggerId: "trigger-clear-released-event",
+                    eventLocalId: "event/retention",
+                    sourceSelectorId: CLEAR_RELEASED_SOURCE_SELECTOR_ID,
+                    occurrenceId: `${id}-occurrence`,
+                    occurredAt: finishedAt,
+                }),
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 scheduledAt: finishedAt,
                 dueAt: finishedAt,
@@ -1042,7 +1112,7 @@ describe("automationRunRetentionRule", () => {
                 deletedAt: new Date("2026-08-01T00:00:00.000Z"),
                 eventPluginId: "plugin.retention",
                 eventLocalId: "event/retention",
-                sourceSelectorId: "retention-released-event-selector",
+                sourceSelectorId: RETENTION_RELEASED_SOURCE_SELECTOR_ID,
                 sourceContractVersion: 1,
             },
         });
@@ -1062,9 +1132,15 @@ describe("automationRunRetentionRule", () => {
                 causeTriggerRevision: 0,
                 causeEventPluginId: "plugin.retention",
                 causeEventLocalId: "event/retention",
-                causeSourceSelectorId: "retention-released-event-selector",
+                causeSourceSelectorId: RETENTION_RELEASED_SOURCE_SELECTOR_ID,
                 causeOccurredAt: finishedAt,
-                occurrenceKey: "retention-released-event-occurrence",
+                occurrenceKey: pluginEventOccurrenceKey({
+                    triggerId: "trigger-retention-released-event",
+                    eventLocalId: "event/retention",
+                    sourceSelectorId: RETENTION_RELEASED_SOURCE_SELECTOR_ID,
+                    occurrenceId: "retention-released-event-occurrence",
+                    occurredAt: finishedAt,
+                }),
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 scheduledAt: finishedAt,
                 dueAt: finishedAt,
@@ -1150,7 +1226,7 @@ describe("automationRunRetentionRule", () => {
                     state: "cancelled",
                     causeKind: "conversation",
                     triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
-                    occurrenceKey: "retention-finalize-expired",
+                    occurrenceKey: conversationOccurrenceKey("retention-finalize-expired", finishedAt),
                     legacyManualIdempotencyKey: null,
                     causeOccurredAt: finishedAt,
                     scheduledAt: finishedAt,
@@ -1165,7 +1241,7 @@ describe("automationRunRetentionRule", () => {
                     state: "running",
                     causeKind: "conversation",
                     triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
-                    occurrenceKey: "retention-finalize-retained",
+                    occurrenceKey: conversationOccurrenceKey("retention-finalize-retained", finishedAt),
                     legacyManualIdempotencyKey: null,
                     causeOccurredAt: finishedAt,
                     executionInputEnvelope: RETENTION_FROZEN_EXECUTION_INPUT,
