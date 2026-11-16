@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import axios from 'axios';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
 
@@ -13,9 +14,10 @@ import {
 
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
-import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
-import { type refreshSavedSecretCatalogForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
+import { refreshSavedSecretCatalogForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
 import {
   createConnectedAccountPurposeBindingOwner,
   type ConnectedAccountPurposeBindingStore,
@@ -26,6 +28,11 @@ import {
   createPluginRawCredentialMaterializer,
   type PluginPermissionGrantListReader,
 } from './rawCredentialMaterializer';
+
+// Stored credentials are a filesystem boundary; operation admission stays real.
+const persistenceBoundary = vi.hoisted(() => ({ readStoredCredentials: vi.fn() }));
+vi.mock('@/persistence', async importOriginal => ({ ...await importOriginal<typeof import('@/persistence')>(),
+  readStoredCredentials: persistenceBoundary.readStoredCredentials }));
 
 const contribution = { pluginId: 'acme.voice', localId: 'speech' } as const;
 const service = { pluginId: 'acme.accounts', localId: 'oauth' } as const;
@@ -1197,60 +1204,60 @@ describe('plugin raw credential materializer', () => {
     expect(String(failure)).not.toContain(leaked);
   });
 
-  it.each(['inspection', 'standalone inspection', 'materialization'] as const)(
-    'admits a cold selected shared Saved Secret before %s', async (operation) => {
-      const admitted = snapshot({ source: 'savedSecret', sharedSecret: true });
-      const refresh = vi.fn<typeof refreshSavedSecretCatalogForOperation>(async () => {
-        saved.setSnapshot(admitted);
-        return admitted;
+  it.each([
+    { operation: 'inspection', catalogState: undefined },
+    { operation: 'standalone inspection', catalogState: undefined },
+    { operation: 'materialization', catalogState: undefined },
+    { operation: 'standalone inspection', catalogState: 'ready' },
+  ] as const)('admits a missing selected shared row before $operation (catalog $catalogState)', async ({ operation, catalogState }) => {
+    const previous = getActiveAccountSettingsSnapshot();
+    onTestFinished(() => {
+      if (previous) setActiveAccountSettingsSnapshot(previous);
+      else resetActiveAccountSettingsSnapshotForTests();
+    });
+    const credentials = { token: 'synthetic-raw-home', encryption: null };
+    persistenceBoundary.readStoredCredentials.mockResolvedValue(credentials);
+    onTestFinished(() => { persistenceBoundary.readStoredCredentials.mockReset(); });
+    const admitted = snapshot({ source: 'savedSecret', sharedSecret: true,
+      scopeKey: resolveAccountSettingsScopeKey(credentials) });
+    const cold = { ...admitted, rawSettings: {}, savedSecretResources: [], savedSecretCatalogState: catalogState };
+    setActiveAccountSettingsSnapshot(cold);
+    const http = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      expect(new URL(String(url)).pathname).toBe('/v1/account/saved-secrets/resources/materials');
+      expect(config?.params).toMatchObject({ resourceIds: ['resource_plugin_voice'] });
+      return { status: 200, data: { resources: [{
+        resourceId: 'resource_plugin_voice', encryptionMode: 'plain', recipientEnvelope: null,
+        entry: { ref: 'happier:shared-secret:v1:resource_plugin_voice', source: 'shared_resource',
+          relationship: 'recipient', name: 'Shared plugin Voice key', kind: 'apiKey', ownerAccountId: 'owner-account',
+          revision: 1, materialStatus: 'ready',
+          capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
+        storedContent: admitted.savedSecretResources?.[0]?.storedContent,
+      }] } };
+    });
+    onTestFinished(() => { http.mockRestore(); });
+    const saved = createHarness({ initialSnapshot: cold,
+      refreshSavedSecretCatalogForOperation: async input => {
+        const refreshed = await refreshSavedSecretCatalogForOperation(input);
+        saved.setSnapshot(refreshed);
+        return refreshed;
+      },
+    });
+    if (operation === 'materialization') {
+      await expect(saved.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
+        kind: 'httpHeaders', headers: { authorization: 'shared-plugin-raw' },
       });
-      const saved = createHarness({
-        initialSnapshot: { ...admitted, savedSecretResources: [], savedSecretCatalogState: undefined },
-        refreshSavedSecretCatalogForOperation: refresh,
+    } else {
+      const inspector = operation === 'inspection' ? saved.materializer : saved.authorizationInspector;
+      await expect(inspector.inspectAuthorization(connectedHeaderRequest)).resolves.toMatchObject({
+        subject: { kind: 'credential_access_disclosure' }, grantRequirement: 'approval_required',
       });
-      if (operation === 'materialization') {
-        await expect(saved.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
-          kind: 'httpHeaders', headers: { authorization: 'shared-plugin-raw' },
-        });
-      } else {
-        const inspector = operation === 'inspection' ? saved.materializer : saved.authorizationInspector;
-        await expect(inspector.inspectAuthorization(connectedHeaderRequest)).resolves.toMatchObject({
-          subject: { kind: 'credential_access_disclosure' },
-          grantRequirement: 'approval_required',
-        });
-        expect(saved.listInputs).toHaveLength(0);
-      }
-      // One Home admission for this operation, including materialization.
-      expect(refresh).toHaveBeenCalledTimes(1);
-      expect(refresh.mock.calls[0]?.[0].references).toEqual([
-        { ref: 'happier:shared-secret:v1:resource_plugin_voice' },
-      ]);
-    },
-  );
-
-  it('asks the Home only when the local selected shared row is not ready for inspection', async () => {
-    const ready = snapshot({ source: 'savedSecret', sharedSecret: true });
-    // Warm (or an operation's already-admitted snapshot): no second Home read.
-    const warmRefresh = vi.fn<typeof refreshSavedSecretCatalogForOperation>(async () => ready);
-    const warm = createHarness({ initialSnapshot: ready, refreshSavedSecretCatalogForOperation: warmRefresh });
-    await expect(warm.authorizationInspector.inspectAuthorization(connectedHeaderRequest)).resolves.toMatchObject({
-      grantRequirement: 'approval_required',
-    });
-    expect(warmRefresh).not.toHaveBeenCalled();
-
-    // Shared after hydration: a ready catalog without the row is stale, not a refusal.
-    const staleRefresh = vi.fn<typeof refreshSavedSecretCatalogForOperation>(async () => {
-      stale.setSnapshot(ready);
-      return ready;
-    });
-    const stale = createHarness({
-      initialSnapshot: { ...ready, savedSecretResources: [], savedSecretCatalogState: 'ready' },
-      refreshSavedSecretCatalogForOperation: staleRefresh,
-    });
-    await expect(stale.authorizationInspector.inspectAuthorization(connectedHeaderRequest)).resolves.toMatchObject({
-      grantRequirement: 'approval_required',
-    });
-    expect(staleRefresh).toHaveBeenCalledTimes(1);
+      // Warm review consumes the admitted row without another Home read.
+      await expect(inspector.inspectAuthorization(connectedHeaderRequest)).resolves.toMatchObject({
+        grantRequirement: 'approval_required',
+      });
+      expect(saved.listInputs).toHaveLength(0);
+    }
+    expect(http).toHaveBeenCalledTimes(1);
   });
 
   it('materializes a selected shared Saved Secret through the same plugin capability', async () => {
