@@ -37,6 +37,51 @@ afterEach(async () => {
 });
 
 describe('useSavedSecretCatalog resource authority', () => {
+    it.each([false, true])('carries an answered catalog refusal through the real owner to Retry and recovers (material=%s)', async includeMaterial => {
+        const { SavedSecretResourceActionErrorV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretResourceActionsV1');
+        let refused = true;
+        let networkOffline = false;
+        let refusedReads = 0;
+        const catalogPath = `/v1/account/saved-secrets/resources${includeMaterial ? '/materials' : ''}`;
+        home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }), handleRequest: async path => {
+            if (path.split('?')[0] !== catalogPath) return null;
+            if (networkOffline) throw new TypeError('Failed to fetch');
+            if (!refused) return null;
+            refusedReads++;
+            return Response.json(SavedSecretResourceActionErrorV1Schema.parse({ error: 'forbidden' }), { status: 403 });
+        } });
+        const { entry } = await home.addOwnerResource();
+        const scope = home.scope;
+        const { useSavedSecretCatalog } = await import('./useSavedSecretCatalog');
+        const { SecretsList } = await import('./SecretsList');
+        const { renderScreen } = await import('@/dev/testkit');
+        const { t } = await import('@/text');
+        function Consumer() {
+            const current = useSavedSecretCatalog({ scope, includeMaterial });
+            return React.createElement(SecretsList, { secrets: [], sharedEntries: current.entries,
+                sharedCatalogError: current.errorCause, sharedCatalogStale: current.error,
+                onRetrySharedCatalog: current.reload });
+        }
+        const screen = await renderScreen(React.createElement(Consumer));
+        await vi.waitFor(() => expect(screen.findByTestId('saved-secret-catalog-failed')).not.toBeNull());
+        expect(refusedReads).toBeGreaterThan(0);
+        expect(getSavedSecretCatalogSnapshot(scope)?.error).toEqual({ kind: 'forbidden', code: 'forbidden', retryable: false });
+        expect(screen.getTextContent()).toContain(t('errors.permissionDenied'));
+        expect(screen.findByTestId(`saved-secret:${entry.ref}`)).toBeNull();
+
+        refused = false;
+        networkOffline = true;
+        await screen.pressByTestIdAsync('saved-secret-catalog-retry');
+        await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(scope)?.error).toEqual({ kind: 'unreachable', code: null, retryable: true }));
+        expect(screen.getTextContent()).toContain(t('errors.networkError'));
+
+        networkOffline = false;
+        await screen.pressByTestIdAsync('saved-secret-catalog-retry');
+        await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${entry.ref}`)).not.toBeNull());
+        expect(getSavedSecretCatalogSnapshot(scope)?.error).toBeNull();
+        expect(screen.findByTestId('saved-secret-catalog-failed')).toBeNull();
+    });
+
     it('preserves typed causes without rerendering boolean-only readers', async () => {
         home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }) });
         const { useSavedSecretCatalog, useSavedSecretCatalogError } = await import('./useSavedSecretCatalog');

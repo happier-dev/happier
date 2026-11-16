@@ -196,6 +196,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'artifact_not_found' || code === 'not_found') return t('artifacts.notFound');
     if (typeof code === 'string' && code.startsWith('project_account_')) return t('widgetAdd.refusals.areaUnavailable');
     if (code === 'server_unreachable' || code === 'home_unreachable') return t('settingsPlugins.targetSelection.unreachableThisHome');
+    if (code === 'unreachable' || (code == null && record.kind === 'unreachable')) return t('errors.networkError');
     if (code === 'invalid_encrypted_envelope' || code === 'plugin_action_input_schema_invalid') return t('common.requestFailed');
     if (code === 'plugin_action_unavailable') return t('ui.pluginUi.actionUnavailable');
     if (code === 'preset_limit_reached') return t('machinePresets.limitWaits');
