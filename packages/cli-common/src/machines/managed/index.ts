@@ -3,6 +3,7 @@ export * from './presetOrigination.js';
 export * from './presetAcquire.js';
 export * from './presetPreparation.js';
 export * from './presetPreparationBuildInput.js';
+export * from './presetPreparationOperation.js';
 export * from './opaquePresetReviewedChild.js';
 export * from './provisioners.js';
 export * from './bootstrapCredential.js';

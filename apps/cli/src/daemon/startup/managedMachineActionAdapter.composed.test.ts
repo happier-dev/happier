@@ -1,7 +1,8 @@
 import '../../../../ui/sources/dev/vitestSetup';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createCliPayloadFixture } from '../../../../../packages/cli-common/src/systemTasks/testkit/createCliPayloadFixture';
 import { join } from 'node:path';
 import axios from 'axios';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -29,7 +30,7 @@ import { createDaemonApprovalExecutionAuthorizationPreparer } from '../externalA
 import { prepareInstalledRequesterAccountActionContext, prepareRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionProjection';
 import { createDaemonSessionAccountActionExecutor } from '../agentRuntime/createDaemonSessionAccountActionExecutor';
 import { dispatchManagedMachineSetup, dispatchManagedSessionStart, prepareExternalActionRequesterAccountAuthorization, projectExternalActionRequesterHttpAuthorization, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
-import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
+import { prepareManagedMachineSetupApplyInput, createManagedMachinePresetPreparationBindingV1 } from '@happier-dev/cli-common/machines/managed';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -41,7 +42,7 @@ import { createDaemonApprovalExecutionOriginCurrentness, createDaemonApprovalExe
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import { registerSessionCreationDirectoryPreflightRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
 import { authorizeMachineRpcRequest, readMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema as ChildRequestSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema as ChildRequestSchema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { applyTrackedSessionTurnLifecycle } from '../sessions/applyTrackedSessionTurnLifecycle';
 import { authorizeTrackedRunnerAgentDaemonServiceOperation } from '../agentRuntime/authorizeTrackedRunnerAgentDaemonServiceOperation';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
@@ -118,6 +119,18 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+
+import { createMachineProvisionerSpecializedPreparationAuthorFixture } from '../../../../../packages/plugin-sdk/fixtures/authoring-inference/machineProvisioners';
+
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
+
+import { ManagedMachinePresetV1Schema, ManagedMachinePresetUpdateInputV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+
+import { openManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+
+import { createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
+
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 
 const approvalWire = vi.hoisted(() => ({ sockets: [] as Array<{ update(value: unknown): void }>,
     registrations: new Map<string, { deliver(packet: unknown, acknowledge: (value: unknown) => void): void }>(),
@@ -214,6 +227,164 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
 }
 
 describe('daemon managed Machine Action factory', () => {
+    it.each(['ready', 'inspected', 'cancelled', 'replaced'] as const)('prepares a private preset beneath its original public Action (%s)', async outcome => {
+        const actionId = MACHINE_PRESET_PREPARE_ACTION_ID_V1;
+        const payload = await createCliPayloadFixture();
+        onTestFinished(() => payload.cleanup());
+        await writeFile(join(payload.payloadRoot, 'package.json'), JSON.stringify({ version: '0.3.0' }));
+        vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payload.payloadRoot);
+        vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', JSON.stringify({ root: payload.payloadRoot, identity: 'a'.repeat(64) }));
+        vi.mocked(globalThis.fetch).mockImplementation(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+            capabilities: { serverIdentity: { serverIdentityId: 'srv_home' },
+                guestCli: { source: 'home-payload', line: '0.3', channel: 'publicdev' } } })));
+        const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+        const accountCredentials = { token, encryption: null };
+        const signing = nacl.sign.keyPair();
+        const settings = AccountSettingsSchema.parse({});
+        const input = { homeId: 'srv_home', id: 'prepare-preset', expectedRevision: 1, machineId: 'controller' };
+        const authored = normalizePluginManifestV2(createMachineProvisionerSpecializedPreparationAuthorFixture().manifest);
+        const originalProvisioner = authored.contributes.machineProvisioners[0]!;
+        const manifest = outcome !== 'replaced' ? authored : normalizePluginManifestV2({ ...authored, contributes: { ...authored.contributes,
+            machineProvisioners: [...authored.contributes.machineProvisioners, { ...originalProvisioner, id: 'replacement',
+                preparation: { ...originalProvisioner.preparation!, actions: { build: 'prepare-build-replacement',
+                    inspect: 'prepare-inspect-replacement', destroy: 'prepare-destroy-replacement' } } }],
+            actions: [...authored.contributes.actions, ...authored.contributes.actions.filter(action => action.id.startsWith('prepare-'))
+                .map(action => ({ ...action, id: `${action.id}-replacement` }))],
+        } });
+        const provider = { pluginId: manifest.id, localId: manifest.contributes.machineProvisioners[0]!.id };
+        const launch = { provider, schemaVersion: 1, name: 'Prepared guest', choices: { name: 'base' } };
+        let preset = ManagedMachinePresetV1Schema.parse({ id: input.id, homeId: input.homeId, revision: 1,
+            owner: { kind: 'account', accountId: 'account' }, controller: { machineId: 'controller', installationId: 'installation' },
+            contentEncryptionMode: 'plain', content: { t: 'plain', v: { v: 1, name: launch.name, launch,
+                preparation: { enabled: true } } }, recipients: [] });
+        const writes: number[] = [];
+        const roots: string[] = [];
+        const nativeRoles: string[] = [];
+        const artifact = { contributionRef: provider, schemaVersion: 1, value: { launch: { name: 'prepared' } } };
+        const replacementArtifact = { ...artifact, contributionRef: { ...provider, localId: 'replacement' } };
+        if (outcome === 'replaced') {
+            preset = ManagedMachinePresetV1Schema.parse({ ...preset, content: { t: 'plain', v: { v: 1,
+                name: launch.name, launch: { ...launch, provider: replacementArtifact.contributionRef, choices: { name: 'replacement' } },
+                preparation: { enabled: true }, prepared: { operationId: 'original-preparation', status: 'ready', artifact,
+                    cliBinaryPath: '/opt/happier/cli/current/happier', binding: createManagedMachinePresetPreparationBindingV1({
+                        content: { launch }, presetRevision: 1, cliIdentity: 'a'.repeat(64) }) },
+            } } });
+        }
+        const nativeOperationRef = { contributionRef: provider, schemaVersion: 1, value: { claimId: 'prepare-operation' } };
+        let markBuildStarted = () => {};
+        const buildStarted = new Promise<void>(resolve => { markBuildStarted = resolve; });
+        const native = nativeFixture({ fixtureManifest: manifest, credentialPurposes: [],
+            actionHandlers: new Map(manifest.contributes.actions.map(action => [action.id, async body => {
+                nativeRoles.push(action.id);
+                if (action.id === 'options') return { base: { launch: outcome === 'replaced' ? { name: 'replacement' } : launch.choices,
+                    nativeFacts: { preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' } } },
+                    dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
+                if (action.id === 'prepare-build') {
+                    expect(openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared)
+                        .toMatchObject({ status: 'building', operationId: 'prepare-operation' });
+                    markBuildStarted();
+                    return outcome === 'ready' ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
+                }
+                if (action.id === 'prepare-inspect') return outcome === 'inspected' ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
+                if (action.id === 'prepare-destroy') {
+                    expect(body).toMatchObject(outcome === 'replaced' ? { artifact } : { nativeOperation: nativeOperationRef });
+                    return { kind: 'confirmed' };
+                }
+                if (action.id === 'prepare-build-replacement') {
+                    expect(body).toMatchObject({ input: { launch: { choices: { name: 'replacement' } } } });
+                    return { kind: 'ready', artifact: replacementArtifact };
+                }
+                throw new Error(`Unexpected preparation role ${action.id}`);
+            }])) });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/connected-accounts/purposes')) return { status: 200, data: { status: 'present', revision: 1,
+                content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } };
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (path === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: 'account' }) };
+            if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: settings }, version: 1 } };
+            if (path === ACCOUNT_SECURITY_PATH_V1) return { status: 200, data: AccountSecurityGetResponseV1Schema.parse({ v: 1,
+                encryptionMode: 'plain', nativeEmail: null, password: { status: 'not_enrolled', revision: null } }) };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }) };
+            throw new Error(`Unexpected preparation GET ${path}`);
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/execution-authorization')) {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                roots.push(path);
+                return { status: 200, data: { v: 1, token: 'prepare-original-root', binding: { accountId: 'account', custodianAccountId: 'account',
+                    authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain', serverIdentityId: 'srv_home',
+                    machineId: 'controller', installationId: 'installation', actionId, presetPreparationAdmission: input, requestId: request.envelope.requestId,
+                    target: { kind: 'machine', machineId: 'controller' }, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
+            }
+            if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
+            if (path.endsWith('/presets/get')) return { status: 200, data: { kind: 'found', preset } };
+            if (path.endsWith('/presets/update')) {
+                const mutation = ManagedMachinePresetUpdateInputV1Schema.parse(body);
+                if (mutation.expectedRevision !== preset.revision) return { status: 409,
+                    data: { kind: 'conflict', currentRevision: preset.revision } };
+                writes.push(mutation.expectedRevision);
+                preset = ManagedMachinePresetV1Schema.parse({ ...preset, ...mutation.patch, revision: preset.revision + 1 });
+                return { status: 200, data: { kind: 'saved', preset } };
+            }
+            throw new Error(`Unexpected preparation POST ${path}`);
+        });
+        const managed = adapter(true, undefined, undefined, signing.secretKey, accountCredentials, undefined, undefined, undefined, native.runtimeRegistry);
+        const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account',
+            generateOperationId: () => 'prepare-operation' });
+        const deps = createCliActionDeps({ credentials: accountCredentials, token, sessionId: '', mode: 'plain', ctx: null,
+            serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+            externalActionMachineRequestPrivateKey: signing.secretKey, externalActionMachineInstallationId: 'installation',
+            actionsSettingsProvider: createActionSettingsProvider({ accountSettings: settings }), machinePresetPrepare: managed.preparePreset });
+        const executor = createActionExecutor({ ...deps, runActionOperation: operations.runActionOperation,
+            invokeContributedAction: createCommittedContributedActionInvoker({ managedProviderOperationAuthority: authority,
+                acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }) }) });
+        const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId, input, requestId: 'prepare-request',
+            target: { kind: 'machine', machineId: 'controller' }, machineId: 'controller', accountId: 'account', accountEncryptionMode: 'plain',
+            tokenEpochHint: 0, token, serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+            installationId: 'installation', privateKey: signing.secretKey });
+        if (!authorization) throw new Error('Home did not admit the Prepare root');
+        const requester = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
+            machineId: 'controller', installationId: 'installation', installationPrivateKey: signing.secretKey,
+            serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+            ownCredentials: accountCredentials, isCurrent: async () => true, createExecutor: () => executor });
+        if (!requester) throw new Error('Prepare requester custody is unavailable');
+        onTestFinished(() => requester.dispose());
+        const confirmation = bindPresentUserActionConfirmationV1(actionId, input, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+            runtimeAccountId: 'account', actionRequestId: 'prepare-request', serverId: configuration.activeServerId,
+            serverIdentityId: 'srv_home', externalActionTarget: authorization.binding.target });
+        const context = { ...confirmation, externalActionExecutionAuthorization: requester.authorization,
+            signExternalActionApprovalInput: (args: Parameters<NonNullable<ActionExecutorContext['signExternalActionApprovalInput']>>[0]) =>
+                signExternalActionApprovalInputV1({ authorizationToken: authorization.token, ...args, privateKey: signing.secretKey }),
+            originalActionEnvelope: { v: 1 as const, requestId: 'prepare-request', target: authorization.binding.target, input } };
+        const result = await operations.observeExecution({ actionId, input, actionRequestId: 'prepare-request',
+            execute: operation => executor.execute(actionId, input, { ...context, ...operation }) });
+        expect(result.ok ? null : result).toBeNull();
+        expect(result).toMatchObject({ ok: true, result: { status: 'accepted', operationId: 'prepare-operation' } });
+        if (outcome === 'cancelled') {
+            await buildStarted;
+            expect(await operations.handlers.cancel({ operationId: 'prepare-operation' })).toMatchObject({ kind: 'requested' });
+        }
+        const terminal = await operations.handlers.getV2({ operationId: 'prepare-operation', waitForTerminal: true });
+        expect(terminal.kind === 'found' && terminal.operation.state === 'failed' ? terminal.operation.error : undefined).toBeUndefined();
+        expect(terminal).toMatchObject({ kind: 'found', operation: { state: outcome === 'cancelled' ? 'cancelled' : 'succeeded' } });
+        const prepared = openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared;
+        expect(roots).toEqual([bindExternalActionExecutionAuthorizationHttpPathV1(actionId)]);
+        if (outcome !== 'cancelled') {
+            expect(prepared).toMatchObject({ status: 'ready', artifact: outcome === 'replaced' ? replacementArtifact : artifact });
+            expect(writes).toEqual(outcome === 'ready' ? [1, 2] : outcome === 'replaced' ? [1, 2, 3, 4] : [1, 2, 3]);
+            expect(nativeRoles).toEqual(outcome === 'ready' ? ['options', 'prepare-build'] : outcome === 'replaced'
+                ? ['prepare-destroy', 'options', 'prepare-build-replacement'] : ['options', 'prepare-build', 'prepare-inspect']);
+        } else {
+            expect(prepared).toMatchObject({ status: 'cancelled' });
+            expect(prepared?.artifact).toBeUndefined();
+            expect(prepared?.nativeOperationRef).toBeUndefined();
+            expect(nativeRoles.filter(role => role === 'prepare-build')).toHaveLength(1);
+            expect(nativeRoles.filter(role => role === 'prepare-destroy')).toHaveLength(1);
+        }
+    });
     it.each(['supported', 'unsupported'] as const)(
       'runs a Machine isolation preset through native Sandbox qualification (%s)', async nativeSandbox => {
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,

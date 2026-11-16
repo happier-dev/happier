@@ -3231,6 +3231,25 @@ establishes the daemon service through existing system-task custody. Its private
 historical “setup recipe” names do not define the public Machine recipe contract.
 Bootstrap task ids, events, prompts and transport mechanics retain their owners.
 
+#### Preset image preparation (0.3 development)
+
+The installed `machines.presets.prepare` host port calls the preset owner's
+`settleManagedMachinePresetPreparationOperationV1`. Native build, inspect and
+destroy run as qualified children of that original Action through the existing
+reviewed-child issuer. They do not require a managed Machine row or mint another
+Account root. The same Connected Account purpose owner materializes the selected
+provider credentials outside the credential-free image input.
+
+Home checks Machine and preset Manage at admission. The original signed binding
+retains `presetPreparationAdmission` with Home, preset, Machine and initial
+revision. An encrypted request exposes only this routing scope; the existing
+envelope digest and opener bind it to the private operand. Later signed preset
+reads and content writes spend that admission. The initial revision guards the
+building write; subsequent status writes use the current preset CAS revision.
+They preserve encryption mode and recipient identities. Stop uses the existing
+operation cancellation owner: it ends new build work while retaining that same
+admission through private cancellation status and owned native cleanup.
+
 In current 0.3 development, the terminal-auth verifier identifies a
 `HOME_AUTHORITY_MISMATCH` with a closed comparison label, verification phase,
 carrier kind and observed-descriptor-present boolean. The shared SSH failure

@@ -11,7 +11,7 @@ import { fixture, pluginId, roles, roleActionId, roleInput, roleResult } from '.
 import { createConnectedAccountPurposeBindingOwner, type ConnectedAccountPurposeBindingStore } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
-import { machineProvisionerAuthorFixture } from '../../../../../../../packages/plugin-sdk/fixtures/authoring-inference/machineProvisioners';
+import { machineProvisionerAuthorFixture, createMachineProvisionerPreparationAuthorFixture } from '../../../../../../../packages/plugin-sdk/fixtures/authoring-inference/machineProvisioners';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { activateContributionModule } from '@/plugins/runtime/lifecycle/activation/activateContributionModule';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -33,6 +33,23 @@ function executeContributedAction(request: Parameters<typeof dispatchContributed
 }
 
 describe('managed native-role custody at contributed dispatch', () => {
+    it.each(['prepare-build', 'prepare-destroy'] as const)('refuses an ordinary native %s without the admitted Prepare parent', async localId => {
+        const manifest = normalizePluginManifestV2(createMachineProvisionerPreparationAuthorFixture().manifest);
+        let effects = 0;
+        const f = fixture({ fixtureManifest: manifest, credentialPurposes: [],
+            actionHandlers: new Map(manifest.contributes.actions.map(action => [action.id, async () => {
+                effects++;
+                throw new Error('An unadmitted preparation must not execute');
+            }])) });
+        const provider = { pluginId: manifest.id, localId: manifest.contributes.machineProvisioners[0]!.id };
+        const input = localId === 'prepare-build' ? { operationId: 'unadmitted', input: { name: 'base' } }
+            : { artifact: { contributionRef: provider, schemaVersion: 1, value: { launch: { name: 'base' } } } };
+        const result = await executeContributedAction({ runtimeRegistry: f.runtimeRegistry,
+            actionId: `${manifest.id}/${localId}`, input, context: { surface: 'plugin' } });
+        expect(result).toMatchObject({ result: { ok: false, errorCode: 'plugin_managed_provider_operation_custody_invalid',
+            actionHandlerInvocation: 'notStarted' } });
+        expect(effects).toBe(0);
+    });
     it.each(['selected', 'foreign', 'absent', 'opaque', 'team', 'team-brokered', 'team-brokered-foreign'] as const)('uses the reviewed Account power credential without a controller (%s binding)', async scenario => {
         const service = { pluginId: 'acme.accounts', localId: 'cloud' };
         const team = scenario.startsWith('team');

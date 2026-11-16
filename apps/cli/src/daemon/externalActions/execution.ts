@@ -1294,6 +1294,7 @@ resolveServerFeaturesSnapshot?: () =>
         },
         managedMachineAction: managedPolicyAction?.managedMachineAction ?? nativeManagedMachineAdapter,
         acquireSessionIsolationSandbox: nativeManagedMachineAdapter.acquireSessionIsolationSandbox,
+        machinePresetPrepare: nativeManagedMachineAdapter.preparePreset,
         ...(fallbackRuntimeActionExecute
           ? { runtimeActionExecute: async request => {
               const family = resolveRuntimeActionExecutionFamily(request.actionId);

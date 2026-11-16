@@ -23,6 +23,7 @@ import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HTTP_PATH_TEMPLATE_V1, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionActionIdV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema, externalActionExecutionAuthorizationRequestSchemaForActionV1, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, ExternalActionRequestEnvelopeSchema, isExternalActionRequestWithinLimit, isExternalActionRequestVersionAllowedForAccountModeV1, type ExternalActionCredentialScopeDiagnosticV1, type ExternalActionServerPrincipalV1, type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionRequestEnvelope, type PreparedExternalActionResponseEnvelope, projectExternalActionHttpError, projectExternalActionResponseEnvelopeV1, type ExternalActionHttpErrorCode, prepareExternalActionResponseEnvelopeV1, readExternalActionProtectedRequestId } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { projectExternalActionPendingResetStartEnvelopeAdmissionV1, projectExternalActionApprovalDecisionEnvelopeAdmissionV1,
+    projectExternalActionPresetPreparationEnvelopeAdmissionV1,
     projectExternalActionDeploymentReadEnvelopeAdmissionV1, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1,
     projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
     projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
@@ -714,6 +715,7 @@ export function registerExternalActionRoutes(
             let approvalDecisionAdmission: ExternalActionExecutionAuthorizationBindingV1['approvalDecisionAdmission'];
             let deploymentReadAdmission: ExternalActionExecutionAuthorizationBindingV1['deploymentReadAdmission'];
             let deploymentPreparationAdmission: ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission'];
+            let presetPreparationAdmission: ExternalActionExecutionAuthorizationBindingV1['presetPreparationAdmission'];
             let registryAppUpdateAdmission: ExternalActionExecutionAuthorizationBindingV1['registryAppUpdateAdmission'];
             let discussionId: ExternalActionExecutionAuthorizationBindingV1['discussionId'];
             let managedAdmission: ExternalActionExecutionAuthorizationBindingV1['managedAdmission'];
@@ -721,6 +723,7 @@ export function registerExternalActionRoutes(
             let deploymentLinkEnvironmentId: string | undefined;
             let deploymentMetadataEnvironmentId: string | undefined;
             try {
+                presetPreparationAdmission = projectExternalActionPresetPreparationEnvelopeAdmissionV1({ actionId: actionId.data, envelope: body.data.envelope });
                 deploymentMetadataEnvironmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1({ actionId: actionId.data, envelope: body.data.envelope });
                 deploymentLinkEnvironmentId = projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1({ actionId: actionId.data, envelope: body.data.envelope });
                 deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId: actionId.data, envelope: body.data.envelope });
@@ -835,6 +838,7 @@ export function registerExternalActionRoutes(
                     ...(approvalDecisionAdmission ? { approvalDecisionAdmission } : {}),
                     ...(deploymentReadAdmission ? { deploymentReadAdmission } : {}),
                     ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
+                    ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
                     ...(registryAppUpdateAdmission ? { registryAppUpdateAdmission } : {}),
                     ...(managedAdmission ? { managedAdmission } : {}),
                     ...(nativeCredentialSpawnChild ? { nativeCredentialSpawnChild } : {}),
@@ -872,7 +876,7 @@ export function registerExternalActionRoutes(
                     browserSessionId: body.data.envelope.v === 2 ? body.data.envelope.browserSessionId : undefined,
                     input: body.data.envelope.v === 1 ? body.data.envelope.input
                         : deploymentMetadataEnvironmentId === undefined
-                            ? deploymentNativeAdmission ?? body.data.envelope.sessionSpawnAdmission ?? managedAdmission?.input
+                            ? presetPreparationAdmission ?? deploymentNativeAdmission ?? body.data.envelope.sessionSpawnAdmission ?? managedAdmission?.input
                                 ?? (actionId.data === 'machines.managed.acquire' ? readExternalActionManagedAcquireAdmission(body.data.envelope)?.input : undefined)
                             : { environmentId: deploymentMetadataEnvironmentId },
                     deploymentNativeAdmission,

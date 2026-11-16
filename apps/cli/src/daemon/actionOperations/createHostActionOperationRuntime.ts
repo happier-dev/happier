@@ -2,6 +2,7 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { isMachineSetupOperationActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionOperationDomainRefV1, ActionOperationSnapshotV1, ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -400,6 +401,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         || request.actionId === 'projects.script.run' || request.actionId === 'projects.compute.exec' || request.actionId === 'projects.prepare'
         || request.actionId === 'machines.managed.power.set' || request.actionId === 'machines.managed.delete'
         || request.actionId === 'machines.managed.acquire' || request.actionId === 'machines.managed.bootstrap.retry'
+        || request.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1
         || (isOrdinaryMachineSetupNativeActionIdV1(request.actionId) && request.actionId !== MACHINE_SETUP_PLAN_ACTION_ID_V1)
         || request.actionId === 'machines.setup.adminAccess.set' || request.actionId === 'machines.reboot'
         || request.actionId === 'machines.services.exec'

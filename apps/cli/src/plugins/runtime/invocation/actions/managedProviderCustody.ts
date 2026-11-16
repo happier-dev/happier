@@ -15,6 +15,7 @@ import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/ma
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { bindManagedMachineRoleCredentials, projectManagedMachineRolePurposeBindingsV1 } from '@happier-dev/cli-common/machines/managed';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 
 /** Managed-resource custody supplied only by the authenticated host operation owner. */
 export type AdmittedManagedProviderOperationExecutionRequest = Readonly<{
@@ -135,6 +136,20 @@ export async function checkManagedProviderOperationCustody(params: Readonly<{
     error: 'The native provisioner role requires current managed-resource custody',
     actionHandlerInvocation: 'notStarted',
   });
+  // A prepared image belongs to its admitted preset operation, before any
+  // managed Machine exists. Consume the same private exact-child issuer used
+  // by other host effects rather than inventing a managed resource for it.
+  if (matches.some(({ role }) => role === 'preparationBuild' || role === 'preparationInspect' || role === 'preparationDestroy')) {
+    const identity = params.action.pluginId ? { pluginId: params.action.pluginId, localId: params.action.definition.id } : undefined;
+    const admitted = identity ? readHostReviewedChildOperationV1(params.approvalContext,
+      formatQualifiedPluginActionId(identity), params.input) : null;
+    if (!identity || !admitted || admitted.parent.actionId !== MACHINE_PRESET_PREPARE_ACTION_ID_V1
+      || params.operation) return invalid();
+    const purposes = resolveRegistryConnectedAccountActionPurposeAuthorizations({ registry: params.contributes,
+      qualifiedActionId: buildQualifiedPluginContributionKey(identity) });
+    if (!purposes || purposes.length > 0 && !params.probeBinding) return invalid();
+    return await isAdmittedManagedProviderCustodyCurrent(params) ? null : invalid();
+  }
   if (params.probeBinding !== undefined) {
     const probe = params.probeBinding;
     const pluginId = params.action.pluginId;

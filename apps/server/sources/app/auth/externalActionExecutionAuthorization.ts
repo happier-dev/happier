@@ -2,7 +2,7 @@ import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredConten
 import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
 import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
-import { MachinePresetActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { MachinePresetActionInputSchemasV1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusRequestV1Schema }
     from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
@@ -495,8 +495,12 @@ export function readAdmittedFiniteOperationPrincipal(binding: ExternalActionExec
     const native = binding.deploymentNativeAdmission;
     const read = binding.deploymentReadAdmission;
     const finiteRead = read?.actionId === binding.actionId && read.actionId !== DEPLOYMENT_LOGS_READ_ACTION_ID_V1;
+    const presetPreparation = binding.presetPreparationAdmission;
+    const finitePresetPreparation = binding.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1 && presetPreparation !== undefined
+        && presetPreparation.homeId === binding.serverIdentityId && presetPreparation.machineId === binding.machineId;
     if (binding.handoffAdmission
-        || !acceptedDeployment && (binding.workflowActionOrigin || !native && !finiteRead && !(isDeploymentDomainDnsActionIdV1(binding.actionId) && binding.environmentId)
+        || presetPreparation && !finitePresetPreparation
+        || !acceptedDeployment && !finitePresetPreparation && (binding.workflowActionOrigin || !native && !finiteRead && !(isDeploymentDomainDnsActionIdV1(binding.actionId) && binding.environmentId)
             || deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined)
         || native && (native.environmentId !== binding.environmentId
             || 'actionId' in native && binding.actionId !== native.actionId
@@ -2855,6 +2859,17 @@ export function isDeploymentNativeHttpPurpose(verified: Pick<VerifiedExternalAct
 async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof, snapshotBatch: SessionReadBatchRequestV1 | null): Promise<boolean | null> {
     const root = verified.binding.actionId;
+    if (root === MACHINE_PRESET_PREPARE_ACTION_ID_V1) {
+        const admission = verified.binding.presetPreparationAdmission;
+        if (!admission || verified.effectActionId !== root) return false;
+        if (isAccountActionHttpOperation('machines.presets.get', proof)) {
+            const read = MachinePresetActionInputSchemasV1['machines.presets.get'].safeParse(proof.body);
+            return read.success && read.data.homeId === admission.homeId && read.data.id === admission.id;
+        }
+        if (!isAccountActionHttpOperation('machines.presets.update', proof)) return false;
+        const write = MachinePresetActionInputSchemasV1['machines.presets.update'].safeParse(proof.body);
+        return write.success && write.data.homeId === admission.homeId && write.data.id === admission.id;
+    }
     if (root === MACHINE_ISOLATION_SET_ACTION_ID_V1) {
         const preset = MachinePresetActionInputSchemasV1['machines.presets.get'].safeParse(proof.body);
         // The receiving installed host opens only its configured references.
@@ -4048,6 +4063,7 @@ function matchesExternalActionAuthorizationBinding(binding: ExternalActionExecut
         || !sameManagedInput(binding.workflowActionOrigin, supplied.workflowActionOrigin)
         || !sameManagedInput(binding.approvalDecisionAdmission, supplied.approvalDecisionAdmission)
         || !sameManagedInput(binding.deploymentPreparationAdmission, supplied.deploymentPreparationAdmission)
+        || !sameManagedInput(binding.presetPreparationAdmission, supplied.presetPreparationAdmission)
         || !sameManagedInput(binding.deploymentCandidatePublication, supplied.deploymentCandidatePublication)
         || !sameManagedInput(binding.deploymentLinkAdmission, supplied.deploymentLinkAdmission)
         || !sameManagedInput(binding.registryAppUpdateAdmission, supplied.registryAppUpdateAdmission)

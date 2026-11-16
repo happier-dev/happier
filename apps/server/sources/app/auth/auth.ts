@@ -30,6 +30,7 @@ import { assertAccountActive } from "./accountStatus";
 import { admitExternalActionBrowserSessionInTx } from './externalActionBrowserAdmission';
 import { isActiveHomeAccountStatus } from '@happier-dev/protocol/home/governance';
 import { inTx, type Tx } from "@/storage/inTx";
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { log } from "@/utils/logging/log";
 import { LRUTtlMap } from "@/utils/collections/lru";
 import { createSha256SecretDigest, sha256SecretDigestMatches } from "./secretDigest";
@@ -631,6 +632,32 @@ class AuthModule {
         }
         const inputRecord = typeof context.input === "object" && context.input !== null && !Array.isArray(context.input)
             ? context.input as Readonly<Record<string, unknown>> : null;
+        if (input.presetPreparationAdmission !== undefined && input.actionId !== MACHINE_PRESET_PREPARE_ACTION_ID_V1) {
+            throw new ApiTokenOperationError('credential_scope_denied');
+        }
+        const presetPreparationAdmission = input.presetPreparationAdmission;
+        const presetApiPrincipal = input.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1 && !('authentication' in input)
+            ? await this.verifyCurrentApiTokenPrincipal(input) : null;
+        if (input.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1) {
+            // The envelope projector owns the exact public/private input projection.
+            // Mint binds its typed result to the installed execution target and preset authority.
+            if (!presetPreparationAdmission || presetPreparationAdmission.homeId !== input.serverIdentityId
+                || presetPreparationAdmission.machineId !== input.machineId
+                || input.target.kind !== 'machine' || input.target.machineId !== input.machineId) {
+                throw new ApiTokenOperationError('credential_scope_denied');
+            }
+            const { admitMachinePresetPreparationInTx } = await import('@/app/machines/managed/machinePresetService');
+            const { ManagedMachineError } = await import('@/app/machines/managed/managedRows');
+            try {
+                await inTx(tx => admitMachinePresetPreparationInTx(tx, { accountId: input.accountId, input: presetPreparationAdmission,
+                    authentication: { authenticationAuthority: 'authentication' in input && input.authentication.kind === 'account'
+                        ? 'present_user' : 'account_automation', authenticationEvidence:
+                        'authentication' in input ? input.authentication.evidence : presetApiPrincipal?.authenticationEvidence } }));
+            } catch (error) {
+                if (error instanceof ManagedMachineError) throw new ApiTokenOperationError('credential_scope_denied');
+                throw error;
+            }
+        }
         const automationId = input.actionId === 'workflow.trigger.run_now' && typeof inputRecord?.automationId === 'string'
             ? inputRecord.automationId : undefined;
         const nativeAdmission = context.deploymentNativeAdmission ?? projectDeploymentNativeAdmissionV1(input.actionId, context.input);
@@ -736,6 +763,7 @@ class AuthModule {
         const deploymentChildRoot = isDeploymentChildRootActionIdV1(input.actionId, input.deploymentPreparationAdmission);
         const parsedBinding = ExternalActionExecutionAuthorizationBindingV1Schema.safeParse({
             ...input, custodianAccountId: machine.accountId, installationId: machine.installationId,
+            ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
             ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
             ...(managedAdmission ? { managedAdmission } : {}),
             ...(managedAcquireDelegation ? { managedAcquireDelegation } : {}),
@@ -876,7 +904,7 @@ class AuthModule {
         }
         // A verified assigned Run spends its signed admission; revocation is
         // considered when admitting the next job, not again for each finite leaf.
-        const principal = admittedApiPrincipal ?? mintApiTokenPrincipal ?? await this.verifyCurrentApiTokenPrincipal(supplied);
+        const principal = admittedApiPrincipal ?? mintApiTokenPrincipal ?? presetApiPrincipal ?? await this.verifyCurrentApiTokenPrincipal(supplied);
         if (!principal) throw new ApiTokenOperationError("invalid_token");
         const qualifiedAction = parseQualifiedPluginActionId(supplied.actionId);
         const invokedAction = supplied.actionId === "action.invoke"

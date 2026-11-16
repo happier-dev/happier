@@ -232,6 +232,8 @@ export type CliActionDepsParams = Readonly<{
   prepareDeploymentTemplateInstantiation?: ActionExecutorDeps['prepareDeploymentTemplateInstantiation'];
   /** Receiving daemon's target-local Activity Undo owner; clients retain exact Machine transport. */
   machineGuardAction?: ActionExecutorDeps['machineGuardAction'];
+  /** Installed original Prepare operation; clients use selected-Machine ingress. */
+  machinePresetPrepare?: ActionExecutorDeps['machinePresetPrepare'];
   /** Machine-owned policy intersects the selected Session's confined SCM root. */
   scmFilesystemAccessPolicy?: FilesystemAccessPolicy;
   /** The daemon binds its canonical local file owner; clients use exact Machine transport. */

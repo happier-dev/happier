@@ -11,6 +11,7 @@ import { supportsMachineOperationProtocolCapabilityV1, supportsMachineSessionInp
 import { resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
 import { projectExternalActionPendingResetStartEnvelopeAdmissionV1, projectExternalActionApprovalDecisionEnvelopeAdmissionV1,
+    projectExternalActionPresetPreparationEnvelopeAdmissionV1,
     projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
     projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
     projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
@@ -630,6 +631,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
 
         let approvalDecisionAdmission: ExternalActionExecutionAuthorizationV1['binding']['approvalDecisionAdmission'];
         let deploymentPreparationAdmission: ExternalActionExecutionAuthorizationV1['binding']['deploymentPreparationAdmission'];
+        let presetPreparationAdmission: ExternalActionExecutionAuthorizationV1['binding']['presetPreparationAdmission'];
         let deploymentReadAdmission: ExternalActionExecutionAuthorizationV1['binding']['deploymentReadAdmission'];
         let registryAppUpdateAdmission: ExternalActionExecutionAuthorizationV1['binding']['registryAppUpdateAdmission'];
         let discussionId: ExternalActionExecutionAuthorizationV1['binding']['discussionId'];
@@ -637,6 +639,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         let deploymentLinkEnvironmentId: string | undefined;
         let deploymentMetadataEnvironmentId: string | undefined;
         try {
+            presetPreparationAdmission = projectExternalActionPresetPreparationEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentMetadataEnvironmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentLinkEnvironmentId = projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
@@ -710,6 +713,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ...(pendingResetStartAdmission ? { pendingResetStartAdmission } : {}),
                 ...(approvalDecisionAdmission ? { approvalDecisionAdmission } : {}),
                 ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
+                ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
                 ...(deploymentReadAdmission ? { deploymentReadAdmission } : {}),
                 ...(registryAppUpdateAdmission ? { registryAppUpdateAdmission } : {}),
                 ...(discussionId === undefined ? {} : { discussionId }),
@@ -724,7 +728,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 managedMachineAdmission: capturedMachineAdmission,
                 input: request.envelope.v === 1 ? request.envelope.input
                 : deploymentMetadataEnvironmentId === undefined
-                    ? deploymentNativeAdmission ?? request.envelope.sessionSpawnAdmission ?? managedAdmission?.input
+                    ? presetPreparationAdmission ?? deploymentNativeAdmission ?? request.envelope.sessionSpawnAdmission ?? managedAdmission?.input
                         ?? (request.actionId === 'machines.managed.acquire' ? readExternalActionManagedAcquireAdmission(request.envelope)?.input : undefined)
                     : { environmentId: deploymentMetadataEnvironmentId },
                 deploymentNativeAdmission,

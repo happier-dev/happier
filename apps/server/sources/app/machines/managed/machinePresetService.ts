@@ -11,6 +11,7 @@ import { qualifyPluginContributionReferenceV1 } from "@happier-dev/protocol/plug
 import { isMachineProvisionerCredentialPurposeRequiredV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import type { ManagedMachinePresetPrepareInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 
 import { inReadSnapshot, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -66,6 +67,10 @@ type OneOffManagedLaunchValidationInput = Readonly<{
 }>;
 type PresetRefusal = Extract<PresetMutationResultV1, { kind: "refused" }>;
 export type ManagedMachinePresetManageContext = PresetContext;
+type PresetPreparationContext = PresetContext & Readonly<{
+    /** The HTTP purpose owner verified this original signed admission against the exact route operands. */
+    presetPreparationAdmission?: ManagedMachinePresetPrepareInputV1;
+}>;
 
 /** Opaque preset admission can route only to an explicit controller or Pool. */
 function hasPresetControllerTarget(preset: Pick<ManagedMachinePresetV1, 'controller' | 'controllerPoolId'>): boolean {
@@ -156,6 +161,17 @@ export async function requireMachinePresetManageInTx(tx: Tx, context: ManagedMac
 
 async function requireHomeInTx(tx: Tx, homeId: string): Promise<void> {
     if (await readCurrentServerIdentityId(process.env, tx) !== homeId) throw new ManagedMachineError("permission_denied");
+}
+
+/** Prepare admits the original preset once; each later content write uses its current CAS revision. */
+export async function admitMachinePresetPreparationInTx(tx: Tx, params: PresetContext & Readonly<{
+    input: ManagedMachinePresetPrepareInputV1;
+}>): Promise<void> {
+    await requireHomeInTx(tx, params.input.homeId);
+    const row = await tx.managedMachinePreset.findFirst({ where: { id: params.input.id, homeId: params.input.homeId } });
+    if (!row || row.archivedAt !== null) throw new ManagedMachineError('preset_not_found');
+    await requireMachinePresetManageInTx(tx, params, ownerOf(row));
+    if (row.revision !== params.input.expectedRevision) throw new ManagedMachineError('request_conflict');
 }
 
 /** A fresh content writer's persisted mode admits tagged content; recipient selection stays server-owned. */
@@ -841,15 +857,16 @@ export async function migrateAccountManagedMachinePresetsForModeInTx(
     return { status: 'applied' };
 }
 
-export async function getMachinePreset(params: PresetContext & Readonly<{ input: ManagedMachinePresetGetInputV1 }>): Promise<ManagedMachinePresetGetResultV1> {
+export async function getMachinePreset(params: PresetPreparationContext & Readonly<{ input: ManagedMachinePresetGetInputV1 }>): Promise<ManagedMachinePresetGetResultV1> {
     try { return await inTx(tx => getMachinePresetInTx(tx, params)); } catch (error) { return refusal(error); }
 }
 
 /** Setup consumes the same current preset reader in its exact-target transaction. */
-export async function getMachinePresetInTx(tx: Tx, params: PresetContext & Readonly<{ input: ManagedMachinePresetGetInputV1 }>): Promise<ManagedMachinePresetGetResultV1> {
-    await requireHomeInTx(tx, params.input.homeId);
+export async function getMachinePresetInTx(tx: Tx, params: PresetPreparationContext & Readonly<{ input: ManagedMachinePresetGetInputV1 }>): Promise<ManagedMachinePresetGetResultV1> {
+    if (!params.presetPreparationAdmission) await requireHomeInTx(tx, params.input.homeId);
     const row = await tx.managedMachinePreset.findFirst({ where: { id: params.input.id, homeId: params.input.homeId } });
-    const access = row ? await resolvePresetAccessInTx(tx, params, ownerOf(row), 'read') : null;
+    const access = row ? params.presetPreparationAdmission ? { teamArchivedAt: null }
+        : await resolvePresetAccessInTx(tx, params, ownerOf(row), 'read') : null;
     if (!row || !access) return { kind: "refused", code: "preset_not_found" };
     return { kind: "found", preset: projectPreset(inheritPresetOwnerArchive(row, access.teamArchivedAt)) };
 }
@@ -888,7 +905,31 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
     }); } catch (error) { return refusal(error); }
 }
 
-export async function updateMachinePreset(params: PresetContext & Readonly<{ input: ManagedMachinePresetUpdateInputV1 }>): Promise<PresetMutationResultV1> {
+/** An admitted build can replace private bytes, never mode, recipient identity or preset definition. */
+async function updatePreparedPresetContentInTx(tx: Tx, row: StoredPreset, current: ManagedMachinePresetV1,
+    input: ManagedMachinePresetUpdateInputV1): Promise<PresetMutationResultV1> {
+    const { content, recipients, ...definitionPatch } = input.patch;
+    if (Object.keys(definitionPatch).length !== 0 || content === null
+        || content !== undefined && content.t !== current.content.t) throw new ManagedMachineError('permission_denied');
+    const next = ManagedMachinePresetV1Schema.parse({ ...current,
+        ...(content === undefined ? {} : { content }), ...(recipients === undefined ? {} : { recipients }) });
+    const currentRecipients = new Map(current.recipients.map(recipient => [recipient.accountId, recipient.envelope.recipientContentPublicKeyFingerprint]));
+    if (next.recipients.length !== current.recipients.length || next.recipients.some(recipient =>
+        currentRecipients.get(recipient.accountId) !== recipient.envelope.recipientContentPublicKeyFingerprint)) {
+        throw new ManagedMachineError('permission_denied');
+    }
+    if (sameManagedInput(next, current)) return { kind: 'saved', preset: current };
+    const result = await tx.managedMachinePreset.updateMany({ where: { id: row.id, revision: input.expectedRevision },
+        data: { launch: storeOpaquePresetLaunch(next), revision: { increment: 1 } } });
+    if (!result.count) {
+        const latest = await tx.managedMachinePreset.findUniqueOrThrow({ where: { id: row.id } });
+        return { kind: 'conflict', currentRevision: latest.revision };
+    }
+    await invalidatePresetInTx(tx, row);
+    return { kind: 'saved', preset: { ...next, revision: row.revision + 1 } };
+}
+
+export async function updateMachinePreset(params: PresetPreparationContext & Readonly<{ input: ManagedMachinePresetUpdateInputV1 }>): Promise<PresetMutationResultV1> {
     const input = ManagedMachinePresetUpdateInputV1Schema.parse(params.input);
     try { return await inTx(async tx => {
         const discovered = await tx.managedMachinePreset.findFirst({ where: { id: input.id, homeId: input.homeId } });
@@ -898,10 +939,11 @@ export async function updateMachinePreset(params: PresetContext & Readonly<{ inp
         if (row && row.controllerMachineId !== discovered?.controllerMachineId) {
             throw new TransactionReplayRequiredError('transaction-account-audience-changed');
         }
-        await requireHomeInTx(tx, input.homeId);
-        if (!row || !await resolvePresetAccessInTx(tx, params, ownerOf(row), 'manage')) return { kind: "refused", code: "preset_not_found" } as const;
+        if (!params.presetPreparationAdmission) await requireHomeInTx(tx, input.homeId);
+        if (!row || !params.presetPreparationAdmission && !await resolvePresetAccessInTx(tx, params, ownerOf(row), 'manage')) return { kind: "refused", code: "preset_not_found" } as const;
         const current = projectPreset(row);
         if (row.revision !== input.expectedRevision) return { kind: "conflict", currentRevision: row.revision } as const;
+        if (params.presetPreparationAdmission) return await updatePreparedPresetContentInTx(tx, row, current, input);
         const { content, recipients, retention, wakeOnAcceptedMessage, simultaneousLimit, controller, controllerPoolId, ...definitionPatch } = input.patch;
         const nextDefinition = { ...current, ...definitionPatch };
         if (content === null) throw new ManagedMachineError('invalid_request');

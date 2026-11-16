@@ -40,6 +40,7 @@ import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/man
 import { invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ManagedMachineExecutionOptions } from '@/machines/managed/acquire';
 import axios from 'axios';
+import { prepareMachinePresetOnHost } from './machinePresetPreparation';
 
 const sessionIsolationAcquisition = Symbol('sessionIsolationAcquisition');
 type SessionIsolationAcquisitionOptions = Pick<ManagedMachineExecutionOptions,
@@ -95,7 +96,8 @@ function isManagedMachinePolicyRetentionSatisfiedAbort(reason: unknown): boolean
 
 async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, signal: AbortSignal | undefined,
     execute: (driver: ReturnType<typeof import('@/machines/managed/acquire')['createManagedMachineAcquisitionDriver']>,
-        controllerCredentials: StoredCredentials) => Promise<T>): Promise<T> {
+        controllerCredentials: StoredCredentials, host: Readonly<{ homeId: string; installationId: string;
+            registry: PluginRuntimeRegistryLease['registry']; isCurrent(): boolean }>) => Promise<T>): Promise<T> {
         if (!params.managedProviderOperationAuthority) {
             throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
         }
@@ -154,7 +156,10 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
                 ...(params.readPolicyCurrent ? { readPolicyCurrent: params.readPolicyCurrent } : {}),
                 ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
                 ...(params.subscribeManagedMachineChanges ? { subscribeManagedMachineChanges: params.subscribeManagedMachineChanges } : {}),
-            }), controllerCredentials);
+            }), controllerCredentials, { homeId: origin.serverIdentityId, installationId: params.installationIdentity.installationId,
+                // Finite Prepare retains this registry until its owned cleanup
+                // settles; the operation signal separately stops new work.
+                registry: lease.registry, isCurrent: () => current });
         } finally {
             current = false;
             try { if (accountRuntime) await accountRuntime.then(runtime => runtime.registry.dispose(), () => {}); }
@@ -300,6 +305,8 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         return await executeNativeAction(request);
     };
     return Object.assign(actionAdapter, {
+        preparePreset: (async request => await withBoundDriver(params, request.signal, async (_driver, _credentials, host) =>
+            await prepareMachinePresetOnHost(request, { ...host, machineId: params.machineId, serverBaseUrl: params.serverBaseUrl }))) satisfies NonNullable<ActionExecutorDeps['machinePresetPrepare']>,
         acquireSessionIsolationSandbox: (async request => {
             const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal);
             if (!origin || !params.installationIdentity) throw new ManagedMachineControllerError('controller_unavailable');

@@ -14,7 +14,7 @@ export function createManagedOpaquePresetReviewedChildPortV1(params: Readonly<{
   context: ActionExecutorContext;
   /** Host-only admission retained from the exact opaque machine response. */
   custody?: ManagedOpaquePresetCustodianAdmissionV1;
-  launch: ValidatedLaunchSnapshotV1;
+  launch: Omit<ValidatedLaunchSnapshotV1, 'name'>;
   provisioner: MachineProvisionerContributionV1;
   localId: string;
   role: string;
