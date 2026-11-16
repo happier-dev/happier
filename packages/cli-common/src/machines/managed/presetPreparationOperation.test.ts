@@ -456,7 +456,8 @@ describe('private preset preparation operation', () => {
             : { kind: 'confirmed' };
         }, build: async (input, root) => {
           events.push('build');
-          expect(input.input.launch).toEqual({ provider: target.launch.provider, schemaVersion: 2, choices: target.launch.choices });
+          expect(input.input).toEqual({ ...buildInput,
+            launch: { provider: target.launch.provider, schemaVersion: 2, choices: target.launch.choices } });
           expect(root).toMatchObject({ operationId: 'operation-two', launch: targetBindingLaunch });
           return { kind: 'ready', artifact: replacementArtifact };
         } }) }).then(result => { settled = true; return result; });

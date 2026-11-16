@@ -20,7 +20,7 @@ describe('opaque preset reviewed child issuer', () => {
     const port = createManagedOpaquePresetReviewedChildPortV1({
       parent: { actionId: 'machines.managed.acquire', input: { homeId: 'home', managedId: 'managed' } },
       context: { surface: 'cli', actionsSettings: normalizeActionsSettingsV1({ v: 1 }) }, launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1,
-        name: 'Private launch name', choices: {} }, provisioner, localId: 'acquire', role: 'acquire',
+        choices: {} }, provisioner, localId: 'acquire', role: 'acquire',
       execute: async (input, context): Promise<ActionExecuteResult> => {
         observed = { input, context };
         return { ok: true, result: { accepted: true } };
@@ -47,7 +47,7 @@ describe('opaque preset reviewed child issuer', () => {
     const port = createManagedOpaquePresetReviewedChildPortV1({
       parent: { actionId: 'machines.managed.acquire', input: { homeId: 'home', managedId: 'managed' } },
       context: { surface: 'cli', actionsSettings: normalizeActionsSettingsV1({ v: 1, ...settings }) },
-      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
+      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, choices: {} },
       provisioner, localId: 'acquire', role: 'acquire', execute: async (_input, context): Promise<ActionExecuteResult> => {
         childContext = context;
         return { ok: true, result: {} };
@@ -90,7 +90,7 @@ describe('opaque preset reviewed child issuer', () => {
     const port = createManagedOpaquePresetReviewedChildPortV1({
       parent: { actionId: 'machines.managed.power.set', input: parentInput },
       context: { ...context, hostReviewedChild: parentPort },
-      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
+      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, choices: {} },
       provisioner, localId: 'power', role: 'power', execute: async (_input, childContext): Promise<ActionExecuteResult> => {
         runs.push(childContext);
         return { ok: true, result: { stopped: true } };
@@ -132,7 +132,7 @@ describe('opaque preset reviewed child issuer', () => {
     const port = createManagedOpaquePresetReviewedChildPortV1({
       parent: { actionId: 'machines.managed.bootstrap.retry', input: parentInput },
       context: { ...context, hostReviewedChild },
-      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
+      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, choices: {} },
       provisioner, localId: 'acquire', role: 'acquire', execute: async (_input, childContext): Promise<ActionExecuteResult> => {
         runs.push(childContext);
         return { ok: true, result: { acquired: true } };
@@ -154,7 +154,7 @@ describe('opaque preset reviewed child issuer', () => {
   it('refuses an action absent from the authenticated opened declaration', () => {
     expect(createManagedOpaquePresetReviewedChildPortV1({
       parent: { actionId: 'machines.managed.acquire', input: {} }, context: { surface: 'cli', actionsSettings: normalizeActionsSettingsV1({ v: 1 }) },
-      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
+      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, choices: {} },
       provisioner, localId: 'foreign', role: 'acquire', execute: async (): Promise<ActionExecuteResult> => ({ ok: true, result: {} }),
     })).toBeNull();
   });
@@ -174,7 +174,7 @@ describe('opaque preset reviewed child issuer', () => {
       parent: { actionId: 'machines.managed.acquire', input: { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 4 } } },
       context, custody: { homeId: 'home', custodianAccountId: 'owner', requestId: 'team-request',
         controller: { machineId: 'controller', installationId: 'controller-installation' } },
-      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
+      launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, choices: {} },
       provisioner, localId: 'acquire', role: 'acquire', execute: async (): Promise<ActionExecuteResult> => {
         executions++;
         return { ok: true, result: { accepted: true } };
@@ -207,7 +207,7 @@ describe('opaque preset reviewed child issuer', () => {
       parent: { actionId: 'machines.managed.acquire', input: { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 4 } } },
       context: { surface: 'cli', actionsSettings: normalizeActionsSettingsV1({ v: 1 }), runtimeAccountId, actionRequestId: 'team-request',
         externalActionExecutionAuthorization: authorization, externalActionTarget: target },
-      custody, launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
+      custody, launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, choices: {} },
       provisioner, localId: 'acquire', role: 'acquire', execute: async (): Promise<ActionExecuteResult> => {
         executions++;
         return { ok: true, result: { accepted: true } };
