@@ -686,6 +686,62 @@ describe('workflow Action leaves', () => {
     expect(store.list().filter((row) => row.blockId === goal.id).map((row) => row.path.scope))
       .toEqual([[], [{ kind: 'workflow', blockId: first.id }], [{ kind: 'workflow', blockId: second.id }]]);
   });
+  it.each((['review.start', 'subagents.plan.start', 'subagents.delegate.start'] as const).flatMap(actionId =>
+    (['deferred', 'literal'] as const).map(binding => ({ actionId, binding }))))(
+    'keeps selected settings for a deferred or literal $actionId panel ($binding) without replacing another engine', async ({ actionId, binding }) => {
+    const starts: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[1][] = [];
+    const muse = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.muse', localId: 'muse' } };
+    const codex = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const model = { agentTargetKey: buildBackendTargetKeyV2(muse), modelId: 'meta/muse-spark-1.3-contributor', providerConnectionId: null };
+    const selectedOptions = { v: 1 as const, updatedAt: 0,
+      overrides: { reasoning_effort: { value: 'minimal', updatedAt: 0 } } };
+    const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'review', actionId, input: {
+      ...(actionId === 'subagents.delegate.start'
+        ? { sessionId: { kind: 'literal' as const, value: 'c222222222222222222222222' } }
+        : { target: { kind: 'literal' as const, value: { kind: 'detached' } } }),
+      instructions: { kind: 'literal', value: 'Review the changes' },
+      [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: { kind: 'list', items: [{ kind: 'item', field: 'value' }] },
+    } };
+    const engineValues = actionId === 'review.start' ? ['muse', 'codex'] : [buildBackendTargetKeyV2(muse), buildBackendTargetKeyV2(codex)];
+    const blocks: WorkflowDefinitionV1['blocks'] = binding === 'literal' ? engineValues.map((engine, index) => ({ ...leaf,
+      id: `review-${index}`, input: { ...leaf.input,
+        [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: { kind: 'literal', value: [engine] } },
+    })) : [{ kind: 'loop', id: 'panel', repetition: {
+      kind: 'items', items: { kind: 'input', name: 'engines', path: [] }, execution: 'sequential', failurePolicy: 'fail_stop',
+    }, body: [leaf] }];
+    const authored: WorkflowDefinitionV1 = { ...definition(blocks), inputs: [{ name: 'engines', valueType: 'json', required: true }], defaults: {
+      agentTarget: muse, modelSelection: { v: 1, ref: model, updatedAt: 0 },
+      sessionConfigOptionOverrides: selectedOptions, connectedServices: null,
+    } };
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent step'); },
+      resolveWorkspace: async () => ({ ok: true, workspace }), action: {
+        // These are native Machine transport and inventory boundaries; selection and Action execution stay real.
+        executor: createTestActionExecutor({ executionRunCheckProtocolV2: async () => ({ ok: true }),
+          resolveSessionReference: async ({ sessionId }) => sessionId
+            ? { kind: 'unique', address: { serverId: 'home', sessionId } } : { kind: 'none' },
+          executionRunStart: async (_sessionId, request) => {
+            starts.push(request); return { runId: `run-${starts.length}`, callId: 'call', sidechainId: 'call' };
+          }, reviewEnginesList: async () => ({ items: ['muse', 'codex'].map(value => ({ value, label: value })) }),
+        }), buildContext: async () => ({ surface: 'cli', externalActionTarget: {
+          kind: 'machine', machineId: workspace.machineId, project: { machineId: workspace.machineId, directory: workspace.directory },
+        } }), observeRun: async () => ({ kind: 'completed', result: {}, commentIds: [], materialization: { kind: 'complete' } }),
+      } });
+    const outcome = await coordinator.run({ runId: actionId, definition: authored, inputs: {
+      engines: engineValues,
+    },
+      executionTarget, authorization });
+    expect(outcome, JSON.stringify({ outcome, rows: store.list().filter(row => row.lifecycle !== 'completed') }))
+      .toMatchObject({ state: 'succeeded' });
+    expect(starts).toHaveLength(2);
+    expect(starts[0]).toMatchObject({ backendTarget: muse, modelSelection: model,
+      sessionConfigOptionOverrides: selectedOptions, connectedServices: null });
+    expect(starts[0]).not.toHaveProperty('childSelection');
+    expect(starts[1]).toMatchObject({ backendTarget: codex });
+    expect(starts[1]).not.toHaveProperty('modelSelection');
+    expect(starts[1]).not.toHaveProperty('sessionConfigOptionOverrides');
+  });
+
   it.each(['review.start', 'subagents.plan.start'] as const)('persists %s launches before observing, and replays only observations', async (actionId) => {
     let starts = 0;
     const executor = createTestActionExecutor({

@@ -2,7 +2,8 @@ import { classifyWorkflowHoldV1, classifyWorkflowReviewEntryV1, projectWorkflowL
 import { readWorkflowActionFieldTextEncodingV1 } from '@happier-dev/protocol/workflows/workflowActionTextV1';
 import { readWorkflowActionOutputSchemaV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { freezeWorkflowLoopLimitsV1, projectWorkflowFiniteActionInputV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
-import { resolveWorkflowAcceptedStepSelectionV1, WorkflowStepSelectionErrorV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { resolveWorkflowAcceptedStepSelectionV1, workflowActionSelectionOverridesEngineV1, WorkflowStepSelectionErrorV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { isAgentStartActionV1, resolveActionAgentStartRequestsV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { deriveWorkflowReplacementId } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveWorkflowInvocationStructureV1, resolveWorkflowRetainedConversationAttemptV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
@@ -48,7 +49,7 @@ import {
   type WorkflowJsonValue,
   type WorkflowValueResolutionRuntime,
 } from './input';
-import { findWorkflowStepById } from './workflowDefinitionTraversal';
+import { findWorkflowStepById, walkWorkflowBlocks } from './workflowDefinitionTraversal';
 import type { WorkflowWorkspaceSource } from './resolveWorkflowWorkspace';
 import {
   resolveWorkflowConversationBinding,
@@ -1910,6 +1911,27 @@ async function executeActionBlock(
         delete input[field];
       }
     }
+    const projectsAgentSelection = !heldInput && isAgentStartActionV1(actionId);
+    const selected = projectsAgentSelection
+      ? resolveWorkflowAcceptedStepSelectionV1(frozen, frame.item?.value, context.inputs) : frozen;
+    if (projectsAgentSelection) {
+      const baseline = workspace ?? await resolveLeafWorkspace(leaf, row, scope, frame, context);
+      workspace = baseline;
+      let authored: WorkflowActionLeafV1 | undefined;
+      for (const block of walkWorkflowBlocks(context.authoredDefinition.blocks)) {
+        if (block.kind === 'action' && block.id === leaf.id) { authored = block; break; }
+      }
+      if (!authored) return await fail('target_unavailable');
+      const projected = resolveActionAgentStartRequestsV1({ actionId, input,
+        context: { executionRunTargetMachineId: baseline.machineId }, baseline,
+        effectiveSelection: { selection: selected.selection,
+          overrideEngine: workflowActionSelectionOverridesEngineV1(context.authoredDefinition.defaults,
+            authored.execution, selected.role !== undefined) } });
+      if (!projected.ok) return await fail(projected.errorCode, 'failed', true);
+      const effective = StrictJsonValueSchema.safeParse(projected.effectiveInput);
+      if (!effective.success || !isWorkflowJsonObject(effective.data)) return await fail('invalid_input', 'failed', true);
+      input = effective.data;
+    }
     if (!isWorkflowJsonObject(schema)) return await fail('invalid_input', 'failed', true);
     const validation = validateExecutionRunProfileResult(input, { kind: 'json', schema });
     if (!validation.ok) {
@@ -1926,8 +1948,8 @@ async function executeActionBlock(
     const actionContext: ActionExecutorContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, invocationRecordId, authorization: context.authorization,
       workDepth: context.workDepth, workspace: actionWorkspace, ...(context.originSessionId ? { originSessionId: context.originSessionId } : {}),
       ...(context.origin ? { origin: context.origin } : {}),
-      ...(frozen.selection.approvalProfileId === undefined ? {} : { approvalProfileId: frozen.selection.approvalProfileId }),
-      ...(frozen.role ? { role: frozen.role } : {}),
+      ...(selected.selection.approvalProfileId === undefined ? {} : { approvalProfileId: selected.selection.approvalProfileId }),
+      ...(selected.role ? { role: selected.role } : {}),
       ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId };
     // Qualified plugin Actions consume the same host front door and approval
     // contract as every other contributed Action; workflow custody stays here.

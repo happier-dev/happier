@@ -18,7 +18,7 @@ import { WorkflowAcceptedSnapshotV1Schema, WorkflowMaterializedLeafV1Schema, Wor
   type WorkflowMaterializedLeafV1, type WorkflowResolvedInputsV1, type WorkflowRoleOverridesV1,
   type WorkflowReplayAgentOverrideV1,
   type WorkflowRunExecutionTargetV1 } from './workflowDefinitionV1.js';
-import { listWorkflowAcceptedLeafSelectionsV1, parseWorkflowLiteralEngineSelectionV1, readWorkflowEngineChoiceV1, resolveWorkflowAcceptedStepSelectionV1, resolveWorkflowEngineSelectionV1, resolveWorkflowStepSelectionV1, WorkflowStepSelectionErrorV1, type ResolveWorkflowStepSelectionV1Input, type WorkflowResolvedStepSelectionV1, type WorkflowStepSelectionRefusalV1, type WorkflowRoleSelectionContextV1 } from './workflowStepSelectionV1.js';
+import { listWorkflowAcceptedLeafSelectionsV1, parseWorkflowLiteralEngineSelectionV1, readWorkflowEngineChoiceV1, resolveWorkflowAcceptedStepSelectionV1, resolveWorkflowEngineSelectionV1, resolveWorkflowStepSelectionV1, workflowActionSelectionOverridesEngineV1, WorkflowStepSelectionErrorV1, type ResolveWorkflowStepSelectionV1Input, type WorkflowResolvedStepSelectionV1, type WorkflowStepSelectionRefusalV1, type WorkflowRoleSelectionContextV1 } from './workflowStepSelectionV1.js';
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
 import { WorkflowStepExecutionSelectionSchema, WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS, findWorkflowUnsupportedSelectionFieldV1, type WorkflowBlock, type WorkflowDefinitionV1,
   type WorkflowIngressContextV1, type WorkflowLeafV1, type WorkflowStepSelectionV1,
@@ -976,8 +976,8 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
           const projected = projectActionStart(input.context, sidecar,
             // A Role, an engine binding or the step's own Agent replaces the Action's authored target;
             // a workflow default Agent only fills a target the Action leaves open.
-            readWorkflowEngineChoiceV1((sourceKey === '$root' ? root : authored).defaults, leaf.execution) !== undefined
-              || leaf.execution?.agentTarget !== undefined || frozen?.role !== undefined,
+            workflowActionSelectionOverridesEngineV1((sourceKey === '$root' ? root : authored).defaults,
+              leaf.execution, frozen?.role !== undefined),
             hasDeferredBinding);
           if (projected.effectiveInput) sidecar.actionInput = projected.effectiveInput;
         } catch (error) {

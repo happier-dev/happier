@@ -81,6 +81,12 @@ export function readWorkflowEngineChoiceV1(defaults: WorkflowEngineChoiceFieldsV
   return owner.roleId !== undefined ? { roleId: owner.roleId } : owner.engine;
 }
 
+/** A Workflow default Agent fills open Action targets; an authored choice replaces them. */
+export function workflowActionSelectionOverridesEngineV1(defaults: WorkflowEngineChoiceFieldsV1,
+  step?: WorkflowEngineChoiceFieldsV1, hasResolvedRole = false): boolean {
+  return readWorkflowEngineChoiceV1(defaults, step) !== undefined || step?.agentTarget !== undefined || hasResolvedRole;
+}
+
 /**
  * An inherited model and effort belong to the inherited Agent: a step Role, binding or different
  * Agent replaces them, while a step naming the same Agent (or only a model) keeps per-field inheritance.
