@@ -16,7 +16,7 @@ import {
     type TextProps as RNTextProps,
 } from 'react-native';
 
-import { Typography } from '@/constants/Typography';
+import { resolveThemeDefaultFontFamily, Typography } from '@/constants/Typography';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
@@ -97,6 +97,8 @@ export const Text = React.memo(
         ref
     ) {
         const uiFontScaleSetting = useLocalSetting('uiFontScale');
+        const { theme } = useUnistyles();
+        const themeFontFamily = Platform.OS === 'web' ? null : theme.typography.fontFamily;
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
         const baseStyle = React.useMemo(() => variant ? Typography.variant(variant, emphasis) : useDefaultTypography ? Typography.default(emphasis) : undefined, [variant, emphasis, useDefaultTypography]);
         const presentation = useHappierTextPresentation({ selectable, textScale: uiFontScale });
@@ -112,13 +114,16 @@ export const Text = React.memo(
             const entries: NonNullable<RNTextProps['style']>[] = [];
             if (baseStyle) entries.push(scaleTextStyle(baseStyle, metricScale));
             if (scaledStyle) entries.push(scaledStyle);
+            const authoredFamily = readSurfaceStyleProperty(entries, 'fontFamily');
+            const family = resolveThemeDefaultFontFamily(authoredFamily, themeFontFamily);
+            if (family !== authoredFamily) entries.push({ fontFamily: family });
             // Faint ink passed as the theme's secondary value takes the containing material's step.
             const authored = readSurfaceStyleProperty(entries, 'color');
             const color = typeof authored === 'string' ? authored : undefined;
             const ink = backedInk(color);
             if (ink !== color) entries.push({ color: ink });
             return entries;
-        }, [baseStyle, scaledStyle, metricScale, backedInk]);
+        }, [baseStyle, scaledStyle, metricScale, backedInk, themeFontFamily]);
 
         return (
             <RNText
@@ -152,6 +157,7 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
         // A placeholder is read (WCAG AA), so every field draws it in the theme's placeholder ink unless it names its own.
         // Web reads it from the custom property the shared `::placeholder` rule takes (theme.css); native from the prop.
         const { theme } = useUnistyles();
+        const themeFontFamily = Platform.OS === 'web' ? null : theme.typography.fontFamily;
         const placeholderInk = placeholderTextColor ?? theme.colors.input.placeholder;
 
         const metricScale = Platform.OS === 'web' ? 1 : uiFontScale;
@@ -161,6 +167,9 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
             const out: NonNullable<RNTextInputProps['style']>[] = [];
             if (defaultStyle) out.push(scaleTextStyle(defaultStyle, metricScale));
             if (scaledStyle) out.push(scaledStyle);
+            const authoredFamily = readSurfaceStyleProperty(out, 'fontFamily');
+            const family = resolveThemeDefaultFontFamily(authoredFamily, themeFontFamily);
+            if (family !== authoredFamily) out.push({ fontFamily: family });
             if (isIosWeb()) {
                 const resolvedFontSize = resolveFontSizeFromStyle(out);
                 if (typeof resolvedFontSize === 'number' && resolvedFontSize > 0 && resolvedFontSize * uiFontScale < 16) {
@@ -180,7 +189,7 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
                 out.push({ ['--happier-placeholder-color' as string]: placeholderInk } as NonNullable<RNTextInputProps['style']>);
             }
             return out;
-        }, [defaultStyle, scaledStyle, uiFontScale, paintColor, metricScale, placeholderInk]);
+        }, [defaultStyle, scaledStyle, uiFontScale, paintColor, metricScale, placeholderInk, themeFontFamily]);
 
         const webAccessibilityProps = Platform.OS === 'web'
             ? { ...HAPPIER_TEXT_INPUT_WEB_MARKER, ...(disableUiFontScaling ? WEB_FONT_SCALING_DISABLED_PROPS : null) }

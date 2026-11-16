@@ -1,6 +1,6 @@
 import { Platform, type TextStyle } from 'react-native';
-import { BUNDLED_FONTS } from './bundledFonts';
 import { HAPPIER_TYPE_WEIGHT, resolveHappierTypeScale, type HappierTypeRole, type HappierTypeEmphasis } from '@happier-dev/plugin-ui/presentation/typeScale';
+import { BUNDLED_FONTS, resolveBundledTypefaceFace } from './bundledFonts';
 
 /**
  * Typography system for Happier app
@@ -104,9 +104,17 @@ function readThroughThemeFamily(kind: ThemeFontKind, weight: DefaultFontWeight |
     return `var(${themeFontFamilyVariableName(kind, weight)}, ${family})`;
 }
 
-export const getDefaultFont = (weight: DefaultFontWeight = 'regular') => {
-    return readThroughThemeFamily('default', weight, getHappierFontFamily('default', weight));
+export const getDefaultFont = (weight: DefaultFontWeight = 'regular', themeFamily: string | null = null) => {
+    const family = themeFamily ? resolveBundledTypefaceFace(themeFamily, weight) ?? themeFamily : getHappierFontFamily('default', weight);
+    return readThroughThemeFamily('default', weight, family);
 };
+
+/** Static default styles take the selected family; deliberate mono, logo and custom faces keep theirs. */
+export function resolveThemeDefaultFontFamily(authoredFamily: string | undefined, themeFamily: string | null): string | undefined {
+    if (!authoredFamily || !themeFamily) return authoredFamily;
+    const weight = DEFAULT_FONT_WEIGHTS.find(candidate => getHappierFontFamily('default', candidate) === authoredFamily);
+    return weight ? resolveBundledTypefaceFace(themeFamily, weight) ?? themeFamily : authoredFamily;
+}
 
 export const getMonoFont = (weight: MonoFontWeight = 'regular') => {
     return readThroughThemeFamily('mono', weight, getHappierFontFamily('mono', weight));
@@ -127,17 +135,18 @@ export const FontWeights = {
 // Style utilities for easy inline usage
 function defaultTypography(
     weight: DefaultFontWeight = 'regular',
+    themeFamily: string | null = null,
 ): Pick<TextStyle, 'fontFamily'> {
-    return { fontFamily: getDefaultFont(weight) };
+    return { fontFamily: getDefaultFont(weight, themeFamily) };
 }
 
 function tabularTypography(): Pick<TextStyle, 'fontVariant'> {
     return { fontVariant: ['tabular-nums'] };
 }
 
-function variantTypography(role: HappierTypeRole, emphasis?: HappierTypeEmphasis) {
+function variantTypography(role: HappierTypeRole, emphasis?: HappierTypeEmphasis, themeFamily: string | null = null) {
     const { weight, ...metrics } = resolveHappierTypeScale(role, Platform.OS, emphasis);
-    return { ...metrics, ...defaultTypography(weight) };
+    return { ...metrics, ...defaultTypography(weight, themeFamily) };
 }
 
 /** Uppercase chrome is the micro role plus the Eyebrow component's two modifiers. */
