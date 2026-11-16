@@ -19,7 +19,7 @@ import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER, createM
     MANAGED_POLICY_PROOF_HEADER } from '@happier-dev/protocol';
 import { inTx } from '@/storage/inTx';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
-import { resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
+import { resolveEffectiveMachineRoleInTx, resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { getManagedMachine } from './managedRead';
 import { readManagedPendingActivationHoldReasonInTx } from './managedWake';
 import { validateManagedCreationBirthInTx } from './managedCreationBirth';
@@ -89,6 +89,37 @@ describe('Account-owned managed control without a controller', () => {
             operation: { actorAccountId: test.owner.id, callerAuthority: 'present_user', rpcMethod: 'daemon.workspaceSync.handoffSourcePhase.v1' },
         }))).toEqual(test.controller ? { custodianAccountId: test.owner.id, machineId: test.controller.machineId,
             installationId: test.controller.installationId } : null);
+    });
+
+    it.each(['native', 'child', 'bind'] as const)('routes a member folder to the enrolled guest daemon (%s storage)', async storage => {
+        const test = await createRetainedGuestFixture(true);
+        const provider = { pluginId: 'happier.devcontainer', localId: 'devcontainer' };
+        await db.machine.update({ where: { id: test.guest.id }, data: {
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] },
+                externalActionExecutionAuthorization: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1,
+        } });
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: test.owner.id, machineId: test.guest.id,
+            principal: { kind: 'account', accountId: test.other.id }, level: 'view' }));
+        await db.managedMachine.update({ where: { id: test.row.id }, data: { enrolledMachineId: test.guest.id,
+            ...(storage === 'native' ? {} : { launch: { provider, schemaVersion: 1, name: 'Guest', choices: {} },
+                resource: { contributionRef: provider, schemaVersion: 1, value: {}, devcontainerObservation: {
+                    nativeResourceId: 'native', user: 'coder', workspaceFolder: '/work',
+                    storage: storage === 'bind' ? { kind: 'bind', hostPath: '/host/work', childPath: '/work' }
+                        : { kind: 'child', childPath: '/work' },
+                } } }),
+        } });
+        const operation = { actorAccountId: test.other.id, callerAuthority: 'present_user' as const,
+            rpcMethod: RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE };
+        expect(await resolveMachineAdmission({ actorAccountId: test.other.id, callerAuthority: 'present_user',
+            machineId: test.guest.id, requiredRole: 'use', operationRpcMethod: operation.rpcMethod }))
+            .toMatchObject({ kind: 'admitted', role: 'use' });
+        expect(await inTx(tx => readMachineDevcontainerWorkspaceSyncEndpointInTx(tx, {
+            accountServerId: homeId, machineId: test.guest.id, rootPath: '/home/member/workspaces/copy', operation,
+        }))).toEqual({ custodianAccountId: test.owner.id, machineId: test.guest.id,
+            installationId: test.guest.installationId });
+        expect(await inTx(tx => readMachineDevcontainerWorkspaceSyncEndpointInTx(tx, {
+            accountServerId: 'another-home', machineId: test.guest.id, rootPath: '/home/member/workspaces/copy', operation,
+        }))).toBeNull();
     });
 
     it.each([false, true])('admits exact installation custody with controller present=%s', async withController => {

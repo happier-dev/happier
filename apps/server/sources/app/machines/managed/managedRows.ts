@@ -15,8 +15,9 @@ import { ManagedAdmissionComputeInputV1Schema, ManagedAdmissionPresetContentV1Sc
 import { ManagedMachinePresetLaunchNameOverrideV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ExternalActionRetainedWorkflowRootV1Schema } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHintV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
-import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type SupportedNativeIntent, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type ManagedResourceV1, type SupportedNativeIntent, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1, type DevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
+import { isWorkspaceSyncDevcontainerBindRootV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { resolvePluginActionConnectedAccountUseRequestsV2, type PluginActionConnectedAccountUseRequestV2 } from "@happier-dev/protocol/plugins/manifest/v2";
 import { MachineProvisionerContributionV1Schema, type MachineProvisionerContributionV1 } from "@happier-dev/protocol/plugins/contributions/machineProvisioners";
 import { PluginJsonValueV2Schema, type PluginJsonSchemaV2 } from "@happier-dev/protocol/plugins/contributions/jsonSchema";
@@ -554,12 +555,12 @@ export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, i
         || !isMachineOperationSupportedForRequester({ ...input.operation, machine })) return null;
     const enrollment = await tx.managedMachine.findUnique({ where: { enrolledMachineId: input.machineId } });
     if (!enrollment) return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
-    // A stale or malformed retained row is not an ordinary-Machine fallback.
+    // A stale enrollment is not an ordinary-Machine fallback.
     const row = await readCurrentMachineManagedEnrollmentInTx(tx, input.machineId);
     if (!row || row.homeId !== input.accountServerId) return null;
-    const child = readStoredManagedDevcontainerChild(row);
-    if (!child || child.observation.storage.childPath !== input.rootPath) return null;
-    if (child.observation.storage.kind === 'child') {
+    const resource = readCurrentStoredManagedResource(row);
+    if (!resource) return null;
+    if (!isWorkspaceSyncDevcontainerBindRootV1({ observation: resource.devcontainerObservation, rootPath: input.rootPath })) {
         return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
     }
     const controller = readManagedController(row);
@@ -618,12 +619,18 @@ export async function readMachineDevcontainerWorkspaceSyncRouteInTx(tx: Tx, inpu
         parentInstallationId: endpoint.installationId };
 }
 
-function readStoredManagedDevcontainerChild(row: StoredManagedMachine): DevcontainerChildProjectionV1 | null {
-    if (!row.controllerMachineId || row.creationState !== 'active' || row.allocation !== 'bound' || row.archivedAt !== null) return null;
+function readCurrentStoredManagedResource(row: StoredManagedMachine): ManagedResourceV1 | null {
+    if (row.creationState !== 'active' || row.allocation !== 'bound' || row.archivedAt !== null) return null;
     const resource = createStoredReadSchema(ManagedResourceV1Schema).safeParse(row.resource);
-    if (!resource.success) return null;
+    return resource.success ? resource.data : null;
+}
+
+function readStoredManagedDevcontainerChild(row: StoredManagedMachine): DevcontainerChildProjectionV1 | null {
+    if (!row.controllerMachineId) return null;
+    const resource = readCurrentStoredManagedResource(row);
+    if (!resource) return null;
     return deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id, controllerMachineId: row.controllerMachineId,
-        enrolledMachineId: row.enrolledMachineId ?? undefined, resource: resource.data }) ?? null;
+        enrolledMachineId: row.enrolledMachineId ?? undefined, resource }) ?? null;
 }
 
 export async function requireCurrentManagedMachineInTx(tx: Tx, input: Readonly<{

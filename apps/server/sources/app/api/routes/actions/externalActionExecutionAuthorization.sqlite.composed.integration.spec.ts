@@ -7267,6 +7267,55 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it.each(['child', 'bind'] as const)('admits an enrolled SOURCE member folder outside the default workspace (%s storage)', async storage => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const createMachine = () => db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
+            metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey),
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1 } });
+        const source = await createMachine();
+        const controller = await createMachine();
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
+            machineId: source.id, principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
+        const homeId = await getOrCreateServerIdentityId();
+        const provider = { pluginId: 'happier.devcontainer', localId: 'devcontainer' };
+        await db.managedMachine.create({ data: { homeId, custodianAccountId: custodian.id,
+            controllerMachineId: controller.id, controllerInstallationId: controller.installationId!, enrolledMachineId: source.id,
+            admittedActionRequestId: crypto.randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
+            launch: { provider, schemaVersion: 1, name: 'SOURCE guest', choices: {} },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            resource: { contributionRef: provider, schemaVersion: 1, value: {}, devcontainerObservation: {
+                nativeResourceId: source.id, user: 'coder', workspaceFolder: '/work',
+                storage: storage === 'child' ? { kind: 'child', childPath: '/work' }
+                    : { kind: 'bind', hostPath: '/host/work', childPath: '/work' } } } } });
+        const sourceRootPath = '/home/member/workspaces/source';
+        const workspaceId = crypto.randomUUID();
+        const input = OpenProjectInputV1Schema.parse({ serverId: homeId, machineId: fixture.machine.id,
+            source: { kind: 'workspace', workspaceId, checkout: {
+                serverId: homeId, workspaceId, machineId: source.id, rootPath: sourceRootPath } },
+            materialization: { kind: 'sync', targetPath: '/target', workspaceAction: createFixtureCopyOnceWorkspaceAction() } });
+        const { app } = await createApp(fixture.team.id);
+        try {
+            const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const envelope = { ...fixture.envelope, input };
+            const root = await mint(app, fixture, 'projects.open', envelope, token);
+            const admission = root.binding.workspaceSyncAdmission;
+            if (!admission) throw new Error('Expected SOURCE admission');
+            expect(admission.source).toMatchObject({ machineId: source.id, role: 'use' });
+            const routing = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: crypto.randomUUID(),
+                accountServerId: homeId, sourceMachineId: source.id, sourceRootPath, originalActionEnvelope: envelope,
+                sourceContext: { machineAdmission: admission.source, callerAuthority: 'present_user' } });
+            expect(await readCurrentWorkspaceSyncProjectSourceAuthorization(root, routing, source.id))
+                .toMatchObject({ receivingMachineAdmission: admission.source,
+                    route: { parentMachineId: source.id, parentInstallationId: source.installationId } });
+            expect(await readCurrentWorkspaceSyncProjectSourceAuthorization(root,
+                { ...routing, sourceRootPath: '/home/member/workspaces/other' }, source.id)).toBeNull();
+            expect(await readCurrentWorkspaceSyncProjectSourceAuthorization(root, routing, controller.id)).toBeNull();
+        } finally { await app.close(); }
+    });
+
     it.each([[1, 'Home'], [2, 'Home'], [1, 'Socket'], [2, 'Socket'],
         [1, 'B Home'], [2, 'B Home'], [1, 'B Socket'], [2, 'B Socket'],
         [1, 'Seed Home'], [2, 'Seed Home'], [1, 'Seed Socket'], [2, 'Seed Socket'],

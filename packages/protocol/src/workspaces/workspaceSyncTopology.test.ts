@@ -5,6 +5,7 @@ import { DevcontainerChildProjectionV1Schema } from '../machines/managed/devcont
 import { ManagedMachineV1Schema } from '../machines/managed/managedMachineV1.js';
 import {
   deriveWorkspaceSyncTopology,
+  selectWorkspaceSyncEndpointAliases,
   resolveWorkspaceSyncReadControllerV1,
   resolveWorkspaceSyncEndpoint,
   resolveWorkspaceSyncTransportAddress,
@@ -97,7 +98,14 @@ describe('workspaceSyncTopology', () => {
       address: { machineId: 'parent', installationId: 'parent-current' } });
     expect(resolveWorkspaceSyncEndpoint({ ...transport, workspaceRefs: [], purpose: 'admitted_mapping' })).toEqual(unavailable);
     expect(resolveWorkspaceSyncTransportAddress({ ...transport,
-      namespace: { ...admittedNamespace, rootPath: '/workspace/source-other' } })).toEqual(unavailable);
+      namespace: { ...admittedNamespace, rootPath: '/workspace/source-other' } })).toEqual({ ok: true,
+      address: { machineId: 'child', installationId: 'child-current' } });
+    const privateWorkspace = { id: 'private', ...admittedNamespace, rootPath: '/home/member/source', createdAtMs: 1 };
+    expect(resolveWorkspaceSyncEndpoint({ workspace: privateWorkspace, workspaceRefs: [privateWorkspace], childMachines: [child] }))
+      .toEqual({ ok: true, workspace: privateWorkspace, endpoint: privateWorkspace });
+    const boundAlias = { id: 'bound-alias', ...admittedNamespace, createdAtMs: 1 };
+    expect(selectWorkspaceSyncEndpointAliases({ workspaceRefs: [physical, boundAlias, privateWorkspace],
+      physicalWorkspaceRefIds: new Set([physical.id]), childMachines: [child] })).toEqual([physical, boundAlias]);
     expect(resolveWorkspaceSyncTransportAddress({ ...transport, childMachines: [{ ...child,
       controller: { ...child.controller, installationId: 'parent-replaced' } }] })).toEqual(unavailable);
     expect(resolveWorkspaceSyncTransportAddress({ ...transport, childMachines: [{ ...child, projection: { ...projection,
