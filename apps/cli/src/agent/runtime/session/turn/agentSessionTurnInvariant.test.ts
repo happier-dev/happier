@@ -67,6 +67,34 @@ describe('createAgentSessionTurnInvariant', () => {
         },
     );
 
+    it('accepts delayed usage without reopening a completed turn or changing its attribution', () => {
+        const invariant = createAgentSessionTurnInvariant({ sessionId: 'session-1' });
+        let sequence = 0;
+        const observe = (event: Record<string, unknown>) => invariant.observe({
+            sessionId: 'session-1', emittedAtMs: 1, sequence: ++sequence, ...event,
+        });
+        const usage = { kind: 'usage-observed', turnId: 'first', observationId: 'late-usage',
+            source: 'acp-prompt-usage', scope: 'turn_delta',
+            tokens: { input: 22040, output: 41, total: 22081, cacheRead: 640, cacheWrite: 0, reasoning: 35 } };
+        expect(observe({ kind: 'turn-start', turnId: 'first', startedBy: 'provider' }).status).toBe('accepted');
+        expect(observe({ kind: 'turn-complete', turnId: 'first' }).status).toBe('accepted');
+        expect(observe(usage)).toMatchObject({ status: 'accepted', event: { turnId: 'first' } });
+        expect(invariant.read()).toMatchObject({ activeTurnId: null, knownTurnCount: 0 });
+        for (const turnId of ['second', 'third']) {
+            expect(observe({ kind: 'turn-start', turnId, startedBy: 'provider' }).status).toBe('accepted');
+            expect(observe(usage)).toMatchObject({ status: 'accepted', event: { turnId: 'first' } });
+            expect(invariant.read()).toMatchObject({ activeTurnId: turnId, knownTurnCount: 1 });
+            expect(observe({ kind: 'turn-complete', turnId }).status).toBe('accepted');
+        }
+        expect(observe({ ...usage, sessionId: 'other' })).toMatchObject({
+            status: 'rejected', diagnostic: { code: 'agent_runtime_event_session_mismatch' },
+        });
+        expect(observe({ kind: 'runtime-ended', cause: 'providerEnded', retryable: false }).status).toBe('accepted');
+        expect(observe(usage)).toMatchObject({
+            status: 'rejected', diagnostic: { code: 'agent_runtime_event_after_runtime_end' },
+        });
+    });
+
     it('admits skill evidence only for its current active turn', () => {
         const invariant = createAgentSessionTurnInvariant({ sessionId: 'session-1' });
         let sequence = 0;

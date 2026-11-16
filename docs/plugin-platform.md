@@ -13123,6 +13123,12 @@ update review; installed trust and update policy remain lifecycle-owned.
 
 ### Usage observations (unreleased 0.3)
 
+Usage observations can arrive after their attributed turn completes. The host
+retains the producer's turn id without reopening that turn; Session identity,
+event ordering and runtime-end fencing still apply. Generic ACP publishes prompt
+response usage even when separate completion evidence settled the turn first.
+Session-cumulative ACP usage updates also publish while no prompt turn is active.
+
 Session and finite-Run usage carriers consume the shared payload in
 `@happier-dev/protocol/runtime/agentUsageObservedPayloadV1`; the SDK derives its
 Session usage type from that payload. A child reports its own witnessed

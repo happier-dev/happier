@@ -123,6 +123,8 @@ export interface EventMessage {
  */
 export interface TokenCountMessage {
   type: 'token-count';
+  /** Host-correlated prompt identity, retained when usage arrives after turn completion. */
+  turnId?: string;
   /** Stable identity of an explicit provider delta, preserved as usage-observed identity. */
   observationId?: string;
   [key: string]: unknown;

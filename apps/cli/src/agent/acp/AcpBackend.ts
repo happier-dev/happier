@@ -2439,6 +2439,8 @@ export class AcpBackend implements CatalogAcpBackend {
   ): boolean {
     if (this.disposed) return true;
     if (turnGeneration !== this.turnGeneration) return true;
+    // Completion evidence settles lifecycle before some Agents return prompt usage.
+    emitPromptUsage(promptResponse);
     if (this.closedTurnGeneration === turnGeneration) return true;
 
     if (this.pendingPromptResponseTurnGeneration === turnGeneration) {
@@ -2447,7 +2449,6 @@ export class AcpBackend implements CatalogAcpBackend {
     if (this.prePromptResponseUpdateGuard === 'terminal') {
       this.dropPromptTurnUpdatesUntilPromptResponse = false;
     }
-    emitPromptUsage(promptResponse);
     const stopReason = readPromptStopReason(promptResponse);
     if (stopReason === null) {
       const shouldReplayDeferredIdle =
@@ -2713,7 +2714,9 @@ export class AcpBackend implements CatalogAcpBackend {
         });
         const telemetry = observation ? buildTokenCountAgentMessageFromUsageObservation(observation) : null;
         if (telemetry) {
-          this.emit(telemetry);
+          this.emit({ ...telemetry,
+            ...(typeof options.metadata?.promptId === 'string' ? { turnId: options.metadata.promptId } : {}),
+          });
         }
       };
 

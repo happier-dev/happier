@@ -106,8 +106,9 @@ function readAgentTurnId(event: AgentSessionRuntimeEvent): string | null {
 
 function isTurnScopedEvent(event: AgentSessionRuntimeEvent): boolean {
     if (isSessionScopedRuntimeTranscriptEvent(event)) return false;
+    // Accounting may arrive after completion; its turn id attributes usage,
+    // rather than asserting that the turn is still active.
     if (event.kind === 'transcript-message-committed'
-        || event.kind === 'usage-observed'
         || event.kind === 'skill-usage'
         || event.kind === 'context-compaction') {
         return readTurnId(event) !== null;

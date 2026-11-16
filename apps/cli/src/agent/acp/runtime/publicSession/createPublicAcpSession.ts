@@ -885,6 +885,23 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     return projectAcpOutputDiagnostic(options.definition?.sessionUpdates, turn.assistantSegmentText);
   };
   let backendMessageProjectionTail: Promise<void> = Promise.resolve();
+  const publishUsage = (message: Extract<AgentMessage, { type: 'token-count' }>, turnId?: string): void => {
+    const observedAtMs = Date.now();
+    const measurement = buildUsageObservedMeasurementFromTokenCountMessage({
+      provider: dependencies.agentId,
+      body: message,
+      observedAtMs,
+      defaultSource: 'acp-token-count',
+    });
+    if (measurement) {
+      publish({
+        kind: 'usage-observed',
+        observationId: message.observationId ?? `acp-usage-${randomUUID()}`,
+        ...(turnId ? { turnId } : {}),
+        ...measurement,
+      });
+    }
+  };
   const emitBackendMessage = async (message: ProjectedBackendMessage, turn: ActiveTurn): Promise<void> => {
     const turnId = turn.turnId;
     switch (message.type) {
@@ -1040,21 +1057,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         return;
       }
       case 'token-count': {
-        const observedAtMs = Date.now();
-        const measurement = buildUsageObservedMeasurementFromTokenCountMessage({
-          provider: dependencies.agentId,
-          body: message,
-          observedAtMs,
-          defaultSource: 'acp-token-count',
-        });
-        if (measurement) {
-          publish({
-            kind: 'usage-observed',
-            observationId: message.observationId ?? `acp-usage-${randomUUID()}`,
-            turnId,
-            ...measurement,
-          });
-        }
+        publishUsage(message, message.turnId ?? turnId);
         return;
       }
       default:
@@ -1363,8 +1366,15 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   );
   const authenticationSetupFailure = options.definition?.auth?.setupFailure;
   const dispatchBackendMessage = (message: ProjectedBackendMessage): void => {
+    if (disposed || runtimeEnded) return;
     const turn = activeTurn;
-    if (!turn || disposed || runtimeEnded) return;
+    if (!turn) {
+      if (message.type === 'token-count') {
+        const turnId = message.turnId;
+        backendMessageProjectionTail = backendMessageProjectionTail.then(() => publishUsage(message, turnId));
+      }
+      return;
+    }
     if (turn.submissionSettled) {
       backendMessageProjectionTail = backendMessageProjectionTail.then(async () => await emitBackendMessage(message, turn));
       return;
