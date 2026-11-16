@@ -75,7 +75,6 @@ describe('Surface and Card', () => {
         <Button testID="inner-primary" title="Continue" onPress={() => {}} />
         <Button testID="inner-disabled" title="Unavailable" disabled onPress={() => {}} />
         <HappierSelect label="Choice" options={[{ value: 'one', label: 'One' }]} value="one" onChange={() => {}} theme={{ ...context.theme, colors: { ...context.theme.colors, elevatedSurface: '#112233' } }} />
-        <HappierSelectionTiles variant="card" accessibilityLabel="Tiles" options={[{ id: 'one', title: 'One' }]} value="one" onChange={() => {}} colors={{ tileBackground: '#112233', tileBorder: '#445566', selection: '#445566', glyph: '#445566', ring: '#445566', previewBackground: '#112233', actionBackground: '#112233', actionBorderHovered: '#445566' }} renderText={({ text }) => <Text value={text} />} renderGlyph={() => null} />
       </HappierMaterialSurface>
       </HappierMaterialRoleProvider>
     </PluginUiPresentationHostProviderInternal>);
@@ -90,6 +89,24 @@ describe('Surface and Card', () => {
     const disabledFill = resolveHappierButtonChrome({ theme: context.theme, variant: 'primary', disabled: true, focused: false }).style.backgroundColor;
     expect(getComputedStyle(mount.container.querySelector<HTMLElement>('[data-testid="inner-disabled"]')!).backgroundColor).toBe(resolveRenderedColor('backgroundColor', disabledFill ?? 'transparent'));
     expect(getComputedStyle(mount.container.querySelector<HTMLElement>('[data-testid="inner-segments"] [role="radio"]')!).backgroundColor).toBe(resolveRenderedColor('backgroundColor', '#ffffff'));
+    mount.unmount();
+  });
+  it('paints a choice tile on a floating plane as its own card, never as a field coat (journey-deploy lab, owner 11-16)', () => {
+    const host: PluginUiPresentationHost = {
+      renderMarkdown: () => null, renderCodeBlock: () => null, renderPopover: () => null, renderIcon: () => null,
+      resolveMaterialColor: () => 'rgba(235, 230, 225, 0.1)',
+    };
+    const mount = mountSurface(<PluginUiPresentationHostProviderInternal host={host}>
+      <HappierMaterialRoleProvider role="floating" resolveMaterialColor={host.resolveMaterialColor}>
+      <HappierMaterialSurface materialRole="floating">
+        <HappierSelectionTiles variant="card" accessibilityLabel="Tiles" options={[{ id: 'one', title: 'One' }, { id: 'two', title: 'Two' }]} value="one" onChange={() => {}} colors={{ tileBackground: '#112233', tileBorder: '#445566', selection: '#000000', glyph: '#445566', ring: '#445566', previewBackground: '#112233', actionBackground: '#112233', actionBorderHovered: '#445566' }} renderText={({ text }) => <Text value={text} />} renderGlyph={() => null} />
+      </HappierMaterialSurface>
+      </HappierMaterialRoleProvider>
+    </PluginUiPresentationHostProviderInternal>);
+    const backgrounds = [...mount.container.querySelectorAll<HTMLElement>('div')].map(node => getComputedStyle(node).backgroundColor);
+    // Native already paints tiles as their own surface; on web they no longer take the plane's field coat.
+    expect(backgrounds.filter(color => color === resolveRenderedColor('backgroundColor', '#112233'))).toHaveLength(2);
+    expect(backgrounds).not.toContain(resolveRenderedColor('backgroundColor', 'rgba(235, 230, 225, 0.1)'));
     mount.unmount();
   });
   it('does not invent a containing finish when a standalone surface declares nested topology', () => {

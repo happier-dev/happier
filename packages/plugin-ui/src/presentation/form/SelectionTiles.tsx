@@ -380,7 +380,9 @@ function useTileStyles(colors: HappierSelectionTilesColors) {
   const paintColor = useHappierMaterialColorResolver();
   return useMemo(() => createTileStyles({
     ...colors,
-    tileBackground: paintColor(colors.tileBackground),
+    // A choice tile is a card on its plane, never a field: it keeps its own surface on a floating plane, as native
+    // already paints it, so tiles read lighter than a dialog and select by their outline (journey-deploy, owner 11-16).
+    tileBackground: colors.tileBackground,
     previewBackground: paintColor(colors.previewBackground),
     actionBackground: paintColor(colors.actionBackground),
   }), [colors, paintColor]);
