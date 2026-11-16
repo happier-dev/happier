@@ -36,6 +36,39 @@ afterEach(async () => {
 });
 
 describe('materializeProjectCheckout', () => {
+  it('refuses a failed-ref clone destination with retained work and recovers at the requested ref in a fresh folder', async () => {
+    const parent = await temporaryRoot();
+    const remote = createBareRemoteRepository();
+    temporaryRoots.push(join(remote, '..'));
+    const source = join(remote, '..', 'source');
+    runGit(source, ['checkout', '-b', 'repair']);
+    await writeFile(join(source, 'README.md'), 'requested repair branch\n');
+    runGit(source, ['add', 'README.md']);
+    runGit(source, ['commit', '-m', 'repair branch']);
+    runGit(source, ['push', remote, 'repair']);
+    const requestedHead = runGit(source, ['rev-parse', 'HEAD']);
+    const request = makeRequest(parent, remote, 'failed-ref');
+    const registry = cloneRegistry(makeProviderRegistry(makeCloneTargetDescription(remote)));
+    const open = (ref: string, destinationDirectoryName = 'failed-ref') => runWithRealGitScmRuntime(() => materializeProjectCheckout({
+      selector: { provider: request.provider, repository: request.repository, protocol: request.protocol },
+      registry, ref,
+      materialization: { kind: 'clone', destinationParentPath: parent, destinationDirectoryName },
+    }));
+    await expect(open('nonexistent-ref')).rejects.toMatchObject({ code: 'COMMAND_FAILED' });
+    const destination = join(parent, 'failed-ref');
+    const originalHead = runGit(destination, ['rev-parse', 'HEAD']);
+    expect(originalHead).not.toBe(requestedHead);
+    // Real hosting clones record the hosted URL, not the fixture's file transport.
+    runGit(destination, ['remote', 'set-url', 'origin', 'https://github.com/happier-dev/happier.git']);
+    await writeFile(join(destination, 'README.md'), 'retained local work\n');
+    await expect(open('repair')).rejects.toMatchObject({ code: 'destination_exists' });
+    expect(runGit(destination, ['rev-parse', 'HEAD'])).toBe(originalHead);
+    expect(await readFile(join(destination, 'README.md'), 'utf8')).toBe('retained local work\n');
+    const repaired = await open('repair', 'repaired-ref');
+    expect(runGit(repaired.rootPath, ['rev-parse', 'HEAD'])).toBe(requestedHead);
+    expect(await readFile(join(repaired.directory, 'README.md'), 'utf8')).toBe('requested repair branch\n');
+  });
+
   it('retains a hosting credential refusal through the real clone and project materialization path', async () => {
     const parent = await temporaryRoot();
     const description = makeCloneTargetDescription('/tmp/qa-auth-refusal.git');
