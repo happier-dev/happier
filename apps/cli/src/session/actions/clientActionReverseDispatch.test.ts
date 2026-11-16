@@ -27,6 +27,50 @@ const disconnectedClient: ClientActionMachineRpc = {
 };
 
 describe('client Action reverse delivery', () => {
+  it('discovers connected theme devices from the current Session viewer without changing the receiver', async () => {
+    const devices = [{ id: 'viewer', deviceLabel: 'My phone' }, { id: 'desktop', deviceLabel: null }];
+    const deliveries: { method: string; payload: unknown; selector: unknown }[] = [];
+    const client: ClientActionMachineRpc = {
+      hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (method, payload, options) => {
+        deliveries.push({ method, payload, selector: options.answeringClient });
+        options.onIssued();
+        return { ok: true, result: { v: 1, execution: { ok: true, result: { themes: [] } } },
+          answeringClientId: 'viewer', answeringClientIds: devices.map(device => device.id), answeringClients: devices };
+      },
+    };
+    expect(await executor(client).execute('appearance.themes.list', { includeDevices: true },
+      { surface: 'agent', authority: 'account_automation', defaultSessionId: 'theme-session' }))
+      .toEqual({ ok: true, result: { themes: [], devices } });
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].method).toBe(sessionUiActionClientRpcMethod('theme-session'));
+    expect(deliveries[0].selector).toEqual({ requireSingle: true, includeCandidates: true });
+    expect(UiActionDispatchRequestV1Schema.parse(deliveries[0].payload)).toMatchObject({
+      actionId: 'appearance.themes.list', input: { includeDevices: false },
+    });
+  });
+
+  it('addresses an explicit theme client outside the caller Session and preserves a disconnected-client code', async () => {
+    const deliveries: { method: string; payload: unknown; selector: unknown }[] = [];
+    const client: ClientActionMachineRpc = {
+      hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (method, payload, options) => {
+        deliveries.push({ method, payload, selector: options.answeringClient });
+        return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
+      },
+    };
+    expect(await executor(client).execute('appearance.themes.apply', {
+      ref: { kind: 'artifact', id: 'shared-theme' }, mode: 'light', clientId: 'other-device',
+    }, { surface: 'agent', authority: 'account_automation', defaultSessionId: 'theme-session' }))
+      .toMatchObject({ ok: false, errorCode: 'client_not_connected' });
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].method).toBe(RPC_METHODS.UI_ACTION_EXECUTE);
+    expect(deliveries[0].selector).toEqual({ clientId: 'other-device', requireSingle: true });
+    expect(UiActionDispatchRequestV1Schema.parse(deliveries[0].payload)).toMatchObject({
+      actionId: 'appearance.themes.apply', input: { clientId: 'other-device' },
+    });
+  });
+
   it.each(['ui.current_context.read', 'inbox.get', 'links.openExternal'] as const)(
     'refuses %s for another Account before reaching the daemon owner App', async actionId => {
     // MACH-PRINCIPAL-AUDIT-1116 A-R4 / SEC 1116B: the daemon's reverse client RPC

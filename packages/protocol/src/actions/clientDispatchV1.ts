@@ -3,7 +3,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionSurfaceSchema, ActionRequiredAuthoritySchema, getActionSpec, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './executor/types.js';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from './actionExecutionResult.js';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, type ActionExecuteFailure } from './actionExecutionResult.js';
 import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
 import { ApprovalExecutionOriginCallerV1Schema } from '../approvals/approvalRequestV1.js';
 import { ExternalActionTargetV1Schema } from './externalActionApi.js';
@@ -14,7 +14,7 @@ import { isAppShellActionId } from './appShellActionFamily.js';
 import { isWorkspaceActionId } from './workspaceActionFamily.js';
 import { isUpdatesActionId } from './updatesActionFamily.js';
 import { isAppUpdateActionId } from './appUpdateActionFamily.js';
-import { isThemeActionId } from './themeActionIdsV1.js';
+import { isThemeActionId, type ThemeActionId } from './themeActionIdsV1.js';
 import { isAccountLifecycleActionId } from './accountLifecycleActionFamily.js';
 import { isVoiceConversationActionId } from './voiceConversationActionFamily.js';
 import type { SocketRpcAnsweringClientCandidateV1 } from '../rpc/socket.js';
@@ -202,6 +202,8 @@ export const UiActionDispatchResultV1Schema = lazyZodSchema(() => z.strictObject
 export type UiActionDispatchResultV1 = z.infer<typeof UiActionDispatchResultV1Schema>;
 
 /** Absence is a declared domain result where the Action has one, otherwise a typed failure. */
+export function clientActionUnavailable(actionId: ThemeActionId): ActionExecuteFailure;
+export function clientActionUnavailable(actionId: ActionId): ActionExecuteResult;
 export function clientActionUnavailable(actionId: ActionId): ActionExecuteResult {
   if (isThemeActionId(actionId)) return { ok: false, errorCode: 'client_not_connected', error: 'client_not_connected' };
   if (actionId === 'session.draft.delete') return { ok: false, errorCode: 'unavailable', error: 'noClient',

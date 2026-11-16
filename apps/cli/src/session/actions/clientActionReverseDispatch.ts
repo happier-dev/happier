@@ -1,3 +1,4 @@
+import { THEME_ACTION_IDS, isThemeActionId } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -56,7 +57,7 @@ export function createClientActionReverseDispatcher(
     }
     const requestedClientId: unknown = input && typeof input === 'object' ? Reflect.get(input, 'clientId') : undefined;
     const clientId = typeof requestedClientId === 'string' ? requestedClientId : undefined;
-    const unavailable = () => clientId
+    const unavailable = () => isThemeActionId(actionId) ? clientActionUnavailable(actionId) : clientId
       ? { ok: false as const, errorCode: 'client_not_available', error: 'The selected clientId is not eligible or is disconnected' }
       : clientActionUnavailable(actionId);
     const machineTransportUnavailable = (errorCode = 'machine_transport_unavailable') => ({
@@ -111,7 +112,8 @@ export function createClientActionReverseDispatcher(
     const originInput = originAction.success ? PluginExecutionOriginActionInputSchemas[originAction.data].parse(input) : null;
     const libraryAction = actionId === 'workflow.library.view.get' || actionId === 'workflow.library.view.set'
       || actionId === 'workflow.library.view.reset';
-    const listsAnsweringClients = actionId === 'plugins.execution_origin.list' || actionId === 'workflow.library.view.get';
+    const listsThemeDevices = actionId === THEME_ACTION_IDS.list && input !== null && typeof input === 'object' && Reflect.get(input, 'includeDevices') === true;
+    const listsAnsweringClients = listsThemeDevices || actionId === 'plugins.execution_origin.list' || actionId === 'workflow.library.view.get';
     const answeringClient = { ...(clientId ? { clientId } : {}), requireSingle: true as const,
       ...(listsAnsweringClients ? { includeCandidates: true as const } : {}) };
     // Project only the address from the already-admitted full Action input.
@@ -129,7 +131,7 @@ export function createClientActionReverseDispatcher(
         || actionId === 'account.home_continuation.invoke'
         ? currentUiContextReadClientRpcMethod()
       : address?.success ? workflowDraftClientRpcMethod(address.data)
-      : !originInput && !libraryAction && !accountClientAction && targetSessionId ? sessionUiActionClientRpcMethod(targetSessionId)
+      : !clientId && !originInput && !libraryAction && !accountClientAction && targetSessionId ? sessionUiActionClientRpcMethod(targetSessionId)
       : RPC_METHODS.UI_ACTION_EXECUTE;
     if (!client) return machineTransportUnavailable();
     // Advertisements are hints, not receiver authority: reconnect/withdrawal can
@@ -141,7 +143,8 @@ export function createClientActionReverseDispatcher(
     let request: UiActionDispatchRequestV1 | VoiceRunActionDispatchRequestV1;
     try {
       request = voiceRun ? { v: 1, actionId, input, voiceRun }
-        : buildUiActionDispatchRequestV1({ actionId, input, ...(admittedHostReviewedChildren ? { admittedHostReviewedChildren } : {}), context: {
+        : buildUiActionDispatchRequestV1({ actionId, input: listsThemeDevices && input && typeof input === 'object'
+          ? { ...input, includeDevices: false } : input, ...(admittedHostReviewedChildren ? { admittedHostReviewedChildren } : {}), context: {
         ...context, surface: context.surface ?? 'agent', authority: context.authority ?? 'account_automation',
         ...(actionCaller ? { actionCaller } : {}),
       } });
@@ -200,6 +203,9 @@ export function createClientActionReverseDispatcher(
       const voiceResult = voiceRun ? UiActionDispatchResultV1Schema.safeParse(response.result) : null;
       const execution = voiceRun ? voiceResult?.success ? voiceResult.data.execution : null
         : parseClientActionDispatchResult(actionId, response.result);
+      if (listsThemeDevices && execution?.ok && execution.result && typeof execution.result === 'object') {
+        return { ...execution, result: { ...execution.result, devices: response.answeringClients ?? [] } };
+      }
       const answeringClients = listsAnsweringClients && response.answeringClientId ? {
         answeringClientId: response.answeringClientId,
         ...(response.answeringClientIds ? { answeringClientIds: [...response.answeringClientIds] } : {}),
