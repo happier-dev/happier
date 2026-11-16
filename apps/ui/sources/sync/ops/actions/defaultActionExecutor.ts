@@ -134,7 +134,8 @@ import { readSkillRulesForItemV1 } from '@happier-dev/protocol/prompts/library/s
 import { readSkillUsageCatalogV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionOperations';
 import { readPromptLibraryCatalogProjectionInContext, mutatePromptLibraryRoleOverrideInContext } from '@/sync/api/account/apiPromptLibraryCatalog';
 import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, resolveActionExecutionPlacementForInput, type PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkspaceSyncRelationshipWriteActionInputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
@@ -1091,6 +1092,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       // The existing transport selects the controller and preserves creation/read operands.
       // Its receiver compares the confirmed review with its own prepared children.
       return await deploymentActionDeps.deploymentAction(args.actionId, input.data, context);
+    }
+    if (args.actionId === WORKFLOW_RUN_START_ACTION_ID_V1) {
+      if (!workflowAction) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      // The Workflow relay owns placement and uncertain admission outcomes.
+      // Return its carried review to the Machine confirmation path, without
+      // admitting the same request against a second, app-local review digest.
+      const context = args.confirmInFlow
+        ? bindPresentUserActionConfirmation(args.actionId, args.input, args.context, args.reviewDigest) : args.context;
+      return workflowAction({ actionId: args.actionId, input: WorkflowRunStartRequestV1Schema.parse(args.input), context,
+        ...(context.signal ? { signal: context.signal } : {}) });
     }
     // Mounted surfaces supply this target through the admitted controller, not
     // Action input, presence ranking, or the UI's default Machine selection.

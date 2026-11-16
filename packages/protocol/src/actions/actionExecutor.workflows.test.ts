@@ -349,6 +349,24 @@ describe('createActionExecutor (Workflow family)', () => {
     expect(readIngress).toHaveBeenCalledOnce();
   });
 
+  it('preserves a receiving host review before Workflow admission', async () => {
+    const input = { runId: '11111111-1111-4111-8111-111111111111', source: { kind: 'inline', definition: {
+      version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'action', id: 'command', actionId: 'machines.command.run',
+        input: { command: { kind: 'literal', value: 'printf reviewed' } } }],
+    } } };
+    const refusal = { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+      details: { reviewDigest: 'MSCiAiJh1KrPkLmLYAEwdx9rcQxLEgmAQPyiZmgnvfU', review: { actionArgs: input,
+        preview: { actionId: 'workflow.run.start', actionArgs: input, hostReviewedChildren: {
+          children: [{ action: 'machines.command.run', role: 'command', input: { command: 'printf reviewed' } }],
+        } },
+      } },
+    };
+    // Only the external Workflow host port is substituted. The shared Action
+    // admission and failure-envelope classification remain real.
+    const executor = createActionExecutor({ workflowAction: async () => refusal } as unknown as ActionExecutorDeps);
+    await expect(executor.execute('workflow.run.start', input, { surface: 'ui' })).resolves.toMatchObject(refusal);
+  });
+
   it('does not publish an unrecognized Workflow operation error', async () => {
     const executor = createActionExecutor({
       workflowAction: vi.fn(async () => ({

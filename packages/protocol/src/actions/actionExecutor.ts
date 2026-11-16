@@ -4611,6 +4611,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         })();
         const failure = readActionFailureEnvelope(result);
         if (!failure) return { ok: true, result };
+        // Host review precedes Workflow admission; keep its carried preview for
+        // the caller's existing confirmation presenter.
+        if (failure.errorCode === 'action_interactive_review_required') return failure;
         const workflowFailure = WorkflowActionFailureV1Schema.safeParse(failure);
         return workflowFailure.success
           ? workflowFailure.data

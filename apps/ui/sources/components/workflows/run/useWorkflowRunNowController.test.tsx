@@ -130,6 +130,48 @@ function admitted(admission: 'created' | 'existing') {
 }
 
 describe('useWorkflowRunNowController', () => {
+  it.each([true, false])('settles the receiving Machine command review before Start (confirm: %s)', async confirmed => {
+    const commandSource: WorkflowRunNowRequest['source'] = { kind: 'inline', definition: {
+      version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'action', id: 'command',
+        actionId: 'machines.command.run', input: { command: { kind: 'literal', value: 'printf QA_RUNS_A_229_UNCONFIRMED' } } }],
+    } };
+    // The actual READY229 HTTP refusal: the receiving Machine carries the
+    // review back before admission. Keep Workflow dispatch and the UI presenter real.
+    executeMock.mockImplementationOnce(({ input }) => ({ ok: false,
+      errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+      details: { reviewDigest: 'MSCiAiJh1KrPkLmLYAEwdx9rcQxLEgmAQPyiZmgnvfU', review: {
+        actionArgs: input, preview: { actionId: 'workflow.run.start', actionArgs: input,
+          hostReviewedContent: { teamCredentialSources: [] },
+          hostReviewedChildren: { children: [{ action: 'machines.command.run', role: 'command',
+            input: { command: 'printf QA_RUNS_A_229_UNCONFIRMED' } }] }, summary: 'Start workflow Run.' },
+      } },
+    }));
+    executeMock.mockResolvedValueOnce(admitted('created'));
+    const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
+    const hook = await renderHook(() => useWorkflowRunNowController());
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = hook.getCurrent().runNow({ runId: RUN_ID, source: commandSource, refusal: 'inline',
+        project: { machineId: 'machine-1', directory: '/home/happier/happier-dev' } });
+    });
+    await vi.waitFor(() => expect(modals.some(entry => entry.type === 'custom')).toBe(true));
+    const review = modals.find(entry => entry.type === 'custom');
+    if (review?.type !== 'custom') throw new Error('Expected the receiving Machine review');
+    expect(review.props).toMatchObject({ actionId: 'workflow.run.start', actionArgs: startInput(0) });
+    const onAnswer: unknown = review.props?.onAnswer;
+    if (typeof onAnswer !== 'function') throw new Error('Expected a review decision');
+    await act(async () => { onAnswer(confirmed); await pending; });
+    await act(async () => { Modal.hide(review.id); });
+    expect(executeMock).toHaveBeenCalledTimes(confirmed ? 2 : 1);
+    const run = storage.getState().workflowRunsById[workflowRunStoreKey(RUN_ID)];
+    if (confirmed) {
+      expect(run?.id).toBe(RUN_ID);
+      expect(startInput(1)).toEqual(startInput(0));
+    } else {
+      expect(run).toBeUndefined();
+      expect(hook.getCurrent().refusal).not.toBeNull();
+    }
+  });
   it('one Start only renders its own intent while preserving the admitted Run', async () => {
     const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
     const { useAutomationRunNowController } = await import('@/components/automations/list/useAutomationRunNowController');

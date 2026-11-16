@@ -139,6 +139,7 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazy
         requesterAccountContentDemandForInput: () => true,
       } : {}),
     executionPlacement: actionId === 'workflow.run.start' ? 'machine' : 'account',
+    ...(actionId === 'workflow.run.start' ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
     approvalPolicy: {
       uiConfirmation: deletesRetainedContent ? 'policy' : 'direct',
       ...(actionId === 'workflow.run.invocations.complete_review' ? { agentDefault: 'authority' as const } : {}),
