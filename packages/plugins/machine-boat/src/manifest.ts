@@ -58,7 +58,7 @@ const defaults = { placementBindings: [], surfaces: ['ui', 'cli', 'plugin'], hos
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
 } as const;
 const runtime = (context: Parameters<typeof nativeFetch>[0]) => createBoatNativeClient({ fetch: nativeFetch(context), signal: context.signal });
-const preparationRuntime = (context: Parameters<typeof nativeFetch>[0]) => createBoatPreparationClient(nativeFetch(context), context.signal,
+const preparationRuntime = (context: PluginAccountActionContext | PluginInvocationContext) => createBoatPreparationClient(nativeFetch(context), context.signal,
   () => context.services.machineProvisioners.waitForNativeObservation());
 const PRICE_SOURCE = 'https://docs.boat.dev/pricing';
 // Static rates verified against https://docs.boat.dev/pricing.md on 2026-10-30.

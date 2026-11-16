@@ -133,7 +133,7 @@ export function createBoatPreparationClient(request: typeof fetch, signal: Abort
         if (target.path !== path) throw new BoatNativeError('boat_upload_identity_mismatch');
         // Boat's native file body API is limited to 5 MiB. Its signed upload URL
         // accepts raw bytes without a size ceiling or account Authorization.
-        const uploaded = await uploadFetch(target.url, { method: 'PUT', signal, redirect: 'error', body: decodeBase64(file.contentsBase64) });
+        const uploaded = await uploadFetch(target.url, { method: 'PUT', signal, redirect: 'error', body: new Uint8Array(decodeBase64(file.contentsBase64)).buffer });
         if (!uploaded.ok) throw new BoatNativeError('boat_upload_failed');
       }
       const script = 'set -eu\n' + (definition.cli.files.length ? 'cd -- ' + quote(directory) + '\n' : '')
